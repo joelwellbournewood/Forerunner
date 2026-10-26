@@ -59,11 +59,12 @@ import {
   modelIdFor,
   modelSettings,
   ProviderRegistry,
+  recordModelWatchBaseline,
   updates,
   WEEK_MINUTES,
 } from "@forerunner/runtime";
 import type { TaskRow } from "@forerunner/state";
-import { FakeProvider, textReply, toolReply } from "@forerunner/testenv";
+import { FAKE_MODELS, FakeProvider, textReply, toolReply } from "@forerunner/testenv";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parsePricingOverrides } from "../../../packages/billing/src/index.ts";
 import { ModelWatchUpdates } from "../../../packages/runtime/src/daemon/adapters.ts";
@@ -679,6 +680,9 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
     expect(existsSync(mw.settings.pricingPath)).toBe(false);
 
     // --- Clause: a weekly model-watch run ... ----------------------------------------------
+    // Alice's install ran the watch before: its first run recorded the ladder's four models
+    // as the provider's baseline (ADR 0089), so the candidate listed since is news.
+    await recordModelWatchBaseline(w.store, { provider: "fake", models: [...FAKE_MODELS] });
     await later();
     const weekOne = w.clock.nowIso();
     await mw.tick();
@@ -950,13 +954,13 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
     expect(gapMs).toBeGreaterThanOrEqual(WEEK_MINUTES * 60_000);
     expect(gapMs).toBeLessThanOrEqual(WEEK_MINUTES * 60_000 + 60_000);
     const run2 = await second.result;
-    // The adopted model is the baseline at the adopted effort; the old one is a candidate that
-    // passes less and costs more, so nothing is proposed and nobody is asked.
+    // The adopted model is the baseline at the adopted effort. The model it replaced is in the
+    // provider's baseline and the price table: not news, so it is not a candidate again
+    // (ADR 0089), nothing is proposed and nobody is asked.
     expect(run2.report.evals.map((e) => [e.role, e.model, e.effort, e.passed, e.total])).toEqual([
       ["baseline", CANDIDATE_MODEL, "low", 4, EVAL_TASKS],
-      ["candidate", "fake-sonnet", "low", 3, EVAL_TASKS],
     ]);
-    expect(run2.report.diff.new_models.map((m) => m.id)).toEqual(["fake-sonnet"]);
+    expect(run2.report.diff.new_models).toEqual([]);
     expect(run2.report.diff.retired_models).toEqual([]);
     expect(run2.report.diff.repriced).toEqual([]);
     expect(run2.report.recommendations).toEqual([]);

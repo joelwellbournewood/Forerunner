@@ -118,6 +118,62 @@ consented to. Spec D's "Human approves" covers the spend as well as the switch.
   of each process. It does not run the evals. Whether it should persist too is left to its
   own module.
 
+## Amendment 2026-10-26: the first run is the baseline, not news
+
+### Context
+
+The run before last on the same fresh install ran only the free check, as item 1 intends. It
+still opened a decision in the inbox: "Model watch 2026-10-26: 10 new, 0 retired, 0
+repriced, 0 unpriced", asking adopt, evaluate, ignore or remind. In the voice session that
+followed, the conversation agent raised it in most replies.
+
+None of the ten models was news. "New" meant "listed by the provider and on no ladder rung".
+The Models API lists every model the account can call, and the ladder uses four of them. The
+other ten were all priced, and with no price list configured (the default) a price can only
+come from the table the install shipped with. So every one became a candidate, and the
+withheld candidate evals were enough to ask the human (item 2). Every fresh install asked
+the same question at its first boot, and every later week again until the human ignored it.
+
+### Decision
+
+6. **The first listing of a provider is its baseline.** The first run that lists a provider
+   records the listing (`recordModelWatchBaseline`, a `release` row on channel
+   `model_watch_baseline`, one per provider, never moved after). Its models are not new in
+   that run. A run in which every listed provider is recorded this way is a baseline run: it
+   runs no eval, even with the `model_watch.run_evals` opt-in or an explicit `evals: true`,
+   and asks nothing (`nothing_to_decide`). Its report names the providers in
+   `baseline_providers` and its summary says "baseline recorded". Later runs compare against
+   the baseline.
+7. **A model the install's price table already knows is not news.** A listed model in the
+   provider's baseline, or in the price table the install shipped with (`BUILTIN_PRICING`,
+   `ModelWatchDeps.pricing`), is neither new nor unpriced, and never a candidate. A row the
+   human or an adopt put in `<config>/pricing.json` does not count: a model priced only there
+   stays news until it is on the ladder or ignored.
+
+Retired models and repricings are still compared with the ladder and the table on every run,
+the baseline run included. A repricing found by a baseline run is in its report but asks
+nothing until the next run finds it again.
+
+### Consequences
+
+- A fresh install's first boot writes a "baseline recorded" report and puts nothing in the
+  inbox. The conversation agent has nothing to bring up.
+- A model the provider listed at the first run but the ladder did not use is never a
+  candidate later. A newer Forerunner that ships a model in its table and on its ladder
+  switches by release, not by the watch.
+- An install upgraded from before this amendment has no baseline row: its first run after
+  the upgrade is a baseline run and asks nothing that week.
+- A provider registered later gets its own baseline on its first listing; the run still
+  reports news from the providers that had one.
+
+### Alternatives considered
+
+- **Compare with the previous report's listing.** Rejected: a candidate would be new for one
+  run only, and the `evaluate` answer starts a later run, in which it would no longer be a
+  candidate.
+- **Keep the table rule only.** It fixes this incident, but a model released after the build
+  would still be asked about on the first boot, before the human has used the install at all.
+
 ## Alternatives considered
 
 - **Keep the evals and lower the per-run budget.** Rejected: any figure above zero is spend

@@ -1596,7 +1596,8 @@ documents its own minimums). So the chat keeps its prefix
 byte-identical from turn to turn for one human and project: the tools are the registry's
 command tools in registration order with static descriptions and schemas, the system text is
 the registry prompt, the project list (ordered by name; it changes only when a project, its
-stage, autonomy, summary or the active project changes) and `CHAT_RETRIEVAL_RULES`, and
+stage, autonomy, summary or the active project changes), `CHAT_RETRIEVAL_RULES` and
+`CHAT_OPEN_REQUEST_RULES` (below), and
 everything that moves (the time, unread count, open requests, running sessions, the lessons and
 doc sections retrieved for the question) is in the first user message (`volatilePreamble` and
 the retrieved blocks). The effort and temperature are request parameters, not part of the
@@ -1610,6 +1611,30 @@ pick a run's calls by it instead of by position. The same test asserts both turn
 run at effort `low`.
 Measured live with a warm cache by `tests/live/test/live-5-chat-cache.live.test.ts`
 (testing.md, "Live runs").
+
+**Open requests in the chat.** On 2026-10-26, in a voice session on a fresh install, the agent
+raised the model watch's open request ("Separately, there is one open request waiting for
+you: a model watch...") in most replies, whatever the human had asked. The cause: every turn
+is a fresh model call (one user message, no history), its `open_requests` fact listed every
+open request in full (id, `why`, options), the registry prompt says to answer from the open
+requests in the context, and nothing told the model it had already said so. Now
+(`openRequestsFact`) the runtime keeps per human and agent which requests the conversation has
+listed, and the fact lists a request in full only when it is not yet listed in this
+conversation (`(not yet mentioned in this conversation)`), when the human's line asks what is
+pending (`ASKS_PENDING_RE`: pending, requests, inbox, decisions, "waiting for me", ...;
+`(the human asked)`), or when it is `blocking` (`[blocking]`). Otherwise the fact is a count:
+`open_requests: 2 (already mentioned in this conversation; bring up only if the human asks)`,
+or `... (+1 already mentioned in this conversation)` beside a newly listed one. A pause longer
+than `CONVERSATION_IDLE_MS` (60 minutes) starts a new conversation, in which an open request is
+listed once more. `CHAT_OPEN_REQUEST_RULES`, in the system text after `CHAT_RETRIEVAL_RULES`,
+tells the model what the fact means: answer what was asked, never mention open requests in
+every reply, at most once and in one short sentence after the answer. The inbox, the
+requests and the UI are unchanged; only what the model is shown changes. The state is in
+process memory, so a daemon restart starts a new conversation. Tests:
+`conversation-open-requests.test.ts` (scripted provider: the rules in the system text, the
+request in the first turn's facts and only a count in the next, listed again when the human
+asks what is pending, a request filed mid-conversation listed once beside the count, a blocking
+one kept, and listed once more after a long pause; the system text is identical across turns).
 
 ### Local daemon (`src/daemon/`, ADR 0011)
 

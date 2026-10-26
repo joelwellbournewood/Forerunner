@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { BUILTIN_PRICING } from "@forerunner/billing";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,13 +14,33 @@ import {
 import type { ModelRef } from "../src/provider/types.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
-/** Lists a new sonnet-tier model beside the haiku rung, so a run has a candidate to test. */
+/**
+ * Lists the rungs and, once `released` is set, a new sonnet-tier model beside them, so a run
+ * after the first (the baseline, ADR 0089) has a candidate to test.
+ */
 class CandidateProvider extends ScriptedProvider {
+  released = false;
   override async listModels(): Promise<ModelRef[]> {
     return [
       { provider: "fake", id: "fake-haiku", tier: "haiku" },
       { provider: "fake", id: "fake-sonnet", tier: "sonnet" },
-      { provider: "fake", id: "fake-sonnet-6", tier: "sonnet" },
+      ...(this.released
+        ? [{ provider: "fake", id: "fake-sonnet-6", tier: "sonnet" as const }]
+        : []),
+    ];
+  }
+}
+
+/** Lists ten models beyond the rungs, each one the install's own price table already knows. */
+class IncidentProvider extends ScriptedProvider {
+  override async listModels(): Promise<ModelRef[]> {
+    return [
+      { provider: "fake", id: "fake-haiku", tier: "haiku" },
+      { provider: "fake", id: "fake-sonnet", tier: "sonnet" },
+      ...Object.keys(BUILTIN_PRICING)
+        .filter((id) => !id.endsWith("-fast"))
+        .slice(0, 10)
+        .map((id) => ({ provider: "fake", id, tier: "sonnet" as const })),
     ];
   }
 }
@@ -162,7 +183,13 @@ describe("model watch on a fresh install", () => {
     writePricing(home);
     const clock = new SimulatedClock("2026-10-26T00:40:00Z");
     const evals = new RecordingEvals();
-    const rt = await boot(home, clock, evals, new CandidateProvider([{ text: "hi" }], clock));
+    const provider = new CandidateProvider([{ text: "hi" }], clock);
+    const rt = await boot(home, clock, evals, provider);
+    // The fresh install's first run records the baseline and asks nothing.
+    const baseline = await rt.modelWatch.run();
+    expect(baseline.decision).toBe("nothing_to_decide");
+    expect(baseline.report.baseline_providers).toEqual(["fake"]);
+    provider.released = true;
     const first = await rt.modelWatch.run();
     expect(first.decision).toBe("pending");
     expect(first.report.evals_deferred?.planned.some((p) => p.model === "fake-sonnet-6")).toBe(
@@ -190,11 +217,28 @@ describe("model watch on a fresh install", () => {
     expect(evals.calls.length).toBeGreaterThan(n);
   });
 
+  it("the first boot's free check over ten table-known models opens no request in the human's inbox", async () => {
+    const home = freshHome();
+    const clock = new SimulatedClock("2026-10-26T00:40:00Z");
+    const evals = new RecordingEvals();
+    const rt = await boot(home, clock, evals, new IncidentProvider([{ text: "hi" }], clock));
+    await rt.scheduler.tick();
+    await rt.modelWatch.settled();
+    const [row] = await reports(rt);
+    expect(row).toBeDefined();
+    expect(row?.changelog).toMatch(/baseline recorded/);
+    expect(await rt.store.humanRequest.open({ humanId: rt.human.id })).toHaveLength(0);
+    expect(evals.calls).toHaveLength(0);
+  });
+
   it("closing the daemon while evals are underway aborts them and close() returns", async () => {
     const home = freshHome();
     const clock = new SimulatedClock("2026-10-26T00:40:00Z");
     const evals = new RecordingEvals(true);
     const rt = await boot(home, clock, evals);
+    // The first run is the baseline and runs no eval (ADR 0089); the paid run comes after it.
+    await rt.modelWatch.run();
+    expect(evals.calls).toHaveLength(0);
     const run = rt.modelWatch.run({ evals: true });
     const outcome = run.then(
       () => "resolved",

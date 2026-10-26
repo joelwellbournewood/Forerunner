@@ -7,7 +7,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { DEFAULT_LADDER, MODE_DEFAULTS, modelIdFor } from "../src/models/ladder.ts";
 import { builtinModelConfig, parseModelSettings } from "../src/models/settings.ts";
-import type { EvalRunnerPort } from "../src/models/watch.ts";
+import { type EvalRunnerPort, recordModelWatchBaseline } from "../src/models/watch.ts";
 import type { ModelRef } from "../src/provider/types.ts";
 import { MODEL_SETTINGS_READ_TOOL } from "../src/wiring/model-config.ts";
 import { ScriptedProvider } from "./helpers.ts";
@@ -231,6 +231,14 @@ describe("model settings wired into the daemon", () => {
   }, 60_000);
 
   it("the model watch proposes the cheaper sonnet and the lower effort; the human adopts; the next session uses both without a restart", async () => {
+    // An install whose first run already recorded the ladder rungs as the baseline (ADR 0089),
+    // so the cheaper sonnet is news to this run.
+    await recordModelWatchBaseline(rt.store, {
+      provider: "fake",
+      models: DEFAULT_LADDER.flatMap((r) =>
+        r.models.fake ? [{ provider: "fake", id: r.models.fake, tier: r.tier }] : [],
+      ),
+    });
     // The human's explicit "run evaluations" (ADR 0089): without it the run makes no paid eval.
     const result = await rt.modelWatch.run({ evals: true });
     const kinds = result.report.recommendations.map((r) => r.kind);

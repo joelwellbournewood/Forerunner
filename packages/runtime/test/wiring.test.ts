@@ -254,6 +254,19 @@ describe("daemon wiring", () => {
 
   it("model watch on a fresh install runs no paid eval: lists and prices only, the planned evals put to the human", async () => {
     const spentBefore = (await rt.store.costLedger.sum({ humanId: rt.human.id })).usd_micro;
+    // The fresh install's first run is the baseline (ADR 0089): no eval, no request.
+    const first = await post("/model-watch/run", {});
+    expect(first.status).toBe(200);
+    const baseline = await json(first);
+    expect(baseline.decision).toBe("nothing_to_decide");
+    expect((baseline.report as Json).baseline_providers).toEqual(["fake"]);
+    expect((baseline.report as Json).evals).toEqual([]);
+    expect(
+      (await openRequests()).filter((r) =>
+        String((r.change_card as { key?: string } | null)?.key ?? "").startsWith("model_watch:"),
+      ),
+    ).toHaveLength(0);
+    // The next run compares against it: still no eval without consent.
     const run = await post("/model-watch/run", {});
     expect(run.status).toBe(200);
     const body = await json(run);

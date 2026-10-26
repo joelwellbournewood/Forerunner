@@ -38,6 +38,7 @@ import {
   type EvalRunnerPort,
   isModelWatchRequest,
   MODEL_WATCH_AGENT_ID,
+  MODEL_WATCH_BASELINE_CHANNEL,
   MODEL_WATCH_CHANNEL,
   ModelWatch,
   type ModelWatchAdoptedEvent,
@@ -48,6 +49,7 @@ import {
   ModelWatchReportSchema,
   recommendLowerEffort,
   recommendSwitch,
+  recordModelWatchBaseline,
   StateModelWatchApprovals,
   scheduleModelWatch,
   WEEK_MINUTES,
@@ -259,7 +261,7 @@ interface World {
 }
 
 async function world(
-  opts: { replies?: ScriptedReply[]; listed?: ModelRef[] } = {},
+  opts: { replies?: ScriptedReply[]; listed?: ModelRef[]; baseline?: boolean } = {},
 ): Promise<World> {
   const clock = new SimulatedClock("2026-10-19T06:00:00Z");
   const store = await openStore({ url: "sqlite::memory:", clock });
@@ -285,6 +287,11 @@ async function world(
   );
   const settings = new MemoryModelSettingsStore(() => clock.nowIso());
   const workRoot = mkdtempSync(join(os.tmpdir(), "fr-model-watch-"));
+  // An install that has run the watch before: its first run recorded the ladder as the
+  // provider's baseline, so these tests' runs compare against it (ADR 0089, first-run rule).
+  // The baseline tests below start from a fresh install instead (`baseline: false`).
+  if (opts.baseline !== false)
+    await recordModelWatchBaseline(store, { provider: "fake", models: [...FAKE_MODELS] });
   return { store, clock, human, provider, registry, settings, workRoot };
 }
 
@@ -1379,6 +1386,156 @@ describe("model watch: paid evals need the human's consent", () => {
     await watch.settled();
     const rows = await w.store.release.list({ channel: MODEL_WATCH_CHANNEL }, { limit: 10 });
     expect(rows).toHaveLength(0);
+  });
+});
+
+/** The incident listing: the ladder plus ten models the install's price table already prices. */
+const TABLE_KNOWN: ModelRef[] = Object.keys(BUILTIN_PRICING)
+  .filter((id) => !id.endsWith("-fast"))
+  .slice(0, 10)
+  .map((id) => ({ provider: "fake", id, tier: "sonnet" as const }));
+
+/** No price list configured (the default install): every fetch fails, as the daemon's does. */
+const NO_PRICE_LIST = {
+  name: "unconfigured",
+  async fetch(): Promise<PriceList> {
+    throw new ForerunnerError("unavailable", "no price list configured");
+  },
+};
+
+describe("model watch: the first run records a baseline (ADR 0089)", () => {
+  it("the 2026-10-26 voice incident: a fresh install's first run over ten table-known models opens no request", async () => {
+    expect(TABLE_KNOWN).toHaveLength(10);
+    const w = await make({ baseline: false, listed: [...FAKE_MODELS, ...TABLE_KNOWN] });
+    const evals = new CountingEvals();
+    const watch = new ModelWatch({
+      clock: w.clock,
+      store: w.store,
+      providers: w.registry,
+      priceList: NO_PRICE_LIST,
+      evals,
+      approvals: new StateModelWatchApprovals(w.store, { agentId: "alice" }),
+      settings: w.settings,
+      humanId: w.human,
+      pricing: BUILTIN_PRICING,
+      evalTargets: [{ specialist: "coder", mode: "coder" }],
+    });
+    const first = await watch.run();
+    expect(first.decision).toBe("nothing_to_decide");
+    expect(first.requestId).toBeNull();
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toHaveLength(0);
+    expect(first.report.diff.new_models).toEqual([]);
+    expect(first.report.baseline_providers).toEqual(["fake"]);
+    expect(first.report.summary).toMatch(/baseline recorded/);
+    expect(first.report.summary).not.toMatch(/10 new/);
+    // The week after: the same listing is still nothing new, so still no request.
+    await w.clock.advance(WEEK_MINUTES * 60_000);
+    const second = await watch.run();
+    expect(second.decision).toBe("nothing_to_decide");
+    expect(second.report.diff.new_models).toEqual([]);
+    expect(second.report.baseline_providers).toEqual([]);
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toHaveLength(0);
+    expect(evals.calls).toHaveLength(0);
+  });
+
+  it("the first run asks nothing and runs no eval even with the opt-in; later runs ask only about models listed since", async () => {
+    const listed: ModelRef[] = [...LISTED];
+    const w = await make({ baseline: false, listed });
+    const evals = new CountingEvals();
+    const watch = watchFor(w, {
+      evals,
+      approvals: new StateModelWatchApprovals(w.store, { agentId: "alice" }),
+      autoEvals: () => true,
+      // No repricing: only the listing can be news here.
+      priceList: {
+        as_of: "2026-10-19",
+        models: {
+          "fake-sonnet-6": { input_per_mtok_usd: 1.5, output_per_mtok_usd: 7.5 },
+          "fake-sonnet-7": { input_per_mtok_usd: 1, output_per_mtok_usd: 5 },
+        },
+      },
+    });
+    const first = await watch.run();
+    expect(first.decision).toBe("nothing_to_decide");
+    expect(first.report.diff.new_models).toEqual([]);
+    expect(first.report.diff.unpriced).toEqual([]);
+    expect(first.report.pricing_proposal).toEqual({});
+    expect(first.report.evals_deferred).toBeNull();
+    expect(evals.calls).toHaveLength(0);
+    // The baseline is stored apart from the reports: the updates screen lists one report.
+    const base = await w.store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL });
+    expect(base.map((r) => r.release_version)).toEqual(["fake"]);
+    expect(await w.store.release.list({ channel: MODEL_WATCH_CHANNEL })).toHaveLength(1);
+
+    const second = await watch.run();
+    expect(second.decision).toBe("nothing_to_decide");
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toHaveLength(0);
+
+    // A model the provider lists after the baseline is news, and the only news.
+    listed.push({ provider: "fake", id: "fake-sonnet-7", tier: "sonnet" });
+    const third = await watch.run();
+    expect(third.report.diff.new_models.map((m) => m.id)).toEqual(["fake-sonnet-7"]);
+    expect(third.decision).toBe("pending");
+    const open = await w.store.humanRequest.open({ humanId: w.human });
+    expect(open).toHaveLength(1);
+    expect(open[0]?.why).toMatch(/: 1 new, /);
+    // The baseline is written once per provider: later runs never move it.
+    expect(await w.store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL })).toHaveLength(1);
+  });
+
+  it("a model the install's price table already knows is not news; one priced only by the price list is", async () => {
+    const w = await make({ listed: [...FAKE_MODELS, ...TABLE_KNOWN] });
+    const approvals = new FakeApprovals({ status: "pending", requestId: "hr-1" });
+    const r = await watchFor(w, {
+      approvals,
+      autoEvals: null,
+      priceList: { as_of: "2026-10-19", models: {} },
+    }).run();
+    expect(r.report.diff.new_models).toEqual([]);
+    expect(r.decision).toBe("nothing_to_decide");
+    expect(approvals.requests).toHaveLength(0);
+
+    const w2 = await make({
+      listed: [
+        ...FAKE_MODELS,
+        ...TABLE_KNOWN,
+        { provider: "fake", id: "fake-sonnet-6", tier: "sonnet" },
+      ],
+    });
+    const r2 = await watchFor(w2, {
+      approvals,
+      autoEvals: null,
+      priceList: {
+        as_of: "2026-10-19",
+        models: { "fake-sonnet-6": { input_per_mtok_usd: 1.5, output_per_mtok_usd: 7.5 } },
+      },
+    }).run();
+    expect(r2.report.diff.new_models.map((m) => m.id)).toEqual(["fake-sonnet-6"]);
+    expect(r2.decision).toBe("pending");
+  });
+
+  it("a provider registered later records its own baseline on its first listing; the others still report news", async () => {
+    const w = await make();
+    const other: ModelProvider = {
+      name: "other",
+      async listModels() {
+        return [
+          { provider: "other", id: "other-small", tier: "haiku" },
+          { provider: "other", id: "other-big", tier: "opus" },
+        ];
+      },
+      stream: w.provider.stream.bind(w.provider),
+      complete: w.provider.complete.bind(w.provider),
+      countTokens: (t) => t.length,
+    };
+    w.registry.register(other);
+    const r = await watchFor(w, { autoEvals: null }).run();
+    expect(r.report.baseline_providers).toEqual(["other"]);
+    expect(r.report.diff.new_models.map((m) => `${m.provider}/${m.id}`)).toEqual([
+      "fake/fake-sonnet-6",
+      "fake/fake-mystery",
+    ]);
+    expect(r.decision).toBe("pending");
   });
 });
 

@@ -51,6 +51,12 @@ import {
 const logger = log("model-watch");
 
 export const MODEL_WATCH_CHANNEL = "model_watch";
+/**
+ * Where each provider's baseline listing is kept: one row per provider (release_version is the
+ * provider name), written by the first run that lists it and never moved after (ADR 0089).
+ * Kept apart from the reports so the updates screen lists reports only.
+ */
+export const MODEL_WATCH_BASELINE_CHANNEL = "model_watch_baseline";
 export const MODEL_WATCH_AGENT_ID = "model-watch";
 export const MODEL_WATCH_SCHEDULE_ID = "model-watch-weekly";
 /** The human's model watch settings live under this key of `human.notify_prefs` (ADR 0089). */
@@ -367,6 +373,11 @@ export const ModelWatchReportSchema = z.object({
     .object({ reason: z.string(), planned: z.array(PlannedEvalSchema) })
     .nullable()
     .default(null),
+  /**
+   * Providers whose listing this run recorded as their baseline (their first listing, ADR
+   * 0089): none of their models is new in this run. Empty on later runs and on older reports.
+   */
+  baseline_providers: z.array(z.string()).default([]),
   skipped: z.array(z.string()),
   summary: z.string(),
 });
@@ -494,12 +505,17 @@ export interface ModelDiff {
   unpriced: ModelWatchReport["diff"]["unpriced"];
 }
 
-/** New and retired models per provider against the ladder; prices from the table or the list, never assumed. */
+/**
+ * New and retired models per provider against the ladder; prices from the table or the list,
+ * never assumed. `known` names listed models that are not news (the provider's baseline, the
+ * install's own price table, ADR 0089): they are neither new nor unpriced.
+ */
 export function diffModels(
   listed: Record<string, ModelRef[]>,
   ladder: LadderRung[],
   table: PricingTable,
   list: PriceList | null,
+  known: (provider: string, modelId: string) => boolean = () => false,
 ): ModelDiff {
   const out: ModelDiff = { new_models: [], retired_models: [], unpriced: [] };
   for (const [provider, models] of Object.entries(listed)) {
@@ -509,6 +525,7 @@ export function diffModels(
     const ids = new Set(models.map((m) => m.id));
     for (const m of models) {
       if (onLadder.has(m.id)) continue;
+      if (known(provider, m.id)) continue;
       const key = canonicalModelId(m.id);
       const tableRow = table[key];
       if (tableRow) {
@@ -868,8 +885,28 @@ export class ModelWatch {
       }
     }
 
-    // 2. Diffs.
-    const modelDiff = diffModels(listed, config.ladder, pricing, priceList);
+    // 2. Diffs. What is news (ADR 0089): a listed model that is not on the ladder, not in the
+    // provider's baseline (its first listing), and not in the price table this install shipped
+    // with (`deps.pricing`, the built-ins; a row the human or an adopt added does not count).
+    // A provider listed for the first time records its listing as its baseline: none of its
+    // models is news in this run. A run where every listed provider does so is a baseline run:
+    // it runs no eval and asks nothing, whatever the opt-in says.
+    const baselines = await readModelWatchBaselines(store);
+    const baselineProviders = Object.keys(listed).filter((p) => !baselines.has(p));
+    const baselineRun =
+      baselineProviders.length > 0 && baselineProviders.length === Object.keys(listed).length;
+    const shipped = this.deps.pricing ?? BUILTIN_PRICING;
+    const known = (provider: string, modelId: string): boolean => {
+      const key = canonicalModelId(modelId);
+      if (baselineProviders.includes(provider)) return true;
+      if (baselines.get(provider)?.has(key)) return true;
+      return shipped[key] !== undefined;
+    };
+    const modelDiff = diffModels(listed, config.ladder, pricing, priceList, known);
+    if (baselineRun)
+      skipped.push(
+        "baseline run: the model listing is recorded; evals and requests start with the next run",
+      );
     const priceDiff = priceList
       ? diffPrices(pricing, priceList, this.thresholds)
       : { repriced: [], proposal: {} };
@@ -997,9 +1034,11 @@ export class ModelWatch {
     let seq = 0;
     const nextId = (kind: string) => `${kind}-${++seq}`;
 
-    // 3a. Baselines and lower-effort probes per target.
-    const baselines = new Map<string, EvalObservation>();
-    if (evalProvider) {
+    // 3a. Baselines and lower-effort probes per target (none in a baseline run).
+    const baselineEvals = new Map<string, EvalObservation>();
+    if (baselineRun) {
+      // Nothing to evaluate: no candidate, and no request would carry a probe's result.
+    } else if (evalProvider) {
       for (const target of targets) {
         const md = config.modeDefaults[target.mode];
         const model = rungModel(md.tier, evalProvider);
@@ -1016,7 +1055,7 @@ export class ModelWatch {
           effort: md.effort,
           role: "baseline",
         });
-        baselines.set(`${target.specialist}|${md.tier}|${evalProvider}`, baseline);
+        baselineEvals.set(`${target.specialist}|${md.tier}|${evalProvider}`, baseline);
         const lowerEffort = effortBelow(md.effort);
         if (!lowerEffort) continue;
         const lower = await observe({
@@ -1050,7 +1089,7 @@ export class ModelWatch {
       for (const target of targets) {
         const md = config.modeDefaults[target.mode];
         const bKey = `${target.specialist}|${cand.tier}|${cand.provider}`;
-        let baseline = baselines.get(bKey);
+        let baseline = baselineEvals.get(bKey);
         if (!baseline) {
           baseline = await observe({
             specialist: target.specialist,
@@ -1061,7 +1100,7 @@ export class ModelWatch {
             effort: md.effort,
             role: "baseline",
           });
-          baselines.set(bKey, baseline);
+          baselineEvals.set(bKey, baseline);
         }
         const candidate = await observe({
           specialist: target.specialist,
@@ -1126,6 +1165,7 @@ export class ModelWatch {
       eval_budget_usd_micro: this.thresholds.evalBudgetUsdMicro,
       evals_deferred:
         !evalsAllowed && planned.length ? { reason: EVALS_DEFERRED_REASON, planned } : null,
+      baseline_providers: baselineProviders,
       skipped,
       summary: "",
     });
@@ -1145,13 +1185,15 @@ export class ModelWatch {
         .filter((m) => m.price_origin === "price_list" && isIgnored(m.provider, m.id))
         .map((m) => canonicalModelId(m.id)),
     );
+    // A baseline run asks nothing (ADR 0089): what it found is the starting point, not news.
     const needsDecision =
-      report.recommendations.length > 0 ||
-      Object.keys(report.pricing_proposal).some((k) => !ignoredRows.has(k)) ||
-      (report.evals_deferred?.planned.some(
-        (p) => p.role === "candidate" && !isIgnored(p.provider, p.model),
-      ) ??
-        false);
+      !baselineRun &&
+      (report.recommendations.length > 0 ||
+        Object.keys(report.pricing_proposal).some((k) => !ignoredRows.has(k)) ||
+        (report.evals_deferred?.planned.some(
+          (p) => p.role === "candidate" && !isIgnored(p.provider, p.model),
+        ) ??
+          false));
     let health: ModelWatchHealth = {
       decision: needsDecision ? "pending" : "nothing_to_decide",
       request_id: null,
@@ -1182,6 +1224,18 @@ export class ModelWatch {
       "published",
       health as unknown as JsonValue,
     );
+    // The report is stored: record the first listing of every provider that had none.
+    for (const provider of baselineProviders) {
+      await recordModelWatchBaseline(store, {
+        provider,
+        models: listed[provider] ?? [],
+        reportId: report.id,
+        agentId: this.deps.agentId ?? null,
+      });
+      await this.audit("model_watch.baseline", `provider ${provider}`, {
+        result: `${listed[provider]?.length ?? 0} model(s) recorded as the baseline`,
+      });
+    }
     if (!needsDecision) {
       return { report, release, decision: health.decision, requestId: null, applied: [] };
     }
@@ -1572,6 +1626,84 @@ export class ModelWatch {
 }
 
 // ---------------------------------------------------------------------------------------
+// Baseline listings (ADR 0089: the first run is the baseline, not news)
+// ---------------------------------------------------------------------------------------
+
+const BaselineArtifactSchema = z.object({
+  provider: z.string(),
+  models: z.array(z.object({ id: z.string(), tier: z.string() })),
+  report_id: z.string().nullable(),
+});
+
+/**
+ * Record a provider's baseline listing: the models it listed the first time the watch saw it.
+ * Written once per provider; a second call (two runs racing on a fresh install) keeps the
+ * first and returns quietly.
+ */
+export async function recordModelWatchBaseline(
+  store: StateStore,
+  input: {
+    provider: string;
+    models: readonly ModelRef[];
+    reportId?: string | null;
+    agentId?: string | null;
+  },
+): Promise<void> {
+  const existing = await store.release.list(
+    { channel: MODEL_WATCH_BASELINE_CHANNEL, release_version: input.provider },
+    { limit: 1 },
+  );
+  if (existing.length) return;
+  const artifact = {
+    provider: input.provider,
+    models: input.models.map((m) => ({ id: m.id, tier: m.tier })),
+    report_id: input.reportId ?? null,
+  };
+  try {
+    await store.release.insert({
+      release_version: input.provider,
+      channel: MODEL_WATCH_BASELINE_CHANNEL,
+      changelog: `model watch baseline for ${input.provider}: ${artifact.models.length} model(s)`,
+      signature: "",
+      status: "installed",
+      artifacts: [artifact as unknown as JsonValue],
+      published_at: null,
+      health: {},
+      author_agent: input.agentId ?? null,
+      author_human: null,
+    });
+  } catch (e) {
+    const now = await store.release.list(
+      { channel: MODEL_WATCH_BASELINE_CHANNEL, release_version: input.provider },
+      { limit: 1 },
+    );
+    if (!now.length) throw e;
+  }
+}
+
+/** Each provider's baseline listing as canonical model ids. A provider without one is absent. */
+export async function readModelWatchBaselines(
+  store: StateStore,
+): Promise<Map<string, Set<string>>> {
+  const rows = await store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL }, { limit: 200 });
+  const out = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const parsed = BaselineArtifactSchema.safeParse(row.artifacts[0]);
+    if (!parsed.success) {
+      // Never a silent provider: an unreadable baseline counts as an empty one, so its
+      // models are compared with the ladder and the price table only.
+      logger.warn("unreadable model watch baseline; compared without it", {
+        provider: row.release_version,
+      });
+      out.set(row.release_version, new Set());
+      continue;
+    }
+    out.set(parsed.data.provider, new Set(parsed.data.models.map((m) => canonicalModelId(m.id))));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------
 // Release row <-> report
 // ---------------------------------------------------------------------------------------
 
@@ -1644,8 +1776,16 @@ export function proposalSteps(report: ModelWatchReport): string[] {
 
 export function summarizeReport(report: ModelWatchReport): string {
   const d = report.diff;
+  const baseline = report.baseline_providers.length
+    ? ` baseline recorded for ${report.baseline_providers
+        .map(
+          (p) =>
+            `${p} (${report.providers.find((x) => x.name === p)?.listed.length ?? 0} model(s))`,
+        )
+        .join(", ")};`
+    : "";
   const parts = [
-    `Model watch ${report.generated_at.slice(0, 10)}: ${d.new_models.length} new, ${d.retired_models.length} retired, ${d.repriced.length} repriced, ${d.unpriced.length} unpriced model(s).`,
+    `Model watch ${report.generated_at.slice(0, 10)}:${baseline} ${d.new_models.length} new, ${d.retired_models.length} retired, ${d.repriced.length} repriced, ${d.unpriced.length} unpriced model(s).`,
     `${report.evals.filter((e) => e.skipped_reason === null).length} eval run(s) for USD ${(report.eval_cost_usd_micro / 1e6).toFixed(4)}.`,
     report.recommendations.length
       ? `${report.recommendations.length} recommendation(s): ${report.recommendations.map((r) => r.text).join(" | ")}`
