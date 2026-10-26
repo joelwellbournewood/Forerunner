@@ -1,9 +1,13 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, Logger, log, SimulatedClock } from "@forerunner/platform";
+import { ForerunnerError, join, Logger, log, SimulatedClock } from "@forerunner/platform";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FasterWhisperStt, HelperMessageSchema } from "../src/providers/local/faster-whisper.ts";
-import { describeHelperExit, HelperProcess } from "../src/providers/local/helper-process.ts";
+import {
+  describeHelperExit,
+  HelperProcess,
+  StderrTail,
+} from "../src/providers/local/helper-process.ts";
 import { KokoroTts } from "../src/providers/local/kokoro.ts";
 import { PiperTts } from "../src/providers/local/piper.ts";
 import type { AudioChunk, SttEvent } from "../src/types.ts";
@@ -194,6 +198,39 @@ describe("FasterWhisperStt when the helper crashes mid-transcription", () => {
       await stt.dispose();
     }
   });
+
+  /**
+   * The GPU run of 2026-10-26: the first utterance crashed twice with 0xC0000005 and nothing
+   * said where, because the helper's stderr (Python's faulthandler traceback, since this
+   * change) was logged at debug level only. A non-zero exit now carries the stderr's last lines.
+   */
+  it("a crash carries the last 40 lines of the helper's stderr: in a warning and in the error's details", async () => {
+    const stt = crashing("stderr", 2, ["--stderr-lines", "60"]);
+    try {
+      const { result: events, lines } = await captured(() => utterance(stt));
+      const error = events.find((e) => e.type === "error");
+      if (error?.type !== "error") throw new Error("no error event");
+      const details = error.details ?? {};
+      const tail = String(details.stderrTail);
+      expect(tail.split("\n")).toEqual(
+        Array.from({ length: 40 }, (_, i) => `trace ${String(i + 21).padStart(3, "0")}`),
+      );
+      expect(details).toMatchObject({ exitCode: 70, exitCodeHex: "0x00000046" });
+      // The first crash, the one the retry was for, keeps its own tail.
+      expect(details.firstCrash).toMatchObject({ exitCodeHex: "0x00000046" });
+      expect(String((details.firstCrash as { stderrTail?: string }).stderrTail)).toContain(
+        "trace 060",
+      );
+      // Both crashes are warnings that carry the tail.
+      const warned = lines.filter((l) => l.startsWith("warn ") && l.includes("trace 060"));
+      expect(warned.map((l) => l.split(" {")[0])).toEqual([
+        "warn helper crashed mid-transcription; restarting it and retrying the utterance",
+        "warn helper crashed mid-transcription; the turn fails",
+      ]);
+    } finally {
+      await stt.dispose();
+    }
+  });
 });
 
 describe("describeHelperExit", () => {
@@ -252,6 +289,39 @@ describe("KokoroTts over the helper protocol", () => {
     // an already-cancelled sentence (barge-in while it was queued) leaves no request behind
     expect(tts.pendingRequests).toBe(0);
   });
+
+  it("a helper crash fails the sentence with the stderr's last 40 lines, logged as a warning", async () => {
+    const crashing = new KokoroTts({ python: node, helperPath: fixture("fake_tts_helper.mjs") });
+    const lines: string[] = [];
+    const off = Logger.addSink((rec) => {
+      if (rec.scope === "voice:kokoro")
+        lines.push(`${rec.level} ${rec.msg} ${JSON.stringify(rec.data ?? {})}`);
+    });
+    try {
+      let caught: unknown;
+      try {
+        for await (const _c of crashing.synthesize("CRASH")) {
+          // drain
+        }
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(ForerunnerError);
+      const err = caught as ForerunnerError;
+      expect(err.code).toBe("provider_error");
+      expect(err.message).toContain("0x00000046");
+      expect(String(err.details.stderrTail).split("\n")).toEqual(
+        Array.from({ length: 40 }, (_, i) => `trace ${String(i + 11).padStart(3, "0")}`),
+      );
+      const warned = lines.find(
+        (l) => l.startsWith("warn helper exited") && l.includes("trace 050"),
+      );
+      expect(warned).toBeDefined();
+    } finally {
+      off();
+      await crashing.dispose();
+    }
+  });
 });
 
 describe("HelperProcess", () => {
@@ -278,6 +348,51 @@ describe("HelperProcess", () => {
     await Promise.race([stopped, new Promise<void>((r) => setTimeout(r, 1500))]);
     expect(proc.alive).toBe(false);
     expect(exited).toBe(true);
+  });
+});
+
+describe("StderrTail", () => {
+  it("keeps the last lines whole across chunks split mid-line, with the unfinished line last", () => {
+    const tail = new StderrTail(3, 1000);
+    tail.push("one\ntw");
+    tail.push("o\r\nthree\nfour\nfi");
+    expect(tail.text()).toBe("three\nfour\nfi");
+    tail.push("ve\n");
+    expect(tail.text()).toBe("three\nfour\nfive");
+  });
+
+  it("caps the size: the newest characters are kept, an over-long line is cut at its start", () => {
+    const tail = new StderrTail(40, 100);
+    for (let i = 0; i < 20; i++) tail.push(`${"x".repeat(20)} ${i}\n`);
+    const text = tail.text();
+    expect(text.length).toBeLessThanOrEqual(100);
+    expect(text.endsWith("x 19")).toBe(true);
+    tail.push(`${"y".repeat(500)}END\n`);
+    expect(tail.text().length).toBeLessThanOrEqual(100);
+    expect(tail.text().endsWith("yEND")).toBe(true);
+  });
+
+  it("a HelperProcess keeps its helper's stderr tail (40 lines)", async () => {
+    let exited = false;
+    const proc = new HelperProcess({
+      argv: [
+        node,
+        "-e",
+        'for (let i = 1; i <= 45; i++) process.stderr.write("line " + i + "\\n"); process.exitCode = 3',
+      ],
+      log: log("voice:test"),
+      onStdout: () => {},
+      onExit: () => {
+        exited = true;
+      },
+    });
+    for (let waited = 0; !exited && waited < 5000; waited += 20)
+      await new Promise<void>((r) => setTimeout(r, 20));
+    expect(exited).toBe(true);
+    const lines = proc.stderrTail().split("\n");
+    expect(lines).toHaveLength(40);
+    expect(lines[0]).toBe("line 6");
+    expect(lines.at(-1)).toBe("line 45");
   });
 });
 

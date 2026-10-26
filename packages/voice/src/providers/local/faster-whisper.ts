@@ -24,7 +24,12 @@ import type {
 } from "../../types.ts";
 import { pcmBytes, toMono16 } from "../../wav.ts";
 import { encodeInFrame, LineReader, STT_IN } from "./framing.ts";
-import { describeHelperExit, HelperProcess } from "./helper-process.ts";
+import {
+  describeHelperExit,
+  HelperProcess,
+  helperExitDetails,
+  isAbnormalExit,
+} from "./helper-process.ts";
 import { probePythonModule } from "./python.ts";
 
 export const DEFAULT_STT_HELPER = fileURLToPath(
@@ -88,6 +93,8 @@ class FasterWhisperSession implements SttSession {
   frames: Buffer[] | null = [];
   private frameBytes = 0;
   retried = false;
+  /** The exit and stderr tail of the crash the retry was for: in the error if the retry fails. */
+  firstCrash: Record<string, unknown> | null = null;
 
   constructor(
     private readonly provider: FasterWhisperStt,
@@ -182,6 +189,9 @@ export class FasterWhisperStt implements SttProvider {
         code: "unavailable",
         message: `faster-whisper helper failed to start: ${errorMessage(e)}`,
         retryable: false,
+        ...(e instanceof ForerunnerError && Object.keys(e.details).length > 0
+          ? { details: e.details }
+          : {}),
       });
     });
     return session;
@@ -378,11 +388,22 @@ export class FasterWhisperStt implements SttProvider {
    */
   private onExit(proc: HelperProcess, code: number | null, signal: NodeJS.Signals | null): void {
     const exit = describeHelperExit(code, signal);
-    const fields = { code, codeHex: exit.hex, signal, cause: exit.cause };
+    const abnormal = isAbnormalExit(code, signal);
+    // A crash's last stderr lines (faulthandler's traceback) go with every report of it.
+    const stderrTail = abnormal ? proc.stderrTail() : "";
+    const fields = {
+      code,
+      codeHex: exit.hex,
+      signal,
+      cause: exit.cause,
+      ...(stderrTail ? { stderrTail } : {}),
+    };
+    const details = helperExitDetails(exit, stderrTail);
     if (this.process !== proc) {
       // A helper already let go (disposed): neither the provider's state nor the current
       // utterance (on a new helper, if any) is its own any more.
-      this.logger.info("helper exited", fields);
+      if (abnormal) this.logger.warn("helper exited", fields);
+      else this.logger.info("helper exited", fields);
       return;
     }
     const wasReady = this.isReady;
@@ -393,12 +414,15 @@ export class FasterWhisperStt implements SttProvider {
     if (!wasReady) {
       this.logger.warn("helper exited before it was ready", fields);
       this.readyReject?.(
-        new ForerunnerError("unavailable", `faster-whisper helper exited, ${exit.text}`),
+        new ForerunnerError("unavailable", `faster-whisper helper exited, ${exit.text}`, {
+          details,
+        }),
       );
     }
     const session = this.current && !this.current.closed ? this.current : null;
     if (wasReady && session && !session.retried && session.frames) {
       session.retried = true;
+      session.firstCrash = details;
       this.logger.warn(
         "helper crashed mid-transcription; restarting it and retrying the utterance",
         fields,
@@ -408,6 +432,7 @@ export class FasterWhisperStt implements SttProvider {
     }
     if (wasReady) {
       if (session) this.logger.warn("helper crashed mid-transcription; the turn fails", fields);
+      else if (abnormal) this.logger.warn("helper exited", fields);
       else this.logger.info("helper exited", fields);
     }
     session?.deliver({
@@ -415,6 +440,7 @@ export class FasterWhisperStt implements SttProvider {
       code: "provider_error",
       message: `faster-whisper helper exited, ${exit.text}${session.retried ? " (after one retry of the utterance)" : ""}`,
       retryable: true,
+      details: { ...details, ...(session.firstCrash ? { firstCrash: session.firstCrash } : {}) },
     });
   }
 
@@ -428,6 +454,10 @@ export class FasterWhisperStt implements SttProvider {
         code: "provider_error",
         message: `faster-whisper helper exited, ${crash}, and did not restart: ${errorMessage(e)}`,
         retryable: true,
+        details: {
+          ...(e instanceof ForerunnerError ? e.details : {}),
+          ...(session.firstCrash ? { firstCrash: session.firstCrash } : {}),
+        },
       });
     });
   }

@@ -72,10 +72,64 @@ export function describeHelperExit(code: number | null, signal: NodeJS.Signals |
   return { code, signal, hex, cause, text: `exit code ${code} (${hex}): ${cause}` };
 }
 
+/** Any exit but a clean exit code 0: a crash, an error exit, a signal, a failed spawn. */
+export function isAbnormalExit(code: number | null, signal: NodeJS.Signals | null): boolean {
+  return code !== 0 || signal !== null;
+}
+
+/**
+ * A helper exit as the details of an error (`ForerunnerError.details`, an STT error event):
+ * the code, in hex, the cause, and the stderr tail when there is one.
+ */
+export function helperExitDetails(exit: HelperExit, stderrTail: string): Record<string, unknown> {
+  return {
+    exitCode: exit.code,
+    exitCodeHex: exit.hex,
+    signal: exit.signal,
+    cause: exit.cause,
+    ...(stderrTail ? { stderrTail } : {}),
+  };
+}
+
+/** How much of a helper's stderr a crash report carries: the last 40 lines, at most 4000 chars. */
+export const STDERR_TAIL_LINES = 40;
+export const STDERR_TAIL_CHARS = 4000;
+
+/**
+ * The last lines a helper wrote to stderr, kept for the report of a crash: Python's
+ * faulthandler (on in fr_stt.py and fr_tts.py) writes the traceback of every thread there when
+ * native code faults, just before the process dies. Chunks may split lines anywhere; an
+ * unfinished last line is part of the tail. The text is capped to its newest `maxChars`.
+ */
+export class StderrTail {
+  private lines: string[] = [];
+  private partial = "";
+
+  constructor(
+    private readonly maxLines = STDERR_TAIL_LINES,
+    private readonly maxChars = STDERR_TAIL_CHARS,
+  ) {}
+
+  push(text: string): void {
+    const parts = (this.partial + text).split("\n");
+    this.partial = (parts.pop() ?? "").slice(-this.maxChars);
+    for (const p of parts) this.lines.push(p.replace(/\r$/, "").slice(-this.maxChars));
+    if (this.lines.length > this.maxLines) this.lines.splice(0, this.lines.length - this.maxLines);
+  }
+
+  /** The tail as one string, lines joined with "\n", at most `maxLines` lines and `maxChars`. */
+  text(): string {
+    const all = this.partial ? [...this.lines, this.partial] : this.lines;
+    const text = all.slice(-this.maxLines).join("\n");
+    return text.length > this.maxChars ? text.slice(-this.maxChars) : text;
+  }
+}
+
 export class HelperProcess {
   readonly child: ChildProcess;
   private readonly clock: Clock;
   private exited = false;
+  private readonly tail = new StderrTail();
 
   constructor(opts: HelperProcessOptions) {
     this.clock = opts.clock ?? systemClock;
@@ -83,6 +137,7 @@ export class HelperProcess {
     this.child.stdout?.on("data", (d: Buffer) => opts.onStdout(d));
     this.child.stderr?.on("data", (d: Buffer) => {
       const text = d.toString("utf8");
+      this.tail.push(text);
       opts.log.debug("helper stderr", { text: text.slice(0, 500) });
       opts.onStderr?.(text);
     });
@@ -104,6 +159,14 @@ export class HelperProcess {
 
   get alive(): boolean {
     return !this.exited;
+  }
+
+  /**
+   * The helper's last stderr lines (`StderrTail`). Complete once onExit has run: the child's
+   * "close" event comes after its stdio streams closed.
+   */
+  stderrTail(): string {
+    return this.tail.text();
   }
 
   write(data: Buffer): boolean {

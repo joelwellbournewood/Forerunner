@@ -40,7 +40,14 @@ export type SttEvent =
       language?: string;
       confidence?: number;
     }
-  | { type: "error"; code: string; message: string; retryable: boolean };
+  | {
+      type: "error";
+      code: string;
+      message: string;
+      retryable: boolean;
+      /** Diagnostics for the log and the turn's error (a crashed helper's exit and stderr tail). */
+      details?: Record<string, unknown>;
+    };
 
 export interface SttSession {
   push(chunk: AudioChunk): void;

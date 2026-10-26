@@ -9,7 +9,12 @@ import { AsyncQueue } from "../../queue.ts";
 import type { AudioChunk, Availability, TtsOptions, TtsProvider } from "../../types.ts";
 import { bytesToPcm } from "../../wav.ts";
 import { encodeInFrame, FrameReader, TTS_IN, TTS_OUT } from "./framing.ts";
-import { HelperProcess } from "./helper-process.ts";
+import {
+  describeHelperExit,
+  HelperProcess,
+  helperExitDetails,
+  isAbnormalExit,
+} from "./helper-process.ts";
 import { probePythonModule } from "./python.ts";
 
 export const DEFAULT_TTS_HELPER = fileURLToPath(
@@ -167,13 +172,13 @@ export class KokoroTts implements TtsProvider {
         this.readyResolve = res;
         this.readyReject = rej;
       });
-      const proc = new HelperProcess({
+      const proc: HelperProcess = new HelperProcess({
         argv: this.helperArgv(python),
         env: this.opts.env,
         clock: this.clock,
         log: this.logger,
         onStdout: (d) => this.onStdout(d),
-        onExit: (code, signal) => this.onExit(code, signal),
+        onExit: (code, signal) => this.onExit(proc, code, signal),
         onSpawnError: (err) => this.readyReject?.(err),
       });
       this.process = proc;
@@ -238,17 +243,32 @@ export class KokoroTts implements TtsProvider {
     }
   }
 
-  private onExit(code: number | null, signal: NodeJS.Signals | null): void {
-    this.logger.info("helper exited", { code, signal });
+  /**
+   * The helper died. An abnormal exit (a crash, an error exit, a signal) is a warning carrying
+   * the code in hex, a plain cause and the last lines of the helper's stderr (Python's
+   * faulthandler traceback after a fault in native code); the same go in the error's details.
+   */
+  private onExit(proc: HelperProcess, code: number | null, signal: NodeJS.Signals | null): void {
+    const exit = describeHelperExit(code, signal);
+    const abnormal = isAbnormalExit(code, signal);
+    const stderrTail = abnormal ? proc.stderrTail() : "";
+    const fields = {
+      code,
+      codeHex: exit.hex,
+      signal,
+      cause: exit.cause,
+      ...(stderrTail ? { stderrTail } : {}),
+    };
+    if (abnormal) this.logger.warn("helper exited", fields);
+    else this.logger.info("helper exited", fields);
     const wasReady = this.isReady;
     this.process = null;
     this.isReady = false;
     this.ready = null;
-    const err = new ForerunnerError(
-      "provider_error",
-      `kokoro helper exited (code ${code}, signal ${signal})`,
-      { retryable: true },
-    );
+    const err = new ForerunnerError("provider_error", `kokoro helper exited, ${exit.text}`, {
+      retryable: true,
+      details: helperExitDetails(exit, stderrTail),
+    });
     if (!wasReady) this.readyReject?.(err);
     for (const r of this.requests.values()) r.queue.fail(err);
     this.requests.clear();

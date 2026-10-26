@@ -34,7 +34,7 @@ src/queue.ts          AsyncQueue used by every session and the pipeline
 src/providers/fake.ts             FakeStt, FakeTts (scripted, Clock-driven), ScriptedVad
 src/providers/local/python.ts     find an interpreter, probe `import <module>` without throwing
 src/providers/local/framing.ts    length-prefixed frames shared with the Python helpers
-src/providers/local/helper-process.ts  long-lived helper subprocess (argv array, killTree); describeHelperExit
+src/providers/local/helper-process.ts  long-lived helper subprocess (argv array, killTree); describeHelperExit; StderrTail (a crash's last 40 stderr lines)
 src/providers/local/faster-whisper.ts  STT via python/fr_stt.py (JSON lines checked by a zod schema; one crash mid-utterance retried)
 src/providers/local/kokoro.ts          TTS via python/fr_tts.py
 src/providers/local/piper.ts           TTS via the `piper` binary (--output-raw)
@@ -649,7 +649,7 @@ device. Two first-audio figures are recorded per turn:
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (230 tests, a few seconds, no network); the
+`pnpm vitest run --project unit packages/voice` (238 tests, a few seconds, no network); the
 speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 `packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
@@ -664,14 +664,15 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/approval.test.ts` | yes variants in seven languages, short ambiguous lines, negations and hesitation, questions and qualifiers refused (the critic's false positives), instructions with an affirmative word refused, deferrals and hand-offs refused in seven languages ("I need to confirm with my manager first", "Simone said yes"), an affirmative buried late in a long line refused, colliding words ("SIM", "Dale", "prima") gated on the line start or the session language, `blockedBy` and the exact line in the record |
 | `test/registry.test.ts` | local -> cloud -> fake policy with reasons, preferred, excluded providers (not probed, the secret never asked for, never picked by the fallback, the status reason; `unavailable` when nothing else can serve), throwing probes, replace by name |
 | `test/availability.test.ts` | probes return `{ok:false}` for missing interpreter/module/binary/model/key; invalid module names never spawn; the Windows Store alias is recognised (`interpreterDidNotRun`, both OSes) and a stub that only prints "Python was not found" is skipped for the next candidate (stub run on Linux) |
-| `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines); a helper that crashes once mid-transcription (`fixtures/crashing_stt_helper.mjs`) is restarted and the utterance gets its final with all of its audio, the crash logged as a warning with the code in hex and a cause, and a helper that crashes on the retry too fails the utterance with the hex code; a crash at the first audio frame, before the end of speech, retried with all of the audio; a helper that dies in the middle of a stdout line (`--partial-line`) with the retry still getting its final well inside a 3 s ready timeout; a disposed helper's late exit leaving the next utterance on a new helper untouched; `describeHelperExit` for 0xC0000005 (unsigned and signed), 0xC0000409, SIGSEGV, SIGKILL and exit code 1 |
+| `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines); a helper that crashes once mid-transcription (`fixtures/crashing_stt_helper.mjs`) is restarted and the utterance gets its final with all of its audio, the crash logged as a warning with the code in hex and a cause, and a helper that crashes on the retry too fails the utterance with the hex code; a crash at the first audio frame, before the end of speech, retried with all of the audio; a helper that dies in the middle of a stdout line (`--partial-line`) with the retry still getting its final well inside a 3 s ready timeout; a disposed helper's late exit leaving the next utterance on a new helper untouched; `describeHelperExit` for 0xC0000005 (unsigned and signed), 0xC0000409, SIGSEGV, SIGKILL and exit code 1; a helper that writes 60 stderr lines before each of two crashes (`--stderr-lines`): both crash warnings carry the last 40 lines, and the utterance's error `details` carry the exit (`exitCode`, `exitCodeHex`), that tail, and the first crash's own as `firstCrash`; a Kokoro helper that crashes on a sentence (`CRASH`) fails it with the hex code and the tail in `details`, logged as a warning; `StderrTail` (lines split across chunks, the unfinished last line, the size cap) and a real `HelperProcess` keeping the last 40 of 45 lines |
 | `test/python-helpers.test.ts` | `py_compile` of both helpers and `--selftest` (skipped visibly when no Python) |
+| `test/python-helper-crashes.test.ts` | the real `fr_stt.py` and `fr_tts.py` run as scripts against stub `faster_whisper` / `kokoro` modules that fault in native code (`ctypes.string_at(0)`), with `PYTHONFAULTHANDLER` unset: stderr carries faulthandler's header and the helper's frames (`_run`, `main`; `_pipeline`); and what `fr_stt.py` hands to native code: every transcription on the main thread, each on its own float32 array (no view of the utterance buffer) that later audio leaves unchanged (skipped visibly without a Python with numpy) |
 | `test/stt-device-fallback.test.ts` | `fr_stt.py`'s `Transcriber` against a stub `faster_whisper`: device `auto` falls back to the CPU at load and at the first transcription, an out-of-memory error keeps the GPU, an explicit device is kept |
 | `test/disposed-providers.test.ts` | a retired `FasterWhisperStt` ends a new session with `unavailable` and a retired `KokoroTts` refuses a sentence, neither spawning its helper (a script that records whether it ran); after `dispose()` alone a new utterance starts a new helper |
 | `test/python-device.test.ts` | `setup_cuda_libraries()` on a fake site-packages: Windows `add_dll_directory` and `PATH` for every `nvidia/*/bin`, Linux cuBLAS and the cuDNN loader preloaded, nothing without the wheels; the gpu profile's `--cpu-fallback` (loud, at load when warmed, reported by `resolved_device()`), an explicit cuda without it raising; `fr_tts.py`'s `KokoroEngine` on cuda falling back with the reason, raising without `--cpu-fallback`, `auto` left to Kokoro; the warm-up sentence on cuda falling back loudly when synthesis fails there, the CPU never warmed |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
 | `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it; `drain()` waits for the play-head, at once on the abort or after `stop()` |
-| `test/loop.test.ts` | `stop()` while a turn with a queued press writes its user audio (audio storage on, a real disk write) calls no model; a carry owned by the next turn and dropped when that turn's STT times out (a later fresh turn gets only its own words), a press withdrawn while the user audio is written leaving the turn answered with its own words, the carry capped at `MAX_CARRIED_CHARS`; the words of a turn cut short by a queued press carry into the next turn's model call (each turn's transcript entry keeps its own words), answered alone when nothing more was said, dropped by `stop()`; a press while the last turn transcribes is queued (the final lands, that turn ends cut short without a model call, the new capture opens and runs), and still opens after an STT timeout, while `stop()` drops it; a turn keeps the mode it started with (a switch during the capture applies to the next turn; an empty transcript's `turn_end` reports its turn's mode); the reply's text before its audio (each `sentence` before its first `audio`, the deltas before that, the final transcript before the model); reply in text: no TTS call, no audio or speaking events, the turn ends with the text, no first audio; a press while the text streams stops the generation and keeps what was shown (no `unspokenText`); `setReplyMode` applies from the next reply; PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
+| `test/loop.test.ts` | `stop()` while a turn with a queued press writes its user audio (audio storage on, a real disk write) calls no model; a carry owned by the next turn and dropped when that turn's STT times out (a later fresh turn gets only its own words), a press withdrawn while the user audio is written leaving the turn answered with its own words, the carry capped at `MAX_CARRIED_CHARS`; the words of a turn cut short by a queued press carry into the next turn's model call (each turn's transcript entry keeps its own words), answered alone when nothing more was said, dropped by `stop()`; a press while the last turn transcribes is queued (the final lands, that turn ends cut short without a model call, the new capture opens and runs), and still opens after an STT timeout, while `stop()` drops it; a turn keeps the mode it started with (a switch during the capture applies to the next turn; an empty transcript's `turn_end` reports its turn's mode); the reply's text before its audio (each `sentence` before its first `audio`, the deltas before that, the final transcript before the model); reply in text: no TTS call, no audio or speaking events, the turn ends with the text, no first audio; a press while the text streams stops the generation and keeps what was shown (no `unspokenText`); `setReplyMode` applies from the next reply; PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off; an STT error's `details` (a crashed helper's stderr tail) on the turn's `ForerunnerError` |
 
 Live validation of the cloud providers is **pending keys** (`docs/status/BLOCKERS.md`, row
 "Voice keys"): the message shapes come from the vendors' public API documentation, not from
@@ -709,7 +710,8 @@ question); the card in `apps/ui/test/settings-voice.test.tsx`; `pnpm voice:insta
   specified (ADR 0090, Consequences); pointing `setup_cuda_libraries()` at `torch/lib` would
   save the space.
 - A run-time CUDA fallback (the gpu profile's `--cpu-fallback`) is said on the helper's stderr
-  and in its ready line; the daemon's provider logs helper stderr at debug level and does not
+  and in its ready line; the daemon's provider logs helper stderr at debug level while the
+  helper runs (only an abnormal exit brings its last lines up to a warning) and does not
   read the ready line's `fallback` yet, so the loud signal is the install check and
   `fr voice status` / Settings → Voice.
 
@@ -745,6 +747,63 @@ question); the card in `apps/ui/test/settings-voice.test.tsx`; `pnpm voice:insta
   and the retry would wait out the 120 s ready timeout). `dispose()` ends an utterance still open
   with `provider_error` ("faster-whisper helper stopped"); the exit and output of a helper already
   let go only log and touch neither the provider's state nor an utterance on a new helper.
+
+- The access violation came back on the gpu profile (2026-10-26, Windows 11, RTX 3060, driver
+  616.92, the pinned lock: faster-whisper 1.2.1, ctranslate2 4.8.3): the first utterance crashed
+  with 0xC0000005, its retry on a fresh helper crashed again 2.5 s later and the turn failed;
+  about 12 later utterances worked. No stack was kept, so the crash is now diagnosable:
+  - `fr_stt.py` and `fr_tts.py` turn on `faulthandler` (all threads, to stderr) before anything
+    loads native code. A fault writes "Windows fatal exception: access violation" (or "Fatal
+    Python error: Segmentation fault") and every thread's Python frames to stderr. It names the
+    Python frame that called into native code (`encode`, `generate_with_fallback`,
+    `detect_language` in faster-whisper), not the native frames.
+  - `HelperProcess` keeps the last 40 lines of the helper's stderr, at most 4000 characters
+    (`StderrTail`). On any abnormal exit (non-zero code, signal) both providers log it with
+    `stderrTail` at warn level and put it in the error's `details` with `exitCode`,
+    `exitCodeHex`, `signal` and `cause`. For STT that is the `SttEvent` error's `details`, which
+    the loop copies onto the turn's `ForerunnerError`; after a failed retry `firstCrash` holds
+    the first crash's exit and tail. The stored `voice.turn` row and the event stream still
+    carry only code and message.
+  - Caveat: on Windows, faulthandler also reports an access violation that native code catches
+    itself, so a traceback in stderr with no crash after it is not a crash.
+
+  What the code reading established, proven against the real packages (faster-whisper 1.2.1
+  and ctranslate2 4.8.3 installed on Linux, `import` plus a transcription, then `sys.modules`
+  and the mapped libraries):
+  - Silero VAD is not in play: the helper calls `transcribe(vad_filter=False)`, faster-whisper
+    imports onnxruntime only inside its VAD model, and onnxruntime is never loaded.
+  - torch is not loaded in the STT helper: ctranslate2 4.8 imports `converters` and `specs`, the
+    modules that need torch, lazily, and faster-whisper never imports it. One OpenMP runtime is
+    mapped (ctranslate2's libgomp on Linux; on Windows it is the libiomp5md.dll the
+    ctranslate2 wheel ships and loads). So there is no second OpenMP runtime, and
+    `KMP_DUPLICATE_LIB_OK` is neither set nor needed. Kokoro and torch run in their own process.
+  - Buffers: each transcription gets a new float32 array (`bytes(buffered)`, then `astype`).
+    Later audio never touches it, and `StorageView.from_array` keeps the array it wraps alive
+    (checked with a weak reference).
+  - Concurrency: every native call runs on the main thread, one at a time. The reader thread
+    only reads stdin. `test/python-helper-crashes.test.ts` keeps both properties.
+
+  Not established, so these are hypotheses:
+  - The input. The retry replayed the same audio to a fresh process and crashed the same way,
+    while the next utterance on another fresh process worked. That fits a fault that depends
+    on the audio (for example a decode path only some audio reaches, such as the
+    temperature-fallback sampling; see SYSTRAN/faster-whisper#71 for Windows crashes tied to
+    temperatures above 0) better than a fault on a process's first call. If the input is the
+    cause, retrying identical audio with identical settings cannot help. A retry that decodes
+    differently (greedy with `temperature=0` only, or the CPU after a GPU crash) is the next
+    step once a traceback shows which call faults.
+  - First call versus later calls. There is no first-call-only path to warm: the gpu warm-up
+    already runs language detection, the full 30 s encoder and a greedy decode on silence.
+    Each new process's first real utterance then runs the same calls as every later one (a
+    beam-5 final, partials at beam 1), and the third process's first utterance worked. A warm-up
+    on synthetic audio was not added. A warm-up "with VAD on" would load onnxruntime, which
+    the helper otherwise never loads.
+  - Mixed cuDNN: on Windows, ctranslate2 4.8.3 loads its own `cudnn64_9.dll` (9.10.2.21), which
+    then loads the cuDNN parts from the pinned `nvidia-cudnn-cu12` (9.19.0.56). That mix is
+    unchecked, but the GPU utterances after the crash worked and the CPU crash used no cuDNN.
+  - Load from the Kokoro helper starting at the same time (both crashes fell in the first turn,
+    the CPU crash happened under heavy load). Compare the timestamps of the Kokoro helper's
+    start with the crash.
 
 - The heard figure (review of b1e65fc, low findings left open): the hotkey's release is stamped
   in the render after the key event, so a hotkey turn reads low by that render and the IPC

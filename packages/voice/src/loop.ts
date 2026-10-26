@@ -464,7 +464,10 @@ export class VoiceLoop {
       } else if (ev.type === "final") {
         return ev;
       } else {
-        throw new ForerunnerError(asErrorCode(ev.code), ev.message, { retryable: ev.retryable });
+        throw new ForerunnerError(asErrorCode(ev.code), ev.message, {
+          retryable: ev.retryable,
+          ...(ev.details ? { details: ev.details } : {}),
+        });
       }
     }
     throw new ForerunnerError("provider_error", "STT session ended without a final transcript");

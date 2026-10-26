@@ -376,7 +376,13 @@ describe("VoiceLoop push-to-talk", () => {
         const session: SttSession = {
           push: () => {},
           endOfSpeech: () => {
-            queue.push({ type: "error", code: "provider_error", message: "boom", retryable: true });
+            queue.push({
+              type: "error",
+              code: "provider_error",
+              message: "boom",
+              retryable: true,
+              details: { stderrTail: "Fatal Python error: Segmentation fault" },
+            });
             queue.close();
           },
           events: queue,
@@ -404,6 +410,11 @@ describe("VoiceLoop push-to-talk", () => {
     expect(events.find((e) => e.type === "error")).toMatchObject({
       turn: 1,
       error: expect.objectContaining({ code: "provider_error", message: "boom" }),
+    });
+    // The provider's details (a crashed helper's stderr tail) reach the turn's error.
+    const failed = events.find((e) => e.type === "error");
+    expect(failed?.type === "error" ? failed.error.details : null).toEqual({
+      stderrTail: "Fatal Python error: Segmentation fault",
     });
     expect(loop.state).toBe("idle");
   });

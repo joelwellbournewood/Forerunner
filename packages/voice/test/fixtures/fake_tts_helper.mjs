@@ -1,5 +1,7 @@
 // Stand-in for python/fr_tts.py: same binary framing, emits three 100 ms silence chunks per
-// request at 24 kHz. A cancel frame marks the id so later chunks are skipped.
+// request at 24 kHz. A cancel frame marks the id so later chunks are skipped. A request with
+// the text "CRASH" writes 50 numbered lines to stderr (`trace 001` ...) and exits with code 70,
+// as a helper whose native code faults does after Python's faulthandler wrote its traceback.
 const SAMPLE_RATE = 24000;
 let buf = Buffer.alloc(0);
 const cancelled = new Set();
@@ -25,6 +27,12 @@ process.stdin.on("data", (d) => {
     buf = buf.subarray(5 + len);
     if (kind === 0) {
       const req = JSON.parse(payload.toString("utf8"));
+      if (req.text === "CRASH") {
+        const lines = [];
+        for (let i = 1; i <= 50; i++) lines.push(`trace ${String(i).padStart(3, "0")}`);
+        process.stderr.write(`${lines.join("\n")}\n`, () => process.exit(70));
+        return;
+      }
       if (req.text === "FAIL") {
         frame(2, req.id, Buffer.from("synthesis failed: scripted"));
         continue;

@@ -15,6 +15,9 @@ const crashCode = Number(arg("--crash-code", "70"));
 const crashAt = arg("--crash-at", "end");
 // Die in the middle of a stdout line, as a process killed while it writes can.
 const partialLine = process.argv.includes("--partial-line");
+// Write this many numbered lines to stderr before dying (`trace 001` ...), as Python's
+// faulthandler writes its traceback when native code faults.
+const stderrLines = Number(arg("--stderr-lines", "0"));
 const crashed = crashFile && existsSync(crashFile) ? Number(readFileSync(crashFile, "utf8")) : 0;
 const willCrash = crashFile !== "" && crashed < crashTimes;
 if (willCrash) writeFileSync(crashFile, String(crashed + 1));
@@ -30,6 +33,16 @@ function emit(obj) {
 let dying = false;
 function crash() {
   dying = true;
+  if (stderrLines > 0) {
+    const lines = [];
+    for (let i = 1; i <= stderrLines; i++) lines.push(`trace ${String(i).padStart(3, "0")}`);
+    process.stderr.write(`${lines.join("\n")}\n`, () => exitNow());
+    return;
+  }
+  exitNow();
+}
+
+function exitNow() {
   if (partialLine) process.stdout.write('{"type":"partial","te', () => process.exit(crashCode));
   else process.exit(crashCode);
 }

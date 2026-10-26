@@ -19,14 +19,22 @@ it between chunks. Exit code 3 means the kokoro package is not importable.
 Device: --device auto|cpu|cuda. "auto" leaves the choice to Kokoro (cuda when torch sees one);
 "cuda" raises when torch cannot use the GPU (a CPU-only torch), unless --cpu-fallback is given:
 then the CPU takes over and the helper says so on stderr and in the ready frame.
+
+Crashes: faulthandler is on before kokoro, torch or numpy load, so a fault in native code (an
+access violation on Windows, SIGSEGV elsewhere) writes the Python traceback of every thread to
+stderr before the process dies; the Node side puts the stderr's last lines in its warning and
+in the sentence's error details.
 """
 
 import argparse
+import faulthandler
 import json
 import queue
 import struct
 import sys
 import threading
+
+faulthandler.enable(file=sys.stderr, all_threads=True)
 
 KIND_REQUEST = 0
 KIND_CANCEL = 1

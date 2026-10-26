@@ -23,10 +23,20 @@ loadable first (setup_cuda_libraries), and the model is warmed with a short sile
 transcription so a missing cuBLAS shows at load, not at the first utterance. The ready line
 says which device and compute type are in use, and carries `fallback` when CUDA failed and the
 CPU took over (device "auto", or an explicit device with --cpu-fallback).
+
+Crashes: faulthandler is on from the first line, so a fault in native code (an access
+violation, 0xC0000005 on Windows, SIGSEGV elsewhere) writes the Python traceback of every
+thread to stderr before the process dies; the Node side puts the stderr's last lines in its
+crash warning and in the turn's error details.
+
+All native work (model load, warm-up, every transcription) runs on the main thread, one call
+at a time; the reader thread only reads stdin. The audio handed to faster-whisper is a fresh
+float32 array copied out of the utterance buffer (pcm_to_float), which nothing else touches.
 """
 
 import argparse
 import ctypes
+import faulthandler
 import json
 import os
 import queue
@@ -36,6 +46,9 @@ import struct
 import sys
 import threading
 import time
+
+# Before anything loads native code (faster_whisper, ctranslate2 and numpy are imported later).
+faulthandler.enable(file=sys.stderr, all_threads=True)
 
 KIND_AUDIO = 0
 KIND_END = 1
