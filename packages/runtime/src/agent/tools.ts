@@ -41,13 +41,6 @@ export interface ToolResult {
   untrusted?: { source: ContentSource; origin?: string };
   costUsdMicro?: number;
   artifacts?: Record<string, unknown>;
-  /**
-   * The run's work is done: the loop makes no further model call after this turn's tool
-   * results and the run completes. Ignored on an error result. Set by the critic's
-   * `submit_review` at effort max (ADR 0028 amendment of 2026-10-26), so no closing call priced
-   * at a full output cap follows the verdict.
-   */
-  endRun?: boolean;
 }
 
 export interface ToolSpec<I = unknown> {

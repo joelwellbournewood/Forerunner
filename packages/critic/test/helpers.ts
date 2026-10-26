@@ -58,7 +58,7 @@ export const CRITIC_PROMPT: CriticPromptSource = {
 /** A scripted `submit_review` call; the defaults are an unremarkable accept. */
 export function submitReply(
   input: Partial<SubmitReviewInput> = {},
-  opts: Pick<ReplyOptions, "when" | "times" | "ttftMs" | "totalMs" | "usage"> = {},
+  opts: Pick<ReplyOptions, "when" | "times" | "ttftMs" | "totalMs"> = {},
 ): ScriptedReply {
   return toolReply(
     SUBMIT_REVIEW_TOOL,

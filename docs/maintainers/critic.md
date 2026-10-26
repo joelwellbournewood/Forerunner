@@ -450,46 +450,6 @@ The phase 3 gate (catch at least 80% of seeded defects, pass at least 90% of cle
 real eval sets with a live model) is run with `calibrate` over `loadEvalSet("evals/registry/evals/coder")`
 and `.../researcher`; the result and the report path go to `docs/status/gates.md`.
 
-### Output tokens and the shape of a review (ADR 0028, amendment of 2026-10-26)
-
-At every effort but `max` a review is two model calls at `REVIEW_TOKENS_PER_CALL` (8192)
-each: the model calls `submit_review`, the tool answers "Review recorded. You may stop now."
-and the loop makes a closing call. `CriticDeps.maxTokensPerCall` overrides the 8192.
-
-At effort `max` (tier 3 on Opus by default; tier 2 when the speed-versus-quality slider raises
-high to max) two things change, both in `modelReview`:
-- `submit_review` returns `endRun: true` (`ToolResult.endRun`, runtime), so the verdict ends
-  the run. A review is one call. No closing call is priced at a full output cap after the
-  verdict.
-- The run asks for `maxTokensCeiling: MAX_EFFORT_TOKENS_CEILING` (24000). The loop sizes each
-  call's `max_tokens` as the largest value between 8192 and 24000 whose priced estimate (full
-  input plus the cap at the output price, the precheck's own estimate) fits the budget left
-  for the review: the critic token's run cap less the run's spend, or the session's budget
-  left, whichever is smaller. When even 8192 does not fit, the call asks for 8192 and the
-  precheck refuses it (`budget_exceeded`, as before).
-
-Why: the live D.15 run of 2026-10-25 ended both tier 3 reviews (Opus 5.5, effort max) at
-`max_tokens` 8192 with no verdict, after about 75 s of thinking. A fixed 20000 cap was rejected
-in review: with the closing call also priced at 20000, it was refused under the review's USD
-0.50, and fast mode (USD 40 per MTok output) priced even the first call over it.
-
-Worst case of one max-effort review is its run cap, since the one call is never priced above
-what is left. With the live test's evidence (about 2400 input tokens in the unit test, a few
-thousand live) under USD 0.50: Opus 5.5 gets the full 24000 (about USD 0.49 at the cap); fast
-mode gets about 12000 (USD 0.50 at the cap). A model that needs more than its cap still stops
-at `max_tokens` with `no_verdict`; the live line prints each call's `max_tokens`.
-
-A verdict that is captured stands. When `submit_review` has recorded one and the run then ends
-`budget_exceeded`, `step_cap_exceeded` or `max_turns` (a later call refused, which at efforts
-below max is the closing call), the review's outcome is `completed` with that verdict. The
-evidence gets `run: <outcome> after the verdict was recorded ...` and the Run row keeps the
-run's own outcome. A timeout, a kill or an error after the verdict still name the review.
-
-Tests: `critic.test.ts`, "a max-effort review finishes inside its budget". A tier 3 review
-under USD 0.50 where the model needs 15000 output tokens, on Opus pricing and in fast mode
-(needs 10000). Tier 2 unchanged (8192, two calls). A captured verdict whose closing call is
-refused. Runtime side: `packages/runtime/test/loop-call-cap.test.ts`.
-
 ## Known issues
 
 ### Measured
