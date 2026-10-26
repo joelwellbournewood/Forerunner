@@ -71,7 +71,7 @@ export function SegmentedControl<T extends string>({
               data-checked={checked}
               className={`cursor-pointer select-none rounded border px-2.5 py-0.5 transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-blue-500 has-[:focus-visible]:ring-offset-1 dark:has-[:focus-visible]:ring-offset-neutral-900 ${
                 checked
-                  ? "border-neutral-300 bg-white font-semibold text-neutral-900 shadow-sm dark:border-neutral-400 dark:bg-neutral-600 dark:text-white"
+                  ? "border-neutral-500 bg-white font-semibold text-neutral-900 shadow-sm dark:border-neutral-400 dark:bg-neutral-600 dark:text-white"
                   : "border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
               }`}
             >

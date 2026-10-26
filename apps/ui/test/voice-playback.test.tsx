@@ -23,7 +23,7 @@ import {
 } from "../src/shell/voice-playback.ts";
 import { AppProvider } from "../src/store/context.tsx";
 import { createStore } from "../src/store/store.ts";
-import { contrast } from "./contrast.ts";
+import { borderContrast, contrast } from "./contrast.ts";
 import { createHarness, type Harness } from "./helpers.tsx";
 
 /**
@@ -1007,6 +1007,10 @@ describe("conversation panel: reply in text", () => {
     }
     expect(on.className).toMatch(/(^|\s)border-neutral-\d+/);
     expect(off.className).toMatch(/(^|\s)border-transparent/);
+    // The chosen pill's outline is a state indicator: at least 3:1 against the track (WCAG 1.4.11).
+    const outline = borderContrast(on, group);
+    expect(outline.light).toBeGreaterThanOrEqual(3);
+    expect(outline.dark).toBeGreaterThanOrEqual(3);
     // Arrow keys move the choice (one tab stop for the group).
     replyRadio("Voice").focus();
     await user.keyboard("{ArrowRight}");

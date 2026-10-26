@@ -80,7 +80,10 @@ apps/ui/
                          PlaceholderPages (NotFound only)
     mobile/              the phone screens (module R; its own doc section, not covered here)
   test/                  Vitest + Testing Library (jsdom); fixtures.ts, fake-daemon.ts, helpers.tsx,
-                         contrast.ts (WCAG ratio of Tailwind text/bg classes, light and dark)
+                         contrast.ts (WCAG ratio of Tailwind text, background and border classes,
+                         light and dark, from the v4 oklch values in tailwindcss/theme.css
+                         converted to sRGB; throws on opacity forms, arbitrary colours and
+                         opacity-* rather than skipping them)
   e2e/                   Playwright specs against the fake daemon
 ```
 
@@ -389,9 +392,10 @@ them only when the stream showed nothing (no EventSource). **The reply mode** ("
 [Voice | Text]", the `voice-reply-mode` `SegmentedControl` from `components/ui.tsx`: a
 `role="radiogroup"` named "Reply" holding two visually hidden native radios, so one tab stop
 and the arrow keys move the choice; the chosen side, `data-checked="true"`, is a raised pill
-(white with a border, bold and a shadow in light; neutral-600 with white text in dark), not
-blue, so it does not read as a second primary button beside Send; every side is above 4.5:1
-in both themes, which `test/contrast.ts` checks from the class names; it replaced a "Reply in text" button with `aria-pressed` that did not read as
+(white with a neutral-500 border, bold and a shadow in light; neutral-600 with white text and a
+neutral-400 border in dark), not blue, so it does not read as a second primary button beside
+Send; every side's text is above 4.5:1 and the chosen pill's outline above 3:1 against the
+track in both themes, which `test/contrast.ts` checks from the class names; it replaced a "Reply in text" button with `aria-pressed` that did not read as
 a toggle; `UiState.voiceReply`,
 remembered per install like the theme under `STORAGE_NAMES.voiceReply`, default Voice) is sent
 with the session start and with every press; the daemon applies it to the turn the press
