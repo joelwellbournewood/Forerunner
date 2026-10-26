@@ -243,6 +243,64 @@ describe("CapChecker", () => {
     expect(STOP_AT).toBe(1);
   });
 
+  describe("room: the largest estimate check still allows", () => {
+    const project: CapScope = { humanId: "alice", projectId: "p1" };
+
+    it("below a level's 80% line, the room stops under that line", async () => {
+      await spend(7_500_000, { projectId: "p1" });
+      const room = await checker.room(project, { phase: "review" });
+      expect(room).toBe(499_999);
+      expect((await checker.check(project, room ?? 0, { phase: "review" })).decision).toBe("allow");
+      expect((await checker.check(project, (room ?? 0) + 1, { phase: "review" })).decision).toBe(
+        "finish_current",
+      );
+    });
+
+    it("past a level's 80% line, only its stop line bounds the room", async () => {
+      await spend(8_500_000, { projectId: "p1" });
+      const room = await checker.room(project, { phase: "review" });
+      expect(room).toBe(1_499_999);
+      expect((await checker.check(project, room ?? 0, { phase: "review" })).decision).toBe(
+        "finish_current",
+      );
+      expect((await checker.check(project, (room ?? 0) + 1, { phase: "review" })).decision).toBe(
+        "stop",
+      );
+    });
+
+    it("uses the checker's own thresholds, not 80% and 100%", async () => {
+      const early = new CapChecker({
+        query: mem,
+        clock,
+        caps,
+        thresholds: { finishCurrentAt: 0.8, stopAt: 0.9 },
+      });
+      await spend(8_500_000, { projectId: "p1" });
+      const room = await early.room(project, { phase: "review" });
+      expect(room).toBe(499_999);
+      expect((await early.check(project, (room ?? 0) + 1, { phase: "review" })).decision).toBe(
+        "stop",
+      );
+    });
+
+    it("for work, keeps the session's review reserve; the plan share is not a money level", async () => {
+      const reserved = new CapChecker({ query: mem, clock, caps: { ...caps, reserveShare: 0.25 } });
+      const session: CapScope = { humanId: "alice", sessionId: "s1" };
+      await spend(600_000, { sessionId: "s1" });
+      const opts = { planUsageShare: 0.5, sourceKind: "subscription" as const };
+      expect(await reserved.room(session, { phase: "work", ...opts })).toBe(150_000);
+      expect((await reserved.check(session, 150_000, { phase: "work", ...opts })).decision).toBe(
+        "allow",
+      );
+      expect(await reserved.room(session, { phase: "review", ...opts })).toBe(199_999);
+    });
+
+    it("is never negative", async () => {
+      await spend(12_000_000, { projectId: "p1" });
+      expect(await checker.room(project, { phase: "review" })).toBe(0);
+    });
+  });
+
   it("rejects negative or fractional estimates", async () => {
     await expect(checker.check(full, -1, { phase: "work" })).rejects.toMatchObject({
       code: "validation",

@@ -200,6 +200,35 @@ export class CapChecker {
     return summarize(levels, opts.phase);
   }
 
+  /**
+   * The largest estimate `check` answers without a worse decision than the scope has now, in
+   * USD micro-units: for each money level (never the plan share) that is still at "allow",
+   * strictly below its finish-current line (and, for the work phase, at most up to the
+   * session's review reserve); for a level already past that line, strictly below its stop
+   * line. Uses this checker's own thresholds. The smallest over the levels, never negative;
+   * undefined when no money level applies. The runtime sizes a call's output cap with it.
+   */
+  async room(scope: CapScope, opts: CapCheckOptions): Promise<number | undefined> {
+    const r = await this.check(scope, 0, opts);
+    const caps = opts.caps ? normalizeCaps(opts.caps) : this.caps;
+    let min: number | undefined;
+    for (const l of r.levels) {
+      if (l.level === "plan") continue;
+      // check(): stop at projected >= stopAt, finish_current at projected >= finishAt.
+      let room = roundHalfUp(l.cap * this.stopAt) - l.spent - 1;
+      if (l.decision === "allow") {
+        room = Math.min(room, roundHalfUp(l.cap * this.finishCurrentAt) - l.spent - 1);
+        if (l.level === "session" && opts.phase === "work") {
+          // ...and finish_current at projected > the work limit.
+          room = Math.min(room, roundHalfUp(l.cap * (1 - caps.reserveShare)) - l.spent);
+        }
+      }
+      room = Math.max(0, room);
+      if (min === undefined || room < min) min = room;
+    }
+    return min;
+  }
+
   private decide(
     level: CapLevel,
     spent: number,

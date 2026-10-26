@@ -1,8 +1,16 @@
+import { CapChecker, InMemoryLedger } from "@forerunner/billing";
+import { SimulatedClock } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { LoopAgentDriver, type RunEvent, type RunPricing } from "../src/agent/loop.ts";
+import {
+  LoopAgentDriver,
+  MODEL_LIMIT_WAIT_MS,
+  type RunEvent,
+  type RunPricing,
+} from "../src/agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../src/agent/tools.ts";
 import { AutoApprove, type CapDecision, type CapsPort } from "../src/enforcement/ports.ts";
+import { BillingCaps } from "../src/wiring/billing-ports.ts";
 import {
   budget,
   deleteRepoTool,
@@ -10,6 +18,7 @@ import {
   harness,
   issue,
   ScriptedProvider,
+  until,
 } from "./helpers.ts";
 
 /**
@@ -43,18 +52,18 @@ const OPUS: RunPricing = {
 };
 
 /**
- * One outer cap (a project's, say) with `left` micro-USD left: like the billing CapChecker it
- * stops a call whose estimate reaches what is left, and reports `left` as its remainder unless
- * `read` is false (a port without the read).
+ * One outer cap (a project's past its 80% line, say) with `left` micro-USD left: like the
+ * billing CapChecker it stops a call whose estimate reaches what is left, and reports one less
+ * as its room unless `read` is false (a port without the read).
  */
 class RemainingCaps implements CapsPort {
   readonly checked: number[] = [];
-  remainingUsdMicro?: () => number;
+  roomUsdMicro?: () => number;
   constructor(
     private readonly left: number,
     opts: { read?: boolean } = {},
   ) {
-    if (opts.read !== false) this.remainingUsdMicro = () => this.left;
+    if (opts.read !== false) this.roomUsdMicro = () => this.left - 1;
   }
   check(_scope: unknown, estimateUsdMicro: number): CapDecision {
     this.checked.push(estimateUsdMicro);
@@ -289,7 +298,54 @@ describe("agent loop: per-call output cap from the budget left (maxTokensCeiling
     expect(outer.checked).toEqual([14_999]);
   });
 
-  it("a caps port without a remainder read bounds nothing; its check still decides", async () => {
+  it("a project at 75% gets no 80% warning from the larger cap (billing CapChecker room)", async () => {
+    // Review finding of 2026-10-26 (84): the outer room was bounded only at the stop line, so
+    // a project at 75% got a spurious "budget at 80%" warning from a 24000 estimate.
+    const clock = new SimulatedClock("2026-03-02T09:00:00Z");
+    const ledger = new InMemoryLedger(clock);
+    await ledger.record({
+      human_id: "j",
+      project_id: "proj-1",
+      session_id: null,
+      task_id: null,
+      run_id: null,
+      billing_source_id: "bs",
+      kind: "api",
+      usd_micro: 150_000,
+      chf_micro: 120_000,
+      rate_chf_per_usd: 0.8,
+      model: "fake-haiku",
+      tokens_in: 0,
+      tokens_out: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      occurred_at: clock.nowIso(),
+    });
+    const checker = new CapChecker({
+      query: ledger,
+      clock,
+      caps: {
+        monthUsdMicro: 100_000_000,
+        projectUsdMicro: 200_000,
+        sessionUsdMicro: Number.MAX_SAFE_INTEGER,
+      },
+    });
+    const r = await run({
+      runCap: 1_000_000,
+      maxTokensPerCall: 8192,
+      maxTokensCeiling: 24_000,
+      caps: new BillingCaps(checker),
+      phase: "review",
+    });
+    expect(r.res.outcome).toBe("completed");
+    expect(r.cap).toBeGreaterThan(8192);
+    expect(r.cap).toBeLessThan(24_000);
+    // 80% of 200000 is 160000; 150000 spent: the estimate stays under 10000.
+    expect(r.estimate).toBe(9_999);
+    expect(r.res.finishCurrent).toBe(false);
+  });
+
+  it("a caps port without a room read bounds nothing; its check still decides", async () => {
     const outer = new RemainingCaps(15_000, { read: false });
     const r = await run({
       runCap: 1_000_000,
@@ -320,6 +376,57 @@ describe("agent loop: per-call output cap from the budget left (maxTokensCeiling
       modelLimit: 4_000,
     });
     expect(r.cap).toBe(8192);
+  });
+
+  describe("a model limit that does not come back (review of 2026-10-26, 84)", () => {
+    const stalled = (timeoutMs: number) => {
+      const h = harness();
+      const provider = new ScriptedProvider([{ text: "done" }], h.clock);
+      const asked: (AbortSignal | undefined)[] = [];
+      Object.assign(provider, {
+        maxOutputTokens: (_m: string, o?: { signal?: AbortSignal }) => {
+          asked.push(o?.signal);
+          return new Promise<number>(() => {});
+        },
+      });
+      const p = driver(h).run({
+        token: issue(h, { allowedTools: ["answer"], budgetUsdMicro: 1_000_000 }),
+        budget: budget("sess-1", 5_000_000, h.clock),
+        provider,
+        model: "fake-haiku",
+        billingSourceId: "bs",
+        system: "s",
+        messages: [{ role: "user", content: "go" }],
+        tools: tools(),
+        pricing: flatPricing,
+        timeoutMs,
+        maxTokensPerCall: 8192,
+        maxTokensCeiling: 24_000,
+      });
+      return { h, provider, asked, p };
+    };
+
+    it("the loop waits MODEL_LIMIT_WAIT_MS, then calls unclamped", async () => {
+      const s = stalled(60_000);
+      await until(() => s.asked.length === 1, "the limit read");
+      // The read is handed the run's signal.
+      expect(s.asked[0]).toBeInstanceOf(AbortSignal);
+      expect(s.provider.calls).toHaveLength(0);
+      await s.h.clock.advance(MODEL_LIMIT_WAIT_MS);
+      const res = await s.p;
+      expect(res.outcome).toBe("completed");
+      expect(s.provider.calls[0]?.max_tokens).toBe(24_000);
+    });
+
+    it("a run timeout shorter than the wait ends the run on time", async () => {
+      const s = stalled(2_000);
+      await until(() => s.asked.length === 1, "the limit read");
+      await s.h.clock.advance(2_000);
+      const res = await s.p;
+      expect(res.outcome).toBe("timeout");
+      expect(res.modelCalls).toBe(0);
+      expect(s.asked[0]?.aborted).toBe(true);
+    });
   });
 
   it("a ceiling that is not a positive whole number is refused before the run starts", async () => {

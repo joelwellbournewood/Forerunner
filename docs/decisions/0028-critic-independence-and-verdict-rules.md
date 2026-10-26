@@ -125,14 +125,20 @@ gaps in rule 2, fixed in the loop (`EnforcementHooks.callRoomUsdMicro`):
 - *Outer caps.* The human's month and the project's budget were not read, so a cap with room
   for the 8192 estimate but not the 24000 one refused the call and the review ended
   `no_verdict`, a regression from the fixed 8192. `CapsPort` gains an optional
-  `remainingUsdMicro(scope, opts)`: the smallest money remainder across its levels (never the
-  plan share). The room takes it less one, since the outer check stops at spend + estimate
-  >= cap.
+  `roomUsdMicro(scope, opts)`, billing `CapChecker.room`: per money level (never the plan
+  share), the largest estimate below its 80% line while it is still at "allow" (no spurious
+  80% warning from a project at 75%), below its stop line once past it, with the checker's
+  own thresholds (no assumption that the stop line is the cap).
 The room never takes the cap below 8192: when 8192 itself does not fit, the call asks for it
-and the hooks decide exactly as they did before this amendment. Also: the ceiling is clamped
-to the model's output limit when the provider reports one (`ModelProvider.maxOutputTokens`;
-the Anthropic adapter reads it from the Models API) and must be a positive whole number. A
-max-effort review stays bounded by its deep-review timeout (10 min by default).
+and the hooks decide exactly as they did before this amendment. Also: the ceiling must be a
+positive whole number, and it is clamped to the model's output limit when the provider
+reports one (`ModelProvider.maxOutputTokens`; the Anthropic adapter reads it from the Models
+API), so the ceiling never raises a cap past that limit (a `maxTokensPerCall` above it is
+still sent as asked). That read must never hold a review: it gets the run's signal, the loop
+waits at most 5 s for it and then goes on unclamped, the adapter makes one attempt of at most
+5 s and keeps a failure for 5 minutes (a Models API that rejects a subscription token costs
+one round trip per few minutes, not one per review). A max-effort review stays bounded by its
+deep-review timeout (10 min by default). Second review of this follow-up: 84, accept.
 
 **Alternatives considered.**
 - *A small fixed cap for the calls after the verdict.* That still pays for a call nobody reads,

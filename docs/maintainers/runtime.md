@@ -196,16 +196,24 @@ critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call
   session's budget left and, while the session still takes new work, what stays strictly
   below its 80% line, and for the work phase at most up to its review reserve, so a larger cap
   never sets no-new-work for good on a call that costs a fraction of its estimate); and the
-  outer caps' smallest money remainder less one (`CapsPort.remainingUsdMicro`, optional:
-  `BillingCaps` and the daemon's `DynamicCaps` read the human's month, the project's budget
-  and the task cap with a zero estimate, never the plan share; the outer check stops at
-  spend + estimate >= cap, hence the one). So a cap with room for the floor is never refused
-  because the ceiling was asked for. When even the floor does not fit, the call asks for the
-  floor and the hooks decide as before. The ceiling must be a positive whole number (the run
-  rejects with `validation` otherwise) and is clamped on the first turn to the model's
-  `max_tokens` limit when the provider reports one (`ModelProvider.maxOutputTokens`: the
-  Anthropic adapter reads `ModelInfo.max_tokens` from the Models API once per model, fills it
-  from `listModels`, and reports nothing on a failed read). Without the option every call
+  outer caps' room (`CapsPort.roomUsdMicro`, optional; `BillingCaps` and the daemon's
+  exported `DynamicCaps` return billing `CapChecker.room`: per money level, never the plan
+  share, strictly below its finish-current line while the level is still at "allow" and below
+  its stop line once past it, with the checker's own thresholds; `DynamicCaps`' unbounded
+  session level never is the smallest). So a cap above the floor is never refused, never
+  sets no-new-work and never raises an 80% warning that the floor alone would not have. When
+  even the floor does not fit, the call asks for the floor and the hooks decide as before.
+  The ceiling must be a positive whole number (the run rejects with `validation` otherwise).
+  On the first turn it is clamped to the model's `max_tokens` limit when the provider reports
+  one (`ModelProvider.maxOutputTokens(model, { signal })`), so the ceiling never raises a cap
+  past that limit; a `maxTokensPerCall` above the limit is still sent as asked. The loop
+  hands the read the run's signal, races it against that signal (a run stopped or timed out
+  while waiting ends at once) and waits at most `MODEL_LIMIT_WAIT_MS` (5 s), then goes on
+  unclamped. The Anthropic adapter reads `ModelInfo.max_tokens` from the Models API once per
+  model in one attempt (`maxRetries: 0`, `MODEL_LIMIT_READ_TIMEOUT_MS` 5 s), fills it from
+  `listModels`, and keeps a failed read for `MODEL_LIMIT_FAILURE_TTL_MS` (5 min) so a Models
+  API that rejects a subscription token costs one round trip per few minutes, not one per
+  review; a read cut short by the caller's signal is not kept. Without the option every call
   asks for `maxTokensPerCall`, as before, and none of these reads happen.
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).

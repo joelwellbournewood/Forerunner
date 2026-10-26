@@ -5,6 +5,7 @@ import {
   type BillingSourceProbe,
   BUILTIN_PRICING,
   CapChecker,
+  type CapCheckOptions,
   CostLedger,
   FixedRateSource,
   loadPricing,
@@ -257,7 +258,6 @@ import {
   credentialFor,
   pricingFor,
   StateLedgerStore,
-  smallestMoneyRemainder,
   stateSources,
 } from "../wiring/billing-ports.ts";
 import {
@@ -1046,8 +1046,11 @@ export function droppedToolAudit(deps: {
   };
 }
 
-/** Outer caps per call: the human's monthly cap and the project's budget looked up live. */
-class DynamicCaps implements CapsPort {
+/**
+ * Outer caps per call: the human's monthly cap and the project's budget looked up live (an
+ * unset or zero cap is unbounded). Exported for its tests.
+ */
+export class DynamicCaps implements CapsPort {
   private readonly cache = new Map<
     string,
     { at: number; projectUsdMicro: number; monthUsdMicro: number }
@@ -1062,7 +1065,7 @@ class DynamicCaps implements CapsPort {
     estimateUsdMicro: number,
     opts: { phase: "work" | "review"; billing?: CapsBilling },
   ): Promise<CapDecision> {
-    const r = await this.measure(scope, estimateUsdMicro, opts);
+    const r = await this.checker.check(scope, estimateUsdMicro, await this.options(scope, opts));
     return {
       decision: r.decision,
       level: r.level ?? undefined,
@@ -1073,21 +1076,22 @@ class DynamicCaps implements CapsPort {
     };
   }
 
-  /** The smallest money remainder across the human's month and the project's budget. */
-  async remainingUsdMicro(
+  /**
+   * The checker's room over the human's month and the project's budget (CapsPort.roomUsdMicro).
+   * The session level here is unbounded (SessionBudget enforces it in-process), so it is never
+   * the smallest.
+   */
+  async roomUsdMicro(
     scope: CapScope,
     opts: { phase: "work" | "review"; billing?: CapsBilling },
   ): Promise<number | undefined> {
-    const r = await this.measure(scope, 0, opts);
-    // The session level here is unbounded (SessionBudget enforces it in-process).
-    return smallestMoneyRemainder(r.levels.filter((l) => l.level !== "session"));
+    return this.checker.room(scope, await this.options(scope, opts));
   }
 
-  private async measure(
+  private async options(
     scope: CapScope,
-    estimateUsdMicro: number,
     opts: { phase: "work" | "review"; billing?: CapsBilling },
-  ) {
+  ): Promise<CapCheckOptions> {
     const key = `${scope.humanId}:${scope.projectId ?? ""}`;
     let caps = this.cache.get(key);
     if (!caps || this.clock.now() - caps.at > 60_000) {
@@ -1103,7 +1107,7 @@ class DynamicCaps implements CapsPort {
     // A subscription run adds the plan level (spec I.1, ADR 0044): the share the run reports
     // against the source's cap; at 80% of it finish the current task, at the cap stop.
     const plan = opts.billing?.kind === "subscription" ? opts.billing : undefined;
-    return this.checker.check(scope, estimateUsdMicro, {
+    return {
       phase: opts.phase,
       caps: {
         monthUsdMicro: caps.monthUsdMicro > 0 ? caps.monthUsdMicro : Number.MAX_SAFE_INTEGER,
@@ -1114,7 +1118,7 @@ class DynamicCaps implements CapsPort {
       ...(plan && typeof plan.planUsageShare === "number"
         ? { planUsageShare: plan.planUsageShare, sourceKind: "subscription" as const }
         : {}),
-    });
+    };
   }
 }
 

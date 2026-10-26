@@ -466,8 +466,10 @@ high to max) two things change, both in `modelReview`:
   input plus the cap at the output price, the precheck's own estimate) fits the room left for
   the review: the critic token's run cap less the run's spend, the session's budget left and
   (while the session still takes new work) what stays below its 80% no-new-work line, and the
-  smallest remainder of the human's and the project's caps (`CapsPort.remainingUsdMicro`).
-  The 24000 is first clamped to the model's own output limit when the provider reports one.
+  room under the human's and the project's caps (`CapsPort.roomUsdMicro`: below their 80%
+  lines, so no spurious "budget at 80%" warning). The 24000 is first clamped to the model's
+  own output limit when the provider reports it within 5 s (a stalled Models API never holds
+  the review: the read gets the run's signal and the loop stops waiting after 5 s).
   When even 8192 does not fit, the call asks for 8192 and the hooks decide as before
   (`budget_exceeded` when a cap refuses it). Details in `runtime.md`, "Two options let a run
   ...".
@@ -495,7 +497,7 @@ under USD 0.50 where the model needs 15000 output tokens, on Opus pricing and in
 refused. A max-effort review whose model does not answer within
 `DEFAULT_DEEP_REVIEW_TIMEOUT_MS` (10 min) ends `timeout` with no verdict: the larger cap buys
 a longer call, not a longer review. Runtime side: `packages/runtime/test/loop-call-cap.test.ts`
-(the 80% line, the outer caps' remainder, the model-limit clamp, `endRun` on an error result
+(the 80% line, the outer caps' room, the model-limit clamp and a stalled limit read, `endRun` on an error result
 and next to a pending approval).
 
 ## Known issues

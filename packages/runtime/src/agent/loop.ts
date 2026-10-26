@@ -51,13 +51,16 @@ export interface RunRequest {
    * the two whose priced estimate (`pricing.estimate`) fits the room the hooks report
    * (`EnforcementHooks.callRoomUsdMicro`): the run cap less the run's spend; the session's
    * budget left and, while the session still takes new work, what stays below its 80%
-   * no-new-work line (and, for work, its review reserve); and the smallest remainder of the
-   * outer caps (human month, project, ...) when the caps port reads one. A larger cap never
-   * refuses a call the floor would have passed, nor flips the session to no-new-work. When even
+   * no-new-work line (and, for work, its review reserve); and the outer caps' room
+   * (`CapsPort.roomUsdMicro`: below their 80% lines, or their stop lines once past) when the
+   * caps port reads one. So a cap above the floor never is refused, flips the session to
+   * no-new-work, or raises an 80% warning the floor alone would not have. When even
    * `maxTokensPerCall` does not fit, the call asks for it and the hooks decide as they always
    * would. The ceiling is first clamped to the model's `max_tokens` limit when the provider
-   * reports one (`ModelProvider.maxOutputTokens`); it must be a positive whole number. Used by
-   * the critic at effort max (ADR 0028, amendments of 2026-10-26).
+   * reports one within `MODEL_LIMIT_WAIT_MS` (`ModelProvider.maxOutputTokens`), so the ceiling
+   * never raises a cap past that limit; a `maxTokensPerCall` above the limit is still sent as
+   * asked. It must be a positive whole number. Used by the critic at effort max (ADR 0028,
+   * amendments of 2026-10-26).
    */
   maxTokensCeiling?: number;
   effort?: EffortLevel;
@@ -290,7 +293,13 @@ export class LoopAgentDriver {
         );
         const floor = req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL;
         if (turn === 1 && req.maxTokensCeiling !== undefined) {
-          ceiling = await clampToModelLimit(req.provider, req.model, req.maxTokensCeiling);
+          ceiling = await clampToModelLimit(
+            req.provider,
+            req.model,
+            req.maxTokensCeiling,
+            controller.signal,
+            clock,
+          );
         }
         const maxOut =
           ceiling !== undefined && ceiling > floor
@@ -579,20 +588,42 @@ export class LoopAgentDriver {
   }
 }
 
+/** How long the loop waits for the provider's model limit before it goes on without a clamp. */
+export const MODEL_LIMIT_WAIT_MS = 5_000;
+
 /**
  * A run's ceiling no higher than the provider's `max_tokens` limit for the model, when the
- * provider reports one (`ModelProvider.maxOutputTokens`); a failed or absent read leaves it.
+ * provider reports one (`ModelProvider.maxOutputTokens`). A failed or absent read, or one that
+ * takes longer than `MODEL_LIMIT_WAIT_MS`, leaves the ceiling as it is. The read is handed the
+ * run's signal and raced against it: a run stopped or timed out while it waits ends at once.
  */
 async function clampToModelLimit(
   provider: ModelProvider,
   model: string,
   ceiling: number,
+  signal: AbortSignal,
+  clock: Clock,
 ): Promise<number> {
+  if (!provider.maxOutputTokens) return ceiling;
+  if (signal.aborted) throw signal.reason;
+  let cancelWait = () => {};
+  let onAbort = () => {};
+  const read = Promise.resolve()
+    .then(() => provider.maxOutputTokens?.(model, { signal }))
+    .catch(() => undefined);
+  const waited = new Promise<undefined>((resolve) => {
+    cancelWait = clock.setTimeout(() => resolve(undefined), MODEL_LIMIT_WAIT_MS);
+  });
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
   let limit: number | undefined;
   try {
-    limit = await provider.maxOutputTokens?.(model);
-  } catch {
-    limit = undefined;
+    limit = await Promise.race([read, waited, aborted]);
+  } finally {
+    cancelWait();
+    signal.removeEventListener("abort", onAbort);
   }
   return typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0
     ? Math.min(ceiling, limit)

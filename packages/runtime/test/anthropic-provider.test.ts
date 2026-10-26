@@ -1,8 +1,10 @@
+import { SimulatedClock } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { FAST_MODE_BETA } from "../src/models/fast-mode.ts";
 import {
   AnthropicMessagesProvider,
   fastModeApplies,
+  MODEL_LIMIT_FAILURE_TTL_MS,
   tierFromId,
 } from "../src/provider/anthropic.ts";
 import { providerCapabilities } from "../src/provider/types.ts";
@@ -199,9 +201,50 @@ describe("AnthropicMessagesProvider", () => {
     expect(urls[0]).toContain("/v1/models/claude-opus-5-5");
     fail = true;
     expect(await p.maxOutputTokens("claude-sonnet-5-5")).toBeUndefined();
-    // A failed read is not kept: the next one asks again.
-    expect(await p.maxOutputTokens("claude-sonnet-5-5")).toBeUndefined();
-    expect(urls).toHaveLength(3);
+    expect(urls).toHaveLength(2);
+  });
+
+  it("keeps a failed limit read for a few minutes, one attempt each, whatever maxRetries says", async () => {
+    const clock = new SimulatedClock("2026-10-26T10:00:00Z");
+    let requests = 0;
+    const fetchImpl: typeof fetch = async () => {
+      requests++;
+      // A subscription token the Models API rejects, say.
+      return new Response(JSON.stringify({ type: "error" }), { status: 429 });
+    };
+    // The adapter's default retries (2) do not apply to this read.
+    const p = new AnthropicMessagesProvider({ authToken: "oat", fetch: fetchImpl, clock });
+    expect(await p.maxOutputTokens("claude-opus-5-5")).toBeUndefined();
+    expect(requests).toBe(1);
+    expect(await p.maxOutputTokens("claude-opus-5-5")).toBeUndefined();
+    expect(requests).toBe(1);
+    await clock.advance(MODEL_LIMIT_FAILURE_TTL_MS);
+    expect(await p.maxOutputTokens("claude-opus-5-5")).toBeUndefined();
+    expect(requests).toBe(2);
+  });
+
+  it("stops a limit read when the caller's signal aborts, and does not keep that as a failure", async () => {
+    let requests = 0;
+    const fetchImpl: typeof fetch = (_input, init) => {
+      requests++;
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+      });
+    };
+    const p = new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 });
+    const ac = new AbortController();
+    const read = p.maxOutputTokens("claude-opus-5-5", { signal: ac.signal });
+    await new Promise((r) => setTimeout(r, 10));
+    ac.abort(new Error("run stopped"));
+    expect(await read).toBeUndefined();
+    const again = new AbortController();
+    const second = p.maxOutputTokens("claude-opus-5-5", { signal: again.signal });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(requests).toBe(2);
+    again.abort();
+    expect(await second).toBeUndefined();
   });
 
   it("uses a subscription token as a bearer credential when given", async () => {

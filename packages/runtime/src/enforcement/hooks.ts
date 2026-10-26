@@ -179,18 +179,18 @@ export class EnforcementHooks {
    * The largest estimate the next model call may have without being refused or changing the
    * session's state (ADR 0028, amendment of 2026-10-26): the run cap less the run's spend, the
    * session's quiet room (`SessionBudget.quietRoomUsdMicro`: its cap, and the 80% no-new-work
-   * line while it still takes new work), and the outer caps' smallest remainder less one
-   * (`CapsPort.remainingUsdMicro`; the outer check stops at spend + estimate >= cap). Never
-   * negative. The loop sizes a call's output cap with it; `beforeModelCall` still decides.
+   * line while it still takes new work), and the outer caps' room (`CapsPort.roomUsdMicro`:
+   * below their 80% lines, or their stop lines once past). Never negative. The loop sizes a
+   * call's output cap with it; `beforeModelCall` still decides.
    */
   async callRoomUsdMicro(ctx: RunContext): Promise<number> {
     const claims = this.claims(ctx);
     let room = ctx.budget.quietRoomUsdMicro(claims.runId, claims.budgetUsdMicro, ctx.phase);
-    const outer = await this.deps.caps.remainingUsdMicro?.(this.capScope(claims), {
+    const outer = await this.deps.caps.roomUsdMicro?.(this.capScope(claims), {
       phase: ctx.phase,
       ...this.capsBilling(ctx),
     });
-    if (typeof outer === "number" && Number.isFinite(outer)) room = Math.min(room, outer - 1);
+    if (typeof outer === "number" && Number.isFinite(outer)) room = Math.min(room, outer);
     return Math.max(0, room);
   }
 

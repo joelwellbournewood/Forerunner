@@ -8,7 +8,6 @@ import {
   credentialFor,
   pricingFor,
   StateLedgerStore,
-  smallestMoneyRemainder,
   stateSources,
 } from "../src/wiring/billing-ports.ts";
 
@@ -77,22 +76,11 @@ describe("billing wiring", () => {
     const stop = await caps.check(scope, 11_000_000, { phase: "work" });
     expect(stop.decision).toBe("stop");
     expect(stop.level).toBe("project");
-    // The read the loop sizes a call's output cap with: the smallest money remainder (project:
-    // 50 - 40 = 10 USD; month 110, session 20).
-    expect(await caps.remainingUsdMicro(scope, { phase: "review" })).toBe(10_000_000);
+    // The read the loop sizes a call's output cap with (CapChecker.room): the project is at its
+    // 80% line already, so its stop line bounds it (50 - 40 USD, less one micro-USD); the month
+    // (80% of 150 less 40) and the session (80% of 20) leave more.
+    expect(await caps.roomUsdMicro(scope, { phase: "review" })).toBe(9_999_999);
     await store.close();
-  });
-
-  it("the smallest money remainder skips the plan share, whose amounts are not USD", () => {
-    expect(
-      smallestMoneyRemainder([
-        { level: "month", remaining: 9_000_000 },
-        { level: "plan", remaining: 0.1 },
-        { level: "project", remaining: 4_000_000 },
-      ]),
-    ).toBe(4_000_000);
-    expect(smallestMoneyRemainder([{ level: "plan", remaining: 0.1 }])).toBeUndefined();
-    expect(smallestMoneyRemainder([])).toBeUndefined();
   });
 
   it("prices runs from the table and reads sources and credentials", async () => {

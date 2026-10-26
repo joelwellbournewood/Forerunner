@@ -96,35 +96,59 @@ export class AnthropicMessagesProvider implements ModelProvider {
     });
   }
 
-  /** Per model: the `max_tokens` limit the Models API reports (undefined when it has none). */
-  private readonly outputLimits = new Map<string, Promise<number | undefined>>();
+  /**
+   * Per model: the `max_tokens` limit the Models API reports (undefined when it has none or
+   * the read failed), with when a failed read may be tried again (`retryAt`).
+   */
+  private readonly outputLimits = new Map<
+    string,
+    { limit: Promise<number | undefined>; retryAt?: number }
+  >();
 
   /**
    * The model's `max_tokens` limit from the Models API (`ModelInfo.max_tokens`), read once per
    * model and kept; `listModels` fills it too. Undefined when the API reports none or the read
-   * fails (the loop then does not clamp; the API itself rejects a cap past the limit).
+   * fails (the loop then does not clamp; the API itself rejects a cap past the limit). The read
+   * is one attempt (`maxRetries: 0`) of at most `MODEL_LIMIT_READ_TIMEOUT_MS`, cut short by
+   * `opts.signal` (the run's). A failure is kept for `MODEL_LIMIT_FAILURE_TTL_MS`, so a Models
+   * API that rejects the credential (a subscription token, say) costs one round trip per few
+   * minutes, not one per review; a read cut short by the caller's signal is not kept.
    */
-  maxOutputTokens(model: string): Promise<number | undefined> {
-    let limit = this.outputLimits.get(model);
-    if (!limit) {
-      limit = this.client.models.retrieve(model).then(
+  maxOutputTokens(model: string, opts: { signal?: AbortSignal } = {}): Promise<number | undefined> {
+    const known = this.outputLimits.get(model);
+    if (known && (known.retryAt === undefined || this.clock.now() < known.retryAt)) {
+      return known.limit;
+    }
+    const entry: { limit: Promise<number | undefined>; retryAt?: number } = {
+      limit: Promise.resolve(undefined),
+    };
+    entry.limit = this.client.models
+      .retrieve(model, null, {
+        maxRetries: 0,
+        timeout: MODEL_LIMIT_READ_TIMEOUT_MS,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      })
+      .then(
         (m) => positiveLimit(m.max_tokens),
         () => {
-          // Not kept: a failed read is tried again on the next call.
-          this.outputLimits.delete(model);
+          if (opts.signal?.aborted) {
+            // The caller gave up, not the API: the next caller asks again.
+            if (this.outputLimits.get(model) === entry) this.outputLimits.delete(model);
+          } else {
+            entry.retryAt = this.clock.now() + MODEL_LIMIT_FAILURE_TTL_MS;
+          }
           return undefined;
         },
       );
-      this.outputLimits.set(model, limit);
-    }
-    return limit;
+    this.outputLimits.set(model, entry);
+    return entry.limit;
   }
 
   async listModels(): Promise<ModelRef[]> {
     const out: ModelRef[] = [];
     for await (const m of this.client.models.list({ limit: 100 })) {
       const known = positiveLimit(m.max_tokens);
-      if (known !== undefined) this.outputLimits.set(m.id, Promise.resolve(known));
+      if (known !== undefined) this.outputLimits.set(m.id, { limit: Promise.resolve(known) });
       const tier = tierFromId(m.id);
       if (tier) out.push({ provider: this.name, id: m.id, tier });
     }
@@ -327,6 +351,11 @@ function mapError(e: unknown): StreamEvent {
     return { type: "error", code: "provider_error", message, retryable: true };
   return { type: "error", code: "provider_error", message, retryable: false };
 }
+
+/** One Models API read of a model's output limit takes at most this long (one attempt). */
+export const MODEL_LIMIT_READ_TIMEOUT_MS = 5_000;
+/** A failed read of a model's output limit is kept this long before it is tried again. */
+export const MODEL_LIMIT_FAILURE_TTL_MS = 5 * 60_000;
 
 /** A reported output limit, when it is a positive whole number; undefined otherwise. */
 function positiveLimit(n: number | null | undefined): number | undefined {

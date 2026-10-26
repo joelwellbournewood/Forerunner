@@ -188,33 +188,14 @@ export class BillingCaps implements CapsPort {
     };
   }
 
-  /** The smallest money remainder across the checker's levels (CapsPort.remainingUsdMicro). */
-  async remainingUsdMicro(
-    scope: CapScope,
-    opts: { phase: "work" | "review" },
-  ): Promise<number | undefined> {
-    const r = await this.checker.check(scope, 0, {
+  /** The checker's room for the scope (CapsPort.roomUsdMicro, billing `CapChecker.room`). */
+  roomUsdMicro(scope: CapScope, opts: { phase: "work" | "review" }): Promise<number | undefined> {
+    return this.checker.room(scope, {
       phase: opts.phase,
       planUsageShare: this.planUsageShare?.(),
       sourceKind: this.sourceKind,
     });
-    return smallestMoneyRemainder(r.levels);
   }
-}
-
-/**
- * The smallest `remaining` across a cap check's money levels (every level but the plan share,
- * whose amounts are shares, not USD micro-units); undefined when there is none.
- */
-export function smallestMoneyRemainder(
-  levels: readonly { level: string; remaining: number }[],
-): number | undefined {
-  let min: number | undefined;
-  for (const l of levels) {
-    if (l.level === "plan") continue;
-    if (min === undefined || l.remaining < min) min = l.remaining;
-  }
-  return min;
 }
 
 /** Pricing for one model, as the loop driver wants it. */

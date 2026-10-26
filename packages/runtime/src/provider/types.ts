@@ -192,10 +192,15 @@ export interface ModelProvider {
   countTokens(text: string): number;
   /**
    * The largest `max_tokens` the provider accepts for `model`; undefined when unknown. The loop
-   * clamps a run's `maxTokensCeiling` to it, so a ceiling never asks past the model's limit.
-   * Optional; must not throw (an unknown limit is undefined).
+   * clamps a run's `maxTokensCeiling` to it, so the ceiling never raises a call's cap past the
+   * model's limit (a `maxTokensPerCall` above the limit is still sent as asked). Optional; must
+   * not throw (an unknown limit is undefined) and should stop when `opts.signal` aborts. The
+   * loop waits at most `MODEL_LIMIT_WAIT_MS` for it and then goes on without a clamp.
    */
-  maxOutputTokens?(model: string): Promise<number | undefined> | number | undefined;
+  maxOutputTokens?(
+    model: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<number | undefined> | number | undefined;
 }
 
 /** Collects a stream into a ModelResponse. Shared by every adapter. */

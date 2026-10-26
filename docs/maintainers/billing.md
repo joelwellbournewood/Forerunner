@@ -213,6 +213,15 @@ with the worst decision (tightest ratio on ties), `spent`, `cap`, `remaining`, `
 human-readable `message` and every measured level. The check is pure given the ledger and the
 clock.
 
+`CapChecker.room(scope, opts)` is the inverse the runtime sizes a call's output cap with (ADR
+0028, amendment of 2026-10-26): the largest estimate `check` answers without a worse decision
+than the scope has now. Per money level (the plan share is a share, not USD, and is skipped):
+while the level is at `allow`, strictly below its finish-current line (and, in phase `work`,
+the session level at most up to the review reserve); once it is past that line, strictly
+below its stop line. It uses the checker's own `thresholds`, so a `stopAt` below 1 is
+honoured. The smallest over the levels, never negative; undefined when no money level
+applies.
+
 ### Estimates (`src/estimates.ts`)
 
 `EstimateTracker.record(specialist, taskType, estimate, actual)` keeps `(actual - estimate) /
