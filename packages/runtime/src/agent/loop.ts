@@ -46,6 +46,15 @@ export interface RunRequest {
   timeoutMs: number;
   /** `max_tokens` of every call (spec D.4: the agent's or specialist's setting). Default 4096. */
   maxTokensPerCall?: number;
+  /**
+   * When set above `maxTokensPerCall`, each call's `max_tokens` is the largest value between
+   * the two whose priced estimate (`pricing.estimate`) fits the budget left for the run: the
+   * token's run cap less the run's spend, and the session's budget left, whichever is smaller.
+   * When even `maxTokensPerCall` does not fit, the call asks for it and the precheck refuses it
+   * as it always would. Outer caps (human, project) are not read here; they still refuse a call
+   * whose estimate they do not cover. Used by the critic at effort max (ADR 0028, 2026-10-26).
+   */
+  maxTokensCeiling?: number;
   effort?: EffortLevel;
   /**
    * Fast mode (spec D.20 and D.4; ADRs 0057 and 0072): every call of the run asks the provider
@@ -262,7 +271,19 @@ export class LoopAgentDriver {
         const inputTokens = req.provider.countTokens(
           req.system + JSON.stringify(messages) + JSON.stringify(toolDefs),
         );
-        const maxOut = req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL;
+        const floor = req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL;
+        const maxOut =
+          req.maxTokensCeiling !== undefined && req.maxTokensCeiling > floor
+            ? fitMaxTokens(
+                (n) => req.pricing.estimate(inputTokens, n),
+                floor,
+                req.maxTokensCeiling,
+                Math.min(
+                  claims.budgetUsdMicro - req.budget.spentByRunId(claims.runId),
+                  req.budget.remainingUsdMicro(),
+                ),
+              )
+            : floor;
         const estimate = req.pricing.estimate(inputTokens, maxOut);
         const pre = await this.deps.hooks.beforeModelCall(ctx, estimate);
         if (pre.decision === "finish_current" && !finishCurrent) {
@@ -346,6 +367,7 @@ export class LoopAgentDriver {
 
         const results: ToolResultBlock[] = [];
         let paused = false;
+        let endRun = false;
         for (const call of toolUses) {
           toolCalls++;
           emit({ type: "tool_call", id: call.id, name: call.name, input: call.input });
@@ -408,6 +430,7 @@ export class LoopAgentDriver {
             approvalKey: decision.approvalKey,
             approvalInput: decision.approvalInput,
           });
+          if (execResult.endRun && !execResult.isError) endRun = true;
           const post = await this.deps.hooks.afterToolCall(ctx, spec, call.input, execResult);
           if (post.report?.suspicious) {
             reports.push(post.report);
@@ -455,6 +478,8 @@ export class LoopAgentDriver {
           outcome = "needs_human";
           break;
         }
+        // A tool said the run's work is done (`ToolResult.endRun`): no further call is made.
+        if (endRun) break;
       }
     } catch (e) {
       const code = e instanceof ForerunnerError ? e.code : "internal";
@@ -535,6 +560,29 @@ export class LoopAgentDriver {
       ctx.signal.removeEventListener("abort", onAbort);
     }
   }
+}
+
+/**
+ * The largest output cap in [floor, ceiling] whose estimate fits `room` (micro-USD), or the
+ * floor when nothing fits (the precheck then refuses the call). `estimate` must not decrease
+ * as the cap grows, which a price per output token guarantees.
+ */
+export function fitMaxTokens(
+  estimate: (maxOut: number) => number,
+  floor: number,
+  ceiling: number,
+  room: number,
+): number {
+  if (estimate(ceiling) <= room) return ceiling;
+  if (estimate(floor) > room) return floor;
+  let lo = floor;
+  let hi = ceiling;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (estimate(mid) <= room) lo = mid;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function addUsage(total: Usage, u: Usage): void {

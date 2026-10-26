@@ -76,3 +76,53 @@ how a verdict is applied to the workflow, and how the calibration is wired to th
   attempt, so the retry ladder would never advance; `failed -> ready` does.
 - **Moving the eval task types into the critic package** to avoid the dynamic import. Deferred;
   it is a mechanical move once the registry sync settles.
+
+## Amendment (2026-10-26, D.15: a max-effort review finishes inside its budget)
+
+**Context.** The live D.15 run of 2026-10-25 (`tests/live/test/live-7-critic-tiers.live.test.ts`)
+ended both tier 3 reviews (Opus 5.5, effort max) with no verdict. The first call stopped at
+`max_tokens` 8192 after about 75 s of thinking (8192 output tokens, about USD 0.17). Tier 2 at
+effort high finished in about 2000. A fixed 20000 cap at effort max was rejected in review
+for two reasons. First, a review was two calls (`submit_review`, then a closing call after
+"Review recorded. You may stop now."), and the loop's precheck prices every call at its full
+output cap. Under the live test's USD 0.50 per review the closing call was refused, so the
+review ended `budget_exceeded` with its verdict captured. Second, fast mode (USD 40 per MTok
+output) priced even the first call over USD 0.50.
+
+**Decision.** At effort `max` only:
+1. The verdict ends the run. `submit_review` returns `endRun: true`, a new `ToolResult` field
+   the loop driver honours by making no further call. A max-effort review is one model call.
+2. The first call's cap comes from the budget. The run sets `maxTokensCeiling` 24000
+   (`MAX_EFFORT_TOKENS_CEILING`), and the loop asks for the largest `max_tokens` between 8192
+   and 24000 whose priced estimate fits what is left: the critic token's run cap less the
+   run's spend, or the session's budget left, whichever is smaller. When 8192 does not fit,
+   the precheck refuses the call as before.
+
+At every effort:
+3. A captured verdict stands. When `submit_review` recorded a verdict and the run then ends
+   `budget_exceeded`, `step_cap_exceeded` or `max_turns`, the refused call was not needed. The
+   review is `completed` with the verdict; the evidence says what was refused, and the Run row
+   keeps the run's outcome. Timeout, kill and error are not covered by this rule.
+
+Tiers 1 and 2 at their default efforts are otherwise unchanged: two calls at 8192.
+
+**Consequences.** One max-effort review never costs more than its run cap: the one call's
+priced estimate fits the budget left, and the actual cost is below the estimate. Under USD
+0.50 with a few thousand input tokens, Opus 5.5 gets 24000 output tokens (about USD 0.49
+priced at the cap) and fast mode about 12000 (about USD 0.50). A review that needs more than
+its cap still ends `no_verdict` at `max_tokens`, and the live line shows each call's
+`max_tokens`. The human and project caps (`CapsPort`) are not read when the cap is sized. A
+call they cannot cover is refused, as any other call would be.
+
+**Alternatives considered.**
+- *A small fixed cap for the calls after the verdict.* That still pays for a call nobody reads,
+  and it needs a per-turn cap the loop does not have. Ending the run is simpler and cheaper.
+- *`maxTurns: 1` at effort max.* This takes away the retry after a malformed `submit_review`
+  (the schema error goes back to the model). With `endRun` the run ends only on a recorded
+  verdict.
+- *The same shape (one call, budget-sized cap) at every tier.* This changes every review's
+  calls and the recordings for no measured gain. At 8192 the closing call fits the usual
+  budgets, and rule 3 covers the case where it does not.
+- *Sizing the cap in the critic.* The critic would have to count input tokens exactly as the
+  loop does (system, transcript, tool definitions). The loop already has these numbers and the
+  budget, so the sizing is a loop option (`maxTokensCeiling`) that any run can use.

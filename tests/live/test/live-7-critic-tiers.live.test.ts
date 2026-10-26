@@ -256,25 +256,28 @@ export function tierReviewLine(e: TierReviewEvidence): string {
           : ", clean not accepted (soft)"
       : `, model said ${e.modelVerdict} before the sign-off rule`;
   const stops = e.stopReasons.map((s) => s ?? "none").join(",");
+  const caps = e.requests.map((r) => r.maxTokens).join(",");
   return (
     `D.15 critic tier ${e.tier} (${e.pick.model}, effort ${e.pick.effort}) ${e.taskId} ${e.variant}: ` +
     `${e.verdict} ${e.grade} (confidence ${e.confidence.toFixed(2)})${soft}${outcomeNote(e)}; ` +
     `review ${(e.wallMs / 1000).toFixed(1)} s, first token ${e.firstTokenMs === null ? "n/a" : `${e.firstTokenMs} ms`}, ` +
-    `${e.modelCalls} model calls (stop ${stops || "none"}), ${e.tokensIn} in, ${e.tokensOut} out tokens, ${usd(e.usd)} ` +
+    `${e.modelCalls} model calls (stop ${stops || "none"}, max_tokens ${caps || "none"}), ${e.tokensIn} in, ${e.tokensOut} out tokens, ${usd(e.usd)} ` +
     `(time limit ${e.pick.timeoutMs / 60_000} min checked after the fact, budget ${usd(e.budgetUsd)})`
   );
 }
 
 /**
  * The review's outcome when it is not `completed`, and the likely cause when a call stopped at
- * `max_tokens` (the critic sends at most 8192 per call, `maxTokensPerCall` in packages/critic):
- * at `max` effort the thinking can use them all before the `submit_review` call.
+ * `max_tokens`: the thinking used the whole cap before the `submit_review` call. The cap is
+ * 8192 per call at effort high; at effort max it is sized from the review's budget, 8192 to
+ * 24000 (`MAX_EFFORT_TOKENS_CEILING` in packages/critic, ADR 0028 amendment of 2026-10-26),
+ * and the line's `max_tokens` list shows what each call asked for.
  */
 export function outcomeNote(e: Pick<TierReviewEvidence, "outcome" | "stopReasons">): string {
   if (e.outcome === "completed") return "";
   const capped = e.stopReasons.includes("max_tokens");
   return capped
-    ? `, ${e.outcome}: a call stopped at max_tokens (8192 per call) before the verdict`
+    ? `, ${e.outcome}: a call stopped at its max_tokens cap before the verdict`
     : `, ${e.outcome}`;
 }
 
@@ -368,7 +371,7 @@ describe("D.15 critic tiers 2 and 3, dry run (scripted provider, no network)", (
   it("names a review that ended without a verdict at max_tokens, and only then", () => {
     expect(outcomeNote({ outcome: "completed", stopReasons: ["tool_use", "end_turn"] })).toBe("");
     expect(outcomeNote({ outcome: "no_verdict", stopReasons: ["max_tokens"] })).toBe(
-      ", no_verdict: a call stopped at max_tokens (8192 per call) before the verdict",
+      ", no_verdict: a call stopped at its max_tokens cap before the verdict",
     );
     expect(outcomeNote({ outcome: "no_verdict", stopReasons: ["end_turn"] })).toBe(", no_verdict");
   });
@@ -396,8 +399,26 @@ describe("D.15 critic tiers 2 and 3, dry run (scripted provider, no network)", (
     expect(reviews.map((e) => e.verdict)).toEqual(["accept", "revise", "human", "human"]);
     expect(reviews.map((e) => e.modelVerdict)).toEqual(["accept", "revise", "accept", "revise"]);
     expect(softChecks(reviews)).toEqual([]);
-    expect(reviews.every((e) => e.stopReasons.join(",") === "tool_use,end_turn")).toBe(true);
-    expect(tierReviewLine(reviews[0] as TierReviewEvidence)).toContain("(stop tool_use,end_turn)");
+    // Tier 2 (effort high): submit_review, then the closing call, 8192 each. Tier 3 (effort
+    // max): one call, the verdict ends the run, its cap sized from the review's USD 0.50.
+    expect(reviews.map((e) => e.stopReasons.join(","))).toEqual([
+      "tool_use,end_turn",
+      "tool_use,end_turn",
+      "tool_use",
+      "tool_use",
+    ]);
+    for (const e of reviews) {
+      const caps = e.requests.map((r) => r.maxTokens);
+      if (e.tier === 2) expect(caps).toEqual([8192, 8192]);
+      else {
+        expect(caps).toHaveLength(1);
+        expect(caps[0]).toBeGreaterThan(8192);
+        expect(caps[0]).toBeLessThanOrEqual(24_000);
+      }
+    }
+    expect(tierReviewLine(reviews[0] as TierReviewEvidence)).toContain(
+      "(stop tool_use,end_turn, max_tokens 8192,8192)",
+    );
     expect(tierReviewLine(reviews[0] as TierReviewEvidence)).toContain("checked after the fact");
     expect(lp.ledger.rows().every((r) => r.model === "fake-opus")).toBe(true);
     expect(lp.ledger.rows()).toHaveLength(lp.provider.calls.length);
@@ -435,7 +456,9 @@ describe(`D.15 critic tiers 2 and 3, live${LIVE ? "" : ` (${SKIP_REASON})`}`, ()
           outputTokens: PROBE_MAX_TOKENS,
         },
         { label: "tier 2 reviews", model: opus, calls: 4, inputTokens, outputTokens: 2_500 },
-        { label: "tier 3 reviews", model: opus, calls: 4, inputTokens, outputTokens: 4_000 },
+        // Tier 3 at effort max: one call per review (the verdict ends the run), its cap sized
+        // from the review's USD 0.50 up to 24000 tokens; the 2026-10-25 run thought past 8192.
+        { label: "tier 3 reviews", model: opus, calls: 2, inputTokens, outputTokens: 16_000 },
       ],
       ceilingUsd + probeCeiling,
     );
