@@ -23,16 +23,19 @@ tested at all. The full matrix is [docs/release/1.0.0-tested.md](release/1.0.0-t
 In short:
 
 - **Tested live:** chat and coding sessions on an Anthropic API key and on a Claude
-  subscription; the critic; budgets and caps; voice on Windows with an NVIDIA GPU; installing
-  and updating the Android app on a real phone.
+  subscription (their pull requests went to a test git host, not GitHub); the critic; voice on
+  one Windows PC; installing and updating the Android app on one real phone. Most of these runs
+  used code from before the last release candidate, and none used the 1.0.0 code.
 - **Slower than the target:** voice. The first spoken word comes about 1.4 to 2.1 s after you
   release Talk on a GPU, about 4 s on the CPU profile. The target is 1.2 s.
 - **Tested only against stand-ins:** email tasks, the cloud runner, push notifications on the
-  phone, the in-app desktop updater, two people's agents sharing a project.
+  phone, the in-app desktop updater, two people's agents sharing a project, and a budget cap
+  stopping a session (no live run hit a cap).
 - **Not tested:** a real mailbox, a real cloud runner host, a real Firebase project, voice on
-  Linux, cloud voice providers, and running the installed MSI, AppImage or `.deb`.
-- **GitHub:** the first live run on a real repository failed on how the token was sent. That is
-  fixed in 1.0.0; the live re-run is pending.
+  Linux, cloud voice providers, pairing a real phone, and running the installed MSI, AppImage
+  or `.deb`.
+- **GitHub:** the one live run on a real repository failed on how the token was sent. 1.0.0
+  includes the fix, which has not had a live run yet.
 
 The phone shows notices only while the app is open, because push is not set up yet. Email and
 the cloud runner are built and pass their tests, but you are the first to run them for real.

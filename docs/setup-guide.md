@@ -14,10 +14,10 @@ short:
 - Email, the cloud runner and push notifications pass their tests against stand-ins only. They
   were never run with a real mailbox, a real host or a real Firebase project.
 - Voice was tested on Windows only, and the first spoken word comes later than the 1.2 s target.
-- Running the installed MSI, AppImage or `.deb` has no recorded test. Builds from source were
-  tested on fresh Windows and Linux machines in CI.
-- The Android app was installed, updated and launched on a real phone. Pairing and approvals
-  were tested on an emulator.
+- Running the installed MSI, AppImage or `.deb` has no recorded test. The scripted install
+  from source was timed on fresh Windows and Linux CI runners, which have no desktop session.
+- The Android app was installed, updated from rc.3 to rc.4 and launched on one real phone.
+  Pairing and approvals were tested only on an emulator, on code from before rc.4.
 
 ## What you need
 
@@ -98,15 +98,23 @@ checkout). It never asks for something without saying what it is for:
 
    | Permission | Access | Why |
    | --- | --- | --- |
-   | Contents | Read and write | Clone, create branches, push commits. Required. |
-   | Pull requests | Read and write | Open, update and comment on pull requests. Required. |
+   | Contents | Read and write | Clone, create branches, push commits. Required: the wizard's check refuses a token without it. |
+   | Pull requests | Read and write | Open, update and comment on pull requests. Required, though the check does not test it. |
    | Issues | Read and write | Comments and the project mirror. The wizard asks for it. |
+   | Commit statuses | Read | CI results reported as commit statuses (read before a merge at autonomy level 3). |
    | Metadata | Read | Set by GitHub automatically. |
 
-   The wizard also asks for read access to see CI results. Do not give admin rights; the check
-   warns about them. The wizard checks the token the moment you paste it and tells you which
-   repositories it can reach and which permission is missing. Nothing is stored until the
-   check passes.
+   **CI results.** The wizard's list says "Workflows: read (to see CI results)". That line is
+   wrong. GitHub's Workflows permission is for changing workflow files, and Forerunner does not
+   need it. Forerunner reads CI results in two ways: check runs (for CI-triggered sessions) and
+   the combined commit status (before a merge). GitHub's API documentation names "Checks: read"
+   for check runs, but GitHub's list of fine-grained token permissions has no Checks entry. So
+   CI-triggered sessions may not see check runs on a private repository with a fine-grained
+   token. This was not tested against GitHub. "Actions: read" is not used by Forerunner.
+
+   Do not give admin rights; the check warns about them. The wizard checks the token the moment
+   you paste it and tells you which repositories it can reach and which permission is missing.
+   Nothing is stored until the check passes.
 3. **Models.** Your Anthropic API key or subscription token, verified the same way. You can set
    both; routing prefers the subscription and falls back to the key.
 4. **Budget.** The monthly cap and the per-session cap (defaults CHF 150 and CHF 5). These are

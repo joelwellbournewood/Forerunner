@@ -12,9 +12,10 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 
 ## [1.0.0] - 2026-10-26
 
-First stable release. It is 1.0.0-rc.4 (ef18b5a) plus the fix below. The human chose to
-release with known gaps. What was tested live, what only against stand-ins, and what not at all
-is in the test matrix: [`docs/release/1.0.0-tested.md`](https://github.com/joelwellbournewood/Forerunner/blob/v1.0.0/docs/release/1.0.0-tested.md).
+First stable release. It is 1.0.0-rc.4 (ef18b5a) plus the git authentication fix below,
+merged before the tag. The human chose to release with known gaps. What was tested live, what
+only against stand-ins, and what not at all is in the test matrix:
+[`docs/release/1.0.0-tested.md`](https://github.com/joelwellbournewood/Forerunner/blob/v1.0.0/docs/release/1.0.0-tested.md).
 
 Installers: Windows MSI (unsigned), Linux AppImage and `.deb`, Android APK (sideloading).
 The rc.4 publish run (`release.yml` run 40395549204) produced every one of them, the signed
@@ -24,24 +25,30 @@ manifest and `SHA256SUMS.txt`.
 
 - Git over HTTPS sent the GitHub token as a bearer header, which GitHub's git endpoint refuses;
   it now uses Basic authentication. Found by the live docs handover run (V.8) on 2026-10-26.
+  1.0.0 includes the fix (merged before the tag); it has no live run yet.
 
 ### Known gaps
 
 Passes against stand-ins (the fake provider, the test mail server, the fake git host, the
-hosted emulator) are weaker evidence than live runs. Three bugs got past them on 2026-10-26:
-the git bearer header above, the Windows venv layout in the voice tests, and paid model-watch
-evaluations that fresh installs started unasked (about USD 13; fixed by the consent rules of
-ADR 0089 in rc.4).
+hosted emulator) are weaker evidence than live runs. Real runs on 2026-10-26 found bugs the
+stand-ins had passed over: the git bearer header above; paid model-watch evaluations that fresh
+installs started unasked (about USD 13; fixed by the consent rules of ADR 0089 in rc.4); and
+on a real phone, one versionCode shared by rc.3, rc.4 and 1.0.0 and a header under the status
+bar (the header fix, ee056ae, is not confirmed on the phone).
 
+- **Code tested:** the live suite, the tier 1 critic calibration and the emulator smoke ran on
+  a76e259, 94 commits before rc.4. No CI, release or live run exists yet on the 1.0.0 commit.
 - **Email:** tested only against the test mail server. Not tested with a real mailbox (L.3).
 - **Cloud runner:** tested only in process. Not tested on a real host (S.12). Anthropic-hosted
-  runs through Claude Managed Agents are planned for 1.1.
+  runs through Claude Managed Agents are planned for 1.1 (the human's wish, reported
+  2026-10-26).
 - **Push notifications:** tested only against fake FCM endpoints; the app polls. Not tested
   with a real Firebase project or on a device (R.6, K.8).
-- **Voice:** works end to end on Windows with an NVIDIA GPU, but first audio misses the 1.2 s
-  target (median 1383 ms, then 2139 ms; 4 turns each). Not tested on Linux or with cloud voice
-  providers.
-- **GitHub:** the live handover (V.8) failed on the bearer header; fixed, live re-run pending.
+- **Voice:** works end to end on one Windows PC (CPU and NVIDIA GPU profiles), but first audio
+  misses the 1.2 s target (GPU median 1383 ms, then 2139 ms, 4 turns each; CPU about 4 s). Not
+  tested on Linux or with cloud voice providers.
+- **GitHub:** V.8's one live attempt failed on the bearer header; the fix is included, the live
+  re-run is pending. That run uses a token with admin rights, which the human chose to keep.
   Every other pull request in testing went to the fake git host.
 - **Desktop app:** the installers were built and published, but no record shows the installed
   MSI, AppImage or `.deb` being run. No real Linux desktop session was tested. The MSI is
@@ -49,15 +56,18 @@ ADR 0089 in rc.4).
 - **Android:** installed and updated (rc.3 to rc.4) on a real phone. Pairing and approvals were
   tested on the emulator only.
 - **Updates:** the desktop in-app updater was tested against the fake git host feed only.
-- **Model watch:** deliberately tested on the fake provider only.
-- **Response times:** D.9, D.13 and D.15 met live. D.10, D.11 and D.14 met earlier and were not
-  re-measured on the final code. D.8 (voice) not met.
+- **Model watch:** no deliberate live run; tested on the fake provider. Its only live use was
+  the unasked paid evaluations above.
+- **Response times:** D.9, D.13 (one task) and D.15 (one clean and one seeded review per tier)
+  met live. D.10, D.11 and D.14 met earlier and were not re-measured on the final code; D.11
+  only because this build plans in code without a model call. D.8 (voice) not met.
 
 ### Known issues
 
 No open P0 or P1 (severity triage of 2026-10-23, re-read on 2026-10-25:
-`docs/status/reports/triage-2026-10-25.md`). Every P2 below has a workaround; the maintainer docs'
-"Known issues" sections carry the detail.
+`docs/status/reports/triage-2026-10-25.md`). The findings of 2026-10-26 (the last block below)
+were not re-triaged. Every P2 below has a workaround; the maintainer docs' "Known issues"
+sections carry the detail.
 
 **Desktop app**
 
@@ -90,8 +100,9 @@ No open P0 or P1 (severity triage of 2026-10-23, re-read on 2026-10-25:
 
 **Phone (Android) and approvals web page**
 
-- A phone with a WebView older than Chrome 99 (and the API 30 emulator image) renders the app
-  unstyled. Workaround: update Android System WebView from the Play Store. [33]
+- A phone with an old WebView (and the API 30 emulator image, Chrome 83) renders the app
+  unstyled. A phone needs a current Android System WebView. Workaround: update Android System
+  WebView from the Play Store. [33]
 - After the 45 s biometric bound the phone has refused the change but the system prompt stays on
   screen; a late touch confirms nothing. Workaround: dismiss it and tap Confirm again. [35]
 - Push-to-talk in the Android app relays the typed line, and the reply is spoken by the phone's own
@@ -285,13 +296,14 @@ No open P0 or P1 (severity triage of 2026-10-23, re-read on 2026-10-25:
 
 - Android push (FCM) is built but has not run on a device; without `google-services.json` in
   the build the app polls as before. Workaround: the inbox and approvals poll.
-- A `.deb` or APK of 1.0.0 is not offered over 1.0.0-rc.N by the OS package manager (dpkg ranks
-  the candidate higher; Android gives both the same versionCode). Workaround: uninstall the
-  candidate first; the in-app updater is not affected.
+- Upgrading from a release candidate: a `.deb` or APK of 1.0.0 may not be offered over
+  1.0.0-rc.N. dpkg ranks the candidate higher. On Android, rc.3, rc.4 and 1.0.0 all carry
+  versionCode 1000000, because the code ignores the pre-release part of the version.
+  Workaround: uninstall the candidate first.
+- On rc.3 the Android app's header sat under the status bar. ee056ae pads the WebView below the
+  status bar and above the navigation bar; the fix is not confirmed on a phone.
 - The voice panel's heard-first-audio figure can be slightly low for hotkey turns and some
   turns can go unmeasured (`docs/maintainers/voice.md`). Workaround: use Send.
-- Android versionCode: rc.3, rc.4 and 1.0.0 all carry versionCode 1000000, because the code
-  ignores the pre-release part of the version. Workaround: uninstall the release candidate first.
 - Voice first audio misses the 1.2 s target: median 1383 ms and 2139 ms on the GPU profile
   (RTX 3060, two runs of 4 turns on 2026-10-26), about 4 s on the CPU profile. Workaround: the
   GPU profile where a card exists; text chat (first token median 682 ms).
