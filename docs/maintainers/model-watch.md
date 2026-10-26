@@ -50,6 +50,18 @@ The scheduler fires its `start` callback with a `StartRequest` for that agent id
 `ModelWatch.run()` instead of starting a session (`compose.ts`). The same `run()` backs
 `fr models watch` and `POST /model-watch/run`.
 
+At start, after the compose-time approvals sync (and not while sync is paused), `compose.ts`
+calls `ModelWatch.seedBaselinesAtStart()`: the free, local half of a run's baseline step. Each
+registered provider (not in `ignoreProviders`) without a baseline row is seeded from the
+earliest report that listed it (`seedBaselinesFromReports`); if any was seeded, the pending
+reports that baseline covers are closed with the run's guarded `closeCoveredRequests`. It
+lists no provider, calls no model or eval and writes no report, so it runs on every boot; once
+each provider has a row, or has no report to seed from, it only reads the baseline rows. An
+error is logged and the boot goes on. The reason: an install upgraded from before the
+baseline rule had its covered requests closed only by the next watch run, and the persisted
+weekly schedule put that run up to a week away (incident of 2026-10-26: the "10 new" request
+stayed open after the update and restart, and the voice agent kept raising it).
+
 One run (`ModelWatch.run({ signal?, evals? })`; `evals: true` is an explicit "run
 evaluations", `false` never evaluates, unset asks `ModelWatchDeps.autoEvals`, which the daemon
 answers from `model_watch.run_evals` and which is off when absent):
@@ -72,7 +84,8 @@ answers from `model_watch.run_evals` and which is off when absent):
      baseline on its first listing; the others still report news in that run.
      *Upgraded installs* (reports, no baseline row): `seedBaselinesFromReports` gives each
      provider missing a row the listing of the earliest report that listed it without an
-     error. After a baseline is recorded, seeded or new, `closeCoveredRequests` closes every
+     error. The daemon does this, and the close below, at start too
+     (`seedBaselinesAtStart`, above); a run seeds only a provider still missing a row. After a baseline is recorded, seeded or new, `closeCoveredRequests` closes every
      pending report with at least one new model, all of them in the baseline, and no
      recommendation: its request is withdrawn and its health set to `nothing_to_decide`
      (audited `model_watch.decision`). A report with a repricing or an eval result stays open.
@@ -567,7 +580,12 @@ on a pending report runs the evals once (a second `evaluate` is refused and runs
 the `model_watch.run_evals` setting makes the scheduled run evaluate; on an install upgraded
 with a pending report (baseline rows removed), `evaluate` reaches the daemon's
 `onEvalsRequested`, which runs that report's candidate (`forReport`); `close()` while an eval is underway aborts it, the run ends
-`killed` and `close()` returns.
+`killed` and `close()` returns. At start (`seedBaselinesAtStart`): a store left by older code
+(one pending "10 new" report as the earliest, no baseline row) has its request withdrawn and
+the report set to `nothing_to_decide` by the restart alone, with no `listModels`, model or
+eval call and no new report; a second boot changes no release row, request or
+`model_watch.*` audit row; a request the human answered before the restart stays answered
+and its report keeps the human's decision.
 
 `wiring.test.ts` (daemon): the first `POST /model-watch/run {}` on a fresh install is the
 baseline run (no eval, no request), the next one makes no eval, no
@@ -608,7 +626,8 @@ registration and one-shot composition.
 - A model a provider listed at the watch's first run, but that the ladder did not use, is
   never a candidate on its own later. `fr models watch --evals --model <provider/id>` puts it
   to the evals; there is no route for naming models yet (`POST /model-watch/run` takes only
-  `evals`). Deleting a baseline row re-seeds it from the earliest report at the next run.
+  `evals`). Deleting a baseline row re-seeds it from the earliest report at the next daemon start
+  or run.
 - A model the human or an adopt priced in `pricing.json` but kept off the ladder stays news
   until it is in the baseline, which only a first listing writes: it is asked about weekly
   until the human ignores it.

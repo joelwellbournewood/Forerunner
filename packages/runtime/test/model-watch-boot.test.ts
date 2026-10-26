@@ -46,6 +46,30 @@ class IncidentProvider extends ScriptedProvider {
   }
 }
 
+/**
+ * Lists the rungs, plus ten table-priced models once `released` is set; counts its listings.
+ * `offline` makes a listing fail, so a boot that lists anything is caught.
+ */
+class UpgradeProvider extends ScriptedProvider {
+  released = false;
+  offline = false;
+  listings = 0;
+  override async listModels(): Promise<ModelRef[]> {
+    this.listings += 1;
+    if (this.offline) throw new Error("test: no provider call expected at boot");
+    return [
+      { provider: "fake", id: "fake-haiku", tier: "haiku" },
+      { provider: "fake", id: "fake-sonnet", tier: "sonnet" },
+      ...(this.released
+        ? Object.keys(BUILTIN_PRICING)
+            .filter((id) => !id.endsWith("-fast"))
+            .slice(0, 10)
+            .map((id) => ({ provider: "fake", id, tier: "sonnet" as const }))
+        : []),
+    ];
+  }
+}
+
 /** Prices for the fake rungs and the candidate, so the candidate is priced from the table. */
 function writePricing(home: string): void {
   const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
@@ -270,5 +294,105 @@ describe("model watch on a fresh install", () => {
     expect(evals.calls[0]?.signal?.aborted).toBe(true);
     expect(await outcome).toBe("killed");
     expect(evals.calls).toHaveLength(1);
+  });
+});
+
+/**
+ * The 2026-10-26 upgrade: an install made on older code had a pending "10 new" request and no
+ * baseline row. The seed-and-close ran only inside a watch run, and the weekly schedule had
+ * just fired, so the request stayed open for a week. The daemon now does the free, local step
+ * at start: seed from the earliest report, close the covered requests, call no provider.
+ */
+describe("model watch baseline at daemon start", () => {
+  /** A store as the older code left it: one pending report naming ten models, no baseline. */
+  async function preUpgradeStore(home: string, clock: SimulatedClock) {
+    const provider = new UpgradeProvider([{ text: "hi" }], clock);
+    const rt = await boot(home, clock, new RecordingEvals(), provider);
+    await rt.modelWatch.run();
+    provider.released = true;
+    const pending = await rt.modelWatch.run();
+    expect(pending.decision).toBe("pending");
+    expect(pending.report.diff.new_models).toHaveLength(10);
+    expect(pending.requestId).toBeTruthy();
+    // Older code wrote no baseline row, and its earliest report is the pending one.
+    for (const row of await rt.store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL }))
+      await rt.store.release.delete(row.id);
+    for (const row of await reports(rt))
+      if (row.release_version !== pending.report.id) await rt.store.release.delete(row.id);
+    return { rt, pending, requestId: pending.requestId as string };
+  }
+
+  async function restart(home: string, clock: SimulatedClock, rt: RuntimeApp) {
+    await rt.close();
+    open.splice(open.indexOf(rt), 1);
+    const provider = new UpgradeProvider([{ text: "hi" }], clock);
+    provider.offline = true;
+    const evals = new RecordingEvals();
+    const next = await boot(home, clock, evals, provider);
+    return { rt: next, provider, evals };
+  }
+
+  it("closes a pre-upgrade pending request at boot, with no provider or eval call", async () => {
+    const home = freshHome();
+    const clock = new SimulatedClock("2026-10-26T10:30:00Z");
+    const before = await preUpgradeStore(home, clock);
+    expect((await before.rt.store.humanRequest.get(before.requestId))?.status).toBe("open");
+
+    const after = await restart(home, clock, before.rt);
+    expect(after.provider.listings).toBe(0);
+    expect(after.provider.calls).toHaveLength(0);
+    expect(after.evals.calls).toHaveLength(0);
+    expect((await after.rt.store.humanRequest.get(before.requestId))?.status).toBe("withdrawn");
+    expect(await after.rt.store.humanRequest.open({ humanId: after.rt.human.id })).toHaveLength(0);
+    const [row] = await reports(after.rt);
+    expect((row?.health as { decision?: string } | undefined)?.decision).toBe("nothing_to_decide");
+    const baselines = await after.rt.store.release.list({
+      channel: MODEL_WATCH_BASELINE_CHANNEL,
+    });
+    expect(baselines.map((b) => b.release_version)).toEqual(["fake"]);
+    // No watch run: still the one report.
+    expect(await reports(after.rt)).toHaveLength(1);
+  });
+
+  it("a second boot does nothing", async () => {
+    const home = freshHome();
+    const clock = new SimulatedClock("2026-10-26T10:30:00Z");
+    const before = await preUpgradeStore(home, clock);
+    const first = await restart(home, clock, before.rt);
+    const snapshot = async (rt: RuntimeApp) => ({
+      releases: [
+        ...(await reports(rt)),
+        ...(await rt.store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL })),
+      ]
+        .map((r) => `${r.id}@${r.version}`)
+        .sort(),
+      audit: (await rt.store.auditLog.list({})).filter((a) => a.tool.startsWith("model_watch."))
+        .length,
+      request: (await rt.store.humanRequest.get(before.requestId))?.version,
+    });
+    const once = await snapshot(first.rt);
+    const second = await restart(home, clock, first.rt);
+    expect(second.provider.listings).toBe(0);
+    expect(await snapshot(second.rt)).toEqual(once);
+  });
+
+  it("leaves an answered request and its decision alone", async () => {
+    const home = freshHome();
+    const clock = new SimulatedClock("2026-10-26T10:30:00Z");
+    const before = await preUpgradeStore(home, clock);
+    const req = await before.rt.store.humanRequest.get(before.requestId);
+    await before.rt.store.humanRequest.answer(
+      before.requestId,
+      req?.version ?? 1,
+      "ignore",
+      before.rt.human.id,
+    );
+    const after = await restart(home, clock, before.rt);
+    expect(after.provider.listings).toBe(0);
+    expect((await after.rt.store.humanRequest.get(before.requestId))?.status).toBe("answered");
+    const [row] = await reports(after.rt);
+    expect((row?.health as { decision?: string } | undefined)?.decision).not.toBe(
+      "nothing_to_decide",
+    );
   });
 });

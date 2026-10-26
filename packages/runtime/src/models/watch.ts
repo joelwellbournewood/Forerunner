@@ -1706,6 +1706,26 @@ export class ModelWatch {
   }
 
   /**
+   * The free, local half of a run's baseline step, for the daemon's start (ADR 0089): each
+   * registered provider without a baseline row takes the listing of the earliest report that
+   * listed it, then the pending reports that baseline covers are closed with the run's guarded
+   * close. No provider is listed, no model or eval is called and no report is written, so an
+   * upgraded install's covered requests close at the restart instead of at the next weekly
+   * run. A provider with no report keeps waiting for its first listing. Idempotent: once every
+   * provider has a row (or no report to seed from) it reads the baselines and returns.
+   */
+  async seedBaselinesAtStart(): Promise<{ seeded: string[]; closed: number }> {
+    const ignore = new Set(this.deps.ignoreProviders ?? []);
+    const baselines = await readModelWatchBaselines(this.deps.store);
+    const missing = this.deps.providers.names().filter((p) => !ignore.has(p) && !baselines.has(p));
+    const seeded = await this.seedBaselinesFromReports(missing, baselines);
+    if (!seeded.length) return { seeded, closed: 0 };
+    const closed = await this.closeCoveredRequests(baselines, null);
+    if (closed) logger.info("model watch: closed requests the seeded baseline covers", { closed });
+    return { seeded, closed };
+  }
+
+  /**
    * An install from before the baseline rule has reports and no baseline rows: each provider
    * missing one takes the listing of the earliest report that listed it without an error.
    * Adds to `baselines` and returns the providers seeded.
@@ -1768,7 +1788,7 @@ export class ModelWatch {
    */
   private async closeCoveredRequests(
     baselines: Map<string, Set<string>>,
-    currentReportId: string,
+    currentReportId: string | null,
   ): Promise<number> {
     const { store } = this.deps;
     const rows = await store.release.list(

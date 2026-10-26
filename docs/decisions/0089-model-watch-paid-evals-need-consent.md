@@ -154,7 +154,8 @@ the same question at its first boot, and every later week again until the human 
    without an error. After a baseline is recorded (seeded or new), every pending report whose
    new models are all in the baseline, with no recommendation of its own (a repricing or an
    eval result stays a question), is closed: its request is withdrawn and the report marked
-   `nothing_to_decide`.
+   `nothing_to_decide`. The daemon does this seed-and-close at start as well, not only in a
+   run (follow-up of 2026-10-26, below).
 9. **An "evaluate" answer evaluates that report's candidates.** The daemon starts
    `run({ evals: true, forReport })`: the report's candidate models are named and evaluated
    whether or not they are news now, so a baseline (seeded or not) never swallows the consent.
@@ -180,6 +181,20 @@ nothing until the next run finds it again.
 - A provider registered later gets its own baseline on its first listing; the run still
   reports news from the providers that had one.
 - The baseline is store-wide: installs sharing a state store share it.
+
+### Follow-up 2026-10-26: seed and close at daemon start
+
+An install made that morning on older code had the pending "10 new" request opened at
+10:30Z. After the update and a restart it stayed open, and the voice agent kept raising it:
+the seed and close ran only inside a watch run, and the persisted weekly schedule had fired
+at 10:29Z, so the next run was a week away. The daemon now runs the free, local part of item
+8 at start (`ModelWatch.seedBaselinesAtStart`): a registered provider without a baseline row
+is seeded from the earliest report that listed it, and if any was seeded the covered pending
+requests are closed with the same guarded close the run uses (an answered request is never
+overridden). It lists no provider, calls no model or eval, writes no report and is
+idempotent, so it runs on every boot. Rejected: running a full watch at start when a
+baseline is missing (a provider call, and a report the human did not ask for) and clearing
+the persisted schedule on upgrade (the same, a week early).
 
 ### Alternatives considered
 

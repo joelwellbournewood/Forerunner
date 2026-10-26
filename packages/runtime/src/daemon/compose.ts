@@ -3069,6 +3069,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       logger.warn("expired intake sessions not closed", { error: errorMessage(e) });
     });
     await syncApprovals();
+    // An install upgraded from before the baseline rule (ADR 0089) closes the requests its
+    // seeded baseline covers now, not at the next weekly run: local reads and writes only.
+    await modelWatch.seedBaselinesAtStart().catch((e: unknown) => {
+      logger.warn("model watch baseline not seeded at start", { error: errorMessage(e) });
+    });
   }
   await refreshMirrorSchedules();
   const jobSchedules = await refreshJobSchedules(scheduler);
