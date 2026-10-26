@@ -79,7 +79,8 @@ apps/ui/
                          (+ DevicesSection, SourcesSection), EmailSettingsPage (Settings -> Capabilities -> Email),
                          PlaceholderPages (NotFound only)
     mobile/              the phone screens (module R; its own doc section, not covered here)
-  test/                  Vitest + Testing Library (jsdom); fixtures.ts, fake-daemon.ts, helpers.tsx
+  test/                  Vitest + Testing Library (jsdom); fixtures.ts, fake-daemon.ts, helpers.tsx,
+                         contrast.ts (WCAG ratio of Tailwind text/bg classes, light and dark)
   e2e/                   Playwright specs against the fake daemon
 ```
 
@@ -374,18 +375,23 @@ reply's sentences are heard; announcing them would talk over the TTS; the turn's
 its `turn_start`), every `error` in either mode, the end of each reply ("End of reply.", "Reply
 interrupted; the rest was not spoken.", "Reply stopped.") and a typed chat's reply once it is
 complete. A reply cut short (its `turn_end` carries
-`unspokenText`) shows what was heard, then the unspoken rest (`conversation-unspoken`) in the
-line's normal text, fully readable (no strike-through, no muting: the real-voice run of
-2026-10-26 found struck-through text hard to read), followed by a small muted "not spoken"
-marker (`conversation-unspoken-marker`); the announcer still says "Reply interrupted; the rest
-was not spoken.". One stopped with nothing unspoken (a text reply)
+`unspokenText`) shows what was heard, then the unspoken rest (`conversation-unspoken`): a small
+muted "not spoken" pill first (`conversation-unspoken-marker`, neutral-600 on neutral-100 in
+light, neutral-400 on neutral-800 in dark, both above 4.5:1), so where speech stopped is
+visible, then the words in the line's normal colour with a subtle dotted underline. No
+strike-through and no grey text: the real-voice run of 2026-10-26 found struck-through text
+hard to read, and the review of the first fix found a marker only at the end left the two parts
+indistinguishable. The announcer still says "Reply interrupted; the rest was not spoken.". One
+stopped with nothing unspoken (a text reply)
 says "(stopped)". The lines of a voice turn are keyed by session and turn
 (`<session>:<turn>:<role>`): the `voice.turn` frame and the polled record update them and add
 them only when the stream showed nothing (no EventSource). **The reply mode** ("Reply:
 [Voice | Text]", the `voice-reply-mode` `SegmentedControl` from `components/ui.tsx`: a
 `role="radiogroup"` named "Reply" holding two visually hidden native radios, so one tab stop
-and the arrow keys move the choice; the chosen side is filled blue with `data-checked="true"`
-in both themes; it replaced a "Reply in text" button with `aria-pressed` that did not read as
+and the arrow keys move the choice; the chosen side, `data-checked="true"`, is a raised pill
+(white with a border, bold and a shadow in light; neutral-600 with white text in dark), not
+blue, so it does not read as a second primary button beside Send; every side is above 4.5:1
+in both themes, which `test/contrast.ts` checks from the class names; it replaced a "Reply in text" button with `aria-pressed` that did not read as
 a toggle; `UiState.voiceReply`,
 remembered per install like the theme under `STORAGE_NAMES.voiceReply`, default Voice) is sent
 with the session start and with every press; the daemon applies it to the turn the press

@@ -40,7 +40,8 @@ import {
  * next one generated so far follows it), the sentence being heard marked (the player's
  * `onSpeaking`, when its first chunk starts at the speaker). When the reply is cut short
  * (a barge-in, a stop) its `turn_end` says what was heard and what was not: the unspoken part
- * stays fully readable, followed by a small muted "not spoken" marker; a text reply that was
+ * follows a small muted "not spoken" pill and keeps its normal colour with a dotted underline,
+ * so where speech stopped is visible and the words stay readable; a text reply that was
  * stopped says so. The turn's record
  * (`voice.turn`, or the polled session after the release) completes the lines and never adds
  * them twice (the lines of a voice turn are keyed by session and turn).
@@ -53,8 +54,8 @@ import {
  * ended turn in its `recentTurns` is applied, so a turn cut short by a barge-in while the panel
  * waited for it still shows.
  *
- * The reply mode ("Reply: [Voice | Text]", a `radiogroup` of two radios with the chosen side
- * filled; remembered per install, default Voice) is sent
+ * The reply mode ("Reply: [Voice | Text]", a `radiogroup` of two radios with the chosen side a
+ * raised pill; remembered per install, default Voice) is sent
  * with the session start and every press: in text the daemon calls no TTS and plays nothing, the reply streams as text
  * and the turn ends when it is complete. While a reply is generated or spoken Talk stays
  * available: the press is the barge-in (in text it stops the generation, as a typed stop does).
@@ -818,12 +819,14 @@ function LineText({ line }: { line: Line }) {
           data-testid="conversation-unspoken"
           title="Generated but not spoken: you interrupted the reply"
         >
-          <span>{line.unspoken}</span>{" "}
           <span
-            className="whitespace-nowrap rounded bg-neutral-100 px-1 text-[0.7rem] italic text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+            className="whitespace-nowrap rounded-full bg-neutral-100 px-1.5 text-[0.7rem] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
             data-testid="conversation-unspoken-marker"
           >
             not spoken
+          </span>{" "}
+          <span className="underline decoration-dotted decoration-neutral-400 underline-offset-2">
+            {line.unspoken}
           </span>
         </span>
       </>

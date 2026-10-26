@@ -29,7 +29,9 @@ export function Button({
 }
 
 /**
- * A choice between a few sides that reads as a switch: "Label: [A | B]", the chosen side filled.
+ * A choice between a few sides that reads as a switch: "Label: [A | B]", the chosen side a
+ * raised pill (light surface, border, bold; deliberately not blue, so it never reads as a
+ * second primary button). Every side meets 4.5:1 in both themes (`test/contrast.ts`).
  * Native radios (visually hidden) in a `radiogroup`: one tab stop, arrow keys move the choice,
  * each side's text is its accessible name. `data-checked` marks the chosen side.
  */
@@ -67,10 +69,10 @@ export function SegmentedControl<T extends string>({
             <label
               key={o.value}
               data-checked={checked}
-              className={`cursor-pointer select-none rounded px-2.5 py-1 font-medium transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-blue-500 has-[:focus-visible]:ring-offset-1 dark:has-[:focus-visible]:ring-offset-neutral-900 ${
+              className={`cursor-pointer select-none rounded border px-2.5 py-0.5 transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-blue-500 has-[:focus-visible]:ring-offset-1 dark:has-[:focus-visible]:ring-offset-neutral-900 ${
                 checked
-                  ? "bg-blue-600 text-white shadow-sm dark:bg-blue-500"
-                  : "text-neutral-700 hover:bg-white dark:text-neutral-300 dark:hover:bg-neutral-700"
+                  ? "border-neutral-300 bg-white font-semibold text-neutral-900 shadow-sm dark:border-neutral-400 dark:bg-neutral-600 dark:text-white"
+                  : "border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
               }`}
             >
               <input

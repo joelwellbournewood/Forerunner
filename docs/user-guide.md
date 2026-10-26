@@ -78,7 +78,8 @@ or GPU (NVIDIA, fastest), each with its disk size shown.
 In the conversation panel (the Talk button or the global hotkey) your words show as they are
 recognised and the agent's reply shows as it is written, the sentence being spoken
 highlighted. Press Talk while the agent answers to interrupt it; the part it had not said yet
-stays visible and readable, with a small "not spoken" tag after it. The **Reply: Voice | Text**
+stays visible and readable, after a small "not spoken" tag and with a dotted underline, so you
+can see where it stopped speaking. The **Reply: Voice | Text**
 switch next to Talk shows how the agent answers; the chosen side is highlighted. Click a side,
 or tab to the switch and use the arrow keys. With **Text** the agent answers in text only,
 without speech: you still talk, the reply appears as it is written, and Talk stops it. The

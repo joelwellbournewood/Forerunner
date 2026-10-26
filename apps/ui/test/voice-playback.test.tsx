@@ -23,6 +23,7 @@ import {
 } from "../src/shell/voice-playback.ts";
 import { AppProvider } from "../src/store/context.tsx";
 import { createStore } from "../src/store/store.ts";
+import { contrast } from "./contrast.ts";
 import { createHarness, type Harness } from "./helpers.tsx";
 
 /**
@@ -874,10 +875,20 @@ describe("conversation panel: the reply's text as it comes", () => {
       expect(["S", "DEL", "STRIKE"]).not.toContain(el.tagName);
       if (el !== marker) expect(el.className).not.toMatch(/text-neutral-|opacity-/);
     }
-    // A small, muted marker after it says so, apart from the words.
+    // A small, muted marker BEFORE the words says where speech stopped (review of 4e55f35: a
+    // marker only at the end left the unspoken part looking like the spoken one).
     expect(marker.textContent).toMatch(/^\s*not spoken\s*$/);
     expect(marker.contains(words)).toBe(false);
-    expect(words.compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(marker.compareDocumentPosition(words) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The words are styled apart from the spoken ones: a subtle dotted underline.
+    expect(words.className).toMatch(/\bunderline\b/);
+    expect(words.className).toMatch(/\bdecoration-dotted\b/);
+    const spoken = within(agentLine()).getByText("All good.");
+    expect(spoken.className).not.toMatch(/underline|decoration-/);
+    // The marker stays legible in both themes (WCAG AA for its small text).
+    const ratio = contrast(marker, marker);
+    expect(ratio.light).toBeGreaterThanOrEqual(4.5);
+    expect(ratio.dark).toBeGreaterThanOrEqual(4.5);
     // The announcer still says the reply was cut short.
     expect(screen.getByTestId("conversation-announcer").textContent).toContain(
       "Reply interrupted; the rest was not spoken.",
@@ -977,6 +988,25 @@ describe("conversation panel: reply in text", () => {
     expect(within(group).getAllByRole("radio")).toHaveLength(2);
     expect(chosen()).toEqual(["voice"]);
     expect(highlighted()).toEqual(["Voice"]);
+    // Both sides legible in both themes (review of 4e55f35: white on blue-500 was 3.76:1).
+    const sides = [...group.querySelectorAll("label")];
+    expect(sides).toHaveLength(2);
+    for (const side of sides) {
+      const ratio = contrast(side, group);
+      expect(ratio.light).toBeGreaterThanOrEqual(4.5);
+      expect(ratio.dark).toBeGreaterThanOrEqual(4.5);
+    }
+    // The chosen side is a raised pill, not a second primary (blue) button beside Send: it
+    // stands apart by surface, border and weight.
+    const [on, off] = sides;
+    if (!on || !off) throw new Error("two sides");
+    expect(on.className).not.toMatch(/\bbg-blue-|dark:bg-blue-/);
+    for (const cls of ["font-semibold", "shadow-sm"]) {
+      expect(on.className.split(/\s+/)).toContain(cls);
+      expect(off.className.split(/\s+/)).not.toContain(cls);
+    }
+    expect(on.className).toMatch(/(^|\s)border-neutral-\d+/);
+    expect(off.className).toMatch(/(^|\s)border-transparent/);
     // Arrow keys move the choice (one tab stop for the group).
     replyRadio("Voice").focus();
     await user.keyboard("{ArrowRight}");
