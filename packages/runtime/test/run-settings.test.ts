@@ -289,7 +289,7 @@ describe("the settings screen's view (GET /settings/models)", () => {
     expect(alice?.modes.map((m) => m.mode)).toEqual(["planning", "text_chat"]);
     expect(alice?.modes[1]).toMatchObject({
       model: "fake-haiku",
-      maxTokens: { value: 400, default: 400, source: "table" },
+      maxTokens: { value: 1024, default: 1024, source: "table" },
       timeoutMinutes: { value: 0.5, source: "table" },
       speedMode: { value: "standard" },
     });

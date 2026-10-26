@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { SESSION_OVERRIDE_KEY } from "@forerunner/commands";
-import { dirname, fromPosix, join } from "@forerunner/platform";
+import { dirname, fromPosix, join, Logger } from "@forerunner/platform";
 import { openStore } from "@forerunner/state";
 import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
@@ -217,7 +217,14 @@ describe("conversation agent over the command registry", () => {
   it("a chat turn runs at the principal's text_chat settings (spec D.4): table defaults, then model_config", async () => {
     const w = await setup([textReply("first", { ttftMs: 0 }), textReply("second", { ttftMs: 0 })]);
     await w.chat("what's next on the game?");
-    expect(w.provider.calls[0]?.request).toMatchObject({ max_tokens: 400, effort: "low" });
+    // 1024 (it was 400 until the real-audio run of 2026-10-26, where thinking took most of
+    // it): a spoken or typed answer of a few sentences is far below; thinking is asked off at
+    // low effort so the cap is the reply's.
+    expect(w.provider.calls[0]?.request).toMatchObject({
+      max_tokens: 1024,
+      effort: "low",
+      thinking: "off",
+    });
     expect(w.provider.calls[0]?.request).not.toHaveProperty("temperature");
     const row = await w.store.agent.mustGet(w.alice);
     await w.store.agent.update(w.alice, row.version, {
@@ -229,6 +236,8 @@ describe("conversation agent over the command registry", () => {
     // The fake declares no temperature: the override is kept but never sent.
     expect(w.provider.calls[1]?.request).toMatchObject({ max_tokens: 900, effort: "medium" });
     expect(w.provider.calls[1]?.request).not.toHaveProperty("temperature");
+    // Above low effort the model thinks as the effort says (spec D: effort sets thinking depth).
+    expect(w.provider.calls[1]?.request).not.toHaveProperty("thinking");
     await w.store.close();
   });
 
@@ -951,6 +960,98 @@ describe("conversation agent cacheable prefix", () => {
     // lists its own). Estimated at four characters per token.
     const prefixChars = JSON.stringify(a.tools).length + (a.system ?? "").length;
     expect(prefixChars / 4).toBeGreaterThan(512);
+    await w.store.close();
+  });
+});
+
+/**
+ * The real-audio run of 2026-10-26 (Haiku 5.5 at effort low, a spoken turn): the reply was cut
+ * off mid-sentence ("...one of the three options: adopt,") at the 400-token cap, most of which
+ * went to the model's adaptive thinking, and the turn was recorded as completed and spoken as
+ * it was. A reply that ends at max_tokens is now trimmed to its last complete sentence, for
+ * speech and text, and recorded as truncated.
+ */
+describe("a reply cut off at max_tokens", () => {
+  const CUT =
+    "You have a decision waiting on the menu. The critic asked for one of the three options: adopt,";
+  const KEPT = "You have a decision waiting on the menu.";
+
+  const warnings = () => {
+    const lines: string[] = [];
+    const off = Logger.addSink((rec) => {
+      if (rec.level === "warn") lines.push(`${rec.msg} ${JSON.stringify(rec.data ?? {})}`);
+    });
+    return { lines, off };
+  };
+
+  it("a spoken turn never streams the broken tail: the speech and the reply end at the last full sentence", async () => {
+    const w = await setup([textReply(CUT, { ttftMs: 0, stopReason: "max_tokens" })]);
+    const tokens: string[] = [];
+    const log = warnings();
+    const res = await w
+      .chat("what is waiting on me?", { source: "voice", onToken: (t) => tokens.push(t) })
+      .finally(log.off);
+    expect(res.reply).toBe(KEPT);
+    // What reached the voice loop (and so the speaker) is the trimmed reply, never "adopt,".
+    expect(tokens.join("").trim()).toBe(KEPT);
+    expect(tokens.join("")).not.toContain("adopt");
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({
+      text: KEPT,
+      outcome: "truncated",
+      stopReason: "max_tokens",
+      source: "voice",
+    });
+    expect(log.lines.some((l) => l.includes("cut off at max_tokens"))).toBe(true);
+    await w.store.close();
+  });
+
+  it("a typed turn's reply is trimmed the same way and recorded as truncated", async () => {
+    const w = await setup([textReply(CUT, { ttftMs: 0, stopReason: "max_tokens" })]);
+    const res = await w.chat("what is waiting on me?");
+    expect(res.reply).toBe(KEPT);
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({ text: KEPT, outcome: "truncated" });
+    await w.store.close();
+  });
+
+  it("a cut-off reply with no complete sentence says so instead of a fragment", async () => {
+    const w = await setup([
+      textReply("The critic asked for one of the three options: adopt,", {
+        ttftMs: 0,
+        stopReason: "max_tokens",
+      }),
+    ]);
+    const tokens: string[] = [];
+    const res = await w.chat("what is waiting on me?", {
+      source: "voice",
+      onToken: (t) => tokens.push(t),
+    });
+    expect(res.reply).not.toContain("adopt");
+    expect(res.reply).toMatch(/cut off/i);
+    expect(tokens.join("")).toBe("");
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({ outcome: "truncated" });
+    await w.store.close();
+  });
+
+  it("a reply cut exactly at a sentence end keeps that sentence", async () => {
+    const w = await setup([
+      textReply("First point. Second point.", { ttftMs: 0, stopReason: "max_tokens" }),
+    ]);
+    const res = await w.chat("what is waiting on me?", { source: "voice" });
+    expect(res.reply).toBe("First point. Second point.");
+    await w.store.close();
+  });
+
+  it("a completed spoken reply streams in full, the last sentence with or without its period", async () => {
+    const w = await setup([textReply("Sure. Polish the menu next", { ttftMs: 0 })]);
+    const tokens: string[] = [];
+    const res = await w.chat("what next?", { source: "voice", onToken: (t) => tokens.push(t) });
+    expect(res.reply).toBe("Sure. Polish the menu next");
+    expect(tokens.join("")).toBe(res.reply);
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({ outcome: "completed", stopReason: "end_turn" });
     await w.store.close();
   });
 });

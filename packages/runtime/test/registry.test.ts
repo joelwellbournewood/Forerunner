@@ -613,7 +613,9 @@ describe("D.4 settings in the specialist frontmatter (ADR 0072)", () => {
     expect(specialistMode("tester")).toBe("coder");
     expect(MODE_DEFAULTS.coder.maxTokens).toBe(4096);
     expect(MODE_DEFAULTS.planning.maxTokens).toBe(16_000);
-    expect(MODE_DEFAULTS.text_chat.maxTokens).toBe(400);
+    // 400 until the real-audio run of 2026-10-26 (a spoken reply cut off by thinking).
+    expect(MODE_DEFAULTS.text_chat.maxTokens).toBe(1024);
+    expect(MODE_DEFAULTS.voice_chat.maxTokens).toBe(1024);
     for (const row of Object.values(MODE_DEFAULTS)) {
       expect(row.speedMode).toBe("standard");
       expect(row.timeoutMs).toBeGreaterThan(0);

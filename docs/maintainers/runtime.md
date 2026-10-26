@@ -1463,6 +1463,44 @@ Transcripts are events on a per-agent conversation session (`chat.human`, `chat.
 `chat.confirmed`, `chat.cancelled`, `chat.forwarded`, and the executor's `change` events).
 Without a command port the chat is read-only.
 
+**Chat replies cut off at max_tokens, and thinking on a chat turn.** The real-audio voice run
+of 2026-10-26 (Haiku 5.5, effort low, a spoken turn) had a reply cut off mid-sentence ("...one
+of the three options: adopt,", 247 characters) that was recorded `completed` and spoken as it
+was; its ledger row showed exactly 400 output tokens, the chat cap then, while every other turn
+of the run used 146 to 310. Root cause: thinking. The adapter sent no `thinking` field, and on
+Haiku 5.5 (and the other 5.x models) that means adaptive thinking, even at low effort, with the
+thinking text omitted from the response and its tokens counted toward `max_tokens`; about 60
+of the 400 tokens were left for the visible text. Three changes:
+- The cap: `MODE_DEFAULTS.voice_chat` and `text_chat` take `CHAT_MAX_TOKENS` (1024, about three
+  times the largest turn of that run with thinking included). A principal's
+  `modes.text_chat.max_tokens` still replaces it.
+- Thinking: at effort `low` (both chat modes' default; the slider or the principal's override
+  can raise it) the turn's run asks `thinking: "off"` (`RunRequest.thinking`, passed on as
+  `ModelRequest.thinking`), so the cap is the reply's and the first sentence is not delayed by
+  thinking (spec principle 8, "fast when talking"). The Anthropic adapter maps it per model with
+  `anthropicThinkingOff`: Haiku 5.5 and Opus 5 `{type: "disabled"}`, Sonnet 5.5
+  `{type: "between_tools"}`, at effort high or below; nothing for a model that cannot turn
+  thinking off (Opus 5.5, Fable, Mythos), one that thinks only when asked (4.x, Sonnet 5), an
+  unknown model, or effort `xhigh`/`max` (where `disabled` is a 400 error). Above `low` the model
+  thinks as the effort says (spec D: effort sets thinking depth) within the same cap.
+- A cut-off reply: the loop reports its last call's `stopReason` on `RunResult` (the outcome
+  stays `completed`; the Run vocabulary is unchanged). When it is `max_tokens` the conversation
+  agent trims the reply to its last complete sentence (`completeSentencesOf`,
+  `src/conversation/sentences.ts`, on the voice package's `SentenceSplitter`; a cut right after a
+  terminator keeps that sentence), writes `outcome: "truncated"` and `stopReason` on the
+  `chat.reply` event (every reply row now carries `stopReason`), and logs a warning
+  (`chat reply cut off at max_tokens`, with the cap, the output tokens, effort and model). A
+  reply with no complete sentence becomes `CUT_OFF_REPLY` ("My answer was cut off..."). On a
+  spoken turn (`source` voice or phone) `onToken` goes through a `SentenceGate`: text is passed
+  on one complete sentence at a time, the unfinished rest of a model call is held until the
+  call ends and released only when it did not stop at `max_tokens`, so the voice loop never
+  receives (and never speaks) the broken tail, and the bridge's `unstreamedPart` finds nothing
+  left to add. A typed turn streams as before; the UI replaces the streamed text with
+  `ChatReply.reply`, which is trimmed. Tests: `conversation.test.ts` ("a reply cut off at
+  max_tokens": spoken and typed turns, no complete sentence, a cut on a sentence end, a
+  completed reply streaming in full), `loop.test.ts` (the stop reason and the thinking request),
+  `anthropic-provider.test.ts` (the per-model thinking mapping).
+
 **Docs search and lessons in the context (spec J.1, O.2, [ADR 0061](../decisions/0061-chat-retrieval-budgets-and-stated-lessons.md)).**
 On the model path `context()` adds to the volatile first message (never to the cached system
 prompt: they change with every question) what `retrieve()` finds for the human's words: the
@@ -2688,11 +2726,12 @@ executor (the row moved between runs) and checks the `max_effort` cap, and an in
 lower cap checks the planning one.
 
 The effort table (`MODE_DEFAULTS`, spec D.8 to D.15) also carries, per mode, the D.4 defaults
-(ADR 0072): `maxTokens` (voice and chat 400, routing 1024, planning 16000, coding and research
-4096, critic 8192), `speedMode` (`standard` everywhere) and `timeoutMs` (chat and voice 30 s,
-planning 5 min, coding and research 30 min, critic tier 1 its 30 s target, tiers 2 and 3
-10 min). These are the numbers the code used before D.4 (the loop's 4096, the intake's
-16000 and 5 min, the chat's 400 and 30 s), so naming them changed no run.
+(ADR 0072): `maxTokens` (voice and chat `CHAT_MAX_TOKENS` 1024, routing 1024, planning 16000,
+coding and research 4096, critic 8192), `speedMode` (`standard` everywhere) and `timeoutMs`
+(chat and voice 30 s, planning 5 min, coding and research 30 min, critic tier 1 its 30 s
+target, tiers 2 and 3 10 min). These are the numbers the code used before D.4 (the loop's
+4096, the intake's 16000 and 5 min, the chat's 400 and 30 s), so naming them changed no run;
+the chat cap has since gone from 400 to 1024 (see "Chat replies cut off at max_tokens").
 
 ### Settings per agent and specialist (`src/models/run-settings.ts`, spec D.4, ADR 0072)
 
@@ -3454,7 +3493,7 @@ left to the project's flag (D.20 unchanged), and standard with the reason withou
 project's leave, off Opus, without a fast-mode price row or on a provider without fast mode,
 an agent's `speed_mode` turning fast on (only with the project's leave) and off for one
 specialist (the `model.fast_mode` audit row "ignored: the run's speed mode is standard");
-`conversation.test.ts` (a chat turn at the table's 400 tokens and low effort, then at the
+`conversation.test.ts` (a chat turn at the table's 1024 tokens, low effort and thinking off, then at the
 principal's `modes.text_chat` override, its temperature kept off a provider that takes none;
 the override's effort shifted by the project's slider on a typed turn, a spoken turn on
 `voice_chat`'s default, the conversation agent's `max_effort` holding both); `intake.test.ts`

@@ -1,4 +1,5 @@
 import { join } from "@forerunner/platform";
+import { FakeProvider, textReply } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver, type RunEvent, wholeMs } from "../src/agent/loop.ts";
 import type { ModelProvider, ModelRequest, StreamEvent } from "../src/provider/types.ts";
@@ -417,5 +418,40 @@ describe("agent loop: whole milliseconds (the Run row's timing columns are integ
     expect(wholeMs(null)).toBeNull();
     expect(wholeMs(Number.NaN)).toBeNull();
     expect(wholeMs(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+});
+
+describe("agent loop: the stop reason and the thinking request", () => {
+  it("reports the last call's stop reason, so a reply cut off at max_tokens is known as such", async () => {
+    const h = harness();
+    const provider = new FakeProvider({
+      replies: [textReply("One full sentence. And a broken", { stopReason: "max_tokens" })],
+      clock: h.clock,
+      latency: "none",
+    });
+    const events: RunEvent[] = [];
+    const res = await driver(h).run({
+      token: issue(h),
+      budget: budget("sess-1", 5_000_000, h.clock),
+      provider,
+      model: "fake-haiku",
+      billingSourceId: "bs",
+      system: "s",
+      messages: [{ role: "user", content: "talk" }],
+      tools: registry(),
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+      maxTokensPerCall: 1024,
+      effort: "low",
+      thinking: "off",
+      onEvent: (e) => events.push(e),
+    });
+    // The loop's outcome stays what it was (the Run row's vocabulary); the caller decides.
+    expect(res.outcome).toBe("completed");
+    expect(res.stopReason).toBe("max_tokens");
+    expect(res.finalText).toBe("One full sentence. And a broken");
+    expect(events.some((e) => e.type === "warning" && e.message.includes("max_tokens"))).toBe(true);
+    // The thinking request reaches the provider with the call.
+    expect(provider.calls[0]?.request).toMatchObject({ max_tokens: 1024, thinking: "off" });
   });
 });

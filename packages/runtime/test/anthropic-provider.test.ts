@@ -130,6 +130,49 @@ describe("AnthropicMessagesProvider", () => {
     });
   });
 
+  it("asks thinking off only where the model accepts it at that effort, and never sends it otherwise", async () => {
+    // Haiku 5.5 thinks by default (adaptive, display omitted) and its thinking tokens count
+    // toward max_tokens: the real-audio run of 2026-10-26 lost most of a 400-token chat cap to
+    // it. `thinking: "off"` maps to what each model accepts; a model that cannot turn thinking
+    // off, or an effort above high, gets no thinking field (a 400 error otherwise).
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return sse(happyEvents);
+    };
+    const p = new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 });
+    const ask = (model: string, over: Record<string, unknown> = {}) =>
+      p.complete({
+        model,
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 100,
+        effort: "low",
+        thinking: "off",
+        ...over,
+      });
+    await ask("claude-haiku-5-5");
+    await ask("claude-haiku-5-5-20261001", { effort: "high" });
+    await ask("claude-sonnet-5-5");
+    await ask("claude-opus-5-5");
+    await ask("claude-haiku-5-5", { effort: "xhigh" });
+    await ask("claude-haiku-5-5", { thinking: undefined });
+    await ask("claude-haiku-4-5");
+    await ask("claude-opus-5");
+    await ask("claude-sonnet-5");
+    expect(bodies.map((b) => b.thinking)).toEqual([
+      { type: "disabled" },
+      { type: "disabled" },
+      { type: "between_tools" },
+      undefined,
+      undefined,
+      undefined,
+      // Thinking is off by default on these: nothing to send.
+      undefined,
+      { type: "disabled" },
+      undefined,
+    ]);
+  });
+
   it("declares no temperature, and fast mode only on an API key (ADR 0072)", () => {
     const api = new AnthropicMessagesProvider({ apiKey: "k", maxRetries: 0 });
     const sub = new AnthropicMessagesProvider({ authToken: "oat", maxRetries: 0 });

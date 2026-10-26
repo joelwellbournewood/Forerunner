@@ -30,6 +30,11 @@ import { type EffortLevel, type ModelProvider, providerCapabilities } from "../p
 import { FORWARDED_SENTENCE, type HeardSource, heardMessageBody } from "../session/live-chat.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { isYes } from "../wiring/state-ports.ts";
+import { completeSentencesOf, SentenceGate } from "./sentences.ts";
+
+/** The reply when the model was cut off at max_tokens before it finished a single sentence. */
+export const CUT_OFF_REPLY =
+  "My answer was cut off before I finished a sentence. Ask me again, or ask for a shorter answer.";
 
 /**
  * The conversation agent (spec O, J, Q; phase 1 "text chat on a fast model, streaming"): a
@@ -432,6 +437,12 @@ export class ConversationAgent {
     });
     let ttft: number | null = null;
     const events: RunEvent[] = [];
+    // A spoken turn's text reaches the speaker one complete sentence at a time: the unfinished
+    // rest of a model call is held until the call ends, and dropped when the call was cut off
+    // at max_tokens, so a broken sentence is never spoken (the real-audio run of 2026-10-26).
+    // A typed turn streams as it comes; its final reply is trimmed below.
+    const spoken = req.source === "voice" || req.source === "phone";
+    const gate = spoken && req.onToken ? new SentenceGate((t) => req.onToken?.(t)) : null;
     const result = await this.deps.hooksDriver.run({
       token,
       budget,
@@ -449,17 +460,43 @@ export class ConversationAgent {
       timeoutMs: textChat.timeoutMs,
       maxTokensPerCall: textChat.maxTokens,
       effort,
+      // At low effort (the chat modes' default, spec principle 8: answer in about a second)
+      // the turn asks thinking off where the model allows it, so thinking cannot eat the
+      // reply's cap; Haiku 5.5 otherwise thinks adaptively even at low effort. Above low the
+      // model thinks as the effort says (spec D: effort sets thinking depth).
+      ...(effort === "low" ? { thinking: "off" as const } : {}),
       ...(textChat.temperature !== null ? { temperature: textChat.temperature } : {}),
       maxTurns: 4,
       label: "conversation",
       protected: true,
       onEvent: (ev) => {
         events.push(ev);
-        if (ev.type === "text_delta") req.onToken?.(ev.text);
-        if (ev.type === "model_call_end" && ttft === null) ttft = ev.ttftMs;
+        if (ev.type === "text_delta") {
+          if (gate) gate.push(ev.text);
+          else req.onToken?.(ev.text);
+        }
+        if (ev.type === "model_call_end") {
+          gate?.end(ev.stopReason === "max_tokens");
+          if (ttft === null) ttft = ev.ttftMs;
+        }
       },
     });
-    let reply = result.finalText.trim();
+    // A reply cut off at max_tokens ends at its last complete sentence, spoken or typed, and
+    // the turn is recorded as truncated (never as a completed answer).
+    const truncated = result.stopReason === "max_tokens";
+    let reply = truncated ? completeSentencesOf(result.finalText) : result.finalText.trim();
+    if (truncated) {
+      this.logger.warn("chat reply cut off at max_tokens; trimmed to its last full sentence", {
+        transcriptId,
+        maxTokens: textChat.maxTokens,
+        outputTokens: result.usage.output_tokens,
+        effort,
+        model,
+        keptChars: reply.length,
+        generatedChars: result.finalText.length,
+      });
+      if (!reply) reply = CUT_OFF_REPLY;
+    }
     const actions: ChatAction[] = [];
     let pendingCard: PendingConfirmation | null = null;
     for (const r of results) {
@@ -505,7 +542,10 @@ export class ConversationAgent {
         // project of its first turn, so the Performance view scopes a turn by this field.
         projectId,
         costUsdMicro: result.costUsdMicro,
-        outcome: result.outcome,
+        // "truncated": the model stopped at max_tokens and the reply was trimmed to its last
+        // full sentence; the stop reason of the turn's last model call says why it ended.
+        outcome: truncated ? "truncated" : result.outcome,
+        stopReason: result.stopReason ?? null,
         actions: actions.map((a) => a.kind),
         sources: {
           docs: context.sources.docs.map((d) => (d.heading ? `${d.path} > ${d.heading}` : d.path)),

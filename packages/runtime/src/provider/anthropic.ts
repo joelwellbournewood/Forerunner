@@ -1,10 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { canonicalModelId } from "@forerunner/billing";
 import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
 import { FAST_MODE_BETA } from "../models/fast-mode.ts";
 import {
   type ChatMessage,
   type ContentBlock,
   collectStream,
+  type EffortLevel,
   type ModelProvider,
   type ModelRef,
   type ModelRequest,
@@ -27,6 +29,26 @@ import {
 export function fastModeApplies(modelId: string, auth: "api_key" | "subscription"): boolean {
   return auth === "api_key" && tierFromId(modelId) === "opus";
 }
+/**
+ * The `thinking` parameter that turns thinking off for `model` at `effort`, or undefined when
+ * nothing is to be sent: the model thinks only when asked (Claude 4.x, Sonnet 5), or it cannot
+ * turn thinking off (Opus 5.5, Fable, Mythos), or the effort is above high, where Haiku 5.5
+ * and Opus 5 answer `disabled` with a 400 error. Sonnet 5.5 rejects `disabled` and takes
+ * `between_tools` (thinking only between tool calls) at high or below. Source:
+ * https://platform.claude.com/docs/en/build-with-claude/thinking ("Configuring thinking"), read
+ * 2026-10-26. An unknown model gets nothing, so a new model is never sent a value it refuses.
+ */
+export function anthropicThinkingOff(
+  modelId: string,
+  effort: EffortLevel | undefined,
+): Anthropic.ThinkingConfigParam | undefined {
+  if (effort === "xhigh" || effort === "max") return undefined;
+  const id = canonicalModelId(modelId);
+  if (id === "claude-haiku-5-5" || id === "claude-opus-5") return { type: "disabled" };
+  if (id === "claude-sonnet-5-5") return { type: "between_tools" };
+  return undefined;
+}
+
 export interface AnthropicProviderOptions {
   apiKey?: string;
   /** OAuth token from `claude setup-token` (subscription). Exactly one of apiKey/authToken is set. */
@@ -182,6 +204,10 @@ export class AnthropicMessagesProvider implements ModelProvider {
       }));
     }
     if (req.effort) params.output_config = { effort: req.effort };
+    if (req.thinking === "off") {
+      const off = anthropicThinkingOff(req.model, req.effort);
+      if (off) params.thinking = off;
+    }
     if (req.metadata) params.metadata = { user_id: req.metadata.user_id };
     // Fast mode (spec D.20, ADR 0057): the same model id with the speed parameter; the beta
     // header is what the API asks for with `speed` on the models that need it. Sent only where

@@ -102,6 +102,14 @@ export interface ModelRequest {
   max_tokens: number;
   effort?: EffortLevel;
   /**
+   * "off": the caller wants no thinking on this call, so the cap is the reply's own (a chat turn
+   * at low effort). A provider maps it to what the model accepts (the Anthropic adapter:
+   * `anthropicThinkingOff`) and sends nothing where the model cannot turn thinking off or
+   * thinks only when asked. Absent: the model's default, which on current Claude models is
+   * adaptive thinking whose depth the effort sets, counted against `max_tokens`.
+   */
+  thinking?: "off";
+  /**
    * Only sent to providers whose capabilities say `acceptsTemperature` (the loop drops it
    * otherwise); the Anthropic adapter never sends it.
    */

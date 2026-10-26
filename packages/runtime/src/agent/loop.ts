@@ -12,6 +12,7 @@ import type {
   ContentBlock,
   EffortLevel,
   ModelProvider,
+  StopReason,
   ToolResultBlock,
   Usage,
 } from "../provider/types.ts";
@@ -64,6 +65,12 @@ export interface RunRequest {
    */
   maxTokensCeiling?: number;
   effort?: EffortLevel;
+  /**
+   * "off": every call asks the provider for no thinking, where the model allows it
+   * (`ModelRequest.thinking`). The conversation agent sets it on a chat turn at low effort so
+   * thinking cannot eat the reply's `max_tokens`.
+   */
+  thinking?: "off";
   /**
    * Fast mode (spec D.20 and D.4; ADRs 0057 and 0072): every call of the run asks the provider
    * for `speed: "fast"` on `model`, and the run's records (the hooks' ledger rows, `run_start`)
@@ -164,6 +171,12 @@ export interface RunResult {
   runId: string;
   outcome: RunOutcome;
   finalText: string;
+  /**
+   * The stop reason of the run's last model call; "max_tokens" means `finalText` was cut off
+   * at the cap (the outcome stays "completed": the caller decides what a cut-off answer is).
+   * Absent when no call returned (a refused first call) and from drivers that do not report it.
+   */
+  stopReason?: StopReason;
   messages: ChatMessage[];
   usage: Usage;
   costUsdMicro: number;
@@ -265,6 +278,7 @@ export class LoopAgentDriver {
     const ttfts: number[] = [];
     const reports: InjectionReport[] = [];
     let finalText = "";
+    let stopReason: StopReason | undefined;
     let outcome: RunOutcome = "completed";
     let error: RunResult["error"];
     let pending: string | undefined;
@@ -344,6 +358,7 @@ export class LoopAgentDriver {
               tools: toolDefs,
               max_tokens: maxOut,
               effort: req.effort,
+              ...(req.thinking === "off" ? { thinking: "off" as const } : {}),
               ...(sendSpeed ? { speed: "fast" as const } : {}),
               ...(sendTemperature ? { temperature: req.temperature } : {}),
               cache: { system: true, tools: true },
@@ -387,6 +402,7 @@ export class LoopAgentDriver {
           stopReason: response.stop_reason,
         });
 
+        stopReason = response.stop_reason;
         messages.push({ role: "assistant", content: response.content });
         const text = response.content
           .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
@@ -544,6 +560,7 @@ export class LoopAgentDriver {
       runId: claims.runId,
       outcome,
       finalText,
+      ...(stopReason !== undefined ? { stopReason } : {}),
       messages,
       usage,
       costUsdMicro: cost,

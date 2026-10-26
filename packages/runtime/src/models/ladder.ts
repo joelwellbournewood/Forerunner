@@ -64,18 +64,31 @@ export interface ModeDefault {
 const STD = "standard" as const;
 
 /**
+ * The voice and text chat modes' output cap per call. It was 400 until the real-audio run of
+ * 2026-10-26, where a spoken reply was cut off mid-sentence at exactly 400 output tokens:
+ * Haiku 5.5 thinks by default (adaptive, even at low effort, its thinking returned empty) and
+ * thinking counts toward `max_tokens`, so the visible text got about 60 of them. 1024 is about
+ * three times the largest chat turn of that run with thinking included (310 tokens out for 530
+ * characters); a chat turn at low effort also asks thinking off (`ConversationAgent`), so the
+ * cap is the reply's. The pre-call estimate prices the whole cap: on Haiku 5.5 that is USD
+ * 0.0005 a call; a principal who moves chat to Opus (USD 20 per million out) reserves USD 0.02
+ * of the turn's USD 0.05 for output.
+ */
+export const CHAT_MAX_TOKENS = 1024;
+
+/**
  * Spec table "Effort and response time" (D.8 to D.15), with the per-call output cap, the speed
  * mode and the run timeout of each mode (ADR 0072: the spec's table names model, effort and the
  * response target; D.4 adds max tokens, speed mode and timeout). The numbers are the ones the
  * code used before D.4 (chat 400 tokens and 30 s, intake 16'000 tokens and 5 min, the loop's
  * 4096 per call, the critic's 8192, its tier-1 target and 10-minute deep review), so making
- * them settings changed no run.
+ * them settings changed no run; the chat cap has since been raised (`CHAT_MAX_TOKENS`).
  */
 export const MODE_DEFAULTS: Record<Mode, ModeDefault> = {
   voice_chat: {
     tier: "haiku",
     effort: "low",
-    maxTokens: 400,
+    maxTokens: CHAT_MAX_TOKENS,
     speedMode: STD,
     timeoutMs: 30_000,
     targetMs: 1200,
@@ -84,7 +97,7 @@ export const MODE_DEFAULTS: Record<Mode, ModeDefault> = {
   text_chat: {
     tier: "haiku",
     effort: "low",
-    maxTokens: 400,
+    maxTokens: CHAT_MAX_TOKENS,
     speedMode: STD,
     timeoutMs: 30_000,
     targetMs: 1000,
