@@ -5,6 +5,7 @@ import {
   type GitHost,
   type GitIdentity,
   GitOps,
+  gitAuthFor,
   type RepoRef,
 } from "@forerunner/capabilities";
 import {
@@ -212,9 +213,14 @@ async function mergeChecked(
   let rebased = false;
   let required: string[] = [];
   if (input.worktree) {
+    // The token is scoped to the repository's clone origin: a worktree whose remote points at
+    // another host never receives it.
+    const auth = deps.token
+      ? gitAuthFor(deps.token, (await host.getRepo(ref.repo)).cloneUrl)
+      : undefined;
     const git = new GitOps({
       cwd: input.worktree,
-      ...(deps.token ? { auth: { token: deps.token } } : {}),
+      ...(auth ? { auth } : {}),
       ...(deps.identity ? { identity: deps.identity } : {}),
     });
     const local = await git.headSha();

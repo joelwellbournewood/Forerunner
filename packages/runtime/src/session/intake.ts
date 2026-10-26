@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { type GitHost, GitOps, type RepoRef } from "@forerunner/capabilities";
+import { type GitHost, GitOps, gitAuthFor, type RepoRef } from "@forerunner/capabilities";
 import { docFile, renderStandardDoc, STANDARD_DOCS, scaffoldDocs } from "@forerunner/memory";
 import {
   type Clock,
@@ -1272,9 +1272,12 @@ export class IntakeService {
     const info = await host.getRepo(repo);
     const dir = join(this.deps.worktreeRoot, "intake", safeSegment(project.id, "project"));
     await mkdir(join(this.deps.worktreeRoot, "intake"), { recursive: true });
+    // The token is scoped to the repository's clone origin (gitAuthFor) and, per command, to
+    // the remote's own URL inside GitOps.
+    const auth = gitAuthFor(this.deps.gitToken, info.cloneUrl);
     const git = new GitOps({
       cwd: dir,
-      ...(this.deps.gitToken ? { auth: { token: this.deps.gitToken } } : {}),
+      ...(auth ? { auth } : {}),
       ...(this.deps.identity ? { identity: this.deps.identity } : {}),
     });
     if (existsSync(join(dir, ".git"))) await git.fetch();

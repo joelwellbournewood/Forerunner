@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { type GitHost, GitOps, type RepoRef } from "@forerunner/capabilities";
+import { type GitHost, GitOps, gitAuthFor, type RepoRef } from "@forerunner/capabilities";
 import {
   STATUS_DOC,
   type StatusLists,
@@ -82,25 +82,10 @@ export function parseRepoRef(text: string): RepoRef | null {
 
 /**
  * The token for the docs clone, scoped to the repository's origin (ADR 0069, the rule the A.3
- * import applies): an http(s) clone URL gives `{ token, origin }`, so git attaches the header
- * to URLs under that origin only (a `url.*.insteadOf` rewrite or a remote on another host
- * reaches it without the token); any other URL (a local path, ssh) gives no token at all,
- * since there is no http origin to scope it to and git needs none for it.
+ * import applies). Moved to `@forerunner/capabilities` so every GitOps caller shares it;
+ * re-exported here for existing importers.
  */
-export function gitAuthFor(
-  token: string | undefined,
-  cloneUrl: string,
-): { token: string; origin: string } | undefined {
-  if (!token) return undefined;
-  let url: URL;
-  try {
-    url = new URL(cloneUrl);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
-  return { token, origin: url.origin };
-}
+export { gitAuthFor };
 
 export class ProjectDocs implements ProjectDocsPort {
   private readonly logger = log("project-docs");

@@ -1,10 +1,26 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, type RunOptions, type RunResult, run } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
-import { GitOps, gitConfigEnv, redactToken, tokenHeaderKey } from "../src/githost/git.ts";
+import {
+  GitOps,
+  gitAuthFor,
+  gitConfigEnv,
+  redactToken,
+  tokenHeaderKey,
+} from "../src/githost/git.ts";
 
 const identity = { name: "Test", email: "test@example.test" };
+
+/** The `*.extraheader` entries a recorded env passes through GIT_CONFIG_*, in order. */
+function headerEntries(env: NodeJS.ProcessEnv): [string, string][] {
+  return [...Array(Number(env.GIT_CONFIG_COUNT ?? 0)).keys()]
+    .map((i): [string, string] => [
+      env[`GIT_CONFIG_KEY_${i}`] ?? "",
+      env[`GIT_CONFIG_VALUE_${i}`] ?? "",
+    ])
+    .filter(([k]) => k.startsWith("http.") && k.endsWith(".extraheader"));
+}
 
 async function bareRepo(): Promise<{ bare: string; url: string }> {
   const root = mkdtempSync(join(tmpdir(), "fr-git-"));
@@ -88,16 +104,20 @@ describe("GitOps", { timeout: 120_000 }, () => {
     if (!clone) throw new Error("no git call recorded");
     expect(clone.argv.join(" ")).not.toContain(token);
     expect(clone.argv).not.toContain("http.extraheader");
-    const count = Number(clone.env.GIT_CONFIG_COUNT);
-    expect(count).toBeGreaterThanOrEqual(1);
-    const slots = [...Array(count).keys()].filter(
-      (i) => clone.env[`GIT_CONFIG_KEY_${i}`] === "http.extraheader",
-    );
-    // An empty entry first resets the key, so a header from the human's own git config is
-    // dropped; ours, after it, is the only one git sends.
-    expect(slots.map((i) => clone.env[`GIT_CONFIG_VALUE_${i}`])).toEqual([
-      "",
-      `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+    // Git's urlmatch lets a more specific `http.<url>.*` entry win over a less specific one, so
+    // the header is scoped to the repository URL itself. Empty entries first reset the
+    // unscoped key, the origin key and the repository keys: whatever header the human's config
+    // has at any of those levels is dropped, and ours, last and most specific, is the only one.
+    const repoKey = "http.http://127.0.0.1:1/acme/service.git/.extraheader";
+    expect(headerEntries(clone.env)).toEqual([
+      ["http.extraheader", ""],
+      ["http.http://127.0.0.1:1/.extraheader", ""],
+      ["http.http://127.0.0.1:1/acme/service.git.extraheader", ""],
+      [repoKey, ""],
+      [
+        repoKey,
+        `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+      ],
     ]);
     // GitHub's git endpoint authenticates Basic only: `bearer` answers 401 "invalid credentials"
     // even for a fine-grained PAT the REST API accepts (seen live on 2026-10-26).
@@ -164,20 +184,19 @@ describe("GitOps", { timeout: 120_000 }, () => {
       runner,
       timeoutMs: 1500,
     });
-    await scoped.clone("http://127.0.0.1:1/acme/service.git");
+    await scoped.clone("http://user:pw@127.0.0.1:1/acme/service.git?q=1#f");
     const env = calls[0]?.env ?? {};
-    const valuesOf = (k: string) =>
-      [...Array(Number(env.GIT_CONFIG_COUNT ?? 0)).keys()]
-        .filter((i) => env[`GIT_CONFIG_KEY_${i}`] === k)
-        .map((i) => env[`GIT_CONFIG_VALUE_${i}`]);
-    expect(valuesOf("http.http://127.0.0.1:1/.extraheader")).toEqual([
-      "",
-      `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
-    ]);
-    // The unscoped key is only ever reset (a stale global header of the human's is dropped);
-    // it never carries the token, so no other host receives it.
-    expect(valuesOf("http.extraheader")).toEqual([""]);
+    const basic = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+    // The token sits on the repository URL's key only (credentials, query and fragment
+    // dropped); the unscoped and origin keys are only ever reset, so no other host or
+    // repository receives it.
+    const withToken = headerEntries(env).filter(([, v]) => v !== "");
+    expect(withToken).toEqual([["http.http://127.0.0.1:1/acme/service.git/.extraheader", basic]]);
     expect(calls[0]?.argv.join(" ")).not.toContain(token);
+    // A remote outside the token's origin gets no header at all (and no reset either).
+    calls.length = 0;
+    await scoped.clone("http://other.example/acme/service.git");
+    expect(headerEntries(calls[0]?.env ?? {})).toEqual([]);
     expect(tokenHeaderKey("https://github.com")).toBe("http.https://github.com/.extraheader");
     expect(tokenHeaderKey("HTTPS://GitHub.com:443/")).toBe("http.https://github.com/.extraheader");
     expect(tokenHeaderKey(undefined)).toBe("http.extraheader");
@@ -191,6 +210,101 @@ describe("GitOps", { timeout: 120_000 }, () => {
       message: expect.stringMatching(/clone timed out after 1500 ms/),
       details: { timeoutMs: 1500 },
     });
+  });
+
+  it("scopes fetch and push to the remote's own URL, keeps local commands token-free and names a missing token", async () => {
+    const calls: { argv: string[]; env: NodeJS.ProcessEnv }[] = [];
+    const remote = "https://github.com/acme/service.git";
+    let fail: RunResult | null = null;
+    const runner = async (argv: readonly string[], opts: RunOptions = {}): Promise<RunResult> => {
+      calls.push({ argv: [...argv], env: opts.env ?? {} });
+      const base = {
+        code: 0,
+        signal: null,
+        stderr: "",
+        truncated: false,
+        timedOut: false,
+        durationMs: 1,
+      } as const;
+      if (argv.includes("get-url")) return { ...base, stdout: `${remote}\n` };
+      if (fail && (argv.includes("fetch") || argv.includes("clone"))) return fail;
+      return { ...base, stdout: "" };
+    };
+    const token = "github_pat_scopedfetchXXXXXXXXXXXXXXXXXXXXXXXX"; // not-a-secret
+    const cwd = mkdtempSync(join(tmpdir(), "fr-git-scope-"));
+    mkdirSync(join(cwd, ".git"));
+    const g = new GitOps({
+      cwd,
+      auth: gitAuthFor(token, remote),
+      runner,
+    });
+    await g.fetch();
+    const fetch = calls.find((c) => c.argv.includes("fetch"));
+    const basic = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+    expect(headerEntries(fetch?.env ?? {}).filter(([, v]) => v !== "")).toEqual([
+      ["http.https://github.com/acme/service.git/.extraheader", basic],
+    ]);
+    // Reading the remote URL is local: it carries no token.
+    const getUrl = calls.find((c) => c.argv.includes("get-url"));
+    expect(headerEntries(getUrl?.env ?? {})).toEqual([]);
+    calls.length = 0;
+    await g.push("forerunner/x");
+    const push = calls.find((c) => c.argv.includes("push"));
+    expect(headerEntries(push?.env ?? {}).filter(([, v]) => v !== "")).toEqual([
+      ["http.https://github.com/acme/service.git/.extraheader", basic],
+    ]);
+    // Local commands never see the header.
+    calls.length = 0;
+    await g.status();
+    expect(headerEntries(calls[0]?.env ?? {})).toEqual([]);
+
+    // gitAuthFor: http(s) clone URLs only, origin taken from the URL.
+    expect(gitAuthFor(token, remote)).toEqual({ token, origin: "https://github.com" });
+    expect(gitAuthFor(token, "git@github.com:acme/service.git")).toBeUndefined();
+    expect(gitAuthFor(undefined, remote)).toBeUndefined();
+
+    // Without a token a private remote fails with a clear error naming the origin; git never
+    // falls back to the human's credential helper.
+    fail = {
+      code: 128,
+      signal: null,
+      stdout: "",
+      stderr:
+        "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n",
+      truncated: false,
+      timedOut: false,
+      durationMs: 1,
+    };
+    const tokenless = new GitOps({ cwd, runner });
+    await expect(tokenless.fetch()).rejects.toMatchObject({
+      code: "provider_auth",
+      message: expect.stringContaining("no token configured for https://github.com"),
+    });
+    await expect(
+      new GitOps({ cwd: join(cwd, "fresh"), runner }).clone(remote),
+    ).rejects.toMatchObject({
+      code: "provider_auth",
+      message: expect.stringContaining("no token configured for https://github.com"),
+    });
+  });
+
+  it("redacts the token from a failed merge's detail", async () => {
+    const token = "github_pat_mergeleakXXXXXXXXXXXXXXXXXXXXXXXX"; // not-a-secret
+    const cwd = mkdtempSync(join(tmpdir(), "fr-git-merge-"));
+    mkdirSync(join(cwd, ".git"));
+    const runner = async (argv: readonly string[]): Promise<RunResult> => ({
+      code: argv.includes("merge") && !argv.includes("--abort") ? 1 : 0,
+      signal: null,
+      stdout: "",
+      stderr: `fatal: unable to access 'https://x-access-token:${token}@github.com/a/b.git/'`,
+      truncated: false,
+      timedOut: false,
+      durationMs: 1,
+    });
+    const r = await new GitOps({ cwd, auth: { token }, runner }).mergeFrom("origin/main");
+    expect(r.ok).toBe(false);
+    expect(r.detail).not.toContain(token);
+    expect(r.detail).toContain("[REDACTED]");
   });
 
   it("reads the remote default branch, the remote URL and lists local branches by prefix", async () => {

@@ -15,7 +15,7 @@ import type {
   TaskExecutor,
 } from "@forerunner/runtime";
 import type { SessionRow, StateStore, TaskRow } from "@forerunner/state";
-import { GitOps } from "./git.ts";
+import { GitOps, gitAuthFor } from "./git.ts";
 import type { GitHost, RepoRef } from "./types.ts";
 
 /**
@@ -69,7 +69,8 @@ export class PrTaskExecutor implements TaskExecutor {
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
     const git = new GitOps({
       cwd: dir,
-      auth: this.deps.token ? { token: this.deps.token } : undefined,
+      // Scoped to the clone URL's origin; a local path or SSH remote gets no header.
+      auth: gitAuthFor(this.deps.token, target.clone),
       identity: this.deps.identity,
     });
     if (existsSync(join(dir, ".git"))) await git.fetch();

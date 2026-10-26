@@ -14,18 +14,22 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, type RunOptions, run } from "@forerunner/platform";
+import { locateHttpBackend } from "@forerunner/testenv";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { GitOps } from "../src/githost/git.ts";
+import { type GitAuth, GitOps, gitAuthFor } from "../src/githost/git.ts";
+
+const httpBackend = await locateHttpBackend();
+const skipReason = httpBackend ? false : "git http-backend not found next to git --exec-path";
 
 const TOKEN = "github_pat_11TESTONLY0abcdefghijklmnop_qrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012345"; // not-a-secret
 const STALE = "stale-cached-password"; // not-a-secret
 const identity = { name: "Forerunner", email: "agent@example.test" };
 
 function accepted(header: string | undefined): boolean {
-  if (!header) return false;
-  const [scheme, value = ""] = header.split(" ", 2);
-  if (scheme?.toLowerCase() !== "basic") return false;
-  const decoded = Buffer.from(value, "base64").toString("utf8");
+  // Exactly one Basic credential: two headers joined with " | " never match.
+  const m = /^basic ([A-Za-z0-9+/=]+)$/i.exec(header ?? "");
+  if (!m) return false;
+  const decoded = Buffer.from(m[1] ?? "", "base64").toString("utf8");
   const colon = decoded.indexOf(":");
   return colon > 0 && decoded.slice(colon + 1) === TOKEN;
 }
@@ -71,7 +75,10 @@ function backend(projectRoot: string, req: IncomingMessage, res: ServerResponse)
   });
 }
 
-describe("GitOps over HTTP with a token", { timeout: 120_000 }, () => {
+// The reason is part of the suite name so a skipped run says why in the reporter.
+const suite = `GitOps over HTTP with a token${skipReason ? ` (skipped: ${skipReason})` : ""}`;
+
+describe.skipIf(skipReason)(suite, { timeout: 120_000 }, () => {
   let root: string;
   let server: Server;
   let base: string;
@@ -93,8 +100,15 @@ describe("GitOps over HTTP with a token", { timeout: 120_000 }, () => {
     await g.push("main");
 
     server = createServer((req, res) => {
-      seen.push(req.headers.authorization);
-      if (!accepted(req.headers.authorization)) {
+      // Every Authorization header as sent (Node keeps only the first in req.headers).
+      const all: string[] = [];
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        if (req.rawHeaders[i]?.toLowerCase() === "authorization")
+          all.push(req.rawHeaders[i + 1] ?? "");
+      }
+      const one = all.length === 1 ? all[0] : all.length === 0 ? undefined : all.join(" | ");
+      seen.push(one);
+      if (!accepted(one)) {
         res.writeHead(401, {
           "WWW-Authenticate": 'Basic realm="GitHub"',
           "Content-Type": "text/plain",
@@ -110,7 +124,11 @@ describe("GitOps over HTTP with a token", { timeout: 120_000 }, () => {
     // The human's own git config: a helper with a stale credential, and a stale header.
     helperLog = join(root, "helper-called.log");
     const logPath = helperLog.replace(/\\/g, "/");
-    const staleBasic = Buffer.from(`someone:${STALE}`).toString("base64");
+    // A stale header at every level git's urlmatch knows: unscoped, the origin, a parent path,
+    // and the repository URL with and without a trailing slash. A more specific entry beats a
+    // less specific one, so ours has to sit at (and reset) the most specific level.
+    const header = (who: string) =>
+      `AUTHORIZATION: basic ${Buffer.from(`${who}:${STALE}`).toString("base64")}`;
     globalConfig = join(root, "human.gitconfig");
     writeFileSync(
       globalConfig,
@@ -118,7 +136,15 @@ describe("GitOps over HTTP with a token", { timeout: 120_000 }, () => {
         "[credential]",
         `\thelper = "!f() { echo \\"$1\\" >> '${logPath}'; echo username=someone; echo password=${STALE}; }; f"`,
         "[http]",
-        `\textraheader = AUTHORIZATION: basic ${staleBasic}`,
+        `\textraheader = ${header("global")}`,
+        `[http "${base}/"]`,
+        `\textraheader = ${header("origin")}`,
+        `[http "${base}/acme/"]`,
+        `\textraheader = ${header("parent")}`,
+        `[http "${base}/acme/service.git"]`,
+        `\textraheader = ${header("repo")}`,
+        `[http "${base}/acme/service.git/"]`,
+        `\textraheader = ${header("repo-slash")}`,
         "",
       ].join("\n"),
     );
@@ -137,10 +163,16 @@ describe("GitOps over HTTP with a token", { timeout: 120_000 }, () => {
     const probe = await asHuman(["git", "config", "--global", "--get", "credential.helper"]);
     expect(probe.stdout).toContain("password=");
 
-    for (const origin of [undefined, base]) {
+    // Without an origin, and with the one every caller now passes (gitAuthFor).
+    const variants: GitAuth[] = [
+      { token: TOKEN },
+      gitAuthFor(TOKEN, `${base}/acme/service.git`) ?? {},
+    ];
+    for (const auth of variants) {
+      const origin = auth.origin;
       seen.length = 0;
       const cwd = join(root, `clone-${origin ? "scoped" : "global"}`);
-      const g = new GitOps({ cwd, identity, auth: { token: TOKEN, origin }, runner: asHuman });
+      const g = new GitOps({ cwd, identity, auth, runner: asHuman });
       await g.clone(`${base}/acme/service.git`);
       expect(existsSync(join(cwd, "README.md"))).toBe(true);
       await g.createBranch(`forerunner/${origin ? "scoped" : "global"}`);
@@ -173,7 +205,20 @@ describe("GitOps over HTTP with a token", { timeout: 120_000 }, () => {
     expect(err?.message).toMatch(/clone failed/);
     expect(err?.message).not.toContain(wrong);
     expect(existsSync(helperLog) ? readFileSync(helperLog, "utf8") : "").toBe("");
-    const stale = Buffer.from(`someone:${STALE}`).toString("base64");
-    expect(seen.some((h) => h?.includes(stale))).toBe(false);
+    // Only the wrong token was offered: no stale header, no helper credential.
+    expect(seen.length).toBeGreaterThan(0);
+    for (const h of seen) {
+      expect(h).toBe(`basic ${Buffer.from(`x-access-token:${wrong}`).toString("base64")}`);
+    }
+  });
+
+  it("names the missing token for a private clone without one, never asking a helper", async () => {
+    seen.length = 0;
+    const g = new GitOps({ cwd: join(root, "clone-tokenless"), identity, runner: asHuman });
+    await expect(g.clone(`${base}/acme/service.git`)).rejects.toMatchObject({
+      code: "provider_auth",
+      message: expect.stringContaining(`no token configured for ${base}`),
+    });
+    expect(existsSync(helperLog) ? readFileSync(helperLog, "utf8") : "").toBe("");
   });
 });

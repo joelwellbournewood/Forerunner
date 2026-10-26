@@ -24,17 +24,64 @@ export interface GitAuth {
    */
   token?: string;
   /**
-   * The origin (`scheme://host[:port]`) the token belongs to. When set, the entry is
-   * `http.<origin>/.extraheader`, which git attaches only to URLs under that origin: a remote
-   * on another host, or a `url.*.insteadOf` rewrite in the user's git config, gets no header.
-   * Without it the header goes to every http(s) remote the command reaches.
+   * The origin (`scheme://host[:port]`) the token belongs to. The header is only ever given to
+   * a remote under this origin: a remote on another host, or one a `url.*.insteadOf` rewrite
+   * sends elsewhere, gets no header. Without it, any http(s) remote may receive the token.
+   * Callers derive it from the clone URL with `gitAuthFor()`.
    */
   origin?: string;
 }
 
 /**
- * The config key that carries the token: scoped to `origin` (normalised to its URL origin)
- * when one is given, else the global `http.extraheader`. A non-http(s) origin is `validation`.
+ * The auth for a clone URL: the token scoped to that URL's origin, or undefined when there is
+ * no token or the URL is not http(s) (a local path or SSH remote needs no header).
+ */
+export function gitAuthFor(
+  token: string | undefined,
+  cloneUrl: string,
+): { token: string; origin: string } | undefined {
+  if (!token) return undefined;
+  let url: URL;
+  try {
+    url = new URL(cloneUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  return { token, origin: url.origin };
+}
+
+/**
+ * Where the token goes for one network command against `remoteUrl`. Git's urlmatch lets the
+ * most specific matching `http.<url>.extraheader` entry win (host, then path length), so a
+ * header scoped to the origin loses to a human's entry for the repository path. Ours sits on
+ * the repository URL itself (credentials, query and fragment dropped, trailing slash added)
+ * and empty entries first reset every level that could carry an older header: the unscoped
+ * key, the origin, and the repository path with and without its trailing slash. Null when the
+ * remote is not http(s) or lies outside `origin`: then no header is sent at all.
+ */
+export function tokenScope(
+  remoteUrl: string,
+  origin?: string,
+): { resets: string[]; key: string } | null {
+  let url: URL;
+  try {
+    url = new URL(remoteUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (origin !== undefined && tokenHeaderKey(origin) !== tokenHeaderKey(url.origin)) return null;
+  const path = url.pathname.replace(/\/+$/, "");
+  const key = `http.${url.origin}${path}/.extraheader`;
+  const resets = ["http.extraheader", `http.${url.origin}/.extraheader`];
+  if (path) resets.push(`http.${url.origin}${path}.extraheader`, key);
+  return { resets, key };
+}
+
+/**
+ * The config key for a token scoped to `origin` (normalised to its URL origin), else the
+ * global `http.extraheader`. A non-http(s) origin is `validation`.
  */
 export function tokenHeaderKey(origin?: string): string {
   if (origin === undefined) return "http.extraheader";
@@ -130,7 +177,16 @@ export class GitOps {
     return argv;
   }
 
-  private async git(args: string[], extra: Partial<RunOptions> = {}): Promise<RunResult> {
+  /**
+   * Run git. `remoteUrl` is the URL a network command talks to (clone, fetch, push); only
+   * then does the token header reach the process, scoped by `tokenScope()`. Local commands
+   * never carry it.
+   */
+  private async git(
+    args: string[],
+    extra: Partial<RunOptions> = {},
+    remoteUrl?: string | null,
+  ): Promise<RunResult> {
     // Every command runs inside opts.cwd; only clone/init may run before it exists. Never fall
     // back to the process working directory (that could touch an unrelated repository).
     const creates = args[0] === "clone" || args[0] === "init";
@@ -144,13 +200,14 @@ export class GitOps {
       SSH_ASKPASS: "",
       GCM_INTERACTIVE: "never",
     };
-    if (this.opts.auth?.token) {
-      // An empty value resets a multi-valued key: a header from the human's own config (global
-      // or scoped to our origin) is dropped, so ours is the only Authorization git sends.
-      const key = tokenHeaderKey(this.opts.auth.origin);
-      const resets = key === "http.extraheader" ? [key] : ["http.extraheader", key];
-      for (const k of resets) Object.assign(env, gitConfigEnv(env, k, ""));
-      Object.assign(env, gitConfigEnv(env, key, tokenAuthHeader(this.opts.auth.token)));
+    const scope =
+      this.opts.auth?.token && remoteUrl ? tokenScope(remoteUrl, this.opts.auth.origin) : null;
+    if (scope && this.opts.auth?.token) {
+      // An empty value resets a multi-valued key. With the resets at every level and ours on
+      // the most specific one, a header from the human's own config is never sent: ours is
+      // the only Authorization git sends.
+      for (const k of scope.resets) Object.assign(env, gitConfigEnv(env, k, ""));
+      Object.assign(env, gitConfigEnv(env, scope.key, tokenAuthHeader(this.opts.auth.token)));
     }
     const runner = this.opts.runner ?? run;
     try {
@@ -188,6 +245,24 @@ export class GitOps {
     }
     if (r.code !== 0) {
       const detail = redactToken(`${r.stderr}\n${r.stdout}`.trim(), this.opts.auth?.token);
+      // Credential helpers are off, so a remote that wants credentials we did not give fails
+      // here rather than falling back to the human's store: name what is missing.
+      const wanted = /(?:could not read Username for|Authentication failed for) '([^']+)'/.exec(
+        r.stderr,
+      );
+      if (wanted && !this.opts.auth?.token) {
+        let origin = wanted[1] ?? "";
+        try {
+          origin = new URL(origin).origin;
+        } catch {
+          // keep git's spelling
+        }
+        throw new ForerunnerError(
+          "provider_auth",
+          `git ${what} failed: no token configured for ${origin} (the remote asked for credentials; Forerunner never uses the human's git credential helper)`,
+          { details: { code: r.code, origin } },
+        );
+      }
       throw new ForerunnerError("provider_error", `git ${what} failed: ${detail.slice(-800)}`, {
         details: { code: r.code },
       });
@@ -201,7 +276,7 @@ export class GitOps {
     if (opts.depth) args.push("--depth", String(opts.depth));
     if (opts.branch) args.push("--branch", opts.branch);
     args.push(url, this.opts.cwd);
-    this.must(await this.git(args, { cwd: undefined }), "clone");
+    this.must(await this.git(args, { cwd: undefined }, url), "clone");
   }
 
   async init(defaultBranch = "main"): Promise<void> {
@@ -212,7 +287,8 @@ export class GitOps {
   }
 
   async fetch(remote = "origin"): Promise<void> {
-    this.must(await this.git(["fetch", "--prune", remote]), "fetch");
+    const url = this.opts.auth?.token ? await this.remoteUrl(remote) : null;
+    this.must(await this.git(["fetch", "--prune", remote], {}, url), "fetch");
   }
 
   async currentBranch(): Promise<string> {
@@ -311,7 +387,11 @@ export class GitOps {
       .split(/\r?\n/)
       .filter(Boolean);
     await this.git(["merge", "--abort"]);
-    return { ok: false, conflicts, detail: r.stderr.trim().slice(-800) };
+    return {
+      ok: false,
+      conflicts,
+      detail: redactToken(r.stderr.trim(), this.opts.auth?.token).slice(-800),
+    };
   }
 
   /**
@@ -332,9 +412,16 @@ export class GitOps {
     if (opts.force && opts.defaultBranch && branch === opts.defaultBranch) {
       throw new ForerunnerError("autonomy_insufficient", `force-pushing ${branch} needs a human`);
     }
-    const args = ["push", "-u", opts.remote ?? "origin", branch];
+    const remote = opts.remote ?? "origin";
+    const args = ["push", "-u", remote, branch];
     if (opts.force) args.splice(1, 0, "--force-with-lease");
-    this.must(await this.git(args), `push ${branch}`);
+    // The push URL as git will use it (pushurl and insteadOf / pushInsteadOf applied).
+    let url: string | null = null;
+    if (this.opts.auth?.token) {
+      const r = await this.git(["remote", "get-url", "--push", remote]);
+      url = r.code === 0 ? r.stdout.trim() : null;
+    }
+    this.must(await this.git(args, {}, url), `push ${branch}`);
   }
 
   /** True when `ancestor` is reachable from `of` (the base has not moved past the branch). */

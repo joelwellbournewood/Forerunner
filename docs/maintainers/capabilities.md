@@ -78,12 +78,23 @@ with their milestone.
   `AUTHORIZATION: basic base64("x-access-token:<token>")` (`tokenAuthHeader()`), never
   `bearer`: GitHub's git endpoint answers a bearer header with 401 "invalid credentials" even
   for a fine-grained PAT its REST API accepts (seen live on Windows, 2026-10-26: the setup
-  check passed, every clone failed). An empty entry for the same key (and for the unscoped
-  `http.extraheader`) comes first, so a header from the human's own config is dropped and ours
-  is the only `Authorization` sent. Every command runs with `-c credential.helper=`, which
+  check passed, every clone failed). Only network commands (clone, fetch, push) carry the
+  header; local commands never see the token. Git's urlmatch lets the most specific matching
+  `http.<url>.extraheader` win, so a header scoped to the origin would lose to a human's entry
+  for the repository path: ours therefore sits on the repository URL itself (`tokenScope()`:
+  credentials, query and fragment dropped, trailing slash added), and empty entries first reset
+  every level that could carry an older header (the unscoped `http.extraheader`, the origin,
+  the repository path with and without its slash). A remote outside `GitAuth.origin` gets no
+  header at all. Every caller scopes the auth to its clone URL's origin (`gitAuthFor()` in intake,
+  merge, the PR executor and project docs; the data import sets the origin itself). The reset drops every
+  `http.extraheader` in the human's own git config for our git calls, auth or not (a proxy or
+  SSO header included): a deliberate choice for an agent's clone. Every command runs with
+  `-c credential.helper=`, which
   empties the helper list from all config levels: Git Credential Manager (Git for Windows'
   system default) or any other helper is never asked for, never given and never told to
-  erase a credential, so git uses exactly our token and the human's store is untouched.
+  erase a credential, so git uses exactly our token and the human's store is untouched. A
+  consequence: a tokenless clone of a private repository no longer borrows the human's saved
+  credentials; it fails with `provider_auth` "no token configured for <origin>".
   `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=""`, `SSH_ASKPASS=""` and `GCM_INTERACTIVE=never`
   keep it from prompting. Error output is redacted (`redactToken()` removes the token raw and
   in its Basic form). git missing

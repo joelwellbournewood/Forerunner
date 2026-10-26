@@ -304,11 +304,15 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
       expect(await h.assets.list(h.otherProjectId)).toEqual([]);
       expect((await h.store.project.mustGet(h.otherProjectId)).repos).toEqual(["acme/public-tool"]);
 
-      // A private repository without a token fails at the clone, the half worktree is removed and
-      // nothing is recorded; with the install's default reference it works.
+      // A private repository without a token fails at the clone, naming the missing token (git's
+      // credential helpers are off, so nothing from the human's store is tried), the half
+      // worktree is removed and nothing is recorded; with the install's default reference it works.
       await expect(
         base.importGitHubRepo({ repo: FULL }, h.otherProjectId, { actor: human }),
-      ).rejects.toMatchObject({ code: "provider_error" });
+      ).rejects.toMatchObject({
+        code: "provider_auth",
+        message: expect.stringContaining(`no token configured for ${host.baseUrl}`),
+      });
       const dir = join(h.projectsRoot, h.otherProjectId, "repos", "acme", "service");
       expect(existsSync(dir)).toBe(false);
       expect(await h.assets.list(h.otherProjectId)).toEqual([]);
@@ -334,7 +338,10 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
       expect(new URL(foreign).origin).not.toBe(new URL(host.baseUrl).origin);
       await expect(
         withDefault.importGitHubRepo({ repo: foreign }, h.projectId, { actor: human }),
-      ).rejects.toMatchObject({ code: "provider_error" });
+      ).rejects.toMatchObject({
+        code: "provider_auth",
+        message: expect.stringContaining(`no token configured for ${new URL(foreign).origin}`),
+      });
       expect(existsSync(join(h.projectsRoot, h.projectId, "repos", "acme", "service"))).toBe(false);
       const named = await withDefault.importGitHubRepo(
         { repo: foreign, tokenRef: "secret:github_token" },
