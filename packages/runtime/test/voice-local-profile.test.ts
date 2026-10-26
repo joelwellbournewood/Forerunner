@@ -403,4 +403,31 @@ describe("LocalVoice: a session's use always ends", () => {
     expect(local.inUse()).toBe(0);
     expect(warnings.join("\n")).toMatch(/1 local voice use.*still counted/);
   });
+
+  it("a use ended after release() is a no-op: the count never goes negative", async () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", cpuVerified);
+    const local = new LocalVoice({
+      dirs,
+      env,
+      clock: new SimulatedClock(),
+      warn: () => {},
+      factory: sessionFactory(async function* () {
+        await new Promise(() => {});
+      }),
+    });
+    const stale = local.stt.start({ sampleRate: 16000 });
+    await local.release();
+    const fresh = local.stt.start({ sampleRate: 16000 });
+    expect(local.inUse()).toBe(1);
+    // The session from before release() ends now: it must not end the fresh one's use.
+    await stale.close();
+    expect(local.inUse()).toBe(1);
+    await stale.close();
+    expect(local.inUse()).toBe(1);
+    await fresh.close();
+    expect(local.inUse()).toBe(0);
+    await fresh.close();
+    expect(local.inUse()).toBe(0);
+  });
 });

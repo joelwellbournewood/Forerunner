@@ -178,8 +178,11 @@ export class LocalVoice {
   readonly tts: TtsProvider;
   private key: string | null = null;
   private pair: LocalPair | null = null;
-  /** Open STT sessions and sentences being synthesised on the current pair. */
-  private using = 0;
+  /**
+   * Open STT sessions and sentences being synthesised, one token each. release() clears the
+   * set, so a use that ends afterwards removes a token that is gone: a no-op, never negative.
+   */
+  private readonly live = new Set<symbol>();
 
   constructor(private readonly opts: LocalVoiceOptions) {
     const refuse = () => this.opts.blocked?.() ?? null;
@@ -208,11 +211,12 @@ export class LocalVoice {
         const why = refuse();
         if (why) throw new ForerunnerError("unavailable", why);
         const inner = self.current().tts;
-        self.using++;
+        const token = Symbol("sentence");
+        self.live.add(token);
         try {
           yield* inner.synthesize(text, o);
         } finally {
-          self.using--;
+          self.live.delete(token);
         }
       },
     };
@@ -220,7 +224,7 @@ export class LocalVoice {
 
   /** Sessions and sentences in flight on the local helpers (a switch waits for none). */
   inUse(): number {
-    return this.using;
+    return this.live.size;
   }
 
   settings(): LocalVoiceSettings | null {
@@ -235,7 +239,7 @@ export class LocalVoice {
   current(): LocalPair {
     const s = this.settings();
     const key = JSON.stringify(s);
-    if (this.pair && (key === this.key || this.using > 0)) return this.pair;
+    if (this.pair && (key === this.key || this.live.size > 0)) return this.pair;
     const old = this.pair;
     this.pair = this.build(s);
     this.key = key;
@@ -245,12 +249,12 @@ export class LocalVoice {
 
   /** Stop the running helpers (before their venv is deleted); the next use starts new ones. */
   async release(): Promise<void> {
-    if (this.using > 0) {
+    if (this.live.size > 0) {
       // A session nobody closed or read to its end: the count would hold every later swap.
       (this.opts.warn ?? ((m: string) => log("voice:local").warn(m)))(
-        `${this.using} local voice use(s) still counted at release; reset to 0`,
+        `${this.live.size} local voice use(s) still counted at release; reset to 0`,
       );
-      this.using = 0;
+      this.live.clear();
     }
     const old = this.pair;
     this.pair = null;
@@ -260,12 +264,10 @@ export class LocalVoice {
 
   /** Counts a session as in use until it is closed or its events end. */
   private tracked(session: SttSession): SttSession {
-    this.using++;
-    let done = false;
+    const token = Symbol("stt-session");
+    this.live.add(token);
     const finish = () => {
-      if (done) return;
-      done = true;
-      this.using--;
+      this.live.delete(token);
     };
     const events = session.events;
     return {

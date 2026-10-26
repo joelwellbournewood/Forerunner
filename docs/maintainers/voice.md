@@ -225,8 +225,10 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
   `torch-requires.json` is torch's Requires-Dist per platform. Every pip run is
   `--only-binary :all:` except docopt (`SOURCE_BUILDS`, sdist only): setuptools from
   build-tools.txt is installed first and the lock runs with `--no-binary docopt
-  --no-build-isolation`, so its build fetches nothing. Windows x64 and Linux x86_64 only; any
-  other platform or architecture is refused up front (`SUPPORTED_TARGETS`).
+  --no-build-isolation`, so its build fetches nothing. Windows x64 and Linux x86_64 only: another OS
+  is refused up front (`SUPPORTED_TARGETS`); the Python's `sysconfig.get_platform()` must be
+  `win-amd64` or `linux-x86_64` (`SUPPORTED_PYTHON_PLATFORMS`, checked on the base interpreter
+  and on a reused venv before any download); Node's architecture is only logged as a hint.
   Then `pip check`. The environment's `PIP_EXTRA_INDEX_URL` and `PIP_FIND_LINKS` are not passed
   to pip. The marker `<venv>/forerunner-voice.json` holds a hash over pip.txt, the torch file
   and the lock; a change to any reinstalls.

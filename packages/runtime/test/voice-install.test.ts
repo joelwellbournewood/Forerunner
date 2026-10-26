@@ -312,24 +312,84 @@ describe("fr voice install", () => {
     expect(fake.calls.some((c) => c.argv.includes("-r"))).toBe(false);
   });
 
-  it("refuses up front on a platform the pinned wheels do not cover", async () => {
-    for (const [platform, arch] of [
-      ["linux", "arm64"],
-      ["windows", "arm64"],
-      ["macos", "arm64"],
-      ["linux", "ia32"],
+  it("refuses up front on an operating system the pinned wheels do not cover", async () => {
+    const { dirs, env } = home();
+    const fake = fakeRunner();
+    const { events, out } = collect();
+    const r = await installVoice("cpu", {
+      dirs,
+      env,
+      platform: "macos",
+      arch: "arm64",
+      run: fake.run,
+      out,
+    });
+    expect(r.exitCode).toBe(1);
+    expect(messages(events, "error").join("\n")).toContain("Windows x64 and Linux x86_64 only");
+    expect(fake.calls).toHaveLength(0);
+    expect(readVoiceSettings(dirs)).toBeNull();
+  });
+
+  it("decides on the Python's platform, not Node's: a 32-bit or ARM Python is refused", async () => {
+    for (const [platform, arch, pyPlatform] of [
+      ["linux", "arm64", "linux-aarch64"],
+      ["windows", "arm64", "win-arm64"],
+      ["windows", "x64", "win32"],
+      ["linux", "x64", "linux-i686"],
     ] as const) {
       const { dirs, env } = home();
-      const fake = fakeRunner();
+      const fake = fakeRunner({ pyPlatform });
       const { events, out } = collect();
       const r = await installVoice("cpu", { dirs, env, platform, arch, run: fake.run, out });
       expect(r.exitCode).toBe(1);
       const err = messages(events, "error").join("\n");
       expect(err).toContain("Windows x64 and Linux x86_64 only");
-      expect(err).toContain(`${platform} ${arch}`);
-      expect(fake.calls).toHaveLength(0);
+      expect(err).toContain(pyPlatform);
+      // Nothing was made or downloaded: only the interpreter lookups ran.
+      expect(fake.calls.some((c) => c.argv.includes("venv"))).toBe(false);
+      expect(fake.calls.some((c) => c.argv.includes("-r"))).toBe(false);
       expect(readVoiceSettings(dirs)).toBeNull();
     }
+  });
+
+  it("allows a 32-bit Node when the Python is 64-bit, with a hint only", async () => {
+    const { dirs, env } = home();
+    const fake = fakeRunner({ pythons: { "py -3.12": "3.12.7" }, pyPlatform: "win-amd64" });
+    const { events, out } = collect();
+    const r = await installVoice("cpu", {
+      dirs,
+      env,
+      platform: "windows",
+      arch: "ia32",
+      run: fake.run,
+      out,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(messages(events, "log").join("\n")).toMatch(/Node is ia32.*Python decides/);
+  });
+
+  it("checks a reused venv's platform too", async () => {
+    const { dirs, env } = home();
+    await installVoice("cpu", {
+      dirs,
+      env,
+      platform: "linux",
+      run: fakeRunner().run,
+      out: () => {},
+    });
+    const { events, out } = collect();
+    const r = await installVoice("cpu", {
+      dirs,
+      env,
+      platform: "linux",
+      run: fakeRunner({ pyPlatform: "linux-aarch64" }).run,
+      out,
+    });
+    expect(r.exitCode).toBe(1);
+    expect(messages(events, "error").join("\n")).toContain("linux-aarch64");
+  });
+
+  it("removing works anywhere", async () => {
     // Removing works anywhere.
     const { dirs, env } = home();
     const removed = await installVoice("none", {

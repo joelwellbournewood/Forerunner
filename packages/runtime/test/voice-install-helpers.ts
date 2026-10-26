@@ -28,6 +28,8 @@ export interface FakeOptions {
   /** The TTS helper fails on cuda with this message. */
   ttsCudaError?: string;
   nvidiaSmi?: string | null;
+  /** What `sysconfig.get_platform()` prints in every interpreter (default linux-x86_64). */
+  pyPlatform?: string;
   /** The venv python of an existing venv does not run (a broken venv). */
   brokenVenv?: boolean;
   /** pip -r fails with this stderr. */
@@ -71,7 +73,12 @@ export function fakeRunner(opts: FakeOptions = {}) {
       const rest = cmd === "py" ? args.slice(1) : args;
       const version = pythons[key];
       if (!version) return notFound;
-      if (rest[0] === "-c") return ok(`${version}\n`);
+      if (rest[0] === "-c")
+        return ok(
+          (rest[1] ?? "").includes("sysconfig")
+            ? `${opts.pyPlatform ?? "linux-x86_64"}\n`
+            : `${version}\n`,
+        );
       if (rest[0] === "-m" && rest[1] === "venv") {
         const dir = rest[2] as string;
         for (const platform of ["linux", "windows"] as const) {
@@ -85,7 +92,12 @@ export function fakeRunner(opts: FakeOptions = {}) {
       return fail(2, "", `unexpected ${req.argv.join(" ")}`);
     }
     if (brokenVenv) return fail(1, "", "error while loading shared libraries");
-    if (args[0] === "-c") return ok("3.12.7\n");
+    if (args[0] === "-c")
+      return ok(
+        (args[1] ?? "").includes("sysconfig")
+          ? `${opts.pyPlatform ?? "linux-x86_64"}\n`
+          : "3.12.7\n",
+      );
     if (args[0] === "-m" && args[1] === "pip") {
       if (args[2] === "check") {
         if (opts.pipCheckError) return fail(1, opts.pipCheckError);

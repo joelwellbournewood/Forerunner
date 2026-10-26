@@ -82,8 +82,11 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
      `pip check` runs after the install. pip gets no `PIP_EXTRA_INDEX_URL` or `PIP_FIND_LINKS`
      from the environment. A hash over the four files in the venv's marker decides whether pip
      runs again.
-   - Only Windows x64 and Linux x86_64 are installed (the wheels pinned are those); any other
-     platform or architecture is refused before anything runs, with the reason.
+   - Only Windows x64 and Linux x86_64 are installed (the wheels pinned are those). Another
+     operating system is refused before anything runs. The architecture is the Python's: its
+     `sysconfig.get_platform()` must be `win-amd64` or `linux-x86_64`, checked on the base
+     interpreter before the venv is made and on a reused venv, before anything is downloaded.
+     Node's own architecture is only a hint (a 32-bit Node can drive a 64-bit Python).
 4. **The install is resumable and idempotent and streams progress.** Each step emits events
    (`step`, `log`, `progress` with bytes and total, `warning`, `error`, `result`). pip runs with
    `--progress-bar raw --resume-retries 5` and its cache; `fr_voice_models.py` fetches the

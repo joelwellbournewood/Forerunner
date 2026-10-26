@@ -153,6 +153,18 @@ export const SUPPORTED_TARGETS = [
   { platform: "linux", arch: "x64" },
 ] as const;
 
+/**
+ * `sysconfig.get_platform()` of an interpreter the wheels fit. What decides is the Python
+ * that installs the wheels, not Node: a 32-bit Node can drive a 64-bit Python, and an x64
+ * Node can find a 32-bit or ARM Python.
+ */
+export const SUPPORTED_PYTHON_PLATFORMS = ["win-amd64", "linux-x86_64"] as const;
+
+const PLATFORM_CODE = "import sysconfig; print(sysconfig.get_platform())";
+
+const unsupportedMessage = (where: string) =>
+  `Local voice installs on Windows x64 and Linux x86_64 only: the pinned wheels (PyTorch, ctranslate2, the NVIDIA libraries) are those two. This is ${where}. Voice can still use a cloud provider (Extensions).`;
+
 const TORCH_BLOCK_BEGIN = "# BEGIN torch-dependencies";
 const TORCH_BLOCK_END = "# END torch-dependencies";
 
@@ -752,12 +764,11 @@ export async function installVoice(
 ): Promise<InstallResult> {
   if (profile === "none") return removeVoice(deps);
   const arch = deps.arch ?? process.arch;
-  const supported = SUPPORTED_TARGETS.some(
-    (t) => t.platform === (deps.platform ?? currentPlatform()) && t.arch === arch,
-  );
-  if (!supported) {
-    const where = `${deps.platform ?? currentPlatform()} ${arch}`;
-    const message = `Local voice installs on Windows x64 and Linux x86_64 only: the pinned wheels (PyTorch, ctranslate2, the NVIDIA libraries) are those two. This is ${where}. Voice can still use a cloud provider (Extensions).`;
+  // The operating system is refused at once; the architecture is the Python's to decide
+  // (checked with sysconfig once the interpreter is known), Node's is only a hint.
+  const os = deps.platform ?? currentPlatform();
+  if (!SUPPORTED_TARGETS.some((t) => t.platform === os)) {
+    const message = unsupportedMessage(`${os} ${arch}`);
     deps.out({ type: "error", message });
     deps.out({ type: "result", ok: false, profile, exitCode: 1, message });
     return { ok: false, exitCode: 1, profile, message };
@@ -836,6 +847,21 @@ export async function installVoice(
       });
 
     checkCancelled();
+    if (arch !== "x64")
+      out({
+        type: "log",
+        message: `Node is ${arch}; the Python decides whether the x64 wheels fit (sysconfig)`,
+      });
+    const assertPythonPlatform = async (python: string[]) => {
+      const r = await run({ argv: [...python, "-c", PLATFORM_CODE], timeoutMs: 30_000, env });
+      const pyPlatform = r.stdout.toString("utf8").trim();
+      if (!(SUPPORTED_PYTHON_PLATFORMS as readonly string[]).includes(pyPlatform))
+        throw new Failure(
+          unsupportedMessage(
+            `a Python for ${pyPlatform || "an unknown platform"} (${python.join(" ")}); install the 64-bit x86 Python 3.12`,
+          ),
+        );
+    };
     // 1. The venv: reused when its interpreter runs, made again when it does not.
     out({ type: "step", step: "venv", message: `managed Python environment: ${venv}` });
     let pythonVersion: string | null = null;
@@ -843,6 +869,7 @@ export async function installVoice(
       const r = await run({ argv: [vpy, "-c", VERSION_CODE], timeoutMs: 30_000, env });
       const v = r.stdout.toString("utf8").trim();
       if (r.code === 0 && pythonVersionOk(v)) {
+        await assertPythonPlatform([vpy]);
         assertEspeakPath(venv, platform, v);
         pythonVersion = v;
         out({ type: "log", message: `reusing it (Python ${v})` });
@@ -852,6 +879,7 @@ export async function installVoice(
     }
     if (!pythonVersion) {
       const base = await findBasePython({ run, platform, explicit: deps.python });
+      await assertPythonPlatform(base.argv);
       assertEspeakPath(venv, platform, base.version);
       rmSync(venv, { recursive: true, force: true });
       out({
