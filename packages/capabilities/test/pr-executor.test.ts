@@ -134,7 +134,11 @@ function innerWriting(
   };
 }
 
-describe("PrTaskExecutor", () => {
+// 12 to 33 git subprocesses per test (counted with a PATH wrapper), the same load as
+// git.test.ts. A loaded Windows runner has run them 3 to 8 times slower than usual (run
+// 40401068999: the conflict case past 20 s, git.test.ts's 43-process case 34.6 s), so this
+// suite gets git.test.ts's 120 s budget instead of the unit project's 20 s default.
+describe("PrTaskExecutor", { timeout: 120_000 }, () => {
   it("clones into a worktree, branches, commits, rebases, pushes and opens a pull request", async () => {
     const w = await world();
     const task = await w.store.task.insert({

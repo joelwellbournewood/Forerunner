@@ -355,6 +355,12 @@ unscoped and scoped to the origin, every request carries our credential and noth
 the helper is never called; a wrong token fails with the token redacted, the helper still not
 called (the old code asked it to `get` and then `erase`) and the stale credential never sent.
 
+`pr-executor.test.ts` runs `PrTaskExecutor` against local bare repositories and
+`MemoryGitHost`: the PR flow end to end, a rebase conflict as a blocking human request with no
+PR, and no changes as a failure. Like `git.test.ts` it spawns dozens of git processes, so both
+suites carry a 120 s timeout rather than the unit default of 20 s: loaded Windows runners have
+run them several times slower than usual.
+
 ## Known issues
 
 - `GitOps` hands the token to git through `GIT_CONFIG_*`, which git older than 2.31 ignores

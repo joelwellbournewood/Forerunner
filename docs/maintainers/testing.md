@@ -492,7 +492,9 @@ without a heard figure named),
 (`replyMode: "text"` on the row: no TTS, no audio) left out of both first-audio figures and of
 `--exclude-first` with their count printed, no transcript or error
 message in the output, the refusals (no home, a store outside it, a non-SQLite store, no store
-yet), one run as a script through `tsx`, the median and p90 against `medianTotalToFirstAudio`
+yet), one run as a script through `tsx` (with an explicit `--since`: the child process runs
+on the real clock while the rows are seeded relative to a fixed time, so the 24 h default
+there would drop them a day after that time), the median and p90 against `medianTotalToFirstAudio`
 and `nearestRank`, and `check` over a stubbed registry and Python probe (both providers
 present, packages missing with the venv commands, `FORERUNNER_PYTHON`, no Python, old Node,
 and the voice profile with the GPU and the verified devices, `!!` when the CPU stands in).

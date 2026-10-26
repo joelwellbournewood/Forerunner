@@ -403,10 +403,14 @@ describe("voice-run report", () => {
 
   it("runs as a script: the result line and the exit code", async () => {
     const { home } = await seedHome([{ hoursAgo: 1, total: 1000 }]);
+    // The child runs on the real clock, so the default window (the last 24 h of now) would drop
+    // rows seeded relative to NOW once the real date passes NOW + 23 h. Name the window: NOW's
+    // own last 24 h. The default window itself is tested in process on the simulated clock.
+    const since = new Date(Date.parse(NOW) - 86_400_000).toISOString();
     const run = (env: Record<string, string>) =>
       spawnSync(
         process.execPath,
-        ["--import", "tsx", join(repoRoot, "scripts", "voice-run.ts"), "report"],
+        ["--import", "tsx", join(repoRoot, "scripts", "voice-run.ts"), "report", "--since", since],
         {
           cwd: repoRoot,
           encoding: "utf8",
