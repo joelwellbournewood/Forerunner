@@ -51,6 +51,19 @@ export const DEFAULT_TURN_BUDGET_USD_MICRO = 50_000;
  */
 export const CHAT_TURN_CALL_ROOM = 3;
 
+/**
+ * The most the default turn budget is raised to: USD 0.25 (ADR 0091). Without it a turn on
+ * Opus 5.5 with about 150'000 tokens of context would get about USD 1.9 (three calls at USD 0.6
+ * of input and 0.02 of output cap each). A turn whose first
+ * call alone would cost more is refused before the call, with `budgetRefusedReply`.
+ */
+export const CHAT_TURN_BUDGET_CEILING_USD_MICRO = 250_000;
+
+/** The reply when the turn's budget refused the first model call (nothing was spent). */
+export function budgetRefusedReply(turnBudgetUsdMicro: number): string {
+  return `That question with its context would cost more than the USD ${(turnBudgetUsdMicro / 1e6).toFixed(2)} a chat turn may spend on this model. Ask it with less pasted text, or switch chat to a cheaper model.`;
+}
+
 /** The reply when the model was cut off at max_tokens before it finished a single sentence. */
 export const CUT_OFF_REPLY =
   "My answer was cut off before I finished a sentence. Ask me again, or ask for a shorter answer.";
@@ -93,7 +106,8 @@ export interface ConversationDeps {
   maxEffort?: EffortLevel;
   /**
    * Per-conversation-turn budget, used as given. Absent: USD 0.05, raised for a turn whose
-   * calls cost more (`CHAT_TURN_CALL_ROOM`).
+   * calls cost more (`CHAT_TURN_CALL_ROOM`), at most USD 0.25
+   * (`CHAT_TURN_BUDGET_CEILING_USD_MICRO`, ADR 0091).
    */
   turnBudgetUsdMicro?: number;
   modelId?: string;
@@ -443,25 +457,29 @@ export class ConversationAgent {
     // The turn's budget: the configured one, or by default USD 0.05 raised to room for
     // `CHAT_TURN_CALL_ROOM` calls priced as the loop prices the first one (its input as sent,
     // the whole output cap), so a realistic turn on an expensive chat model (Opus 5.5, which
-    // cannot turn thinking off) is not refused before it starts.
+    // cannot turn thinking off) is not refused before it starts; never above
+    // `CHAT_TURN_BUDGET_CEILING_USD_MICRO` (ADR 0091).
     const turnBudgetUsdMicro =
       this.deps.turnBudgetUsdMicro ??
-      Math.max(
-        DEFAULT_TURN_BUDGET_USD_MICRO,
-        CHAT_TURN_CALL_ROOM *
-          pricing.estimate(
-            this.deps.provider.countTokens(
-              system +
-                JSON.stringify(messages) +
-                JSON.stringify(
-                  tools.definitions(
-                    tools.names(),
-                    (s) => z.toJSONSchema(s) as Record<string, unknown>,
+      Math.min(
+        CHAT_TURN_BUDGET_CEILING_USD_MICRO,
+        Math.max(
+          DEFAULT_TURN_BUDGET_USD_MICRO,
+          CHAT_TURN_CALL_ROOM *
+            pricing.estimate(
+              this.deps.provider.countTokens(
+                system +
+                  JSON.stringify(messages) +
+                  JSON.stringify(
+                    tools.definitions(
+                      tools.names(),
+                      (s) => z.toJSONSchema(s) as Record<string, unknown>,
+                    ),
                   ),
-                ),
+              ),
+              textChat.maxTokens,
             ),
-            textChat.maxTokens,
-          ),
+        ),
       );
     const budget = new SessionBudget({
       sessionId,
@@ -565,6 +583,9 @@ export class ConversationAgent {
     }
     // A cut-off answer with nothing whole left says so, unless a card's read-back is the reply.
     if (!reply && truncated) reply = CUT_OFF_REPLY;
+    // The turn's budget refused the first call: nothing was spent; say what would help.
+    if (!reply && result.error?.code === "budget_exceeded" && result.modelCalls === 0)
+      reply = budgetRefusedReply(turnBudgetUsdMicro);
     if (!reply)
       reply =
         result.outcome === "completed"
@@ -597,6 +618,8 @@ export class ConversationAgent {
         // full sentence; the stop reason of the turn's last model call says why it ended.
         outcome: truncated ? "truncated" : result.outcome,
         stopReason: result.stopReason ?? null,
+        // What the turn was allowed to spend (ADR 0091).
+        turnBudgetUsdMicro,
         actions: actions.map((a) => a.kind),
         sources: {
           docs: context.sources.docs.map((d) => (d.heading ? `${d.path} > ${d.heading}` : d.path)),

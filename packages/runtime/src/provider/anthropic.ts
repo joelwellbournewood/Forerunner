@@ -34,7 +34,8 @@ export function fastModeApplies(modelId: string, auth: "api_key" | "subscription
  * nothing is to be sent: the model thinks only when asked (Claude 4.x), or it cannot turn
  * thinking off (Opus 5.5, Fable, Mythos), or the effort is above high, where Haiku 5.5 and
  * Opus 5 answer `disabled` with a 400 error. Sonnet 5 thinks adaptively by default and takes
- * `disabled` at any effort (the docs name no effort limit for it). Sonnet 5.5 rejects
+ * `disabled`; the docs name no effort limit for it, but it gets the same xhigh/max guard as the
+ * others (a chat turn asks thinking off only at low effort anyway). Sonnet 5.5 rejects
  * `disabled` and takes `between_tools` (thinking only between tool calls) at high or below.
  * Source: https://platform.claude.com/docs/en/build-with-claude/thinking ("Configuring
  * thinking"), read 2026-10-26. An unknown model gets nothing, so a new model is never sent a
@@ -44,9 +45,9 @@ export function anthropicThinkingOff(
   modelId: string,
   effort: EffortLevel | undefined,
 ): Anthropic.ThinkingConfigParam | undefined {
+  if (effort === "xhigh" || effort === "max") return undefined;
   const id = canonicalModelId(modelId);
   if (id === "claude-sonnet-5") return { type: "disabled" };
-  if (effort === "xhigh" || effort === "max") return undefined;
   if (id === "claude-haiku-5-5" || id === "claude-opus-5") return { type: "disabled" };
   if (id === "claude-sonnet-5-5") return { type: "between_tools" };
   return undefined;

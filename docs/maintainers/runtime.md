@@ -1478,12 +1478,12 @@ of the 400 tokens were left for the visible text. Three changes:
   can raise it) the turn's run asks `thinking: "off"` (`RunRequest.thinking`, passed on as
   `ModelRequest.thinking`), so the cap is the reply's and the first sentence is not delayed by
   thinking (spec principle 8, "fast when talking"). The Anthropic adapter maps it per model with
-  `anthropicThinkingOff`: Sonnet 5 `{type: "disabled"}` at any effort (it thinks adaptively by
-  default; the docs give it no effort limit); Haiku 5.5 and Opus 5 `{type: "disabled"}` and
-  Sonnet 5.5 `{type: "between_tools"}`, at effort high or below; nothing for a model that
-  cannot turn thinking off (Opus 5.5, Fable, Mythos), one that thinks only when asked (4.x), an
-  unknown model, or effort `xhigh`/`max` on Haiku 5.5, Opus 5 and Sonnet 5.5 (where it is a
-  400 error). Above `low` the model
+  `anthropicThinkingOff`: Haiku 5.5, Opus 5 and Sonnet 5 `{type: "disabled"}` and Sonnet 5.5
+  `{type: "between_tools"}`, at effort high or below; nothing for a model that cannot turn
+  thinking off (Opus 5.5, Fable, Mythos), one that thinks only when asked (4.x), an unknown
+  model, or effort `xhigh`/`max` (a 400 error on Haiku 5.5, Opus 5 and Sonnet 5.5; Sonnet 5,
+  which thinks adaptively by default, has no documented effort limit but gets the same guard,
+  and a chat turn asks thinking off only at low effort anyway). Above `low` the model
   thinks as the effort says (spec D: effort sets thinking depth) within the same cap.
 - A cut-off reply: the loop reports its last call's `stopReason` on `RunResult` (the outcome
   stays `completed`; the Run vocabulary is unchanged). When it is `max_tokens` the conversation
@@ -1510,10 +1510,18 @@ of the 400 tokens were left for the visible text. Three changes:
   turn's own pricing. The precheck prices the full cap before the call, so on Opus 5.5 (which
   cannot turn thinking off) a turn with about 6'000 tokens of context was refused at USD 0.05;
   it now gets about USD 0.13. On Haiku 5.5 the USD 0.05 holds until the context passes about
-  160'000 tokens. A configured turn budget is used as given.
+  160'000 tokens. The raise stops at `CHAT_TURN_BUDGET_CEILING_USD_MICRO` (USD 0.25, [ADR
+  0091](../decisions/0091-chat-turn-budget.md)): on Opus 5.5 with about 150'000 tokens of
+  context the rule alone would give about USD 1.9. A turn whose first call does not fit is
+  refused by the precheck before anything is spent, and the reply says so
+  (`budgetRefusedReply`: the budget in USD, ask with less pasted text or switch chat to a
+  cheaper model) with outcome `budget_exceeded`. Every `chat.reply` row carries
+  `turnBudgetUsdMicro`. A configured turn budget is used as given.
 - Tests: `conversation.test.ts` ("a reply cut off at max_tokens": spoken and typed turns, no
   complete sentence, a pending card's read-back, a cut on a sentence end, an Opus-priced turn
-  with a 6'000-token context, a completed reply streaming in full),
+  with a 150'000-token context refused at the ceiling with no call made, an Opus-priced turn
+  with a 6'000-token context answered at exactly three first-call estimates, a completed reply
+  streaming in full),
   `conversation-sentences.test.ts` (the gate into a real `SentenceSplitter` emitting sentence
   one before sentence two completes, the exact text and the empty first piece, cut tails, and a
   `VoiceLoop` whose `modelFirstTokenMs` and first sentence are not pushed back), `loop.test.ts`

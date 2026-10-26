@@ -971,6 +971,18 @@ describe("conversation agent cacheable prefix", () => {
  * it was. A reply that ends at max_tokens is now trimmed to its last complete sentence, for
  * speech and text, and recorded as truncated.
  */
+/**
+ * Opus 5.5 as the built-in price table has it (packages/billing/src/pricing.ts, row of
+ * 2026-10-06: USD 4 per million input tokens and USD 20 per million output tokens), in
+ * micro-USD per token: 4 in, 20 out. The 1024 chat cap alone is priced at about USD 0.02 before
+ * a call, and Opus 5.5 cannot turn thinking off.
+ */
+const OPUS_PRICING = {
+  estimate: (inTok: number, maxOut: number) => inTok * 4 + maxOut * 20,
+  cost: (u: { input_tokens: number; output_tokens: number }) =>
+    u.input_tokens * 4 + u.output_tokens * 20,
+};
+
 describe("a reply cut off at max_tokens", () => {
   const CUT =
     "You have a decision waiting on the menu. The critic asked for one of the three options: adopt,";
@@ -1067,15 +1079,8 @@ describe("a reply cut off at max_tokens", () => {
   });
 
   it("a chat turn on an expensive model with a realistic context is not refused by the turn budget", async () => {
-    // Opus 5.5 list prices in micro-USD per token (USD 4 in, 20 out per million): the 1024 cap
-    // alone is priced at about USD 0.02 before the call, and Opus cannot turn thinking off.
-    const opus = {
-      estimate: (inTok: number, maxOut: number) => inTok * 4 + maxOut * 20,
-      cost: (u: { input_tokens: number; output_tokens: number }) =>
-        u.input_tokens * 4 + u.output_tokens * 20,
-    };
     const w = await setup([textReply("The menu is next.", { ttftMs: 0 })], {
-      agentDeps: { modelId: "fake-opus", pricing: opus },
+      agentDeps: { modelId: "fake-opus", pricing: OPUS_PRICING },
     });
     // About 6'000 tokens of context (four characters a token): a long pasted question.
     const context = "The renderer flickers when the menu opens over the map. ".repeat(430);
@@ -1083,6 +1088,35 @@ describe("a reply cut off at max_tokens", () => {
     expect(res.reply).toBe("The menu is next.");
     const reply = (await w.log()).find((e) => e.type === "chat.reply");
     expect(reply?.payload).toMatchObject({ outcome: "completed" });
+    // The budget is three calls priced as the loop priced the first one (input as sent, the
+    // whole 1024 cap), above USD 0.05 and below the USD 0.25 ceiling.
+    const first = w.provider.calls[0]?.request;
+    const input = w.provider.countTokens(
+      (first?.system ?? "") + JSON.stringify(first?.messages) + JSON.stringify(first?.tools),
+    );
+    const budget = (reply?.payload as { turnBudgetUsdMicro?: number } | undefined)
+      ?.turnBudgetUsdMicro;
+    expect(budget).toBe(3 * OPUS_PRICING.estimate(input, 1024));
+    expect(budget).toBeGreaterThan(50_000);
+    expect(budget).toBeLessThan(250_000);
+    await w.store.close();
+  });
+
+  it("a huge context on an expensive model is refused at the USD 0.25 ceiling, before any call, saying what to do", async () => {
+    const w = await setup([textReply("never sent", { ttftMs: 0 })], {
+      agentDeps: { modelId: "fake-opus", pricing: OPUS_PRICING },
+    });
+    // About 150'000 tokens of context: three calls would be about USD 1.9 on Opus 5.5.
+    const context = "The renderer flickers when the menu opens over the map. ".repeat(10_500);
+    const res = await w.chat(`${context}\nWhat should I look at first?`);
+    expect(w.provider.calls).toHaveLength(0);
+    expect(res.reply).toMatch(/USD 0\.25/);
+    expect(res.reply).toMatch(/shorter|cheaper model/);
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({
+      outcome: "budget_exceeded",
+      turnBudgetUsdMicro: 250_000,
+    });
     await w.store.close();
   });
 

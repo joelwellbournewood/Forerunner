@@ -160,9 +160,10 @@ describe("AnthropicMessagesProvider", () => {
     await ask("claude-opus-5");
     await ask("claude-opus-5", { effort: "max" });
     await ask("claude-sonnet-5");
-    // Sonnet 5 thinks adaptively by default and takes `disabled` at any effort (the docs give
-    // it no effort limit, unlike Haiku 5.5 and Opus 5).
+    // Sonnet 5 thinks adaptively by default and takes `disabled`. The docs name no effort limit
+    // for it, but the same xhigh/max guard as the other models applies: nothing is sent there.
     await ask("claude-sonnet-5", { effort: "max" });
+    await ask("claude-sonnet-5", { effort: "xhigh" });
     expect(bodies.map((b) => b.thinking)).toEqual([
       { type: "disabled" },
       { type: "disabled" },
@@ -175,7 +176,8 @@ describe("AnthropicMessagesProvider", () => {
       { type: "disabled" },
       undefined,
       { type: "disabled" },
-      { type: "disabled" },
+      undefined,
+      undefined,
     ]);
   });
 
