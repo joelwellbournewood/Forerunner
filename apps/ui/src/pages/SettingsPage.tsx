@@ -22,6 +22,7 @@ import type { ThemePreference } from "../store/store.ts";
 import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
 import { SourcesSection } from "./SourcesSection.tsx";
+import { VoiceSettingsCard } from "./VoiceSettingsCard.tsx";
 
 type Scope = SettingView["scope"];
 const SCOPES: readonly Scope[] = ["global", "human", "agent", "project"];
@@ -718,6 +719,8 @@ export function SettingsPage() {
         onToggle={(setting, command) => setEditing({ setting, command })}
       />
       <ModelSettingsSection />
+
+      <VoiceSettingsCard />
 
       <div
         className="rounded border border-neutral-200 p-3 dark:border-neutral-800"

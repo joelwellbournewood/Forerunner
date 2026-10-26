@@ -14,8 +14,10 @@ import type {
   ReviewView,
   SourceCandidateView,
   SourceView,
+  VoiceInstallView,
   VoiceStatusView,
 } from "@forerunner/runtime/daemon/api-types";
+import { VOICE_PROFILE_INFO, VOICE_PROFILES } from "@forerunner/runtime/daemon/api-types";
 import type { AuditExportRecord } from "@forerunner/runtime/daemon/audit-export";
 import type {
   AgentView,
@@ -2375,4 +2377,28 @@ export const MODEL_SETTINGS: ModelSettingsView = {
     },
   ],
   configError: null,
+};
+
+/**
+ * `GET /voice/install` (Settings → Voice, ADR 0089): the cpu profile installed and verified on a
+ * PC with an NVIDIA GPU, so gpu is the recommended switch.
+ */
+export const VOICE_INSTALL: VoiceInstallView = {
+  profile: "cpu",
+  profiles: VOICE_PROFILES.map((p) => ({ ...VOICE_PROFILE_INFO[p] })),
+  recommended: "gpu",
+  gpu: {
+    present: true,
+    name: "NVIDIA GeForce RTX 4070",
+    driver: "572.83",
+    memoryMb: 12282,
+    reason: "found by nvidia-smi",
+  },
+  installedAt: "2026-10-26T09:00:00.000Z",
+  verifiedAt: "2026-10-26T09:05:00.000Z",
+  stt: { device: "cpu", computeType: "int8", fallback: null },
+  tts: { device: "cpu", computeType: null, fallback: null },
+  pythonOverride: null,
+  job: null,
+  cli: "fr voice install --cpu",
 };

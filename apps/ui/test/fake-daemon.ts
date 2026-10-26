@@ -29,6 +29,9 @@ import type {
   SourceCandidateView,
   SourceView,
   TaskView,
+  VoiceInstallEntryView,
+  VoiceInstallEvent,
+  VoiceInstallView,
   VoiceSessionView,
   VoiceStatusView,
   VoiceTurnView,
@@ -122,6 +125,7 @@ import {
   TASKS,
   UPDATES_FEED,
   UPDATES_STATUS,
+  VOICE_INSTALL,
   VOICE_STATUS,
 } from "./fixtures.ts";
 
@@ -207,6 +211,12 @@ export interface FakeDaemonOptions {
    * `{ available: false, reason }` makes /voice/status say why and POST /voice/sessions answer 503.
    */
   voice?: { available: boolean; reason?: string };
+  /**
+   * Settings → Voice (ADR 0089): changes to the fixture's `GET /voice/install` answer, and
+   * `voiceInstallGpuFails` makes a switch to gpu end with the CPU standing in (exit code 2).
+   */
+  voiceInstall?: Partial<VoiceInstallView>;
+  voiceInstallGpuFails?: string;
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -278,6 +288,9 @@ export interface FakeDaemonState {
   voiceSessions: Map<string, { view: VoiceSessionView; pressed: boolean; chunks: number }>;
   /** When set, the next released turn transcribes to this line (tests script the human). */
   nextVoiceLine: string | null;
+  /** `GET /voice/install` and the last install job's events (ADR 0089). */
+  voiceInstall: VoiceInstallView;
+  voiceInstallEntries: VoiceInstallEntryView[];
 }
 
 const DESKTOP_OFF: DesktopControlView = {
@@ -376,6 +389,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     acceptsTemperature: options.acceptsTemperature ?? true,
     voiceSessions: new Map(),
     nextVoiceLine: null,
+    voiceInstall: { ...clone(VOICE_INSTALL), ...(options.voiceInstall ?? {}) },
+    voiceInstallEntries: [],
   };
 
   const emit = (event: string, data: unknown) => {
@@ -1417,6 +1432,114 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       sessions: [...state.voiceSessions.values()].filter((v) => !v.view.endedAt).length,
     }),
   );
+  // Settings → Voice (ADR 0089): the profile and a scripted install job. The job runs to its end
+  // at once; the events route replays it (JSON, or SSE that ends with the job).
+  app.get("/voice/install", (c) => c.json(state.voiceInstall));
+  app.post("/voice/install", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { profile?: string };
+    const profile = body.profile;
+    if (profile !== "none" && profile !== "cpu" && profile !== "gpu")
+      return errorBody(c, 400, "validation", "profile must be one of none, cpu, gpu");
+    if ([...state.voiceSessions.values()].some((v) => !v.view.endedAt))
+      return errorBody(
+        c,
+        409,
+        "conflict",
+        "a voice session is open: stop it before switching the voice profile",
+      );
+    const fails = profile === "gpu" ? options.voiceInstallGpuFails : undefined;
+    const ending: VoiceInstallEvent[] = fails
+      ? [
+          {
+            type: "warning",
+            message: `GPU check failed for speech recognition: ${fails}. Speech recognition runs on the CPU (int8) until this is fixed.`,
+          },
+          {
+            type: "result",
+            ok: true,
+            profile,
+            exitCode: 2,
+            message: `voice profile ${profile} installed, but the GPU check failed`,
+          },
+        ]
+      : [
+          {
+            type: "result",
+            ok: true,
+            profile,
+            exitCode: 0,
+            message: `voice profile ${profile} installed`,
+          },
+        ];
+    const events: VoiceInstallEvent[] =
+      profile === "none"
+        ? [
+            { type: "step", step: "remove", message: "turning local voice off" },
+            {
+              type: "result",
+              ok: true,
+              profile,
+              exitCode: 0,
+              message: "local voice is off and its packages and models are removed",
+            },
+          ]
+        : [
+            { type: "step", step: "venv", message: "managed Python environment" },
+            { type: "step", step: "packages", message: `installing the ${profile} packages` },
+            {
+              type: "progress",
+              what: "torch-2.11.0.whl",
+              bytes: 1_376_500_000,
+              total: 2_753_000_000,
+            },
+            {
+              type: "progress",
+              what: "torch-2.11.0.whl",
+              bytes: 2_753_000_000,
+              total: 2_753_000_000,
+            },
+            { type: "step", step: "verify", message: "checking speech recognition and speech" },
+            ...ending,
+          ];
+    const at = new Date().toISOString();
+    state.voiceInstallEntries = events.map((event, i) => ({ seq: i + 1, event }));
+    const device = profile === "gpu" ? "cuda" : "cpu";
+    state.voiceInstall = {
+      ...state.voiceInstall,
+      profile,
+      verifiedAt: profile === "none" ? null : at,
+      stt:
+        profile === "none"
+          ? null
+          : fails
+            ? { device: "cpu", computeType: "int8", fallback: fails }
+            : { device, computeType: profile === "gpu" ? "float16" : "int8", fallback: null },
+      tts: profile === "none" ? null : { device, computeType: null, fallback: null },
+      job: {
+        id: `vi-${state.voiceInstallEntries.length}`,
+        profile,
+        state: "done",
+        startedAt: at,
+        finishedAt: at,
+        exitCode: fails ? 2 : 0,
+        recent: state.voiceInstallEntries,
+      },
+    };
+    return c.json(state.voiceInstall, 202);
+  });
+  app.get("/voice/install/events", (c) => {
+    const after = Number(c.req.query("afterSeq") ?? 0);
+    const entries = state.voiceInstallEntries.filter((e) => e.seq > after);
+    if (!(c.req.header("accept") ?? "").includes("text/event-stream")) return c.json(entries);
+    return streamSSE(c, async (stream) => {
+      for (const e of entries)
+        await stream.writeSSE({
+          event: "voice.install",
+          data: JSON.stringify(e),
+          id: String(e.seq),
+        });
+    });
+  });
   app.get("/extensions/:id", (c) => {
     const e = findExtension(c);
     return e ? c.json(e) : errorBody(c, 404, "not_found", "no such extension");
