@@ -17,7 +17,8 @@ import type { LoopAgentDriver } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { renderBrief, validateBrief } from "../brief.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
-import type { CapsPort } from "../enforcement/ports.ts";
+import type { RunBilling } from "../enforcement/hooks.ts";
+import type { CapsBilling, CapsPort } from "../enforcement/ports.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import type { ProviderRegistry } from "../provider/registry.ts";
 import type { Registry } from "../registry/index.ts";
@@ -195,6 +196,13 @@ export interface LoopEvalRunnerDeps {
    * still checked by the hooks as any run's.
    */
   caps?: CapsPort;
+  /**
+   * How `billingSourceId` bills (ADR 0044), read before every task: its kind and, for a
+   * subscription, the plan share and its cap. It goes to the caps check (so the plan level is
+   * checked as for any run) and to the loop driver (the ledger rows' kind). Absent: an
+   * API-style source with no plan level.
+   */
+  billing?: () => Promise<RunBilling | undefined> | RunBilling | undefined;
   /** Upper bound on tasks per eval set (cost and time); default: the whole set. */
   maxTasks?: number;
   keepWorkDirs?: boolean;
@@ -246,20 +254,8 @@ export class LoopEvalRunner implements EvalRunnerPort {
     let cost = 0;
     for (const task of tasks) {
       if (input.signal?.aborted) throw stopped(input.signal);
-      if (this.deps.caps) {
-        const outer = await this.deps.caps.check(
-          { humanId: this.deps.humanId },
-          task.brief.budgetUsdMicro,
-          { phase: "work" },
-        );
-        if (outer.decision !== "allow") {
-          throw new ForerunnerError(
-            "budget_exceeded",
-            `model watch eval ${task.id} not started: ${outer.message ?? `${outer.level ?? "a"} cap reached`}`,
-            { details: { level: outer.level, decision: outer.decision, task: task.id } },
-          );
-        }
-      }
+      const billing = await this.deps.billing?.();
+      await this.checkOuterCaps(task.id, task.brief.budgetUsdMicro, billing);
       const workDir = resolve(
         join(
           this.deps.workRoot,
@@ -318,7 +314,7 @@ export class LoopEvalRunner implements EvalRunnerPort {
           if (lease.engine === "process" && (await this.deps.allowProcessSandbox?.()) !== true) {
             throw new ForerunnerError(
               "not_supported",
-              `eval ${task.id} needs a container sandbox and only the process stand-in is available; set model_watch.allow_process_sandbox to run evals there`,
+              `eval ${task.id} runs commands and needs a container sandbox; only the process stand-in is available on this machine: install Docker or Podman, or allow the process sandbox for evals`,
               { details: { reason: PROCESS_SANDBOX_REFUSED, task: task.id } },
             );
           }
@@ -367,16 +363,19 @@ export class LoopEvalRunner implements EvalRunnerPort {
           compression: "off",
           label: `eval ${task.id} on ${input.model} at ${input.effort}`,
           ...(input.signal ? { signal: input.signal } : {}),
+          ...(billing ? { billing } : {}),
         });
         cost += result.costUsdMicro;
         if (input.signal?.aborted) throw stopped(input.signal);
-        // A cap stop or a kill ends the set, not just the task.
-        if (result.outcome === "budget_exceeded" || result.outcome === "killed") {
-          throw new ForerunnerError(
-            result.outcome,
-            `eval ${task.id} ended ${result.outcome}: ${result.error?.message ?? ""}`.trim(),
-            { details: { task: task.id } },
-          );
+        // A kill ends the set. A budget stop ends it only when an outer cap (the month, the
+        // plan) is the reason; a task over its own budget is that task's failure.
+        if (result.outcome === "killed") {
+          throw new ForerunnerError("killed", `eval ${task.id} was stopped`, {
+            details: { task: task.id },
+          });
+        }
+        if (result.outcome === "budget_exceeded") {
+          await this.checkOuterCaps(task.id, 0, billing);
         }
         if (task.grader_files) writeFiles(workDir, task.grader_files);
         status =
@@ -410,6 +409,37 @@ export class LoopEvalRunner implements EvalRunnerPort {
       costUsdMicro: Math.round(cost),
       durationMs: Math.max(0, Math.round(clock.monotonic() - started)),
     };
+  }
+
+  /**
+   * The human's outer caps for one eval task (month, plan): anything but "allow" starts no
+   * further task (`budget_exceeded`, `details.level` names the cap). No caps port: no check.
+   */
+  private async checkOuterCaps(
+    taskId: string,
+    estimateUsdMicro: number,
+    billing: RunBilling | undefined,
+  ): Promise<void> {
+    if (!this.deps.caps) return;
+    const share = billing?.planUsageShare?.();
+    const capsBilling: CapsBilling | undefined = billing
+      ? {
+          sourceId: this.deps.billingSourceId,
+          kind: billing.kind,
+          ...(typeof share === "number" ? { planUsageShare: share } : {}),
+          ...(billing.planShareCap !== undefined ? { planShareCap: billing.planShareCap } : {}),
+        }
+      : undefined;
+    const outer = await this.deps.caps.check({ humanId: this.deps.humanId }, estimateUsdMicro, {
+      phase: "work",
+      ...(capsBilling ? { billing: capsBilling } : {}),
+    });
+    if (outer.decision === "allow") return;
+    throw new ForerunnerError(
+      "budget_exceeded",
+      `eval ${taskId} not started: ${outer.message ?? `${outer.level ?? "a"} cap reached`}`,
+      { details: { level: outer.level, decision: outer.decision, task: taskId } },
+    );
   }
 
   /** Mechanical checks; the first failure decides, a rubric without failures is "needs model". */

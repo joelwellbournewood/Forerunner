@@ -690,9 +690,10 @@ export interface ModelWatchDeps {
    */
   autoEvals?: () => boolean | Promise<boolean>;
   /**
-   * Called when a human consents to a report's withheld evals: an "evaluate" answer, or an
-   * "adopt" of a report whose evals were withheld. The daemon runs `run({ evals: true })` in
-   * the background; a hook that throws is logged, the decision stands.
+   * Called when a human consents to a report's withheld evals: an "evaluate" answer on a
+   * pending or reminded report, and nothing else (an adopt never starts a paid run). The
+   * daemon runs `run({ evals: true })` in the background; paid runs are single-flight, so an
+   * evaluate during a paid run joins it. A hook that throws is logged, the decision stands.
    */
   onEvalsRequested?: (event: ModelWatchEvalsRequestedEvent) => void | Promise<void>;
   /**
@@ -737,11 +738,15 @@ export interface ModelWatchResolveResult {
 }
 
 export const EVALS_DEFERRED_REASON =
-  "paid evals need the human's consent: answer 'evaluate', adopt the report, or turn on the model_watch run_evals setting";
+  "paid evals need the human's consent: answer 'evaluate', run evaluations, or turn on the model_watch run_evals setting";
 
 export class ModelWatch {
   readonly thresholds: WatchThresholds;
   private readonly inFlight = new Set<Promise<unknown>>();
+  /** The paid run in flight, if any: a second paid run joins it (single flight, ADR 0089). */
+  private paidRun: Promise<ModelWatchRunResult> | null = null;
+  /** Serialises the paid-or-free decision of each run in call order. */
+  private decisions: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: ModelWatchDeps) {
     this.thresholds = { ...DEFAULT_WATCH_THRESHOLDS, ...(deps.thresholds ?? {}) };
@@ -776,7 +781,30 @@ export class ModelWatch {
   run(opts: { signal?: AbortSignal; evals?: boolean } = {}): Promise<ModelWatchRunResult> {
     const signals = [opts.signal, this.deps.signal].filter((x): x is AbortSignal => !!x);
     const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
-    const p = this.runOnce({ signal, evals: opts.evals });
+    // Decide paid or free in call order (a chain), so that two runs asked for at once see each
+    // other: a paid run while one is in flight joins it instead of starting a second one.
+    // The chain carries the run in a box: it must not wait for the run itself to end.
+    const decided = this.decisions.then(
+      async (): Promise<{ run: Promise<ModelWatchRunResult> }> => {
+        const paid =
+          opts.evals ?? (this.deps.autoEvals ? (await this.deps.autoEvals()) === true : false);
+        if (paid && this.paidRun) return { run: this.paidRun };
+        const run = this.runOnce({ signal, evals: paid });
+        if (paid) {
+          this.paidRun = run;
+          const clear = () => {
+            if (this.paidRun === run) this.paidRun = null;
+          };
+          void run.then(clear, clear);
+        }
+        return { run };
+      },
+    );
+    this.decisions = decided.then(
+      () => undefined,
+      () => undefined,
+    );
+    const p = decided.then((box) => box.run);
     this.inFlight.add(p);
     void p.then(
       () => this.inFlight.delete(p),
@@ -798,8 +826,7 @@ export class ModelWatch {
   }): Promise<ModelWatchRunResult> {
     const { clock, store } = this.deps;
     throwIfStopped(opts.signal);
-    const evalsAllowed =
-      opts.evals ?? (this.deps.autoEvals ? (await this.deps.autoEvals()) === true : false);
+    const evalsAllowed = opts.evals === true;
     const planned: PlannedEval[] = [];
     const id = newId(clock.now());
     const skipped: string[] = [];
@@ -1106,11 +1133,25 @@ export class ModelWatch {
 
     throwIfStopped(opts.signal);
     // Withheld evals alone ask the human only when they would test something new (a candidate);
-    // the weekly lower-effort probes never nag (ADR 0089).
+    // the weekly lower-effort probes never nag, and a candidate the human already ignored with
+    // its evals withheld is not asked about again, nor is its new price row (ADR 0089).
+    const ignored = report.evals_deferred
+      ? await this.ignoredDeferredCandidates()
+      : new Set<string>();
+    const isIgnored = (provider: string, model: string) =>
+      ignored.has(`${provider}/${canonicalModelId(model)}`);
+    const ignoredRows = new Set(
+      modelDiff.new_models
+        .filter((m) => m.price_origin === "price_list" && isIgnored(m.provider, m.id))
+        .map((m) => canonicalModelId(m.id)),
+    );
     const needsDecision =
       report.recommendations.length > 0 ||
-      Object.keys(report.pricing_proposal).length > 0 ||
-      (report.evals_deferred?.planned.some((p) => p.role === "candidate") ?? false);
+      Object.keys(report.pricing_proposal).some((k) => !ignoredRows.has(k)) ||
+      (report.evals_deferred?.planned.some(
+        (p) => p.role === "candidate" && !isIgnored(p.provider, p.model),
+      ) ??
+        false);
     let health: ModelWatchHealth = {
       decision: needsDecision ? "pending" : "nothing_to_decide",
       request_id: null,
@@ -1205,6 +1246,14 @@ export class ModelWatch {
           { details: { reportId } },
         );
       }
+      // One paid run per answer: only an open (or reminded) report can be sent to evaluation.
+      if (health.decision !== "pending" && health.decision !== "remind") {
+        throw new ForerunnerError(
+          "validation",
+          `model watch report ${reportId} is ${health.decision}; only a pending or reminded report can be evaluated`,
+          { details: { reportId, decision: health.decision } },
+        );
+      }
       next = { ...health, decision: "evaluate", decided_at: now, by: answer.by };
     } else if (answer.decision === "adopt") {
       applied = await this.applyAdoption(report, answer);
@@ -1251,14 +1300,33 @@ export class ModelWatch {
     if (answer.decision === "adopt" && answer.by && this.deps.onAdopted) {
       await this.notifyAdopted({ reportId, by: answer.by, applied });
     }
-    // Consent to the withheld evals: "evaluate", or an adopt of a report that withheld them.
-    if (
-      answer.by &&
-      (answer.decision === "evaluate" || (answer.decision === "adopt" && report.evals_deferred))
-    ) {
+    // Consent to the withheld evals is "evaluate" and nothing else: an adopt ("yes", "ok",
+    // "approve") applies the report's rows and never starts a paid run (ADR 0089).
+    if (answer.by && answer.decision === "evaluate") {
       await this.requestEvals({ reportId, by: answer.by });
     }
     return { release: updated, decision: next.decision, applied };
+  }
+
+  /** `provider/model` of the candidates of reports the human ignored with their evals withheld. */
+  private async ignoredDeferredCandidates(): Promise<Set<string>> {
+    const rows = await this.deps.store.release.list(
+      { channel: MODEL_WATCH_CHANNEL },
+      { orderBy: "created_at desc", limit: 200 },
+    );
+    const out = new Set<string>();
+    for (const row of rows) {
+      if (healthOf(row).decision !== "ignored") continue;
+      let report: ModelWatchReport;
+      try {
+        report = reportFromRelease(row);
+      } catch {
+        continue;
+      }
+      for (const p of report.evals_deferred?.planned ?? [])
+        if (p.role === "candidate") out.add(`${p.provider}/${canonicalModelId(p.model)}`);
+    }
+    return out;
   }
 
   private async requestEvals(event: ModelWatchEvalsRequestedEvent): Promise<void> {
@@ -1568,7 +1636,7 @@ export function proposalSteps(report: ModelWatchReport): string[] {
   if (deferred) {
     const n = deferred.planned.length;
     steps.push(
-      `Evaluations not run (they cost money): ${n} eval set run(s) planned, at most USD ${(report.eval_budget_usd_micro / 1e6).toFixed(2)}. Answer "evaluate" to run them; "adopt" applies the price rows and runs them too.`,
+      `Evaluations not run (they cost money): ${n} eval set run(s) planned, at most USD ${(report.eval_budget_usd_micro / 1e6).toFixed(2)}. Only "evaluate" runs them; "adopt" applies the price rows and runs nothing.`,
     );
   }
   return steps;

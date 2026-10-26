@@ -2620,7 +2620,13 @@ least 90%) writes `specialists/<name>/specialist.md` with the one `status:` line
 live registry (`onPromoted`), so `RuntimeApp.specialists(name)` finds it at once. Anything
 else (a failed set, a set below 10 tasks, over budget, no model, an eval error, the name
 taken) keeps it proposed, the reason and the result on the card, a `warning` message in the
-inbox. Reject removes `proposed/<name>/` (the record stays on the card). An answer by
+inbox. Two refusals of the eval runner have their own outcomes and say what to do instead of
+"fix the prompt or the eval set" (ADR 0089, ADR 0071 amendment of 2026-10-26):
+`sandbox_unavailable` (the runner refused the process stand-in, `details.reason
+process_sandbox_not_allowed`: "install Docker or Podman, or allow the process sandbox, then
+approve again") and `cap_reached` (a `budget_exceeded` from the runner's caps check: "month cap
+past 80%", or the plan share for a subscription; approve again once the cap resets or is
+raised). Nothing ran in either case. `specialist-approval.test.ts` covers both. Reject removes `proposed/<name>/` (the record stays on the card). An answer by
 another human, an unreadable answer and a proposal whose prompt version changed since it was
 filed run nothing, are recorded and are filed again. Each step is a
 `registry.specialist_approval` audit row. In the daemon the evaluation runs in the

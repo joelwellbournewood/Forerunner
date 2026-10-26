@@ -241,7 +241,11 @@ lines, a name an active specialist or a pending proposal holds) comes back to th
 nothing on disk. The undo of the command is `SpecialistApprovals.withdraw`: the proposal is
 taken back (the same steps as a reject) while it still waits; a request the human already
 answered, or a running evaluation, refuses the undo with `claim_conflict`, and a proposal that
-went live is `not_found`. A proposal that reaches `proposed/` without a request (written
+went live is `not_found`. On a machine with no container engine, the approval's eval run of a
+specialist that runs commands ends `sandbox_unavailable` until Docker or Podman is installed or
+the human allows the process sandbox for evals (`model_watch.allow_process_sandbox`, high risk).
+A month past its 80% line ends it `cap_reached`. Neither counts against the proposal: approve
+again when the cause is gone (ADR 0089). A proposal that reaches `proposed/` without a request (written
 directly, pulled, hand-written) is filed by the daemon's next approvals sync (`fileMissing()`,
 run from `syncApprovals` on the answer route and the approvals poll, `FORERUNNER_APPROVALS_POLL_MS`,
 default 5 s, and at start); one whose request is open, or answered and waiting to be applied,

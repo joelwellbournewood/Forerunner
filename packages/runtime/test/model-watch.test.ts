@@ -1114,6 +1114,24 @@ describe("model watch: weekly trigger", () => {
     await again.tick();
     expect(started).toHaveLength(2);
   });
+
+  it("a persisted last run in the future (the clock was corrected back) is clamped to now: no run at once, the next a week later", async () => {
+    const clock = new SimulatedClock("2026-10-26T00:40:00Z");
+    const fired = memoryFiredKeys();
+    fired.set("model-watch-weekly", "2027-10-26T00:40:00.000Z");
+    const started: StartRequest[] = [];
+    const s = new Scheduler({ clock, fired, start: async (req) => void started.push(req) }, 60_000);
+    scheduleModelWatch(s, { timezone: "Europe/Zurich" });
+    await s.tick();
+    expect(started).toHaveLength(0);
+    expect(fired.get("model-watch-weekly")).toBe("2026-10-26T00:40:00.000Z");
+    await clock.advance(WEEK_MINUTES * 60_000 - 60_000);
+    await s.tick();
+    expect(started).toHaveLength(0);
+    await clock.advance(60_000);
+    await s.tick();
+    expect(started).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------------------
@@ -1192,7 +1210,7 @@ describe("model watch: paid evals need the human's consent", () => {
     expect(approvals.requests).toHaveLength(0);
   });
 
-  it("'evaluate' writes nothing and asks the daemon to run the evals; so does 'adopt' on a report whose evals were withheld", async () => {
+  it("'evaluate' writes nothing and asks the daemon to run the evals; 'adopt' of a report whose evals were withheld never starts a paid run", async () => {
     const w = await make();
     const requested: ModelWatchEvalsRequestedEvent[] = [];
     const watch = watchFor(w, {
@@ -1201,20 +1219,123 @@ describe("model watch: paid evals need the human's consent", () => {
       onEvalsRequested: (ev) => void requested.push(ev),
     });
     const first = await watch.run();
+    await expect(watch.resolve(first.report.id, { decision: "evaluate" })).rejects.toMatchObject({
+      code: "approval_required",
+    });
     const ev = await watch.resolve(first.report.id, { decision: "evaluate", by: w.human });
     expect(ev.decision).toBe("evaluate");
     expect(ev.applied).toEqual([]);
     expect(w.settings.writes).toEqual({ pricing: 0, models: 0 });
     expect(requested).toEqual([{ reportId: first.report.id, by: w.human }]);
-    await expect(watch.resolve(first.report.id, { decision: "evaluate" })).rejects.toMatchObject({
-      code: "approval_required",
-    });
 
+    // Adopt applies the price rows and nothing else: "yes", "ok" or "approve" is no consent
+    // to spend (the human's rule: paid work only on an explicit "evaluate").
     const second = await watch.run();
     const adopted = await watch.resolve(second.report.id, { decision: "adopt", by: w.human });
     expect(adopted.decision).toBe("adopted");
     expect(w.settings.writes.pricing).toBe(1);
-    expect(requested.map((r) => r.reportId)).toEqual([first.report.id, second.report.id]);
+    expect(requested.map((r) => r.reportId)).toEqual([first.report.id]);
+    for (const word of ["yes", "ok", "approve", "approved"]) {
+      const row = { answer: word, answered_by: w.human } as unknown as Parameters<
+        typeof answerFromHumanRequest
+      >[0];
+      expect(answerFromHumanRequest(row)?.decision).toBe("adopt");
+    }
+  });
+
+  it("'evaluate' is accepted only on a pending or reminded report: a second evaluate, or one on an ignored or adopted report, is refused and starts nothing", async () => {
+    const w = await make();
+    const requested: ModelWatchEvalsRequestedEvent[] = [];
+    const watch = watchFor(w, {
+      evals: new CountingEvals(),
+      autoEvals: null,
+      onEvalsRequested: (ev) => void requested.push(ev),
+    });
+    const a = await watch.run();
+    await watch.resolve(a.report.id, { decision: "evaluate", by: w.human });
+    await expect(
+      watch.resolve(a.report.id, { decision: "evaluate", by: w.human }),
+    ).rejects.toMatchObject({ code: "validation" });
+    const b = await watch.run();
+    await watch.resolve(b.report.id, { decision: "ignore", by: w.human });
+    await expect(
+      watch.resolve(b.report.id, { decision: "evaluate", by: w.human }),
+    ).rejects.toMatchObject({ code: "validation" });
+    const c = await watch.run();
+    await watch.resolve(c.report.id, { decision: "remind", by: w.human });
+    await watch.resolve(c.report.id, { decision: "evaluate", by: w.human });
+    expect(requested.map((r) => r.reportId)).toEqual([a.report.id, c.report.id]);
+  });
+
+  it("paid runs are single-flight: two explicit runs, or one overlapping a scheduled paid run, make one run", async () => {
+    const w = await make();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const evals = new CountingEvals(async (_input, n) => {
+      if (n === 1) await gate;
+    });
+    const watch = watchFor(w, { evals, autoEvals: () => true });
+    const scheduled = watch.run();
+    const asked = watch.run({ evals: true });
+    const again = watch.run({ evals: true });
+    release();
+    const [x, y, z] = await Promise.all([scheduled, asked, again]);
+    expect(y.report.id).toBe(x.report.id);
+    expect(z.report.id).toBe(x.report.id);
+    expect(evals.calls).toHaveLength(3);
+    const rows = await w.store.release.list({ channel: MODEL_WATCH_CHANNEL }, { limit: 10 });
+    expect(rows).toHaveLength(1);
+    // Once it has ended, the next explicit run is a new run.
+    await watch.run({ evals: true });
+    expect(evals.calls).toHaveLength(6);
+  });
+
+  it("a candidate the human already ignored with its evals withheld is not asked about again", async () => {
+    // Only the new candidate is on the price list: its price row and its withheld evals are
+    // the only things to decide.
+    const onlyCandidate: PriceList = {
+      as_of: "2026-10-19",
+      models: { "fake-sonnet-6": { input_per_mtok_usd: 1.5, output_per_mtok_usd: 7.5 } },
+    };
+    const w = await make();
+    const approvals = new FakeApprovals({ status: "pending", requestId: "hr-1" });
+    const watch = watchFor(w, {
+      evals: new CountingEvals(),
+      approvals,
+      autoEvals: null,
+      priceList: onlyCandidate,
+    });
+    const first = await watch.run();
+    expect(first.decision).toBe("pending");
+    await watch.resolve(first.report.id, { decision: "ignore", by: w.human });
+    const second = await watch.run();
+    expect(second.decision).toBe("nothing_to_decide");
+    expect(approvals.requests).toHaveLength(1);
+    // The report still records the candidate and what was withheld.
+    expect(second.report.evals_deferred?.planned.some((p) => p.model === "fake-sonnet-6")).toBe(
+      true,
+    );
+    // A new candidate asks again.
+    const w2 = await make({
+      listed: [...LISTED, { provider: "fake", id: "fake-sonnet-7", tier: "sonnet" }],
+    });
+    const watch2 = watchFor(w2, {
+      evals: new CountingEvals(),
+      approvals,
+      autoEvals: null,
+      priceList: {
+        ...onlyCandidate,
+        models: {
+          ...onlyCandidate.models,
+          "fake-sonnet-7": { input_per_mtok_usd: 1, output_per_mtok_usd: 5 },
+        },
+      },
+    });
+    const a = await watch2.run();
+    await watch2.resolve(a.report.id, { decision: "ignore", by: w2.human });
+    expect((await watch2.run()).decision).toBe("nothing_to_decide");
   });
 
   it("reads 'evaluate' and 'run evaluations' answers from the inbox", () => {

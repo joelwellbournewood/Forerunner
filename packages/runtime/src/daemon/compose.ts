@@ -86,7 +86,7 @@ import { DataImporter } from "../data/import.ts";
 import { registerDataTools } from "../data/tools.ts";
 import type { DataLimits } from "../data/types.ts";
 import { DeviceManager } from "../devices/index.ts";
-import type { EnforcementHooks, HookDeps, RunContext } from "../enforcement/hooks.ts";
+import type { EnforcementHooks, HookDeps, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import { KillFileWatcher } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
 import type { CapDecision, CapScope, CapsBilling, CapsPort } from "../enforcement/ports.ts";
@@ -251,6 +251,7 @@ import {
   VoiceProviderRegistry,
 } from "../voice/pkg.ts";
 import {
+  planUsageOf,
   RouterTaskBilling,
   sdkHostCommandsEnabled,
   seedBillingSources,
@@ -2072,6 +2073,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     modelWatchSettingsOf((await store.human.get(human.id))?.notify_prefs);
   // The daemon's stop: close() aborts every model watch run and waits for it to end.
   const modelWatchStop = new AbortController();
+  // How the eval runs' source bills, read before every eval task: its kind, and for a
+  // subscription the month's plan share and its cap, so the caps check the plan level too.
+  const evalBilling = async (): Promise<RunBilling | undefined> => {
+    const source = (await stateSources(store)(human.id)).find((s) => s.id === billingSourceId);
+    if (!source) return undefined;
+    if (source.kind === "subscription") {
+      const plan = await planUsageOf(store, clock, source);
+      return {
+        kind: "subscription",
+        planShareCap: plan.cap,
+        planUsageShare: () => plan.share,
+      };
+    }
+    return { kind: source.kind === "plan_credits" ? "plan_credits" : "api" };
+  };
   const evalRunner =
     opts.evalRunner ??
     new LoopEvalRunner({
@@ -2089,8 +2105,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // never in the process stand-in unless the human allowed it (ADR 0089).
       sandbox: sandboxPort,
       allowProcessSandbox: async () => (await watchSettings()).allowProcessSandbox,
-      // The human's month and its 80% line apply before every eval task, as to new work.
+      // The human's month and its 80% line apply before every eval task, as to new work, with
+      // the plan level of a subscription source.
       caps,
+      billing: evalBilling,
     });
   // Proposed specialists (spec C.5, ADR 0071): the approving answer runs the proposal's eval
   // set through the same eval runner as the model watch (every call under the hooks, charged

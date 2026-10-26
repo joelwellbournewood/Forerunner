@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
@@ -10,7 +10,41 @@ import {
   type EvalRunOutcome,
   MODEL_WATCH_CHANNEL,
 } from "../src/models/watch.ts";
+import type { ModelRef } from "../src/provider/types.ts";
 import { ScriptedProvider } from "./helpers.ts";
+
+/** Lists a new sonnet-tier model beside the haiku rung, so a run has a candidate to test. */
+class CandidateProvider extends ScriptedProvider {
+  override async listModels(): Promise<ModelRef[]> {
+    return [
+      { provider: "fake", id: "fake-haiku", tier: "haiku" },
+      { provider: "fake", id: "fake-sonnet", tier: "sonnet" },
+      { provider: "fake", id: "fake-sonnet-6", tier: "sonnet" },
+    ];
+  }
+}
+
+/** Prices for the fake rungs and the candidate, so the candidate is priced from the table. */
+function writePricing(home: string): void {
+  const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+  mkdirSync(dirs.config, { recursive: true });
+  const row = (i: number, o: number) => ({
+    input_per_mtok_usd: i,
+    output_per_mtok_usd: o,
+    cache_read_per_mtok_usd: i / 10,
+    cache_write_per_mtok_usd: i * 1.25,
+    as_of: "2026-10-01",
+    source: "override",
+  });
+  writeFileSync(
+    join(dirs.config, "pricing.json"),
+    JSON.stringify({
+      "fake-haiku": row(1, 5),
+      "fake-sonnet": row(3, 15),
+      "fake-sonnet-6": row(1.5, 7.5),
+    }),
+  );
+}
 
 /**
  * The 2026-10-26 incident on a fresh install: `fr setup` then `fr daemon` ran the weekly model
@@ -63,14 +97,19 @@ function freshHome(): string {
   return home;
 }
 
-async function boot(home: string, clock: SimulatedClock, evals: EvalRunnerPort) {
+async function boot(
+  home: string,
+  clock: SimulatedClock,
+  evals: EvalRunnerPort,
+  provider: ScriptedProvider = new ScriptedProvider([{ text: "hello" }], clock),
+) {
   const rt = await composeRuntime({
     env: { FORERUNNER_HOME: home },
     dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
     config: null,
     clock,
     vault: new MemoryVault({}),
-    provider: new ScriptedProvider([{ text: "hello" }], clock),
+    provider,
     registryDir: REGISTRY,
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "1.0.0",
@@ -105,18 +144,41 @@ describe("model watch on a fresh install", () => {
     await second.modelWatch.settled();
     expect(evals.calls).toHaveLength(0);
     expect(await reports(second)).toHaveLength(1);
+    await second.close();
+    open.splice(open.indexOf(second), 1);
+
+    // Once per week: a boot a week after the first run runs the free check again, once.
+    await clock.advance(7 * 24 * 60 * 60_000);
+    const third = await boot(home, clock, evals);
+    await third.scheduler.tick();
+    await third.scheduler.tick();
+    await third.modelWatch.settled();
+    expect(evals.calls).toHaveLength(0);
+    expect(await reports(third)).toHaveLength(2);
   });
 
   it("the human's opt-in setting turns the scheduled evals on; 'evaluate' on a report runs them once", async () => {
     const home = freshHome();
+    writePricing(home);
     const clock = new SimulatedClock("2026-10-26T00:40:00Z");
     const evals = new RecordingEvals();
-    const rt = await boot(home, clock, evals);
-    const report = (await rt.modelWatch.run()).report;
+    const rt = await boot(home, clock, evals, new CandidateProvider([{ text: "hi" }], clock));
+    const first = await rt.modelWatch.run();
+    expect(first.decision).toBe("pending");
+    expect(first.report.evals_deferred?.planned.some((p) => p.model === "fake-sonnet-6")).toBe(
+      true,
+    );
     expect(evals.calls).toHaveLength(0);
-    await rt.modelWatch.resolve(report.id, { decision: "evaluate", by: rt.human.id });
+    await rt.modelWatch.resolve(first.report.id, { decision: "evaluate", by: rt.human.id });
     await rt.modelWatch.settled();
     expect(evals.calls.length).toBeGreaterThan(0);
+    // One paid run for the answer: a second "evaluate" is refused and starts nothing.
+    const once = evals.calls.length;
+    await expect(
+      rt.modelWatch.resolve(first.report.id, { decision: "evaluate", by: rt.human.id }),
+    ).rejects.toMatchObject({ code: "validation" });
+    await rt.modelWatch.settled();
+    expect(evals.calls.length).toBe(once);
 
     const n = evals.calls.length;
     const human = await rt.store.human.mustGet(rt.human.id);

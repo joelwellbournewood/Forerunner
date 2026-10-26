@@ -467,8 +467,9 @@ export function UpdatesPage() {
             {report.evals_deferred ? (
               <p className="mt-2 text-xs text-neutral-500" data-testid="model-watch-deferred">
                 Evaluations not run: {report.evals_deferred.planned.length} eval set run(s) would
-                cost money and count against your caps. Run evaluations to measure them, or turn on
-                the model_watch run_evals setting.
+                cost money and count against your caps. Only Run evaluations (or the model_watch
+                run_evals setting) runs them. Adopt applies the price rows only and runs no
+                evaluation.
               </p>
             ) : null}
             {health?.decision === "pending" ? (

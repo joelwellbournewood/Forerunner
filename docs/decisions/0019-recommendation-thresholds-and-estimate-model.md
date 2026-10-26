@@ -125,7 +125,7 @@ Review of the first build found two things the decision above left implicit.
 ## Amendment 2026-10-26: the eval budget bounds a run the human consented to
 
 ADR 0089 changes when the evals run, not the thresholds. A watch run makes no paid eval
-unless the human consented to it: an explicit "run evaluations", an `evaluate` or `adopt`
-answer on a report whose evals were withheld, or the opt-in setting `model_watch.run_evals`
+unless the human consented to it: an explicit "run evaluations", an `evaluate`
+answer on a report whose evals were withheld (an adopt never starts a paid run), or the opt-in setting `model_watch.run_evals`
 (default off). The 5 USD `evalBudgetUsdMicro` now caps that consented run. The consequence
 above ("roughly 20 USD a month") holds only for an install that turned the opt-in on.

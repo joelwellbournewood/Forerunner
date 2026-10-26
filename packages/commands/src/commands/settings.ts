@@ -24,6 +24,11 @@ export interface SettingSpec {
   label: string;
   scope: "project" | "global";
   risk: Risk;
+  /**
+   * The risk of one value, when it is not the key's flat `risk`: `model_watch` with
+   * `allow_process_sandbox: true` is high (device confirmation), ADR 0089.
+   */
+  riskFor?: (value: unknown) => Risk;
   schema: z.ZodType<JsonValue>;
   /** A column instead of the JSON bag, when the row has one. */
   column?: keyof ProjectRow | keyof HumanRow;
@@ -239,6 +244,13 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     label: "the model watch evals",
     scope: "global",
     risk: "medium",
+    // Letting eval commands run without a container is a weaker sandbox: the device confirms.
+    riskFor: (value) =>
+      value &&
+      typeof value === "object" &&
+      (value as Record<string, unknown>).allow_process_sandbox === true
+        ? "high"
+        : "medium",
     schema: ModelWatchSetting as unknown as z.ZodType<JsonValue>,
     description:
       "Model watch (ADR 0089): run_evals runs the paid eval sets on every weekly run without asking (default off); allow_process_sandbox lets eval tasks run commands in the process stand-in when no container engine exists (default off).",
@@ -268,6 +280,11 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     },
   },
 };
+
+/** The risk of setting `value` on the key: its `riskFor` when it has one, else its `risk`. */
+export function settingRisk(spec: SettingSpec, value: unknown): Risk {
+  return spec.riskFor ? spec.riskFor(value) : spec.risk;
+}
 
 /** Own keys only: "constructor" or "__proto__" are unknown settings, not prototype lookups. */
 export function settingSpec(key: string): SettingSpec {
@@ -392,7 +409,7 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
   name: "settings.set",
   description: `Change a setting by key. Keys: ${Object.keys(SETTING_SPECS).join(", ")}.`,
   params,
-  risk: (p) => settingSpec(p.key).risk,
+  risk: (p) => settingRisk(settingSpec(p.key), p.value),
   maxRisk: "high",
   scope: (p) =>
     Object.hasOwn(SETTING_SPECS, p.key) && SETTING_SPECS[p.key]?.scope === "global"
@@ -408,7 +425,7 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
       oldValue: show(t.current),
       newValue: newValueOf(t),
       scope: t.spec.scope === "global" ? "global" : "project",
-      risk: t.spec.risk,
+      risk: settingRisk(t.spec, t.value),
       sentence: sentenceOf(t),
       reversible: true,
       projectId: t.project?.id ?? null,

@@ -146,6 +146,10 @@ describe("Updates screen", () => {
     expect(within(latest).getByTestId("model-watch-deferred")).toHaveTextContent(
       "Evaluations not run",
     );
+    // Only "Run evaluations" spends: adopting applies the price rows and runs nothing.
+    expect(within(latest).getByTestId("model-watch-deferred")).toHaveTextContent(
+      "Adopt applies the price rows only and runs no evaluation",
+    );
     await user.click(screen.getByTestId("model-watch-evaluate"));
     await waitFor(() =>
       expect(postedCalls(harness, "/model-watch/reports/mw_2/answer")).toHaveLength(1),

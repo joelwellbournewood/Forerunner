@@ -166,3 +166,20 @@ recorded, what promotion writes, and how the answer is applied exactly once.
 - **A directory watch on `proposed/`** (2026-10-25). Rejected: the tool files its own request,
   and a hand-written proposal is filed within one approvals poll; a watcher adds a platform
   dependency for seconds of latency.
+
+## Amendment 2026-10-26: two refusals are not eval failures
+
+The gate shares the model watch's eval runner, and ADR 0089 gave the runner two refusals.
+It refuses an eval task that would run its commands in the process stand-in unless the human
+allowed it. It starts no eval task once the human's month (or a subscription's plan share) is
+past its 80% line. Before this amendment the gate recorded both as `eval_error` and told the
+human to "fix the prompt or the eval set", which was wrong in both cases. They now have their
+own outcomes, and the proposal stays proposed with nothing run:
+
+- `sandbox_unavailable`: "install Docker or Podman, or allow the process sandbox, then approve
+  again". The switch is `model_watch.allow_process_sandbox`, which is high risk and needs the
+  device to confirm.
+- `cap_reached`: "month cap past 80%" (or the cap the runner names, such as the plan share).
+  The human can approve again once the cap resets or is raised.
+
+Both count as failed applications in `syncAnswers`, like `over_budget`.

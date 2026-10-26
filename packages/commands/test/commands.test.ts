@@ -455,6 +455,43 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("settings.set model_watch: allowing the process sandbox for evals is high risk and needs the device, not a tap", async () => {
+    const w = await world();
+    const riskOf = async (value: unknown) =>
+      (
+        await w.executor.plan(
+          { name: "settings.set", params: { key: "model_watch", value } },
+          w.ctx(),
+        )
+      ).impact.risk;
+    expect(await riskOf({ run_evals: true })).toBe("medium");
+    expect(await riskOf({ allow_process_sandbox: false })).toBe("medium");
+    expect(await riskOf({ allow_process_sandbox: true })).toBe("high");
+    expect(await riskOf({ run_evals: true, allow_process_sandbox: true })).toBe("high");
+    const tapped = await w.executor.execute({
+      name: "settings.set",
+      params: { key: "model_watch", value: { allow_process_sandbox: true } },
+      ctx: w.ctx(),
+      confirmation: tap(w.human.id),
+    });
+    expect(tapped.status).not.toBe("done");
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs.model_watch).toBeUndefined();
+    const confirmed = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "model_watch", value: { allow_process_sandbox: true } },
+        ctx: w.ctx(),
+        confirmation: deviceOk(w.phone.id),
+      }),
+    );
+    expect(confirmed.card.impact.risk).toBe("high");
+    expect(confirmed.sentence).toContain("process sandbox");
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs.model_watch).toEqual({
+      allow_process_sandbox: true,
+    });
+    await w.store.close();
+  });
+
   it("settings.set refuses prototype keys as unknown settings, not as internal errors", async () => {
     const w = await world();
     for (const key of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {

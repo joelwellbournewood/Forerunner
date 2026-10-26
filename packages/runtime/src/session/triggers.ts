@@ -256,7 +256,14 @@ export class Scheduler {
     for (const s of this.schedules.values()) {
       if (!s.enabled) continue;
       if (s.kind === "every") {
-        const last = this.lastEvery.get(s.id) ?? this.persistedEvery(s);
+        let last = this.lastEvery.get(s.id) ?? this.persistedEvery(s);
+        if (last > now) {
+          // A last run in the future (the clock was corrected back): clamp it to now, so the
+          // schedule waits one interval from here instead of never firing or firing at once.
+          last = now;
+          this.lastEvery.set(s.id, now);
+          if (s.persist) this.fired.set(s.id, new Date(now).toISOString());
+        }
         if (now - last >= (s.everyMinutes ?? 60) * 60_000) {
           this.lastEvery.set(s.id, now);
           if (s.persist) this.fired.set(s.id, new Date(now).toISOString());

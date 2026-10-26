@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import type { PricingTable } from "@forerunner/billing";
 import { type Clock, errorMessage, ForerunnerError, join, log } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, JsonValue, StateStore } from "@forerunner/state";
-import { loadEvalTasksLite } from "../models/eval-runner.ts";
+import { loadEvalTasksLite, PROCESS_SANDBOX_REFUSED } from "../models/eval-runner.ts";
 import type { EvalRunnerPort, EvalRunOutcome } from "../models/watch.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import { isPidAlive } from "../update/lock.ts";
@@ -178,6 +178,10 @@ export type SpecialistApplyOutcome =
   | "eval_failed"
   | "eval_set_too_small"
   | "over_budget"
+  /** The eval set runs commands, no container engine exists and the process sandbox is not allowed (ADR 0089). */
+  | "sandbox_unavailable"
+  /** The human's month (or plan) is past its 80% line or at its cap: no eval task starts (ADR 0089). */
+  | "cap_reached"
   | "no_model"
   | "eval_error"
   | "name_taken"
@@ -1026,6 +1030,7 @@ export class SpecialistApprovals {
       outcome: SpecialistApplyOutcome,
       reason: string,
       evalResult?: ProposalEvalResult,
+      next = `fix the prompt or the eval set and approve again (fr specialists approve ${name}), or reject it`,
     ): Promise<SpecialistApplyResult> => {
       // The directory can be gone (removed by hand); the card still gets the outcome.
       if (record && existsSync(dir)) {
@@ -1057,7 +1062,7 @@ export class SpecialistApprovals {
         evalResult?.costUsdMicro ?? 0,
       );
       await this.note(
-        `Specialist "${name}" was approved but stays proposed: ${reason}. The result is recorded in ${PROPOSED_DIR}/${name}/${PROPOSAL_FILE}; fix the prompt or the eval set and approve again (fr specialists approve ${name}), or reject it.`,
+        `Specialist "${name}" was approved but stays proposed: ${reason}. The result is recorded in ${PROPOSED_DIR}/${name}/${PROPOSAL_FILE}; ${next}.`,
         row.project_id,
       );
       logger.info("specialist stays proposed", { name, outcome, reason });
@@ -1121,6 +1126,27 @@ export class SpecialistApprovals {
         pricing: target.pricing,
       });
     } catch (e) {
+      // Two refusals are not a failure of the proposal and say what the human can do (ADR 0089).
+      if (e instanceof ForerunnerError && e.details?.reason === PROCESS_SANDBOX_REFUSED) {
+        const again = `install Docker or Podman, or allow the process sandbox, then approve again (fr specialists approve ${name})`;
+        return keep(
+          "sandbox_unavailable",
+          `its eval set runs commands and this machine has no container engine; nothing ran. To evaluate it, ${again}`,
+          undefined,
+          again,
+        );
+      }
+      if (e instanceof ForerunnerError && e.code === "budget_exceeded") {
+        const level = typeof e.details?.level === "string" ? e.details.level : "month";
+        const what = level === "plan" ? "the subscription's plan share is" : `the ${level} cap is`;
+        const again = `approve again (fr specialists approve ${name}) once the cap resets or is raised`;
+        return keep(
+          "cap_reached",
+          `${level === "month" ? "month cap past 80%" : `${what} past 80%`}: no eval task starts (${errorMessage(e)})`,
+          undefined,
+          again,
+        );
+      }
       return keep("eval_error", `the eval run failed: ${errorMessage(e)}`);
     }
     const verdict = gateVerdict(outcome);
@@ -1281,6 +1307,8 @@ function count(out: SpecialistSyncResult, r: SpecialistApplyResult): void {
     r.outcome === "eval_failed" ||
     r.outcome === "eval_set_too_small" ||
     r.outcome === "over_budget" ||
+    r.outcome === "sandbox_unavailable" ||
+    r.outcome === "cap_reached" ||
     r.outcome === "no_model" ||
     r.outcome === "eval_error" ||
     r.outcome === "name_taken"

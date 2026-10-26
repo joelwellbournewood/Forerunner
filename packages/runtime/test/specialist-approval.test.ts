@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { syncRegistry } from "../../../scripts/sync-registry.ts";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { fileTools } from "../src/daemon/tools.ts";
-import { LoopEvalRunner } from "../src/models/eval-runner.ts";
+import { LoopEvalRunner, PROCESS_SANDBOX_REFUSED } from "../src/models/eval-runner.ts";
 import type { EvalRunInput, EvalRunnerPort } from "../src/models/watch.ts";
 import { ProviderRegistry } from "../src/provider/registry.ts";
 import {
@@ -517,7 +517,7 @@ describe("specialist approval: approve runs the eval set", () => {
     const w = await make({
       evals: {
         run: async () => {
-          throw new ForerunnerError("budget_exceeded", "monthly cap reached");
+          throw new ForerunnerError("provider_error", "the provider answered 500");
         },
       },
     });
@@ -526,8 +526,50 @@ describe("specialist approval: approve runs the eval set", () => {
     expect((await w.approvals.syncAnswers()).failed).toBe(1);
     const c = card(await w.store.humanRequest.mustGet(request.id));
     expect(c.outcome).toBe("eval_error");
-    expect(String(c.reason)).toContain("monthly cap reached");
+    expect(String(c.reason)).toContain("the provider answered 500");
     expect(existsSync(join(proposedDir(w), "specialist.md"))).toBe(true);
+  });
+
+  it("an eval run refused the process sandbox, or stopped by the month cap, gets its own outcome and says what to do (ADR 0089)", async () => {
+    const sandboxed = await make({
+      evals: {
+        run: async () => {
+          throw new ForerunnerError("not_supported", "eval localizer-001 needs a container", {
+            details: { reason: PROCESS_SANDBOX_REFUSED, task: "localizer-001" },
+          });
+        },
+      },
+    });
+    const a = await sandboxed.approvals.propose(proposalFor(sandboxed.human));
+    await answer(sandboxed, a.request, "approve");
+    expect((await sandboxed.approvals.syncAnswers()).failed).toBe(1);
+    const ac = card(await sandboxed.store.humanRequest.mustGet(a.request.id));
+    expect(ac.outcome).toBe("sandbox_unavailable");
+    expect(String(ac.reason)).toMatch(
+      /install Docker or Podman, or allow the process sandbox, then approve again/,
+    );
+    expect(String(ac.reason)).not.toMatch(/fix the prompt/);
+    const notes = await sandboxed.store.message.list({ to_human_id: sandboxed.human });
+    expect(notes.map((n) => n.body).join("\n")).toMatch(/Docker or Podman/);
+    expect(notes.map((n) => n.body).join("\n")).not.toMatch(/fix the prompt or the eval set/);
+    expect(existsSync(join(proposedDir(sandboxed), "specialist.md"))).toBe(true);
+
+    const capped = await make({
+      evals: {
+        run: async () => {
+          throw new ForerunnerError("budget_exceeded", "eval localizer-001 not started", {
+            details: { level: "month", decision: "finish_current" },
+          });
+        },
+      },
+    });
+    const b = await capped.approvals.propose(proposalFor(capped.human));
+    await answer(capped, b.request, "approve");
+    expect((await capped.approvals.syncAnswers()).failed).toBe(1);
+    const bc = card(await capped.store.humanRequest.mustGet(b.request.id));
+    expect(bc.outcome).toBe("cap_reached");
+    expect(String(bc.reason)).toMatch(/month cap past 80%/);
+    expect(existsSync(join(proposedDir(capped), "specialist.md"))).toBe(true);
   });
 
   it("a proposal edited after it was filed is not evaluated under the old approval; it is filed again", async () => {
