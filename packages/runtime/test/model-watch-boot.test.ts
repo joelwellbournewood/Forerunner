@@ -11,6 +11,7 @@ import {
   type EvalRunOutcome,
   MODEL_WATCH_BASELINE_CHANNEL,
   MODEL_WATCH_CHANNEL,
+  recordModelWatchBaseline,
 } from "../src/models/watch.ts";
 import type { ModelRef } from "../src/provider/types.ts";
 import { ScriptedProvider } from "./helpers.ts";
@@ -374,6 +375,28 @@ describe("model watch baseline at daemon start", () => {
     const second = await restart(home, clock, first.rt);
     expect(second.provider.listings).toBe(0);
     expect(await snapshot(second.rt)).toEqual(once);
+  });
+
+  it("closes a covered pending request at boot when the baseline row already exists (no seed)", async () => {
+    const home = freshHome();
+    const clock = new SimulatedClock("2026-10-26T10:30:00Z");
+    const before = await preUpgradeStore(home, clock);
+    // A baseline written without its close (a boot that stopped between the two steps).
+    await recordModelWatchBaseline(before.rt.store, {
+      provider: "fake",
+      models: before.pending.report.providers[0]?.listed.map((m) => ({
+        provider: "fake",
+        id: m.id,
+        tier: m.tier,
+      })) as ModelRef[],
+      reportId: before.pending.report.id,
+    });
+    expect((await before.rt.store.humanRequest.get(before.requestId))?.status).toBe("open");
+    const after = await restart(home, clock, before.rt);
+    expect(after.provider.listings).toBe(0);
+    expect((await after.rt.store.humanRequest.get(before.requestId))?.status).toBe("withdrawn");
+    const [row] = await reports(after.rt);
+    expect((row?.health as { decision?: string } | undefined)?.decision).toBe("nothing_to_decide");
   });
 
   it("leaves an answered request and its decision alone", async () => {

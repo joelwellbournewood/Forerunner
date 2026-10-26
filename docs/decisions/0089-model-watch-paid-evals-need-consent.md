@@ -189,9 +189,11 @@ An install made that morning on older code had the pending "10 new" request open
 the seed and close ran only inside a watch run, and the persisted weekly schedule had fired
 at 10:29Z, so the next run was a week away. The daemon now runs the free, local part of item
 8 at start (`ModelWatch.seedBaselinesAtStart`): a registered provider without a baseline row
-is seeded from the earliest report that listed it, and if any was seeded the covered pending
-requests are closed with the same guarded close the run uses (an answered request is never
-overridden). It lists no provider, calls no model or eval, writes no report and is
+is seeded from the earliest report that listed it, and whenever any baseline exists the
+covered pending requests are closed with the same guarded close the run uses (an answered
+request is never overridden); a run likewise closes them whenever a baseline exists, not only
+after it seeded one. A boot while sync is paused skips the step; the first run after the
+resume does it. It lists no provider, calls no model or eval, writes no report and is
 idempotent, so it runs on every boot. Rejected: running a full watch at start when a
 baseline is missing (a provider call, and a report the human did not ask for) and clearing
 the persisted schedule on upgrade (the same, a week early).
