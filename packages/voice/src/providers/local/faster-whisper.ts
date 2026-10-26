@@ -164,8 +164,18 @@ export class FasterWhisperStt implements SttProvider {
   private readonly logger: Logger;
   private process: HelperProcess | null = null;
   private ready: Promise<void> | null = null;
-  private readyResolve: (() => void) | null = null;
-  private readyReject: ((e: unknown) => void) | null = null;
+  /**
+   * Each helper's own pending ready: settled by its ready line, its exit, its load timer (while
+   * it is still the current helper) or its being let go. Never another helper's.
+   */
+  private readonly readyWaiters = new Map<
+    HelperProcess,
+    { resolve: () => void; reject: (e: unknown) => void }
+  >();
+  /** Stops of helpers let go outside dispose() (the retry's CPU helper); dispose() awaits them. */
+  private readonly stopping = new Set<Promise<void>>();
+  /** dispose() is running: a closing session starts no helper in the background. */
+  private disposing = false;
   private isReady = false;
   private pending: Buffer[] = [];
   private current: FasterWhisperSession | null = null;
@@ -239,15 +249,35 @@ export class FasterWhisperStt implements SttProvider {
     // the next utterance starts the usual (GPU) helper.
     const p = this.process;
     if (p && p === this.retryOnly) {
-      this.logger.info("stopping the retry's CPU helper; the next utterance starts the usual one");
       this.retryOnly = null;
       this.process = null;
       this.isReady = false;
       this.ready = null;
       this.helperDevice = null;
       this.pending = [];
-      void p.stop(encodeInFrame(STT_IN.close));
+      this.letGo(p, "the retried utterance ended");
+      // Load the usual (GPU) helper now, in the background, rather than at the next turn.
+      if (!this.disposing && !this.disposed) {
+        this.logger.info(
+          "stopped the retry's CPU helper; starting the usual helper for the next utterance",
+        );
+        void this.ensureProcess().catch(() => {
+          // reported to the next session by start()
+        });
+      }
     }
+  }
+
+  /**
+   * Stop a helper the provider no longer uses: its pending ready (if it was still loading) is
+   * rejected, and the stop is kept in `stopping` until the process has exited.
+   */
+  private letGo(p: HelperProcess, why: string): void {
+    this.readyWaiters
+      .get(p)
+      ?.reject(new ForerunnerError("unavailable", `faster-whisper helper let go: ${why}`));
+    const stop = p.stop(encodeInFrame(STT_IN.close)).finally(() => this.stopping.delete(stop));
+    this.stopping.add(stop);
   }
 
   /**
@@ -261,24 +291,32 @@ export class FasterWhisperStt implements SttProvider {
   }
 
   async dispose(): Promise<void> {
-    // An utterance still open ends here: the helper's exit, once it comes, belongs to a helper
-    // already let go and only logs (a new utterance may be on a new helper by then).
-    if (this.current && !this.current.closed)
-      this.current.deliver({
-        type: "error",
-        code: "provider_error",
-        message: "faster-whisper helper stopped",
-        retryable: true,
-      });
-    const p = this.process;
-    this.process = null;
-    this.isReady = false;
-    this.ready = null;
-    this.pending = [];
-    this.helperDevice = null;
-    this.nextOnCpu = false;
-    this.retryOnly = null;
-    if (p) await p.stop(encodeInFrame(STT_IN.close));
+    this.disposing = true;
+    try {
+      // An utterance still open ends here: the helper's exit, once it comes, belongs to a helper
+      // already let go and only logs (a new utterance may be on a new helper by then). Ending
+      // it may let go of the retry's CPU helper (sessionClosed); that stop is awaited below.
+      if (this.current && !this.current.closed)
+        this.current.deliver({
+          type: "error",
+          code: "provider_error",
+          message: "faster-whisper helper stopped",
+          retryable: true,
+        });
+      const p = this.process;
+      this.process = null;
+      this.isReady = false;
+      this.ready = null;
+      this.pending = [];
+      this.helperDevice = null;
+      this.nextOnCpu = false;
+      this.retryOnly = null;
+      if (p) this.letGo(p, "stopped");
+      // Every helper this provider let go has exited when dispose() (and retire()) resolves.
+      await Promise.all([...this.stopping]);
+    } finally {
+      this.disposing = false;
+    }
   }
 
   private helperArgv(python: string, onCpu: boolean): string[] {
@@ -310,16 +348,18 @@ export class FasterWhisperStt implements SttProvider {
         new ForerunnerError("unavailable", "faster-whisper provider was disposed (retired)"),
       );
     if (this.ready) return this.ready;
-    this.ready = (async () => {
+    const ready = (async () => {
       let python = this.opts.python ?? this.pythonExe;
       if (!python) {
         const probe = await probePythonModule("faster_whisper", { env: this.opts.env });
         python = probe.python;
         if (!python) throw new ForerunnerError("unavailable", probe.reason);
       }
+      let resolve!: () => void;
+      let reject!: (e: unknown) => void;
       const readyPromise = new Promise<void>((res, rej) => {
-        this.readyResolve = res;
-        this.readyReject = rej;
+        resolve = res;
+        reject = rej;
       });
       // One line reader per helper process: a helper that dies in the middle of a line leaves
       // its half line behind with it, never in front of the next helper's ready line.
@@ -336,27 +376,43 @@ export class FasterWhisperStt implements SttProvider {
           if (this.process === proc) this.onStdout(lines, d);
         },
         onExit: (code, signal) => this.onExit(proc, code, signal),
-        onSpawnError: (err) => this.readyReject?.(err),
+        onSpawnError: (err) => reject(err),
+      });
+      const settled = () => this.readyWaiters.delete(proc);
+      this.readyWaiters.set(proc, {
+        resolve: () => {
+          settled();
+          resolve();
+        },
+        reject: (e) => {
+          settled();
+          reject(e);
+        },
       });
       this.process = proc;
       this.helperDevice = null;
       if (onCpu) this.retryOnly = proc;
       const cancel = this.clock.setTimeout(() => {
-        this.readyReject?.(
-          new ForerunnerError("timeout", "faster-whisper helper did not become ready"),
-        );
+        // Only the current helper's own load times out here; one let go was settled then.
+        if (this.process !== proc) return;
+        this.readyWaiters
+          .get(proc)
+          ?.reject(new ForerunnerError("timeout", "faster-whisper helper did not become ready"));
         proc.kill();
       }, this.opts.readyTimeoutMs ?? 120_000);
       try {
         await readyPromise;
       } finally {
         cancel();
+        settled();
       }
     })();
-    this.ready.catch(() => {
-      this.ready = null;
+    this.ready = ready;
+    // A failed load forgets itself, never a newer helper's load started meanwhile.
+    ready.catch(() => {
+      if (this.ready === ready) this.ready = null;
     });
-    return this.ready;
+    return ready;
   }
 
   private onStdout(lines: LineReader, data: Buffer): void {
@@ -382,7 +438,7 @@ export class FasterWhisperStt implements SttProvider {
       case "ready": {
         this.isReady = true;
         this.helperDevice = msg.device ?? null;
-        this.readyResolve?.();
+        if (this.process) this.readyWaiters.get(this.process)?.resolve();
         const frames = this.pending.splice(0);
         for (const f of frames) this.process?.write(f);
         break;
@@ -407,7 +463,10 @@ export class FasterWhisperStt implements SttProvider {
       case "error": {
         const message = msg.message ?? "helper error";
         if (!this.isReady) {
-          this.readyReject?.(new ForerunnerError("unavailable", message));
+          if (this.process)
+            this.readyWaiters
+              .get(this.process)
+              ?.reject(new ForerunnerError("unavailable", message));
         } else {
           this.current?.deliver({
             type: "error",
@@ -462,7 +521,7 @@ export class FasterWhisperStt implements SttProvider {
     if (this.retryOnly === proc) this.retryOnly = null;
     if (!wasReady) {
       this.logger.warn("helper exited before it was ready", fields);
-      this.readyReject?.(
+      this.readyWaiters.get(proc)?.reject(
         new ForerunnerError("unavailable", `faster-whisper helper exited, ${exit.text}`, {
           details,
         }),

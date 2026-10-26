@@ -211,4 +211,50 @@ class WhisperModel:
       { samples: 800, beam_size: 5, temperature: "default" },
     ]);
   });
+
+  it("parse_decode refuses temperatures that are not finite numbers >= 0", () => {
+    // Python's json reads NaN, Infinity and -Infinity; none is a temperature.
+    const cases = [
+      '{"temperature": NaN}',
+      '{"temperature": [0, Infinity]}',
+      '{"temperature": -Infinity}',
+      '{"temperature": [-0.5]}',
+      '{"temperature": []}',
+      '{"temperature": [true]}',
+      '{"beam_size": 0}',
+      '{"beam_size": 1.5}',
+      '{"best_of": 2}',
+      "[1]",
+    ];
+    const r = spawnSync(
+      python as string,
+      [
+        "-c",
+        [
+          "import json, sys",
+          `sys.path.insert(0, ${JSON.stringify(helperDir)})`,
+          "import fr_stt",
+          `cases = json.loads(${JSON.stringify(JSON.stringify(cases))})`,
+          "out = []",
+          "for c in cases:",
+          "    try:",
+          "        fr_stt.parse_decode(c.encode('utf-8'))",
+          "        out.append('accepted')",
+          "    except ValueError:",
+          "        out.append('refused')",
+          'out.append(json.dumps(fr_stt.parse_decode(b\'{"beam_size": 1, "temperature": [0, 0.2]}\')))',
+          "out.append(json.dumps(fr_stt.parse_decode(b'{\"temperature\": 0}')))",
+          "print(json.dumps(out))",
+        ].join("\n"),
+      ],
+      { encoding: "utf8", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    const out = JSON.parse(r.stdout.trim()) as string[];
+    expect(out.slice(0, cases.length)).toEqual(cases.map(() => "refused"));
+    expect(out.slice(cases.length)).toEqual([
+      '{"beam_size": 1, "temperature": [0.0, 0.2]}',
+      '{"temperature": 0.0}',
+    ]);
+  });
 });

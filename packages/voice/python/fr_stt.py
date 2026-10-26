@@ -41,6 +41,7 @@ import argparse
 import ctypes
 import faulthandler
 import json
+import math
 import os
 import queue
 import re
@@ -61,8 +62,8 @@ KIND_DECODE = 4
 
 
 def parse_decode(payload):
-    """A decode frame's options: {"beam_size": int >= 1, "temperature": float or [float, ...]},
-    both optional. Anything else is refused with ValueError."""
+    """A decode frame's options: {"beam_size": int >= 1, "temperature": a finite float >= 0 or a
+    non-empty list of them}, both optional. Anything else is refused with ValueError."""
     try:
         raw = json.loads(payload.decode("utf-8"))
     except Exception as e:
@@ -77,8 +78,12 @@ def parse_decode(payload):
             out[key] = value
         elif key == "temperature":
             values = value if isinstance(value, list) else [value]
-            if not values or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in values):
-                raise ValueError("temperature must be a number or a list of numbers")
+            # json reads NaN and Infinity: a temperature is a finite number >= 0.
+            if not values or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0
+                for v in values
+            ):
+                raise ValueError("temperature must be a finite number >= 0 or a list of them")
             out[key] = [float(v) for v in values] if isinstance(value, list) else float(value)
         else:
             raise ValueError("unknown option %s" % key)

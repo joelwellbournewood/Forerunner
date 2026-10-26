@@ -26,6 +26,12 @@ const recordFile = arg("--record-file", "");
 const requested = arg("--device", "auto");
 const device = requested === "auto" ? "cpu" : requested;
 const computeType = arg("--compute-type", "default");
+// Model load time: the ready line comes after `--ready-delay-ms`, or `--cpu-ready-delay-ms` on
+// the CPU (the retry's helper after a GPU crash). `--pid-file` gets "<device> <pid>" per start.
+const readyDelayMs = Number(arg("--ready-delay-ms", "0"));
+const cpuReadyDelayMs = Number(arg("--cpu-ready-delay-ms", String(readyDelayMs)));
+const pidFile = arg("--pid-file", "");
+if (pidFile) appendFileSync(pidFile, `${device} ${process.pid}\n`);
 const crashed = crashFile && existsSync(crashFile) ? Number(readFileSync(crashFile, "utf8")) : 0;
 const willCrash = crashFile !== "" && crashed < crashTimes;
 if (willCrash) writeFileSync(crashFile, String(crashed + 1));
@@ -56,7 +62,10 @@ function exitNow() {
   else process.exit(crashCode);
 }
 
-emit({ type: "ready", model: "fake", device, compute_type: computeType });
+const ready = () => emit({ type: "ready", model: "fake", device, compute_type: computeType });
+const delay = device === "cpu" ? cpuReadyDelayMs : readyDelayMs;
+if (delay > 0) setTimeout(ready, delay);
+else ready();
 
 process.stdin.on("data", (d) => {
   if (dying) return;

@@ -258,6 +258,117 @@ describe("FasterWhisperStt when the helper crashes mid-transcription", () => {
     }
   });
 
+  /** The helper processes a stand-in started, in order: device and pid (`--pid-file`). */
+  const starts = async (file: string) =>
+    (await readFile(file, "utf8").catch(() => ""))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => {
+        const [device, pid] = l.split(" ");
+        return { device: device ?? "", pid: Number(pid) };
+      });
+  /** Wait (real time, at most 5 s) for the first start of a helper on `device`. */
+  const startOf = async (file: string, device: string) => {
+    for (let waited = 0; waited < 5000; waited += 20) {
+      const found = (await starts(file)).find((s) => s.device === device);
+      if (found) return found;
+      await new Promise<void>((r) => setTimeout(r, 20));
+    }
+    throw new Error(`no ${device} helper started`);
+  };
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const onGpu = (name: string, extra: string[], readyTimeoutMs?: number) =>
+    new FasterWhisperStt({
+      python: node,
+      helperPath: fixture("crashing_stt_helper.mjs"),
+      device: "cuda",
+      computeType: "float16",
+      ...(readyTimeoutMs !== undefined ? { readyTimeoutMs } : {}),
+      extraArgs: [
+        "--crash-file",
+        join(dir, name),
+        "--crash-times",
+        "1",
+        "--pid-file",
+        join(dir, `${name}.pids`),
+        "--record-file",
+        join(dir, `${name}.jsonl`),
+        ...extra,
+      ],
+    });
+
+  it("after the retry on the CPU, the GPU helper is started again in the background for the next turn", async () => {
+    const stt = onGpu("prewarm", []);
+    const pids = join(dir, "prewarm.pids");
+    try {
+      const events = await utterance(stt);
+      expect(events.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      // No new utterance yet: the usual helper is already on its way.
+      let list = await starts(pids);
+      for (let waited = 0; list.length < 3 && waited < 5000; waited += 20) {
+        await new Promise<void>((r) => setTimeout(r, 20));
+        list = await starts(pids);
+      }
+      expect(list.map((s) => s.device)).toEqual(["cuda", "cpu", "cuda"]);
+      const next = await utterance(stt);
+      expect(next.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      const [, later] = await recorded(join(dir, "prewarm.jsonl"));
+      // The next turn ran on that pre-started helper, not on a fourth one.
+      expect(later).toMatchObject({ device: "cuda", decode: null, pid: list[2]?.pid });
+      expect(await starts(pids)).toHaveLength(3);
+    } finally {
+      await stt.dispose();
+    }
+  });
+
+  it("retire() during the retry on the CPU resolves only after that helper has exited", async () => {
+    const stt = onGpu("retire-cpu", ["--crash-at", "audio"]);
+    const pids = join(dir, "retire-cpu.pids");
+    const session = stt.start({ sampleRate: 16000 });
+    for (const c of chunkify(synth(440, 200), 20).slice(0, 4)) session.push(c);
+    // The GPU helper dies at the first audio; the retry's CPU helper starts (no end of speech
+    // yet, so it stays up waiting for more audio).
+    const cpu = await startOf(pids, "cpu");
+    expect(alive(cpu.pid)).toBe(true);
+    await stt.retire();
+    // Nothing of the provider outlives retire(): a venv swap may delete the venv next.
+    expect(alive(cpu.pid)).toBe(false);
+  });
+
+  it("a barge-in while the retry's CPU helper loads: the new utterance's helper is not failed by the old load timer", async () => {
+    // The CPU helper never becomes ready within the ready timeout (1.5 s); the human starts a
+    // new utterance 1.1 s into its load, on a GPU helper that takes 0.6 s to load. The old
+    // helper's timer, firing meanwhile, must not reject the new helper's ready.
+    const stt = onGpu(
+      "barge-in",
+      ["--ready-delay-ms", "600", "--cpu-ready-delay-ms", "10000"],
+      1500,
+    );
+    const pids = join(dir, "barge-in.pids");
+    try {
+      const first = stt.start({ sampleRate: 16000 });
+      for (const c of chunkify(synth(440, 200), 20)) first.push(c);
+      first.endOfSpeech();
+      const cpu = await startOf(pids, "cpu");
+      await new Promise<void>((r) => setTimeout(r, 1100));
+      const events = await utterance(stt);
+      expect(events.filter((e) => e.type === "error")).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      // The CPU helper was let go at the barge-in.
+      await waitFor(() => !alive(cpu.pid), 3000);
+    } finally {
+      await stt.dispose();
+    }
+  }, 15_000);
+
   it("fails the utterance only when the retry crashes too, naming the exit code in hex", async () => {
     const stt = crashing("twice", 2);
     try {
