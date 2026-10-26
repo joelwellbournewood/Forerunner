@@ -1,5 +1,5 @@
 /**
- * The voice profile from the command line (ADR 0089):
+ * The voice profile from the command line (ADR 0090):
  *
  *   fr voice install [--cpu | --gpu] [--python <path>]   install, repair or switch
  *   fr voice remove                                       local voice off, packages and models deleted
@@ -131,7 +131,7 @@ export function registerVoiceCli(program: Command, deps: VoiceCliDeps): void {
   const voice = program
     .command("voice")
     .description(
-      "Local voice: install, switch or remove the speech packages and models (ADR 0089)",
+      "Local voice: install, switch or remove the speech packages and models (ADR 0090)",
     );
 
   voice
@@ -141,7 +141,7 @@ export function registerVoiceCli(program: Command, deps: VoiceCliDeps): void {
     )
     .option("--cpu", "faster-whisper int8 and Kokoro on the CPU (about 2.3 GB; works anywhere)")
     .option("--gpu", "NVIDIA only: faster-whisper and Kokoro on CUDA (about 8 GB; fastest)")
-    .option("--python <path>", "the Python 3.10 to 3.12 interpreter that makes the venv")
+    .option("--python <path>", "the Python 3.12 interpreter that makes the venv")
     .action(async (opts: { cpu?: boolean; gpu?: boolean; python?: string }) => {
       if (opts.cpu && opts.gpu)
         throw new ForerunnerError("validation", "option --cpu cannot be used with --gpu");

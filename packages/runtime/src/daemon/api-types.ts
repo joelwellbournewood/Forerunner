@@ -33,7 +33,7 @@ export {
   SourceView,
   SUPPORTED_SOURCE_KINDS,
 } from "../sources/types.ts";
-/** Settings -> Voice shapes (ADR 0089): the voice profile, its install job and its progress. */
+/** Settings -> Voice shapes (ADR 0090): the voice profile, its install job and its progress. */
 export {
   GpuView,
   VOICE_INSTALL_ROUTES,
@@ -1821,7 +1821,7 @@ export const DAEMON_ROUTES = {
   removeSource:
     "DELETE /sources/:id ({ ok, id, candidatesRemoved }; projects created from it stay)",
   ...DEVICES_ROUTES,
-  // Settings -> Voice (ADR 0089): the voice profile, its install and progress.
+  // Settings -> Voice (ADR 0090): the voice profile, its install and progress.
   ...VOICE_INSTALL_ROUTES,
   dataAssets: "GET /projects/:id/data (DataAssetView[])",
   registerDataAsset:

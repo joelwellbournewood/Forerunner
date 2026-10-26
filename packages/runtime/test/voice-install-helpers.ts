@@ -32,6 +32,8 @@ export interface FakeOptions {
   brokenVenv?: boolean;
   /** pip -r fails with this stderr. */
   pipError?: string;
+  /** `pip check` reports this broken requirement. */
+  pipCheckError?: string;
 }
 
 export function fakeRunner(opts: FakeOptions = {}) {
@@ -85,8 +87,13 @@ export function fakeRunner(opts: FakeOptions = {}) {
     if (brokenVenv) return fail(1, "", "error while loading shared libraries");
     if (args[0] === "-c") return ok("3.12.7\n");
     if (args[0] === "-m" && args[1] === "pip") {
-      if (args.includes("-r")) {
-        if (opts.pipError) return fail(1, "", opts.pipError);
+      if (args[2] === "check") {
+        if (opts.pipCheckError) return fail(1, opts.pipCheckError);
+        return ok("No broken requirements found.\n");
+      }
+      if (args.includes("-r") && !args.some((a) => a.endsWith("pip.txt"))) {
+        if (opts.pipError && args.some((a) => a.includes("requirements-")))
+          return fail(1, "", opts.pipError);
         const text =
           "Collecting torch==2.11.0\n  Downloading torch-2.11.0.whl (114.5 MB)\nProgress 0 of 1000\nProgress 500 of 1000\nProgress 1000 of 1000\nSuccessfully installed torch-2.11.0\n";
         req.onStdout?.(Buffer.from(text));

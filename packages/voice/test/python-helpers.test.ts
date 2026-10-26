@@ -33,7 +33,7 @@ describe("bundled Python helpers", () => {
         join(dir, "helper"),
         DEFAULT_STT_HELPER,
         DEFAULT_TTS_HELPER,
-        // The voice install's model fetcher (ADR 0089) runs in the same interpreter.
+        // The voice install's model fetcher (ADR 0090) runs in the same interpreter.
         fileURLToPath(new URL("../python/fr_voice_models.py", import.meta.url)),
       ],
       { allowFailure: true, timeoutMs: 30_000 },

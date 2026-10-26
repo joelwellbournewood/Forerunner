@@ -28,6 +28,7 @@
     "gates:verify": "tsx scripts/gates-verify.ts",
     "voice:run": "tsx scripts/voice-run.ts",
     "voice:install": "tsx scripts/voice-install.ts",
+    "voice:lock": "tsx scripts/voice-lock.ts",
     "check": "pnpm lint && pnpm lint:paths && pnpm typecheck && pnpm test && pnpm docs:check && pnpm docs:links && pnpm secrets:scan",
     "state-api": "tsx services/state-api/src/main.ts",
     "runner": "tsx services/cloud-runner/src/main.ts",

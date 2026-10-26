@@ -493,11 +493,17 @@ and `nearestRank`, and `check` over a stubbed registry and Python probe (both pr
 present, packages missing with the venv commands, `FORERUNNER_PYTHON`, no Python, old Node,
 and the voice profile with the GPU and the verified devices, `!!` when the CPU stands in).
 
-`scripts/voice-install.ts` (`pnpm voice:install [--cpu|--gpu|--none]`, ADR 0089) is the
+`scripts/voice-install.ts` (`pnpm voice:install [--cpu|--gpu|--none]`, ADR 0090) is the
 launcher's install step: the same installer as `fr voice install` in the run's
 `FORERUNNER_HOME`. `scripts/voice-install.test.ts` covers the refusal without a home, the
 profile by flag or by detection, keeping the installed profile without a flag, `--none`, and an
 unknown argument, with the fake process runner of `packages/runtime/test/voice-install-helpers.ts`.
+
+`scripts/voice-lock.ts` (`pnpm voice:lock`, ADR 0090) regenerates the hashed voice pins in
+`packages/voice/python` (needs the network and uv). `scripts/voice-lock.test.ts` covers its
+offline parts: the torch hashes taken from an index page (cp312, Windows and Linux x86_64, the
+pinned version only; a missing wheel refused), the torch file's text, the pins listed for the
+Requires-Python table. `packages/runtime/test/voice-pins.test.ts` checks the generated files.
 
 ### Docs close-out (`scripts/closeout-docs.test.ts`)
 

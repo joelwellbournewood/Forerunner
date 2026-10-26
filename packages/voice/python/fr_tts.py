@@ -86,11 +86,17 @@ KOKORO_REPO = "hexgrad/Kokoro-82M"
 
 
 class KokoroEngine:
-    def __init__(self, lang, default_voice, device="auto", cpu_fallback=False):
+    # `warm` (the helper's own start) synthesises one short sentence on an explicit cuda: torch
+    # loads cuBLAS at the first matmul, so a broken CUDA shows here, before ready, where
+    # --cpu-fallback can still fall back and say so, instead of at the human's first sentence.
+    def __init__(self, lang, default_voice, device="auto", cpu_fallback=False, warm=False):
         self.default_voice = default_voice
         self.fallback = None
         try:
             self.pipeline = self._pipeline(lang, device)
+            if warm and device == "cuda":
+                for _ in self.chunks("Ready.", None, 1.0):
+                    pass
         except RuntimeError as e:
             if device != "cuda" or not cpu_fallback:
                 raise
@@ -145,7 +151,7 @@ def main():
         return 0
 
     try:
-        engine = KokoroEngine(args.lang, args.voice, device=args.device, cpu_fallback=args.cpu_fallback)
+        engine = KokoroEngine(args.lang, args.voice, device=args.device, cpu_fallback=args.cpu_fallback, warm=True)
     except ImportError as e:
         write_frame(OUT_ERROR, 0, ("kokoro not importable: %s" % e).encode("utf-8"))
         return 3

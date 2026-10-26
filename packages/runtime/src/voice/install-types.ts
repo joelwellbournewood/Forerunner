@@ -1,5 +1,5 @@
 /**
- * Voice profiles (ADR 0089): which local speech stack this install has. Browser-safe (no
+ * Voice profiles (ADR 0090): which local speech stack this install has. Browser-safe (no
  * node imports) so the Settings → Voice card, the CLI and the daemon show the same catalog.
  *
  *   none  no Python speech packages; local voice is off (cloud voice still works with a key)
@@ -154,6 +154,8 @@ export const VOICE_INSTALL_ROUTES = {
     "GET /voice/install (VoiceInstallView: the voice profile in force, the catalog with sizes and trade-offs, the GPU found, the devices the last install verified, the running or last install)",
   startVoiceInstall:
     "POST /voice/install (VoiceInstallBody { profile } -> 202 VoiceInstallView: installs, switches or removes the local voice stack in the background, the same steps as fr voice install / remove; 409 conflict while an install runs or a voice session is open)",
+  cancelVoiceInstall:
+    "POST /voice/install/cancel (-> 202 VoiceInstallView once the running install has stopped: its process is killed, what was downloaded is kept, nothing is recorded; 409 conflict when none runs)",
   voiceInstallEvents:
     "GET /voice/install/events?afterSeq= (VoiceInstallEntryView[] as JSON) | Accept: text/event-stream (SSE `voice.install` frames, bearer header; ends with the job)",
 } as const;

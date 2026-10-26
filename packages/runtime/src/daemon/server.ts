@@ -482,7 +482,7 @@ export function createDaemonApp(
     }),
   );
   app.route("/model-watch", createModelWatchRoutes({ watch: rt.modelWatch }));
-  // Settings -> Voice (ADR 0089): the voice profile and its install job with progress.
+  // Settings -> Voice (ADR 0090): the voice profile and its install job with progress.
   app.route("/", createVoiceInstallRoutes({ jobs: rt.voiceInstall }));
   // Notifications (spec R.6, ADR 0017, ADR 0038): preferences, a test send, the recent list.
   app.route(

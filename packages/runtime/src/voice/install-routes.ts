@@ -1,5 +1,5 @@
 /**
- * Settings → Voice behind the daemon (ADR 0089): `GET /voice/install` (the profile, the
+ * Settings → Voice behind the daemon (ADR 0090): `GET /voice/install` (the profile, the
  * catalog, the GPU, what was verified), `POST /voice/install` (install, switch or remove in
  * the background, the same `installVoice` / `removeVoice` as the CLI) and
  * `GET /voice/install/events` (the job's progress, replayable, as SSE with the bearer header or
@@ -59,6 +59,8 @@ interface Job {
   exitCode: number | null;
   entries: VoiceInstallEntryView[];
   done: Promise<void>;
+  /** Aborts the running step's process and ends the install (the cancel route, a daemon stop). */
+  abort: AbortController;
 }
 
 const RECENT = 40;
@@ -140,6 +142,7 @@ export class VoiceInstallJobs {
       exitCode: null,
       entries,
       done: Promise.resolve(),
+      abort: new AbortController(),
     };
     const out = (event: VoiceInstallEvent) => {
       const entry = { seq: entries.length + 1, event };
@@ -153,6 +156,7 @@ export class VoiceInstallJobs {
       clock: this.deps.clock,
       out,
       beforeCleanup: () => this.deps.release(),
+      signal: job.abort.signal,
       ...(this.deps.platform ? { platform: this.deps.platform } : {}),
       ...(this.deps.run ? { run: this.deps.run } : {}),
     };
@@ -174,6 +178,15 @@ export class VoiceInstallJobs {
         for (const l of this.listeners) l(null);
       });
     return this.jobView() as VoiceInstallJobView;
+  }
+
+  /** Cancel the running install; resolves when it has stopped. False when none runs. */
+  async cancel(): Promise<boolean> {
+    const job = this.job;
+    if (job?.state !== "running") return false;
+    job.abort.abort();
+    await job.done;
+    return true;
   }
 
   eventsAfter(seq: number): VoiceInstallEntryView[] {
@@ -218,6 +231,13 @@ export function createVoiceInstallRoutes(deps: { jobs: VoiceInstallJobs }): Hono
         400,
       );
     jobs.start(parsed.data.profile);
+    return c.json(await jobs.view(), 202);
+  });
+
+  app.post("/voice/install/cancel", async (c) => {
+    if (!jobs.running)
+      return c.json({ code: "conflict", message: "no voice install is running" }, 409);
+    await jobs.cancel();
     return c.json(await jobs.view(), 202);
   });
 

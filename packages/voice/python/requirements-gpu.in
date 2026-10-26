@@ -1,0 +1,32 @@
+# Voice profile "gpu" (ADR 0090): the packages besides PyTorch, all from PyPI. The lock
+# requirements-gpu.txt is generated from this file (docs/maintainers/voice.md, "Updating the
+# pins"); PyTorch itself is torch-gpu.txt, installed alone from the PyTorch CUDA 12.8 index.
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+kokoro==0.9.4
+misaki[en]==0.9.4
+transformers==5.20.2
+huggingface-hub==2.3.0
+soundfile==0.14.0
+numpy==2.5.4
+# ctranslate2 4.8 loads cuBLAS 12 at run time, and on Windows the cuDNN 9 parts behind its
+# bundled cudnn64_9.dll; the versions torch 2.11.0+cu128 requires on Linux.
+nvidia-cublas-cu12==12.8.4.1
+nvidia-cudnn-cu12==9.19.0.56
+# misaki's English G2P loads this spaCy model and otherwise pip-installs it at first use.
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
+# torch 2.11.0+cu128's own Requires-Dist (its wheel metadata): torch is installed with
+# --no-deps, so the lock carries them. On Windows the wheel declares no CUDA dependency.
+filelock
+typing-extensions>=4.10.0
+setuptools<82
+sympy>=1.13.3
+networkx>=2.5.1
+jinja2
+fsspec>=0.8.5
+cuda-toolkit[cublas,cudart,cufft,cufile,cupti,curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1 ; platform_system == "Linux"
+cuda-bindings>=12.9.4,<13 ; platform_system == "Linux"
+nvidia-cusparselt-cu12==0.7.1 ; platform_system == "Linux"
+nvidia-nccl-cu12==2.28.9 ; platform_system == "Linux"
+nvidia-nvshmem-cu12==3.4.5 ; platform_system == "Linux"
+triton==3.6.0 ; platform_system == "Linux"

@@ -524,7 +524,7 @@ export interface ComposeOptions {
     retainStoppedMs?: number;
     /** How long a read-aloud waits for its player's stream before playing (default 1.5 s). */
     awaitListenerMs?: number;
-    /** The process runner of `POST /voice/install` (tests pass a fake one; ADR 0089). */
+    /** The process runner of `POST /voice/install` (tests pass a fake one; ADR 0090). */
     installRunner?: VoiceProcRunner;
   };
 }
@@ -720,11 +720,11 @@ export interface RuntimeApp {
    */
   speech: SpeakSessions;
   /**
-   * The local voice helpers as the voice profile says (ADR 0089): read from voice.json at
+   * The local voice helpers as the voice profile says (ADR 0090): read from voice.json at
    * every use; `release()` stops them before `POST /voice/install` deletes their venv.
    */
   localVoice: LocalVoice;
-  /** Settings -> Voice's install and switch jobs behind `/voice/install` (ADR 0089). */
+  /** Settings -> Voice's install and switch jobs behind `/voice/install` (ADR 0090). */
   voiceInstall: VoiceInstallJobs;
   /** Signed updates (spec M) over this process's store. */
   updates: UpdateManager;
@@ -2797,8 +2797,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // status read and session start so a toggle applies at the next session. Without a usable
   // pair, or without a model credential, `voice.status()` reports why and a session start is
   // refused with `unavailable`.
-  // The local helpers follow the voice profile (ADR 0089: voice.json, read at every use).
-  const localVoice = new LocalVoice({ dirs, env, clock });
+  // The local helpers follow the voice profile (ADR 0090: voice.json, read at every use).
+  // While an install runs, new local sessions and sentences are refused (the venv may be
+  // replaced under them); the ones running finish on the helpers they have.
+  let installRunning: () => boolean = () => false;
+  const localVoice = new LocalVoice({
+    dirs,
+    env,
+    clock,
+    blocked: () =>
+      installRunning()
+        ? "a voice install is running (Settings -> Voice); local voice is back when it ends"
+        : null,
+  });
   const voiceRegistry =
     opts.voice?.registry ??
     (opts.voice?.stt || opts.voice?.tts
@@ -2839,7 +2850,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       : {}),
   });
   voiceBusy = () => (voice.open().length > 0 ? VOICE_IN_CONVERSATION : null);
-  // Settings -> Voice (ADR 0089): install, switch or remove the local voice stack as a job.
+  // Settings -> Voice (ADR 0090): install, switch or remove the local voice stack as a job.
   // Refused while a voice session is open; the helpers are stopped before a venv is deleted.
   const voiceInstall = new VoiceInstallJobs({
     dirs,
@@ -2849,9 +2860,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     busy: () =>
       voice.open().length > 0
         ? "a voice session is open: stop it before switching the voice profile"
-        : null,
+        : localVoice.inUse() > 0
+          ? "local voice is speaking or listening: wait for it to finish before switching the voice profile"
+          : null,
     release: () => localVoice.release(),
   });
+  installRunning = () => voiceInstall.running;
   // Read aloud (spec A.6, L.6; ADR 0063): one speaker over the same registry, TTS only, no
   // model call; one voice at a time. Every utterance is announced on the bus (`speak`, the
   // `speak.started` frame on `/events`, with who plays it) so a speech player (the UI with
@@ -3285,6 +3299,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // First: no model watch run (and no paid eval) outlives the daemon (ADR 0089).
       modelWatchStop.abort(new ForerunnerError("killed", "daemon stopping"));
       await modelWatch.settled();
+      // A running voice install is cancelled (its process killed, nothing recorded; ADR 0090).
+      await voiceInstall.cancel();
       await voiceRelay.close();
       await voice.close();
       await speechSessions.close();

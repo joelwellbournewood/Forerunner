@@ -2380,7 +2380,7 @@ export const MODEL_SETTINGS: ModelSettingsView = {
 };
 
 /**
- * `GET /voice/install` (Settings → Voice, ADR 0089): the cpu profile installed and verified on a
+ * `GET /voice/install` (Settings → Voice, ADR 0090): the cpu profile installed and verified on a
  * PC with an NVIDIA GPU, so gpu is the recommended switch.
  */
 export const VOICE_INSTALL: VoiceInstallView = {

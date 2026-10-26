@@ -57,7 +57,7 @@ const LINE_TONES = {
 } as const;
 
 /**
- * Settings → Voice (ADR 0089): the voice profile in force (none, cpu, gpu) with the devices its
+ * Settings → Voice (ADR 0090): the voice profile in force (none, cpu, gpu) with the devices its
  * check verified, each profile's disk size and trade-off, and a switch that runs the same
  * install as `fr voice install` through the daemon with its progress streamed here. A switch
  * downloads gigabytes, so it is confirmed first; the terminal command is shown too.
@@ -73,6 +73,18 @@ export function VoiceSettingsCard() {
 
   useEffect(() => () => abort.current?.abort(), []);
 
+  // The job being followed and the last event the card has: a stream that drops while the
+  // job runs (a proxy, a sleeping laptop) is opened again from there, never from the start.
+  const attached = useRef<string | null>(null);
+  const lastSeq = useRef(0);
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (retry.current) clearTimeout(retry.current);
+    },
+    [],
+  );
+
   const follow = (afterSeq: number) => {
     abort.current?.abort();
     const controller = new AbortController();
@@ -81,14 +93,29 @@ export function VoiceSettingsCard() {
     followVoiceInstall(
       client,
       afterSeq,
-      (e) => setEntries((prev) => (prev.some((p) => p.seq === e.seq) ? prev : [...prev, e])),
+      (e) => {
+        lastSeq.current = Math.max(lastSeq.current, e.seq);
+        setEntries((prev) => (prev.some((p) => p.seq === e.seq) ? prev : [...prev, e]));
+      },
       controller.signal,
     )
       .catch((e: unknown) => {
         if (!controller.signal.aborted) setError(describeError(e));
       })
-      .finally(() => {
+      .finally(async () => {
         if (controller.signal.aborted) return;
+        let still = false;
+        try {
+          const now = await voiceInstallView(client);
+          still = now.job?.state === "running" && now.job.id === attached.current;
+        } catch {
+          still = false;
+        }
+        if (controller.signal.aborted) return;
+        if (still) {
+          retry.current = setTimeout(() => follow(lastSeq.current), 500);
+          return;
+        }
         setFollowing(false);
         view.reload();
       });
@@ -99,9 +126,11 @@ export function VoiceSettingsCard() {
   const runningJobId = job?.state === "running" ? job.id : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: attach once per running job
   useEffect(() => {
-    if (!runningJobId || following || !job) return;
+    if (!runningJobId || !job || attached.current === runningJobId) return;
+    attached.current = runningJobId;
     setEntries(job.recent);
-    follow(job.recent.at(-1)?.seq ?? 0);
+    lastSeq.current = job.recent.at(-1)?.seq ?? 0;
+    follow(lastSeq.current);
   }, [runningJobId]);
 
   const start = async (profile: VoiceProfile) => {
@@ -109,7 +138,9 @@ export function VoiceSettingsCard() {
     setError(null);
     setEntries([]);
     try {
-      await startVoiceInstall(client, profile);
+      const started = await startVoiceInstall(client, profile);
+      attached.current = started.job?.id ?? null;
+      lastSeq.current = 0;
       follow(0);
     } catch (e) {
       setError(describeError(e));

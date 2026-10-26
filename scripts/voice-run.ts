@@ -121,7 +121,7 @@ export interface CheckResult {
   tts: string | null;
   missing: string[];
   commands: string[];
-  /** The voice profile of this home (ADR 0089); null when none was chosen. */
+  /** The voice profile of this home (ADR 0090); null when none was chosen. */
   profile: VoiceProfile | null;
   /** The devices the profile's last check verified. */
   devices: { stt: string; tts: string } | null;
@@ -196,7 +196,7 @@ export async function runCheck(deps: CheckDeps): Promise<CheckResult> {
     `${py.version ? "ok " : "!! "} python          ${py.version ? `${py.version} (${py.python})` : `not found: ${py.reason}`}${env.FORERUNNER_PYTHON ? " [FORERUNNER_PYTHON]" : ""}`,
   );
 
-  // The voice profile (ADR 0089): what `fr voice install` put in this home and verified.
+  // The voice profile (ADR 0090): what `fr voice install` put in this home and verified.
   const dirs = appDirs({ env });
   const voice = readVoiceSettings(dirs);
   const gpu = await (deps.gpu ?? (() => detectNvidiaGpu({ platform })))();

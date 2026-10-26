@@ -525,7 +525,7 @@ describe("voice-run check", () => {
     expect(noPy.text()).toContain("!!  node            20.1.0 (needs >= 22.13)");
   });
 
-  it("reports the voice profile and the devices its last check verified (ADR 0089)", async () => {
+  it("reports the voice profile and the devices its last check verified (ADR 0090)", async () => {
     const gpu = async () => ({
       present: true,
       name: "NVIDIA GeForce RTX 4070",

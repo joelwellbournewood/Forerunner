@@ -10,7 +10,7 @@ import { ApiError, type DaemonClient, routePath } from "./client.ts";
 import { readSseStream } from "./sse.ts";
 
 /**
- * Settings → Voice (ADR 0089): the voice profile, its install as a daemon job, and the job's
+ * Settings → Voice (ADR 0090): the voice profile, its install as a daemon job, and the job's
  * progress. The events stream is read with fetch and the bearer header (no token in the URL);
  * a daemon that answers JSON is read once.
  */

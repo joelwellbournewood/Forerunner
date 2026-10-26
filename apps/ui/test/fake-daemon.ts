@@ -212,11 +212,16 @@ export interface FakeDaemonOptions {
    */
   voice?: { available: boolean; reason?: string };
   /**
-   * Settings → Voice (ADR 0089): changes to the fixture's `GET /voice/install` answer, and
+   * Settings → Voice (ADR 0090): changes to the fixture's `GET /voice/install` answer, and
    * `voiceInstallGpuFails` makes a switch to gpu end with the CPU standing in (exit code 2).
    */
   voiceInstall?: Partial<VoiceInstallView>;
   voiceInstallGpuFails?: string;
+  /**
+   * The job's first events stream ends after three events while the job still runs (a proxy
+   * or a sleep dropping the connection); the next stream carries the rest and the job ends.
+   */
+  voiceInstallDropOnce?: boolean;
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -288,9 +293,11 @@ export interface FakeDaemonState {
   voiceSessions: Map<string, { view: VoiceSessionView; pressed: boolean; chunks: number }>;
   /** When set, the next released turn transcribes to this line (tests script the human). */
   nextVoiceLine: string | null;
-  /** `GET /voice/install` and the last install job's events (ADR 0089). */
+  /** `GET /voice/install` and the last install job's events (ADR 0090). */
   voiceInstall: VoiceInstallView;
   voiceInstallEntries: VoiceInstallEntryView[];
+  /** The `afterSeq` of every install events stream opened (where a stream resumed). */
+  voiceInstallStreamsAfter: number[];
 }
 
 const DESKTOP_OFF: DesktopControlView = {
@@ -391,6 +398,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     nextVoiceLine: null,
     voiceInstall: { ...clone(VOICE_INSTALL), ...(options.voiceInstall ?? {}) },
     voiceInstallEntries: [],
+    voiceInstallStreamsAfter: [],
   };
 
   const emit = (event: string, data: unknown) => {
@@ -1432,8 +1440,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       sessions: [...state.voiceSessions.values()].filter((v) => !v.view.endedAt).length,
     }),
   );
-  // Settings → Voice (ADR 0089): the profile and a scripted install job. The job runs to its end
+  // Settings → Voice (ADR 0090): the profile and a scripted install job. The job runs to its end
   // at once; the events route replays it (JSON, or SSE that ends with the job).
+  let voiceInstallDone: VoiceInstallView | null = null;
+  let voiceInstallStreams = 0;
+
   app.get("/voice/install", (c) => c.json(state.voiceInstall));
   app.post("/voice/install", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { profile?: string };
@@ -1502,6 +1513,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             ...ending,
           ];
     const at = new Date().toISOString();
+    const voiceInstallBefore = { ...state.voiceInstall };
     state.voiceInstallEntries = events.map((event, i) => ({ seq: i + 1, event }));
     const device = profile === "gpu" ? "cuda" : "cpu";
     state.voiceInstall = {
@@ -1525,11 +1537,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         recent: state.voiceInstallEntries,
       },
     };
+    if (options.voiceInstallDropOnce && state.voiceInstall.job) {
+      // Running until the second stream has delivered the rest.
+      voiceInstallDone = { ...state.voiceInstall };
+      const running = {
+        ...state.voiceInstall.job,
+        state: "running" as const,
+        finishedAt: null,
+        exitCode: null,
+        recent: [],
+      };
+      state.voiceInstall = { ...voiceInstallBefore, job: running };
+      voiceInstallStreams = 0;
+    }
     return c.json(state.voiceInstall, 202);
   });
   app.get("/voice/install/events", (c) => {
     const after = Number(c.req.query("afterSeq") ?? 0);
-    const entries = state.voiceInstallEntries.filter((e) => e.seq > after);
+    if ((c.req.header("accept") ?? "").includes("text/event-stream"))
+      state.voiceInstallStreamsAfter.push(after);
+    let entries = state.voiceInstallEntries.filter((e) => e.seq > after);
+    if (voiceInstallDone) {
+      voiceInstallStreams++;
+      if (voiceInstallStreams === 1) entries = entries.slice(0, 3);
+      else {
+        state.voiceInstall = voiceInstallDone;
+        voiceInstallDone = null;
+      }
+    }
     if (!(c.req.header("accept") ?? "").includes("text/event-stream")) return c.json(entries);
     return streamSSE(c, async (stream) => {
       for (const e of entries)

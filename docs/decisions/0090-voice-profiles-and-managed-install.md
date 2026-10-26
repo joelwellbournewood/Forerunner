@@ -1,4 +1,4 @@
-# 0089 — Voice profiles: none, cpu or gpu, installed into a managed venv per profile with pinned packages, verified on the device, switchable from setup, Settings and the CLI
+# 0090 — Voice profiles: none, cpu or gpu, installed into a managed venv per profile with pinned packages, verified on the device, switchable from setup, Settings and the CLI
 
 Date: 2026-10-26
 Status: accepted
@@ -42,25 +42,42 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
    `<data>/voice/models` (the helpers' `HF_HOME`, never the human's global cache). A switch
    builds the new venv beside the old one and deletes the old one only after the new one is
    verified, so a failed switch leaves voice working and a running helper's files are never
-   rewritten (Windows locks loaded DLLs). The base interpreter is Python 3.10 to 3.12, found in
-   a fixed order (`py -3.12`, `-3.11`, `-3.10`, `python`, `python3` on Windows; `python3.12`,
-   `python3.11`, `python3.10`, `python3`, `python` on Linux) or given with `--python`; without
-   one the install stops with the `winget` or `apt` line. `FORERUNNER_PYTHON` still wins at run
-   time, with a warning at install.
-3. **Pinned requirements per profile in the repo**, `packages/voice/python/requirements-cpu.txt`
-   and `requirements-gpu.txt`: PyTorch from its CPU or CUDA 12.8 wheel index (`+cpu` /
-   `+cu128` pins), faster-whisper, ctranslate2, kokoro, misaki[en], transformers,
-   huggingface-hub, soundfile, numpy and the spaCy English model (misaki otherwise pip-installs
-   it at first use), and on gpu `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` at the versions
-   torch requires. A hash of the file in the venv's marker decides whether pip runs again.
+   rewritten (Windows locks loaded DLLs). The base interpreter is **Python 3.12**: the pinned
+   numpy 2.5.4 declares `>=3.12` and kokoro 0.9.4 `<3.13`. It is found in a fixed order
+   (`py -3.12`, `python`, `python3` on Windows; `python3.12`, `python3`, `python` on Linux) or
+   given with `--python`; without one the install stops with the `winget` or `apt` line.
+   **`FORERUNNER_PYTHON` wins in every case at run time**: with a profile installed the helpers
+   use it with the profile's devices; with profile `none`, or a profile whose venv is gone, they
+   run as before profiles (that interpreter, device `auto`) instead of reporting voice off. The
+   install warns that the venv it makes will not be used.
+3. **Hashed pins per profile in the repo, PyTorch apart** (`packages/voice/python`):
+   - `torch-<profile>.txt`: `torch==2.11.0+cpu` / `+cu128` alone with the sha256 of its cp312
+     Windows and Linux x86_64 wheels, installed with
+     `--no-deps --require-hashes --index-url https://download.pytorch.org/whl/cpu|cu128`.
+   - `requirements-<profile>.txt`: a universal lock (`uv pip compile --universal
+     --generate-hashes`) of `requirements-<profile>.in` from PyPI only, installed with
+     `--no-deps --require-hashes --index-url https://pypi.org/simple`. The `.in` holds the exact
+     top-level pins (faster-whisper, ctranslate2, kokoro, misaki[en], transformers,
+     huggingface-hub, soundfile, numpy, on gpu `nvidia-cublas-cu12` and `nvidia-cudnn-cu12`), the
+     spaCy English model by URL with `#sha256=` (misaki otherwise pip-installs it at first use),
+     and torch's own Requires-Dist copied from its wheel metadata (on gpu the CUDA 12.8 wheels
+     and triton, Linux only), because torch is installed without its dependencies.
+   - `pip.txt`: pip 26.2.2, hashed. `requires-python.json`: every pin's Requires-Python from the
+     index metadata, which a unit test checks against the accepted Python offline.
+   - `pnpm voice:lock` (`scripts/voice-lock.ts`, needs uv and the network) regenerates all of
+     them. `pip check` runs after the install. pip gets no `PIP_EXTRA_INDEX_URL` or
+     `PIP_FIND_LINKS` from the environment. A hash over the three files in the venv's marker
+     decides whether pip runs again.
 4. **The install is resumable and idempotent and streams progress.** Each step emits events
    (`step`, `log`, `progress` with bytes and total, `warning`, `error`, `result`). pip runs with
    `--progress-bar raw --resume-retries 5` and its cache; `fr_voice_models.py` fetches the
    models with byte progress and skips what is cached; the marker and `voice.json` are written
    only after their step succeeded, so running the install again finishes an interrupted one. A
-   lock file keeps the CLI and the daemon from installing at the same time. No argument carries
-   a secret (the models are public). The venv's espeak-ng data path is checked against the
-   espeak-ng limit before anything is downloaded.
+   lock file keeps the CLI and the daemon from installing at the same time (a refusal names the
+   lock file). No argument carries a secret (the models are public). The venv's espeak-ng data
+   path is checked against the espeak-ng limit before anything is downloaded. A run can be
+   cancelled: the daemon's job has an AbortController, reached by `POST /voice/install/cancel`
+   and by the daemon's shutdown; the running process is killed and nothing is recorded.
 5. **Verification runs the real helpers on the profile's device**: STT on 0.5 s of silence
    (`--device cuda --compute-type float16` on gpu, `cpu`/`int8` on cpu) and Kokoro on one
    sentence (`--device cuda|cpu`). The ready line and frame now say the device in use. On gpu
@@ -68,7 +85,9 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
    loudly: a warning naming the error, the CPU checked instead, the reason recorded in
    `voice.json`, exit code 2 (0 done, 1 failed). At run time the gpu profile starts STT with
    `--cpu-fallback` and Kokoro with `--device cuda --cpu-fallback`; a side whose check fell back
-   starts on the CPU directly.
+   starts on the CPU directly. Kokoro on an explicit cuda synthesises one short sentence at
+   start, so a CUDA error that torch raises only at the first matmul falls back there (loudly,
+   with `--cpu-fallback`) instead of at the human's first sentence.
 6. **CUDA libraries from pip wheels are made loadable by `fr_stt.py`** before ctranslate2 is
    imported: on Windows each `site-packages/nvidia/*/bin` goes to `os.add_dll_directory` and
    first on `PATH` (ctranslate2 loads cuBLAS with a plain `LoadLibrary`); on Linux cuBLAS and
@@ -89,7 +108,17 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
 8. **The daemon's local providers follow `voice.json` at every use** (`LocalVoice` in
    `local-profile.ts`): a change from the CLI or the card applies at the next voice session
    without a restart; the old helper processes are stopped. Profile `none` reports local voice
-   unavailable with the way to turn it on; cloud providers are unaffected.
+   unavailable with the way to turn it on; cloud providers are unaffected. `voice.json` is
+   written atomically (a temporary file renamed over it) because a running daemon reads it.
+9. **Live sessions are never cut by a switch.** `LocalVoice` counts the open STT sessions and
+   the sentences being synthesised; while any is in use a changed `voice.json` waits and the old
+   helpers keep serving, and the swap happens at the first use after they end. While an install
+   runs, new local sessions and new sentences (read-aloud included) are refused with the reason;
+   the install itself is refused while a voice session is open or local voice is in use. A
+   disposed provider never starts its helper again (`FasterWhisperStt` / `KokoroTts`
+   `ensureProcess` rejects after `dispose()`), so a session holding the old provider cannot
+   respawn a helper from the old venv. A voice session using only cloud providers is not
+   refused during an install: it does not touch the venv.
 
 ## Consequences
 
@@ -108,6 +137,17 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
 - The GPU path is unit-tested with fake processes and a stub faster-whisper; on hardware it is
   unverified until it runs on the human's PC (`fr voice install --gpu`, then
   `pnpm voice:run check`).
+- Python 3.10 and 3.11 are refused: with them the pinned numpy would not install. Supporting
+  them would need a second numpy pin behind a marker; one supported Python keeps the lock and
+  the test small.
+- Supply chain, what remains: every file pip installs is pinned by hash, PyTorch only from the
+  PyTorch index and everything else only from PyPI, so a same-named package on another index
+  cannot be picked. The trust is in those two indexes and in the hashes recorded when
+  `pnpm voice:lock` ran (it trusts what the indexes served then; nobody reviews wheel
+  contents). The lock is universal, so its hashes cover every platform's wheels, including
+  macOS and aarch64 ones the installer never uses. The models from Hugging Face are fetched by
+  name and revision `main`, not by hash; `fr_voice_models.py` could pin revisions later. The
+  venv's own pip bootstrap (`ensurepip`) comes from the system Python.
 
 ## Alternatives considered
 
@@ -123,3 +163,8 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
   loader path cannot be changed after start anyway.
 - **"Run this command" in Settings instead of a route.** Smaller, but the human asked for a
   button; the progress events made the route small.
+- **Requirements files with `--extra-index-url` for PyTorch** (the first version of this
+  decision). Simpler, but pip then takes any package from whichever index offers the best
+  version, and nothing was hashed. Replaced by the torch-alone file and the PyPI-only lock.
+- **A second numpy pin for Python 3.10 and 3.11.** Possible with markers; rejected for one
+  supported Python (above).

@@ -64,7 +64,7 @@ export interface VoiceRegistryOptions {
   vault: Vault;
   clock: Clock;
   /**
-   * The local helpers as the voice profile says (ADR 0089; the daemon and `voice:run check`
+   * The local helpers as the voice profile says (ADR 0090; the daemon and `voice:run check`
    * pass one). Absent: faster-whisper and Kokoro as before profiles (any Python, device auto).
    */
   local?: LocalVoice;

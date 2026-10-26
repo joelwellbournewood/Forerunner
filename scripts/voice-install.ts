@@ -2,7 +2,7 @@
 /**
  * voice-install: the install step of a real-audio voice run (the launcher outside the repo runs
  * it before `pnpm voice:run check`), in the run's dedicated FORERUNNER_HOME. The same installer
- * as `fr voice install` (ADR 0089): a managed venv under the home's data directory, the pinned
+ * as `fr voice install` (ADR 0090): a managed venv under the home's data directory, the pinned
  * packages of the profile, the models with progress, and a check of both helpers on the
  * profile's device.
  *

@@ -8,7 +8,7 @@ import { formatInstallEvent, voiceSetupStep } from "../src/voice/install-cli.ts"
 import { fakeRunner, NVIDIA } from "./voice-install-helpers.ts";
 
 /**
- * The voice profile from the command line (ADR 0089): `fr voice install [--cpu|--gpu]`,
+ * The voice profile from the command line (ADR 0090): `fr voice install [--cpu|--gpu]`,
  * `fr voice remove`, `fr voice status`, and the voice step of `fr setup` (asked
  * interactively, `--voice none|cpu|gpu` without asking). In process through `buildProgram()`
  * with a fake process runner.

@@ -150,7 +150,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
     .addOption(
       new Option(
         "--voice <profile>",
-        "local voice: none (off), cpu (about 2.3 GB, any PC) or gpu (NVIDIA, about 8 GB, fastest); asked when interactive, installed with progress (ADR 0089)",
+        "local voice: none (off), cpu (about 2.3 GB, any PC) or gpu (NVIDIA, about 8 GB, fastest); asked when interactive, installed with progress (ADR 0090)",
       ).choices(["none", "cpu", "gpu"]),
     )
     .action(async (opts) => {
@@ -200,7 +200,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
         if (report.skipped.length)
           out(`Not configured yet: ${report.skipped.join(", ")} (run fr setup again any time)`);
         out(report.complete ? "Setup complete." : "Setup saved; credentials can be added later.");
-        // Voice (ADR 0089): the profile, asked or from --voice, installed with its progress.
+        // Voice (ADR 0090): the profile, asked or from --voice, installed with its progress.
         const voice = await voiceSetupStep(
           {
             voice: opts.voice,
@@ -441,7 +441,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
     input: deps.stdin,
   });
 
-  // Local voice (ADR 0089): install, switch or remove the speech stack; no daemon needed.
+  // Local voice (ADR 0090): install, switch or remove the speech stack; no daemon needed.
   registerVoiceCli(program, { env, out, ...(deps.voice ?? {}) });
 
   // Proposed specialists (spec C.5, ADR 0071): approve runs the eval set and promotes on a

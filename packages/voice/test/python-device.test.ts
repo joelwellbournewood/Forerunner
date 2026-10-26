@@ -238,3 +238,80 @@ describe.skipIf(!python)("fr_tts.py: the device Kokoro runs on", () => {
     ]);
   });
 });
+
+/**
+ * A stub kokoro that loads on cuda but fails at the first synthesis there, as a GPU without a
+ * usable cuBLAS does (torch loads it lazily at the first matmul).
+ */
+function kokoroSynthStub(): string {
+  const dir = mkdtempSync(join(tmpdir(), "fr-tts-synth-stub-"));
+  writeFileSync(
+    join(dir, "kokoro.py"),
+    `
+CALLS = []
+SYNTHS = []
+class _Param:
+    def __init__(self, device):
+        class _D:
+            pass
+        self.device = _D()
+        self.device.type = device
+class _Model:
+    def __init__(self, device):
+        self._device = device
+    def parameters(self):
+        yield _Param(self._device)
+class KPipeline:
+    def __init__(self, lang_code, repo_id=None, device=None):
+        CALLS.append(device)
+        self.device = device or "cpu"
+        self.model = _Model(self.device)
+    def __call__(self, text, voice=None, speed=1.0):
+        SYNTHS.append((self.device, text))
+        if self.device == "cuda":
+            raise RuntimeError("CUBLAS_STATUS_NOT_INITIALIZED when calling cublasCreate(handle)")
+        yield None, None, [0.0, 0.1, -0.1]
+`,
+  );
+  return dir;
+}
+
+describe.skipIf(!python)("fr_tts.py: warming Kokoro on the GPU", () => {
+  it("a CUDA error at the first synthesis falls back loudly with --cpu-fallback when warmed", () => {
+    const r = py(
+      [
+        "import fr_tts, kokoro",
+        "e = fr_tts.KokoroEngine('a', 'af_heart', device='cuda', cpu_fallback=True, warm=True)",
+        "print(kokoro.CALLS)",
+        "print(e.device, e.fallback)",
+        "print(len(kokoro.SYNTHS))",
+      ],
+      [kokoroSynthStub()],
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.split("\n").slice(0, 3)).toEqual([
+      "['cuda', 'cpu']",
+      "cpu CUBLAS_STATUS_NOT_INITIALIZED when calling cublasCreate(handle)",
+      "1",
+    ]);
+    expect(r.stderr).toMatch(/CUDA failed.*falling back to the CPU/);
+  });
+
+  it("without --cpu-fallback the warm-up error is raised; the CPU is never warmed", () => {
+    const r = py(
+      [
+        "import fr_tts, kokoro",
+        "try:\n    fr_tts.KokoroEngine('a', 'af_heart', device='cuda', warm=True)\n    print('no error')\nexcept RuntimeError as e:\n    print('raised', e)",
+        "kokoro.SYNTHS.clear()",
+        "e = fr_tts.KokoroEngine('a', 'af_heart', device='cpu', warm=True)",
+        "print(e.device, len(kokoro.SYNTHS))",
+      ],
+      [kokoroSynthStub()],
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.split("\n").slice(0, 2)).toEqual([
+      "raised CUBLAS_STATUS_NOT_INITIALIZED when calling cublasCreate(handle)",
+      "cpu 0",
+    ]);
+  });
+});

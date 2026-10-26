@@ -5,7 +5,7 @@ import { installProgress } from "../src/pages/VoiceSettingsCard.tsx";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
- * Settings → Voice (ADR 0089): the voice profile in force with the devices its check verified,
+ * Settings → Voice (ADR 0090): the voice profile in force with the devices its check verified,
  * every profile with its disk size and trade-off, and a confirmed switch that runs the install
  * through the daemon with its progress streamed into the card.
  */
@@ -71,6 +71,29 @@ describe("Settings: voice", () => {
     );
     expect(within(card).getByTestId("voice-stt-device")).toHaveTextContent("cuda (float16)");
     expect(within(card).getByTestId("voice-tts-device")).toHaveTextContent("cuda");
+  });
+
+  it("re-attaches when the progress stream drops while the install still runs", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ voiceInstallDropOnce: true });
+    renderApp("/settings", harness);
+    const gpu = await profileRow("gpu");
+    await user.click(within(gpu).getByTestId("voice-profile-switch"));
+    await user.click(within(gpu).getByTestId("voice-profile-confirm"));
+    const progress = await screen.findByTestId("voice-install-progress");
+    // The rest of the job arrives over a second stream, from where the first one stopped.
+    expect(
+      await within(progress).findByText("voice profile gpu installed", undefined, {
+        timeout: 5000,
+      }),
+    ).toBeInTheDocument();
+    const card = screen.getByTestId("voice-settings");
+    await waitFor(() =>
+      expect(within(card).getByTestId("voice-profile-current")).toHaveTextContent("gpu"),
+    );
+    // Each step once: the second stream resumed after the last event the card had.
+    expect(within(progress).getAllByText("installing the gpu packages")).toHaveLength(1);
+    expect(harness.daemon.state.voiceInstallStreamsAfter).toEqual([0, 3]);
   });
 
   it("a GPU check that fell back shows the warning and the reason", async () => {

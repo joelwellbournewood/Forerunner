@@ -1,26 +1,30 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { type AppDirs, appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { type AppDirs, appDirs, dirname, join, SimulatedClock } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_HELPERS_DIR,
   detectNvidiaGpu,
   findBasePython,
   installVoice,
+  PYPI_INDEX,
   parseVoiceProfileAnswer,
+  pipFile,
   readVoiceSettings,
   recommendedProfile,
   removeVoice,
   requirementsFile,
+  torchFile,
   VOICE_PROFILE_QUESTION,
   venvPythonPath,
   voiceDirs,
+  writeVoiceSettings,
 } from "../src/voice/install.ts";
 import type { VoiceInstallEvent } from "../src/voice/install-types.ts";
 import { fakeRunner, NVIDIA } from "./voice-install-helpers.ts";
 
 /**
- * `fr voice install` / `fr voice remove` and the Settings → Voice switch (ADR 0089): a managed
+ * `fr voice install` / `fr voice remove` and the Settings → Voice switch (ADR 0090): a managed
  * venv per profile under the data directory, the pinned requirements file of the profile, the
  * models fetched with progress, then the helpers run on the profile's device to verify. Every
  * process goes through a runner; here a fake one answers like Python, pip and the helpers do.
@@ -39,31 +43,6 @@ const collect = () => {
 const messages = (events: VoiceInstallEvent[], type: VoiceInstallEvent["type"]) =>
   events.filter((e) => e.type === type).map((e) => ("message" in e ? e.message : ""));
 
-describe("voice profiles: the pinned package lists", () => {
-  it("cpu: CPU PyTorch from its index, no CUDA wheels; gpu: CUDA PyTorch and cuBLAS/cuDNN 12/9", () => {
-    const cpu = readFileSync(requirementsFile("cpu", DEFAULT_HELPERS_DIR), "utf8");
-    const gpu = readFileSync(requirementsFile("gpu", DEFAULT_HELPERS_DIR), "utf8");
-    const pins = (text: string) =>
-      text
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith("#") && !l.startsWith("--"));
-    expect(cpu).toContain("--extra-index-url https://download.pytorch.org/whl/cpu");
-    expect(gpu).toContain("--extra-index-url https://download.pytorch.org/whl/cu128");
-    expect(pins(cpu)).toContain("torch==2.11.0+cpu");
-    expect(pins(gpu)).toContain("torch==2.11.0+cu128");
-    expect(pins(gpu)).toContain("nvidia-cublas-cu12==12.8.4.1");
-    expect(pins(gpu).some((p) => /^nvidia-cudnn-cu12==9\./.test(p))).toBe(true);
-    expect(pins(cpu).some((p) => p.startsWith("nvidia-"))).toBe(false);
-    for (const list of [pins(cpu), pins(gpu)]) {
-      for (const name of ["faster-whisper", "ctranslate2", "kokoro", "misaki[en]", "soundfile"])
-        expect(list.some((p) => p.startsWith(`${name}==`))).toBe(true);
-      // Every line is an exact pin or a pinned URL.
-      for (const p of list) expect(p).toMatch(/==|@ https:\/\/.*-\d+\.\d+\.\d+-/);
-    }
-  });
-});
-
 describe("fr voice install", () => {
   it("cpu: makes the venv, installs the cpu list, fetches the models, verifies on the CPU", async () => {
     const { dirs, env } = home();
@@ -81,10 +60,35 @@ describe("fr voice install", () => {
     expect(r.ok).toBe(true);
     const vd = voiceDirs(dirs);
     const venvPy = venvPythonPath(vd.venv("cpu"), "linux");
-    const pipR = fake.calls.find((c) => c.argv.includes("-r"));
-    expect(pipR?.argv[0]).toBe(venvPy);
-    expect(pipR?.argv).toContain(requirementsFile("cpu", DEFAULT_HELPERS_DIR));
-    expect(pipR?.argv).toEqual(expect.arrayContaining(["--progress-bar", "raw"]));
+    const pipRun = (file: string) => fake.calls.find((c) => c.argv.includes(file));
+    // pip itself from its hashed pin, then torch alone from the PyTorch index without its
+    // dependencies, then the hashed lock from PyPI only, then pip check.
+    const pipSelf = pipRun(pipFile(DEFAULT_HELPERS_DIR));
+    expect(pipSelf?.argv).toEqual(
+      expect.arrayContaining(["--require-hashes", "--index-url", PYPI_INDEX]),
+    );
+    const torch = pipRun(torchFile("cpu", DEFAULT_HELPERS_DIR));
+    expect(torch?.argv[0]).toBe(venvPy);
+    expect(torch?.argv).toEqual(
+      expect.arrayContaining([
+        "--no-deps",
+        "--require-hashes",
+        "--index-url",
+        "https://download.pytorch.org/whl/cpu",
+        "--progress-bar",
+        "raw",
+      ]),
+    );
+    expect(torch?.argv).not.toContain("--extra-index-url");
+    const rest = pipRun(requirementsFile("cpu", DEFAULT_HELPERS_DIR));
+    expect(rest?.argv).toEqual(
+      expect.arrayContaining(["--no-deps", "--require-hashes", "--index-url", PYPI_INDEX]),
+    );
+    expect(rest?.argv).not.toContain("--extra-index-url");
+    const order = [pipSelf, torch, rest].map((c) => fake.calls.indexOf(c as never));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    const check = fake.calls.find((c) => c.argv[3] === "check");
+    expect(fake.calls.indexOf(check as never)).toBeGreaterThan(order[2] as number);
     // Models land in the managed folder, never the user's global Hugging Face cache.
     const models = fake.calls.find((c) => c.argv[1]?.endsWith("fr_voice_models.py"));
     expect(models?.env?.HF_HOME).toBe(vd.models);
@@ -119,9 +123,18 @@ describe("fr voice install", () => {
       out: () => {},
     });
     expect(r.exitCode).toBe(0);
-    const pipR = fake.calls.find((c) => c.argv.includes("-r"));
-    expect(pipR?.argv).toContain(requirementsFile("gpu", DEFAULT_HELPERS_DIR));
-    expect(pipR?.argv[0]).toBe(venvPythonPath(voiceDirs(dirs).venv("gpu"), "windows"));
+    const torch = fake.calls.find((c) => c.argv.includes(torchFile("gpu", DEFAULT_HELPERS_DIR)));
+    expect(torch?.argv).toEqual(
+      expect.arrayContaining([
+        "--index-url",
+        "https://download.pytorch.org/whl/cu128",
+        "--no-deps",
+      ]),
+    );
+    const rest = fake.calls.find((c) =>
+      c.argv.includes(requirementsFile("gpu", DEFAULT_HELPERS_DIR)),
+    );
+    expect(rest?.argv[0]).toBe(venvPythonPath(voiceDirs(dirs).venv("gpu"), "windows"));
     // Windows: the venv is made with the py launcher's 3.12 when there is one.
     const venv = fake.calls.find((c) => c.argv.includes("venv"));
     expect(venv?.argv.slice(0, 2)).toEqual(["py", "-3.12"]);
@@ -233,16 +246,25 @@ describe("fr voice install", () => {
     expect(messages(events, "log").join("\n")).toMatch(/does not run; making it again/);
   });
 
-  it("without Python 3.10 to 3.12: a clear message with the install line, nothing written", async () => {
+  it("without Python 3.12: a clear message with the install line, nothing written", async () => {
     for (const platform of ["windows", "linux"] as const) {
       const { dirs, env } = home();
-      const fake = fakeRunner({ pythons: { python3: "3.13.1", python: "3.13.1" } });
+      const fake = fakeRunner({
+        pythons: {
+          python3: "3.13.1",
+          python: "3.11.9",
+          "py -3.11": "3.11.9",
+          "python3.11": "3.11.9",
+        },
+      });
       const { events, out } = collect();
       const r = await installVoice("cpu", { dirs, env, platform, run: fake.run, out });
       expect(r.exitCode).toBe(1);
       const err = messages(events, "error").join("\n");
-      expect(err).toMatch(/Python 3\.10 to 3\.12/);
+      expect(err).toMatch(/needs Python 3\.12/);
+      expect(err).toMatch(/numpy 2\.5/);
       expect(err).toMatch(/3\.13\.1/);
+      expect(err).toMatch(/3\.11\.9/);
       expect(err).toContain(
         platform === "windows"
           ? "winget install -e --id Python.Python.3.12"
@@ -268,6 +290,100 @@ describe("fr voice install", () => {
     expect(err).toMatch(/FORERUNNER_HOME/);
     expect(fake.calls.some((c) => c.argv.includes("venv"))).toBe(false);
     expect(fake.calls.some((c) => c.argv.includes("-r"))).toBe(false);
+  });
+
+  it("fails when pip check finds a broken requirement, without writing the marker", async () => {
+    const { dirs, env } = home();
+    const fake = fakeRunner({
+      pipCheckError: "kokoro 0.9.4 requires torch, which is not installed.",
+    });
+    const { events, out } = collect();
+    const r = await installVoice("cpu", { dirs, env, platform: "linux", run: fake.run, out });
+    expect(r.exitCode).toBe(1);
+    expect(messages(events, "error").join("\n")).toMatch(/kokoro 0\.9\.4 requires torch/);
+    const again = fakeRunner();
+    await installVoice("cpu", { dirs, env, platform: "linux", run: again.run, out: () => {} });
+    expect(
+      again.calls.some((c) => c.argv.includes(requirementsFile("cpu", DEFAULT_HELPERS_DIR))),
+    ).toBe(true);
+  });
+
+  it("pip never sees an extra index or find-links from the environment", async () => {
+    const { dirs, env } = home();
+    const fake = fakeRunner();
+    await installVoice("cpu", {
+      dirs,
+      env: { ...env, PIP_EXTRA_INDEX_URL: "https://evil.example/simple", PIP_FIND_LINKS: "/tmp/x" },
+      platform: "linux",
+      run: fake.run,
+      out: () => {},
+    });
+    for (const c of fake.calls.filter((c) => c.argv[2] === "pip" || c.argv[1] === "-m")) {
+      expect(c.env?.PIP_EXTRA_INDEX_URL).toBeUndefined();
+      expect(c.env?.PIP_FIND_LINKS).toBeUndefined();
+    }
+  });
+
+  it("stops when cancelled: the running step is aborted, nothing is recorded, the lock is freed", async () => {
+    const { dirs, env } = home();
+    const controller = new AbortController();
+    const fake = fakeRunner();
+    const run: typeof fake.run = async (req) => {
+      if (req.argv.includes(torchFile("cpu", DEFAULT_HELPERS_DIR))) {
+        expect(req.signal).toBeDefined();
+        controller.abort();
+        return { code: null, stdout: Buffer.alloc(0), stderr: "killed" };
+      }
+      return fake.run(req);
+    };
+    const { events, out } = collect();
+    const r = await installVoice("cpu", {
+      dirs,
+      env,
+      platform: "linux",
+      run,
+      out,
+      signal: controller.signal,
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.message).toMatch(/cancelled/);
+    expect(messages(events, "error").join("\n")).toMatch(/cancelled/);
+    expect(fake.calls.some((c) => c.argv[1]?.endsWith("fr_voice_models.py"))).toBe(false);
+    expect(readVoiceSettings(dirs)).toBeNull();
+    expect(existsSync(voiceDirs(dirs).lock)).toBe(false);
+  });
+
+  it("names the lock file when another install holds it", async () => {
+    const { dirs, env } = home();
+    const lock = voiceDirs(dirs).lock;
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, String(process.ppid));
+    const { events, out } = collect();
+    const r = await installVoice("cpu", {
+      dirs,
+      env,
+      platform: "linux",
+      run: fakeRunner().run,
+      out,
+    });
+    expect(r.exitCode).toBe(1);
+    const err = messages(events, "error").join("\n");
+    expect(err).toContain(lock);
+    expect(err).toMatch(new RegExp(`process ${process.ppid}`));
+  });
+
+  it("writes voice.json atomically: a temporary file renamed over it, none left behind", () => {
+    const { dirs } = home();
+    const target = voiceDirs(dirs).settings;
+    writeVoiceSettings(dirs, { version: 1, profile: "cpu", updatedAt: "t" });
+    writeVoiceSettings(dirs, { version: 1, profile: "gpu", updatedAt: "t2" });
+    expect(readdirSync(dirname(target)).filter((f) => f.startsWith("voice.json"))).toEqual([
+      "voice.json",
+    ]);
+    expect(readVoiceSettings(dirs)?.profile).toBe("gpu");
+    // A torn temporary file from a crash is never what is read.
+    writeFileSync(`${target}.tmp-123`, "{ torn");
+    expect(readVoiceSettings(dirs)?.profile).toBe("gpu");
   });
 
   it("switching profiles removes the other venv after the new one is verified", async () => {
@@ -381,17 +497,24 @@ describe("the GPU and the default profile", () => {
     expect(parseVoiceProfileAnswer("maybe", "cpu")).toBeNull();
   });
 
-  it("finds a 3.10 to 3.12 interpreter in the per-OS order", async () => {
+  it("finds a 3.12 interpreter in the per-OS order, never 3.10 or 3.11", async () => {
     const linux = await findBasePython({
-      run: fakeRunner({ pythons: { python3: "3.13.0", "python3.11": "3.11.9" } }).run,
+      run: fakeRunner({ pythons: { "python3.11": "3.11.9", python3: "3.12.4" } }).run,
       platform: "linux",
     });
-    expect(linux).toEqual({ argv: ["python3.11"], version: "3.11.9" });
+    expect(linux).toEqual({ argv: ["python3"], version: "3.12.4" });
     const win = await findBasePython({
-      run: fakeRunner({ pythons: { "py -3.10": "3.10.11", python: "3.12.1" } }).run,
+      run: fakeRunner({
+        pythons: { "py -3.11": "3.11.9", "py -3.10": "3.10.11", python: "3.12.1" },
+      }).run,
       platform: "windows",
     });
-    expect(win).toEqual({ argv: ["py", "-3.10"], version: "3.10.11" });
+    expect(win).toEqual({ argv: ["python"], version: "3.12.1" });
+    const launcher = await findBasePython({
+      run: fakeRunner({ pythons: { "py -3.12": "3.12.7", python: "3.13.0" } }).run,
+      platform: "windows",
+    });
+    expect(launcher.argv).toEqual(["py", "-3.12"]);
     const explicit = await findBasePython({
       run: fakeRunner({ pythons: { "/opt/python3.12/bin/python3": "3.12.2" } }).run,
       platform: "linux",

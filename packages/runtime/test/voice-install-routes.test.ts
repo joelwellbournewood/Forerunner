@@ -12,7 +12,7 @@ import { VoiceInstallEntryView, VoiceInstallView } from "../src/voice/install-ty
 import { fakeRunner, NVIDIA } from "./voice-install-helpers.ts";
 
 /**
- * Settings → Voice through the daemon (ADR 0089): the view with the catalog and the GPU, an
+ * Settings → Voice through the daemon (ADR 0090): the view with the catalog and the GPU, an
  * install or switch as a background job with its progress replayable as JSON or SSE, one job at
  * a time, refused while a voice session is open, and the helpers stopped before an old venv is
  * deleted.
@@ -150,6 +150,48 @@ describe("GET/POST /voice/install", () => {
   });
 });
 
+describe("cancelling an install", () => {
+  it("POST /voice/install/cancel aborts the running job; the result says cancelled", async () => {
+    const h = mkdtempSync(join(tmpdir(), "fr-voice-routes-cancel-"));
+    const env = { FORERUNNER_HOME: h };
+    const fake = fakeRunner({ nvidiaSmi: null });
+    let signalled: AbortSignal | undefined;
+    const jobs = new VoiceInstallJobs({
+      dirs: appDirs({ env }),
+      env,
+      clock: new SimulatedClock(),
+      platform: "linux",
+      run: async (req) => {
+        if (req.argv.some((a) => a.endsWith("torch-cpu.txt"))) {
+          signalled = req.signal;
+          // A long download, until the signal aborts it.
+          await new Promise<void>((r) => req.signal?.addEventListener("abort", () => r()));
+          return { code: null, stdout: Buffer.alloc(0), stderr: "killed" };
+        }
+        return fake.run(req);
+      },
+      busy: () => null,
+      release: async () => {},
+    });
+    const app = createVoiceInstallRoutes({ jobs });
+    expect((await app.request("/voice/install/cancel", { method: "POST" })).status).toBe(409);
+    await app.request("/voice/install", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profile: "cpu" }),
+    });
+    for (let i = 0; i < 50 && !signalled; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(signalled).toBeDefined();
+    const r = await app.request("/voice/install/cancel", { method: "POST" });
+    expect(r.status).toBe(202);
+    await jobs.settled;
+    const v = VoiceInstallView.parse(await (await app.request("/voice/install")).json());
+    expect(v.job).toMatchObject({ state: "failed", exitCode: 1 });
+    expect(JSON.stringify(v.job?.recent.at(-1))).toMatch(/cancelled/);
+    expect(DAEMON_ROUTES.cancelVoiceInstall).toMatch(/^POST \/voice\/install\/cancel/);
+  });
+});
+
 describe("the daemon serves the voice install routes", () => {
   it("behind the bearer token, listed in DAEMON_ROUTES", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-voice-routes-daemon-"));
@@ -182,5 +224,50 @@ describe("the daemon serves the voice install routes", () => {
     } finally {
       await rt.close();
     }
+  });
+
+  it("a daemon stop cancels a running install; a voice install blocks local voice meanwhile", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-voice-routes-stop-"));
+    const env = { FORERUNNER_HOME: home };
+    const fake = fakeRunner({ nvidiaSmi: null });
+    let aborted = false;
+    let downloading = false;
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock: new SimulatedClock(),
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      registryDir: join(process.cwd(), "evals", "registry"),
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+      voice: {
+        installRunner: async (req) => {
+          if (req.argv.some((a) => a.endsWith("torch-cpu.txt"))) {
+            downloading = true;
+            await new Promise<void>((r) =>
+              req.signal?.addEventListener("abort", () => {
+                aborted = true;
+                r();
+              }),
+            );
+            return { code: null, stdout: Buffer.alloc(0), stderr: "killed" };
+          }
+          return fake.run(req);
+        },
+      },
+    });
+    rt.voiceInstall.start("cpu");
+    for (let i = 0; i < 100 && !downloading; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(downloading).toBe(true);
+    expect(await rt.localVoice.stt.isAvailable()).toEqual({
+      ok: false,
+      reason: expect.stringMatching(/voice install is running/),
+    });
+    await rt.close();
+    expect(aborted).toBe(true);
+    expect(rt.voiceInstall.running).toBe(false);
   });
 });

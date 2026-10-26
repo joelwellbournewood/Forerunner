@@ -146,6 +146,8 @@ export class FasterWhisperStt implements SttProvider {
   private current: FasterWhisperSession | null = null;
   private availability: Availability | null = null;
   private pythonExe: string | null = null;
+  /** Set by dispose(): the helper is never started again (ADR 0090, a voice profile swap). */
+  private disposed = false;
 
   constructor(private readonly opts: FasterWhisperOptions = {}) {
     this.clock = opts.clock ?? systemClock;
@@ -202,6 +204,7 @@ export class FasterWhisperStt implements SttProvider {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
     // An utterance still open ends here: the helper's exit, once it comes, belongs to a helper
     // already let go and only logs (a new utterance may be on a new helper by then).
     if (this.current && !this.current.closed)
@@ -243,6 +246,10 @@ export class FasterWhisperStt implements SttProvider {
   }
 
   private ensureProcess(): Promise<void> {
+    if (this.disposed)
+      return Promise.reject(
+        new ForerunnerError("unavailable", "faster-whisper provider was disposed"),
+      );
     if (this.ready) return this.ready;
     this.ready = (async () => {
       let python = this.opts.python ?? this.pythonExe;

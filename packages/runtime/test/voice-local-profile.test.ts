@@ -17,7 +17,7 @@ import {
 import { buildVoiceRegistry } from "../src/voice/providers.ts";
 
 /**
- * The daemon's local providers follow the voice profile (ADR 0089): the managed venv's
+ * The daemon's local providers follow the voice profile (ADR 0090): the managed venv's
  * interpreter, the profile's devices (cuda with a loud CPU fallback on gpu), the models folder
  * as HF_HOME, or "voice is off" for none. voice.json is read at every use, so a switch from
  * the CLI or Settings applies at the next voice session without a restart.
@@ -129,6 +129,19 @@ describe("localVoiceSettings: what the profile means for the helpers", () => {
     expect(s?.python).toBeNull();
     expect(s?.stt.device).toBe("cuda");
   });
+
+  it("FORERUNNER_PYTHON wins in every case: profile none, or a profile whose venv is gone", () => {
+    const { dirs, env } = home();
+    const withPy = { ...env, FORERUNNER_PYTHON: "/opt/py/bin/python" };
+    writeVoiceSettings(dirs, { version: 1, profile: "none", updatedAt: "t" });
+    // Not off: the interpreter named by the environment is used, as before profiles.
+    expect(localVoiceSettings({ dirs, env: withPy, platform: "linux" })).toBeNull();
+    writeVoiceSettings(dirs, { version: 1, profile: "gpu", updatedAt: "t" });
+    const gone = localVoiceSettings({ dirs, env: withPy, platform: "linux" });
+    expect(gone?.off).toBeNull();
+    expect(gone?.python).toBeNull();
+    expect(gone?.stt.device).toBe("cuda");
+  });
 });
 
 describe("LocalVoice: the registry's faster-whisper and kokoro follow voice.json", () => {
@@ -201,5 +214,129 @@ describe("LocalVoice: the registry's faster-whisper and kokoro follow voice.json
     });
     expect(built[1]?.tts.extraArgs).toEqual(["--device", "cuda", "--cpu-fallback"]);
     expect(built[1]?.env?.HF_HOME).toBe(voiceDirs(dirs).models);
+  });
+});
+
+/** A factory whose helpers record use and can hold a session or a synthesis open. */
+function trackingFactory() {
+  const built: LocalHelperOptions[] = [];
+  let disposed = 0;
+  let releaseSynth: () => void = () => {};
+  const factory = (o: LocalHelperOptions) => {
+    built.push(o);
+    const index = built.length;
+    return {
+      stt: {
+        name: "faster-whisper",
+        kind: "local" as const,
+        isAvailable: async () => ({ ok: true, reason: `pair ${index}` }),
+        start: () => {
+          let closed = false;
+          const queue: unknown[] = [];
+          return {
+            events: {
+              async *[Symbol.asyncIterator]() {
+                while (!closed) await new Promise((r) => setTimeout(r, 5));
+                yield* queue as never[];
+              },
+            },
+            push: () => {},
+            endOfSpeech: () => {},
+            close: async () => {
+              closed = true;
+            },
+          };
+        },
+        dispose: async () => {
+          disposed++;
+        },
+      },
+      tts: {
+        name: "kokoro",
+        kind: "local" as const,
+        isAvailable: async () => ({ ok: true, reason: `pair ${index}` }),
+        synthesize: async function* () {
+          await new Promise<void>((r) => {
+            releaseSynth = r;
+          });
+          yield { pcm: new Int16Array(10), sampleRate: 24000, channels: 1, timestampMs: 0 };
+        },
+        dispose: async () => {
+          disposed++;
+        },
+      },
+    };
+  };
+  return { factory, built, disposed: () => disposed, releaseSynth: () => releaseSynth() };
+}
+
+const cpuVerified = {
+  at: "t",
+  stt: { device: "cpu", computeType: "int8", fallback: null },
+  tts: { device: "cpu", computeType: null, fallback: null },
+};
+
+describe("LocalVoice: live sessions and a profile change", () => {
+  it("defers a swap while an STT session is open; the old helpers live until it ends", async () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", cpuVerified);
+    const t = trackingFactory();
+    const local = new LocalVoice({ dirs, env, clock: new SimulatedClock(), factory: t.factory });
+    const session = local.stt.start({ sampleRate: 16000 });
+    expect(local.inUse()).toBe(1);
+    installed(dirs, "gpu", { at: "t2", stt: cuda, tts: ttsCuda });
+    // Still the old pair, nothing stopped, while the session is open.
+    expect((await local.stt.isAvailable()).reason).toBe("pair 1");
+    expect(t.built).toHaveLength(1);
+    expect(t.disposed()).toBe(0);
+    await session.close();
+    expect(local.inUse()).toBe(0);
+    expect((await local.stt.isAvailable()).reason).toBe("pair 2");
+    expect(t.disposed()).toBe(2);
+  });
+
+  it("defers a swap while a sentence is being synthesised", async () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", cpuVerified);
+    const t = trackingFactory();
+    const local = new LocalVoice({ dirs, env, clock: new SimulatedClock(), factory: t.factory });
+    const it = local.tts.synthesize("Hello.")[Symbol.asyncIterator]();
+    const first = it.next();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(local.inUse()).toBe(1);
+    installed(dirs, "gpu", { at: "t2", stt: cuda, tts: ttsCuda });
+    expect((await local.tts.isAvailable()).reason).toBe("pair 1");
+    t.releaseSynth();
+    await first;
+    await it.next();
+    expect(local.inUse()).toBe(0);
+    expect((await local.tts.isAvailable()).reason).toBe("pair 2");
+  });
+
+  it("refuses new sessions and speech while an install runs, with the reason", async () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", cpuVerified);
+    let installing: string | null = "a voice install is running";
+    const t = trackingFactory();
+    const local = new LocalVoice({
+      dirs,
+      env,
+      clock: new SimulatedClock(),
+      factory: t.factory,
+      blocked: () => installing,
+    });
+    expect(await local.stt.isAvailable()).toEqual({
+      ok: false,
+      reason: "a voice install is running",
+    });
+    expect(() => local.stt.start({ sampleRate: 16000 })).toThrow(/voice install is running/);
+    const speak = async () => {
+      for await (const _ of local.tts.synthesize("Hi.")) {
+        // nothing
+      }
+    };
+    await expect(speak()).rejects.toThrow(/voice install is running/);
+    installing = null;
+    expect((await local.stt.isAvailable()).ok).toBe(true);
   });
 });
