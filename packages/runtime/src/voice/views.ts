@@ -230,6 +230,7 @@ export function voiceEventView(entry: VoiceBridgeEntry, chf: number): VoiceEvent
           latency: voiceLatencyView(e.latency),
           entry: e.entry,
           unspokenText: e.unspokenText ?? null,
+          ...(e.continued ? { continued: true } : {}),
         },
       };
     case "voice.readback":

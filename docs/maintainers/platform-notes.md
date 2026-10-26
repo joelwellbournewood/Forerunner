@@ -90,7 +90,10 @@ other credential-like key names, a token nested deeper than eight levels, a thro
 of a connection string with an empty user (`redis://:password@host/0`, `amqp://:pw@h`),
 upper-case `*_KEY` names, the key-name rule in every case (`PRIVATE_KEY`, `Private_Key`,
 `signingKey`, `signingKEY`) with the public-key exception and the plain words (`monkey`,
-`MONKEY`) that stay.
+`MONKEY`) that stay. `clock.test.ts` covers `SimulatedClock`: timers in order, timers scheduled by
+timers, never backwards, and `nextTimerIn()` (how far away the next timer is, null when none;
+tests that drive a composed runtime step the clock to the next timer and no further, and yield
+real time while nothing is pending, so real IO is never overtaken by simulated time).
 
 ## Known issues
 

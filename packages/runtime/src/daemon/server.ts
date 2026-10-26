@@ -1625,7 +1625,7 @@ export function createDaemonApp(
     const body = await parse(c, VoicePressBody);
     // A press always counts: one that came while the last turn transcribes is queued by the
     // loop and answered once the new turn listens (or the session stopped).
-    if (body.pressed) await session.bridge.pressAndWait(body.replyMode);
+    if (body.pressed) await session.bridge.pressAndWait(body.replyMode, c.req.raw.signal);
     else session.bridge.press(false, body.replyMode);
     return c.json(voiceSessionView(session, chf()));
   });

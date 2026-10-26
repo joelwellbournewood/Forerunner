@@ -341,10 +341,16 @@ error adds no "Agent:" line. A press while a session is live posts the press fir
 status read before it, so a barge-in reaches the daemon at once. A press counts only when the
 daemon's answer names a newer turn that is `listening` (the daemon queues a press that comes
 while the last turn transcribes and answers once the new turn listens, `voice.md`); otherwise
-the panel undoes the player's silencing (`interrupt()` returns the undo) and, if it was waiting
-for a reply, goes back to waiting for it. A press that gets 404, or 409 "has ended" (the daemon
-restarted, the session was stopped elsewhere), forgets the session, closes its player and tries
-once more through the status read and a new session.
+the panel undoes the player's silencing (`interrupt()` returns the undo, compare-and-restore: it
+leaves a bound a later press raised and a turn a real `barge_in`, `error` or cut-short
+`turn_end` silenced in between) and, if it was waiting for a reply, goes back to waiting for it.
+A press that gets 404, or 409 "has ended" (the daemon restarted, the session was stopped
+elsewhere), forgets the session, takes the old player's audio output over
+(`player.detachOutput()`: made in the click, it may start, where one made after the awaits may
+not) and tries once more through the status read and a new session. A turn cut short by a press
+while it transcribed carries its words into the next turn (`voice.md`): its `turn_end`
+(`continued`) announces nothing, and the next turn's line is marked "(continued)"
+(`data-continued`, from `transcript_final.carried`).
 The text itself shows as it comes, from the session's event stream (below; the player hands
 every frame but `audio` to the panel's `onFrame` after its seq check, so a reconnect's replay
 shows nothing twice): the human's line from `transcript_partial` (italic, `data-partial`, as

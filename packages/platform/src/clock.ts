@@ -134,6 +134,12 @@ export class SimulatedClock implements Clock {
   pendingTimers(): number {
     return this.timers.length;
   }
+
+  /** Milliseconds until the next pending timer is due, or null when none is pending. */
+  nextTimerIn(): number | null {
+    const next = this.timers[0];
+    return next ? Math.max(0, next.at - this.current) : null;
+  }
 }
 
 export const systemClock: Clock = new SystemClock();

@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { SESSION_OVERRIDE_KEY } from "@forerunner/commands";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
-import { FakeProvider, textReply } from "@forerunner/testenv";
+import { FakeProvider, lastUserText, textReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -15,7 +15,11 @@ import {
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { VOICE_APPROVAL_AUDIT_TOOL, VOICE_SESSION_AUDIT_TOOL } from "../src/voice/bridge.ts";
+import {
+  VOICE_APPROVAL_AUDIT_TOOL,
+  VOICE_PRESS_WAIT_MS,
+  VOICE_SESSION_AUDIT_TOOL,
+} from "../src/voice/bridge.ts";
 import {
   type AudioChunk,
   CartesiaTts,
@@ -42,7 +46,6 @@ type Json = Record<string, unknown>;
 const json = async (r: Response): Promise<Json> => (await r.json()) as Json;
 const jsonList = async (r: Response): Promise<Json[]> => (await r.json()) as Json[];
 const STATUS_REPLY = "The session on PharmaWatch completed. One pull request is open.";
-const STEP_MS = 50;
 const FRAME_MS = 20;
 
 /** Let every pending microtask and I/O callback run (the store's queries, the provider). */
@@ -50,7 +53,27 @@ async function settle(rounds = 8): Promise<void> {
   for (let i = 0; i < rounds; i++) await new Promise<void>((r) => setImmediate(r));
 }
 
-/** Step the simulated clock until `p` settles (the loop's STT, model and TTS delays run on it). */
+/** How long `drive` waits in real time, overall, for real IO that has no timer to step to. */
+const DRIVE_REAL_LIMIT_MS = 15_000;
+/** Real macrotask turns `drive` yields before it moves the simulated clock. */
+const DRIVE_QUIET_TURNS = 3;
+/**
+ * The farthest timer `drive` steps to. The runtime keeps long timers (a daily sweep): when one
+ * of those is all that is pending, the work in flight is real IO, not simulated time, and a
+ * jump to it moved the clock a day ahead on a loaded run (sessions evicted, waits expired).
+ */
+const DRIVE_HORIZON_MS = 10_000;
+
+const realTurn = () => new Promise<void>((r) => setTimeout(r, 0));
+
+/**
+ * Step the simulated clock until `p` settles (the loop's STT, model and TTS delays run on it).
+ * Real IO (the store, the registry's files on a cold run) runs on real time, so the clock moves
+ * only when a timer is pending within the horizon, and only to that timer: a fixed step after a
+ * fixed number of yields overtook IO that was still pending on a loaded machine, and the latency
+ * stages grew by the steps taken meanwhile. Otherwise it yields real macrotask turns and looks
+ * again, within an overall real-time bound; past it, it fails rather than hang.
+ */
 async function drive<T>(clock: SimulatedClock, p: Promise<T> | T, limitMs = 60_000): Promise<T> {
   let done = false;
   const tracked = Promise.resolve(p).then(
@@ -64,10 +87,21 @@ async function drive<T>(clock: SimulatedClock, p: Promise<T> | T, limitMs = 60_0
     },
   );
   let spent = 0;
-  while (!done && spent < limitMs) {
+  const realStart = performance.now();
+  while (!done && performance.now() - realStart < DRIVE_REAL_LIMIT_MS) {
     await settle(24);
-    await clock.advance(STEP_MS);
-    spent += STEP_MS;
+    for (let i = 0; i < DRIVE_QUIET_TURNS && !done; i++) await realTurn();
+    if (done) break;
+    const next = clock.nextTimerIn();
+    if (next === null || next > DRIVE_HORIZON_MS || spent + next > limitMs) continue;
+    await clock.advance(next);
+    spent += next;
+  }
+  if (!done) {
+    tracked.catch(() => {});
+    throw new Error(
+      `drive: not settled after ${DRIVE_REAL_LIMIT_MS} ms of real time (${spent} ms simulated; next timer ${clock.nextTimerIn()} ms away)`,
+    );
   }
   return tracked;
 }
@@ -150,6 +184,16 @@ describe("voice routes on the composed daemon", () => {
       voice: { stt, tts },
     });
     ({ app, token } = createDaemonApp(rt));
+    // Warm the conversation agent (the registry's files, the store's first queries) so the
+    // first measured turn is not a cold start; a typed chat line, so no TTS or voice row.
+    const warm = await drive(
+      clock,
+      req("/chat", {
+        method: "POST",
+        body: JSON.stringify({ humanId: rt.human.id, agentId: rt.agent.id, text: "Note that." }),
+      }),
+    );
+    expect(warm.status).toBe(200);
     const p = await rt.store.project.insert({
       name: "PharmaWatch",
       goal: "Watch pharma news",
@@ -991,12 +1035,17 @@ describe("voice routes on the composed daemon", () => {
     // The press view leaves out the recent turns: only GET /voice/sessions/:id carries them.
     expect(released.recentTurns).toBeUndefined();
     scripts[stt.sessions.length] = { final: "What is the status?" }; // the next capture's
-    const pressed = VoiceSessionView.parse(
-      await json(await drive(clock, post(`/voice/sessions/${id}/press`, { pressed: true }))),
-    );
+    // The press must reach the daemon before the final lands (the request is parsed
+    // asynchronously; the simulated clock does not move until it is queued).
+    const pressing = post(`/voice/sessions/${id}/press`, { pressed: true });
+    const loop = rt.voice.mustGet(id).bridge.loop;
+    for (let i = 0; i < 2_000 && !loop.pressQueued; i++) await realTurn();
+    expect(loop.pressQueued).toBe(true);
+    const pressed = VoiceSessionView.parse(await json(await drive(clock, pressing)));
     expect(pressed).toMatchObject({ state: "listening", turn: released.turn + 1 });
     const cut = (await events(id)).find((e) => e.type === "turn_end" && e.turn === released.turn);
-    expect(cut?.data).toMatchObject({ latency: { interrupted: true } });
+    // Its words go on in the next turn: "I wasn't done talking".
+    expect(cut?.data).toMatchObject({ latency: { interrupted: true }, continued: true });
     await speak();
     await post(`/voice/sessions/${id}/press`, { pressed: false });
     const done = await drive(
@@ -1013,7 +1062,127 @@ describe("voice routes on the composed daemon", () => {
       [released.turn, "first part", true, ""],
       [pressed.turn, "What is the status?", false, STATUS_REPLY],
     ]);
+    // The agent got both utterances as one line; the new turn's final frame names the carry.
+    const calls = (rt.provider as FakeProvider).calls;
+    expect(lastUserText(calls.at(-1)?.request as never)).toContain(
+      "first part What is the status?",
+    );
+    const final2 = (await events(id)).find(
+      (e) => e.type === "transcript_final" && e.turn === pressed.turn,
+    );
+    expect(final2?.data).toMatchObject({
+      text: "What is the status?",
+      carried: { turn: released.turn, text: "first part" },
+    });
     expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+  });
+
+  describe("a press queued behind a transcribing turn", () => {
+    const openSession = async () =>
+      VoiceSessionView.parse(
+        await json(await post("/voice/sessions", { projectId, language: "en" })),
+      ).id;
+    /** A pushed turn released into `transcribing`, its final `finalDelayMs` away. */
+    const transcribing = async (id: string, finalDelayMs: number) => {
+      scripts[stt.sessions.length] = { final: "What is the status?", finalDelayMs };
+      await post(`/voice/sessions/${id}/press`, { pressed: true });
+      for (const frame of speechFrames(200)) {
+        clock.tickMonotonic(FRAME_MS);
+        await post(`/voice/sessions/${id}/audio`, {
+          pcm: encodePcm(frame),
+          sampleRate: frame.sampleRate,
+          channels: frame.channels,
+          timestampMs: frame.timestampMs,
+        });
+      }
+      const released = VoiceSessionView.parse(
+        await json(await post(`/voice/sessions/${id}/press`, { pressed: false })),
+      );
+      expect(released.state).toBe("transcribing");
+      return released.turn;
+    };
+    /** Real turns until the daemon has the press queued (the request is parsed asynchronously). */
+    const untilQueued = async (id: string) => {
+      const loop = rt.voice.mustGet(id).bridge.loop;
+      for (let i = 0; i < 2_000 && !loop.pressQueued; i++) await realTurn();
+      expect(loop.pressQueued).toBe(true);
+    };
+    const untilIdle = (id: string, turns: number) =>
+      drive(
+        clock,
+        (async () => {
+          for (;;) {
+            const v = VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`)));
+            if (v.turns >= turns && v.state === "idle") return v;
+            await settle(4);
+          }
+        })(),
+      );
+
+    it("a release before the queued press opened withdraws it: the press answers not listening and the turn replies", async () => {
+      const id = await openSession();
+      const turn = await transcribing(id, 300);
+      const press = post(`/voice/sessions/${id}/press`, { pressed: true });
+      await untilQueued(id);
+      const release = await post(`/voice/sessions/${id}/press`, { pressed: false });
+      expect(release.status).toBe(200);
+      const answer = VoiceSessionView.parse(await json(await drive(clock, press)));
+      expect(answer.state).not.toBe("listening");
+      expect(answer.turn).toBe(turn);
+      const done = await untilIdle(id, 1);
+      expect(done.lastTurn).toMatchObject({ turn, heard: STATUS_REPLY, interrupted: false });
+      expect(done.turn).toBe(turn);
+      expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+    });
+
+    it("a stop while the press waits answers it at once with the ended session", async () => {
+      const id = await openSession();
+      await transcribing(id, 5_000);
+      const press = post(`/voice/sessions/${id}/press`, { pressed: true });
+      await untilQueued(id);
+      expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+      const answer = VoiceSessionView.parse(await json(await drive(clock, press, 1_000)));
+      expect(answer.endedAt).not.toBeNull();
+      expect(answer.state).toBe("idle");
+    });
+
+    it("the wait is capped: past it the press is withdrawn and answered with the session as it is", async () => {
+      const id = await openSession();
+      const turn = await transcribing(id, VOICE_PRESS_WAIT_MS + 2_000);
+      const t0 = clock.monotonic();
+      const press = post(`/voice/sessions/${id}/press`, { pressed: true });
+      await untilQueued(id);
+      const answer = VoiceSessionView.parse(await json(await drive(clock, press)));
+      expect(clock.monotonic() - t0).toBeGreaterThanOrEqual(VOICE_PRESS_WAIT_MS);
+      expect(clock.monotonic() - t0).toBeLessThan(VOICE_PRESS_WAIT_MS + 2_000);
+      expect(answer).toMatchObject({ state: "transcribing", turn });
+      // Withdrawn: when the final lands the turn replies as usual, no capture opens.
+      const done = await untilIdle(id, 1);
+      expect(done.lastTurn).toMatchObject({ turn, heard: STATUS_REPLY });
+      expect(done.turn).toBe(turn);
+      expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+    });
+
+    it("a press request the shell gave up on (aborted) is withdrawn too", async () => {
+      const id = await openSession();
+      const turn = await transcribing(id, 2_000);
+      const ac = new AbortController();
+      const press = Promise.resolve(
+        app.request(`/voice/sessions/${id}/press`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ pressed: true }),
+          signal: ac.signal,
+        }),
+      ).catch(() => null);
+      await untilQueued(id);
+      ac.abort();
+      await drive(clock, press, 1_000);
+      const done = await untilIdle(id, 1);
+      expect(done.lastTurn).toMatchObject({ turn, heard: STATUS_REPLY });
+      expect(done.turn).toBe(turn);
+      expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+    });
   });
 
   it("streams the events over SSE and stops at once", async () => {

@@ -1117,4 +1117,77 @@ describe("VoiceLoop text replies (replyMode: text)", () => {
     expect(second.loop.state).toBe("idle");
     expect(second.loop.currentTurn).toBe(1);
   });
+
+  it("the words of a turn cut short by a queued press carry into the next turn: the agent gets both", async () => {
+    const heard: string[] = [];
+    const { clock, loop, events } = setup({
+      scripts: [{ final: "Move the review" }, { final: "to Friday." }],
+      converse: async function* (text, signal) {
+        heard.push(text);
+        await clock.sleep(100, signal);
+        yield "Done.";
+      },
+    });
+    pttTurn(loop, clock);
+    loop.pressStart(); // "I wasn't done talking"
+    await advance(clock, 300);
+    await settle();
+    // Turn 1 ended without a reply and says its words go on in the next turn.
+    expect(events.find((e) => e.type === "turn_end" && e.turn === 1)).toMatchObject({
+      entry: null,
+      continued: true,
+    });
+    for (const c of speech(200)) loop.push(c);
+    clock.tickMonotonic(20);
+    loop.pressEnd();
+    await runUntilIdle(loop, clock);
+    expect(heard).toEqual(["Move the review to Friday."]);
+    expect(events.find((e) => e.type === "transcript_final" && e.turn === 2)).toMatchObject({
+      text: "to Friday.",
+      carried: { turn: 1, text: "Move the review" },
+    });
+    // The transcript keeps each turn's own words.
+    expect(loop.transcript.map((e) => `${e.turn}:${e.role}:${e.text}`)).toEqual([
+      "1:user:Move the review",
+      "2:user:to Friday.",
+      "2:assistant:Done.",
+    ]);
+  });
+
+  it("a carried line with nothing said after it is answered on its own; stop() drops it", async () => {
+    const heard: string[] = [];
+    const { clock, loop } = setup({
+      scripts: [{ final: "What is the status?" }, { final: "" }],
+      converse: async function* (text) {
+        heard.push(text);
+        yield "All good.";
+      },
+    });
+    pttTurn(loop, clock);
+    loop.pressStart();
+    await advance(clock, 300);
+    await settle();
+    clock.tickMonotonic(20);
+    loop.pressEnd(); // released at once: nothing more was said
+    await runUntilIdle(loop, clock);
+    expect(heard).toEqual(["What is the status?"]);
+
+    const second = setup({
+      scripts: [{ final: "first" }, { final: "second" }],
+      converse: async function* (text) {
+        heard.push(text);
+        yield "Ok.";
+      },
+    });
+    pttTurn(second.loop, second.clock);
+    second.loop.pressStart();
+    await advance(second.clock, 300);
+    await settle();
+    await second.loop.stop();
+    second.loop.start();
+    pttTurn(second.loop, second.clock);
+    await runUntilIdle(second.loop, second.clock);
+    // After a stop the next turn starts fresh: "first" is not carried into it.
+    expect(heard.at(-1)).toBe("second");
+  });
 });

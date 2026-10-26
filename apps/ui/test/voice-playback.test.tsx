@@ -1155,6 +1155,48 @@ describe("conversation panel: review follow-ups", () => {
       true,
     );
     expect(screen.queryByTestId("voice-reason")).toBeNull();
+    // The output made in the first click (where a webview lets it start) goes to the new
+    // player: none is created after the awaits, none closed.
+    expect(h.audio.state.created).toBe(1);
+    expect(h.audio.state.closed).toBe(0);
+  });
+
+  it("a press while the last turn transcribed carries its words: one line goes on, no reply stopped", async () => {
+    const h = setup();
+    const { stream } = await startTalking(h);
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1, { replyMode: "voice" }));
+      stream.fire("voice.event", frame("transcript_final", 1, { text: "Move the review" }));
+      stream.fire("voice.event", frame("barge_in", 1, { spokenText: "" }));
+      stream.fire(
+        "voice.event",
+        frame("turn_end", 1, {
+          replyMode: "voice",
+          latency: { interrupted: true },
+          entry: null,
+          unspokenText: null,
+          continued: true,
+        }),
+      );
+      stream.fire("voice.event", frame("turn_start", 2, { replyMode: "voice" }));
+      stream.fire(
+        "voice.event",
+        frame("transcript_final", 2, {
+          text: "to Friday.",
+          carried: { turn: 1, text: "Move the review" },
+        }),
+      );
+    });
+    const humans = screen.getAllByTestId("conversation-human");
+    expect(humans).toHaveLength(2);
+    expect(humans[0]?.textContent).toContain("Move the review");
+    expect(humans[1]?.textContent).toContain("(continued)");
+    expect(humans[1]?.textContent).toContain("to Friday.");
+    expect(humans[1]?.dataset.continued).toBe("true");
+    expect(screen.queryAllByTestId("conversation-agent")).toHaveLength(0);
+    const log = screen.getByTestId("conversation-announcer");
+    expect(log.textContent).not.toMatch(/stopped|interrupted/i);
+    expect(log.textContent).toContain("You: to Friday.");
   });
 
   it("keeps the sentence marked until the window has played it, past the daemon's turn end", async () => {
@@ -1321,5 +1363,42 @@ describe("voice reply player: the end of what is heard", () => {
     expect(p.ends).toEqual([]);
     p.fire(frame("turn_end", 1, { latency: { interrupted: false } }));
     expect(p.ends).toEqual([1]);
+  });
+});
+
+describe("voice reply player: the undo of a press is compare-and-restore", () => {
+  it("does not lower what a later press raised", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, JITTER_START_MS));
+    const undo = p.player.interrupt();
+    p.player.silenceBefore(5); // a later press that the daemon took
+    undo();
+    p.fire(audioMs(3, JITTER_MAX_MS));
+    expect(p.audio.scheduled.filter((x) => !x.stopped)).toHaveLength(0);
+    p.fire(audioMs(5, JITTER_MAX_MS));
+    expect(p.audio.scheduled.filter((x) => !x.stopped)).toHaveLength(1);
+  });
+
+  it("does not unsilence a turn a real barge_in silenced in between", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, JITTER_START_MS));
+    const undo = p.player.interrupt();
+    p.fire(frame("barge_in", 1, { spokenText: "" }));
+    undo();
+    p.fire(audioMs(1, JITTER_MAX_MS));
+    expect(p.audio.scheduled).toHaveLength(1);
+  });
+
+  it("restores when nothing happened in between: the turn's later audio plays", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, JITTER_START_MS));
+    const undo = p.player.interrupt();
+    undo();
+    p.fire(audioMs(1, JITTER_MAX_MS));
+    expect(p.audio.scheduled).toHaveLength(2);
+    expect(p.audio.scheduled[1]?.stopped).toBe(false);
   });
 });

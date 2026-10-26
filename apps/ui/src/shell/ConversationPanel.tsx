@@ -70,6 +70,8 @@ interface Line {
   key?: string;
   /** Human: the STT's partial transcript, not final yet. */
   partial?: boolean;
+  /** Human: these words go on from the turn before (a press came while it transcribed). */
+  continued?: boolean;
   /** Agent: the reply's finished sentences, by index (each its own span). */
   sentences?: string[];
   /** Agent: what the model generated after the last finished sentence. */
@@ -273,6 +275,8 @@ export function ConversationPanel({
             ...(l ?? { id: nextId(), role: "human", via: "voice" }),
             text: str(data.text) || "(nothing heard)",
             partial: false,
+            // The agent gets the turn before's words with these: show them as one utterance.
+            ...(data.carried ? { continued: true } : {}),
           }));
           return;
         case "model_delta":
@@ -320,6 +324,9 @@ export function ConversationPanel({
           const interrupted = latency?.interrupted === true || entry?.interrupted === true;
           const reply: VoiceReplyMode | undefined =
             data.replyMode === "text" || data.replyMode === "voice" ? data.replyMode : undefined;
+          // A turn whose words go on in the next (a press while it transcribed) had no reply to
+          // stop: nothing to announce.
+          if (data.continued === true) return;
           if (unspoken) announce("Reply interrupted; the rest was not spoken.");
           else if (interrupted) announce("Reply stopped.");
           else if (entry) announce("End of reply.");
@@ -495,8 +502,12 @@ export function ConversationPanel({
           (error.status === 404 || (error.status === 409 && /ended/.test(error.message)));
         if (!gone || closed()) throw error;
         sessionRef.current = null;
-        playerRef.current?.close();
+        // The output made in this click goes to the new session's player (one made after the
+        // awaits may never start in a webview).
+        const kept = playerRef.current?.detachOutput() ?? null;
         playerRef.current = null;
+        if (kept && !outputRef.current) outputRef.current = kept;
+        else void kept?.close().catch(() => undefined);
         session = await ensureSession();
         if (!session) return;
         turnsRef.current = session.turns;
@@ -741,9 +752,11 @@ export function ConversationPanel({
               data-testid={`conversation-${l.role}`}
               data-via={l.via}
               {...(l.partial ? { "data-partial": "true" } : {})}
+              {...(l.continued ? { "data-continued": "true" } : {})}
               {...(l.reply ? { "data-reply": l.reply } : {})}
             >
               <span className="font-semibold">{l.role === "human" ? "You" : "Agent"}:</span>{" "}
+              {l.continued ? <span className="text-xs text-neutral-500">(continued) </span> : null}
               <LineText line={l} />
               {l.error ? (
                 <span className="text-red-700 dark:text-red-300"> ({l.error})</span>

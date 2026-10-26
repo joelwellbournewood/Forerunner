@@ -62,7 +62,18 @@ export type VoiceLoopEvent =
   /** `replyMode`: how this turn's reply goes out, taken when the turn starts. */
   | { type: "turn_start"; turn: number; replyMode: ReplyMode }
   | { type: "transcript_partial"; turn: number; text: string }
-  | { type: "transcript_final"; turn: number; text: string; entry: TranscriptEntry }
+  /**
+   * `text` is this turn's own words; `carried`, the words of a turn cut short by a press that
+   * came while it transcribed ("I wasn't done talking"): the agent gets `carried.text` and
+   * `text` together.
+   */
+  | {
+      type: "transcript_final";
+      turn: number;
+      text: string;
+      entry: TranscriptEntry;
+      carried?: { turn: number; text: string };
+    }
   | { type: "model_delta"; turn: number; text: string }
   | { type: "sentence"; turn: number; index: number; text: string }
   | { type: "audio"; turn: number; sentenceIndex: number; chunk: AudioChunk }
@@ -79,6 +90,11 @@ export type VoiceLoopEvent =
       entry: TranscriptEntry | null;
       /** Text the model generated that was never played (only when the turn was cut short). */
       unspokenText?: string;
+      /**
+       * A press came while this turn transcribed: its words go on in the next turn (that
+       * turn's `transcript_final.carried`), so this turn has no reply of its own.
+       */
+      continued?: true;
     }
   | { type: "error"; turn: number; error: ForerunnerError };
 
@@ -191,6 +207,8 @@ export class VoiceLoop {
    * opens its capture. A press always counts.
    */
   private queuedPressValue = false;
+  /** The words of a turn cut short by a queued press, for the next turn's model call. */
+  private carried: { turn: number; text: string } | null = null;
 
   constructor(private readonly opts: VoiceLoopOptions) {
     this.clock = opts.clock;
@@ -218,6 +236,16 @@ export class VoiceLoop {
   /** A press is waiting for the transcribing turn's final to open its capture. */
   get pressQueued(): boolean {
     return this.queuedPressValue;
+  }
+
+  /**
+   * Withdraw a queued press (the shell gave up waiting for it): the transcribing turn then
+   * goes on to its reply. Returns whether one was queued.
+   */
+  cancelQueuedPress(): boolean {
+    const was = this.queuedPressValue;
+    this.queuedPressValue = false;
+    return was;
   }
 
   get replyMode(): ReplyMode {
@@ -250,6 +278,7 @@ export class VoiceLoop {
   async stop(): Promise<void> {
     this.stopped = true;
     this.queuedPressValue = false;
+    this.carried = null;
     this.abortResponse("stop");
     const caps = [this.capture, this.transcribing].filter((c): c is Capture => c !== null);
     this.capture = null;
@@ -514,7 +543,19 @@ export class VoiceLoop {
       audioStored: false,
     };
     this.transcript.push(userEntry);
-    this.emit({ type: "transcript_final", turn: cap.turn, text: final.text, entry: userEntry });
+    // Words carried from a turn cut short by a press go to the model with this turn's own.
+    const carried = this.carried;
+    this.carried = null;
+    const said = carried
+      ? [carried.text, final.text.trim()].filter((t) => t.length > 0).join(" ")
+      : final.text;
+    this.emit({
+      type: "transcript_final",
+      turn: cap.turn,
+      text: final.text,
+      entry: userEntry,
+      ...(carried ? { carried } : {}),
+    });
     // The write runs in the background so disk IO never delays the model call.
     const userWrite =
       this.store && cap.userPcm.length > 0
@@ -526,7 +567,7 @@ export class VoiceLoop {
             })
         : Promise.resolve();
 
-    if (final.text.trim().length === 0) {
+    if (said.trim().length === 0) {
       await userWrite;
       const latency = buildLatencyReport(
         {
@@ -559,13 +600,15 @@ export class VoiceLoop {
     if (this.queuedPressValue) {
       // The human pressed again before the final landed: a barge-in on a reply not started
       // yet. The words are kept; no model is called; the queued capture opens after this.
+      // The words go on in the next turn: the human was not done talking.
+      this.carried = { turn: carried?.turn ?? cap.turn, text: said };
       await userWrite;
       this.emit({ type: "barge_in", turn: cap.turn, spokenText: "" });
-      this.endStopped(cap, endOfTurnMs, finalTranscriptMs);
+      this.endStopped(cap, endOfTurnMs, finalTranscriptMs, true);
       return;
     }
     try {
-      await this.respond(cap.turn, cap.replyMode, final.text, {
+      await this.respond(cap.turn, cap.replyMode, said, {
         tEnd,
         tFinal,
         endOfTurnMs,
@@ -577,7 +620,12 @@ export class VoiceLoop {
   }
 
   /** stop() while waiting for the transcript: end the turn without a model call. */
-  private endStopped(cap: Capture, endOfTurnMs: number, finalTranscriptMs: number | null): void {
+  private endStopped(
+    cap: Capture,
+    endOfTurnMs: number,
+    finalTranscriptMs: number | null,
+    continued = false,
+  ): void {
     const turn = cap.turn;
     const latency = buildLatencyReport(
       {
@@ -592,7 +640,14 @@ export class VoiceLoop {
       this.opts.targets,
     );
     this.latencies.push(latency);
-    this.emit({ type: "turn_end", turn, replyMode: cap.replyMode, latency, entry: null });
+    this.emit({
+      type: "turn_end",
+      turn,
+      replyMode: cap.replyMode,
+      latency,
+      entry: null,
+      ...(continued ? { continued: true as const } : {}),
+    });
     if (this.turn === turn && this.stateValue === "transcribing") this.setState("idle");
   }
 

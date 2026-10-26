@@ -211,6 +211,11 @@ interface TurnState {
 }
 
 const DEFAULT_BUFFER = 1000;
+/**
+ * How long `pressAndWait` waits for a queued press to open its capture (the transcribing
+ * turn's final); past it the press is withdrawn and the route answers the session as it is.
+ */
+export const VOICE_PRESS_WAIT_MS = 3_000;
 export const VOICE_SESSION_AUDIT_TOOL = "voice.session";
 export const VOICE_APPROVAL_AUDIT_TOOL = "voice.approval";
 /**
@@ -356,6 +361,8 @@ export class VoiceBridge {
       this.loop.pressStart();
     } else {
       this.loop.pressEnd();
+      // A release can withdraw a queued press: whoever waits on it gets the answer now.
+      if (this.pressWaiters.length > 0 && !this.loop.pressQueued) this.releasePressWaiters();
     }
   }
 
@@ -364,10 +371,33 @@ export class VoiceBridge {
    * transcribing, and the loop queued the press) once that turn's final landed, the turn ended
    * without a reply and the new capture opened; or when the session stopped meanwhile.
    */
-  async pressAndWait(replyMode?: ReplyMode): Promise<void> {
+  async pressAndWait(replyMode?: ReplyMode, signal?: AbortSignal): Promise<void> {
     this.press(true, replyMode);
     if (!this.loop.pressQueued) return;
-    await new Promise<void>((resolve) => this.pressWaiters.push(resolve));
+    // Bounded on the clock and by the request: a press that cannot take effect in time (a slow
+    // final) or that the shell gave up on is withdrawn, so no capture opens that nobody holds.
+    const timeout = new AbortController();
+    let gaveUp = false;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        signal?.removeEventListener("abort", giveUp);
+        timeout.abort();
+        resolve();
+      };
+      const giveUp = () => {
+        gaveUp = true;
+        this.pressWaiters = this.pressWaiters.filter((w) => w !== done);
+        done();
+      };
+      this.pressWaiters.push(done);
+      if (signal?.aborted) giveUp();
+      else signal?.addEventListener("abort", giveUp, { once: true });
+      this.clock
+        .sleep(VOICE_PRESS_WAIT_MS, timeout.signal)
+        .then(giveUp)
+        .catch(() => {});
+    });
+    if (gaveUp && this.loop.pressQueued) this.loop.cancelQueuedPress();
   }
 
   /** Microphone audio (any rate and channel count; the loop converts for STT and the VAD). */

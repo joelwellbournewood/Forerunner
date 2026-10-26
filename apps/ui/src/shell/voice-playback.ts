@@ -79,13 +79,20 @@ export interface VoiceReplyPlayer {
    * human pressed Talk. The daemon's turn may be over while this window still plays its tail
    * (its buffer and lead), and a press then reaches no reply to barge in on. Returns an undo for
    * a press the daemon did not take: the turns stop being silenced (what was stopped stays
-   * stopped; later frames of those turns play again).
+   * stopped; later frames of those turns play again). The undo is compare-and-restore: it leaves
+   * a bound a later press raised, and a turn a real `barge_in`, `error` or cut-short `turn_end`
+   * silenced in between, as they are.
    */
   interrupt(): () => void;
   /** Drop every turn before `turn` (the turn a press just started): none of it plays. */
   silenceBefore(turn: number): void;
   /** Silence what is queued and stop following the session; closes the audio output. */
   close(): void;
+  /**
+   * Like `close()`, but hands the audio output over instead of closing it (a new session's
+   * player takes it: an output made in a click may start, one made after awaits may not).
+   */
+  detachOutput(): AudioOutput | null;
   /** The jitter buffer's current target in ms (grows after an underrun; diagnostics). */
   readonly bufferTargetMs: number;
 }
@@ -229,6 +236,8 @@ export function followVoiceReply(
   const silenced = new Set<number>();
   /** Every turn up to this one is silenced (a press). */
   let silencedUpTo = 0;
+  /** Turns the daemon's own frames cut short (never unsilenced by a press's undo). */
+  const frameSilenced = new Set<number>();
   /** The newest turn any frame named. */
   let maxTurnSeen = 0;
   /** Turns whose audio the daemon said is complete (`speaking_end`, `turn_end`). */
@@ -423,6 +432,7 @@ export function followVoiceReply(
         break;
       case "barge_in":
       case "error":
+        if (turn !== null) frameSilenced.add(turn);
         if (forPlaying) silence();
         break;
       case "voice.stopped":
@@ -441,6 +451,7 @@ export function followVoiceReply(
       case "turn_end": {
         const latency = (parsed.data as { latency?: { interrupted?: boolean } } | null)?.latency;
         if (turn !== null) audioComplete.add(turn);
+        if (latency?.interrupted && turn !== null) frameSilenced.add(turn);
         if (latency?.interrupted && forPlaying) silence();
         else if (forPlaying && buffering) flush();
         maybeSpeakingEnd(turn);
@@ -473,9 +484,11 @@ export function followVoiceReply(
       const added = playingTurn !== null && !silenced.has(playingTurn) ? playingTurn : null;
       silence();
       silencedUpTo = Math.max(silencedUpTo, maxTurnSeen);
+      const setTo = silencedUpTo;
       return () => {
-        silencedUpTo = prevUpTo;
-        if (added !== null) silenced.delete(added);
+        // Only what this interrupt did, and only if nothing changed it since.
+        if (silencedUpTo === setTo) silencedUpTo = prevUpTo;
+        if (added !== null && !frameSilenced.has(added)) silenced.delete(added);
       };
     },
     silenceBefore(turn: number) {
@@ -490,6 +503,14 @@ export function followVoiceReply(
       source?.close();
       source = null;
       void audio?.close().catch(() => undefined);
+    },
+    detachOutput() {
+      if (closed) return null;
+      closed = true;
+      silence();
+      source?.close();
+      source = null;
+      return audio;
     },
   };
 }

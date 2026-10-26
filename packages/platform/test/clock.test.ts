@@ -47,6 +47,18 @@ describe("SimulatedClock", () => {
     expect(c.monotonic()).toBe(30);
   });
 
+  it("says how far away the next timer is, so a test can step to it and no further", async () => {
+    const c = new SimulatedClock(0);
+    expect(c.nextTimerIn()).toBeNull();
+    const cancel = c.setTimeout(() => {}, 300);
+    c.setTimeout(() => {}, 1000);
+    expect(c.nextTimerIn()).toBe(300);
+    await c.advance(100);
+    expect(c.nextTimerIn()).toBe(200);
+    cancel();
+    expect(c.nextTimerIn()).toBe(900);
+  });
+
   it("never moves backwards", async () => {
     const c = new SimulatedClock(1000);
     await expect(c.set(10)).rejects.toThrow(/backwards/);

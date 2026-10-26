@@ -136,10 +136,17 @@ converse(transcript, signal) ──deltas──▶ SentenceSplitter ──senten
    (the faster-whisper helper drops the session in flight when a new one starts), so a
    push-to-talk press in `transcribing` is queued (`pressQueued`), never dropped: once that
    turn's final lands, the turn keeps the words, calls no model and ends as cut short
-   (`barge_in` with `spokenText: ""`, `turn_end` with `entry: null` and latency
-   `interrupted: true`), and the queued capture opens (`turn_start` of the next turn). An empty
-   transcript, an STT failure or timeout opens it too; a release before it opened cancels it;
-   `stop()` drops it. The daemon's press route waits for it (`VoiceBridge.pressAndWait`) and
+   (`barge_in` with `spokenText: ""`, `turn_end` with `entry: null`, latency
+   `interrupted: true` and `continued: true`), and the queued capture opens (`turn_start` of the
+   next turn). The human was not done talking: the words are carried into the next turn, whose
+   model call gets them and its own words as one line (`transcript_final.carried
+   { turn, text }`; its transcript entry and its `voice.turn` row's `said` keep its own words);
+   a next turn with nothing said answers the carried words alone; a chain of such presses
+   carries all of them; `stop()` drops what is carried. An empty transcript, an STT failure or
+   timeout opens the capture too; a release before it opened cancels it; `stop()` drops it.
+   The daemon's press route waits for it (`VoiceBridge.pressAndWait`, at most
+   `VOICE_PRESS_WAIT_MS` (3 s) on the clock, and no longer than the request: past either the
+   press is withdrawn, `cancelQueuedPress()`, and the route answers the session as it is) and
    answers once the new turn listens, so a shell can tell a press that counted (a newer turn,
    `listening`) from one that did not.
 8. **Stop.** `stop()` is immediate in every state (O.9): a capture still listening is closed; a
@@ -629,7 +636,7 @@ device. Two first-audio figures are recorded per turn:
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (194 tests, a few seconds, no network); the
+`pnpm vitest run --project unit packages/voice` (196 tests, a few seconds, no network); the
 speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 `packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
@@ -651,7 +658,7 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/python-device.test.ts` | `setup_cuda_libraries()` on a fake site-packages: Windows `add_dll_directory` and `PATH` for every `nvidia/*/bin`, Linux cuBLAS and the cuDNN loader preloaded, nothing without the wheels; the gpu profile's `--cpu-fallback` (loud, at load when warmed, reported by `resolved_device()`), an explicit cuda without it raising; `fr_tts.py`'s `KokoroEngine` on cuda falling back with the reason, raising without `--cpu-fallback`, `auto` left to Kokoro; the warm-up sentence on cuda falling back loudly when synthesis fails there, the CPU never warmed |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
 | `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it; `drain()` waits for the play-head, at once on the abort or after `stop()` |
-| `test/loop.test.ts` | a press while the last turn transcribes is queued (the final lands, that turn ends cut short without a model call, the new capture opens and runs), and still opens after an STT timeout, while `stop()` drops it; a turn keeps the mode it started with (a switch during the capture applies to the next turn; an empty transcript's `turn_end` reports its turn's mode); the reply's text before its audio (each `sentence` before its first `audio`, the deltas before that, the final transcript before the model); reply in text: no TTS call, no audio or speaking events, the turn ends with the text, no first audio; a press while the text streams stops the generation and keeps what was shown (no `unspokenText`); `setReplyMode` applies from the next reply; PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
+| `test/loop.test.ts` | the words of a turn cut short by a queued press carry into the next turn's model call (each turn's transcript entry keeps its own words), answered alone when nothing more was said, dropped by `stop()`; a press while the last turn transcribes is queued (the final lands, that turn ends cut short without a model call, the new capture opens and runs), and still opens after an STT timeout, while `stop()` drops it; a turn keeps the mode it started with (a switch during the capture applies to the next turn; an empty transcript's `turn_end` reports its turn's mode); the reply's text before its audio (each `sentence` before its first `audio`, the deltas before that, the final transcript before the model); reply in text: no TTS call, no audio or speaking events, the turn ends with the text, no first audio; a press while the text streams stops the generation and keeps what was shown (no `unspokenText`); `setReplyMode` applies from the next reply; PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
 
 Live validation of the cloud providers is **pending keys** (`docs/status/BLOCKERS.md`, row
 "Voice keys"): the message shapes come from the vendors' public API documentation, not from
