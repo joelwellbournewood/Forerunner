@@ -1277,4 +1277,42 @@ describe("VoiceLoop text replies (replyMode: text)", () => {
     expect((heard[0] ?? "").length).toBeLessThanOrEqual(MAX_CARRIED_CHARS + " the end".length);
     expect(heard[0]?.startsWith("word")).toBe(true);
   });
+
+  it("stop() while the turn with a queued press writes its audio calls no model (O.9)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fr-voice-stop-"));
+    tmpDirs.push(dir);
+    let converseCalls = 0;
+    const { clock, loop, events } = setup({
+      storeAudio: true,
+      audioDir: dir,
+      scripts: [{ final: "first part" }, { final: "never" }],
+      converse: async function* () {
+        converseCalls++;
+        yield "Should not be said.";
+      },
+    });
+    pttTurn(loop, clock);
+    loop.pressStart(); // queued behind the transcribing turn
+    // The stop lands while the turn awaits its user audio write (a real disk write here).
+    let stopping: Promise<void> | null = null;
+    const origPush = events.push.bind(events);
+    events.push = (...items) => {
+      for (const e of items)
+        if (e.type === "transcript_final" && e.turn === 1)
+          queueMicrotask(() => {
+            stopping = loop.stop();
+          });
+      return origPush(...items);
+    };
+    await advance(clock, 300);
+    await runUntilIdle(loop, clock);
+    await (stopping ?? Promise.resolve());
+    events.push = origPush;
+    expect(converseCalls).toBe(0);
+    expect(loop.state).toBe("idle");
+    expect(loop.currentTurn).toBe(1);
+    expect(loop.transcript.filter((e) => e.role === "assistant")).toHaveLength(0);
+    const end = events.find((e) => e.type === "turn_end" && e.turn === 1);
+    expect(end?.type === "turn_end" && end.latency.interrupted).toBe(true);
+  });
 });

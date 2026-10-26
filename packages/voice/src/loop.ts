@@ -613,6 +613,11 @@ export class VoiceLoop {
       // The human pressed again before the final landed: a barge-in on a reply not started
       // yet. The words are kept; no model is called; the queued capture opens after this.
       await userWrite;
+      // stop() during the write: nothing more for this turn, no model call (O.9).
+      if (stopSignal.aborted) {
+        this.endStopped(cap, endOfTurnMs, finalTranscriptMs);
+        return;
+      }
     }
     if (this.queuedPressValue && !stopSignal.aborted) {
       // Still queued after the write (a release, the cap or an aborted request can withdraw it
@@ -677,6 +682,26 @@ export class VoiceLoop {
     transcript: string,
     t: { tEnd: number; tFinal: number; endOfTurnMs: number; finalTranscriptMs: number },
   ): Promise<void> {
+    // A stop that landed on any path before this point: no model is called after it (O.9);
+    // the turn still ends, cut short, so nothing waits on it.
+    if (this.stopped) {
+      const latency = buildLatencyReport(
+        {
+          turn,
+          endOfTurnMs: t.endOfTurnMs,
+          finalTranscriptMs: t.finalTranscriptMs,
+          modelFirstTokenMs: null,
+          firstAudioMs: null,
+          interrupted: true,
+          noResponse: true,
+        },
+        this.opts.targets,
+      );
+      this.latencies.push(latency);
+      this.emit({ type: "turn_end", turn, replyMode, latency, entry: null });
+      if (this.turn === turn && this.stateValue === "transcribing") this.setState("idle");
+      return;
+    }
     const abort = new AbortController();
     const signal = abort.signal;
     const res: Response = {
