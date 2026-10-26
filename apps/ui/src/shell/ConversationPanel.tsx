@@ -290,6 +290,9 @@ export function ConversationPanel({
           }));
           return;
         case "model_delta":
+          // The conversation agent's sentence gate passes whole sentences and stamps the first
+          // token with an empty piece: that piece shows nothing (no empty "Agent:" line).
+          if (!str(data.text)) return;
           upsertTurnLine(sessionId, turn, "agent", (l) => {
             const base: Line = l ?? {
               id: nextId(),

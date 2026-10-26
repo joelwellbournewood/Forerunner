@@ -357,7 +357,8 @@ every frame but `audio` to the panel's `onFrame` after its seq check, so a recon
 shows nothing twice): the human's line from `transcript_partial` (italic, `data-partial`, as
 often as the STT gives partials: faster-whisper re-transcribes once a second while the button
 is held, a cost the daemon pays anyway) and then `transcript_final`; the agent's line from the
-first `model_delta`, each finished `sentence` its own span and the part of the next sentence
+first non-empty `model_delta` (the conversation agent's sentence gate sends whole sentences
+after an empty first piece, which adds no line), each finished `sentence` its own span and the part of the next sentence
 generated so far after it (`consume` drops a sentence's text from that tail; the splitter's
 sentences are trimmed substrings of the deltas). The sentence being heard is marked
 (`data-speaking`, a highlight, `aria-current`; not a live region): the player's

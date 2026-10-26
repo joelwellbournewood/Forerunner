@@ -873,6 +873,34 @@ describe("conversation panel: the reply's text as it comes", () => {
     expect(agentLine().querySelector("[data-speaking]")).toBeNull();
   });
 
+  it("an empty first piece (the conversation agent's sentence gate stamps the first token with one) adds no empty Agent line", async () => {
+    const h = setup();
+    const { stream } = await startTalking(h);
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1, { replyMode: "voice" }));
+      stream.fire("voice.event", frame("transcript_final", 1, { text: "what is next" }));
+      stream.fire("voice.event", frame("model_delta", 1, { text: "" }));
+    });
+    expect(screen.queryAllByTestId("conversation-agent")).toHaveLength(0);
+    // A reply cut off before its first complete sentence (max_tokens) never shows one either.
+    act(() => {
+      stream.fire(
+        "voice.event",
+        frame("turn_end", 1, { replyMode: "voice", latency: { interrupted: false }, entry: null }),
+      );
+    });
+    expect(screen.queryAllByTestId("conversation-agent")).toHaveLength(0);
+    // The gate then passes whole sentences: each shows as it comes.
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 2, { replyMode: "voice" }));
+      stream.fire("voice.event", frame("model_delta", 2, { text: "" }));
+      stream.fire("voice.event", frame("model_delta", 2, { text: "All good. " }));
+      stream.fire("voice.event", frame("sentence", 2, { index: 0, text: "All good." }));
+    });
+    expect(screen.getAllByTestId("conversation-agent")).toHaveLength(1);
+    expect(screen.getByTestId("conversation-agent").textContent).toBe("Agent: All good.");
+  });
+
   it("a reconnect's replay does not show the reply's text twice", async () => {
     const h = setup();
     const { stream } = await startTalking(h);

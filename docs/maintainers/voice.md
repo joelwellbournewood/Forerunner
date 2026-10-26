@@ -168,7 +168,11 @@ converse(transcript, signal) ──deltas──▶ SentenceSplitter ──senten
    human's words are `transcript_partial` events while the capture runs and one
    `transcript_final` before the model is called (`test/loop.test.ts`, "VoiceLoop reply
    text"). The daemon streams them all, numbered (`seq`); the panel builds its lines from them
-   (`apps.md`).
+   (`apps.md`). Through the daemon's bridge the deltas come from the conversation agent's
+   `SentenceGate` (`runtime.md`): whole sentences, after an empty first piece that stamps the
+   model's first token, so a reply streams sentence by sentence (in text mode too) and a reply
+   cut off at `max_tokens` never shows its unfinished last sentence; the panel ignores the empty
+   piece.
 
 ### Reply in text
 
@@ -645,7 +649,7 @@ device. Two first-audio figures are recorded per turn:
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (200 tests, a few seconds, no network); the
+`pnpm vitest run --project unit packages/voice` (230 tests, a few seconds, no network); the
 speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 `packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
