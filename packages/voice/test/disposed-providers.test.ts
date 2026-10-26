@@ -59,6 +59,26 @@ describe("retired local providers", () => {
     expect(existsSync(helper.ran)).toBe(false);
   });
 
+  it("faster-whisper: retire() while the interpreter probe runs spawns nothing after it", async () => {
+    // No `python` option: the first utterance probes for an interpreter (here node, through
+    // FORERUNNER_PYTHON; its probe fails the import but names a runnable interpreter). The
+    // provider is retired while that probe runs; when it returns, no helper may start from
+    // the venv the swap is about to remove.
+    const helper = spyHelper();
+    const stt = new FasterWhisperStt({
+      helperPath: helper.path,
+      env: { ...process.env, FORERUNNER_PYTHON: node },
+      readyTimeoutMs: 2000,
+    });
+    const session = stt.start({ sampleRate: 16000 });
+    await stt.retire();
+    const events: SttEvent[] = [];
+    for await (const e of session.events) events.push(e);
+    expect(events.at(-1)).toMatchObject({ type: "error" });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(existsSync(helper.ran)).toBe(false);
+  });
+
   it("dispose() alone stops the current helper but lets the provider start a new one", async () => {
     const helper = spyHelper();
     const stt = new FasterWhisperStt({

@@ -360,7 +360,11 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
   retires the old pair: `FasterWhisperStt.retire()` / `KokoroTts.retire()` stop the helper and
   mark the provider so `ensureProcess()` rejects with `unavailable` "... provider was disposed
   (retired)" (`test/disposed-providers.test.ts`); a session holding the old provider gets an
-  error instead of a helper respawned from the old venv. `dispose()` alone keeps its meaning
+  error instead of a helper respawned from the old venv. A `FasterWhisperStt` load that is
+  still probing for an interpreter when it is retired or disposed spawns nothing once the
+  probe returns: it rejects with `unavailable` if the provider is disposed or `ready` is no
+  longer its own. The probed interpreter is cached in `pythonExe`, so later loads skip the
+  probe. `dispose()` alone keeps its meaning
   (stop the current helper and end the open utterance; the next utterance may start a new
   helper), which the STT crash handling relies on. A
   session's use ends at its final or error even if its reader never leaves the loop, and
@@ -649,7 +653,7 @@ device. Two first-audio figures are recorded per turn:
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (245 tests, a few seconds, no network); the
+`pnpm vitest run --project unit packages/voice` (246 tests, a few seconds, no network); the
 speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 `packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
@@ -668,7 +672,7 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/python-helpers.test.ts` | `py_compile` of both helpers and `--selftest` (skipped visibly when no Python) |
 | `test/python-helper-crashes.test.ts` | the real `fr_stt.py` and `fr_tts.py` run as scripts against stub `faster_whisper` / `kokoro` modules that fault in native code (`ctypes.string_at(0)`), with `PYTHONFAULTHANDLER` unset: stderr carries faulthandler's header and the helper's frames (`_run`, `main`; `_pipeline`); and what `fr_stt.py` hands to native code: every transcription on the main thread, each on its own float32 array (no view of the utterance buffer) that later audio leaves unchanged; a decode frame making one utterance `beam_size=1, temperature=[0.0]` while the next, after a reset, decodes with `--beam-size` and faster-whisper's default temperatures; `parse_decode` refusing NaN, infinite and negative temperatures, empty or boolean lists, a beam size below 1 or not an integer, unknown keys and a non-object (skipped visibly without a Python with numpy) |
 | `test/stt-device-fallback.test.ts` | `fr_stt.py`'s `Transcriber` against a stub `faster_whisper`: device `auto` falls back to the CPU at load and at the first transcription, an out-of-memory error keeps the GPU, an explicit device is kept |
-| `test/disposed-providers.test.ts` | a retired `FasterWhisperStt` ends a new session with `unavailable` and a retired `KokoroTts` refuses a sentence, neither spawning its helper (a script that records whether it ran); after `dispose()` alone a new utterance starts a new helper |
+| `test/disposed-providers.test.ts` | a retired `FasterWhisperStt` ends a new session with `unavailable` and a retired `KokoroTts` refuses a sentence, neither spawning its helper (a script that records whether it ran); `retire()` while the first utterance's interpreter probe runs (no `python` option, `FORERUNNER_PYTHON` set to node) ends the utterance with an error and spawns no helper after the probe; after `dispose()` alone a new utterance starts a new helper |
 | `test/python-device.test.ts` | `setup_cuda_libraries()` on a fake site-packages: Windows `add_dll_directory` and `PATH` for every `nvidia/*/bin`, Linux cuBLAS and the cuDNN loader preloaded, nothing without the wheels; the gpu profile's `--cpu-fallback` (loud, at load when warmed, reported by `resolved_device()`), an explicit cuda without it raising; `fr_tts.py`'s `KokoroEngine` on cuda falling back with the reason, raising without `--cpu-fallback`, `auto` left to Kokoro; the warm-up sentence on cuda falling back loudly when synthesis fails there, the CPU never warmed |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
 | `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it; `drain()` waits for the play-head, at once on the abort or after `stop()` |

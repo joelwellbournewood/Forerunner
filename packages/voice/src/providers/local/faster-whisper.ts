@@ -348,12 +348,22 @@ export class FasterWhisperStt implements SttProvider {
         new ForerunnerError("unavailable", "faster-whisper provider was disposed (retired)"),
       );
     if (this.ready) return this.ready;
+    // This load's own promise, for the check after the probe (assigned below, before any await).
+    const self: { ready: Promise<void> | null } = { ready: null };
     const ready = (async () => {
       let python = this.opts.python ?? this.pythonExe;
       if (!python) {
         const probe = await probePythonModule("faster_whisper", { env: this.opts.env });
         python = probe.python;
         if (!python) throw new ForerunnerError("unavailable", probe.reason);
+        this.pythonExe = python;
+        // retire() or dispose() during the probe: this load is no longer wanted, and a helper
+        // spawned now could hold the venv a profile swap is about to remove.
+        if (this.disposed || this.ready !== self.ready)
+          throw new ForerunnerError(
+            "unavailable",
+            "faster-whisper provider was stopped while it looked for Python",
+          );
       }
       let resolve!: () => void;
       let reject!: (e: unknown) => void;
@@ -407,6 +417,7 @@ export class FasterWhisperStt implements SttProvider {
         settled();
       }
     })();
+    self.ready = ready;
     this.ready = ready;
     // A failed load forgets itself, never a newer helper's load started meanwhile.
     ready.catch(() => {
