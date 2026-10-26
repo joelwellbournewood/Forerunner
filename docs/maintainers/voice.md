@@ -442,6 +442,13 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
 
 ## Known issues
 
+- faster-whisper's device `auto` picks CUDA wherever ctranslate2 sees an NVIDIA GPU, even when
+  the CUDA libraries (cuBLAS, cuDNN) are not installed, and then fails at load or at the first
+  transcription ("Library cublas64_12.dll is not found", the real-audio run of 2026-10-26).
+  `fr_stt.py` falls back to the CPU (`int8`) once, with a line on stderr
+  (`test/stt-device-fallback.test.ts`, which runs the helper's `Transcriber` against a stub
+  `faster_whisper`). To use the GPU, install the CUDA 12 cuBLAS and cuDNN libraries.
+
 - The heard figure (review of b1e65fc, low findings left open): the hotkey's release is stamped
   in the render after the key event, so a hotkey turn reads low by that render and the IPC
   (Send is stamped in the click); a heard POST that lands between `finish()` and the

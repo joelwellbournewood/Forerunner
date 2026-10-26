@@ -69,15 +69,54 @@ def pcm_to_float(raw):
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-class Transcriber:
-    def __init__(self, model_name, device, compute_type, language, beam_size):
-        from faster_whisper import WhisperModel
+CUDA_ERROR_MARKS = ("cublas", "cudnn", "cudart", "cuda")
 
-        self.model = WhisperModel(model_name, device=device, compute_type=compute_type)
+
+def is_cuda_runtime_error(e):
+    """A GPU the runtime sees but cannot use (no cuBLAS / cuDNN / driver): the CPU still works."""
+    msg = str(e).lower()
+    return any(m in msg for m in CUDA_ERROR_MARKS)
+
+
+class Transcriber:
+    # device "auto" picks CUDA wherever ctranslate2 sees an NVIDIA GPU, even when the CUDA
+    # libraries are missing; that fails at load or at the first transcription ("Library
+    # cublas64_12.dll is not found"). Either way the helper falls back to the CPU once.
+    def __init__(self, model_name, device, compute_type, language, beam_size):
+        self.model_name = model_name
+        self.device = device
+        self.compute_type = compute_type
         self.language = language
         self.beam_size = beam_size
+        try:
+            self.model = self._load(device, compute_type)
+        except Exception as e:
+            if device == "cpu" or not is_cuda_runtime_error(e):
+                raise
+            self._fall_back(e)
+
+    def _load(self, device, compute_type):
+        from faster_whisper import WhisperModel
+
+        return WhisperModel(self.model_name, device=device, compute_type=compute_type)
+
+    def _fall_back(self, e):
+        sys.stderr.write("fr_stt: %s; falling back to the CPU\n" % e)
+        sys.stderr.flush()
+        self.device = "cpu"
+        self.compute_type = "int8"
+        self.model = self._load("cpu", "int8")
 
     def run(self, audio, sample_rate, final):
+        try:
+            return self._run(audio, final)
+        except Exception as e:
+            if self.device == "cpu" or not is_cuda_runtime_error(e):
+                raise
+            self._fall_back(e)
+            return self._run(audio, final)
+
+    def _run(self, audio, final):
         if len(audio) == 0:
             return "", 0.0, 0.0, self.language
         segments, info = self.model.transcribe(
