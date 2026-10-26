@@ -1,6 +1,8 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Theme.forerunner_mobile" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <!-- The strips the inset padding leaves (status and navigation bars) match the page:
+             white, and neutral-950 at night (apps/ui MobileApp). -->
+        <item name="android:windowBackground">#FFFFFF</item>
     </style>
 </resources>

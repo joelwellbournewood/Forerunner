@@ -1395,7 +1395,9 @@ reports `env(safe-area-inset-*)` itself sees zero, so nothing pads twice. The UI
 and bottom nav sit inside the padded WebView unchanged. The padded strips show the theme's
 window background (Material 3 DayNight); the status bar icons follow `enableEdgeToEdge`'s
 light/dark choice. The keyboard inset means the WebView shrinks above the keyboard, which
-`adjustResize` no longer does for an edge-to-edge window.
+`adjustResize` no longer does for an edge-to-edge window. The activity uses `adjustResize` (so Android 10, the minimum, reports the keyboard as an inset
+too), and the window background is the page's (white, `#0A0A0A` at night), so the padded strips
+under the status and navigation bars match the header and the bottom navigation.
 
 **Boot.** The shell resolves the app directories, loads `mobile.json`, builds the secure
 files over the Keystore wrapper (Android) or the file wrapper (desktop dev builds; Settings
