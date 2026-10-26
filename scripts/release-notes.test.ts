@@ -235,13 +235,64 @@ describe("release.yml: the GitHub release job sees the secrets it reports on", (
     const wf = text();
     const publish = jobBlock(wf, "publish");
     const sums = stepAround(publish, "SHA256SUMS.txt");
-    expect(sums).toMatch(/! -name SHA256SUMS\.txt/);
+    // scripts/release-files.mjs writes the sums over exactly the files it publishes and never
+    // lists SHA256SUMS.txt itself (release-files.test.ts runs it over a stale sums file).
+    expect(sums).toMatch(/\n {8}run: node scripts\/release-files\.mjs artifacts(\n|$)/);
     expect(publish.indexOf("SHA256SUMS.txt")).toBeGreaterThan(
       publish.indexOf("--out artifacts/forerunner-release.json"),
     );
     expect(publish.indexOf("SHA256SUMS.txt")).toBeLessThan(
       publish.indexOf("softprops/action-gh-release"),
     );
+  });
+
+  it("the desktop job uploads only the installers, never the bundle tree (rc.3 run 40248159390 hit the rate limit on hundreds of .so files)", () => {
+    const desktop = jobBlock(text(), "desktop");
+    const upload = stepAround(desktop, "actions/upload-artifact@");
+    const block = upload.match(/\n {10}path: \|\n((?: {12}.*\n?)+)/);
+    expect(block, "the upload step has a multi-line path:").not.toBeNull();
+    const paths = (block?.[1] ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+    expect(paths).toEqual([
+      "apps/desktop/src-tauri/target/release/bundle/msi/*.msi",
+      "apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage",
+      "apps/desktop/src-tauri/target/release/bundle/deb/*.deb",
+    ]);
+    // a build that produced no installer fails here, not in the publish job
+    expect(upload).toMatch(/\n {10}if-no-files-found: error\n/);
+  });
+
+  it("the GitHub release publishes the list release-files.mjs picked, the two docs, and no glob", () => {
+    const publish = jobBlock(text(), "publish");
+    const pick = stepAround(publish, "scripts/release-files.mjs");
+    expect(pick).toMatch(/\n {8}id: files\n/);
+    expect(publish.indexOf("scripts/release-files.mjs")).toBeGreaterThan(
+      publish.indexOf("--out artifacts/forerunner-release.json"),
+    );
+    const release = stepAround(publish, "softprops/action-gh-release");
+    const files = release.match(/\n {10}files: \|\n((?: {12}.*\n?)+)/);
+    expect(files, "the release step has a multi-line files:").not.toBeNull();
+    const lines = (files?.[1] ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    expect(lines).toEqual([
+      `\${{ steps.files.outputs.files }}`,
+      "docs/user-guide.md",
+      "docs/setup-guide.md",
+    ]);
+    expect(release).not.toMatch(/\*\*\/\*/);
+    expect(release).not.toMatch(/artifacts\/\*/);
+  });
+
+  it("the manifest step still finds the installers and the APK in the downloaded layout", () => {
+    const manifest = stepAround(jobBlock(text(), "publish"), "Signed release manifest");
+    for (const pattern of ["'*.msi'", "'*.AppImage'", "'*.apk'"]) {
+      expect(manifest).toContain(`pick ${pattern}`);
+    }
+    expect(manifest).toMatch(/find artifacts -type f -name "\$1"/);
   });
 
   it("the workflow runs on tags only (a manual dispatch had no tag to name the release by)", () => {

@@ -46,13 +46,17 @@ jobs:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: pnpm --filter @forerunner/desktop tauri build --ci
+      # The installers only: bundle/appimage/ and bundle/deb/ also hold the AppDir and the deb's
+      # staging tree (hundreds of .so files, icons, `copyright`); rc.3 uploaded them and the
+      # publish job hit GitHub's secondary rate limit before the APK went up (run 40248159390).
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}
           path: |
-            apps/desktop/src-tauri/target/release/bundle/msi/*
-            apps/desktop/src-tauri/target/release/bundle/appimage/*
-            apps/desktop/src-tauri/target/release/bundle/deb/*
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
 
   android:
     name: android apk
@@ -192,16 +196,17 @@ jobs:
           pnpm exec tsx packages/runtime/src/cli/main.ts update sign \
             --manifest manifest.json --key-file "$keyfile" --out artifacts/forerunner-release.json
           rm -f "$keyfile" manifest.json
-      # After the manifest, so the sums cover it too; never the sums file itself.
-      - name: Checksums
-        run: |
-          cd artifacts
-          find . -type f ! -name SHA256SUMS.txt -exec sha256sum {} \; | sort -k 2 > SHA256SUMS.txt
+      # After the manifest, so the sums cover it too; never the sums file itself. Picks the .msi,
+      # .AppImage, .deb, .apk and forerunner-release.json, writes the sums file over exactly
+      # those by their published names (the sums file itself never), and fails when an installer or the APK is missing.
+      - name: Release files and SHA256SUMS.txt (scripts/release-files.mjs)
+        id: files
+        run: node scripts/release-files.mjs artifacts
       - uses: softprops/action-gh-release@v2
         with:
           body_path: RELEASE_NOTES.md
           files: |
-            artifacts/**/*
+            ${{ steps.files.outputs.files }}
             docs/user-guide.md
             docs/setup-guide.md
           draft: false
