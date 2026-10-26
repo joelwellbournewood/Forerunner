@@ -15,10 +15,12 @@ import {
  */
 export interface GitAuth {
   /**
-   * Bearer token for HTTPS remotes. It reaches git as an `http.extraheader` entry through the
-   * process environment (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, git
-   * 2.31+): never on the command line, where a process listing would show it, and never
-   * written to the clone's config.
+   * Token for HTTPS remotes. It reaches git as an `http.extraheader` entry
+   * `AUTHORIZATION: basic base64("x-access-token:<token>")` through the process environment
+   * (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, git 2.31+): never on the
+   * command line, where a process listing would show it, never in a URL, and never written to
+   * the clone's config. Basic, not bearer: GitHub's git endpoint answers a bearer header with
+   * 401 "invalid credentials" even for a fine-grained PAT its REST API accepts.
    */
   token?: string;
   /**
@@ -50,6 +52,15 @@ export function tokenHeaderKey(origin?: string): string {
     );
   }
   return `http.${scope.origin}/.extraheader`;
+}
+
+/** The header value git sends for `token`: Basic with GitHub's `x-access-token` user. */
+export function tokenAuthHeader(token: string): string {
+  return `AUTHORIZATION: basic ${basicCredential(token)}`;
+}
+
+function basicCredential(token: string): string {
+  return Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
 }
 
 export interface GitIdentity {
@@ -102,8 +113,13 @@ export class GitOps {
         "-c",
         `user.email=${this.opts.identity.email}`,
       );
-    // Keep output stable and non-interactive on both platforms.
+    // Keep output stable and non-interactive on both platforms. `credential.helper=` empties
+    // the helper list from every config level (Git Credential Manager from Git for Windows'
+    // system config included): git never offers the human's cached credential in place of
+    // ours, never stores ours, and never erases theirs when a request fails.
     argv.push(
+      "-c",
+      "credential.helper=",
       "-c",
       "core.autocrlf=false",
       "-c",
@@ -125,17 +141,16 @@ export class GitOps {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
       GIT_ASKPASS: "",
+      SSH_ASKPASS: "",
       GCM_INTERACTIVE: "never",
     };
     if (this.opts.auth?.token) {
-      Object.assign(
-        env,
-        gitConfigEnv(
-          env,
-          tokenHeaderKey(this.opts.auth.origin),
-          `AUTHORIZATION: bearer ${this.opts.auth.token}`,
-        ),
-      );
+      // An empty value resets a multi-valued key: a header from the human's own config (global
+      // or scoped to our origin) is dropped, so ours is the only Authorization git sends.
+      const key = tokenHeaderKey(this.opts.auth.origin);
+      const resets = key === "http.extraheader" ? [key] : ["http.extraheader", key];
+      for (const k of resets) Object.assign(env, gitConfigEnv(env, k, ""));
+      Object.assign(env, gitConfigEnv(env, key, tokenAuthHeader(this.opts.auth.token)));
     }
     const runner = this.opts.runner ?? run;
     try {
@@ -355,7 +370,10 @@ export class GitOps {
   }
 }
 
+/** Remove the token, raw or in its Basic form, from text bound for an error or a log. */
 export function redactToken(text: string, token?: string): string {
   if (!token) return text;
-  return text.split(token).join("[REDACTED]");
+  let out = text;
+  for (const form of [basicCredential(token), token]) out = out.split(form).join("[REDACTED]");
+  return out;
 }

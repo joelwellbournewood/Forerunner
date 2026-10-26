@@ -597,6 +597,15 @@ export class FakeGitHost {
         headers: { "WWW-Authenticate": 'Basic realm="GitHub"', "Content-Type": "text/plain" },
       });
     if (auth.bad) return unauthorized();
+    // GitHub's git endpoint authenticates Basic only: `bearer` / `token` answer 401 "invalid
+    // credentials" there even for a token the REST API accepts (github.com, 2026-10-26).
+    const header = c.req.header("authorization");
+    if (header && !/^basic\s/i.test(header)) {
+      return new Response("invalid credentials", {
+        status: 401,
+        headers: { "WWW-Authenticate": 'Basic realm="GitHub"', "Content-Type": "text/plain" },
+      });
+    }
     const repo = this.store.repo(decodeURIComponent(ownerSeg), decodeURIComponent(nameSeg));
     const service =
       c.req.query("service") ??

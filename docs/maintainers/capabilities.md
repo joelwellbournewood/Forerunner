@@ -74,7 +74,19 @@ with their milestone.
   line where a process listing shows it and never touches disk (ADR 0069); with
   `GitAuth.origin` the key is `http.<origin>/.extraheader` (`tokenHeaderKey()`; a non-http(s)
   origin is `validation`), which git applies to URLs under that origin only, so a remote on
-  another host or an `insteadOf` rewrite gets no token. Error output is redacted. git missing
+  another host or an `insteadOf` rewrite gets no token. The header is
+  `AUTHORIZATION: basic base64("x-access-token:<token>")` (`tokenAuthHeader()`), never
+  `bearer`: GitHub's git endpoint answers a bearer header with 401 "invalid credentials" even
+  for a fine-grained PAT its REST API accepts (seen live on Windows, 2026-10-26: the setup
+  check passed, every clone failed). An empty entry for the same key (and for the unscoped
+  `http.extraheader`) comes first, so a header from the human's own config is dropped and ours
+  is the only `Authorization` sent. Every command runs with `-c credential.helper=`, which
+  empties the helper list from all config levels: Git Credential Manager (Git for Windows'
+  system default) or any other helper is never asked for, never given and never told to
+  erase a credential, so git uses exactly our token and the human's store is untouched.
+  `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=""`, `SSH_ASKPASS=""` and `GCM_INTERACTIVE=never`
+  keep it from prompting. Error output is redacted (`redactToken()` removes the token raw and
+  in its Basic form). git missing
   from PATH is `unavailable`, a spawn failure `provider_error`, a command the runner killed at
   `timeoutMs` (default 5 minutes) `timeout` naming the limit. `GitOpsOptions.runner` swaps the
   process runner (tests record argv and env). The data module's GitHub repository import
@@ -319,7 +331,18 @@ through `GIT_CONFIG_*` and never argv (a recording runner), a caller's own `GIT_
 entries kept, the key scoped to `GitAuth.origin` (`http.<origin>/.extraheader`, normalised;
 non-http origins refused), a killed command reported as `timeout` with the limit,
 `remoteDefaultBranch()`, `remoteUrl()` and `localBranches(prefix)`, no force-push of the
-default branch, redacted errors.
+default branch, redacted errors. The recording runner also pins the auth shape: a Basic
+`x-access-token` header after an empty reset entry, no `bearer`, no raw token in argv or env,
+`-c credential.helper=` before the subcommand with or without a token.
+
+`git-auth.integration.test.ts` runs `GitOps` against a real `git http-backend` behind a small
+Node server that, like GitHub's git endpoint, takes only Basic with the right token and answers
+anything else with 401 "invalid credentials". The human's config is simulated through
+`GIT_CONFIG_GLOBAL`: a credential helper that offers a stale password and logs every call, and
+a stale global `http.extraheader`. Clone, branch, push and fetch succeed with the token both
+unscoped and scoped to the origin, every request carries our credential and nothing else, and
+the helper is never called; a wrong token fails with the token redacted, the helper still not
+called (the old code asked it to `get` and then `erase`) and the stale credential never sent.
 
 ## Known issues
 

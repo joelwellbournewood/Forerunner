@@ -1365,4 +1365,31 @@ describe("FakeGitHost git over HTTP", () => {
       expect(hidden.stderr).toMatch(/not found|404/);
     },
   );
+
+  it.skipIf(skipReason())(
+    "takes only Basic on git smart HTTP, like GitHub, while the REST API takes bearer",
+    async () => {
+      // github.com, 2026-10-26: `bearer` / `token` on /info/refs answer 401 "invalid
+      // credentials" for a token the REST API accepts; Basic x-access-token:<token> works.
+      const pat = host.createToken({
+        owner: "alice",
+        kind: "fine_grained",
+        permissions: { contents: "write" },
+        repos: [full],
+      });
+      const refs = `${host.baseUrl}/${full}.git/info/refs?service=git-upload-pack`;
+      for (const scheme of ["bearer", "Bearer", "token"]) {
+        const res = await fetch(refs, { headers: { Authorization: `${scheme} ${pat.token}` } });
+        expect(res.status).toBe(401);
+        expect(res.headers.get("www-authenticate")).toMatch(/^Basic/);
+        expect(await res.text()).toBe("invalid credentials");
+      }
+      const basic = Buffer.from(`x-access-token:${pat.token}`).toString("base64");
+      const ok = await fetch(refs, { headers: { Authorization: `Basic ${basic}` } });
+      expect(ok.status).toBe(200);
+      await ok.arrayBuffer();
+      const rest = await api(host.baseUrl, "GET", "/user", { token: pat.token });
+      expect(rest.status).toBe(200);
+    },
+  );
 });

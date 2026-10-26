@@ -90,18 +90,37 @@ describe("GitOps", { timeout: 120_000 }, () => {
     expect(clone.argv).not.toContain("http.extraheader");
     const count = Number(clone.env.GIT_CONFIG_COUNT);
     expect(count).toBeGreaterThanOrEqual(1);
-    const slot = [...Array(count).keys()].find(
+    const slots = [...Array(count).keys()].filter(
       (i) => clone.env[`GIT_CONFIG_KEY_${i}`] === "http.extraheader",
     );
-    expect(slot).toBeDefined();
-    expect(clone.env[`GIT_CONFIG_VALUE_${slot}`]).toBe(`AUTHORIZATION: bearer ${token}`);
+    // An empty entry first resets the key, so a header from the human's own git config is
+    // dropped; ours, after it, is the only one git sends.
+    expect(slots.map((i) => clone.env[`GIT_CONFIG_VALUE_${i}`])).toEqual([
+      "",
+      `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+    ]);
+    // GitHub's git endpoint authenticates Basic only: `bearer` answers 401 "invalid credentials"
+    // even for a fine-grained PAT the REST API accepts (seen live on 2026-10-26).
+    expect(Object.values(clone.env).some((v) => /bearer/i.test(v ?? ""))).toBe(false);
+    // The raw token is in neither argv nor env.
+    expect(Object.values(clone.env).some((v) => (v ?? "").includes(token))).toBe(false);
+    // Every credential helper is off (Git Credential Manager on Windows included): git neither
+    // offers a cached credential from the human's store nor writes ours to it.
+    const helperAt = clone.argv.indexOf("credential.helper=");
+    expect(helperAt).toBeGreaterThan(0);
+    expect(clone.argv[helperAt - 1]).toBe("-c");
+    expect(helperAt).toBeLessThan(clone.argv.indexOf("clone"));
     expect(clone.env.GIT_TERMINAL_PROMPT).toBe("0");
-    // Without a token nothing about http.extraheader reaches git.
+    expect(clone.env.GIT_ASKPASS).toBe("");
+    expect(clone.env.SSH_ASKPASS).toBe("");
+    expect(clone.env.GCM_INTERACTIVE).toBe("never");
+    // Without a token nothing about http.extraheader reaches git, and helpers are still off.
     calls.length = 0;
     await new GitOps({ cwd: join(tmpdir(), "nope"), identity, runner }).clone("http://x/y.git");
     const bare = calls[0]?.env ?? {};
     expect(Object.values(bare).some((v) => v === "http.extraheader")).toBe(false);
-    expect(Object.values(bare).some((v) => /bearer/i.test(v ?? ""))).toBe(false);
+    expect(Object.values(bare).some((v) => /bearer|basic/i.test(v ?? ""))).toBe(false);
+    expect(calls[0]?.argv).toContain("credential.helper=");
     // A caller's own GIT_CONFIG_* entries are kept; ours is appended after them.
     const env = gitConfigEnv(
       { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.autocrlf", GIT_CONFIG_VALUE_0: "false" },
@@ -137,8 +156,6 @@ describe("GitOps", { timeout: 120_000 }, () => {
       return reply;
     };
     const token = "ghp_scopedtokenvalueXXXXXXXXXXXXXXXXXXXXXXXX"; // not-a-secret
-    const keysOf = (env: NodeJS.ProcessEnv) =>
-      [...Array(Number(env.GIT_CONFIG_COUNT ?? 0)).keys()].map((i) => env[`GIT_CONFIG_KEY_${i}`]);
     // With an origin the entry is `http.<origin>/.extraheader`: git attaches it to URLs under
     // that origin only, so an `insteadOf` rewrite or a remote on another host gets no token.
     const scoped = new GitOps({
@@ -149,8 +166,17 @@ describe("GitOps", { timeout: 120_000 }, () => {
     });
     await scoped.clone("http://127.0.0.1:1/acme/service.git");
     const env = calls[0]?.env ?? {};
-    expect(keysOf(env)).toContain("http.http://127.0.0.1:1/.extraheader");
-    expect(keysOf(env)).not.toContain("http.extraheader");
+    const valuesOf = (k: string) =>
+      [...Array(Number(env.GIT_CONFIG_COUNT ?? 0)).keys()]
+        .filter((i) => env[`GIT_CONFIG_KEY_${i}`] === k)
+        .map((i) => env[`GIT_CONFIG_VALUE_${i}`]);
+    expect(valuesOf("http.http://127.0.0.1:1/.extraheader")).toEqual([
+      "",
+      `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+    ]);
+    // The unscoped key is only ever reset (a stale global header of the human's is dropped);
+    // it never carries the token, so no other host receives it.
+    expect(valuesOf("http.extraheader")).toEqual([""]);
     expect(calls[0]?.argv.join(" ")).not.toContain(token);
     expect(tokenHeaderKey("https://github.com")).toBe("http.https://github.com/.extraheader");
     expect(tokenHeaderKey("HTTPS://GitHub.com:443/")).toBe("http.https://github.com/.extraheader");
@@ -192,6 +218,11 @@ describe("GitOps", { timeout: 120_000 }, () => {
     });
     expect(redactToken("fatal: Authorization: bearer secret-token failed", "secret-token")).toBe(
       "fatal: Authorization: bearer [REDACTED] failed",
+    );
+    // The Basic form is redacted too (GIT_TRACE / GIT_CURL_VERBOSE print the header).
+    const b64 = Buffer.from("x-access-token:secret-token").toString("base64");
+    expect(redactToken(`> Authorization: Basic ${b64}`, "secret-token")).toBe(
+      "> Authorization: Basic [REDACTED]",
     );
     expect(GitOps.worktreePath(join("r"), "task/1:ä")).toBe(join("r", "task-1--"));
   });

@@ -354,7 +354,9 @@ for the authenticated login, `HTTP_*` for the other headers, so gzip-encoded pus
 pipes the buffered body to stdin, parses the CGI header block (`Status:`, `Content-Type`, …)
 and streams the rest as the response body. Authorization is checked before the backend runs:
 anonymous reads of public repos pass; otherwise `401` with `WWW-Authenticate: Basic` (so git
-sends the token), `404` for repos the token cannot see, `403 Write access to repository not
+sends the token). Like github.com, these routes take Basic only: a `bearer` or `token`
+header answers `401` with the body `invalid credentials` even for a token the REST routes
+accept (that leniency once hid a `bearer` extraheader in `GitOps` that failed live). `404` for repos the token cannot see, `403 Write access to repository not
 granted.` for `git-receive-pack` without `contents: write`. For a receive-pack the refs are
 snapshotted before and after the backend exits and the diff goes through
 `RepoOps.applyRefChanges`, the same path the API and `seedCommit` use: a `push` event per
@@ -617,7 +619,9 @@ without `projects`; the request log never containing a token value; rate limitin
 hour on the clock); git over HTTP: clone with a token, push a branch (branch listed, `push`
 event with `created`, `pusher`, `commits[].added`, request log entry), push to a PR head
 (`head.sha`, `synchronize`, `commits`), rebase merge visible in a fresh clone, anonymous
-`ls-remote` on a private repo rejected, read-only token push rejected (403), other user 404.
+`ls-remote` on a private repo rejected, read-only token push rejected (403), other user 404,
+`bearer` / `token` on `/info/refs` rejected with 401 "invalid credentials" while Basic and the
+REST API accept the same fine-grained token.
 
 Other stand-ins: to be filled by the testenv items that build them.
 
