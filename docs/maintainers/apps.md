@@ -325,14 +325,40 @@ a dialog opened by the desktop shell's global hotkey (`forerunner://hotkey`, see
 Tauri shells inject"), the palette's "Talk to your agent" entry (hint: the chord) and the
 header's Talk button (opens without starting voice). Every voice request (a hotkey press, the
 palette, the panel's Talk button) toggles a push-to-talk turn through the daemon's `/voice`
-routes: `GET /voice/status`, then `POST /voice/sessions { mode: "push_to_talk", projectId? }`
-once per panel (reused for later turns), `POST …/press { pressed: true }`, the microphone
+routes: `GET /voice/status`, then `POST /voice/sessions { mode: "push_to_talk", replyMode,
+projectId? }` once per panel (reused for later turns), `POST …/press { pressed: true,
+replyMode? }` (the mode only when it differs from the session's), the microphone
 (`shell/voice-capture.ts`: getUserMedia + ScriptProcessorNode, 16-bit LE mono PCM, base64)
 posted chunk by chunk to `…/audio`, one post after the other (the daemon appends chunks in
 arrival order); the next request (or Send) stops the capture, waits until every chunk of the
 turn was posted (the daemon's loop drops audio that arrives after the release), posts
 `{ pressed: false }` and polls `GET /voice/sessions/:id` (500 ms, at most 60 s) until the turn
-count grows, then shows the transcript (`said`) and the spoken reply (`heard`). The reply is
+count grows; the turn's record (`said`, `heard`, the error) then completes the turn's lines.
+The text itself shows as it comes, from the session's event stream (below; the player hands
+every frame but `audio` to the panel's `onFrame` after its seq check, so a reconnect's replay
+shows nothing twice): the human's line from `transcript_partial` (italic, `data-partial`, as
+often as the STT gives partials: faster-whisper re-transcribes once a second while the button
+is held, a cost the daemon pays anyway) and then `transcript_final`; the agent's line from the
+first `model_delta`, each finished `sentence` its own span and the part of the next sentence
+generated so far after it (`consume` drops a sentence's text from that tail; the splitter's
+sentences are trimmed substrings of the deltas). The sentence being heard is marked
+(`data-speaking`, a highlight): the player's `onSpeaking(turn, sentenceIndex)` fires by a timer
+when a sentence's first chunk is due at the speaker (its scheduled start), not when the frame
+arrived, and silencing cancels what is not due yet. A reply cut short (its `turn_end` carries
+`unspokenText`) shows what was heard, then the unspoken rest struck through and labelled
+"(not spoken)" (`conversation-unspoken`); one stopped with nothing unspoken (a text reply)
+says "(stopped)". The lines of a voice turn are keyed by session and turn
+(`<session>:<turn>:<role>`): the `voice.turn` frame and the polled record update them and add
+them only when the stream showed nothing (no EventSource). **Reply: voice / text** (the
+`voice-reply-mode` button, `UiState.voiceReply`, remembered per install like the theme under
+`STORAGE_NAMES.voiceReply`, default voice) is sent with the session start, and with a press
+when it differs from the mode the session last reported (a toggle between turns); the daemon
+applies it from that turn's reply (`voice.md`, "Reply in text"). In text nothing
+plays and nothing is measured as heard (no audio frame comes; the release is forgotten at the
+turn's `turn_end`). While a reply is generated or spoken (phase `waiting`) Talk and the hotkey
+stay available: the press is the barge-in (`startTurn` bumps `waitRef`, so the release still
+polling for the previous turn stops without touching the phase), which in text stops the
+generation. The reply is
 also heard: from the session's start the panel follows `GET /voice/sessions/:id/events`
 (EventSource with `?token=`, `afterSeq` = the session's `lastSeq`; `shell/voice-playback.ts`)
 and plays every `audio` frame (base64 16-bit LE PCM at its `sampleRate` and `channels`,
@@ -783,8 +809,15 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   A stream that stalls longer than the queued audio still leaves a pause (the jitter buffer
   turns many short gaps into one, and grows, but cannot invent audio); the buffer's numbers
   (200 ms start, doubling to 1 s, 250 ms pause rule) are chosen from one run's report, not
-  tuned on real hardware yet, and a target that grew stays for the session. The Talk button stays disabled until the turn ended, so a
-  press cannot barge in on the reply from the panel.
+  tuned on real hardware yet, and a target that grew stays for the session.
+- The text of a voice reply streams in the panel since 2026-10-26 (it used to appear only
+  with the polled record, after the reply had been spoken); exercised in jsdom with the fake
+  EventSource (`test/voice-playback.test.tsx`, "the reply's text as it comes", "reply in
+  text"), not yet in a real window. The "(not spoken)" split is the daemon's (sentences whose
+  playback started at its sink, `voice.md` "Known issues"), so it can count as spoken a
+  sentence the window had not played yet; the `data-speaking` mark follows the window's own
+  schedule. A barge-in reaches a reply the daemon still runs; a reply only the window still
+  plays (its buffer) is silenced by the press as before.
 - The microphone capture (`browserMicCapture`) uses ScriptProcessorNode, deprecated but
   present in WebView2 and WebKitGTK; it has been exercised in jsdom with a fake capture only,
   not yet in a real desktop window with a real voice provider (no provider key here).

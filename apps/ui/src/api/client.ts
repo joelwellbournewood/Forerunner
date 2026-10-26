@@ -132,6 +132,7 @@ import {
   VoiceSessionView as VoiceSessionViewSchema,
   type VoiceStatusView,
   VoiceStatusView as VoiceStatusViewSchema,
+  type VoiceTurnView,
 } from "@forerunner/runtime/daemon/api-types";
 import { z } from "zod";
 import type { DaemonConfig } from "./config.ts";
@@ -268,6 +269,7 @@ export type {
   VoiceAudioBody,
   VoiceSessionView,
   VoiceStatusView,
+  VoiceTurnView,
 };
 
 /** Types the contract defines only as schemas. */
@@ -482,10 +484,15 @@ export interface DaemonClient {
     projectId?: string;
     language?: string;
     mode?: "push_to_talk" | "open_mic";
+    /** `text`: the agent replies in text only (no TTS, no audio); default `voice`. */
+    replyMode?: "voice" | "text";
   }): Promise<VoiceSessionView>;
   voiceSession(id: string, signal?: AbortSignal): Promise<VoiceSessionView>;
-  /** Push-to-talk press (true) or release (false); a press while the agent speaks barges in. */
-  voicePress(id: string, pressed: boolean): Promise<VoiceSessionView>;
+  /**
+   * Push-to-talk press (true) or release (false); a press while the agent speaks (or writes,
+   * replying in text) barges in. `replyMode` sets how this turn's reply goes out, and the next.
+   */
+  voicePress(id: string, pressed: boolean, replyMode?: "voice" | "text"): Promise<VoiceSessionView>;
   /** One captured chunk of 16-bit PCM (base64). */
   voiceAudio(id: string, chunk: VoiceAudioBody): Promise<VoiceSessionView>;
   /** What the human heard: the player's release-to-speaker first audio of a turn (once per turn). */
@@ -835,8 +842,11 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     startVoiceSession: (body) => post(routePath("startVoiceSession"), VoiceSessionViewSchema, body),
     voiceSession: (id, signal) =>
       get(routePath("voiceSession", { id }), VoiceSessionViewSchema, undefined, signal),
-    voicePress: (id, pressed) =>
-      post(routePath("voicePress", { id }), VoiceSessionViewSchema, { pressed }),
+    voicePress: (id, pressed, replyMode) =>
+      post(routePath("voicePress", { id }), VoiceSessionViewSchema, {
+        pressed,
+        ...(replyMode ? { replyMode } : {}),
+      }),
     voiceAudio: (id, chunk) => post(routePath("voiceAudio", { id }), VoiceSessionViewSchema, chunk),
     voiceHeard: (id, body) => post(routePath("voiceHeard", { id }), VoiceHeardViewSchema, body),
     stopVoiceSession: (id) =>

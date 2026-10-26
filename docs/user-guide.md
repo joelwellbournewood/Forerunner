@@ -75,6 +75,13 @@ Each arrives with its milestone; the setup guide says what to configure. Speech 
 chosen in the setup wizard and changed in Settings → Voice: none, CPU (any PC, slower replies)
 or GPU (NVIDIA, fastest), each with its disk size shown.
 
+In the conversation panel (the Talk button or the global hotkey) your words show as they are
+recognised and the agent's reply shows as it is written, the sentence being spoken
+highlighted. Press Talk while the agent answers to interrupt it; the part it had not said yet
+stays visible, struck through and marked "not spoken". **Reply: text** makes the agent answer
+in text only, without speech: you still talk, the reply appears as it is written, and Talk
+stops it. The choice is remembered on this computer.
+
 ## Where things live
 
 Configuration, the vault, memory and data stay in your user profile (`fr dirs` prints the

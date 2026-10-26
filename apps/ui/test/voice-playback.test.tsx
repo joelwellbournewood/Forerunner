@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { DaemonClient } from "../src/api/client.ts";
 import type { EventSourceLike } from "../src/api/sse.ts";
 import type { AudioOutput } from "../src/lib/speech.ts";
+import { storageKey } from "../src/lib/storage.ts";
 import { AppRoutes } from "../src/routes.tsx";
 import {
   type CapturedChunk,
@@ -21,6 +22,7 @@ import {
   PLAYBACK_LEAD_MS,
 } from "../src/shell/voice-playback.ts";
 import { AppProvider } from "../src/store/context.tsx";
+import { createStore } from "../src/store/store.ts";
 import { createHarness, type Harness } from "./helpers.tsx";
 
 /**
@@ -774,5 +776,255 @@ describe("voice reply player: the jitter buffer", () => {
     p.fire(audioMs(2, JITTER_MAX_MS));
     expect(p.audio.scheduled).toHaveLength(2);
     expect(p.audio.state.closed).toBe(0);
+  });
+});
+
+/**
+ * The reply's text in the panel (the real-audio run of 2026-10-26: the text showed only once
+ * the reply had been spoken): the human's words as the STT recognises them, the reply's text
+ * as the model generates it (`model_delta`, `sentence`), the sentence being spoken marked, and
+ * after a barge-in what was not spoken set apart. And the reply mode: "Reply: text" asks the
+ * daemon for text-only replies (no TTS, no audio), is remembered per install, and a Talk press
+ * while the text is written stops it.
+ */
+describe("conversation panel: the reply's text as it comes", () => {
+  const agentLine = () => screen.getAllByTestId("conversation-agent").at(-1) as HTMLElement;
+  const humanLine = () => screen.getAllByTestId("conversation-human").at(-1) as HTMLElement;
+
+  it("shows the human's words as they are recognised and the reply as it is generated, before the turn ends", async () => {
+    const h = setup();
+    const { stream } = await startTalking(h);
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1));
+      stream.fire("voice.event", frame("transcript_partial", 1, { text: "what is" }));
+    });
+    expect(humanLine().textContent).toContain("what is");
+    expect(humanLine().dataset.partial).toBe("true");
+    act(() => {
+      stream.fire("voice.event", frame("transcript_final", 1, { text: "what is next" }));
+    });
+    expect(humanLine().textContent).toContain("what is next");
+    expect(humanLine().dataset.partial).toBeUndefined();
+    // One human line for the turn, not one per frame.
+    expect(screen.getAllByTestId("conversation-human")).toHaveLength(1);
+
+    act(() => {
+      stream.fire("voice.event", frame("model_delta", 1, { text: "All good. " }));
+    });
+    expect(agentLine().textContent).toContain("All good.");
+    act(() => {
+      stream.fire("voice.event", frame("sentence", 1, { index: 0, text: "All good." }));
+      stream.fire("voice.event", frame("model_delta", 1, { text: "Two tasks" }));
+    });
+    // The finished sentence and the part of the next one generated so far.
+    expect(agentLine().textContent).toContain("All good. Two tasks");
+    act(() => {
+      stream.fire("voice.event", frame("model_delta", 1, { text: " remain." }));
+      stream.fire("voice.event", frame("sentence", 1, { index: 1, text: "Two tasks remain." }));
+    });
+    expect(agentLine().textContent).toContain("All good. Two tasks remain.");
+    expect(agentLine().textContent).not.toContain("remain. remain.");
+    expect(screen.getAllByTestId("conversation-agent")).toHaveLength(1);
+  });
+
+  it("marks the sentence being spoken, and after a barge-in sets apart what was not spoken", async () => {
+    const h = setup();
+    const { stream } = await startTalking(h);
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1));
+      stream.fire("voice.event", frame("transcript_final", 1, { text: "what is next" }));
+      stream.fire("voice.event", frame("model_delta", 1, { text: "All good. Two tasks remain." }));
+      stream.fire("voice.event", frame("sentence", 1, { index: 0, text: "All good." }));
+      stream.fire("voice.event", frame("sentence", 1, { index: 1, text: "Two tasks remain." }));
+      stream.fire("voice.event", audioMs(1, JITTER_START_MS, 0));
+    });
+    // Marked when its audio starts at the speaker (after the lead), not when the frame came.
+    await waitFor(() =>
+      expect(within(agentLine()).getByText("All good.").dataset.speaking).toBe("true"),
+    );
+    expect(within(agentLine()).getByText("Two tasks remain.").dataset.speaking).toBeUndefined();
+    act(() => {
+      stream.fire("voice.event", frame("barge_in", 1, { spokenText: "All good." }));
+      stream.fire(
+        "voice.event",
+        frame("turn_end", 1, {
+          replyMode: "voice",
+          latency: { interrupted: true },
+          entry: { turn: 1, role: "assistant", text: "All good.", interrupted: true },
+          unspokenText: "Two tasks remain.",
+        }),
+      );
+    });
+    const unspoken = within(agentLine()).getByTestId("conversation-unspoken");
+    expect(unspoken.textContent).toContain("Two tasks remain.");
+    expect(unspoken.textContent).toMatch(/not spoken/i);
+    // What was spoken stays as it was, outside the unspoken part.
+    expect(agentLine().textContent).toMatch(/All good\..*Two tasks remain\./);
+    expect(
+      within(agentLine()).queryByText("All good.")?.closest("[data-testid=conversation-unspoken]"),
+    ).toBeNull();
+    expect(agentLine().querySelector("[data-speaking]")).toBeNull();
+  });
+
+  it("a reconnect's replay does not show the reply's text twice", async () => {
+    const h = setup();
+    const { stream } = await startTalking(h);
+    // Numbered in the order the daemon sent them.
+    const start = frame("turn_start", 1);
+    const partial = frame("transcript_partial", 1, { text: "what" });
+    const final = frame("transcript_final", 1, { text: "what is next" });
+    const delta = frame("model_delta", 1, { text: "All good. " });
+    act(() => {
+      for (const f of [start, partial, final, delta]) stream.fire("voice.event", f);
+    });
+    act(() => {
+      stream.fire("voice.event", partial);
+      stream.fire("voice.event", delta);
+    });
+    expect(agentLine().textContent).not.toContain("All good. All good.");
+    expect(humanLine().textContent).toContain("what is next");
+  });
+
+  it("the turn's record completes the lines: the polled turn does not add them a second time", async () => {
+    const h = setup();
+    const { user, stream } = await startTalking(h);
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1));
+      stream.fire("voice.event", frame("transcript_final", 1, { text: "what is next" }));
+      stream.fire("voice.event", frame("model_delta", 1, { text: "Shown as it came." }));
+    });
+    await user.click(screen.getByTestId("voice-send"));
+    await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Press/));
+    expect(screen.getAllByTestId("conversation-human")).toHaveLength(1);
+    expect(screen.getAllByTestId("conversation-agent")).toHaveLength(1);
+  });
+});
+
+describe("conversation panel: reply in text", () => {
+  const replyToggle = () => screen.getByTestId("voice-reply-mode");
+
+  it("asks the daemon for text replies, remembers the choice per install, and shows the reply as text", async () => {
+    const h = setup();
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId("talk-open"));
+    expect(replyToggle().textContent).toMatch(/Reply: voice/);
+    await user.click(replyToggle());
+    expect(replyToggle().textContent).toMatch(/Reply: text/);
+    const key = storageKey(h.harness.store.getState().config.installId, "voiceReply");
+    expect(h.harness.storage.get(key)).toBe("text");
+    await user.click(await screen.findByTestId("voice-talk"));
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    const calls = h.harness.daemon.state.calls;
+    expect(calls.find((c) => c.path === "/voice/sessions")?.body).toMatchObject({
+      replyMode: "text",
+    });
+    // The session started in text: the press need not say it again.
+    expect(calls.find((c) => c.path.endsWith("/press"))?.body).toEqual({ pressed: true });
+    const id = [...h.harness.daemon.state.voiceSessions.keys()][0] ?? "";
+    const stream = h.sources.instances.find((s) => s.url.includes(`/voice/sessions/${id}/events`));
+    if (!stream) throw new Error("no stream");
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1));
+      stream.fire("voice.event", frame("transcript_final", 1, { text: "what is next" }));
+      stream.fire("voice.event", frame("model_delta", 1, { text: "Written, not said." }));
+    });
+    const agent = screen.getAllByTestId("conversation-agent").at(-1) as HTMLElement;
+    expect(agent.textContent).toContain("Written, not said.");
+    expect(agent.dataset.reply).toBe("text");
+
+    // Switching back to voice applies from the next press.
+    await user.click(screen.getByTestId("voice-send"));
+    await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Press/));
+    await user.click(replyToggle());
+    expect(h.harness.storage.get(key)).toBe("voice");
+    await user.click(screen.getByTestId("voice-talk"));
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    const presses = calls.filter((c) => c.path.endsWith("/press"));
+    expect(presses.at(-1)?.body).toEqual({ pressed: true, replyMode: "voice" });
+  });
+
+  it("starts in the remembered mode", async () => {
+    const harness = createHarness();
+    harness.storage.set(
+      storageKey(harness.store.getState().config.installId, "voiceReply"),
+      "text",
+    );
+    const store = createStore(harness.store.getState().config, harness.storage);
+    render(
+      <VoiceCaptureContext.Provider value={silentCapture()}>
+        <AppProvider
+          client={harness.client}
+          store={store}
+          realtime={{ eventSource: fakeEventSources().factory, audio: () => null }}
+        >
+          <MemoryRouter initialEntries={["/"]}>
+            <AppRoutes />
+          </MemoryRouter>
+        </AppProvider>
+      </VoiceCaptureContext.Provider>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId("talk-open"));
+    expect(replyToggle().textContent).toMatch(/Reply: text/);
+  });
+
+  it("Talk while the text is written stops it, as a typed stop does: the line says it stopped", async () => {
+    const h = setup();
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId("talk-open"));
+    await user.click(replyToggle());
+    await user.click(await screen.findByTestId("voice-talk"));
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    const id = [...h.harness.daemon.state.voiceSessions.keys()][0] ?? "";
+    const stream = h.sources.instances.find((s) => s.url.includes(`/voice/sessions/${id}/events`));
+    if (!stream) throw new Error("no stream");
+    // The daemon keeps the turn running after the release: the reply is being written.
+    h.harness.daemon.state.voiceHold = true;
+    await user.click(screen.getByTestId("voice-send"));
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Thinking|^Replying/),
+    );
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1));
+      stream.fire("voice.event", frame("transcript_final", 1, { text: "tell me everything" }));
+      stream.fire("voice.event", frame("model_delta", 1, { text: "First this. Then" }));
+    });
+    // The press is allowed while the reply is written: it is the barge-in.
+    const talk = screen.getByTestId("voice-talk");
+    expect(talk).not.toBeDisabled();
+    await user.click(talk);
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    const presses = h.harness.daemon.state.calls.filter((c) => c.path.endsWith("/press"));
+    expect(presses.map((c) => (c.body as { pressed: boolean }).pressed)).toEqual([
+      true,
+      false,
+      true,
+    ]);
+    act(() => {
+      stream.fire("voice.event", frame("barge_in", 1, { spokenText: "" }));
+      stream.fire(
+        "voice.event",
+        frame("turn_end", 1, {
+          replyMode: "text",
+          latency: { interrupted: true },
+          entry: { turn: 1, role: "assistant", text: "First this. Then", interrupted: true },
+          unspokenText: null,
+        }),
+      );
+    });
+    const agent = screen.getAllByTestId("conversation-agent").at(-1) as HTMLElement;
+    expect(agent.textContent).toContain("First this. Then");
+    expect(within(agent).getByTestId("conversation-stopped").textContent).toMatch(/stopped/i);
+    expect(within(agent).queryByTestId("conversation-unspoken")).toBeNull();
+    // Nothing was played, so nothing was measured as heard.
+    expect(heardPosts(h)).toHaveLength(0);
   });
 });

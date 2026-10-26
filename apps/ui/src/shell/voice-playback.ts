@@ -51,6 +51,14 @@ import { type AudioOutput, decodeFrame } from "../lib/speech.ts";
  * (`POST /voice/sessions/:id/heard`) and lands on the turn's `voice.turn` row as
  * `heardFirstAudioMs`, beside the daemon-side `totalToFirstAudioMs`. Without EventSource or an
  * audio output nothing plays, nothing is measured and the turn still shows as text.
+ *
+ * The panel reads the same stream for the text (one EventSource per session): every frame
+ * but `audio` is handed to `onFrame` after the seq check, so a reconnect's replay never shows a
+ * transcript or a reply delta twice. `onSpeaking(turn, sentenceIndex)` says when a sentence's
+ * first chunk starts at the speaker (its scheduled start, by a timer on the page), so the panel
+ * marks the sentence being heard rather than the one the daemon is synthesising; silencing
+ * cancels what was not announced yet. A turn replied in text has no audio frames: nothing plays
+ * and nothing is measured (the release is forgotten at its `turn_end`).
  */
 export interface VoiceReplyPlayer {
   readonly sessionId: string;
@@ -79,7 +87,19 @@ export const JITTER_MAX_MS = 1000;
 /** A buffer short of its target starts anyway once no audio came for this long. */
 export const JITTER_IDLE_MS = 250;
 
+/** One frame of the session's stream as the panel gets it (`VoiceEventView`). */
+export interface VoiceStreamFrame {
+  seq: number | null;
+  type: string;
+  turn: number | null;
+  data: unknown;
+}
+
 export interface VoiceReplyOptions {
+  /** Every frame but `audio`, in order, each once (a reconnect's replay is dropped first). */
+  onFrame?: (frame: VoiceStreamFrame) => void;
+  /** A sentence's first chunk starts at the speaker now. */
+  onSpeaking?: (turn: number, sentenceIndex: number) => void;
   eventSource?: EventSourceFactory | undefined;
   /**
    * The audio output, created in the Talk click or the hotkey press (`createVoiceOutput`) so
@@ -188,6 +208,9 @@ export function followVoiceReply(
   let targetS = JITTER_START_MS / 1000;
   const maxS = JITTER_MAX_MS / 1000;
   let cancelIdle: (() => void) | null = null;
+  /** The playing turn's highest sentence whose start was scheduled for `onSpeaking`. */
+  let announced = -1;
+  const speakingTimers = new Set<() => void>();
   /** Turns cut short: their late frames are not played. */
   const silenced = new Set<number>();
   /** The highest turn that played audio; a release measures the first turn after it. */
@@ -202,6 +225,8 @@ export function followVoiceReply(
 
   const silence = () => {
     stopIdle();
+    for (const cancel of speakingTimers) cancel();
+    speakingTimers.clear();
     pending = [];
     pendingS = 0;
     buffering = false;
@@ -246,8 +271,21 @@ export function followVoiceReply(
     const ctxNow = audio.currentTime;
     const startAt = nextAt > ctxNow ? nextAt : ctxNow + leadS;
     let at = startAt;
+    const turn = playingTurn;
     for (const { buffer, sentenceIndex } of pending) {
       lastSentence = sentenceIndex;
+      if (options.onSpeaking && turn !== null && sentenceIndex > announced) {
+        announced = sentenceIndex;
+        const onSpeaking = options.onSpeaking;
+        const cancel = setTimer(
+          () => {
+            speakingTimers.delete(cancel);
+            if (!closed) onSpeaking(turn, sentenceIndex);
+          },
+          Math.max(0, (at - ctxNow) * 1000),
+        );
+        speakingTimers.add(cancel);
+      }
       const node = audio.createBufferSource();
       node.buffer = buffer;
       node.connect(audio.destination);
@@ -259,7 +297,6 @@ export function followVoiceReply(
     nextAt = at;
     pending = [];
     pendingS = 0;
-    const turn = playingTurn;
     if (turn === null) return;
     if (!started) measure(audio, turn, startAt, ctxNow);
     started = true;
@@ -281,6 +318,7 @@ export function followVoiceReply(
       playingTurn = turn;
       started = false;
       lastSentence = -1;
+      announced = -1;
       buffering = true;
     } else if (!buffering) {
       if (!started) buffering = true;
@@ -331,6 +369,18 @@ export function followVoiceReply(
       lastSeq = parsed.seq;
     }
     const turn = typeof parsed.turn === "number" ? parsed.turn : null;
+    if (parsed.type !== "audio" && typeof parsed.type === "string" && options.onFrame) {
+      try {
+        options.onFrame({
+          seq: typeof parsed.seq === "number" ? parsed.seq : null,
+          type: parsed.type,
+          turn,
+          data: parsed.data,
+        });
+      } catch {
+        // the panel's rendering must not stop the playback
+      }
+    }
     const forPlaying = turn === null || turn === playingTurn;
     switch (parsed.type) {
       case "audio":

@@ -12,6 +12,8 @@ import { type KeyValueStore, storageKey } from "../lib/storage.ts";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 export type ThemePreference = "system" | "light" | "dark";
+/** How the agent replies in the conversation panel's voice turns: spoken, or as text only. */
+export type VoiceReplyMode = "voice" | "text";
 
 export interface ConnectionState {
   status: ConnectionStatus;
@@ -33,6 +35,8 @@ export interface UiState {
   blockingCount: number;
   killActive: boolean;
   theme: ThemePreference;
+  /** The conversation panel's "Reply: voice / text", remembered per install; default voice. */
+  voiceReply: VoiceReplyMode;
   /** Set when the daemon announced a restart ("Update and restart"); cleared on reconnect. */
   restart: RestartRequested | null;
   /** Bumped on every `extension.changed` frame so the Extensions panel reloads. */
@@ -122,6 +126,7 @@ export type UiAction =
   | { type: "blockingCount"; count: number }
   | { type: "killActive"; active: boolean }
   | { type: "theme"; theme: ThemePreference }
+  | { type: "voiceReply"; mode: VoiceReplyMode }
   | { type: "restart"; restart: RestartRequested | null }
   | { type: "extension.changed" }
   /**
@@ -132,7 +137,11 @@ export type UiAction =
   /** A status read starts: its token is `desktopOrder.next` after this action. */
   | { type: "desktopRead" };
 
-export const STORAGE_NAMES = { activeProject: "activeProject", theme: "theme" } as const;
+export const STORAGE_NAMES = {
+  activeProject: "activeProject",
+  theme: "theme",
+  voiceReply: "voiceReply",
+} as const;
 
 function isTheme(value: string | null): value is ThemePreference {
   return value === "system" || value === "light" || value === "dark";
@@ -140,6 +149,7 @@ function isTheme(value: string | null): value is ThemePreference {
 
 export function initialState(config: DaemonConfig, storage: KeyValueStore): UiState {
   const storedTheme = storage.get(storageKey(config.installId, STORAGE_NAMES.theme));
+  const storedReply = storage.get(storageKey(config.installId, STORAGE_NAMES.voiceReply));
   return {
     config,
     connection: {
@@ -157,6 +167,7 @@ export function initialState(config: DaemonConfig, storage: KeyValueStore): UiSt
     blockingCount: 0,
     killActive: false,
     theme: isTheme(storedTheme) ? storedTheme : "system",
+    voiceReply: storedReply === "text" ? "text" : "voice",
     restart: null,
     extensionsVersion: 0,
     desktopControl: null,
@@ -198,6 +209,8 @@ export function reduce(state: UiState, action: UiAction): UiState {
       return state.killActive === action.active ? state : { ...state, killActive: action.active };
     case "theme":
       return state.theme === action.theme ? state : { ...state, theme: action.theme };
+    case "voiceReply":
+      return state.voiceReply === action.mode ? state : { ...state, voiceReply: action.mode };
     case "restart":
       return { ...state, restart: action.restart };
     case "extension.changed":
@@ -256,6 +269,9 @@ export function createStore(config: DaemonConfig, storage: KeyValueStore): UiSto
       }
       if (next.theme !== state.theme) {
         storage.set(storageKey(config.installId, STORAGE_NAMES.theme), next.theme);
+      }
+      if (next.voiceReply !== state.voiceReply) {
+        storage.set(storageKey(config.installId, STORAGE_NAMES.voiceReply), next.voiceReply);
       }
       state = next;
       for (const l of listeners) l();

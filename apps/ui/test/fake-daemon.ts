@@ -305,6 +305,11 @@ export interface FakeDaemonState {
   voiceInstallEntries: VoiceInstallEntryView[];
   /** The `afterSeq` of every install events stream opened (where a stream resumed). */
   voiceInstallStreamsAfter: number[];
+  /**
+   * When true, a release leaves the turn running (state `thinking`, no `lastTurn`): the reply
+   * is still being generated or spoken, and a press is the barge-in. Tests stream its frames.
+   */
+  voiceHold: boolean;
 }
 
 const DESKTOP_OFF: DesktopControlView = {
@@ -406,6 +411,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     voiceInstall: { ...clone(VOICE_INSTALL), ...(options.voiceInstall ?? {}) },
     voiceInstallEntries: [],
     voiceInstallStreamsAfter: [],
+    voiceHold: false,
   };
 
   const emit = (event: string, data: unknown) => {
@@ -1211,11 +1217,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     said: string,
     projectId: string | undefined,
     chunks: number,
+    replyMode: VoiceTurnView["replyMode"] = "voice",
   ): VoiceTurnView => {
     const reply = chatReply(said, projectId);
     return {
       turn,
       source: "audio",
+      replyMode,
       said,
       heard: reply.reply,
       reply,
@@ -1267,6 +1275,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       state: "idle",
       turn: 0,
       mode: parsed.data.mode ?? "push_to_talk",
+      replyMode: parsed.data.replyMode ?? "voice",
       language: parsed.data.language ?? null,
       projectId: parsed.data.projectId ?? null,
       conversationSessionId: nextId("sess"),
@@ -1290,6 +1299,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!v) return errorBody(c, 404, "not_found", "no such voice session");
     const parsed = VoicePressBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    if (parsed.data.replyMode) v.view = { ...v.view, replyMode: parsed.data.replyMode };
     if (parsed.data.pressed) {
       v.pressed = true;
       v.chunks = 0;
@@ -1297,9 +1307,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     } else if (v.pressed) {
       v.pressed = false;
       const turn = v.view.turns + 1;
+      if (state.voiceHold) {
+        v.view = { ...v.view, state: "thinking", turn };
+        return c.json(v.view);
+      }
       const said = state.nextVoiceLine ?? "what is next";
       state.nextVoiceLine = null;
-      const last = voiceTurn(turn, said, v.view.projectId ?? undefined, v.chunks);
+      const last = voiceTurn(turn, said, v.view.projectId ?? undefined, v.chunks, v.view.replyMode);
       v.view = {
         ...v.view,
         state: "idle",
