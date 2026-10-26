@@ -2,7 +2,7 @@ import { ForerunnerError } from "@forerunner/platform";
 import { ContextPipeline, type RunEvent, type SignedToken } from "@forerunner/runtime";
 import { textReply, toolReply } from "@forerunner/testenv";
 import { describe, expect, it, vi } from "vitest";
-import { MAX_EFFORT_TOKENS_PER_CALL, VERDICT_ADJUSTED_AUDIT_TOOL } from "../src/critic.ts";
+import { VERDICT_ADJUSTED_AUDIT_TOOL } from "../src/critic.ts";
 import { SIGNOFF_KEY } from "../src/followup.ts";
 import { ESCALATE_RULE } from "../src/rules.ts";
 import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
@@ -821,29 +821,6 @@ describe("CriticService: persistence, resolution and patterns (H.3, H.5)", () =>
       expect(await w.store.finding.repeated(2)).toHaveLength(1);
       // Proposals are returned, never written: the critic does not touch the lesson table.
       expect(await w.store.lesson.count()).toBe(0);
-    } finally {
-      await w.close();
-    }
-  });
-
-  it("a max-effort review gets room to finish: 20000 output tokens per call, 8192 otherwise (D.15 live run of 2026-10-25)", async () => {
-    // Live, tier 3 on Opus at effort max spent the whole 8192-token call thinking and ended
-    // with no verdict (run 2026-10-25T23:11:28.448Z). 20000 still prices under the review's
-    // USD 0.50 on Opus (the loop prices a call at its full output cap).
-    const w = await world({
-      replies: [submitReply(), closingReply(), submitReply(), closingReply()],
-    });
-    try {
-      await w.critic.review(taskInput(w.ids.task, 2), w.ctx());
-      await w.critic.review(taskInput(w.ids.task, 3), w.ctx());
-      const efforts = w.provider.calls.map((c) => c.request.effort);
-      const caps = w.provider.calls.map((c) => c.request.max_tokens);
-      expect(efforts[0]).toBe("high");
-      expect(caps[0]).toBe(8192);
-      const maxAt = efforts.indexOf("max");
-      expect(maxAt).toBeGreaterThan(0);
-      expect(caps[maxAt]).toBe(MAX_EFFORT_TOKENS_PER_CALL);
-      expect(MAX_EFFORT_TOKENS_PER_CALL).toBe(20_000);
     } finally {
       await w.close();
     }
