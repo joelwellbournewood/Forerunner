@@ -157,6 +157,31 @@ export class SessionBudget {
   remainingUsdMicro(): number {
     return Math.max(0, this.limits.budgetUsdMicro - this.spentBySession);
   }
+
+  /**
+   * The largest estimate `precheck` admits for this run without changing the session's state:
+   * within the run cap and the session cap and, while the session still takes new work, below
+   * the line that would set no-new-work for good (80% of the cap; for the work phase also the
+   * review reserve). Once no-new-work is set that line no longer bounds anything, so only the
+   * caps do. Never negative. Used to size a call's output cap (`RunRequest.maxTokensCeiling`):
+   * a larger cap must not flip the session to no-new-work for a call that costs a fraction of it.
+   */
+  quietRoomUsdMicro(runId: string, runCapUsdMicro: number, phase: "work" | "review"): number {
+    const cap = this.limits.budgetUsdMicro;
+    let room = Math.min(runCapUsdMicro - this.spentByRunId(runId), cap - this.spentBySession);
+    if (!this._noNewWork) {
+      // precheck flips at projected >= 80% of the cap: the estimate must stay strictly below.
+      room = Math.min(room, Math.ceil(cap * 0.8 - this.spentBySession) - 1);
+      // ...and, for work, at projected > the work ceiling: at most up to it.
+      if (phase === "work") {
+        room = Math.min(
+          room,
+          Math.floor(cap * (1 - this.limits.reserveShare) - this.spentBySession),
+        );
+      }
+    }
+    return Math.max(0, room);
+  }
 }
 
 /**

@@ -114,8 +114,9 @@ export const REVIEW_TOKENS_PER_CALL = 8192;
 
 /**
  * At effort `max` the first call's `max_tokens` grows from `REVIEW_TOKENS_PER_CALL` up to this
- * ceiling, as far as the budget left for the review pays for it at the loop's full-cap price
- * (`RunRequest.maxTokensCeiling`), and the verdict ends the run (`ToolResult.endRun`): no closing
+ * ceiling, as far as the room left for the review pays for it at the loop's full-cap price
+ * (`RunRequest.maxTokensCeiling`: run, session below its 80% line, human and project caps,
+ * clamped to the model's output limit), and the verdict ends the run (`ToolResult.endRun`): no closing
  * call is priced after it. The live D.15 run of 2026-10-25 ended both tier 3 reviews (Opus 5.5,
  * effort max) at 8192 with no verdict. ADR 0028, amendment of 2026-10-26.
  */

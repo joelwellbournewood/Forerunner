@@ -190,6 +190,12 @@ export interface ModelProvider {
   complete(req: ModelRequest): Promise<ModelResponse>;
   /** Rough token count for budgeting before a call. */
   countTokens(text: string): number;
+  /**
+   * The largest `max_tokens` the provider accepts for `model`; undefined when unknown. The loop
+   * clamps a run's `maxTokensCeiling` to it, so a ceiling never asks past the model's limit.
+   * Optional; must not throw (an unknown limit is undefined).
+   */
+  maxOutputTokens?(model: string): Promise<number | undefined> | number | undefined;
 }
 
 /** Collects a stream into a ModelResponse. Shared by every adapter. */

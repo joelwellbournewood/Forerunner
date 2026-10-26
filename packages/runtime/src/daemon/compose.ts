@@ -257,6 +257,7 @@ import {
   credentialFor,
   pricingFor,
   StateLedgerStore,
+  smallestMoneyRemainder,
   stateSources,
 } from "../wiring/billing-ports.ts";
 import {
@@ -1061,6 +1062,32 @@ class DynamicCaps implements CapsPort {
     estimateUsdMicro: number,
     opts: { phase: "work" | "review"; billing?: CapsBilling },
   ): Promise<CapDecision> {
+    const r = await this.measure(scope, estimateUsdMicro, opts);
+    return {
+      decision: r.decision,
+      level: r.level ?? undefined,
+      spentUsdMicro: r.spent,
+      capUsdMicro: r.cap,
+      remainingUsdMicro: r.remaining,
+      message: r.message,
+    };
+  }
+
+  /** The smallest money remainder across the human's month and the project's budget. */
+  async remainingUsdMicro(
+    scope: CapScope,
+    opts: { phase: "work" | "review"; billing?: CapsBilling },
+  ): Promise<number | undefined> {
+    const r = await this.measure(scope, 0, opts);
+    // The session level here is unbounded (SessionBudget enforces it in-process).
+    return smallestMoneyRemainder(r.levels.filter((l) => l.level !== "session"));
+  }
+
+  private async measure(
+    scope: CapScope,
+    estimateUsdMicro: number,
+    opts: { phase: "work" | "review"; billing?: CapsBilling },
+  ) {
     const key = `${scope.humanId}:${scope.projectId ?? ""}`;
     let caps = this.cache.get(key);
     if (!caps || this.clock.now() - caps.at > 60_000) {
@@ -1076,7 +1103,7 @@ class DynamicCaps implements CapsPort {
     // A subscription run adds the plan level (spec I.1, ADR 0044): the share the run reports
     // against the source's cap; at 80% of it finish the current task, at the cap stop.
     const plan = opts.billing?.kind === "subscription" ? opts.billing : undefined;
-    const r = await this.checker.check(scope, estimateUsdMicro, {
+    return this.checker.check(scope, estimateUsdMicro, {
       phase: opts.phase,
       caps: {
         monthUsdMicro: caps.monthUsdMicro > 0 ? caps.monthUsdMicro : Number.MAX_SAFE_INTEGER,
@@ -1088,14 +1115,6 @@ class DynamicCaps implements CapsPort {
         ? { planUsageShare: plan.planUsageShare, sourceKind: "subscription" as const }
         : {}),
     });
-    return {
-      decision: r.decision,
-      level: r.level ?? undefined,
-      spentUsdMicro: r.spent,
-      capUsdMicro: r.cap,
-      remainingUsdMicro: r.remaining,
-      message: r.message,
-    };
   }
 }
 

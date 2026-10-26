@@ -96,9 +96,35 @@ export class AnthropicMessagesProvider implements ModelProvider {
     });
   }
 
+  /** Per model: the `max_tokens` limit the Models API reports (undefined when it has none). */
+  private readonly outputLimits = new Map<string, Promise<number | undefined>>();
+
+  /**
+   * The model's `max_tokens` limit from the Models API (`ModelInfo.max_tokens`), read once per
+   * model and kept; `listModels` fills it too. Undefined when the API reports none or the read
+   * fails (the loop then does not clamp; the API itself rejects a cap past the limit).
+   */
+  maxOutputTokens(model: string): Promise<number | undefined> {
+    let limit = this.outputLimits.get(model);
+    if (!limit) {
+      limit = this.client.models.retrieve(model).then(
+        (m) => positiveLimit(m.max_tokens),
+        () => {
+          // Not kept: a failed read is tried again on the next call.
+          this.outputLimits.delete(model);
+          return undefined;
+        },
+      );
+      this.outputLimits.set(model, limit);
+    }
+    return limit;
+  }
+
   async listModels(): Promise<ModelRef[]> {
     const out: ModelRef[] = [];
     for await (const m of this.client.models.list({ limit: 100 })) {
+      const known = positiveLimit(m.max_tokens);
+      if (known !== undefined) this.outputLimits.set(m.id, Promise.resolve(known));
       const tier = tierFromId(m.id);
       if (tier) out.push({ provider: this.name, id: m.id, tier });
     }
@@ -300,6 +326,11 @@ function mapError(e: unknown): StreamEvent {
   if (status === 529 || (status && status >= 500))
     return { type: "error", code: "provider_error", message, retryable: true };
   return { type: "error", code: "provider_error", message, retryable: false };
+}
+
+/** A reported output limit, when it is a positive whole number; undefined otherwise. */
+function positiveLimit(n: number | null | undefined): number | undefined {
+  return typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : undefined;
 }
 
 export function tierFromId(id: string): ModelTier | null {

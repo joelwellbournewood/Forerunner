@@ -51,6 +51,45 @@ describe("session budget", () => {
     expect(() => b.checkWallClock(10_000)).toThrow(/wall-clock/);
   });
 
+  it("quiet room: the largest estimate precheck admits without setting no-new-work", () => {
+    const b = mk(5_000_000);
+    b.record("r0", 3_600_000);
+    const room = b.quietRoomUsdMicro("r1", 5_000_000, "review");
+    expect(room).toBe(399_999);
+    // One more micro-USD reaches the 80% line; the room itself leaves the session as it was.
+    const at = mk(5_000_000);
+    at.record("r0", 3_600_000);
+    expect(at.precheck("r1", 5_000_000, room + 1, "review").decision).toBe("finish_current");
+    expect(at.noNewWork).toBe(true);
+    expect(b.precheck("r1", 5_000_000, room, "review").decision).toBe("allow");
+    expect(b.noNewWork).toBe(false);
+    // The run cap bounds it too.
+    expect(b.quietRoomUsdMicro("r1", 100_000, "review")).toBe(100_000);
+  });
+
+  it("quiet room for work stops at the review reserve", () => {
+    const b = new SessionBudget({
+      sessionId: "s",
+      budgetUsdMicro: 1_000_000,
+      stepCap: 3,
+      deadlineMs: 10_000,
+      reserveShare: 0.25,
+    });
+    b.record("r0", 500_000);
+    expect(b.quietRoomUsdMicro("r1", 1_000_000, "work")).toBe(250_000);
+    expect(b.precheck("r1", 1_000_000, 250_000, "work").decision).toBe("allow");
+    expect(b.quietRoomUsdMicro("r1", 1_000_000, "review")).toBe(299_999);
+  });
+
+  it("quiet room once no-new-work is set: only the caps bound it", () => {
+    const b = mk(1_000_000);
+    b.record("r0", 850_000);
+    expect(b.noNewWork).toBe(true);
+    expect(b.quietRoomUsdMicro("r1", 1_000_000, "review")).toBe(150_000);
+    b.record("r0", 200_000);
+    expect(b.quietRoomUsdMicro("r1", 1_000_000, "review")).toBe(0);
+  });
+
   it("estimates conservatively from input tokens and max output", () => {
     expect(
       estimateCallUsdMicro(1_000_000, 1_000, { inputPerMtokUsd: 3, outputPerMtokUsd: 15 }),

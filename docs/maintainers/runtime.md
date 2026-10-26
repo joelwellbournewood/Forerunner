@@ -190,12 +190,23 @@ critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call
   tool results. No further model call is made and the outcome is `completed`. A pending
   approval in the same turn still wins (`needs_human`).
 - `RunRequest.maxTokensCeiling`: when above `maxTokensPerCall`, each call's `max_tokens` is
-  the largest value between the two whose `pricing.estimate` fits the budget left for the run
-  (`fitMaxTokens`): the token's run cap less the run's spend, or `SessionBudget.remainingUsdMicro()`,
-  whichever is smaller. When the floor does not fit, the call asks for the floor and the
-  precheck refuses it. Outer caps (`CapsPort`: human, project) are not read when sizing; they
-  still refuse a call their remaining budget does not cover. Without the option every call
-  asks for `maxTokensPerCall`, as before.
+  the largest value between the two whose `pricing.estimate` fits the room
+  `EnforcementHooks.callRoomUsdMicro(ctx)` reports (`fitMaxTokens`). The room is the smallest
+  of: the token's run cap less the run's spend; `SessionBudget.quietRoomUsdMicro` (the
+  session's budget left and, while the session still takes new work, what stays strictly
+  below its 80% line, and for the work phase at most up to its review reserve, so a larger cap
+  never sets no-new-work for good on a call that costs a fraction of its estimate); and the
+  outer caps' smallest money remainder less one (`CapsPort.remainingUsdMicro`, optional:
+  `BillingCaps` and the daemon's `DynamicCaps` read the human's month, the project's budget
+  and the task cap with a zero estimate, never the plan share; the outer check stops at
+  spend + estimate >= cap, hence the one). So a cap with room for the floor is never refused
+  because the ceiling was asked for. When even the floor does not fit, the call asks for the
+  floor and the hooks decide as before. The ceiling must be a positive whole number (the run
+  rejects with `validation` otherwise) and is clamped on the first turn to the model's
+  `max_tokens` limit when the provider reports one (`ModelProvider.maxOutputTokens`: the
+  Anthropic adapter reads `ModelInfo.max_tokens` from the Models API once per model, fills it
+  from `listModels`, and reports nothing on a failed read). Without the option every call
+  asks for `maxTokensPerCall`, as before, and none of these reads happen.
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
 

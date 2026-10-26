@@ -22,6 +22,8 @@ import type {
   ApprovalPort,
   AuditPort,
   BillingKind,
+  CapScope,
+  CapsBilling,
   CapsPort,
   LedgerPort,
   SecretsPort,
@@ -147,32 +149,10 @@ export class EnforcementHooks {
       estimateUsdMicro,
       ctx.phase,
     );
-    const share = ctx.billing?.planUsageShare?.();
-    const outer = await this.deps.caps.check(
-      {
-        humanId: claims.ownerHumanId,
-        projectId: claims.projectId,
-        sessionId: claims.sessionId,
-        taskId: claims.taskId,
-        runId: claims.runId,
-      },
-      estimateUsdMicro,
-      {
-        phase: ctx.phase,
-        ...(ctx.billing
-          ? {
-              billing: {
-                sourceId: ctx.billingSourceId,
-                kind: ctx.billing.kind,
-                ...(typeof share === "number" ? { planUsageShare: share } : {}),
-                ...(ctx.billing.planShareCap !== undefined
-                  ? { planShareCap: ctx.billing.planShareCap }
-                  : {}),
-              },
-            }
-          : {}),
-      },
-    );
+    const outer = await this.deps.caps.check(this.capScope(claims), estimateUsdMicro, {
+      phase: ctx.phase,
+      ...this.capsBilling(ctx),
+    });
     if (outer.decision === "stop") {
       throw new ForerunnerError(
         "budget_exceeded",
@@ -192,6 +172,50 @@ export class EnforcementHooks {
         outer.decision === "finish_current" || local.decision === "finish_current"
           ? "finish_current"
           : "allow",
+    };
+  }
+
+  /**
+   * The largest estimate the next model call may have without being refused or changing the
+   * session's state (ADR 0028, amendment of 2026-10-26): the run cap less the run's spend, the
+   * session's quiet room (`SessionBudget.quietRoomUsdMicro`: its cap, and the 80% no-new-work
+   * line while it still takes new work), and the outer caps' smallest remainder less one
+   * (`CapsPort.remainingUsdMicro`; the outer check stops at spend + estimate >= cap). Never
+   * negative. The loop sizes a call's output cap with it; `beforeModelCall` still decides.
+   */
+  async callRoomUsdMicro(ctx: RunContext): Promise<number> {
+    const claims = this.claims(ctx);
+    let room = ctx.budget.quietRoomUsdMicro(claims.runId, claims.budgetUsdMicro, ctx.phase);
+    const outer = await this.deps.caps.remainingUsdMicro?.(this.capScope(claims), {
+      phase: ctx.phase,
+      ...this.capsBilling(ctx),
+    });
+    if (typeof outer === "number" && Number.isFinite(outer)) room = Math.min(room, outer - 1);
+    return Math.max(0, room);
+  }
+
+  private capScope(claims: CapabilityClaims): CapScope {
+    return {
+      humanId: claims.ownerHumanId,
+      projectId: claims.projectId,
+      sessionId: claims.sessionId,
+      taskId: claims.taskId,
+      runId: claims.runId,
+    };
+  }
+
+  private capsBilling(ctx: RunContext): { billing?: CapsBilling } {
+    if (!ctx.billing) return {};
+    const share = ctx.billing.planUsageShare?.();
+    return {
+      billing: {
+        sourceId: ctx.billingSourceId,
+        kind: ctx.billing.kind,
+        ...(typeof share === "number" ? { planUsageShare: share } : {}),
+        ...(ctx.billing.planShareCap !== undefined
+          ? { planShareCap: ctx.billing.planShareCap }
+          : {}),
+      },
     };
   }
 

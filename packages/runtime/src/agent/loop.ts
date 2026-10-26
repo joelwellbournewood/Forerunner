@@ -48,11 +48,16 @@ export interface RunRequest {
   maxTokensPerCall?: number;
   /**
    * When set above `maxTokensPerCall`, each call's `max_tokens` is the largest value between
-   * the two whose priced estimate (`pricing.estimate`) fits the budget left for the run: the
-   * token's run cap less the run's spend, and the session's budget left, whichever is smaller.
-   * When even `maxTokensPerCall` does not fit, the call asks for it and the precheck refuses it
-   * as it always would. Outer caps (human, project) are not read here; they still refuse a call
-   * whose estimate they do not cover. Used by the critic at effort max (ADR 0028, 2026-10-26).
+   * the two whose priced estimate (`pricing.estimate`) fits the room the hooks report
+   * (`EnforcementHooks.callRoomUsdMicro`): the run cap less the run's spend; the session's
+   * budget left and, while the session still takes new work, what stays below its 80%
+   * no-new-work line (and, for work, its review reserve); and the smallest remainder of the
+   * outer caps (human month, project, ...) when the caps port reads one. A larger cap never
+   * refuses a call the floor would have passed, nor flips the session to no-new-work. When even
+   * `maxTokensPerCall` does not fit, the call asks for it and the hooks decide as they always
+   * would. The ceiling is first clamped to the model's `max_tokens` limit when the provider
+   * reports one (`ModelProvider.maxOutputTokens`); it must be a positive whole number. Used by
+   * the critic at effort max (ADR 0028, amendments of 2026-10-26).
    */
   maxTokensCeiling?: number;
   effort?: EffortLevel;
@@ -197,6 +202,15 @@ export class LoopAgentDriver {
 
   async run(req: RunRequest): Promise<RunResult> {
     const { clock } = this.deps;
+    if (
+      req.maxTokensCeiling !== undefined &&
+      !(Number.isSafeInteger(req.maxTokensCeiling) && req.maxTokensCeiling > 0)
+    ) {
+      throw new ForerunnerError(
+        "validation",
+        `maxTokensCeiling must be a positive whole number, got ${String(req.maxTokensCeiling)}`,
+      );
+    }
     const claims = req.token.claims;
     const startedMono = clock.monotonic();
     const controller = new AbortController();
@@ -261,6 +275,9 @@ export class LoopAgentDriver {
     const sendSpeed = req.speed === "fast" && caps.fastMode;
     const sendTemperature = req.temperature !== undefined && caps.acceptsTemperature;
 
+    // The run's output-cap ceiling, clamped to the model's limit on the first turn.
+    let ceiling: number | undefined;
+
     emit({ type: "run_start", runId: claims.runId, model: recordedModel });
     try {
       for (let turn = 1; ; turn++) {
@@ -272,16 +289,16 @@ export class LoopAgentDriver {
           req.system + JSON.stringify(messages) + JSON.stringify(toolDefs),
         );
         const floor = req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL;
+        if (turn === 1 && req.maxTokensCeiling !== undefined) {
+          ceiling = await clampToModelLimit(req.provider, req.model, req.maxTokensCeiling);
+        }
         const maxOut =
-          req.maxTokensCeiling !== undefined && req.maxTokensCeiling > floor
+          ceiling !== undefined && ceiling > floor
             ? fitMaxTokens(
                 (n) => req.pricing.estimate(inputTokens, n),
                 floor,
-                req.maxTokensCeiling,
-                Math.min(
-                  claims.budgetUsdMicro - req.budget.spentByRunId(claims.runId),
-                  req.budget.remainingUsdMicro(),
-                ),
+                ceiling,
+                await this.deps.hooks.callRoomUsdMicro(ctx),
               )
             : floor;
         const estimate = req.pricing.estimate(inputTokens, maxOut);
@@ -560,6 +577,26 @@ export class LoopAgentDriver {
       ctx.signal.removeEventListener("abort", onAbort);
     }
   }
+}
+
+/**
+ * A run's ceiling no higher than the provider's `max_tokens` limit for the model, when the
+ * provider reports one (`ModelProvider.maxOutputTokens`); a failed or absent read leaves it.
+ */
+async function clampToModelLimit(
+  provider: ModelProvider,
+  model: string,
+  ceiling: number,
+): Promise<number> {
+  let limit: number | undefined;
+  try {
+    limit = await provider.maxOutputTokens?.(model);
+  } catch {
+    limit = undefined;
+  }
+  return typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0
+    ? Math.min(ceiling, limit)
+    : ceiling;
 }
 
 /**

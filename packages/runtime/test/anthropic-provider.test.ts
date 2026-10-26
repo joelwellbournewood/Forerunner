@@ -173,6 +173,37 @@ describe("AnthropicMessagesProvider", () => {
     expect(seen[3]?.body.speed).toBeUndefined();
   });
 
+  it("reads a model's max_tokens limit from the Models API once, and reports none when the read fails", async () => {
+    const urls: string[] = [];
+    let fail = false;
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input instanceof Request ? input.url : input);
+      urls.push(url);
+      if (fail) return new Response(JSON.stringify({ type: "error" }), { status: 500 });
+      return new Response(
+        JSON.stringify({
+          type: "model",
+          id: "claude-opus-5-5",
+          display_name: "Opus",
+          created_at: "2026-01-01T00:00:00Z",
+          max_input_tokens: 200_000,
+          max_tokens: 32_000,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const p = new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 });
+    expect(await p.maxOutputTokens("claude-opus-5-5")).toBe(32_000);
+    expect(await p.maxOutputTokens("claude-opus-5-5")).toBe(32_000);
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain("/v1/models/claude-opus-5-5");
+    fail = true;
+    expect(await p.maxOutputTokens("claude-sonnet-5-5")).toBeUndefined();
+    // A failed read is not kept: the next one asks again.
+    expect(await p.maxOutputTokens("claude-sonnet-5-5")).toBeUndefined();
+    expect(urls).toHaveLength(3);
+  });
+
   it("uses a subscription token as a bearer credential when given", async () => {
     let headers: Headers | null = null;
     const fetchImpl: typeof fetch = async (_i, init) => {

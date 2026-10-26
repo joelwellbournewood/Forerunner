@@ -96,7 +96,8 @@ output) priced even the first call over USD 0.50.
    (`MAX_EFFORT_TOKENS_CEILING`), and the loop asks for the largest `max_tokens` between 8192
    and 24000 whose priced estimate fits what is left: the critic token's run cap less the
    run's spend, or the session's budget left, whichever is smaller. When 8192 does not fit,
-   the precheck refuses the call as before.
+   the precheck refuses the call as before. (Narrowed the same day after the change's own
+   review; see "Follow-up" below.)
 
 At every effort:
 3. A captured verdict stands. When `submit_review` recorded a verdict and the run then ends
@@ -111,8 +112,27 @@ priced estimate fits the budget left, and the actual cost is below the estimate.
 0.50 with a few thousand input tokens, Opus 5.5 gets 24000 output tokens (about USD 0.49
 priced at the cap) and fast mode about 12000 (about USD 0.50). A review that needs more than
 its cap still ends `no_verdict` at `max_tokens`, and the live line shows each call's
-`max_tokens`. The human and project caps (`CapsPort`) are not read when the cap is sized. A
-call they cannot cover is refused, as any other call would be.
+`max_tokens`.
+
+**Follow-up (2026-10-26, from the independent review of this amendment, 82, accept).** Two
+gaps in rule 2, fixed in the loop (`EnforcementHooks.callRoomUsdMicro`):
+- *The 80% line.* The session precheck sets no-new-work for good once spend plus estimate
+  reaches 80% of the session cap. Priced at 24000, a review call could cross that line though
+  it costs a fraction of its estimate (cap USD 5, USD 3.50 spent: about USD 0.50 priced, about
+  USD 0.17 spent), ending the session's new work early. While the session still takes new
+  work, the room now stops strictly below that line (and, for the work phase, at the review
+  reserve): `SessionBudget.quietRoomUsdMicro`. Once no-new-work is set, only the caps bound it.
+- *Outer caps.* The human's month and the project's budget were not read, so a cap with room
+  for the 8192 estimate but not the 24000 one refused the call and the review ended
+  `no_verdict`, a regression from the fixed 8192. `CapsPort` gains an optional
+  `remainingUsdMicro(scope, opts)`: the smallest money remainder across its levels (never the
+  plan share). The room takes it less one, since the outer check stops at spend + estimate
+  >= cap.
+The room never takes the cap below 8192: when 8192 itself does not fit, the call asks for it
+and the hooks decide exactly as they did before this amendment. Also: the ceiling is clamped
+to the model's output limit when the provider reports one (`ModelProvider.maxOutputTokens`;
+the Anthropic adapter reads it from the Models API) and must be a positive whole number. A
+max-effort review stays bounded by its deep-review timeout (10 min by default).
 
 **Alternatives considered.**
 - *A small fixed cap for the calls after the verdict.* That still pays for a call nobody reads,

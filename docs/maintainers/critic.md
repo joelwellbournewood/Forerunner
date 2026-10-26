@@ -463,10 +463,14 @@ high to max) two things change, both in `modelReview`:
   verdict.
 - The run asks for `maxTokensCeiling: MAX_EFFORT_TOKENS_CEILING` (24000). The loop sizes each
   call's `max_tokens` as the largest value between 8192 and 24000 whose priced estimate (full
-  input plus the cap at the output price, the precheck's own estimate) fits the budget left
-  for the review: the critic token's run cap less the run's spend, or the session's budget
-  left, whichever is smaller. When even 8192 does not fit, the call asks for 8192 and the
-  precheck refuses it (`budget_exceeded`, as before).
+  input plus the cap at the output price, the precheck's own estimate) fits the room left for
+  the review: the critic token's run cap less the run's spend, the session's budget left and
+  (while the session still takes new work) what stays below its 80% no-new-work line, and the
+  smallest remainder of the human's and the project's caps (`CapsPort.remainingUsdMicro`).
+  The 24000 is first clamped to the model's own output limit when the provider reports one.
+  When even 8192 does not fit, the call asks for 8192 and the hooks decide as before
+  (`budget_exceeded` when a cap refuses it). Details in `runtime.md`, "Two options let a run
+  ...".
 
 Why: the live D.15 run of 2026-10-25 ended both tier 3 reviews (Opus 5.5, effort max) at
 `max_tokens` 8192 with no verdict, after about 75 s of thinking. A fixed 20000 cap was rejected
@@ -488,7 +492,11 @@ run's own outcome. A timeout, a kill or an error after the verdict still name th
 Tests: `critic.test.ts`, "a max-effort review finishes inside its budget". A tier 3 review
 under USD 0.50 where the model needs 15000 output tokens, on Opus pricing and in fast mode
 (needs 10000). Tier 2 unchanged (8192, two calls). A captured verdict whose closing call is
-refused. Runtime side: `packages/runtime/test/loop-call-cap.test.ts`.
+refused. A max-effort review whose model does not answer within
+`DEFAULT_DEEP_REVIEW_TIMEOUT_MS` (10 min) ends `timeout` with no verdict: the larger cap buys
+a longer call, not a longer review. Runtime side: `packages/runtime/test/loop-call-cap.test.ts`
+(the 80% line, the outer caps' remainder, the model-limit clamp, `endRun` on an error result
+and next to a pending approval).
 
 ## Known issues
 

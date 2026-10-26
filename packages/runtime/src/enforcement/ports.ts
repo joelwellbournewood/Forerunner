@@ -45,6 +45,18 @@ export interface CapsPort {
     estimateUsdMicro: number,
     opts: { phase: "work" | "review"; billing?: CapsBilling },
   ): Promise<CapDecision> | CapDecision;
+  /**
+   * The smallest amount left, in USD micro-units, across the money levels `check` measures for
+   * this scope (month, project, task, ...; never the plan share), before any estimate; undefined
+   * when no money level applies. `check` stops a call whose spend plus estimate reaches a cap,
+   * so the largest estimate it admits is one less than this. The loop reads it to size a call's
+   * output cap (`RunRequest.maxTokensCeiling`). Optional: a port without it bounds nothing there,
+   * and `check` still refuses a call its caps do not cover.
+   */
+  remainingUsdMicro?(
+    scope: CapScope,
+    opts: { phase: "work" | "review"; billing?: CapsBilling },
+  ): Promise<number | undefined> | number | undefined;
 }
 
 export interface SecretsPort {

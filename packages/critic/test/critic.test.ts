@@ -14,11 +14,12 @@ import {
   VERDICT_ADJUSTED_AUDIT_TOOL,
 } from "../src/critic.ts";
 import { SIGNOFF_KEY } from "../src/followup.ts";
+import { DEFAULT_DEEP_REVIEW_TIMEOUT_MS } from "../src/model.ts";
 import { ESCALATE_RULE } from "../src/rules.ts";
 import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
 import type { CheckCommand, CheckRunner } from "../src/tier0.ts";
 import type { ReviewEvidence, ReviewInput } from "../src/types.ts";
-import { baseEvidence, CRITIC_PROMPT, closingReply, submitReply, world } from "./helpers.ts";
+import { baseEvidence, CRITIC_PROMPT, closingReply, submitReply, until, world } from "./helpers.ts";
 
 const taskInput = (
   taskId: string,
@@ -1053,6 +1054,32 @@ describe("CriticService: a max-effort review finishes inside its budget (D.15 li
       expect(r.out.costUsdMicro).toBeLessThanOrEqual(REVIEW_CAP);
     } finally {
       await r.w.close();
+    }
+  });
+
+  it("a max-effort review is still bounded by its deep-review timeout", async () => {
+    // The larger cap buys a longer call, not a longer review: a model that has not answered by
+    // DEFAULT_DEEP_REVIEW_TIMEOUT_MS is cut off and the review names the timeout.
+    const w = await world({
+      latency: "simulated",
+      replies: [submitReply({}, { ttftMs: DEFAULT_DEEP_REVIEW_TIMEOUT_MS + 60_000 })],
+      deps: { pricing },
+    });
+    try {
+      const p = w.critic.review(taskInput(w.ids.task, 3), w.ctx({ budgetUsdMicro: REVIEW_CAP }));
+      await until(() => w.provider.calls.length >= 1, "the review call");
+      const req = w.provider.calls[0]?.request;
+      expect(req?.effort).toBe("max");
+      expect(req?.max_tokens ?? 0).toBeGreaterThan(REVIEW_TOKENS_PER_CALL);
+      await w.clock.advance(DEFAULT_DEEP_REVIEW_TIMEOUT_MS + 1);
+      const out = await p;
+      expect(out.outcome).toBe("timeout");
+      // No verdict was captured: the review is not a pass (grade 0, escalate).
+      expect(out.grade).toBe(0);
+      expect(out.verdict).not.toBe("accept");
+      expect(w.provider.calls).toHaveLength(1);
+    } finally {
+      await w.close();
     }
   });
 
