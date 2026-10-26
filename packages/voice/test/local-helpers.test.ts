@@ -1,9 +1,9 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, log, SimulatedClock } from "@forerunner/platform";
+import { join, Logger, log, SimulatedClock } from "@forerunner/platform";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FasterWhisperStt, HelperMessageSchema } from "../src/providers/local/faster-whisper.ts";
-import { HelperProcess } from "../src/providers/local/helper-process.ts";
+import { describeHelperExit, HelperProcess } from "../src/providers/local/helper-process.ts";
 import { KokoroTts } from "../src/providers/local/kokoro.ts";
 import { PiperTts } from "../src/providers/local/piper.ts";
 import type { AudioChunk, SttEvent } from "../src/types.ts";
@@ -48,6 +48,105 @@ describe("FasterWhisperStt over the helper protocol", () => {
     for await (const e of session.events) events.push(e);
     expect(events[0]?.type).toBe("error");
     await broken.dispose();
+  });
+});
+
+/**
+ * The real-audio run of 2026-10-26: fr_stt.py died mid-transcription with exit code 3221225477
+ * (0xC0000005, an access violation inside faster-whisper on Windows, CPU int8, under heavy CPU
+ * load) and the turn failed with the human's speech lost. One crash now costs nothing the human
+ * notices: the helper is restarted and the utterance's audio, still in memory, is sent again.
+ */
+describe("FasterWhisperStt when the helper crashes mid-transcription", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "fr-stt-crash-"));
+  });
+  afterAll(() => rm(dir, { recursive: true, force: true }));
+
+  const crashing = (name: string, times: number) =>
+    new FasterWhisperStt({
+      python: node,
+      helperPath: fixture("crashing_stt_helper.mjs"),
+      extraArgs: ["--crash-file", join(dir, name), "--crash-times", String(times)],
+    });
+  const utterance = async (stt: FasterWhisperStt) => {
+    const events: SttEvent[] = [];
+    const session = stt.start({ sampleRate: 16000 });
+    for (const c of chunkify(synth(440, 200), 20)) session.push(c);
+    session.endOfSpeech();
+    for await (const e of session.events) events.push(e);
+    return events;
+  };
+  const captured = async <T>(fn: () => Promise<T>) => {
+    const lines: string[] = [];
+    const off = Logger.addSink((rec) => {
+      if (rec.scope === "voice:faster-whisper")
+        lines.push(`${rec.level} ${rec.msg} ${JSON.stringify(rec.data ?? {})}`);
+    });
+    try {
+      return { result: await fn(), lines };
+    } finally {
+      off();
+    }
+  };
+
+  it("restarts the helper and retries the utterance's audio once: the turn gets its final", async () => {
+    const stt = crashing("once", 1);
+    try {
+      const { result: events, lines } = await captured(() => utterance(stt));
+      expect(events.filter((e) => e.type === "error")).toEqual([]);
+      // The whole utterance reached the new helper: 200 ms at 16 kHz mono = 6400 bytes.
+      expect(events.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      // The crash is logged as a warning with the exit code in hex and a plain cause.
+      const crash = lines.find((l) => l.includes("retrying the utterance"));
+      expect(crash).toBeDefined();
+      expect(crash).toMatch(/^warn /);
+      expect(crash).toContain("0x00000046");
+      expect(crash).toMatch(/"cause":"[^"]+"/);
+      // The restarted helper serves the next utterance as usual.
+      const next = await utterance(stt);
+      expect(next.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+    } finally {
+      await stt.dispose();
+    }
+  });
+
+  it("fails the utterance only when the retry crashes too, naming the exit code in hex", async () => {
+    const stt = crashing("twice", 2);
+    try {
+      const events = await utterance(stt);
+      const errors = events.filter((e) => e.type === "error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ code: "provider_error", retryable: true });
+      const message = errors[0]?.type === "error" ? errors[0].message : "";
+      expect(message).toContain("0x00000046");
+      expect(message).toContain("after one retry");
+      expect(events.some((e) => e.type === "final")).toBe(false);
+    } finally {
+      await stt.dispose();
+    }
+  });
+});
+
+describe("describeHelperExit", () => {
+  it("names a Windows crash status in hex with a plain cause", () => {
+    const av = describeHelperExit(3221225477, null);
+    expect(av.hex).toBe("0xC0000005");
+    expect(av.cause).toMatch(/access violation/);
+    expect(av.text).toContain("exit code 3221225477 (0xC0000005)");
+    // The same status read as a signed 32-bit number.
+    expect(describeHelperExit(-1073741819, null).hex).toBe("0xC0000005");
+    expect(describeHelperExit(3221226505, null).cause).toMatch(/stack buffer overrun/);
+  });
+
+  it("names a signal and an ordinary exit code", () => {
+    expect(describeHelperExit(null, "SIGSEGV")).toMatchObject({ hex: null });
+    expect(describeHelperExit(null, "SIGSEGV").cause).toMatch(/segmentation fault/);
+    expect(describeHelperExit(null, "SIGKILL").cause).toMatch(/killed/);
+    const one = describeHelperExit(1, null);
+    expect(one.hex).toBe("0x00000001");
+    expect(one.text).toContain("exit code 1 (0x00000001)");
   });
 });
 

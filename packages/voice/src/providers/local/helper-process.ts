@@ -18,6 +18,60 @@ export interface HelperProcessOptions {
   onSpawnError?: (err: Error) => void;
 }
 
+/** How a helper's exit reads in a log line: the code in hex (Windows statuses) and a plain cause. */
+export interface HelperExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** The exit code as an unsigned 32-bit hex number (`0xC0000005`); null for a signal. */
+  hex: string | null;
+  /** What the code or signal usually means, in plain words. */
+  cause: string;
+  /** One line for a log or an error message: `exit code 3221225477 (0xC0000005): access ...`. */
+  text: string;
+}
+
+/** Windows NTSTATUS codes a crashed native helper exits with (the process's exit code). */
+const WINDOWS_STATUS = new Map<number, string>([
+  [
+    0xc0000005,
+    "access violation: native code in the helper (faster-whisper, CTranslate2, onnxruntime) read or wrote memory it does not own and Windows ended the process",
+  ],
+  [0xc00000fd, "stack overflow in the helper's native code"],
+  [0xc0000409, "stack buffer overrun (fail-fast) in the helper's native code"],
+  [0xc000001d, "illegal instruction: a native library uses a CPU instruction this machine lacks"],
+  [0xc0000374, "heap corruption in the helper's native code"],
+  [0xc0000017, "out of memory"],
+  [0xc000013a, "stopped by Ctrl+C or the console closing"],
+  [0xc0000142, "a DLL failed to initialise when the helper started"],
+]);
+
+const SIGNAL_CAUSE: Partial<Record<NodeJS.Signals, string>> = {
+  SIGSEGV: "segmentation fault: native code in the helper touched memory it does not own",
+  SIGBUS: "bus error in the helper's native code",
+  SIGILL: "illegal instruction: a native library uses a CPU instruction this machine lacks",
+  SIGABRT: "the helper aborted (a native library gave up on a failed check)",
+  SIGKILL: "killed from outside (the out-of-memory killer, or a forced stop)",
+  SIGTERM: "asked to stop from outside",
+};
+
+/** The exit code in hex with a plain cause, for the log line of a helper that died. */
+export function describeHelperExit(code: number | null, signal: NodeJS.Signals | null): HelperExit {
+  if (code === null) {
+    const cause = signal ? (SIGNAL_CAUSE[signal] ?? "ended by a signal") : "ended without a code";
+    return { code, signal, hex: null, cause, text: `signal ${signal ?? "none"}: ${cause}` };
+  }
+  const unsigned = code >>> 0;
+  const hex = `0x${unsigned.toString(16).toUpperCase().padStart(8, "0")}`;
+  const cause =
+    WINDOWS_STATUS.get(unsigned) ??
+    (unsigned >= 0xc0000000
+      ? "a Windows error status: the helper crashed in native code"
+      : code === 0
+        ? "a normal exit"
+        : "the helper exited with an error (its log on stderr says why)");
+  return { code, signal, hex, cause, text: `exit code ${code} (${hex}): ${cause}` };
+}
+
 export class HelperProcess {
   readonly child: ChildProcess;
   private readonly clock: Clock;

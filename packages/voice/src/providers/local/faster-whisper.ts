@@ -24,7 +24,7 @@ import type {
 } from "../../types.ts";
 import { pcmBytes, toMono16 } from "../../wav.ts";
 import { encodeInFrame, LineReader, STT_IN } from "./framing.ts";
-import { HelperProcess } from "./helper-process.ts";
+import { describeHelperExit, HelperProcess } from "./helper-process.ts";
 import { probePythonModule } from "./python.ts";
 
 export const DEFAULT_STT_HELPER = fileURLToPath(
@@ -69,11 +69,25 @@ type HelperMessage = z.infer<typeof HelperMessageSchema>;
 
 const HELPER_RATE = 16000;
 
+/**
+ * Audio of one utterance kept in memory for a retry after a helper crash: two minutes of 16 kHz
+ * mono PCM (3.84 MB). An utterance longer than that is not retried; its crash fails the turn.
+ */
+export const STT_RETRY_AUDIO_BYTES = HELPER_RATE * 2 * 120;
+
 class FasterWhisperSession implements SttSession {
   readonly queue = new AsyncQueue<SttEvent>();
   readonly events: AsyncIterable<SttEvent> = this.queue;
   closed = false;
   ended = false;
+  /**
+   * The utterance's audio frames as sent, so a helper that dies mid-transcription can be
+   * restarted and given the same audio once (`retried`); null once the utterance outgrew
+   * `STT_RETRY_AUDIO_BYTES`.
+   */
+  frames: Buffer[] | null = [];
+  private frameBytes = 0;
+  retried = false;
 
   constructor(
     private readonly provider: FasterWhisperStt,
@@ -85,7 +99,13 @@ class FasterWhisperSession implements SttSession {
   push(chunk: AudioChunk): void {
     if (this.closed || this.ended) return;
     const mono = toMono16(chunk, HELPER_RATE);
-    this.provider.send(encodeInFrame(STT_IN.audio, pcmBytes(mono)));
+    const frame = encodeInFrame(STT_IN.audio, pcmBytes(mono));
+    if (this.frames) {
+      this.frameBytes += frame.length;
+      if (this.frameBytes > STT_RETRY_AUDIO_BYTES) this.frames = null;
+      else this.frames.push(frame);
+    }
+    this.provider.send(frame);
   }
 
   endOfSpeech(): void {
@@ -233,7 +253,7 @@ export class FasterWhisperStt implements SttProvider {
         clock: this.clock,
         log: this.logger,
         onStdout: (d) => this.onStdout(d),
-        onExit: (code, signal) => this.onExit(code, signal),
+        onExit: (code, signal) => this.onExit(proc, code, signal),
         onSpawnError: (err) => this.readyReject?.(err),
       });
       this.process = proc;
@@ -318,23 +338,72 @@ export class FasterWhisperStt implements SttProvider {
     }
   }
 
-  private onExit(code: number | null, signal: NodeJS.Signals | null): void {
-    this.logger.info("helper exited", { code, signal });
+  /**
+   * The helper died. A crash in the middle of an utterance (the real-audio run of 2026-10-26:
+   * exit code 3221225477, 0xC0000005, an access violation inside faster-whisper on Windows
+   * under heavy CPU load) costs nothing the human notices: the helper is restarted and the
+   * utterance's audio, still in memory, is sent again once. Only a second crash, a restart that
+   * fails, or an utterance too long to keep fails the session. The exit code is logged in hex
+   * with a plain cause.
+   */
+  private onExit(proc: HelperProcess, code: number | null, signal: NodeJS.Signals | null): void {
+    const exit = describeHelperExit(code, signal);
+    const fields = { code, codeHex: exit.hex, signal, cause: exit.cause };
+    if (this.process !== proc) {
+      // A helper already let go (disposed): the provider's state is not its own any more.
+      this.logger.info("helper exited", fields);
+      this.current?.deliver({
+        type: "error",
+        code: "provider_error",
+        message: `faster-whisper helper exited, ${exit.text}`,
+        retryable: true,
+      });
+      return;
+    }
     const wasReady = this.isReady;
     this.process = null;
     this.isReady = false;
     this.ready = null;
     this.pending = [];
     if (!wasReady) {
+      this.logger.warn("helper exited before it was ready", fields);
       this.readyReject?.(
-        new ForerunnerError("unavailable", `faster-whisper helper exited with code ${code}`),
+        new ForerunnerError("unavailable", `faster-whisper helper exited, ${exit.text}`),
       );
     }
-    this.current?.deliver({
+    const session = this.current && !this.current.closed ? this.current : null;
+    if (wasReady && session && !session.retried && session.frames) {
+      session.retried = true;
+      this.logger.warn(
+        "helper crashed mid-transcription; restarting it and retrying the utterance",
+        fields,
+      );
+      this.replay(session, exit.text);
+      return;
+    }
+    if (wasReady) {
+      if (session) this.logger.warn("helper crashed mid-transcription; the turn fails", fields);
+      else this.logger.info("helper exited", fields);
+    }
+    session?.deliver({
       type: "error",
       code: "provider_error",
-      message: `faster-whisper helper exited (code ${code}, signal ${signal})`,
+      message: `faster-whisper helper exited, ${exit.text}${session.retried ? " (after one retry of the utterance)" : ""}`,
       retryable: true,
+    });
+  }
+
+  /** Send the utterance again to a fresh helper: reset, its audio, and its end if it was said. */
+  private replay(session: FasterWhisperSession, crash: string): void {
+    this.pending.push(encodeInFrame(STT_IN.reset), ...(session.frames ?? []));
+    if (session.ended) this.pending.push(encodeInFrame(STT_IN.endOfSpeech));
+    this.ensureProcess().catch((e: unknown) => {
+      session.deliver({
+        type: "error",
+        code: "provider_error",
+        message: `faster-whisper helper exited, ${crash}, and did not restart: ${errorMessage(e)}`,
+        retryable: true,
+      });
     });
   }
 }

@@ -34,8 +34,8 @@ src/queue.ts          AsyncQueue used by every session and the pipeline
 src/providers/fake.ts             FakeStt, FakeTts (scripted, Clock-driven), ScriptedVad
 src/providers/local/python.ts     find an interpreter, probe `import <module>` without throwing
 src/providers/local/framing.ts    length-prefixed frames shared with the Python helpers
-src/providers/local/helper-process.ts  long-lived helper subprocess (argv array, killTree)
-src/providers/local/faster-whisper.ts  STT via python/fr_stt.py (JSON lines checked by a zod schema)
+src/providers/local/helper-process.ts  long-lived helper subprocess (argv array, killTree); describeHelperExit
+src/providers/local/faster-whisper.ts  STT via python/fr_stt.py (JSON lines checked by a zod schema; one crash mid-utterance retried)
 src/providers/local/kokoro.ts          TTS via python/fr_tts.py
 src/providers/local/piper.ts           TTS via the `piper` binary (--output-raw)
 src/providers/cloud/transport.ts  injected WebSocket factory and streaming HTTP; SecretResolver
@@ -454,7 +454,7 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/approval.test.ts` | yes variants in seven languages, short ambiguous lines, negations and hesitation, questions and qualifiers refused (the critic's false positives), instructions with an affirmative word refused, deferrals and hand-offs refused in seven languages ("I need to confirm with my manager first", "Simone said yes"), an affirmative buried late in a long line refused, colliding words ("SIM", "Dale", "prima") gated on the line start or the session language, `blockedBy` and the exact line in the record |
 | `test/registry.test.ts` | local -> cloud -> fake policy with reasons, preferred, excluded providers (not probed, the secret never asked for, never picked by the fallback, the status reason; `unavailable` when nothing else can serve), throwing probes, replace by name |
 | `test/availability.test.ts` | probes return `{ok:false}` for missing interpreter/module/binary/model/key; invalid module names never spawn; the Windows Store alias is recognised (`interpreterDidNotRun`, both OSes) and a stub that only prints "Python was not found" is skipped for the next candidate (stub run on Linux) |
-| `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines) |
+| `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines); a helper that crashes once mid-transcription (`fixtures/crashing_stt_helper.mjs`) is restarted and the utterance gets its final with all of its audio, the crash logged as a warning with the code in hex and a cause, and a helper that crashes on the retry too fails the utterance with the hex code; `describeHelperExit` for 0xC0000005 (unsigned and signed), 0xC0000409, SIGSEGV, SIGKILL and exit code 1 |
 | `test/python-helpers.test.ts` | `py_compile` of both helpers and `--selftest` (skipped visibly when no Python) |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
 | `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it; `drain()` waits for the play-head, at once on the abort or after `stop()` |
@@ -475,6 +475,25 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   `--device` is kept) and not on an out-of-memory error of a working GPU, with a line on stderr
   (`test/stt-device-fallback.test.ts`, which runs the helper's `Transcriber` against a stub
   `faster_whisper`). To use the GPU, install the CUDA 12 cuBLAS and cuDNN libraries.
+
+- faster-whisper can crash in native code. In the same run, on turn 5, `fr_stt.py` died
+  mid-transcription with exit code 3221225477 (0xC0000005, an access violation, Windows, CPU
+  device, `int8`) while the machine was under heavy CPU load from unrelated work; the turn
+  failed with `provider_error` and the human's speech was lost, and the next turn worked on a
+  fresh helper. The cause inside CTranslate2 is not known and nothing in the helper can catch it,
+  so the Node side absorbs one crash: `FasterWhisperStt` keeps the utterance's audio frames in
+  memory (`FasterWhisperSession.frames`, up to `STT_RETRY_AUDIO_BYTES`, two minutes of 16 kHz
+  mono; a longer utterance is not retried), and when the helper exits while an utterance is open
+  it restarts the helper and sends reset, the same audio and the end of speech again, once. The
+  session only sees the final (a second partial may arrive first). A second crash of the same
+  utterance, a restart that fails, or an utterance too long to keep ends the session with
+  `provider_error` naming the exit (`faster-whisper helper exited, exit code ... (0x...): <cause>
+  (after one retry of the utterance)`). Every exit is logged with `code`, `codeHex` and a plain
+  `cause` from `describeHelperExit` (`helper-process.ts`: Windows NTSTATUS crash codes such as
+  0xC0000005 access violation, 0xC00000FD stack overflow, 0xC0000409 stack buffer overrun, and
+  POSIX signals such as SIGSEGV and SIGKILL); a crash mid-utterance is a warning
+  (`helper crashed mid-transcription; restarting it and retrying the utterance`). Exits of a
+  helper already let go (`dispose()`) do not touch the provider's state.
 
 - The heard figure (review of b1e65fc, low findings left open): the hotkey's release is stamped
   in the render after the key event, so a hotkey turn reads low by that render and the IPC
