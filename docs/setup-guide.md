@@ -5,13 +5,28 @@ where your data lives, and remove it again. This guide is attached to every rele
 marked "coming in this release" describe features whose final shape lands with a later
 milestone of the 1.0 build; the steps there are the ones already in place.
 
+## What works and what doesn't yet
+
+Version 1.0.0 was released with known gaps. Read
+[docs/release/1.0.0-tested.md](release/1.0.0-tested.md) before you rely on a part of it. In
+short:
+
+- Email, the cloud runner and push notifications pass their tests against stand-ins only. They
+  were never run with a real mailbox, a real host or a real Firebase project.
+- Voice was tested on Windows only, and the first spoken word comes later than the 1.2 s target.
+- Running the installed MSI, AppImage or `.deb` has no recorded test. Builds from source were
+  tested on fresh Windows and Linux machines in CI.
+- The Android app was installed, updated and launched on a real phone. Pairing and approvals
+  were tested on an emulator.
+
 ## What you need
 
 - A PC with Windows 10/11 (64-bit) or Linux (Ubuntu 22.04 or newer, Debian 12, Fedora 39 or
   newer). macOS is best effort and not covered here.
 - An Anthropic API key or a Claude subscription (`claude setup-token`), for the models.
 - A GitHub account with a fine-grained personal access token for the repositories your agent
-  will work on. The first-run wizard tells you the exact scopes and where to click.
+  will work on. It needs **Contents: read and write** and **Pull requests: read and write** on
+  those repositories (details in First run, step 2).
 - Optional: Docker Desktop (Windows) or Docker/Podman (Linux) so coding tasks run in a sandbox.
   Without it, Forerunner still works; tasks run in a process sandbox with fewer guarantees.
 - Optional, for talking to your agent by voice on this PC (Windows x64 or Linux x86_64; not
@@ -19,6 +34,8 @@ milestone of the 1.0 build; the steps there are the ones already in place.
   graphics card with a current driver. Windows:
   `winget install -e --id Python.Python.3.12`. Debian/Ubuntu:
   `sudo apt-get install -y python3.12 python3.12-venv`.
+- Optional, for email tasks and the agent's own email: a mailbox dedicated to the agent with
+  IMAP and SMTP access and an **app password** (see "Email" below).
 
 ## Install on Windows
 
@@ -75,10 +92,21 @@ The first start opens the setup wizard (the same thing as `pnpm fr setup` from a
 checkout). It never asks for something without saying what it is for:
 
 1. **You.** Your name and time zone (used for the daily schedule and summaries).
-2. **GitHub.** A fine-grained token. The wizard lists the exact permissions (contents, pull
-   requests, issues, metadata) and the repositories to allow, with a link to the page where you
-   create it. It checks the token the moment you paste it and tells you which repositories it can
-   reach. Nothing is stored until the check passes.
+2. **GitHub.** A fine-grained token (GitHub → Settings → Developer settings → Personal access
+   tokens → Fine-grained tokens). Under "Repository access" pick only the repositories the
+   agent may work in. Then set these repository permissions:
+
+   | Permission | Access | Why |
+   | --- | --- | --- |
+   | Contents | Read and write | Clone, create branches, push commits. Required. |
+   | Pull requests | Read and write | Open, update and comment on pull requests. Required. |
+   | Issues | Read and write | Comments and the project mirror. The wizard asks for it. |
+   | Metadata | Read | Set by GitHub automatically. |
+
+   The wizard also asks for read access to see CI results. Do not give admin rights; the check
+   warns about them. The wizard checks the token the moment you paste it and tells you which
+   repositories it can reach and which permission is missing. Nothing is stored until the
+   check passes.
 3. **Models.** Your Anthropic API key or subscription token, verified the same way. You can set
    both; routing prefers the subscription and falls back to the key.
 4. **Budget.** The monthly cap and the per-session cap (defaults CHF 150 and CHF 5). These are
@@ -91,8 +119,12 @@ checkout). It never asks for something without saying what it is for:
    | Choice | Disk | Download | Trade-off |
    | --- | --- | --- | --- |
    | None | 0 GB | nothing | No local speech; voice works only with a cloud voice provider set up in Extensions. |
-   | CPU | about 2.3 GB | about 1 GB | Works on any PC. Replies start slower: about 1 s before the first spoken word. |
-   | GPU (NVIDIA) | about 8 GB | about 4.5 GB | Fastest replies. Needs an NVIDIA card and driver; if the card cannot be used, the CPU takes over and setup says why. |
+   | CPU | about 2.3 GB | about 1 GB | Works on any PC. Slow: on the one PC measured, about 4 s from releasing Talk to the first spoken word. |
+   | GPU (NVIDIA) | about 8 GB | about 4.5 GB | Fastest replies: about 1.4 to 2.1 s on an RTX 3060. Needs an NVIDIA card and driver; if the card cannot be used, the CPU takes over and setup says why. |
+
+   Both profiles need Python 3.12 on Windows x64 or Linux x86_64 (see "What you need"). The
+   times are medians from a few turns on one Windows PC on 2026-10-26; the target is 1.2 s and
+   neither profile meets it. Voice has not been tested on Linux.
 
    When an NVIDIA card is found, GPU is the default. The install runs right after with its
    progress on screen and checks that speech recognition and speech work on the chosen
@@ -115,6 +147,36 @@ voice conversation first). From a terminal: `fr voice install --cpu` or `--gpu`,
 with the models in `voice/models`; nothing is installed into your system Python. If the GPU
 check fails, `fr voice install --gpu` prints a `WARNING` with the reason and voice keeps working
 on the CPU; after updating the NVIDIA driver, run it again.
+
+## Email (optional)
+
+Email lets your agent send mail in the mode you choose and lets you send it tasks by email.
+It has been tested only against a test mail server, never with a real mailbox. Try it with
+care.
+
+You need:
+
+- A mailbox for the agent alone, not your own. It must allow IMAP and SMTP.
+- An **app password** for that mailbox. Forerunner does not sign in with your normal password
+  or through a browser login. Most providers create app passwords only when two-factor sign-in
+  is on. Gmail, for example: turn on 2-Step Verification for the account, then create an app
+  password in the Google account's security settings.
+- TLS for sending. SMTP uses port 465 (TLS from the start) or 587 (STARTTLS, which Forerunner
+  insists on). Forerunner never sends the password or a message in the clear.
+
+Steps:
+
+1. Store the app password in the vault: `fr vault set agent_imap_password` and paste it at the
+   hidden prompt. Do the same for SMTP if it differs (`agent_smtp_password`). The name must not
+   say token, API key or PAT; those names are kept for other credentials.
+2. Open Settings → Capabilities → Email. Enter the address, the IMAP and SMTP hosts, ports and
+   user, and the password references (`secret:agent_imap_password`). Never type the password
+   itself there; the page refuses it.
+3. Pick the sending mode. Anything beyond "off" asks you to confirm on your device.
+4. For tasks by email, enter your own address under "My address". Tasks by email need a
+   sending mode other than "off". Mail from any other sender,
+   or mail whose DKIM signature fails or does not match the sender, is ignored and listed in the
+   command audit.
 
 ## Pairing the phone (coming in this release)
 

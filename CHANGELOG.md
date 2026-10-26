@@ -10,6 +10,294 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-26
+
+First stable release. It is 1.0.0-rc.4 (ef18b5a) plus the fix below. The human chose to
+release with known gaps. What was tested live, what only against stand-ins, and what not at all
+is in the test matrix: [`docs/release/1.0.0-tested.md`](https://github.com/joelwellbournewood/Forerunner/blob/v1.0.0/docs/release/1.0.0-tested.md).
+
+Installers: Windows MSI (unsigned), Linux AppImage and `.deb`, Android APK (sideloading).
+The rc.4 publish run (`release.yml` run 40395549204) produced every one of them, the signed
+manifest and `SHA256SUMS.txt`.
+
+### Fixed
+
+- Git over HTTPS sent the GitHub token as a bearer header, which GitHub's git endpoint refuses;
+  it now uses Basic authentication. Found by the live docs handover run (V.8) on 2026-10-26.
+
+### Known gaps
+
+Passes against stand-ins (the fake provider, the test mail server, the fake git host, the
+hosted emulator) are weaker evidence than live runs. Three bugs got past them on 2026-10-26:
+the git bearer header above, the Windows venv layout in the voice tests, and paid model-watch
+evaluations that fresh installs started unasked (about USD 13; fixed by the consent rules of
+ADR 0089 in rc.4).
+
+- **Email:** tested only against the test mail server. Not tested with a real mailbox (L.3).
+- **Cloud runner:** tested only in process. Not tested on a real host (S.12). Anthropic-hosted
+  runs through Claude Managed Agents are planned for 1.1.
+- **Push notifications:** tested only against fake FCM endpoints; the app polls. Not tested
+  with a real Firebase project or on a device (R.6, K.8).
+- **Voice:** works end to end on Windows with an NVIDIA GPU, but first audio misses the 1.2 s
+  target (median 1383 ms, then 2139 ms; 4 turns each). Not tested on Linux or with cloud voice
+  providers.
+- **GitHub:** the live handover (V.8) failed on the bearer header; fixed, live re-run pending.
+  Every other pull request in testing went to the fake git host.
+- **Desktop app:** the installers were built and published, but no record shows the installed
+  MSI, AppImage or `.deb` being run. No real Linux desktop session was tested. The MSI is
+  unsigned.
+- **Android:** installed and updated (rc.3 to rc.4) on a real phone. Pairing and approvals were
+  tested on the emulator only.
+- **Updates:** the desktop in-app updater was tested against the fake git host feed only.
+- **Model watch:** deliberately tested on the fake provider only.
+- **Response times:** D.9, D.13 and D.15 met live. D.10, D.11 and D.14 met earlier and were not
+  re-measured on the final code. D.8 (voice) not met.
+
+### Known issues
+
+No open P0 or P1 (severity triage of 2026-10-23, re-read on 2026-10-25:
+`docs/status/reports/triage-2026-10-25.md`). Every P2 below has a workaround; the maintainer docs'
+"Known issues" sections carry the detail.
+
+**Desktop app**
+
+- Settings → Devices pairs phones only; the paired list refreshes on Done or Refresh and the pairing
+  countdown follows the PC's clock. Workaround: Refresh; keep the PC clock in sync. [10]
+- Pages for the project queue, docs and the import form show "route not available". Workaround:
+  add notes in chat (`note.add`) or from the phone; import through `POST /projects/:id/data/import`
+  or register data by locator. [12, 78, 152]
+- An undo made from the Changes screen is logged with source `chat`. No workaround needed. [13]
+- Extension permissions can be approved or denied, not narrowed or widened from the panel;
+  a connector update is applied by remove-and-add. Workaround: deny and re-approve. [14, 15, 98]
+- The Inbox reloads only when the blocking count changes. Workaround: Refresh. [16]
+- Read aloud and spoken alerts play only while the app window is open; a browser tab stays
+  silent until clicked; the conversation panel shows a voice reply as text. Workaround: keep the
+  window open; read the text. [17, 18]
+- Export audit log may do nothing on the Linux desktop shell. Workaround: `fr audit export`. [19]
+- The fast-mode card shows an archived project by its id. [9]
+- Clicking an OS notification does not open the window. Workaround: the tray or the window. [20]
+- Global hotkey: unavailable in a pure Wayland session, delivered only while an X window has
+  focus under some compositors, and a press before the window exists is not queued. Workaround:
+  X11; press again once the window is up. [22, 23]
+- The Linux tray icon needs an AppIndicator host (GNOME: the AppIndicator extension); the window
+  and the daemon work without it. [24]
+- Windows-only shell code has been built and tested on CI's `windows-latest` only. [21]
+- The specialist and skill toggles in the Extensions panel do not yet reach the loader.
+  Workaround: set the specialist's `status` in its file. [99]
+- The desktop-control banner lives in the app window; while the window is hidden the tray title or
+  tooltip is the indicator. [82]
+- "Update available" notifications open Settings, not the Updates page. [124]
+
+**Phone (Android) and approvals web page**
+
+- A phone with a WebView older than Chrome 99 (and the API 30 emulator image) renders the app
+  unstyled. Workaround: update Android System WebView from the Play Store. [33]
+- After the 45 s biometric bound the phone has refused the change but the system prompt stays on
+  screen; a late touch confirms nothing. Workaround: dismiss it and tap Confirm again. [35]
+- Push-to-talk in the Android app relays the typed line, and the reply is spoken by the phone's own
+  synthesis. Workaround: open `/m` in a browser on the phone to record audio. [38]
+- Uploads use the web file picker (no share target); queued uploads over 2 MiB in total are held
+  in memory and lost if the app closes before they are sent; progress is shown by phase.
+  Workaround: keep the app open until the upload is sent; upload again otherwise. [39]
+- The phone treats a monthly-cap change as high risk because `/me` does not carry the cap yet. [30]
+- The phone's change log is per phone; the desktop's and the phone's logs are joined only through
+  the remote command rows. [32]
+- Push notifications are a polling stand-in until a Firebase project exists; notices appear only
+  while the app is open. (BLOCKERS.md, Firebase row)
+- Approvals web page: high-risk answers and chat are not relayed yet ("does not relay chat yet");
+  nothing issues the web link and the service does not serve the page's build. Workaround: the
+  desktop or the phone; mount the `dist/` folder behind a proxy and start the pairing by the admin
+  route. [26, 27, 28, 29]
+
+**Agents, sessions and approvals**
+
+- A plan approved while the agent is busy is `queued` in the scheduler's single slot; a later
+  trigger replaces it and the plan is proposed again. [128]
+- Open chat confirmations live in memory: a daemon restart drops them and a pending high-risk card;
+  a restart also forgets scheduled starts, so an undo of such a start is a no-op. Workaround: ask
+  again. [70, 134, 153]
+- A bare "yes" typed right after a voice answer is reported "Not done"; nothing runs twice.
+  Workaround: type the line again. [136]
+- "and" inside a project name splits a typed sentence. Workaround: rename, or let the model parse
+  it. [71]
+- A line said during a live session reaches the agent after the task in flight; a long task delays
+  it. [153]
+- Sessions started from a subscription (Agent SDK path) cannot run shell commands or tests unless
+  `FORERUNNER_SDK_HOST_COMMANDS=1`; flagged file content is not rewritten on that path and git over
+  SSH is unavailable. Workaround: the API-key path; HTTPS remotes with a token. [138, 146]
+- The subscription plan share is an estimate (default USD 50 a month) until a probe reports the
+  real plan; it can stop subscription work early. Workaround: `FORERUNNER_PLAN_USD_MONTHLY`. [43]
+- The critic reviews the diff with the project's checks listed as "not run" at tier 1; at tiers 2
+  and 3 it runs only the checks passed to it; a few quality edges in its grading. [73, 74, 75, 76]
+- Screenshots taken under desktop control never reach the model; audit rows of that module carry no
+  token id; screenshots include overlapping windows. [81, 83, 84]
+- Desktop control works through X11/XWayland only and Windows SendKeys are ignored by elevated
+  windows. [79, 80]
+- After an accepting review at autonomy level 3 the merge waits up to 10 minutes for CI; a
+  repository whose CI runs only on push leaves the PR to you. [155]
+- CI triggers read check runs only (not commit statuses), a reopened PR is not watched again,
+  there is no webhook receiver, and a crash between the poll's cursor save and the start can lose
+  that one event's inbox message (the PR still shows it). [150]
+- Intake: a daemon that dies during the planning call leaves the intake session running until
+  closed by hand; the PR path needs `git` and a host token; a re-run reuses the brief. [131]
+- Project docs: the critic's docs-drift check may list `docs/status.md` before the session-end
+  write; a project created from chat gets no doc scaffold. Workaround: create from the dashboard.
+  [132]
+- Source discovery marks nothing as an existing install until a marker is written by hand; GitLab
+  and plain git remotes are refused. [133]
+- Chat docs search is lexical with no index, reads the last checked-out clone, and the registry's
+  chat prompt does not yet mention the docs. Workaround: ask in the doc's own words. [109]
+- Memory: contradictions are detected by polarity words only; `fr memory check` and the start-time
+  reconcile are not wired; lint-failing lessons are still served; usage is a hit count; the format
+  migrator is a placeholder; `offerToProjects` is narrower for direct callers. [103–108, 110]
+- The private memory index is unencrypted on disk (like the solo state store); the spec's encrypted
+  backup is not built; it is a second schema whose cross-store supersede is refused. [101, 102]
+- Fast mode: chat, intake and the model watch's evals never go fast; the critic's model settings
+  follow its tiers; a fast request the API served at standard speed is still priced as fast (an
+  over-statement); the Agent SDK path takes no speed or output cap. [1, 2, 151]
+- A proposed specialist needs at least 10 mechanically checked tasks (rubric-only sets cannot pass
+  yet); a promotion is reflected in the registry hash at the next start; no agent tool proposes a
+  specialist yet. Workaround: `fr specialists approve`. [5, 6, 210]
+- Only coder and researcher have eval sets; researcher grading relies on the rubric and the critic
+  for oddly phrased wrong answers. [4, 8]
+- Monthly jobs (critic calibration, handover test) have run on the fake provider only; their
+  reports are per-install files; a run deferred by quiet hours is lost on a restart. Workaround:
+  `fr jobs ... --force`. [156]
+- Shared secrets reach an agent on its owner's PC only (the cloud runner has no wrapping key);
+  there is no app screen for grants and `propose` is not a chat command. Workaround: the daemon's
+  `/secrets/shared` routes. [154]
+- The install's wrapping key is an ordinary vault entry; never grant `forerunner.install_wrap_key`
+  to an extension or a run. [166]
+- An approval card for a production Cloudflare deploy below level 3 is asked twice; custom domains
+  are not attached. [64, 65]
+
+**Email, notifications and the cloud runner**
+
+- Email: one connection per operation; HTML-only mail through a small tag stripper; the per-email
+  estimate is a constant plus words; the daily digest has no scheduler entry; sends held while paused
+  are not resent on resume; a changed mode or mailbox takes effect at the next session or daemon
+  start; a mode change from the Settings page has no undo (set it again); the private command marker
+  stays in the sent log and audit rows; a refusal whose audit row could not be written is recorded
+  only in the daemon log. [85–87, 89–94]
+- A cloud command from a human with no cloud runner stays pending until cancelled; an email session
+  for a busy agent fails at once instead of queueing; run one watcher per mailbox. [60, 61, 62]
+- The cloud runner unlock card needs the runner's key on the answering device; there is no phone
+  key-import screen yet. Workaround: `fr runner-key import` on the desktop. [63]
+- Notifications: held and digest queues, the dedupe memory and the state service's quiet-hour push
+  notices live in memory and are dropped by a restart (the inbox keeps the records); the desktop
+  channel probes `notify-send`/`powershell` once per process; the email channel is resolved at
+  start; Telegram is one-way and Signal needs `signal-cli` set up by hand; peer messages and email
+  commands raise no notification of their own. Workaround: the inbox; restart the daemon after
+  installing a notifier. [119–123, 171]
+
+**Browser capability**
+
+- Without Chromium only static pages are read; a Chromium that fails to launch is not demoted at
+  run time (restart with it fixed). The block list is the project's and has no UI; the registry's
+  researcher names Claude Code's web tools, which the loop path cannot map (name `browser_*`). [44,
+  45, 46]
+- A capability installed before the `browser_*`/`email_*` rename keeps its old tool names until
+  removed and re-added from the catalog (1.0.0 is the first release, so no install is affected).
+  [48]
+- Redirects 307/308 are followed as GET; a read right after a blocked navigation may see Chromium's
+  error page; downloads by URL cannot use page state; a purchase or password guard inside a tool
+  call ends the call with `approval_required` and the model re-calls after the answer; a few
+  extraction and hidden-text heuristics. [49–56]
+
+**Billing, pricing and the model watch**
+
+- Haiku 5.5's price tier above 100K prompt tokens is not modelled (an under-estimate of up to 5x on
+  those calls; the cap check still runs per call); the `claude-opus-5-5-fast` price is assumed at six
+  times standard; 5.5 prices date from 2026-10-06 until the weekly model watch confirms them. [40,
+  41, 42]
+- A model adopted from `fr models watch` on the command line reaches a running daemon at its next
+  start (answers in the app apply at once); the cost estimate learns from the plan's figure rather
+  than the base estimate; new models are unpriced until a row exists; lower-effort probes exist for
+  coder and researcher only. [111–118]
+- Connector (MCP) calls report no price; a weekly tier 2+ eval needs a container engine. [97, 140]
+- Context compression: the Headroom proxy's panel entry, CLI and savings line are not wired; stored
+  originals are pruned after 30 days. [141, 142, 143]
+
+**Sandbox, security and updates**
+
+- Node 22 `fetch` ignores proxy variables inside the allowlist sandbox (use `EnvHttpProxyAgent`);
+  the gateway route falls back to `0.0.0.0` with a warning (prefer the sidecar); the sidecar needs
+  `node` in the task image or `FORERUNNER_EGRESS_IMAGE`; a symlink planted between the walk and the
+  open on Windows is not caught. [157–160]
+- Linux without a Secret Service keeps the device key next to the data at 0600 (logged at startup);
+  two processes on one file vault are not coordinated (use separate profiles). [163, 164]
+- Updates: a release built without `UPDATE_SIGNING_KEY` is unsigned and no install takes it; an
+  update that waits for an inbox answer is not re-issued by itself (retry after answering); the
+  sync gate learns of a peer's migration lazily; Android updates go through the system installer;
+  the Windows MSI is unsigned (BLOCKERS.md). [193–199]
+- A connector closed by a global stop reconnects only when the registry restarts; a URL typed for
+  a new connector is probed before approval. [95, 96]
+
+**Collaboration and the state service**
+
+- Several state-service instances need sticky sessions and a shared volume; run the GitHub mirror
+  and push on one instance. [169]
+- The GitHub Projects mirror: item index per process (run one mirror per project), milestones as
+  labelled issues, no `task.mirrored_url` column, no "sync now" route, `cost_ledger` not polled.
+  [57, 167, 168, 170, 172]
+- The mirror's `secret_ref` can name any vault entry (it is only ever sent to the GitHub API);
+  the session grant does not add `api.cloudflare.com`. [67, 69]
+- Which human shares a project is read from the project's settings until the service exposes
+  membership. [72]
+- On an install created before 1.0.0 with an empty email, `fr setup --email` makes the next start
+  create a second human; `fr doctor` warns. Workaround: `fr setup --human-id <id>`. [129]
+- Revoking this PC's own desktop device row refuses high-risk confirmations until the daemon
+  restarts. [130]
+- Voice: faster-whisper re-transcribes partials; Cartesia opens one WebSocket per sentence; open mic
+  without echo cancellation can barge in (use push-to-talk); stored audio has no cap or retention
+  (keep storage off); a provider that ignores its abort delays the turn's end. [200–204]
+
+**For maintainers (no user-visible effect)**
+
+- Test hygiene: scenario worlds and helpers compose the daemon by hand; relative imports in the
+  e2e project, the app's fake service and the voice package; scenario 6's own reader copy; the fake
+  git host's REST-only board and real-time webhooks; no recorded provider traffic yet; the live
+  harness's older `FORERUNNER_E2E_LIVE` path; phase 7 gate tests share one world; `newId` has no
+  per-millisecond counter; a phone plan's change source is `chat`; the CI e2e step's name; scenario
+  3's voice answer and the phone specs' pairing seam still to add; the CDP driver covers the smoke
+  only and the CI Android job builds twice; DKIM/SPF verification runs with an injected verifier in
+  tests; B.5's four low review findings (inserts need no reason, a stale comment, a shared test id, a
+  missing dialog test). [3, 31, 34, 36, 37, 47, 58, 88, 137, 173–176, 178–180, 186, 187, 189–191,
+  208]
+- Live harness: a call killed before `message_start` and output before the disconnect stay outside
+  the ledger; the pre-call estimate can undercount by its heuristic; a crash can leave a tmp ledger
+  file; hooks' ledger rows carry no `specialist`; a `0/0` row for a subscription run that ended
+  early; projected first audio over the 1.2 s anchor until measured on devices. [177, 181–185]
+- Docs and ADRs: ADR 0007's older interface; the cloudflare force-push note; ADRs still to write for
+  the specialist, mirror and harness decisions; requirement rows that do not list the shell's test
+  modules; the Gradle proxy note; `@forerunner/platform` by relative path from `scripts/`; the
+  desktop shell's missing `client` declaration; `gate: "registry"` set by the loop, not the spec
+  builder; the file tools' second containment check still lexical (the hooks' real-path check runs
+  first); the session handoff does not list lessons; `update_applied` sent while exiting; the
+  daemon has no `notFound` handler and no daily-schedule route; the data routes' bounded limits.
+  [7, 11, 25, 59, 66, 68, 77, 100, 125–127, 135, 139, 144, 147, 148, 149, 161, 162, 165, 188,
+  192]
+- Known issues lines a merge left behind after their fix (email routes mounted, `StateApprovals`
+  one-shot, `tests/live` in CI, the daemon's voice routes, the Q requirement rows, the solo
+  store's desktop row); corrected in the next docs pass. [209, 212]
+
+**Added on 2026-10-25 night and 2026-10-26**
+
+- Android push (FCM) is built but has not run on a device; without `google-services.json` in
+  the build the app polls as before. Workaround: the inbox and approvals poll.
+- A `.deb` or APK of 1.0.0 is not offered over 1.0.0-rc.N by the OS package manager (dpkg ranks
+  the candidate higher; Android gives both the same versionCode). Workaround: uninstall the
+  candidate first; the in-app updater is not affected.
+- The voice panel's heard-first-audio figure can be slightly low for hotkey turns and some
+  turns can go unmeasured (`docs/maintainers/voice.md`). Workaround: use Send.
+- Android versionCode: rc.3, rc.4 and 1.0.0 all carry versionCode 1000000, because the code
+  ignores the pre-release part of the version. Workaround: uninstall the release candidate first.
+- Voice first audio misses the 1.2 s target: median 1383 ms and 2139 ms on the GPU profile
+  (RTX 3060, two runs of 4 turns on 2026-10-26), about 4 s on the CPU profile. Workaround: the
+  GPU profile where a card exists; text chat (first token median 682 ms).
+- The speech-recognition helper crashed once with 0xC0000005 on Windows on a first utterance;
+  the cause is not proven. It restarts and retries the utterance. Workaround: say it again.
+
 ## [1.0.0-rc.4] - 2026-10-26
 
 ### Added
@@ -267,248 +555,4 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 
 ### Known issues
 
-No open P0 or P1 (severity triage of 2026-10-23, re-read on 2026-10-25:
-`docs/status/reports/triage-2026-10-25.md`). Every P2 below has a workaround; the maintainer docs'
-"Known issues" sections carry the detail.
-
-**Desktop app**
-
-- Settings → Devices pairs phones only; the paired list refreshes on Done or Refresh and the pairing
-  countdown follows the PC's clock. Workaround: Refresh; keep the PC clock in sync. [10]
-- Pages for the project queue, docs and the import form show "route not available". Workaround:
-  add notes in chat (`note.add`) or from the phone; import through `POST /projects/:id/data/import`
-  or register data by locator. [12, 78, 152]
-- An undo made from the Changes screen is logged with source `chat`. No workaround needed. [13]
-- Extension permissions can be approved or denied, not narrowed or widened from the panel;
-  a connector update is applied by remove-and-add. Workaround: deny and re-approve. [14, 15, 98]
-- The Inbox reloads only when the blocking count changes. Workaround: Refresh. [16]
-- Read aloud and spoken alerts play only while the app window is open; a browser tab stays
-  silent until clicked; the conversation panel shows a voice reply as text. Workaround: keep the
-  window open; read the text. [17, 18]
-- Export audit log may do nothing on the Linux desktop shell. Workaround: `fr audit export`. [19]
-- The fast-mode card shows an archived project by its id. [9]
-- Clicking an OS notification does not open the window. Workaround: the tray or the window. [20]
-- Global hotkey: unavailable in a pure Wayland session, delivered only while an X window has
-  focus under some compositors, and a press before the window exists is not queued. Workaround:
-  X11; press again once the window is up. [22, 23]
-- The Linux tray icon needs an AppIndicator host (GNOME: the AppIndicator extension); the window
-  and the daemon work without it. [24]
-- Windows-only shell code has been built and tested on CI's `windows-latest` only. [21]
-- A cloud voice provider switched off in the Extensions panel may still be used as the fallback
-  when no local speech-to-text is installed, and a cloud row whose key grant was removed may still
-  be picked; the panel gives no reason. Workaround: remove the key (`fr setup`) or install the
-  local provider. Fix in progress. [205, 206, 207]
-- The specialist and skill toggles in the Extensions panel do not yet reach the loader.
-  Workaround: set the specialist's `status` in its file. [99]
-- The desktop-control banner lives in the app window; while the window is hidden the tray title or
-  tooltip is the indicator. [82]
-- "Update available" notifications open Settings, not the Updates page. [124]
-
-**Phone (Android) and approvals web page**
-
-- A phone with a WebView older than Chrome 99 (and the API 30 emulator image) renders the app
-  unstyled. Workaround: update Android System WebView from the Play Store. [33]
-- After the 45 s biometric bound the phone has refused the change but the system prompt stays on
-  screen; a late touch confirms nothing. Workaround: dismiss it and tap Confirm again. [35]
-- Push-to-talk in the Android app relays the typed line, and the reply is spoken by the phone's own
-  synthesis. Workaround: open `/m` in a browser on the phone to record audio. [38]
-- Uploads use the web file picker (no share target); queued uploads over 2 MiB in total are held
-  in memory and lost if the app closes before they are sent; progress is shown by phase.
-  Workaround: keep the app open until the upload is sent; upload again otherwise. [39]
-- The phone treats a monthly-cap change as high risk because `/me` does not carry the cap yet. [30]
-- The phone's change log is per phone; the desktop's and the phone's logs are joined only through
-  the remote command rows. [32]
-- Push notifications are a polling stand-in until a Firebase project exists; notices appear only
-  while the app is open. (BLOCKERS.md, Firebase row)
-- Approvals web page: high-risk answers and chat are not relayed yet ("does not relay chat yet");
-  nothing issues the web link and the service does not serve the page's build. Workaround: the
-  desktop or the phone; mount the `dist/` folder behind a proxy and start the pairing by the admin
-  route. [26, 27, 28, 29]
-
-**Agents, sessions and approvals**
-
-- An always-human approval answered after its session has ended is not consumed; the next
-  session asks again. Workaround: move the task back to ready and answer while the session runs.
-  Fix in progress. [145]
-- A plan approved while the agent is busy is `queued` in the scheduler's single slot; a later
-  trigger replaces it and the plan is proposed again. [128]
-- Open chat confirmations live in memory: a daemon restart drops them and a pending high-risk card;
-  a restart also forgets scheduled starts, so an undo of such a start is a no-op. Workaround: ask
-  again. [70, 134, 153]
-- A bare "yes" typed right after a voice answer is reported "Not done"; nothing runs twice.
-  Workaround: type the line again. [136]
-- "and" inside a project name splits a typed sentence. Workaround: rename, or let the model parse
-  it. [71]
-- A line said during a live session reaches the agent after the task in flight; a long task delays
-  it. [153]
-- Sessions started from a subscription (Agent SDK path) cannot run shell commands or tests unless
-  `FORERUNNER_SDK_HOST_COMMANDS=1`; flagged file content is not rewritten on that path and git over
-  SSH is unavailable. Workaround: the API-key path; HTTPS remotes with a token. [138, 146]
-- The subscription plan share is an estimate (default USD 50 a month) until a probe reports the
-  real plan; it can stop subscription work early. Workaround: `FORERUNNER_PLAN_USD_MONTHLY`. [43]
-- The critic reviews the diff with the project's checks listed as "not run" at tier 1; at tiers 2
-  and 3 it runs only the checks passed to it; a few quality edges in its grading. [73, 74, 75, 76]
-- Screenshots taken under desktop control never reach the model; audit rows of that module carry no
-  token id; screenshots include overlapping windows. [81, 83, 84]
-- Desktop control works through X11/XWayland only and Windows SendKeys are ignored by elevated
-  windows. [79, 80]
-- After an accepting review at autonomy level 3 the merge waits up to 10 minutes for CI; a
-  repository whose CI runs only on push leaves the PR to you. [155]
-- CI triggers read check runs only (not commit statuses), a reopened PR is not watched again,
-  there is no webhook receiver, and a crash between the poll's cursor save and the start can lose
-  that one event's inbox message (the PR still shows it). [150]
-- Intake: a daemon that dies during the planning call leaves the intake session running until
-  closed by hand; the PR path needs `git` and a host token; a re-run reuses the brief. [131]
-- Project docs: the critic's docs-drift check may list `docs/status.md` before the session-end
-  write; a project created from chat gets no doc scaffold. Workaround: create from the dashboard.
-  [132]
-- Source discovery marks nothing as an existing install until a marker is written by hand; GitLab
-  and plain git remotes are refused. [133]
-- Chat docs search is lexical with no index, reads the last checked-out clone, and the registry's
-  chat prompt does not yet mention the docs. Workaround: ask in the doc's own words. [109]
-- Memory: contradictions are detected by polarity words only; `fr memory check` and the start-time
-  reconcile are not wired; lint-failing lessons are still served; usage is a hit count; the format
-  migrator is a placeholder; `offerToProjects` is narrower for direct callers. [103–108, 110]
-- The private memory index is unencrypted on disk (like the solo state store); the spec's encrypted
-  backup is not built; it is a second schema whose cross-store supersede is refused. [101, 102]
-- Fast mode: chat, intake and the model watch's evals never go fast; the critic's model settings
-  follow its tiers; a fast request the API served at standard speed is still priced as fast (an
-  over-statement); the Agent SDK path takes no speed or output cap. [1, 2, 151]
-- A proposed specialist needs at least 10 mechanically checked tasks (rubric-only sets cannot pass
-  yet); a promotion is reflected in the registry hash at the next start; no agent tool proposes a
-  specialist yet. Workaround: `fr specialists approve`. [5, 6, 210]
-- Only coder and researcher have eval sets; researcher grading relies on the rubric and the critic
-  for oddly phrased wrong answers. [4, 8]
-- Monthly jobs (critic calibration, handover test) have run on the fake provider only; their
-  reports are per-install files; a run deferred by quiet hours is lost on a restart. Workaround:
-  `fr jobs ... --force`. [156]
-- Shared secrets reach an agent on its owner's PC only (the cloud runner has no wrapping key);
-  there is no app screen for grants and `propose` is not a chat command. Workaround: the daemon's
-  `/secrets/shared` routes. [154]
-- The install's wrapping key is an ordinary vault entry; never grant `forerunner.install_wrap_key`
-  to an extension or a run. [166]
-- The startup brief's "changed since last session" list is empty because it reads the session being
-  started; the handoff and the peer feed carry the changes. [211]
-- An approval card for a production Cloudflare deploy below level 3 is asked twice; custom domains
-  are not attached. [64, 65]
-
-**Email, notifications and the cloud runner**
-
-- Email: one connection per operation; HTML-only mail through a small tag stripper; the per-email
-  estimate is a constant plus words; the daily digest has no scheduler entry; sends held while paused
-  are not resent on resume; a changed mode or mailbox takes effect at the next session or daemon
-  start; a mode change from the Settings page has no undo (set it again); the private command marker
-  stays in the sent log and audit rows; a refusal whose audit row could not be written is recorded
-  only in the daemon log. [85–87, 89–94]
-- A cloud command from a human with no cloud runner stays pending until cancelled; an email session
-  for a busy agent fails at once instead of queueing; run one watcher per mailbox. [60, 61, 62]
-- The cloud runner unlock card needs the runner's key on the answering device; there is no phone
-  key-import screen yet. Workaround: `fr runner-key import` on the desktop. [63]
-- Notifications: held and digest queues, the dedupe memory and the state service's quiet-hour push
-  notices live in memory and are dropped by a restart (the inbox keeps the records); the desktop
-  channel probes `notify-send`/`powershell` once per process; the email channel is resolved at
-  start; Telegram is one-way and Signal needs `signal-cli` set up by hand; peer messages and email
-  commands raise no notification of their own. Workaround: the inbox; restart the daemon after
-  installing a notifier. [119–123, 171]
-
-**Browser capability**
-
-- Without Chromium only static pages are read; a Chromium that fails to launch is not demoted at
-  run time (restart with it fixed). The block list is the project's and has no UI; the registry's
-  researcher names Claude Code's web tools, which the loop path cannot map (name `browser_*`). [44,
-  45, 46]
-- A capability installed before the `browser_*`/`email_*` rename keeps its old tool names until
-  removed and re-added from the catalog (1.0.0 is the first release, so no install is affected).
-  [48]
-- Redirects 307/308 are followed as GET; a read right after a blocked navigation may see Chromium's
-  error page; downloads by URL cannot use page state; a purchase or password guard inside a tool
-  call ends the call with `approval_required` and the model re-calls after the answer; a few
-  extraction and hidden-text heuristics. [49–56]
-
-**Billing, pricing and the model watch**
-
-- Haiku 5.5's price tier above 100K prompt tokens is not modelled (an under-estimate of up to 5x on
-  those calls; the cap check still runs per call); the `claude-opus-5-5-fast` price is assumed at six
-  times standard; 5.5 prices date from 2026-10-06 until the weekly model watch confirms them. [40,
-  41, 42]
-- A model adopted from `fr models watch` on the command line reaches a running daemon at its next
-  start (answers in the app apply at once); the cost estimate learns from the plan's figure rather
-  than the base estimate; new models are unpriced until a row exists; lower-effort probes exist for
-  coder and researcher only. [111–118]
-- Connector (MCP) calls report no price; a weekly tier 2+ eval needs a container engine. [97, 140]
-- Context compression: the Headroom proxy's panel entry, CLI and savings line are not wired; stored
-  originals are pruned after 30 days. [141, 142, 143]
-
-**Sandbox, security and updates**
-
-- Node 22 `fetch` ignores proxy variables inside the allowlist sandbox (use `EnvHttpProxyAgent`);
-  the gateway route falls back to `0.0.0.0` with a warning (prefer the sidecar); the sidecar needs
-  `node` in the task image or `FORERUNNER_EGRESS_IMAGE`; a symlink planted between the walk and the
-  open on Windows is not caught. [157–160]
-- Linux without a Secret Service keeps the device key next to the data at 0600 (logged at startup);
-  two processes on one file vault are not coordinated (use separate profiles). [163, 164]
-- Updates: a release built without `UPDATE_SIGNING_KEY` is unsigned and no install takes it; an
-  update that waits for an inbox answer is not re-issued by itself (retry after answering); the
-  sync gate learns of a peer's migration lazily; Android updates go through the system installer;
-  the Windows MSI is unsigned (BLOCKERS.md). [193–199]
-- A connector closed by a global stop reconnects only when the registry restarts; a URL typed for
-  a new connector is probed before approval. [95, 96]
-
-**Collaboration and the state service**
-
-- Several state-service instances need sticky sessions and a shared volume; run the GitHub mirror
-  and push on one instance. [169]
-- The GitHub Projects mirror: item index per process (run one mirror per project), milestones as
-  labelled issues, no `task.mirrored_url` column, no "sync now" route, `cost_ledger` not polled.
-  [57, 167, 168, 170, 172]
-- The mirror's `secret_ref` can name any vault entry (it is only ever sent to the GitHub API);
-  the session grant does not add `api.cloudflare.com`. [67, 69]
-- Which human shares a project is read from the project's settings until the service exposes
-  membership. [72]
-- On an install created before 1.0.0 with an empty email, `fr setup --email` makes the next start
-  create a second human; `fr doctor` warns. Workaround: `fr setup --human-id <id>`. [129]
-- Revoking this PC's own desktop device row refuses high-risk confirmations until the daemon
-  restarts. [130]
-- Voice: faster-whisper re-transcribes partials; Cartesia opens one WebSocket per sentence; open mic
-  without echo cancellation can barge in (use push-to-talk); stored audio has no cap or retention
-  (keep storage off); a provider that ignores its abort delays the turn's end. [200–204]
-
-**For maintainers (no user-visible effect)**
-
-- Test hygiene: scenario worlds and helpers compose the daemon by hand; relative imports in the
-  e2e project, the app's fake service and the voice package; scenario 6's own reader copy; the fake
-  git host's REST-only board and real-time webhooks; no recorded provider traffic yet; the live
-  harness's older `FORERUNNER_E2E_LIVE` path; phase 7 gate tests share one world; `newId` has no
-  per-millisecond counter; a phone plan's change source is `chat`; the CI e2e step's name; scenario
-  3's voice answer and the phone specs' pairing seam still to add; the CDP driver covers the smoke
-  only and the CI Android job builds twice; DKIM/SPF verification runs with an injected verifier in
-  tests; B.5's four low review findings (inserts need no reason, a stale comment, a shared test id, a
-  missing dialog test). [3, 31, 34, 36, 37, 47, 58, 88, 137, 173–176, 178–180, 186, 187, 189–191,
-  208]
-- Live harness: a call killed before `message_start` and output before the disconnect stay outside
-  the ledger; the pre-call estimate can undercount by its heuristic; a crash can leave a tmp ledger
-  file; hooks' ledger rows carry no `specialist`; a `0/0` row for a subscription run that ended
-  early; projected first audio over the 1.2 s anchor until measured on devices. [177, 181–185]
-- Docs and ADRs: ADR 0007's older interface; the cloudflare force-push note; ADRs still to write for
-  the specialist, mirror and harness decisions; requirement rows that do not list the shell's test
-  modules; the Gradle proxy note; `@forerunner/platform` by relative path from `scripts/`; the
-  desktop shell's missing `client` declaration; `gate: "registry"` set by the loop, not the spec
-  builder; the file tools' second containment check still lexical (the hooks' real-path check runs
-  first); the session handoff does not list lessons; `update_applied` sent while exiting; the
-  daemon has no `notFound` handler and no daily-schedule route; the data routes' bounded limits.
-  [7, 11, 25, 59, 66, 68, 77, 100, 125–127, 135, 139, 144, 147, 148, 149, 161, 162, 165, 188,
-  192]
-- Known issues lines a merge left behind after their fix (email routes mounted, `StateApprovals`
-  one-shot, `tests/live` in CI, the daemon's voice routes, the Q requirement rows, the solo
-  store's desktop row); corrected in the next docs pass. [209, 212]
-
-**Added on 2026-10-25 night**
-
-- Android push (FCM) is built but has not run on a device; without `google-services.json` in
-  the build the app polls as before. Workaround: the inbox and approvals poll.
-- A `.deb` or APK of 1.0.0 is not offered over 1.0.0-rc.N by the OS package manager (dpkg ranks
-  the candidate higher; Android gives both the same versionCode). Workaround: uninstall the
-  candidate first; the in-app updater is not affected.
-- The voice panel's heard-first-audio figure can be slightly low for hotkey turns and some
-  turns can go unmeasured (`docs/maintainers/voice.md`). Workaround: use Send.
-
+Moved to the `[1.0.0]` section, the list that shipped with 1.0.0.

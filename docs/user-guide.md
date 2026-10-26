@@ -14,6 +14,29 @@ when it must, and leaves a handoff note. Every limit (money, steps, time, tools,
 autonomy) is enforced by the runtime, not by a prompt. You can stop everything at any time with
 the kill switch.
 
+## What works and what doesn't yet
+
+Version 1.0.0 was released with known gaps. Some parts were tested live, on real PCs, a real
+phone and real accounts. Others were tested only against stand-ins we built. A few were not
+tested at all. The full matrix is [docs/release/1.0.0-tested.md](release/1.0.0-tested.md).
+
+In short:
+
+- **Tested live:** chat and coding sessions on an Anthropic API key and on a Claude
+  subscription; the critic; budgets and caps; voice on Windows with an NVIDIA GPU; installing
+  and updating the Android app on a real phone.
+- **Slower than the target:** voice. The first spoken word comes about 1.4 to 2.1 s after you
+  release Talk on a GPU, about 4 s on the CPU profile. The target is 1.2 s.
+- **Tested only against stand-ins:** email tasks, the cloud runner, push notifications on the
+  phone, the in-app desktop updater, two people's agents sharing a project.
+- **Not tested:** a real mailbox, a real cloud runner host, a real Firebase project, voice on
+  Linux, cloud voice providers, and running the installed MSI, AppImage or `.deb`.
+- **GitHub:** the first live run on a real repository failed on how the token was sent. That is
+  fixed in 1.0.0; the live re-run is pending.
+
+The phone shows notices only while the app is open, because push is not set up yet. Email and
+the cloud runner are built and pass their tests, but you are the first to run them for real.
+
 ## Home
 
 Every project is a card: stage, next milestone, health, spend against budget, how many things
@@ -67,11 +90,12 @@ The tray icon and the red button in the header stop every session of one agent o
 everyone, revoke the run tokens and freeze claims within two seconds. Starting a session again
 lifts the stop.
 
-## Voice, phone and email (coming in this release)
+## Voice, phone and email
 
 Push-to-talk voice chat with read-back confirmation, the Android app for approvals and remote
 control of your PC, and tasks by email that run on the cloud runner while your PCs are off.
-Each arrives with its milestone; the setup guide says what to configure. Speech on this PC is
+The setup guide says what to configure. See "What works and what doesn't yet" above for how
+far each was tested. Speech on this PC is
 chosen in the setup wizard and changed in Settings → Voice: none, CPU (any PC, slower replies)
 or GPU (NVIDIA, fastest), each with its disk size shown.
 
