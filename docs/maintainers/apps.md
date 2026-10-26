@@ -332,9 +332,20 @@ also heard: from the session's start the panel follows `GET /voice/sessions/:id/
 (EventSource with `?token=`, `afterSeq` = the session's `lastSeq`; `shell/voice-playback.ts`)
 and plays every `audio` frame (base64 16-bit LE PCM at its `sampleRate` and `channels`,
 decoded with `decodeFrame` from `lib/speech.ts`) back to back through Web Audio, in arrival
-order. With an empty (or drained) queue a chunk starts `PLAYBACK_LEAD_MS` (50 ms) after the
-context's current time, so a main-thread stall between scheduling and rendering does not clip
-it into a click; queued chunks follow without a gap. The player keeps the last frame `seq` it
+order, behind a jitter buffer. A turn starts once `JITTER_START_MS` (200 ms) of audio is in
+hand, or earlier once the buffered sentence is known to be complete (a chunk of the next
+`sentenceIndex`, `speaking_end`, a normal `turn_end`) or nothing came for `JITTER_IDLE_MS`
+(250 ms). A chunk that arrives after the queue ran dry inside a turn is an underrun: the
+target doubles, up to `JITTER_MAX_MS` (1 s), and the turn re-buffers to it before resuming,
+so a TTS slower than real time (Kokoro on a CPU, the real-audio run of 2026-10-26: a gap
+inside a word at every late 100 ms chunk) pauses once instead of at every chunk. The target
+lives as long as the session's player and never shrinks (`player.bufferTargetMs`). Buffered
+audio starts `PLAYBACK_LEAD_MS` (50 ms) after the context's current time, or right after what
+still plays, so a main-thread stall between scheduling and rendering does not clip it into a
+click; queued chunks follow without a gap and without a fade (consecutive chunks are one
+waveform; a fade would dip every chunk). The cost is first-audio latency: about 200 ms of TTS
+output at a session's start (with a fast TTS little more than the time to produce it, since
+the daemon's sink sends the first 300 ms at once; `voice.md`), up to 1 s after underruns. The player keeps the last frame `seq` it
 acted on and drops anything at or below it: an EventSource reconnects by itself (a stream
 hiccup) and the daemon resumes after the `Last-Event-ID` it sends, but a replayed `barge_in`
 must never silence the reply playing now. A `barge_in`, an `error` and a `turn_end` whose
@@ -349,7 +360,7 @@ later Talk only resumes it. What the human heard is measured here (`voice.md`, "
 run"): Send or the hotkey's release calls `player.turnEnded()` before anything is awaited, and
 the next turn's first chunk posts `POST /voice/sessions/:id/heard { turn, heardFirstAudioMs }`
 once: its scheduled start in context time mapped onto `performance.now()` (both read at
-scheduling), plus `baseLatency` and `outputLatency` (consecutive stages), minus the release;
+scheduling, when the buffer starts, so the buffering is included), plus `baseLatency` and `outputLatency` (consecutive stages), minus the release;
 a turn played while the context is not `running` (its clock frozen) is not measured. A released turn that
 ends without audio is not the reference for the next one. The page's clock is a seam too
 (`realtime.now`). Nothing else plays these frames: the
@@ -749,8 +760,10 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   includes the device latency the figure adds, so it is not mixed in. Where a browser reports
   no `outputLatency` (or 0; not checked in WebView2 or WebKitGTK yet) only `baseLatency` is
   counted and the device's own buffer is not, so the figure is low by that much there.
-  Chunks are scheduled as they arrive; a stream that stalls longer than the queued audio
-  leaves a gap (no jitter buffer). The Talk button stays disabled until the turn ended, so a
+  A stream that stalls longer than the queued audio still leaves a pause (the jitter buffer
+  turns many short gaps into one, and grows, but cannot invent audio); the buffer's numbers
+  (200 ms start, doubling to 1 s, 250 ms pause rule) are chosen from one run's report, not
+  tuned on real hardware yet, and a target that grew stays for the session. The Talk button stays disabled until the turn ended, so a
   press cannot barge in on the reply from the panel.
 - The microphone capture (`browserMicCapture`) uses ScriptProcessorNode, deprecated but
   present in WebView2 and WebKitGTK; it has been exercised in jsdom with a fake capture only,

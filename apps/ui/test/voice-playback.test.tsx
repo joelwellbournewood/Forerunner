@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import type { DaemonClient } from "../src/api/client.ts";
 import type { EventSourceLike } from "../src/api/sse.ts";
 import type { AudioOutput } from "../src/lib/speech.ts";
 import { AppRoutes } from "../src/routes.tsx";
@@ -12,14 +13,23 @@ import {
   type MicCapture,
   VoiceCaptureContext,
 } from "../src/shell/voice-capture.ts";
-import { PLAYBACK_LEAD_MS } from "../src/shell/voice-playback.ts";
+import {
+  followVoiceReply,
+  JITTER_IDLE_MS,
+  JITTER_MAX_MS,
+  JITTER_START_MS,
+  PLAYBACK_LEAD_MS,
+} from "../src/shell/voice-playback.ts";
 import { AppProvider } from "../src/store/context.tsx";
 import { createHarness, type Harness } from "./helpers.tsx";
 
 /**
  * The conversation panel plays the reply of a voice turn (spec O.3): the `audio` frames of
  * `GET /voice/sessions/:id/events` decoded from 16-bit PCM at their rate and channel count and
- * scheduled back to back through Web Audio, the first after a short lead; a barge-in, an
+ * scheduled back to back through Web Audio once enough is buffered (a jitter buffer: a turn
+ * starts, and a queue that ran dry inside a turn resumes, only with the target in hand or the
+ * whole sentence; the target grows after each underrun, bounded), the first after a short
+ * lead; a barge-in, an
  * error, a turn cut short (each for the turn being played), the session's stop and closing the
  * panel silence what is still queued; a frame replayed by a reconnect is not acted on twice;
  * what the human heard (release to the first chunk at the speaker) is posted per turn. jsdom
@@ -211,14 +221,23 @@ const frame = (type: string, turn: number | null, data: unknown = {}) => ({
   turn,
   data,
 });
-const audioFrame = (turn: number, samples: number[], sampleRate = 8000, channels = 1) =>
+const audioFrame = (
+  turn: number,
+  samples: number[],
+  sampleRate = 8000,
+  channels = 1,
+  sentenceIndex = 0,
+) =>
   frame("audio", turn, {
-    sentenceIndex: 0,
+    sentenceIndex,
     sampleRate,
     channels,
     timestampMs: 0,
     pcm: pcm(samples),
   });
+/** `ms` of mono audio at 8 kHz in one chunk; the default fills the start target on its own. */
+const audioMs = (turn: number, ms = JITTER_START_MS, sentenceIndex = 0) =>
+  audioFrame(turn, new Array<number>(Math.round(ms * 8)).fill(1), 8000, 1, sentenceIndex);
 
 describe("conversation panel: the voice reply is played", () => {
   it("follows the session's events with the token and plays the audio frames back to back", async () => {
@@ -232,6 +251,11 @@ describe("conversation panel: the voice reply is played", () => {
       stream.fire("voice.event", frame("speaking_start", 1));
       stream.fire("voice.event", audioFrame(1, [0, 16384, -32768, 32767]));
       stream.fire("voice.event", audioFrame(1, [1, 2, 3, 4], 8000, 2));
+    });
+    // Less than the start target: held until the turn's audio is complete.
+    expect(h.audio.scheduled).toHaveLength(0);
+    act(() => {
+      stream.fire("voice.event", frame("speaking_end", 1));
     });
     expect(h.audio.scheduled).toHaveLength(2);
     expect(Array.from(h.audio.scheduled[0]?.channels[0] ?? [])).toEqual([
@@ -251,7 +275,6 @@ describe("conversation panel: the voice reply is played", () => {
     ]);
     // A turn that ends normally lets the queued audio finish.
     act(() => {
-      stream.fire("voice.event", frame("speaking_end", 1));
       stream.fire("voice.event", frame("turn_end", 1, { latency: { interrupted: false } }));
     });
     expect(h.audio.scheduled.every((s) => !s.stopped)).toBe(true);
@@ -261,14 +284,14 @@ describe("conversation panel: the voice reply is played", () => {
     const h = setup();
     const { stream } = await startTalking(h);
     act(() => {
-      stream.fire("voice.event", audioFrame(1, [1, 2]));
-      stream.fire("voice.event", audioFrame(1, [3, 4]));
+      stream.fire("voice.event", audioMs(1, 100));
+      stream.fire("voice.event", audioMs(1, 100));
       stream.fire("voice.event", frame("barge_in", 1, { spokenText: "" }));
     });
     expect(h.audio.scheduled.map((s) => s.stopped)).toEqual([true, true]);
 
     act(() => {
-      stream.fire("voice.event", audioFrame(2, [5, 6]));
+      stream.fire("voice.event", audioMs(2));
     });
     expect(h.audio.scheduled).toHaveLength(3);
     // After the silence the next chunk starts after the lead, not after the cut-off ones.
@@ -280,7 +303,7 @@ describe("conversation panel: the voice reply is played", () => {
     expect(h.audio.scheduled[2]?.stopped).toBe(true);
 
     act(() => {
-      stream.fire("voice.event", audioFrame(3, [7, 8]));
+      stream.fire("voice.event", audioMs(3));
       stream.fire("voice.event", frame("turn_end", 3, { latency: { interrupted: true } }));
     });
     expect(h.audio.scheduled[3]?.stopped).toBe(true);
@@ -292,13 +315,13 @@ describe("conversation panel: the voice reply is played", () => {
     const h = setup();
     const { stream } = await startTalking(h);
     act(() => {
-      stream.fire("voice.event", audioFrame(1, [1, 2]));
+      stream.fire("voice.event", audioMs(1));
       stream.fire("voice.event", frame("voice.stopped", 1, {}));
     });
     expect(h.audio.scheduled[0]?.stopped).toBe(true);
     expect(stream.closed).toBe(true);
     act(() => {
-      stream.fire("voice.event", audioFrame(2, [3, 4]));
+      stream.fire("voice.event", audioMs(2));
     });
     expect(h.audio.scheduled).toHaveLength(1);
   });
@@ -307,8 +330,8 @@ describe("conversation panel: the voice reply is played", () => {
     const h = setup();
     const { user, stream } = await startTalking(h);
     act(() => {
-      stream.fire("voice.event", audioFrame(1, [1, 2]));
-      stream.fire("voice.event", audioFrame(1, [3, 4]));
+      stream.fire("voice.event", audioMs(1));
+      stream.fire("voice.event", audioMs(1));
     });
     expect(h.audio.scheduled[1]?.stopped).toBe(false);
 
@@ -325,14 +348,14 @@ describe("conversation panel: the voice reply is played", () => {
     const h = setup();
     const { stream } = await startTalking(h);
     // Numbered in the order the daemon sent them.
-    const firstChunk = audioFrame(1, [1, 2]);
+    const firstChunk = audioMs(1);
     const bargeIn = frame("barge_in", 1, { spokenText: "" });
     const cutShort = frame("turn_end", 1, { latency: { interrupted: true } });
     act(() => {
       stream.fire("voice.event", firstChunk);
       stream.fire("voice.event", bargeIn);
       stream.fire("voice.event", cutShort);
-      stream.fire("voice.event", audioFrame(2, [3, 4]));
+      stream.fire("voice.event", audioMs(2));
     });
     expect(h.audio.scheduled.map((s) => s.stopped)).toEqual([true, false]);
     // The EventSource reconnected and the daemon replayed what it sent before.
@@ -348,7 +371,7 @@ describe("conversation panel: the voice reply is played", () => {
     const h = setup();
     const { stream } = await startTalking(h);
     act(() => {
-      stream.fire("voice.event", audioFrame(2, [1, 2]));
+      stream.fire("voice.event", audioMs(2));
       // Events of another turn (an earlier turn's late error or interrupted end) leave it alone.
       stream.fire("voice.event", frame("error", 1, { code: "provider_error", message: "x" }));
       stream.fire("voice.event", frame("turn_end", 1, { latency: { interrupted: true } }));
@@ -358,29 +381,39 @@ describe("conversation panel: the voice reply is played", () => {
     act(() => {
       stream.fire("voice.event", frame("barge_in", 2, { spokenText: "" }));
       // A chunk of the cut-off turn still in flight is not played.
-      stream.fire("voice.event", audioFrame(2, [3, 4]));
+      stream.fire("voice.event", audioMs(2));
     });
     expect(h.audio.scheduled).toHaveLength(1);
     expect(h.audio.scheduled[0]?.stopped).toBe(true);
   });
 
-  it("schedules after the lead whenever the queue has drained, back to back while it has not", async () => {
+  it("plays back to back while audio is queued, and re-buffers once the queue ran dry inside a turn", async () => {
     const h = setup();
     const { stream } = await startTalking(h);
     act(() => {
-      stream.fire("voice.event", audioFrame(1, [1, 2, 3, 4]));
+      stream.fire("voice.event", audioMs(1));
     });
-    const first = (h.audio.scheduled[0]?.at ?? 0) + 4 / 8000;
-    h.audio.state.currentTime = 0.01; // still playing the first chunk
+    const first = (h.audio.scheduled[0]?.at ?? 0) + JITTER_START_MS / 1000;
+    h.audio.state.currentTime = 0.1; // still playing the first chunk
     act(() => {
-      stream.fire("voice.event", audioFrame(1, [1, 2]));
+      stream.fire("voice.event", audioMs(1, 20));
     });
     expect(h.audio.scheduled[1]?.at).toBeCloseTo(first, 10);
-    h.audio.state.currentTime = 5; // the queue ran dry (a pause between sentences)
+    h.audio.state.currentTime = 5; // the queue ran dry inside the reply (a late chunk)
     act(() => {
-      stream.fire("voice.event", audioFrame(1, [1, 2]));
+      stream.fire("voice.event", audioMs(1));
     });
+    // Not played at once with a gap after it: held until the grown target is in hand.
+    expect(h.audio.scheduled).toHaveLength(2);
+    act(() => {
+      stream.fire("voice.event", audioMs(1));
+    });
+    expect(h.audio.scheduled).toHaveLength(4);
     expect(h.audio.scheduled[2]?.at).toBeCloseTo(5 + PLAYBACK_LEAD_MS / 1000, 10);
+    expect(h.audio.scheduled[3]?.at).toBeCloseTo(
+      5 + (PLAYBACK_LEAD_MS + JITTER_START_MS) / 1000,
+      10,
+    );
   });
 
   it("measures what the human heard: the release to the first chunk at the speaker, posted once per turn", async () => {
@@ -397,8 +430,8 @@ describe("conversation panel: the voice reply is played", () => {
     h.audio.state.baseLatency = 0.005;
     act(() => {
       stream.fire("voice.event", frame("turn_start", 1));
-      stream.fire("voice.event", audioFrame(1, [1, 2]));
-      stream.fire("voice.event", audioFrame(1, [3, 4]));
+      stream.fire("voice.event", audioMs(1));
+      stream.fire("voice.event", audioMs(1));
     });
     await waitFor(() => expect(heardPosts(h)).toHaveLength(1));
     expect(heardPosts(h)[0]).toMatchObject({
@@ -422,14 +455,14 @@ describe("conversation panel: the voice reply is played", () => {
     h.audio.state.currentTime = 10;
     h.audio.state.outputLatency = undefined;
     act(() => {
-      stream.fire("voice.event", audioFrame(2, [1, 2]));
+      stream.fire("voice.event", audioMs(2));
     });
     await waitFor(() => expect(heardPosts(h)).toHaveLength(2));
     expect(heardPosts(h)[1]?.body).toEqual({ turn: 2, heardFirstAudioMs: 955 });
 
     // Audio of a turn with no release before it (nothing pressed) is not measured.
     act(() => {
-      stream.fire("voice.event", audioFrame(3, [1, 2]));
+      stream.fire("voice.event", audioMs(3));
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(heardPosts(h)).toHaveLength(2);
@@ -445,9 +478,10 @@ describe("conversation panel: the voice reply is played", () => {
     h.audio.state.running = "suspended";
     act(() => {
       stream.fire("voice.event", frame("turn_start", 1));
-      stream.fire("voice.event", audioFrame(1, [1, 2]));
+      stream.fire("voice.event", audioMs(1));
     });
     await new Promise((r) => setTimeout(r, 20));
+    expect(h.audio.scheduled).toHaveLength(1);
     expect(heardPosts(h)).toHaveLength(0);
   });
 
@@ -460,9 +494,10 @@ describe("conversation panel: the voice reply is played", () => {
     await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Press/));
     act(() => {
       stream.fire("voice.event", frame("turn_end", 1, { latency: { interrupted: false } }));
-      stream.fire("voice.event", audioFrame(2, [1, 2]));
+      stream.fire("voice.event", audioMs(2));
     });
     await new Promise((r) => setTimeout(r, 20));
+    expect(h.audio.scheduled).toHaveLength(1);
     expect(heardPosts(h)).toHaveLength(0);
   });
 
@@ -477,8 +512,184 @@ describe("conversation panel: the voice reply is played", () => {
     const h = setup(false);
     const { stream } = await startTalking(h);
     act(() => {
-      stream.fire("voice.event", audioFrame(1, [1, 2]));
+      stream.fire("voice.event", audioMs(1));
     });
     expect(h.audio.scheduled).toHaveLength(0);
+  });
+});
+
+/**
+ * The jitter buffer on its own (the player without the panel): a local TTS on a slow CPU
+ * (Kokoro, the real-audio run of 2026-10-26) streams ~100 ms chunks slower than real time, and
+ * a player that schedules each one as it arrives leaves a gap inside words at every late
+ * chunk. Here the page's clock and the context's run together (1 ms of page time = 1 ms of
+ * context time) and the player's timer is driven by `at()`.
+ */
+function directPlayer() {
+  const sources = fakeEventSources();
+  const audio = fakeAudio();
+  const page = { now: 0 };
+  const heard: Array<[number, number]> = [];
+  const timers: Array<{ at: number; fn: () => void; done: boolean }> = [];
+  const client = {
+    url: () => "http://daemon.test/voice/sessions/s1/events",
+    voiceHeard: async () => undefined,
+  } as unknown as DaemonClient;
+  const player = followVoiceReply(
+    client,
+    { id: "s1", lastSeq: 0 },
+    {
+      eventSource: sources.factory,
+      output: audio.make(),
+      now: () => page.now,
+      onHeard: (turn, ms) => heard.push([turn, ms]),
+      setTimer: (fn, ms) => {
+        const t = { at: page.now + ms, fn, done: false };
+        timers.push(t);
+        return () => {
+          t.done = true;
+        };
+      },
+    },
+  );
+  if (!player) throw new Error("no player");
+  const stream = sources.instances[0] as FakeSource;
+  /** Move both clocks to `ms` (page time), firing the player's timers that fall due. */
+  const at = (ms: number) => {
+    page.now = ms;
+    audio.state.currentTime = ms / 1000;
+    for (const t of timers) {
+      if (t.done || t.at > ms) continue;
+      t.done = true;
+      t.fn();
+    }
+  };
+  const fire = (f: unknown) => stream.fire("voice.event", f);
+  /** Gaps between consecutive scheduled chunks (s): where one does not start as the last ends. */
+  const gaps = (chunkS: number) =>
+    audio.scheduled
+      .slice(1)
+      .map((s, i) => s.at - ((audio.scheduled[i]?.at ?? 0) + chunkS))
+      .filter((g) => g > 1e-9);
+  return { player, audio, heard, at, fire, gaps };
+}
+
+describe("voice reply player: the jitter buffer", () => {
+  it("plays chunks arriving slower than real time without a gap once the start target is buffered", () => {
+    const p = directPlayer();
+    // A sentence of eight 100 ms chunks, one every 120 ms (the TTS runs at 0.83x real time).
+    for (let k = 0; k < 8; k++) {
+      p.at(k * 120);
+      p.fire(audioMs(1, 100));
+    }
+    p.fire(frame("speaking_end", 1));
+    expect(p.audio.scheduled).toHaveLength(8);
+    // Started once 200 ms were in hand (the second chunk, at 120 ms), after the lead.
+    expect(p.audio.scheduled[0]?.at).toBeCloseTo(0.12 + PLAYBACK_LEAD_MS / 1000, 10);
+    // Every start is where the previous chunk ends: no gap inside the sentence.
+    expect(p.gaps(0.1)).toEqual([]);
+    expect(p.player.bufferTargetMs).toBe(JITTER_START_MS);
+  });
+
+  it("re-buffers after an underrun instead of playing each late chunk with a gap, growing the target", () => {
+    const p = directPlayer();
+    // A long reply at 0.83x real time: the start buffer runs dry after a while.
+    const n = 60;
+    for (let k = 0; k < n; k++) {
+      p.at(k * 120);
+      p.fire(audioMs(1, 100));
+    }
+    p.fire(frame("speaking_end", 1));
+    expect(p.audio.scheduled).toHaveLength(n);
+    const gaps = p.gaps(0.1);
+    // Scheduling each chunk on arrival would leave a gap at nearly every chunk; the buffer
+    // leaves one pause per underrun, each long enough to refill the grown target.
+    expect(gaps.length).toBeGreaterThanOrEqual(1);
+    expect(gaps.length).toBeLessThanOrEqual(3);
+    expect(p.player.bufferTargetMs).toBeGreaterThan(JITTER_START_MS);
+    expect(p.player.bufferTargetMs).toBeLessThanOrEqual(JITTER_MAX_MS);
+    // Each resumption had the target in hand: the pause before it covers at least 300 ms of
+    // arrivals (the 400 ms target at 0.83x real time, less the 100 ms that was late).
+    for (const g of gaps) expect(g).toBeGreaterThanOrEqual(0.3);
+  });
+
+  it("bounds the target's growth and keeps it for the session's next turn", () => {
+    const p = directPlayer();
+    const seen: number[] = [];
+    let t = 0;
+    for (let i = 0; i < 6; i++) {
+      // A chunk that fills even the largest target, then the queue runs dry before the next.
+      p.at(t);
+      p.fire(audioMs(1, JITTER_MAX_MS));
+      t += JITTER_MAX_MS + 500;
+      seen.push(p.player.bufferTargetMs);
+    }
+    expect(seen[0]).toBe(JITTER_START_MS);
+    expect(seen[1]).toBe(JITTER_START_MS * 2);
+    expect(Math.max(...seen)).toBe(JITTER_MAX_MS);
+    expect(seen.at(-1)).toBe(JITTER_MAX_MS);
+    // The next turn starts with the grown target: a slow CPU stays slow.
+    p.at(t);
+    p.fire(audioMs(2, JITTER_START_MS));
+    const before = p.audio.scheduled.length;
+    p.fire(audioMs(2, JITTER_MAX_MS - JITTER_START_MS));
+    expect(p.audio.scheduled.length).toBe(before + 2);
+  });
+
+  it("starts a sentence shorter than the target once it is complete: the next sentence, the reply's end or a pause", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, 50, 0));
+    p.fire(audioMs(1, 50, 0));
+    expect(p.audio.scheduled).toHaveLength(0);
+    // The next sentence's first chunk says the first one is complete (before the pause rule).
+    p.at(JITTER_IDLE_MS - 50);
+    p.fire(audioMs(1, 50, 1));
+    expect(p.audio.scheduled).toHaveLength(3);
+    expect(p.gaps(0.05)).toEqual([]);
+
+    // A short reply whose end is never announced still starts once nothing came for a while.
+    p.at(5000);
+    p.fire(audioMs(2, 80));
+    p.at(5000 + JITTER_IDLE_MS - 1);
+    expect(p.audio.scheduled).toHaveLength(3);
+    p.at(5000 + JITTER_IDLE_MS);
+    expect(p.audio.scheduled).toHaveLength(4);
+    expect(p.audio.scheduled[3]?.at).toBeCloseTo(5 + JITTER_IDLE_MS / 1000 + 0.05, 10);
+  });
+
+  it("counts the buffering in what the human heard", () => {
+    const p = directPlayer();
+    p.at(1000);
+    p.player.turnEnded();
+    p.at(1100);
+    p.fire(audioMs(1, 100));
+    expect(p.heard).toEqual([]);
+    p.at(1250);
+    p.fire(audioMs(1, 100));
+    // The first chunk came at 1100 but starts only once 200 ms are buffered (1250) plus the
+    // lead: 1300 ms on the page, 300 ms after the release.
+    expect(p.heard).toEqual([[1, 300]]);
+  });
+
+  it("a barge-in silences at once: what plays is stopped, what is buffered is dropped", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, 200));
+    p.at(100);
+    p.fire(audioMs(1, 100));
+    p.at(400); // ran dry: the next chunk is buffered, not played
+    p.fire(audioMs(1, 100));
+    expect(p.audio.scheduled).toHaveLength(2);
+    p.fire(frame("barge_in", 1, { spokenText: "" }));
+    expect(p.audio.scheduled.map((s) => s.stopped)).toEqual([true, true]);
+    // Nothing buffered comes back: not on the pause timer, not on a late chunk of that turn.
+    p.at(400 + JITTER_IDLE_MS * 4);
+    p.fire(audioMs(1, 1000));
+    expect(p.audio.scheduled).toHaveLength(2);
+    // The next turn starts fresh after the lead.
+    p.fire(audioMs(2, JITTER_MAX_MS));
+    expect(p.audio.scheduled).toHaveLength(3);
+    expect(p.audio.scheduled[2]?.stopped).toBe(false);
   });
 });

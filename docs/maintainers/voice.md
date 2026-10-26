@@ -61,8 +61,17 @@ python/fr_stt.py, python/fr_tts.py  bundled helpers (faster-whisper, Kokoro)
 - Every provider has `name`, `kind: "local" | "cloud" | "fake"` and
   `isAvailable(): Promise<{ok, reason}>` which never throws.
 - `AudioSink.play(chunk, signal)` resolves when the chunk has been handed to the device;
-  `stop()` flushes on barge-in. The default `pacedSink(clock)` sleeps the chunk's duration (no
-  device, used by tests and by the cloud runner).
+  `stop()` flushes on barge-in. `pacedSink(clock, aheadMs = PACED_SINK_AHEAD_MS)` (300 ms) has
+  no device: it keeps a play-head (where the chunks handed over so far end) and resolves once
+  the play-head is at most `aheadMs` beyond now, like a device with that much buffer; a chunk
+  that comes after the play-head passed (TTS slower than real time) restarts it from now, and
+  `stop()` resets it. The daemon's bridge and `/speak` use it with the 300 ms lead, so the
+  window's player gets the first 300 ms of a reply at once and the rest at real time. It used
+  to sleep each chunk's duration from the moment the previous sleep woke, which fell behind by
+  the timer's lateness on every chunk (a loaded event loop, Windows timers): the frames
+  reached the player slower than real time even with a fast TTS, and its queue ran dry inside
+  words (`test/paced-sink.test.ts`). The loop's own default, with no `sink` passed (its tests,
+  the e2e scenario), is `pacedSink(clock, 0)`: each chunk at its place on the play-head.
 
 ### A turn
 
@@ -382,7 +391,13 @@ device. Two first-audio figures are recorded per turn:
   audio frame: those times are the daemon's clock and its own detection, and the release is
   what the human did; the figure therefore also includes posting the turn's last chunks and
   the release (the panel sends the release after them), which the daemon-side figure starts
-  after. It includes the 50 ms playback lead. The player posts it once per turn
+  after. It includes the player's jitter buffer (a turn starts once 200 ms of audio is in hand,
+  more after an underrun, up to 1 s; `apps.md`) and the 50 ms playback lead: it is read when
+  the buffered audio is scheduled, since that is when the human starts hearing it. With a TTS
+  faster than real time the buffer adds little: the daemon's sink hands the first 300 ms over
+  at once, so the start target is in hand as soon as the TTS has produced 200 ms. With a TTS
+  slower than real time it adds the time the TTS takes to produce 200 ms (more once the target
+  grew), on top of `ttsFirstByteMs`. The player posts it once per turn
   (`POST /voice/sessions/:id/heard`); it lands on the turn's `voice.turn` row while the turn
   runs (the usual case: the reply's first chunk is heard long before the turn ends), or as a
   `voice.heard` row `{ voiceSessionId, turn, heardFirstAudioMs }` once the row is written (the
@@ -432,6 +447,7 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines) |
 | `test/python-helpers.test.ts` | `py_compile` of both helpers and `--selftest` (skipped visibly when no Python) |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
+| `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it |
 | `test/loop.test.ts` | PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
 
 Live validation of the cloud providers is **pending keys** (`docs/status/BLOCKERS.md`, row
@@ -458,12 +474,25 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   written in the same millisecond as its turn can sort first and be dropped; a previous turn's
   `turn_end` arriving after the next release leaves that turn unmeasured. None gives a wrong
   value; some samples can be missing or slightly low. Use Send (not the hotkey) for the
-  real-audio run.
+  real-audio run. Since the player's jitter buffer (2026-10-26) the figure includes the
+  buffering (200 ms of audio in hand, up to 1 s after underruns); heard figures recorded
+  before it leave out the time spent buffering and are not comparable.
 
 - faster-whisper has no true incremental mode: partials re-transcribe the whole utterance every
   `partialIntervalMs` (1 s) and are skipped when newer audio is already queued. Final transcript
   latency for a 5 s utterance on CPU with the `base` model is around 300 to 600 ms; use
   `small`/GPU for better accuracy or Deepgram for the lowest latency.
+- Kokoro on a CPU can synthesise slower than real time (the real-audio run of 2026-10-26 on a
+  Windows PC: `ttsFirstByteMs` 0.5 to 1.1 s, the reply audibly broken inside words). Two
+  causes were fixed: the paced sink drifted behind real time (above, `AudioSink`), and the
+  player scheduled each late 100 ms chunk with a gap before it; it now has a jitter buffer
+  (`apps.md`, the panel's reply player). A TTS that stays slower than real time still pauses:
+  once per underrun rather than at every chunk, and the buffer grows (to 1 s) so each stretch
+  between pauses is longer, at the cost of that much first-audio latency on the session's
+  later turns. `fr_tts.py` splits each Kokoro
+  segment into 100 ms pieces after the whole segment was synthesised, so a sentence's audio
+  arrives in one burst; the split costs nothing in gaps. A GPU, Piper or a cloud TTS avoids the
+  pauses altogether.
 - Cartesia opens one WebSocket per sentence (simple, robust); reusing a connection with
   `context_id` continuation would save roughly 100 ms per sentence after the first.
 - Cartesia's documented auth for WebSockets is the `api_key` query parameter; the header form is

@@ -82,7 +82,11 @@ export interface VoiceLoopOptions {
   converse: ConverseFn;
   clock: Clock;
   onEvent?: (e: VoiceLoopEvent) => void;
-  /** Playback target; default paces chunks in real time on the clock without a device. */
+  /**
+   * Playback target; default paces chunks in real time on the clock without a device, each
+   * handed over at its place on the play-head (`pacedSink(clock, 0)`). The daemon's bridge
+   * passes `pacedSink(clock)`, which runs `PACED_SINK_AHEAD_MS` ahead for the window's player.
+   */
   sink?: AudioSink;
   sampleRate?: number;
   language?: string;
@@ -168,7 +172,7 @@ export class VoiceLoop {
     this.clock = opts.clock;
     this.logger = log("voice:loop");
     this.vad = opts.vad ?? new EnergyVad();
-    this.sink = opts.sink ?? pacedSink(opts.clock);
+    this.sink = opts.sink ?? pacedSink(opts.clock, 0);
     this.store = opts.storeAudio
       ? new AudioStore({
           ...(opts.audioDir ? { dir: opts.audioDir } : {}),
@@ -796,11 +800,33 @@ export class VoiceLoop {
   }
 }
 
-/** Default sink: pretend to play by sleeping for each chunk's duration on the clock. */
-export function pacedSink(clock: Clock): AudioSink {
+/** How far `pacedSink` hands chunks over ahead of their place on its play-head, in ms. */
+export const PACED_SINK_AHEAD_MS = 300;
+
+/**
+ * Default sink: pretends to play on the clock, with no device (the app window plays the `audio`
+ * frames). It keeps a play-head (where the chunks handed over so far end) and resolves once the
+ * play-head is at most `aheadMs` beyond now, like a device with that much buffer. Pacing
+ * against the play-head rather than sleeping each chunk's duration from the moment the last
+ * sleep woke keeps it at real time when its timer wakes late (a loaded event loop, Windows
+ * timers): per-chunk sleeps fell behind a few ms per chunk, so the frames reached the player
+ * slower than real time and its queue ran dry inside words. A chunk that came after the
+ * play-head had passed (generation slower than real time) restarts it from now. `stop()`
+ * (a barge-in) flushes it.
+ */
+export function pacedSink(clock: Clock, aheadMs = PACED_SINK_AHEAD_MS): AudioSink {
+  let until: number | null = null;
   return {
-    play: (chunk, signal) => clock.sleep(chunkDurationMs(chunk), signal).catch(() => {}),
-    stop: () => {},
+    play: async (chunk, signal) => {
+      const now = clock.monotonic();
+      const start = until !== null && until > now ? until : now;
+      until = start + chunkDurationMs(chunk);
+      const wait = until - aheadMs - now;
+      if (wait > 0) await clock.sleep(wait, signal).catch(() => {});
+    },
+    stop: () => {
+      until = null;
+    },
   };
 }
 
