@@ -26,7 +26,7 @@ Rules enforced in code, never only by prompt text:
 | Nothing changes the ladder, an effort default or a price without a human's recorded `adopt` answer. `ModelWatch.applyAdoption` is the only code path that writes `pricing.json` or `models.json`; it refuses any other decision or an answer without `by`. | `watch.ts` `applyAdoption` | `approval_required` |
 | A price is never assumed. A model on neither the pricing table nor the fetched price list is reported as unpriced, not evaluated and never recommended; the eval runner refuses an unpriced model before its first call (`pricingFor` → `costOf` throws). | `diffModels`, `LoopEvalRunner.run` | `validation` |
 | No paid eval without the human's consent (ADR 0089): a run evaluates only when asked (`run({ evals: true })`, `fr models watch --evals`, `POST /run { evals: true }`), after an `evaluate` answer on a pending or reminded report, or when `human.notify_prefs.model_watch.run_evals` is true. Default off. An `adopt` ("yes", "ok", "approve") never starts a paid run. Otherwise the report lists what it would have run in `evals_deferred` and no eval reaches the runner. | `ModelWatch.run`, `resolve` | `validation` for an `evaluate` on a report not pending or reminded |
-| Paid runs are single-flight: while one runs, another paid run joins it (same promise, same report). The paid-or-free decision is serialised in call order. | `ModelWatch.run` (`paidRun`, `decisions`) | |
+| Paid runs are single-flight: while one runs, another paid run joins it (same promise, same report) when it names no model the running one does not cover; one that names more (`--model`, an `evaluate` answer's report) waits for the last paid run to end. Two paid runs never overlap. The paid-or-free decision is serialised in call order. | `ModelWatch.run` (`paidRuns`, `decisions`) | |
 | One watch run spends at most `evalBudgetUsdMicro` on evals (default 5 USD). The check runs before every eval; later evals are skipped and the report says so. The monthly cap, kill switch and audit hooks apply to each eval call as to any run (the runner issues a token per task, owned by the human, so every ledger row counts in the human's month). | `guardEvalBudget`, `LoopEvalRunner` | `budget_exceeded` |
 | Eval work is new work under the caps: before every eval task the runner checks the human's outer caps (`LoopEvalRunnerDeps.caps`, the daemon's `DynamicCaps`, the task's budget as the estimate) with the eval source's billing (`LoopEvalRunnerDeps.billing`: kind, and for a subscription the plan share and cap, so the plan level is checked); past the 80% line or at the cap no task starts. A run that ends `budget_exceeded` ends the set only when a re-check of the outer caps no longer allows; a task over its own budget fails that task. A cap stop or a kill ends the watch run's remaining evals without calling the runner. | `LoopEvalRunner.run` (`checkOuterCaps`), `ModelWatch.run` (`halted`) | `budget_exceeded` |
 | Eval commands never execute on the host: the model's `run_command` and the grader's `command_exit0` checks run in a sandbox lease over the task's work directory with no egress. A lease in the process stand-in (`engine: "process"`) is refused before any model call unless `model_watch.allow_process_sandbox` is true (default off). | `LoopEvalRunner` | `not_supported` (`details.reason: "process_sandbox_not_allowed"`); see `sandbox.md` |
@@ -70,14 +70,26 @@ answers from `model_watch.run_evals` and which is off when absent):
      request, `decision: "nothing_to_decide"`, a `skipped` line saying so. Later runs compare
      against the baseline, which never moves. A provider registered later gets its own
      baseline on its first listing; the others still report news in that run.
-   - *known*: a model in the provider's baseline, or one the install's own price table already
-     prices (`deps.pricing`, `BUILTIN_PRICING` in the daemon; a row in `<config>/pricing.json`
-     does not count), is not news. `diffModels` takes this as its `known(provider, id)`
-     argument and skips such models: they are neither new nor unpriced and never candidates.
-     The incident behind this: a fresh install's first run listed ten Anthropic models the
-     built-in table priced but the ladder did not use, called them all new, planned candidate
-     evals for them, and opened "Model watch <date>: 10 new, 0 retired, 0 repriced, 0
-     unpriced" in the inbox.
+     *Upgraded installs* (reports, no baseline row): `seedBaselinesFromReports` gives each
+     provider missing a row the listing of the earliest report that listed it without an
+     error. After a baseline is recorded, seeded or new, `closeCoveredRequests` closes every
+     pending report with at least one new model, all of them in the baseline, and no
+     recommendation: its request is withdrawn and its health set to `nothing_to_decide`
+     (audited `model_watch.decision`). A report with a repricing or an eval result stays open.
+   - *known*: a model in the provider's baseline is not news, and nothing else is: the price
+     table does not decide it (a table-priced model listed after the baseline is news).
+     `diffModels` takes this as its `known(provider, id)` argument and skips such models:
+     they are neither new nor unpriced and never candidates on their own. The incident behind
+     the baseline: a fresh install's first run listed ten Anthropic models the ladder did not
+     use, called them all new, planned candidate evals for them, and opened "Model watch
+     <date>: 10 new, 0 retired, 0 repriced, 0 unpriced" in the inbox.
+   - *named candidates*: `run({ evals: true, models: ["provider/id"] })` (`fr models watch
+     --evals --model provider/id`, repeatable) and `run({ evals: true, forReport })` (the
+     daemon's answer to "evaluate": that report's planned candidates and priced new models)
+     evaluate the named models as candidates whether news or not; they are listed in
+     `report.forced_candidates`. A name that is not listed, already on the ladder or has no
+     price is skipped with the reason. Naming without `evals: true` is refused (`validation`)
+     before anything runs. A run with names is never a baseline run.
    - *new*: listed by a provider, on no ladder rung for that provider, and not known. Priced from the table
      first (`price_origin: "table"`), else from the price list (`"price_list"`; cache prices
      default to `CACHE_READ_SHARE` / `CACHE_WRITE_SHARE` of the input price when the list omits
@@ -325,8 +337,10 @@ only caller; `specialist-approval.test.ts` covers both refusals.
 ### CLI and routes
 
 `registerModelWatchCli(program, () => ({ watch, out? }))` adds `fr models watch [--evals]
-[--json]` (run now, print the report and whether a decision is open; `--evals` is the explicit
-"run evaluations", without it the run is the free check unless the opt-in is on) and `fr models report [--id <id>]
+[--model <provider/id>]... [--json]` (run now, print the report and whether a decision is
+open; `--evals` is the explicit "run evaluations", without it the run is the free check unless
+the opt-in is on; `--model` names a listed model to evaluate as a candidate even when it is
+not news, is repeatable, and is refused with `validation` without `--evals`) and `fr models report [--id <id>]
 [--list] [--json]` (latest, one, or the list newest first). The orchestrator passes a thunk that
 composes the runtime (`cli/main.ts`).
 
@@ -504,8 +518,15 @@ ignored candidate is not asked about again; a persisted last run in the future i
 now; the baseline (ADR 0089, 2026-10-26): a fresh install's first run over ten models the
 built-in table prices opens no request and the next week's run neither, the first run asks
 nothing and runs no eval even with the opt-in and stores one baseline row apart from the
-reports, a model listed after the baseline is the only news and opens one request, a model
-the install's table knows is not news while one priced only by the price list is, a provider
+reports, a model listed after the baseline is the only news and opens one request, a
+table-priced model listed after the baseline is news while a baseline model is not, priced
+or not; an upgraded install (reports, no baseline row) seeds the baseline from its earliest
+report and withdraws the pending request that only named those models, while a pending
+report with a repricing stays open; `evaluate` on a pre-upgrade report runs that report's
+candidate (`forReport`); a named model (`models`) is refused without evals, evaluated with
+them under the run's budget (an unlisted or unpriced name skipped), queued behind a paid run
+in flight (never two at once; a plain run joins the first) and reachable as `fr models watch
+--evals --model`, which refuses `--model` without `--evals`; a provider
 registered later records its own baseline while the other still reports news (the shared
 `world()` seeds the ladder as the fake provider's baseline, so the other tests run as an
 install past its first run); `fr models watch|report`; the routes
@@ -533,7 +554,9 @@ write one report between them, and a boot a week later writes exactly one more; 
 boot's free check over ten table-known models writes a "baseline recorded" report and opens no
 request in the inbox; after the baseline run, `evaluate`
 on a pending report runs the evals once (a second `evaluate` is refused and runs nothing) and
-the `model_watch.run_evals` setting makes the scheduled run evaluate; `close()` while an eval is underway aborts it, the run ends
+the `model_watch.run_evals` setting makes the scheduled run evaluate; on an install upgraded
+with a pending report (baseline rows removed), `evaluate` reaches the daemon's
+`onEvalsRequested`, which runs that report's candidate (`forReport`); `close()` while an eval is underway aborts it, the run ends
 `killed` and `close()` returns.
 
 `wiring.test.ts` (daemon): the first `POST /model-watch/run {}` on a fresh install is the
@@ -569,14 +592,18 @@ registration and one-shot composition.
   finished in the store after the window, would count it twice; the daemon never calls
   `refresh()` after start, so this is a limit for a process that polls a shared store (poll at
   least every `foldOverlapMs`).
-- The baseline silences what a provider listed at the watch's first run for good. A model
-  that was already listed then, but that the ladder did not use, is never a candidate later,
-  not even in a `--evals` run. There is no way yet to put such a model to the evals: deleting
-  the baseline row only records a new one at the next run. A command that names a model to
-  test would close this. An install upgraded from before the baseline rule has no
-  baseline row, so its first run after the upgrade is a baseline run and asks nothing that
-  week. A model the human or an adopt priced in `pricing.json` but kept off the ladder stays
-  news, since only the shipped table counts as known.
+- The baseline is store-wide: one row per provider name in the state store, not per human or
+  machine. Installs that share a store (a team on the shared Postgres) share the baseline,
+  and the first run on any of them records it for all.
+- A model a provider listed at the watch's first run, but that the ladder did not use, is
+  never a candidate on its own later. `fr models watch --evals --model <provider/id>` puts it
+  to the evals; there is no route for naming models yet (`POST /model-watch/run` takes only
+  `evals`). Deleting a baseline row re-seeds it from the earliest report at the next run.
+- A model the human or an adopt priced in `pricing.json` but kept off the ladder stays news
+  until it is in the baseline, which only a first listing writes: it is asked about weekly
+  until the human ignores it.
+- A pending pre-upgrade report with a repricing is not closed by the baseline even when its
+  new models are all in it; the human answers it as before.
 - `remind` is not a timer; the next weekly run re-proposes. A reminder for a report whose
   diff has disappeared by then is silently moot.
 - Lower-effort probes exist only for modes that have an eval target (coder, researcher).

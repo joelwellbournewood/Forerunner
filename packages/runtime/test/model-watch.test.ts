@@ -1483,7 +1483,9 @@ describe("model watch: the first run records a baseline (ADR 0089)", () => {
     expect(await w.store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL })).toHaveLength(1);
   });
 
-  it("a model the install's price table already knows is not news; one priced only by the price list is", async () => {
+  it("only the baseline decides what is news: a model the price table knows, listed after the baseline, is news", async () => {
+    // The baseline is the ladder only (make() seeds FAKE_MODELS); the ten table-priced models
+    // appear later. The price table knowing them does not make them old news.
     const w = await make({ listed: [...FAKE_MODELS, ...TABLE_KNOWN] });
     const approvals = new FakeApprovals({ status: "pending", requestId: "hr-1" });
     const r = await watchFor(w, {
@@ -1491,17 +1493,14 @@ describe("model watch: the first run records a baseline (ADR 0089)", () => {
       autoEvals: null,
       priceList: { as_of: "2026-10-19", models: {} },
     }).run();
-    expect(r.report.diff.new_models).toEqual([]);
-    expect(r.decision).toBe("nothing_to_decide");
-    expect(approvals.requests).toHaveLength(0);
+    expect(r.report.diff.new_models.map((m) => m.id)).toEqual(TABLE_KNOWN.map((m) => m.id));
+    expect(r.report.diff.new_models.every((m) => m.price_origin === "table")).toBe(true);
+    expect(r.decision).toBe("pending");
+    expect(approvals.requests).toHaveLength(1);
 
-    const w2 = await make({
-      listed: [
-        ...FAKE_MODELS,
-        ...TABLE_KNOWN,
-        { provider: "fake", id: "fake-sonnet-6", tier: "sonnet" },
-      ],
-    });
+    // And a model in the baseline is not news, priced or not.
+    const w2 = await make({ baseline: false, listed: [...LISTED] });
+    await recordModelWatchBaseline(w2.store, { provider: "fake", models: [...LISTED] });
     const r2 = await watchFor(w2, {
       approvals,
       autoEvals: null,
@@ -1510,8 +1509,9 @@ describe("model watch: the first run records a baseline (ADR 0089)", () => {
         models: { "fake-sonnet-6": { input_per_mtok_usd: 1.5, output_per_mtok_usd: 7.5 } },
       },
     }).run();
-    expect(r2.report.diff.new_models.map((m) => m.id)).toEqual(["fake-sonnet-6"]);
-    expect(r2.decision).toBe("pending");
+    expect(r2.report.diff.new_models).toEqual([]);
+    expect(r2.report.diff.unpriced).toEqual([]);
+    expect(r2.decision).toBe("nothing_to_decide");
   });
 
   it("a provider registered later records its own baseline on its first listing; the others still report news", async () => {
@@ -1536,6 +1536,186 @@ describe("model watch: the first run records a baseline (ADR 0089)", () => {
       "fake/fake-mystery",
     ]);
     expect(r.decision).toBe("pending");
+  });
+});
+
+/** Only the new candidate is priced: its row and its withheld evals are all there is to decide. */
+const ONLY_CANDIDATE: PriceList = {
+  as_of: "2026-10-19",
+  models: { "fake-sonnet-6": { input_per_mtok_usd: 1.5, output_per_mtok_usd: 7.5 } },
+};
+
+/** An install from before the baseline rule: its reports stay, it has no baseline row. */
+async function dropBaselines(store: StateStore): Promise<void> {
+  for (const row of await store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL }))
+    await store.release.delete(row.id);
+}
+
+describe("model watch: an install upgraded from before the baseline rule (ADR 0089)", () => {
+  it("seeds the baseline from the earliest report and closes the pending request that only named those models", async () => {
+    const w = await make();
+    const watch = watchFor(w, {
+      approvals: new StateModelWatchApprovals(w.store, { agentId: "alice" }),
+      autoEvals: null,
+      priceList: ONLY_CANDIDATE,
+    });
+    const old = await watch.run();
+    expect(old.decision).toBe("pending");
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toHaveLength(1);
+    await dropBaselines(w.store);
+
+    await w.clock.advance(WEEK_MINUTES * 60_000);
+    const next = await watch.run();
+    // The earliest report's listing is the baseline: nothing in this listing is news.
+    const [row] = await w.store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL });
+    expect(row?.release_version).toBe("fake");
+    expect(JSON.stringify(row?.artifacts)).toContain(old.report.id);
+    expect(next.report.baseline_providers).toEqual([]);
+    expect(next.report.diff.new_models).toEqual([]);
+    expect(next.decision).toBe("nothing_to_decide");
+    // The old request named only models now in the baseline: withdrawn, its report closed.
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toHaveLength(0);
+    expect((await w.store.humanRequest.mustGet(old.requestId ?? "")).status).toBe("withdrawn");
+    expect((await watch.getReport(old.report.id)).health.decision).toBe("nothing_to_decide");
+  });
+
+  it("a pending report that also proposes a repricing stays open", async () => {
+    const w = await make();
+    const watch = watchFor(w, {
+      approvals: new StateModelWatchApprovals(w.store, { agentId: "alice" }),
+      autoEvals: null,
+    });
+    const old = await watch.run();
+    expect(old.report.recommendations.map((r) => r.kind)).toContain("reprice");
+    await dropBaselines(w.store);
+    await watch.run();
+    expect((await watch.getReport(old.report.id)).health.decision).toBe("pending");
+    expect((await w.store.humanRequest.mustGet(old.requestId ?? "")).status).toBe("open");
+  });
+
+  it("'evaluate' on a pre-upgrade report runs that report's candidate evals; no baseline run swallows them", async () => {
+    const w = await make();
+    const evals = new CountingEvals();
+    let watch: ModelWatch | null = null;
+    watch = watchFor(w, {
+      evals,
+      approvals: new StateModelWatchApprovals(w.store, { agentId: "alice" }),
+      autoEvals: null,
+      priceList: ONLY_CANDIDATE,
+      // What the daemon does with the human's consent (compose.ts).
+      onEvalsRequested: (ev) => {
+        void watch?.run({ evals: true, forReport: ev.reportId });
+      },
+    });
+    const old = await watch.run();
+    expect(old.report.evals_deferred?.planned.some((p) => p.model === "fake-sonnet-6")).toBe(true);
+    await dropBaselines(w.store);
+    await watch.resolve(old.report.id, { decision: "evaluate", by: w.human });
+    await watch.settled();
+    expect(evals.calls.some((c) => c.model === "fake-sonnet-6")).toBe(true);
+    const [latest] = await watch.listReports({ limit: 1 });
+    const report = (await watch.getReport(latest?.id ?? "")).report;
+    expect(report.forced_candidates).toEqual(["fake/fake-sonnet-6"]);
+    expect(report.evals.some((e) => e.role === "candidate" && e.model === "fake-sonnet-6")).toBe(
+      true,
+    );
+  });
+});
+
+describe("model watch: a named model forced in as a candidate", () => {
+  /** sonnet-6 is in the baseline, so no run tests it unless it is named. */
+  async function knownCandidate() {
+    const w = await make({ baseline: false, listed: [...FAKE_MODELS, ...LISTED.slice(-2)] });
+    await recordModelWatchBaseline(w.store, {
+      provider: "fake",
+      models: [...FAKE_MODELS, ...LISTED.slice(-2)],
+    });
+    return w;
+  }
+
+  it("needs consent: without evals a named model is refused before anything runs", async () => {
+    const w = await knownCandidate();
+    const evals = new CountingEvals();
+    const watch = watchFor(w, { evals, autoEvals: null, priceList: ONLY_CANDIDATE });
+    await expect(watch.run({ models: ["fake/fake-sonnet-6"] })).rejects.toMatchObject({
+      code: "validation",
+    });
+    expect(evals.calls).toHaveLength(0);
+    expect(await w.store.release.list({ channel: MODEL_WATCH_CHANNEL })).toHaveLength(0);
+  });
+
+  it("with evals the named model is evaluated as a candidate under the run's budget; an unlisted or unpriced name is skipped", async () => {
+    const w = await knownCandidate();
+    const evals = new CountingEvals();
+    const watch = watchFor(w, { evals, autoEvals: null, priceList: ONLY_CANDIDATE });
+    const r = await watch.run({
+      evals: true,
+      models: ["fake/fake-sonnet-6", "fake/fake-nope", "fake/fake-mystery"],
+    });
+    expect(r.report.diff.new_models).toEqual([]);
+    expect(r.report.forced_candidates).toEqual(["fake/fake-sonnet-6"]);
+    expect(evals.calls.filter((c) => c.model === "fake-sonnet-6")).toHaveLength(1);
+    expect(r.report.skipped.join("\n")).toMatch(/fake\/fake-nope: not listed/);
+    expect(r.report.skipped.join("\n")).toMatch(/fake\/fake-mystery: no price/);
+    expect(evals.calls.some((c) => c.model === "fake-mystery")).toBe(false);
+
+    // The run's eval budget still caps it.
+    const capped = watchFor(w, {
+      evals: new CountingEvals(),
+      autoEvals: null,
+      priceList: ONLY_CANDIDATE,
+      thresholds: { evalBudgetUsdMicro: 0 },
+    });
+    const c = await capped.run({ evals: true, models: ["fake/fake-sonnet-6"] });
+    expect(c.report.evals.every((e) => e.skipped_reason?.startsWith("budget_exceeded"))).toBe(true);
+  });
+
+  it("single flight: a named-model run asked for during a paid run waits for it; never two at once", async () => {
+    const w = await knownCandidate();
+    let active = 0;
+    let most = 0;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const evals = new CountingEvals(async (_input, n) => {
+      active += 1;
+      most = Math.max(most, active);
+      if (n === 1) await gate;
+      active -= 1;
+    });
+    const watch = watchFor(w, { evals, autoEvals: null, priceList: ONLY_CANDIDATE });
+    const plain = watch.run({ evals: true });
+    const named = watch.run({ evals: true, models: ["fake/fake-sonnet-6"] });
+    const joined = watch.run({ evals: true });
+    release();
+    const [a, b, c] = await Promise.all([plain, named, joined]);
+    expect(most).toBe(1);
+    expect(c.report.id).toBe(a.report.id);
+    expect(b.report.id).not.toBe(a.report.id);
+    expect(a.report.forced_candidates).toEqual([]);
+    expect(b.report.forced_candidates).toEqual(["fake/fake-sonnet-6"]);
+  });
+
+  it("fr models watch --evals --model provider/id; --model without --evals is refused", async () => {
+    const w = await knownCandidate();
+    const evals = new CountingEvals();
+    const watch = watchFor(w, { evals, autoEvals: null, priceList: ONLY_CANDIDATE });
+    const lines: string[] = [];
+    const program = new Command();
+    program.exitOverride();
+    registerModelWatchCli(program, () => ({ watch, out: (l) => lines.push(l) }));
+    await expect(
+      program.parseAsync(["models", "watch", "--model", "fake/fake-sonnet-6"], { from: "user" }),
+    ).rejects.toMatchObject({ code: "validation" });
+    expect(evals.calls).toHaveLength(0);
+    await program.parseAsync(
+      ["models", "watch", "--evals", "--model", "fake/fake-sonnet-6", "--json"],
+      { from: "user" },
+    );
+    const parsed = JSON.parse(lines.join("\n")) as { report: { forced_candidates: string[] } };
+    expect(parsed.report.forced_candidates).toEqual(["fake/fake-sonnet-6"]);
+    expect(evals.calls.some((c) => c.model === "fake-sonnet-6")).toBe(true);
   });
 });
 

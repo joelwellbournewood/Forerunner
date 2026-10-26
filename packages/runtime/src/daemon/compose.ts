@@ -2167,7 +2167,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // The human consented to the evals a report withheld: run them now, in the background.
     onEvalsRequested: (ev) => {
       logger.info("model watch evals requested", { reportId: ev.reportId, by: ev.by });
-      void modelWatch.run({ evals: true }).catch((e: unknown) => {
+      // The answered report's own candidates are named, so they are evaluated even when a
+      // baseline (seeded on an upgraded install) no longer counts them as news (ADR 0089).
+      void modelWatch.run({ evals: true, forReport: ev.reportId }).catch((e: unknown) => {
         logger.warn("model watch evals did not complete", { error: errorMessage(e) });
       });
     },

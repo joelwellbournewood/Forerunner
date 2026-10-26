@@ -1620,21 +1620,32 @@ open request in full (id, `why`, options), the registry prompt says to answer fr
 requests in the context, and nothing told the model it had already said so. Now
 (`openRequestsFact`) the runtime keeps per human and agent which requests the conversation has
 listed, and the fact lists a request in full only when it is not yet listed in this
-conversation (`(not yet mentioned in this conversation)`), when the human's line asks what is
-pending (`ASKS_PENDING_RE`: pending, requests, inbox, decisions, "waiting for me", ...;
-`(the human asked)`), or when it is `blocking` (`[blocking]`). Otherwise the fact is a count:
+conversation (`(not yet mentioned in this conversation)`), when the human's line asks about
+their own queue (`(the human asked)`), or when it is `blocking`. `ASKS_PENDING_RE` is narrow
+on purpose: "any/my/open/pending requests|decisions|approvals", "what's pending|waiting|
+outstanding", "waiting for/on me", "inbox", "anything I should know". "The pull request",
+"the API request failed", "a decision on X" and "the deploy is pending" do not match. A
+blocking request is `[blocking]` the first time and `[already mentioned; blocking]` after:
+it stays listed so the model knows of it, and the rules say to repeat it only when what the
+human asks depends on it. Otherwise the fact is a count:
 `open_requests: 2 (already mentioned in this conversation; bring up only if the human asks)`,
-or `... (+1 already mentioned in this conversation)` beside a newly listed one. A pause longer
-than `CONVERSATION_IDLE_MS` (60 minutes) starts a new conversation, in which an open request is
-listed once more. `CHAT_OPEN_REQUEST_RULES`, in the system text after `CHAT_RETRIEVAL_RULES`,
-tells the model what the fact means: answer what was asked, never mention open requests in
-every reply, at most once and in one short sentence after the answer. The inbox, the
-requests and the UI are unchanged; only what the model is shown changes. The state is in
-process memory, so a daemon restart starts a new conversation. Tests:
-`conversation-open-requests.test.ts` (scripted provider: the rules in the system text, the
-request in the first turn's facts and only a count in the next, listed again when the human
-asks what is pending, a request filed mid-conversation listed once beside the count, a blocking
-one kept, and listed once more after a long pause; the system text is identical across turns).
+or `... (+1 already mentioned in this conversation)` beside a newly listed one. A request
+counts as mentioned only once the turn's run ends `completed`: a turn that fails or is aborted
+leaves it "not yet mentioned" for the next. A pause longer than `CONVERSATION_IDLE_MS` (60
+minutes) starts a new conversation, in which an open request is listed once more. The
+conversation key is the human and the agent: typed, voice and phone turns of the same human
+to the same agent share one conversation, so a request mentioned in a voice reply is not
+listed again in the next typed turn. `CHAT_OPEN_REQUEST_RULES`, in the system text after
+`CHAT_RETRIEVAL_RULES`, tells the model what the fact means: answer what was asked, never
+mention open requests in every reply, at most once and in one short sentence after the
+answer. The inbox, the requests and the UI are unchanged; only what the model is shown
+changes. The state is in process memory, so a daemon restart starts a new conversation.
+Tests: `conversation-open-requests.test.ts` (scripted provider: the rules in the system text,
+the request in the first turn's facts and only a count in the next, listed again when the
+human asks about their queue and not for six other senses of the words, a request filed
+mid-conversation listed once beside the count, a blocking one kept and marked already
+mentioned, a failed turn not counting, and listed once more after a long pause; the system
+text is identical across turns).
 
 ### Local daemon (`src/daemon/`, ADR 0011)
 

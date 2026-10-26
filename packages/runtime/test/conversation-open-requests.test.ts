@@ -1,5 +1,5 @@
 import { openStore, type StateStore } from "@forerunner/state";
-import { FakeProvider, textReply } from "@forerunner/testenv";
+import { errorReply, FakeProvider, textReply } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import {
@@ -157,14 +157,76 @@ describe("conversation agent: open requests are not brought up in every reply", 
     await w.store.close();
   });
 
-  it("a blocking request (work waits on it) stays listed and is marked blocking", async () => {
+  it("a blocking request (work waits on it) stays listed; once mentioned it is marked so, to repeat only when the question depends on it", async () => {
     const w = await setup();
     await modelWatchRequest(w, { why: "Approve the deploy key", blocking: true });
     await w.chat("hello");
+    expect(w.user(0)).toContain("Approve the deploy key");
+    expect(w.user(0)).toContain("[blocking]");
+    expect(w.user(0)).toContain("not yet mentioned in this conversation");
     await w.chat("what next?");
     expect(w.user(1)).toContain("Approve the deploy key");
-    expect(w.user(1)).toContain("[blocking]");
+    expect(w.user(1)).toContain("[already mentioned; blocking]");
+    expect(w.user(1)).not.toContain("not yet mentioned");
+    expect(CHAT_OPEN_REQUEST_RULES).toMatch(/already mentioned; blocking/);
+    expect(CHAT_OPEN_REQUEST_RULES).toMatch(/depends on it/);
     await w.store.close();
+  });
+
+  it("only questions about the human's own queue list the requests again; other senses of the words do not", async () => {
+    const asks = [
+      "any open requests?",
+      "what's waiting?",
+      "what is pending?",
+      "is anything waiting for me?",
+      "anything I should know?",
+      "check my inbox",
+      "do I have any decisions?",
+      "my approvals?",
+    ];
+    const other = [
+      "can you review the pull request?",
+      "the API request failed again",
+      "we made a decision on the database",
+      "the deploy is pending",
+      "what's the request rate on the server?",
+      "pending changes in the repo?",
+    ];
+    const w = await setup(2 + asks.length * 2 + other.length);
+    await modelWatchRequest(w);
+    await w.chat("hello");
+    let i = 1;
+    for (const line of other) {
+      await w.chat(line);
+      expect(w.user(i), line).not.toContain("Model watch");
+      i += 1;
+    }
+    for (const line of asks) {
+      await w.chat(line);
+      expect(w.user(i), line).toContain("Model watch 2026-10-26");
+      expect(w.user(i), line).toContain("the human asked");
+      i += 1;
+    }
+    await w.store.close();
+  });
+
+  it("a turn that fails does not count as mentioning the request", async () => {
+    const h = await setup(0);
+    h.provider.pushReplies(
+      errorReply("invalid_request", "fake provider error", { retryable: false }),
+      textReply("Sure.", { ttftMs: 0 }),
+      textReply("Sure.", { ttftMs: 0 }),
+    );
+    await modelWatchRequest(h);
+    const failed = await h.chat("hello");
+    expect(failed.reply).toMatch(/could not answer/i);
+    expect(h.user(0)).toContain("Model watch 2026-10-26");
+    await h.chat("hello again");
+    expect(h.user(1)).toContain("Model watch 2026-10-26");
+    expect(h.user(1)).toContain("not yet mentioned in this conversation");
+    await h.chat("and now?");
+    expect(h.user(2)).not.toContain("Model watch");
+    await h.store.close();
   });
 
   it("a new conversation after a long pause mentions the open request once more", async () => {

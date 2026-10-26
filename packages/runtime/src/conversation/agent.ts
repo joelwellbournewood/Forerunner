@@ -246,9 +246,11 @@ export const CHAT_OPEN_REQUEST_RULES = `# Open requests
 The session facts may list the human's open requests (decisions and questions waiting in their
 inbox). They are context, not the topic: answer what the human asked.
 Never mention open requests in every reply.
-Bring one up only when the human asks what is pending, when it is marked [blocking], or when
-the facts say it is not yet mentioned in this conversation; then at most once, in one short
-sentence after the answer. When the facts say the requests were already mentioned, do not
+Bring one up only when the human asks what is pending, or when the facts say it is not yet
+mentioned in this conversation; then at most once, in one short sentence after the answer.
+A request marked [blocking] holds up work: mention it once like the others. One marked
+[already mentioned; blocking] stays listed so you know of it: repeat it only when what the
+human asks depends on it. When the facts say the requests were already mentioned, do not
 bring them up unless the human asks.`;
 
 /**
@@ -257,9 +259,13 @@ bring them up unless the human asks.`;
  */
 export const CONVERSATION_IDLE_MS = 60 * 60_000;
 
-/** The human asks what waits for them: the open requests are listed in full for this turn. */
+/**
+ * The human asks about their own queue: the open requests are listed in full for this turn.
+ * Narrow on purpose: "the pull request", "the API request failed", "a decision on X" or "the
+ * deploy is pending" are other senses of the words and do not match.
+ */
 const ASKS_PENDING_RE =
-  /\b(pending|open (requests?|items?|questions?|decisions?)|requests?|waiting (for|on) me|anything (for|from) me|needs? (anything )?from me|inbox|to decide|decisions?|approvals?|ausstehend|offen(e|en)? (anfragen|fragen|entscheidungen))\b/i;
+  /\b(?:(?:any|my|open|pending)\s+(?:requests?|decisions?|approvals?)|what(?:'s|’s|\s+is)\s+(?:pending|waiting|outstanding)|waiting\s+(?:for|on)\s+me|inbox|anything\s+i\s+should\s+know)\b/i;
 
 /** What one conversation has listed in full so far (keyed by human and agent). */
 interface ConversationState {
@@ -270,34 +276,44 @@ interface ConversationState {
 type OpenRequest = Awaited<ReturnType<StateStore["humanRequest"]["open"]>>[number];
 
 /**
- * The `open_requests` fact for one turn: in full the requests the human asked about, those
- * that block work and those not yet listed in this conversation (each then marked as listed);
- * the others only as a count. No request is ever repeated turn after turn unasked.
+ * The `open_requests` fact for one turn and the requests it lists in full: those the human
+ * asked about, those that block work and those not yet listed in this conversation; the
+ * others only as a count. The caller marks the listed ones as mentioned once the reply is
+ * complete, so a failed turn mentions nothing.
  */
 function openRequestsFact(
   requests: readonly OpenRequest[],
   conv: ConversationState,
   query: string,
-): string | number {
-  if (!requests.length) return 0;
+): { fact: string | number; shown: string[] } {
+  if (!requests.length) return { fact: 0, shown: [] };
   const asked = ASKS_PENDING_RE.test(query);
   const shown = requests.filter((r) => asked || r.blocking || !conv.mentioned.has(r.id));
   const held = requests.length - shown.length;
   if (!shown.length)
-    return `${requests.length} (already mentioned in this conversation; bring up only if the human asks)`;
+    return {
+      fact: `${requests.length} (already mentioned in this conversation; bring up only if the human asks)`,
+      shown: [],
+    };
   const unmentioned = shown.some((r) => !conv.mentioned.has(r.id));
-  for (const r of shown) conv.mentioned.add(r.id);
+  const mark = (r: OpenRequest) => {
+    if (!r.blocking) return "";
+    return conv.mentioned.has(r.id) && !asked ? " [already mentioned; blocking]" : " [blocking]";
+  };
   const list = shown
     .map(
       (r) =>
-        `${r.id.slice(0, 8)}: ${r.why.slice(0, 80)} [${r.options.map(String).join("/")}]${r.blocking ? " [blocking]" : ""}`,
+        `${r.id.slice(0, 8)}: ${r.why.slice(0, 80)} [${r.options.map(String).join("/")}]${mark(r)}`,
     )
     .join(" | ");
   const notes = [
     asked ? "the human asked" : unmentioned ? "not yet mentioned in this conversation" : null,
     held ? `+${held} already mentioned in this conversation` : null,
   ].filter((n): n is string => n !== null);
-  return notes.length ? `${list} (${notes.join("; ")})` : list;
+  return {
+    fact: notes.length ? `${list} (${notes.join("; ")})` : list,
+    shown: shown.map((r) => r.id),
+  };
 }
 
 const UNDO_RE = /^\s*(undo|rückgängig|r[üu]ckg[äa]ngig machen)\s*[.!]?\s*$/i;
@@ -627,6 +643,10 @@ export class ConversationAgent {
     // A reply cut off at max_tokens ends at its last complete sentence, spoken or typed, and
     // the turn is recorded as truncated (never as a completed answer).
     const truncated = result.stopReason === "max_tokens";
+    // Only a turn that answered counts as having shown its open requests: an aborted or
+    // failed turn leaves them "not yet mentioned" for the next one.
+    if (result.outcome === "completed")
+      for (const id of context.shownRequests) conv.mentioned.add(id);
     let reply = truncated ? completeSentencesOf(result.finalText) : result.finalText.trim();
     if (truncated) {
       this.logger.warn("chat reply cut off at max_tokens; trimmed to its last full sentence", {
@@ -908,6 +928,8 @@ export class ConversationAgent {
   ): Promise<{
     stable: string;
     volatile: string;
+    /** Ids of the open requests listed in full in this turn's facts. */
+    shownRequests: string[];
     sources: ChatSources;
     retrieval: { docs: RetrievalStats; lessons: RetrievalStats };
   }> {
@@ -923,12 +945,13 @@ export class ConversationAgent {
     const unread = await store.message.inbox({ humanId }, { unreadOnly: true, limit: 5 });
     const requests = await store.humanRequest.open({ humanId }, { limit: 5 });
     const sessions = await store.session.active(agentId);
+    const openRequests = openRequestsFact(requests, conv, query);
     const volatile = volatilePreamble({
       now: this.deps.clock.nowIso(),
       active_project: projectId ?? "none",
       unread_messages: unread.length,
       // In full once per conversation, when asked, or while blocking; else a count.
-      open_requests: openRequestsFact(requests, conv, query),
+      open_requests: openRequests.fact,
       running_sessions: sessions.filter((s) => s.summary !== "conversation").length,
     });
     const retrieved = await this.retrieve(humanId, agent, projectId, query);
@@ -937,6 +960,7 @@ export class ConversationAgent {
       volatile: [volatile, ...retrieved.blocks].join("\n\n"),
       sources: retrieved.sources,
       retrieval: retrieved.stats,
+      shownRequests: openRequests.shown,
     };
   }
 

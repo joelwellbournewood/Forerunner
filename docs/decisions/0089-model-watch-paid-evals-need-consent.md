@@ -144,11 +144,26 @@ the same question at its first boot, and every later week again until the human 
    and asks nothing (`nothing_to_decide`). Its report names the providers in
    `baseline_providers` and its summary says "baseline recorded". Later runs compare against
    the baseline.
-7. **A model the install's price table already knows is not news.** A listed model in the
-   provider's baseline, or in the price table the install shipped with (`BUILTIN_PRICING`,
-   `ModelWatchDeps.pricing`), is neither new nor unpriced, and never a candidate. A row the
-   human or an adopt put in `<config>/pricing.json` does not count: a model priced only there
-   stays news until it is on the ladder or ignored.
+7. **Only the baseline decides what is news.** A listed model is new when it is on no ladder
+   rung and not in its provider's baseline. The price table does not decide it: a model the
+   table prices but the provider lists only after the baseline is news, and one in the
+   baseline is not news whether the table prices it or not. (The first version of this
+   amendment also counted the shipped table as known; review of 2026-10-26 dropped that.)
+8. **An upgraded install seeds its baseline from its reports.** A provider without a baseline
+   row on an install that has reports takes the listing of the earliest report that listed it
+   without an error. After a baseline is recorded (seeded or new), every pending report whose
+   new models are all in the baseline, with no recommendation of its own (a repricing or an
+   eval result stays a question), is closed: its request is withdrawn and the report marked
+   `nothing_to_decide`.
+9. **An "evaluate" answer evaluates that report's candidates.** The daemon starts
+   `run({ evals: true, forReport })`: the report's candidate models are named and evaluated
+   whether or not they are news now, so a baseline (seeded or not) never swallows the consent.
+   A run with named models is never a baseline run. `fr models watch --evals --model
+   <provider/id>` names a listed, priced, off-ladder model the same way. Naming a model
+   without `--evals` (or `evals: true`) is refused (`validation`). Named runs are paid runs:
+   the run's eval budget caps them, and single flight holds: a paid run asked for while
+   another runs joins it when that run already covers its named models, else it waits for it
+   to end. Two paid runs never overlap.
 
 Retired models and repricings are still compared with the ladder and the table on every run,
 the baseline run included. A repricing found by a baseline run is in its report but asks
@@ -158,13 +173,13 @@ nothing until the next run finds it again.
 
 - A fresh install's first boot writes a "baseline recorded" report and puts nothing in the
   inbox. The conversation agent has nothing to bring up.
-- A model the provider listed at the first run but the ladder did not use is never a
-  candidate later. A newer Forerunner that ships a model in its table and on its ladder
-  switches by release, not by the watch.
-- An install upgraded from before this amendment has no baseline row: its first run after
-  the upgrade is a baseline run and asks nothing that week.
+- A model the provider listed at the first run but the ladder did not use is not a candidate
+  on its own later; `fr models watch --evals --model <provider/id>` puts it to the evals.
+- An install upgraded from before this amendment keeps comparing against its earliest
+  report's listing, and its pending requests about models in that listing are withdrawn.
 - A provider registered later gets its own baseline on its first listing; the run still
   reports news from the providers that had one.
+- The baseline is store-wide: installs sharing a state store share it.
 
 ### Alternatives considered
 
@@ -173,6 +188,8 @@ nothing until the next run finds it again.
   candidate.
 - **Keep the table rule only.** It fixes this incident, but a model released after the build
   would still be asked about on the first boot, before the human has used the install at all.
+- **Baseline plus the table rule.** Rejected in review: a model the table prices but the
+  provider starts listing later is real news, and the table would hide it.
 
 ## Alternatives considered
 

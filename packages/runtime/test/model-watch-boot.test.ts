@@ -9,6 +9,7 @@ import {
   type EvalRunInput,
   type EvalRunnerPort,
   type EvalRunOutcome,
+  MODEL_WATCH_BASELINE_CHANNEL,
   MODEL_WATCH_CHANNEL,
 } from "../src/models/watch.ts";
 import type { ModelRef } from "../src/provider/types.ts";
@@ -215,6 +216,25 @@ describe("model watch on a fresh install", () => {
     await rt.scheduler.tick();
     await rt.modelWatch.settled();
     expect(evals.calls.length).toBeGreaterThan(n);
+  });
+
+  it("an install upgraded with a pending report: 'evaluate' runs that report's candidate, not a baseline run", async () => {
+    const home = freshHome();
+    writePricing(home);
+    const clock = new SimulatedClock("2026-10-26T00:40:00Z");
+    const evals = new RecordingEvals();
+    const provider = new CandidateProvider([{ text: "hi" }], clock);
+    const rt = await boot(home, clock, evals, provider);
+    await rt.modelWatch.run();
+    provider.released = true;
+    const old = await rt.modelWatch.run();
+    expect(old.decision).toBe("pending");
+    // Before the baseline rule there were reports and no baseline row.
+    for (const row of await rt.store.release.list({ channel: MODEL_WATCH_BASELINE_CHANNEL }))
+      await rt.store.release.delete(row.id);
+    await rt.modelWatch.resolve(old.report.id, { decision: "evaluate", by: rt.human.id });
+    await rt.modelWatch.settled();
+    expect(evals.calls.some((c) => c.model === "fake-sonnet-6")).toBe(true);
   });
 
   it("the first boot's free check over ten table-known models opens no request in the human's inbox", async () => {

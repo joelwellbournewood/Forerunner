@@ -378,6 +378,11 @@ export const ModelWatchReportSchema = z.object({
    * 0089): none of their models is new in this run. Empty on later runs and on older reports.
    */
   baseline_providers: z.array(z.string()).default([]),
+  /**
+   * `provider/id` of the models evaluated as candidates because they were named (`--model`,
+   * or an "evaluate" answer on a report), not because they were news. Empty by default.
+   */
+  forced_candidates: z.array(z.string()).default([]),
   skipped: z.array(z.string()),
   summary: z.string(),
 });
@@ -760,8 +765,12 @@ export const EVALS_DEFERRED_REASON =
 export class ModelWatch {
   readonly thresholds: WatchThresholds;
   private readonly inFlight = new Set<Promise<unknown>>();
-  /** The paid run in flight, if any: a second paid run joins it (single flight, ADR 0089). */
-  private paidRun: Promise<ModelWatchRunResult> | null = null;
+  /**
+   * Paid runs in flight or queued, oldest first (single flight, ADR 0089): one runs at a time.
+   * A paid run asked for joins the oldest one whose named candidates cover its own (a plain
+   * run names none, so it joins the first); one that names more waits for the last to end.
+   */
+  private paidRuns: { run: Promise<ModelWatchRunResult>; named: Set<string> }[] = [];
   /** Serialises the paid-or-free decision of each run in call order. */
   private decisions: Promise<void> = Promise.resolve();
 
@@ -794,8 +803,27 @@ export class ModelWatch {
    * report. Paid evals run only with consent (ADR 0089): `evals: true` is an explicit "run
    * evaluations"; unset, the human's `autoEvals` setting decides (default off); `false` never.
    * An abort (the caller's or the owner's signal) ends the run without a report.
+   *
+   * `models` (`provider/id`) and `forReport` (the candidates of that report) name models to
+   * evaluate as candidates even when they are not news, e.g. a model in the baseline. Naming
+   * one is a paid request: it needs `evals: true` and is refused (`validation`) without it.
    */
-  run(opts: { signal?: AbortSignal; evals?: boolean } = {}): Promise<ModelWatchRunResult> {
+  run(
+    opts: { signal?: AbortSignal; evals?: boolean; models?: string[]; forReport?: string } = {},
+  ): Promise<ModelWatchRunResult> {
+    const named = new Set([
+      ...(opts.models ?? []),
+      ...(opts.forReport ? [`report:${opts.forReport}`] : []),
+    ]);
+    if (named.size && opts.evals !== true) {
+      return Promise.reject(
+        new ForerunnerError(
+          "validation",
+          "naming a model to evaluate runs paid evals: it needs evals: true (fr models watch --evals --model <provider/id>)",
+          { details: { models: [...named] } },
+        ),
+      );
+    }
     const signals = [opts.signal, this.deps.signal].filter((x): x is AbortSignal => !!x);
     const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
     // Decide paid or free in call order (a chain), so that two runs asked for at once see each
@@ -805,15 +833,24 @@ export class ModelWatch {
       async (): Promise<{ run: Promise<ModelWatchRunResult> }> => {
         const paid =
           opts.evals ?? (this.deps.autoEvals ? (await this.deps.autoEvals()) === true : false);
-        if (paid && this.paidRun) return { run: this.paidRun };
-        const run = this.runOnce({ signal, evals: paid });
-        if (paid) {
-          this.paidRun = run;
-          const clear = () => {
-            if (this.paidRun === run) this.paidRun = null;
-          };
-          void run.then(clear, clear);
-        }
+        const once = () =>
+          this.runOnce({
+            signal,
+            evals: paid,
+            models: opts.models ?? [],
+            forReport: opts.forReport ?? null,
+          });
+        if (!paid) return { run: once() };
+        const covering = this.paidRuns.find((e) => [...named].every((n) => e.named.has(n)));
+        if (covering) return { run: covering.run };
+        const last = this.paidRuns.at(-1);
+        const run = last ? last.run.then(once, once) : once();
+        const entry = { run, named };
+        this.paidRuns.push(entry);
+        const clear = () => {
+          this.paidRuns = this.paidRuns.filter((e) => e !== entry);
+        };
+        void run.then(clear, clear);
         return { run };
       },
     );
@@ -840,6 +877,8 @@ export class ModelWatch {
   private async runOnce(opts: {
     signal?: AbortSignal;
     evals?: boolean;
+    models: string[];
+    forReport: string | null;
   }): Promise<ModelWatchRunResult> {
     const { clock, store } = this.deps;
     throwIfStopped(opts.signal);
@@ -885,33 +924,73 @@ export class ModelWatch {
       }
     }
 
-    // 2. Diffs. What is news (ADR 0089): a listed model that is not on the ladder, not in the
-    // provider's baseline (its first listing), and not in the price table this install shipped
-    // with (`deps.pricing`, the built-ins; a row the human or an adopt added does not count).
-    // A provider listed for the first time records its listing as its baseline: none of its
-    // models is news in this run. A run where every listed provider does so is a baseline run:
-    // it runs no eval and asks nothing, whatever the opt-in says.
+    // 2. Diffs. What is news (ADR 0089): a listed model that is not on the ladder and not in the
+    // provider's baseline (its first listing). The price table does not decide it.
+    // A provider without a baseline row on an install that has reports (one from before the
+    // baseline rule) takes the listing of the earliest report that listed it. A provider
+    // never listed before records this run's listing: none of its models is news in this
+    // run. A run where every listed provider does so is a baseline run: it runs no eval and
+    // asks nothing, whatever the opt-in says, unless models are named for evaluation.
     const baselines = await readModelWatchBaselines(store);
+    const seeded = await this.seedBaselinesFromReports(
+      Object.keys(listed).filter((p) => !baselines.has(p)),
+      baselines,
+    );
     const baselineProviders = Object.keys(listed).filter((p) => !baselines.has(p));
+    const named = await this.namedCandidates(opts.models, opts.forReport);
     const baselineRun =
-      baselineProviders.length > 0 && baselineProviders.length === Object.keys(listed).length;
-    const shipped = this.deps.pricing ?? BUILTIN_PRICING;
-    const known = (provider: string, modelId: string): boolean => {
-      const key = canonicalModelId(modelId);
-      if (baselineProviders.includes(provider)) return true;
-      if (baselines.get(provider)?.has(key)) return true;
-      return shipped[key] !== undefined;
-    };
+      named.length === 0 &&
+      baselineProviders.length > 0 &&
+      baselineProviders.length === Object.keys(listed).length;
+    const known = (provider: string, modelId: string): boolean =>
+      baselineProviders.includes(provider) ||
+      (baselines.get(provider)?.has(canonicalModelId(modelId)) ?? false);
     const modelDiff = diffModels(listed, config.ladder, pricing, priceList, known);
     if (baselineRun)
       skipped.push(
         "baseline run: the model listing is recorded; evals and requests start with the next run",
       );
+    // Named candidates: listed, off the ladder, priced; evaluated whether news or not.
+    const forced: ModelDiff["new_models"] = [];
+    for (const name of named) {
+      const slash = name.indexOf("/");
+      const provider = slash > 0 ? name.slice(0, slash) : "";
+      const modelId = slash > 0 ? name.slice(slash + 1) : "";
+      const ref = (listed[provider] ?? []).find(
+        (m) => canonicalModelId(m.id) === canonicalModelId(modelId),
+      );
+      if (!provider || !modelId) {
+        skipped.push(`candidate ${name}: expected provider/model`);
+        continue;
+      }
+      if (!ref) {
+        skipped.push(`candidate ${name}: not listed by ${provider}`);
+        continue;
+      }
+      if (config.ladder.some((r) => r.models[provider] === ref.id)) {
+        skipped.push(`candidate ${name}: already on the ladder`);
+        continue;
+      }
+      if (forced.some((f) => f.provider === provider && f.id === ref.id)) continue;
+      const already = modelDiff.new_models.find((m) => m.provider === provider && m.id === ref.id);
+      const entry =
+        already ?? diffModels({ [provider]: [ref] }, [], pricing, priceList).new_models[0];
+      if (!entry?.priced) {
+        skipped.push(`candidate ${name}: no price (add a pricing.json row or a price list)`);
+        continue;
+      }
+      forced.push(entry);
+    }
+    const forcedNames = forced.map((m) => `${m.provider}/${m.id}`);
+    const candidates = [
+      ...modelDiff.new_models,
+      ...forced.filter((f) => !modelDiff.new_models.includes(f)),
+    ];
     const priceDiff = priceList
       ? diffPrices(pricing, priceList, this.thresholds)
       : { repriced: [], proposal: {} };
     const pricingProposal: Record<string, PricingProposalRow> = { ...priceDiff.proposal };
-    for (const m of modelDiff.new_models) {
+    for (const m of candidates) {
       if (m.price_origin === "price_list" && m.price) {
         pricingProposal[canonicalModelId(m.id)] = {
           input_per_mtok_usd: m.price.input_per_mtok_usd,
@@ -1078,7 +1157,7 @@ export class ModelWatch {
     }
 
     // 3b. Candidates: every priced new model, on every target, against the same rung's model.
-    for (const cand of modelDiff.new_models) {
+    for (const cand of candidates) {
       if (!cand.priced) continue;
       const from = rungModel(cand.tier, cand.provider);
       if (!from) {
@@ -1166,6 +1245,7 @@ export class ModelWatch {
       evals_deferred:
         !evalsAllowed && planned.length ? { reason: EVALS_DEFERRED_REASON, planned } : null,
       baseline_providers: baselineProviders,
+      forced_candidates: forcedNames,
       skipped,
       summary: "",
     });
@@ -1235,7 +1315,11 @@ export class ModelWatch {
       await this.audit("model_watch.baseline", `provider ${provider}`, {
         result: `${listed[provider]?.length ?? 0} model(s) recorded as the baseline`,
       });
+      baselines.set(provider, new Set((listed[provider] ?? []).map((m) => canonicalModelId(m.id))));
     }
+    // A baseline recorded now can make older requests moot: close those it covers.
+    if (seeded.length || baselineProviders.length)
+      await this.closeCoveredRequests(baselines, report.id);
     if (!needsDecision) {
       return { report, release, decision: health.decision, requestId: null, applied: [] };
     }
@@ -1589,6 +1673,102 @@ export class ModelWatch {
       });
     }
     return applied;
+  }
+
+  /**
+   * An install from before the baseline rule has reports and no baseline rows: each provider
+   * missing one takes the listing of the earliest report that listed it without an error.
+   * Adds to `baselines` and returns the providers seeded.
+   */
+  private async seedBaselinesFromReports(
+    missing: string[],
+    baselines: Map<string, Set<string>>,
+  ): Promise<string[]> {
+    if (!missing.length) return [];
+    const rows = await this.deps.store.release.list(
+      { channel: MODEL_WATCH_CHANNEL },
+      { orderBy: "created_at asc", limit: 500 },
+    );
+    const seeded: string[] = [];
+    for (const provider of missing) {
+      for (const row of rows) {
+        let report: ModelWatchReport;
+        try {
+          report = reportFromRelease(row);
+        } catch {
+          continue;
+        }
+        const entry = report.providers.find((p) => p.name === provider && p.error === null);
+        if (!entry) continue;
+        const models = entry.listed.map((m) => ({ provider, id: m.id, tier: m.tier }));
+        await recordModelWatchBaseline(this.deps.store, {
+          provider,
+          models,
+          reportId: report.id,
+          agentId: this.deps.agentId ?? null,
+        });
+        await this.audit("model_watch.baseline", `provider ${provider}`, {
+          result: `${models.length} model(s) seeded from report ${report.id}`,
+        });
+        baselines.set(provider, new Set(models.map((m) => canonicalModelId(m.id))));
+        seeded.push(provider);
+        break;
+      }
+    }
+    return seeded;
+  }
+
+  /** `provider/id` names to evaluate: the given ones, plus the candidates of `forReport`. */
+  private async namedCandidates(models: string[], forReport: string | null): Promise<string[]> {
+    const out = [...models];
+    if (forReport) {
+      const report = reportFromRelease(await this.releaseFor(forReport));
+      for (const p of report.evals_deferred?.planned ?? [])
+        if (p.role === "candidate") out.push(`${p.provider}/${p.model}`);
+      for (const m of report.diff.new_models) if (m.priced) out.push(`${m.provider}/${m.id}`);
+    }
+    return [...new Set(out)];
+  }
+
+  /**
+   * Close every pending report whose only matter was new models that a baseline now holds:
+   * at least one new model, all of them in their provider's baseline, and no recommendation
+   * (a repricing or an eval result stays a question). Its request is withdrawn and the report
+   * marked `nothing_to_decide`.
+   */
+  private async closeCoveredRequests(
+    baselines: Map<string, Set<string>>,
+    currentReportId: string,
+  ): Promise<void> {
+    const { store } = this.deps;
+    const rows = await store.release.list(
+      { channel: MODEL_WATCH_CHANNEL, status: "published" },
+      { orderBy: "created_at desc", limit: 200 },
+    );
+    for (const row of rows) {
+      if (row.release_version === currentReportId) continue;
+      const health = healthOf(row);
+      if (health.decision !== "pending") continue;
+      let report: ModelWatchReport;
+      try {
+        report = reportFromRelease(row);
+      } catch {
+        continue;
+      }
+      const news = report.diff.new_models;
+      if (!news.length || report.recommendations.length) continue;
+      if (!news.every((m) => baselines.get(m.provider)?.has(canonicalModelId(m.id)))) continue;
+      if (health.request_id) {
+        const req = await store.humanRequest.get(health.request_id);
+        if (req?.status === "open") await store.humanRequest.withdraw(req.id, req.version);
+      }
+      await store.release.patch(row.id, {
+        health: { ...health, decision: "nothing_to_decide" } as unknown as JsonValue,
+      });
+      await this.audit("model_watch.decision", `report ${report.id}: closed by the baseline`, {
+        result: "its new models are all in the baseline; request withdrawn",
+      });
+    }
   }
 
   private async releaseFor(reportId: string): Promise<ReleaseRow> {

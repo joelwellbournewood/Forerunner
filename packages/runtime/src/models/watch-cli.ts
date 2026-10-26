@@ -2,6 +2,7 @@
  * `fr models watch` and `fr models report`: run the weekly model watch by hand and read its
  * reports. The orchestrator registers this on the `fr` program with the wired ModelWatch.
  */
+import { ForerunnerError } from "@forerunner/platform";
 import type { Command } from "commander";
 import { formatModelWatchReport, type ModelWatch, type ModelWatchHealth } from "./watch.ts";
 
@@ -30,10 +31,25 @@ export function registerModelWatchCli(
       "run the eval sets on new candidates and lower efforts now (costs money, counts against your caps)",
       false,
     )
-    .action(async (opts: { json: boolean; evals: boolean }) => {
+    .option(
+      "--model <provider/id>",
+      "evaluate this listed model as a candidate even when it is not new (repeatable; needs --evals)",
+      (value: string, prev: string[]) => [...prev, value],
+      [] as string[],
+    )
+    .action(async (opts: { json: boolean; evals: boolean; model: string[] }) => {
       const d = await deps();
       const out = d.out ?? ((line: string) => console.log(line));
-      const r = await d.watch.run(opts.evals ? { evals: true } : {});
+      if (opts.model.length && !opts.evals) {
+        throw new ForerunnerError(
+          "validation",
+          "--model runs paid evals: add --evals (fr models watch --evals --model <provider/id>)",
+          { details: { models: opts.model } },
+        );
+      }
+      const r = await d.watch.run(
+        opts.evals ? { evals: true, ...(opts.model.length ? { models: opts.model } : {}) } : {},
+      );
       if (opts.json) {
         out(
           JSON.stringify(
