@@ -1,6 +1,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { type AppDirs, appDirs, dirname, join, SimulatedClock } from "@forerunner/platform";
+import {
+  type AppDirs,
+  appDirs,
+  currentPlatform,
+  dirname,
+  join,
+  type Platform,
+  SimulatedClock,
+} from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { describe, expect, it } from "vitest";
 import {
@@ -29,11 +37,18 @@ function home(): { dirs: AppDirs; env: NodeJS.ProcessEnv } {
   return { dirs: appDirs({ env }), env };
 }
 
+/**
+ * The OS these tests run on. The fake venv is laid out as the installer lays it out on that OS
+ * (Scripts\python.exe on Windows, bin/python elsewhere), because LocalVoice without a
+ * `platform` looks there; a fixture with one fixed layout passes on one OS only.
+ */
+const HOST: Platform = currentPlatform();
+
 function installed(
   dirs: AppDirs,
   profile: "cpu" | "gpu",
   verified: VoiceSettings["verified"],
-  platform: "linux" | "windows" = "linux",
+  platform: Platform = HOST,
 ): string {
   const venv = voiceDirs(dirs).venv(profile);
   const py = venvPythonPath(venv, platform);
@@ -61,13 +76,13 @@ const ttsCuda = { device: "cuda", computeType: null, fallback: null };
 describe("localVoiceSettings: what the profile means for the helpers", () => {
   it("no voice.json: null (the behaviour from before profiles: any Python, device auto)", () => {
     const { dirs, env } = home();
-    expect(localVoiceSettings({ dirs, env, platform: "linux" })).toBeNull();
+    expect(localVoiceSettings({ dirs, env, platform: HOST })).toBeNull();
   });
 
   it("none: off, with the way to turn it on", () => {
     const { dirs, env } = home();
     writeVoiceSettings(dirs, { version: 1, profile: "none", updatedAt: "2026-10-26T10:00:00Z" });
-    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    const s = localVoiceSettings({ dirs, env, platform: HOST });
     expect(s?.off).toMatch(/voice is off/);
     expect(s?.off).toMatch(/fr voice install --cpu/);
     expect(s?.off).toMatch(/Settings/);
@@ -76,7 +91,7 @@ describe("localVoiceSettings: what the profile means for the helpers", () => {
   it("gpu, verified on cuda: the venv's Python, STT cuda float16 and Kokoro cuda, both with the CPU fallback", () => {
     const { dirs, env } = home();
     const py = installed(dirs, "gpu", { at: "t", stt: cuda, tts: ttsCuda });
-    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    const s = localVoiceSettings({ dirs, env, platform: HOST });
     expect(s).toMatchObject({
       profile: "gpu",
       off: null,
@@ -94,7 +109,7 @@ describe("localVoiceSettings: what the profile means for the helpers", () => {
       stt: { device: "cpu", computeType: "int8", fallback: "cublas64_12.dll not found" },
       tts: ttsCuda,
     });
-    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    const s = localVoiceSettings({ dirs, env, platform: HOST });
     expect(s?.stt).toEqual({ device: "cpu", computeType: "int8", cpuFallback: false });
     expect(s?.tts).toEqual({ device: "cuda", cpuFallback: true });
   });
@@ -106,7 +121,7 @@ describe("localVoiceSettings: what the profile means for the helpers", () => {
       stt: { device: "cpu", computeType: "int8", fallback: null },
       tts: { device: "cpu", computeType: null, fallback: null },
     });
-    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    const s = localVoiceSettings({ dirs, env, platform: HOST });
     expect(s?.stt).toEqual({ device: "cpu", computeType: "int8", cpuFallback: false });
     expect(s?.tts).toEqual({ device: "cpu", cpuFallback: false });
   });
@@ -114,7 +129,7 @@ describe("localVoiceSettings: what the profile means for the helpers", () => {
   it("a profile whose venv is gone: off until it is installed again", () => {
     const { dirs, env } = home();
     writeVoiceSettings(dirs, { version: 1, profile: "gpu", updatedAt: "t" });
-    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    const s = localVoiceSettings({ dirs, env, platform: HOST });
     expect(s?.off).toMatch(/fr voice install --gpu/);
   });
 
@@ -124,7 +139,7 @@ describe("localVoiceSettings: what the profile means for the helpers", () => {
     const s = localVoiceSettings({
       dirs,
       env: { ...env, FORERUNNER_PYTHON: "/opt/py/bin/python" },
-      platform: "linux",
+      platform: HOST,
     });
     expect(s?.python).toBeNull();
     expect(s?.stt.device).toBe("cuda");
@@ -135,9 +150,9 @@ describe("localVoiceSettings: what the profile means for the helpers", () => {
     const withPy = { ...env, FORERUNNER_PYTHON: "/opt/py/bin/python" };
     writeVoiceSettings(dirs, { version: 1, profile: "none", updatedAt: "t" });
     // Not off: the interpreter named by the environment is used, as before profiles.
-    expect(localVoiceSettings({ dirs, env: withPy, platform: "linux" })).toBeNull();
+    expect(localVoiceSettings({ dirs, env: withPy, platform: HOST })).toBeNull();
     writeVoiceSettings(dirs, { version: 1, profile: "gpu", updatedAt: "t" });
-    const gone = localVoiceSettings({ dirs, env: withPy, platform: "linux" });
+    const gone = localVoiceSettings({ dirs, env: withPy, platform: HOST });
     expect(gone?.off).toBeNull();
     expect(gone?.python).toBeNull();
     expect(gone?.stt.device).toBe("cuda");
@@ -429,5 +444,42 @@ describe("LocalVoice: a session's use always ends", () => {
     expect(local.inUse()).toBe(0);
     await fresh.close();
     expect(local.inUse()).toBe(0);
+  });
+});
+
+describe("each OS's venv layout, on every OS", () => {
+  for (const platform of ["windows", "linux"] as const) {
+    it(`${platform}: the helpers run the venv's own interpreter`, async () => {
+      const { dirs, env } = home();
+      const py = installed(dirs, "cpu", cpuVerified, platform);
+      expect(py).toBe(
+        platform === "windows"
+          ? join(voiceDirs(dirs).venv("cpu"), "Scripts", "python.exe")
+          : join(voiceDirs(dirs).venv("cpu"), "bin", "python"),
+      );
+      expect(localVoiceSettings({ dirs, env, platform })?.python).toBe(py);
+      const built: LocalHelperOptions[] = [];
+      const local = new LocalVoice({
+        dirs,
+        env,
+        clock: new SimulatedClock(),
+        platform,
+        factory: (o) => {
+          built.push(o);
+          return trackingFactory().factory(o);
+        },
+      });
+      expect((await local.stt.isAvailable()).ok).toBe(true);
+      expect(built).toHaveLength(1);
+      expect(built[0]?.python).toBe(py);
+    });
+  }
+
+  it("a venv laid out for the other OS is not taken for an installed profile", () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", cpuVerified, "linux");
+    const s = localVoiceSettings({ dirs, env, platform: "windows" });
+    expect(s?.off).toContain(join(voiceDirs(dirs).venv("cpu"), "Scripts", "python.exe"));
+    expect(s?.off).toMatch(/fr voice install --cpu/);
   });
 });
