@@ -17,6 +17,7 @@ import type {
   LatencyTargets,
   ProviderKind,
   ProviderStatus,
+  ReplyMode,
   SelectInput,
   SelectionPolicy,
   SttProvider,
@@ -62,6 +63,8 @@ export interface StartVoiceSessionOptions {
   projectId?: string;
   language?: string;
   mode?: VoiceMode;
+  /** `voice` (default) speaks the replies; `text` streams them as text only (no TTS, no audio). */
+  replyMode?: ReplyMode;
 }
 
 export interface VoiceSessionsDeps {
@@ -187,6 +190,7 @@ export class VoiceSessions {
       ...(opts.projectId ? { projectId: opts.projectId } : {}),
       ...(opts.language ? { language: opts.language } : {}),
       ...(opts.mode ? { mode: opts.mode } : {}),
+      ...(opts.replyMode ? { replyMode: opts.replyMode } : {}),
       stt: picked.stt.provider,
       tts: picked.tts.provider,
       ...(this.deps.sink ? { sink: this.deps.sink(this.deps.clock) } : {}),

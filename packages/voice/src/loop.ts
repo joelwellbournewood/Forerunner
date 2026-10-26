@@ -31,6 +31,12 @@ import { concatPcm, toMono16 } from "./wav.ts";
 
 export type VoiceMode = "push_to_talk" | "open_mic";
 export type VoiceLoopState = "idle" | "listening" | "transcribing" | "thinking" | "speaking";
+/**
+ * How the agent replies: `voice` speaks the reply (sentence-by-sentence TTS); `text` streams it
+ * as text only (`model_delta` and `sentence` events) with no TTS and no audio at all.
+ */
+export type ReplyMode = "voice" | "text";
+export const REPLY_MODES: readonly ReplyMode[] = ["voice", "text"];
 
 /** The conversation agent (runtime) as a stream of text deltas; must stop on `signal`. */
 export type ConverseFn = (transcript: string, signal: AbortSignal) => AsyncIterable<string>;
@@ -65,6 +71,8 @@ export type VoiceLoopEvent =
   | {
       type: "turn_end";
       turn: number;
+      /** How this turn's reply went out (taken when the reply started). */
+      replyMode: ReplyMode;
       latency: LatencyReport;
       /** null when nothing was heard: empty transcript, or cut short before the first chunk. */
       entry: TranscriptEntry | null;
@@ -92,6 +100,11 @@ export interface VoiceLoopOptions {
   language?: string;
   voice?: string;
   speed?: number;
+  /**
+   * `voice` (default) speaks the reply; `text` streams it as text only: no TTS call, no audio,
+   * the turn ends when the text is complete. `setReplyMode()` changes it from the next reply.
+   */
+  replyMode?: ReplyMode;
   /** Speech while the agent talks aborts TTS and the model stream. Default true. */
   bargeIn?: boolean;
   /** How many sentences to synthesise ahead of playback. Default 1. */
@@ -167,12 +180,14 @@ export class VoiceLoop {
   private readonly logger: Logger;
   private readonly store: AudioStore | null;
   private stopped = false;
+  private replyModeValue: ReplyMode;
 
   constructor(private readonly opts: VoiceLoopOptions) {
     this.clock = opts.clock;
     this.logger = log("voice:loop");
     this.vad = opts.vad ?? new EnergyVad();
     this.sink = opts.sink ?? pacedSink(opts.clock, 0);
+    this.replyModeValue = opts.replyMode ?? "voice";
     this.store = opts.storeAudio
       ? new AudioStore({
           ...(opts.audioDir ? { dir: opts.audioDir } : {}),
@@ -188,6 +203,15 @@ export class VoiceLoop {
 
   get currentTurn(): number {
     return this.turn;
+  }
+
+  get replyMode(): ReplyMode {
+    return this.replyModeValue;
+  }
+
+  /** From the next reply on; a reply already under way keeps the mode it started with. */
+  setReplyMode(mode: ReplyMode): void {
+    this.replyModeValue = mode;
   }
 
   /** Resolves once the turn in flight (if any) has ended. */
@@ -479,7 +503,13 @@ export class VoiceLoop {
         this.opts.targets,
       );
       this.latencies.push(latency);
-      this.emit({ type: "turn_end", turn: cap.turn, latency, entry: null });
+      this.emit({
+        type: "turn_end",
+        turn: cap.turn,
+        replyMode: this.replyModeValue,
+        latency,
+        entry: null,
+      });
       if (this.turn === cap.turn && this.stateValue === "transcribing") this.setState("idle");
       return;
     }
@@ -511,7 +541,7 @@ export class VoiceLoop {
       this.opts.targets,
     );
     this.latencies.push(latency);
-    this.emit({ type: "turn_end", turn, latency, entry: null });
+    this.emit({ type: "turn_end", turn, replyMode: this.replyModeValue, latency, entry: null });
     if (this.turn === turn && this.stateValue === "transcribing") this.setState("idle");
   }
 
@@ -532,6 +562,9 @@ export class VoiceLoop {
       abortedBy: null,
     };
     this.response = res;
+    // Taken once: a switch while this reply runs applies from the next one.
+    const replyMode = this.replyModeValue;
+    const speak = replyMode === "voice";
     this.setState("thinking");
 
     const splitter = new SentenceSplitter();
@@ -575,7 +608,8 @@ export class VoiceLoop {
       if (tFirstSentence === null) tFirstSentence = this.clock.monotonic();
       res.sentences.push(text);
       this.emit({ type: "sentence", turn, index, text });
-      sentences.push(text);
+      // A text reply is complete as text: nothing goes to TTS.
+      if (speak) sentences.push(text);
     };
 
     const modelLoop = (async () => {
@@ -596,7 +630,9 @@ export class VoiceLoop {
       }
     })();
 
+    // Text replies run no synthesis and no playback: the TTS is never called (no CPU for it).
     const synthWorker = (async () => {
+      if (!speak) return;
       let index = 0;
       try {
         for await (const text of sentences) {
@@ -634,6 +670,7 @@ export class VoiceLoop {
     })();
 
     const playWorker = (async () => {
+      if (!speak) return;
       for await (const item of ready) {
         if (signal.aborted) break;
         markPlayStarted(item.index);
@@ -710,11 +747,13 @@ export class VoiceLoop {
 
     const cutShort = res.abortedBy !== null;
     const byHuman = res.abortedBy === "barge_in" || res.abortedBy === "stop";
-    const spokenText = res.spoken.join(" ");
+    // A text reply was shown as it was generated: what was generated is what the human got,
+    // and nothing of it was left unspoken. A voice reply counts what was played.
+    const spokenText = speak ? res.spoken.join(" ") : res.generated.trim();
     // From the sentence list, not character offsets: the model may separate sentences with
     // newlines or double spaces, which the spoken text (joined with single spaces) does not keep.
-    const unspokenParts = cutShort ? res.sentences.slice(res.lastPlayedIndex + 1) : [];
-    const rest = cutShort ? splitter.pending.trim() : "";
+    const unspokenParts = cutShort && speak ? res.sentences.slice(res.lastPlayedIndex + 1) : [];
+    const rest = cutShort && speak ? splitter.pending.trim() : "";
     if (rest) unspokenParts.push(rest);
     const unspokenText = unspokenParts.join(" ");
     // No assistant line when nothing was heard: session history must not get an empty entry.
@@ -727,7 +766,7 @@ export class VoiceLoop {
         text: cutShort ? spokenText : res.generated,
         at: this.clock.nowIso(),
         audioStored: false,
-        ...(cutShort ? { interrupted: true, unspokenText } : {}),
+        ...(cutShort ? { interrupted: true, ...(speak ? { unspokenText } : {}) } : {}),
       };
       this.insertTranscript(entry);
       if (this.store && assistantPcm.length > 0) {
@@ -762,6 +801,7 @@ export class VoiceLoop {
     this.emit({
       type: "turn_end",
       turn,
+      replyMode,
       latency,
       entry,
       ...(unspokenText.length > 0 ? { unspokenText } : {}),

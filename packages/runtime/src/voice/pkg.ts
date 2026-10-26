@@ -31,6 +31,8 @@ export {
   type ProviderKind,
   type ProviderStatus,
   pacedSink,
+  REPLY_MODES,
+  type ReplyMode,
   type SelectInput,
   type Selection,
   type SelectionPolicy,

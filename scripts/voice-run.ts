@@ -20,8 +20,11 @@
  *       and the output device are in it). The result is decided on the heard figure when any
  *       counted turn has one, else on the daemon-side figure, and the line says which.
  *       --exclude-first <n> leaves out the first n audio turns of the whole window (all voice
- *       sessions together, in time order; typed turns do not count towards n): one warm-up
- *       per daemon start means passing the number of starts, not 1 per session.
+ *       sessions together, in time order; typed turns and text replies do not count towards
+ *       n): one warm-up per daemon start means passing the number of starts, not 1 per session.
+ *       Turns replied in text (the panel's "Reply: text", `replyMode: "text"` on the row: no
+ *       TTS, no audio) have no first audio and are left out of both figures, and the report
+ *       says how many.
  *       Exit 0 when the median is within the target, 2 when it is not (or no turn was
  *       measured), 1 on a refusal or an error.
  *
@@ -388,6 +391,8 @@ export interface TurnSample {
   voiceSessionId: string | null;
   turn: number | null;
   source: string;
+  /** How the reply went out; rows written before the mode was recorded were spoken. */
+  replyMode: "voice" | "text";
   totalToFirstAudioMs: number | null;
   /** What the human heard, from the row or a later `voice.heard` row of the same turn. */
   heardFirstAudioMs: number | null;
@@ -417,6 +422,7 @@ export function turnSample(e: Pick<EventRow, "created_at" | "payload">): TurnSam
     voiceSessionId: idOf(p.voiceSessionId),
     turn: num(p.turn),
     source: typeof p.source === "string" && /^[a-z_]{1,16}$/.test(p.source) ? p.source : "unknown",
+    replyMode: p.replyMode === "text" ? "text" : "voice",
     totalToFirstAudioMs: num(l.totalToFirstAudioMs),
     heardFirstAudioMs: num(l.heardFirstAudioMs),
     stages,
@@ -571,6 +577,7 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
   const measured: TurnSample[] = [];
   let audioSeen = 0;
   let typed = 0;
+  let textReplies = 0;
   let warmup = 0;
   let unmeasured = 0;
   // Only worth saying per turn when the run has heard figures at all.
@@ -580,6 +587,10 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
     if (s.source !== "audio") {
       typed++;
       note = " [not counted: typed turn]";
+    } else if (s.replyMode === "text") {
+      // Nothing was spoken: no first audio to measure, whatever the row carries.
+      textReplies++;
+      note = " [not counted: text reply, nothing spoken]";
     } else if (audioSeen++ < exclude) {
       warmup++;
       note = " [not counted: warm-up]";
@@ -592,7 +603,7 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
     }
     const stages = STAGES.map((st) => `${st.key}=${ms(s.stages[st.key])}`).join(" ");
     out(
-      `${s.at} turn=${s.turn ?? "-"} source=${s.source} totalToFirstAudioMs=${ms(s.totalToFirstAudioMs)} heardFirstAudioMs=${ms(s.heardFirstAudioMs)} ${stages} within=${s.withinTarget === null ? "-" : s.withinTarget ? "yes" : "no"}${s.interrupted ? " interrupted" : ""}${s.errorCode ? ` error=${s.errorCode}` : ""}${note}`,
+      `${s.at} turn=${s.turn ?? "-"} source=${s.source} totalToFirstAudioMs=${ms(s.totalToFirstAudioMs)} heardFirstAudioMs=${ms(s.heardFirstAudioMs)} ${stages} within=${s.withinTarget === null ? "-" : s.withinTarget ? "yes" : "no"}${s.interrupted ? " interrupted" : ""}${s.replyMode === "text" ? " reply=text" : ""}${s.errorCode ? ` error=${s.errorCode}` : ""}${note}`,
     );
   }
   const target = FIRST_AUDIO_TARGET_MS;
@@ -612,8 +623,12 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
   const heardTurns = measured.filter((s) => s.heardFirstAudioMs !== null);
   const heard = summary(heardTurns.map((s) => s.heardFirstAudioMs as number));
   out(
-    `turns: ${samples.length} in the window; ${measured.length} counted; ${typed} typed, ${warmup} warm-up, ${unmeasured} without first audio left out`,
+    `turns: ${samples.length} in the window; ${measured.length} counted; ${typed} typed, ${textReplies > 0 ? `${textReplies} text ${textReplies === 1 ? "reply" : "replies"}, ` : ""}${warmup} warm-up, ${unmeasured} without first audio left out`,
   );
+  if (textReplies > 0)
+    out(
+      `text replies (reply mode text: no TTS, no audio) have no first audio and are left out of both first-audio figures: ${textReplies}`,
+    );
   out(
     `first audio, daemon-side (totalToFirstAudioMs, measured where the daemon's paced sink takes the first chunk; the SSE hop, decoding, scheduling and the output device come after it): ${daemon.line}`,
   );

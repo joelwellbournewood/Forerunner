@@ -40,6 +40,7 @@ import {
   type LatencyReport,
   type LatencyTargets,
   pacedSink,
+  type ReplyMode,
   type SpokenApprovalRecord,
   type SttProvider,
   spokenApprovalRecord,
@@ -75,6 +76,12 @@ export interface VoiceBridgeOptions {
   language?: string;
   /** Default push-to-talk; open mic runs the loop's VAD on the pushed audio. */
   mode?: VoiceMode;
+  /**
+   * `voice` (default) speaks every reply; `text` streams it as text only: the loop calls no
+   * TTS and plays nothing, the turn ends when the text is complete. `setReplyMode` (or a
+   * press or typed line that names one) changes it from the next reply.
+   */
+  replyMode?: ReplyMode;
   stt: SttProvider;
   tts: TtsProvider;
   /** Playback target; default `pacedSink(clock)` (the shell plays the `audio` events). */
@@ -112,6 +119,8 @@ export interface VoiceApproval extends SpokenApprovalRecord {
 export interface VoiceTurn {
   turn: number;
   source: VoiceTurnSource;
+  /** How the reply went out: spoken (`voice`) or shown as text only (`text`, nothing heard). */
+  replyMode: ReplyMode;
   /** What the human said (the final transcript). */
   said: string;
   /** What the human heard: the assistant transcript line (what was played). */
@@ -183,6 +192,7 @@ export interface VoiceBridgeEntry {
 interface TurnState {
   turn: number;
   source: VoiceTurnSource;
+  replyMode: ReplyMode;
   reply: ChatReply | null;
   approval: VoiceApproval | null;
   outcome: CommandResultView | null;
@@ -248,6 +258,7 @@ export class VoiceBridge {
       clock: opts.clock,
       sink: opts.sink ?? pacedSink(opts.clock),
       ...(opts.language ? { language: opts.language } : {}),
+      ...(opts.replyMode ? { replyMode: opts.replyMode } : {}),
       ...(opts.storeAudio ? { storeAudio: true, sessionId: this.id } : {}),
       ...(opts.audioDir ? { audioDir: join(opts.audioDir, this.id) } : {}),
       ...(opts.env ? { env: opts.env } : {}),
@@ -282,6 +293,17 @@ export class VoiceBridge {
     return this.loop.currentTurn;
   }
 
+  /** How the next reply goes out (the panel's "Reply: voice / text"). */
+  get replyMode(): ReplyMode {
+    return this.loop.replyMode;
+  }
+
+  /** From the next reply on; a reply under way keeps its mode. */
+  setReplyMode(mode: ReplyMode): void {
+    this.assertOpen();
+    this.loop.setReplyMode(mode);
+  }
+
   get ended(): boolean {
     return this.endedAt !== null;
   }
@@ -301,9 +323,14 @@ export class VoiceBridge {
   // -------------------------------------------------------------------------------------
   // Input from the shell
 
-  /** Push-to-talk pressed or released. While the agent speaks a press is the barge-in. */
-  press(pressed: boolean): void {
+  /**
+   * Push-to-talk pressed or released. While the agent speaks (or, replying in text, while it
+   * writes) a press is the barge-in. A `replyMode` sets how this turn's reply and the next ones
+   * go out.
+   */
+  press(pressed: boolean, replyMode?: ReplyMode): void {
     this.assertOpen();
+    if (replyMode) this.loop.setReplyMode(replyMode);
     if (pressed) {
       this.nextSource = "audio";
       this.loop.pressStart();
@@ -323,7 +350,7 @@ export class VoiceBridge {
    * converse port, approval rules, TTS pipeline and rows). Resolves when the turn has ended.
    * Refused while a capture is open or a transcript is awaited.
    */
-  async text(text: string): Promise<VoiceTurn> {
+  async text(text: string, replyMode?: ReplyMode): Promise<VoiceTurn> {
     this.assertOpen();
     const line = text.trim();
     if (!line) throw new ForerunnerError("validation", "text must not be empty");
@@ -331,6 +358,7 @@ export class VoiceBridge {
     if (state === "listening" || state === "transcribing") {
       throw new ForerunnerError("validation", `a voice turn is ${state}; wait for it to end`);
     }
+    if (replyMode) this.loop.setReplyMode(replyMode);
     this.nextSource = "text";
     this.textStt.inject(line);
     this.loop.pressStart();
@@ -414,14 +442,21 @@ export class VoiceBridge {
     const value = Math.round(ms);
     const twice = () =>
       new ForerunnerError("validation", `turn ${turn} already has its heard first audio`);
+    const textReply = () =>
+      new ForerunnerError(
+        "validation",
+        `turn ${turn} was replied in text: nothing was spoken, so nothing was heard`,
+      );
     const st = this.live.get(turn);
     if (st && !st.ended) {
+      if (st.replyMode === "text") throw textReply();
       if (st.heardMs !== null) throw twice();
       st.heardMs = value;
       return { turn, heardFirstAudioMs: value, recordedOn: "voice.turn" };
     }
     const record = this.turns.find((t) => t.turn === turn);
     if (!record) throw new ForerunnerError("not_found", `no voice turn ${turn}`);
+    if (record.replyMode === "text") throw textReply();
     if (record.heardFirstAudioMs !== null) throw twice();
     record.heardFirstAudioMs = value;
     this.chain = this.chain
@@ -527,6 +562,8 @@ export class VoiceBridge {
       st = {
         turn,
         source: "audio",
+        // Until the reply starts: the mode it will go out in (the loop's turn_end confirms it).
+        replyMode: this.loop.replyMode,
         reply: null,
         approval: null,
         outcome: null,
@@ -588,6 +625,7 @@ export class VoiceBridge {
         this.turnState(e.turn).error = e.error;
         break;
       case "turn_end": {
+        this.turnState(e.turn).replyMode = e.replyMode;
         this.record(e);
         this.finish(this.turnState(e.turn), e.latency, e.entry, e.unspokenText);
         return;
@@ -625,6 +663,7 @@ export class VoiceBridge {
     const record: VoiceTurn = {
       turn,
       source: st.source,
+      replyMode: st.replyMode,
       said: user?.text ?? "",
       heard: assistant?.text ?? "",
       reply: st.reply,
@@ -652,6 +691,9 @@ export class VoiceBridge {
           voiceSessionId: this.id,
           turn,
           source: record.source,
+          // A text reply played nothing: no first audio, no heard figure (the run's report and
+          // /performance leave it out of the first-audio figures).
+          replyMode: record.replyMode,
           said: record.said,
           heard: record.heard,
           audioChunks: record.audioChunks,

@@ -64,6 +64,8 @@ async function seedHome(
     heard?: number | null;
     /** A `voice.heard` row right after the turn's row (the player's figure arrived later). */
     heardRow?: number;
+    /** The row's `replyMode`; rows written before it was recorded have none. */
+    replyMode?: "voice" | "text";
   }[],
 ): Promise<Seed> {
   const home = tempHome();
@@ -105,6 +107,7 @@ async function seedHome(
         voiceSessionId: t.vs ?? "vs-1",
         turn: t.turnNo ?? n,
         source: t.source ?? "audio",
+        ...(t.replyMode ? { replyMode: t.replyMode } : {}),
         said: SECRET_SAID,
         heard: SECRET_HEARD,
         unspokenText: `${SECRET_HEARD} unspoken`,
@@ -268,6 +271,38 @@ describe("voice-run report", () => {
     expect(o.text()).toContain("source=text totalToFirstAudioMs=300");
     expect(o.text()).toContain("[not counted: typed turn]");
     expect(o.text()).toContain("4 in the window; 2 counted; 1 typed, 1 warm-up, 0 without");
+  });
+
+  it("leaves text replies out of the first-audio figures (nothing was spoken) and says so", async () => {
+    const { home } = await seedHome([
+      { hoursAgo: 5, total: 900, replyMode: "voice", heard: 1100 },
+      // A text reply has no first audio; a stray figure on its row must not count either.
+      { hoursAgo: 4, total: null, replyMode: "text" },
+      { hoursAgo: 3, total: 400, replyMode: "text", heard: 500 },
+      { hoursAgo: 2, total: 1000, heard: 1200 }, // a row from before the mode was recorded
+    ]);
+    const o = lines();
+    const r = await runReport({
+      env: { FORERUNNER_HOME: home },
+      out: o.out,
+      argv: ["--exclude-first", "1"],
+      clock: clockAt(),
+    });
+    // The warm-up is the first spoken reply; text replies do not count towards it.
+    expect(r).toMatchObject({ basis: "heard", n: 1, median: 1200 });
+    const turnLines = o.all.filter((l) => / turn=\d+ /.test(l));
+    expect(turnLines[0]).not.toContain("reply=text");
+    expect(turnLines[0]).toContain("[not counted: warm-up]");
+    expect(turnLines[1]).toContain("reply=text");
+    expect(turnLines[1]).toContain("[not counted: text reply, nothing spoken]");
+    expect(turnLines[2]).toContain("[not counted: text reply, nothing spoken]");
+    expect(turnLines[3]).not.toContain("reply=text");
+    expect(o.text()).toContain(
+      "4 in the window; 1 counted; 0 typed, 2 text replies, 1 warm-up, 0 without first audio left out",
+    );
+    expect(o.text()).toContain(
+      "text replies (reply mode text: no TTS, no audio) have no first audio and are left out of both first-audio figures: 2",
+    );
   });
 
   it("decides on what the human heard when the player posted it, and prints both figures", async () => {

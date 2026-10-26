@@ -807,6 +807,110 @@ describe("voice routes on the composed daemon", () => {
     expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
   });
 
+  it("reply mode text: the reply streams as text with no TTS and no audio, the row records the mode, nothing is heard", async () => {
+    const refused = await post("/voice/sessions", { projectId, replyMode: "loud" });
+    expect(refused.status).toBe(409);
+    const started = VoiceSessionView.parse(
+      await json(await post("/voice/sessions", { projectId, language: "en", replyMode: "text" })),
+    );
+    expect(started.replyMode).toBe("text");
+    const id = started.id;
+    const ttsBefore = tts.calls.length;
+    const typed = VoiceTurnView.parse(
+      await json(
+        await drive(clock, post(`/voice/sessions/${id}/text`, { text: "What is the status?" })),
+      ),
+    );
+    expect(typed).toMatchObject({
+      replyMode: "text",
+      heard: STATUS_REPLY,
+      audioChunks: 0,
+      interrupted: false,
+      unspokenText: null,
+    });
+    expect(typed.latency).toMatchObject({ firstAudioMs: null, totalToFirstAudioMs: null });
+    expect(typed.latency.modelFirstTokenMs).not.toBeNull();
+    // The TTS was never called: a text reply costs no synthesis.
+    expect(tts.calls).toHaveLength(ttsBefore);
+    const seen = (await events(id)).filter((e) => e.turn === typed.turn);
+    const types = seen.map((e) => e.type);
+    expect(types).toContain("model_delta");
+    expect(types).toContain("sentence");
+    for (const t of ["speaking_start", "speaking_end", "voice.first_audio"])
+      expect(types).not.toContain(t);
+    expect(seen.find((e) => e.type === "turn_end")?.data).toMatchObject({ replyMode: "text" });
+    // The reply's text frames come before the turn's end, in seq order.
+    expect(types.indexOf("model_delta")).toBeLessThan(types.indexOf("turn_end"));
+    const shown = seen
+      .filter((e) => e.type === "model_delta")
+      .map((e) => (e.data as { text: string }).text)
+      .join("");
+    expect(shown).toBe(STATUS_REPLY);
+    const rowOf = async (turn: number) =>
+      (await rt.store.event.list(started.conversationSessionId))
+        .filter((e) => e.type === "voice.turn" && (e.payload as Json).voiceSessionId === id)
+        .map((e) => e.payload as Json)
+        .find((r) => r.turn === turn);
+    expect(await rowOf(typed.turn)).toMatchObject({ replyMode: "text", audioChunks: 0 });
+    // Nothing was spoken, so nothing was heard: a heard figure for the turn is refused.
+    expect(
+      (await post(`/voice/sessions/${id}/heard`, { turn: typed.turn, heardFirstAudioMs: 500 }))
+        .status,
+    ).toBe(409);
+
+    // The press carries the panel's choice: back to voice from this turn on.
+    scripts[stt.sessions.length] = { final: "What is the status?" };
+    const pressed = VoiceSessionView.parse(
+      await json(await post(`/voice/sessions/${id}/press`, { pressed: true, replyMode: "voice" })),
+    );
+    expect(pressed.replyMode).toBe("voice");
+    for (const frame of speechFrames(300)) {
+      clock.tickMonotonic(FRAME_MS);
+      await post(`/voice/sessions/${id}/audio`, {
+        pcm: encodePcm(frame),
+        sampleRate: frame.sampleRate,
+        channels: frame.channels,
+        timestampMs: frame.timestampMs,
+      });
+    }
+    const released = VoiceSessionView.parse(
+      await json(await post(`/voice/sessions/${id}/press`, { pressed: false })),
+    );
+    const spoken = await drive(
+      clock,
+      (async () => {
+        for (;;) {
+          const v = VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`)));
+          if (v.turns >= released.turn && v.state === "idle") return v;
+          await settle(4);
+        }
+      })(),
+    );
+    expect(spoken.lastTurn).toMatchObject({ turn: released.turn, replyMode: "voice" });
+    expect(spoken.lastTurn?.latency.totalToFirstAudioMs).toEqual(expect.any(Number));
+    expect(tts.calls.length).toBeGreaterThan(ttsBefore);
+    await drive(clock, settle(8));
+    expect(await rowOf(released.turn)).toMatchObject({ replyMode: "voice" });
+
+    // The text route takes it too, and the session keeps the last choice.
+    const again = VoiceTurnView.parse(
+      await json(
+        await drive(
+          clock,
+          post(`/voice/sessions/${id}/text`, { text: "Note that.", replyMode: "text" }),
+        ),
+      ),
+    );
+    expect(again.replyMode).toBe("text");
+    expect(VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`))).replyMode).toBe(
+      "text",
+    );
+    expect(
+      (await post(`/voice/sessions/${id}/press`, { pressed: true, replyMode: "loud" })).status,
+    ).toBe(409);
+    expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+  });
+
   it("streams the events over SSE and stops at once", async () => {
     const ac = new AbortController();
     const res = await app.request(`/voice/sessions/${sessionId}/events?token=${token}&afterSeq=0`, {

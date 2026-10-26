@@ -100,6 +100,7 @@ export function voiceTurnView(t: VoiceTurn, chf: number): VoiceTurnView {
   return {
     turn: t.turn,
     source: t.source,
+    replyMode: t.replyMode,
     said: t.said,
     heard: t.heard,
     reply: t.reply ? voiceChatReplyView(t.reply, chf) : null,
@@ -122,6 +123,7 @@ export function voiceSessionView(s: VoiceSession, chf: number): VoiceSessionView
     state: b.state,
     turn: b.currentTurn,
     mode: b.mode,
+    replyMode: b.replyMode,
     language: b.language,
     projectId: b.projectId,
     conversationSessionId: b.sessionId,
@@ -216,6 +218,7 @@ export function voiceEventView(entry: VoiceBridgeEntry, chf: number): VoiceEvent
       return {
         ...base,
         data: {
+          replyMode: e.replyMode,
           latency: voiceLatencyView(e.latency),
           entry: e.entry,
           unspokenText: e.unspokenText ?? null,

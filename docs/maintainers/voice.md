@@ -136,6 +136,32 @@ converse(transcript, signal) ──deltas──▶ SentenceSplitter ──senten
    turn waiting for its final transcript ends without a model call (`turn_end` with
    `entry: null` and latency `interrupted: true`, no `converse()`, no TTS); a reply being
    generated or played is aborted like a barge-in. Input is ignored until `start()`.
+8. **Text frames.** The reply's text is out before its audio: every delta is a `model_delta`
+   event as it arrives, every finished sentence a `sentence` event (`index`, the same index
+   the sentence's `audio` events carry as `sentenceIndex`) before it goes to TTS, and the
+   human's words are `transcript_partial` events while the capture runs and one
+   `transcript_final` before the model is called (`test/loop.test.ts`, "VoiceLoop reply
+   text"). The daemon streams them all, numbered (`seq`); the panel builds its lines from them
+   (`apps.md`).
+
+### Reply in text
+
+`replyMode` (`"voice" | "text"`, default `voice`; `REPLY_MODES`) decides how a reply goes out.
+`setReplyMode()` changes it from the next reply; a reply under way keeps the mode it started
+with (taken once in `respond()`). In `text` the loop runs the model and the sentence splitter
+as usual (the `model_delta` and `sentence` events) but no synthesis and no playback: the TTS
+is never called (no CPU for it, and a local helper is not even started), no `audio`,
+`speaking_start` or `speaking_end` event comes, the state goes `thinking` -> `idle`, and the
+turn ends when the text is complete. The latency report has `modelFirstTokenMs` and no first
+audio (`firstAudioMs`, `totalToFirstAudioMs`, `ttsFirstByteMs` null), so `/performance` (which
+counts voice turns by `totalToFirstAudioMs`) leaves text replies out. A barge-in (a press, or
+open-mic speech) stops the generation, as a typed stop does: the assistant entry keeps what was
+generated (it was shown), `interrupted: true`, no `unspokenText`. `turn_end` carries
+`replyMode`. The daemon's bridge takes the mode at the session start, with every press and
+with a typed line (`POST /voice/sessions`, `…/press`, `…/text` with `replyMode`; the session
+keeps the last one), writes it on the `voice.turn` row and the `VoiceTurnView`, and refuses a
+heard figure for a text turn (409: nothing was spoken). `voice-run report` leaves text replies
+out of both first-audio figures and says how many (below).
 
 ### Latency budget (O.5, D.8)
 
@@ -381,10 +407,10 @@ registry, and the shells talk to it over the daemon's `/voice` routes (`DAEMON_R
 | Step | Route | What happens |
 | --- | --- | --- |
 | Can I talk? | `GET /voice/status` | `VoiceStatusView`: `available` with the STT and TTS provider the registry's policy picked and the reason, or `available: false` with the reason to show (no local helper and no key, or no model credential); every registered provider's status row with its key by reference only |
-| Open | `POST /voice/sessions { projectId?, language?, mode? }` | 201 `VoiceSessionView` (`id`, `conversationSessionId`, providers, `pending`); 503 `unavailable` with the reason when nothing can run |
-| Listen | `GET /voice/sessions/:id/events` with `Accept: text/event-stream` (`?token=` allowed, `?afterSeq=` to resume) | SSE `voice.event` frames (`VoiceEventView`): the loop's `state`, `turn_start`, `transcript_partial`, `transcript_final`, `model_delta`, `sentence`, `audio` (base64 16-bit PCM with `sampleRate`, `channels`: the shell plays it), `speaking_start`, `speaking_end`, `barge_in`, `turn_end`, `error`, plus `voice.first_audio` (first audio with how long after the end of the turn), `voice.readback` (approval needed: the card read back, `pending.id`), `voice.approval` (the decision with the exact line), `voice.answer`, `voice.turn` (done: the turn's record with the latency stages) and `voice.stopped`; `heartbeat` every 15 s. Without the SSE accept header the same route answers the kept frames as JSON (audio frames are never kept) |
-| Speak (push-to-talk) | `POST /voice/sessions/:id/press { pressed: true }`, then one `POST /voice/sessions/:id/audio` per captured chunk (JSON `{ pcm (base64 int16 LE), sampleRate, channels, timestampMs }` or the raw bytes as `application/octet-stream` with `?sampleRate=&channels=&timestampMs=`), then `{ pressed: false }` | the loop's turn: STT, the agent, TTS; a press while the agent speaks is the barge-in. In `open_mic` mode the shell streams audio continuously and never presses |
-| Type (no microphone) | `POST /voice/sessions/:id/text { text }` | the same turn through the same loop (`TextTurnStt`: the line is the final transcript), answered with `VoiceTurnView` once the turn has ended; refused (409) while a capture is open |
+| Open | `POST /voice/sessions { projectId?, language?, mode?, replyMode? }` | 201 `VoiceSessionView` (`id`, `conversationSessionId`, providers, `replyMode`, `pending`); 503 `unavailable` with the reason when nothing can run. `replyMode: "text"`: every reply as text only ("Reply in text") |
+| Listen | `GET /voice/sessions/:id/events` with `Accept: text/event-stream` (`?token=` allowed, `?afterSeq=` to resume) | SSE `voice.event` frames (`VoiceEventView`): the loop's `state`, `turn_start`, `transcript_partial`, `transcript_final`, `model_delta` (`{ text }`, each delta as the model generates it), `sentence` (`{ index, text }`, before its audio), `audio` (base64 16-bit PCM with `sampleRate`, `channels` and the `sentenceIndex` it belongs to: the shell plays it), `speaking_start`, `speaking_end`, `barge_in`, `turn_end` (with `replyMode`, the latency, the `entry` heard and `unspokenText`), `error`, plus `voice.first_audio` (first audio with how long after the end of the turn), `voice.readback` (approval needed: the card read back, `pending.id`), `voice.approval` (the decision with the exact line), `voice.answer`, `voice.turn` (done: the turn's record with the latency stages) and `voice.stopped`; `heartbeat` every 15 s. Without the SSE accept header the same route answers the kept frames as JSON (audio frames are never kept) |
+| Speak (push-to-talk) | `POST /voice/sessions/:id/press { pressed: true, replyMode? }` (the mode applies from this turn's reply and stays), then one `POST /voice/sessions/:id/audio` per captured chunk (JSON `{ pcm (base64 int16 LE), sampleRate, channels, timestampMs }` or the raw bytes as `application/octet-stream` with `?sampleRate=&channels=&timestampMs=`), then `{ pressed: false }` | the loop's turn: STT, the agent, TTS; a press while the agent speaks is the barge-in. In `open_mic` mode the shell streams audio continuously and never presses |
+| Type (no microphone) | `POST /voice/sessions/:id/text { text, replyMode? }` | the same turn through the same loop (`TextTurnStt`: the line is the final transcript), answered with `VoiceTurnView` once the turn has ended; refused (409) while a capture is open |
 | Answer a read-back | say yes or no (a turn), or `POST /voice/sessions/:id/answer { answer: "tap" \| "no" }` | a spoken line is judged by `expectYes`: a yes is confirmed and a plain "no" (no, nope, cancel, nein, non, abbrechen; "stop" too while no work session of the agent runs, but with one running "stop" is the kill switch, spec O.9: the bridge hands it to the conversation agent, which cancels the card and stops the session, review of w3-o9-chat-to-inbox 2026-10-25) cancelled by the bridge through the registry itself with `source: "voice"`, exactly as a tap is, and the registry's sentence is spoken; a refused line (a question, a qualifier, a deferral, a hesitation) repeats the card. A tap confirms as a tap (a medium-risk card; a high-risk card still needs the paired device and the result says so), "no" cancels. The registry's pending list decides whether the card still waits: a card tapped in the UI, answered by email or expired is refused with the reason and forgotten by the session. The decision (`VoiceApprovalView`, the `voice.approval` frame) carries the registry's `status` and `reason`, the turn (`VoiceTurnView`) its `outcome` (the result with the sentence, change log id and undo token), and a `voice.answer` frame carries the same result for a spoken, tapped or cancelled answer |
 | Read | `GET /voice/sessions/:id` | `VoiceSessionView` with `state`, `turn`, `pending`, `lastTurn`, `lastSeq` |
 | Close | `POST /voice/sessions/:id/stop` | immediate in every state (O.9); input is refused afterwards |
@@ -511,6 +537,9 @@ profile (`--profile voice-run`) apart from the everyday install.
    `ttsFirstByteMs`), then n, median (as `medianTotalToFirstAudio`) and p90 (by nearest rank,
    the rule `/performance` uses; `/performance` itself counts typed and warm-up turns too, so
    its p90 is over other turns) of each figure against `MODE_DEFAULTS.voice_chat` (1200 ms),
+   leaving out turns replied in text (`replyMode: "text"` on the row, " reply=text" on its
+   line, "[not counted: text reply, nothing spoken]", and a line with their count; they do not
+   count towards `--exclude-first` either: nothing warmed the TTS),
    the stage medians and
    `VOICE RESULT: n=<n> median=<ms> p90=<ms> target=<ms> <met|not met> (<heard|daemon-side> first audio)`
    (met: the median within the target). The result is decided on the heard figure when any
@@ -567,8 +596,8 @@ device. Two first-audio figures are recorded per turn:
   streamed-vs-whole check.
 - Latency targets: `DEFAULT_LATENCY_TARGETS` in `latency.ts`; the loop accepts `targets` for
   per-project overrides. Changing the stage anchors changes the spec's budget: ADR first.
-- Loop behaviour: `VoiceLoop` options (`mode`, `bargeIn`, `prefetchSentences`, `preRollMs`,
-  `sttFinalTimeoutMs`, `storeAudio`). Every state transition emits a `state` event; add new
+- Loop behaviour: `VoiceLoop` options (`mode`, `replyMode`, `bargeIn`, `prefetchSentences`,
+  `preRollMs`, `sttFinalTimeoutMs`, `storeAudio`). Every state transition emits a `state` event; add new
   events to `VoiceLoopEvent` rather than new callbacks.
 - Helper protocol: `framing.ts` and the docstrings in `python/fr_stt.py` / `fr_tts.py` must
   stay identical; `test/local-helpers.test.ts` runs the Node side against
@@ -576,7 +605,7 @@ device. Two first-audio figures are recorded per turn:
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (187 tests, a few seconds, no network); the
+`pnpm vitest run --project unit packages/voice` (191 tests, a few seconds, no network); the
 speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 `packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
@@ -598,7 +627,7 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/python-device.test.ts` | `setup_cuda_libraries()` on a fake site-packages: Windows `add_dll_directory` and `PATH` for every `nvidia/*/bin`, Linux cuBLAS and the cuDNN loader preloaded, nothing without the wheels; the gpu profile's `--cpu-fallback` (loud, at load when warmed, reported by `resolved_device()`), an explicit cuda without it raising; `fr_tts.py`'s `KokoroEngine` on cuda falling back with the reason, raising without `--cpu-fallback`, `auto` left to Kokoro; the warm-up sentence on cuda falling back loudly when synthesis fails there, the CPU never warmed |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
 | `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it; `drain()` waits for the play-head, at once on the abort or after `stop()` |
-| `test/loop.test.ts` | PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
+| `test/loop.test.ts` | the reply's text before its audio (each `sentence` before its first `audio`, the deltas before that, the final transcript before the model); reply in text: no TTS call, no audio or speaking events, the turn ends with the text, no first audio; a press while the text streams stops the generation and keeps what was shown (no `unspokenText`); `setReplyMode` applies from the next reply; PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
 
 Live validation of the cloud providers is **pending keys** (`docs/status/BLOCKERS.md`, row
 "Voice keys"): the message shapes come from the vendors' public API documentation, not from

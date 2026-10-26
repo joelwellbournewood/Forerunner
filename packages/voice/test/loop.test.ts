@@ -7,6 +7,7 @@ import {
   type ConverseFn,
   PACED_SINK_AHEAD_MS,
   pacedSink,
+  type ReplyMode,
   VoiceLoop,
   type VoiceLoopEvent,
   type VoiceMode,
@@ -38,6 +39,7 @@ interface SetupOptions {
   tts?: TtsProvider;
   sink?: AudioSink;
   clock?: SimulatedClock;
+  replyMode?: ReplyMode;
 }
 
 function setup(o: SetupOptions = {}) {
@@ -73,6 +75,7 @@ function setup(o: SetupOptions = {}) {
     ...(o.sink ? { sink: o.sink } : {}),
     ...(o.storeAudio ? { storeAudio: true, sessionId: "s1" } : {}),
     ...(o.audioDir ? { audioDir: o.audioDir } : {}),
+    ...(o.replyMode ? { replyMode: o.replyMode } : {}),
   });
   loop.start();
   return { clock, stt, tts, events, loop };
@@ -877,5 +880,135 @@ describe("VoiceLoop failures", () => {
     expect(pulled).toBeLessThanOrEqual(2);
     expect(clock.pendingTimers()).toBe(0);
     expect(loop.transcript.filter((e) => e.role === "assistant")).toHaveLength(0);
+  });
+});
+
+describe("VoiceLoop reply text", () => {
+  it("voice replies: each sentence's text is out before its first audio, the deltas before that", async () => {
+    const { clock, loop, events } = setup();
+    pttTurn(loop, clock);
+    await throughFirstAudio(clock);
+    await advanceStepwise(clock, 1500, 50);
+    await loop.idle();
+    const types = typesOf(events);
+    for (const index of [0, 1]) {
+      const sentenceAt = events.findIndex((e) => e.type === "sentence" && e.index === index);
+      const audioAt = events.findIndex((e) => e.type === "audio" && e.sentenceIndex === index);
+      expect(sentenceAt).toBeGreaterThan(-1);
+      expect(sentenceAt).toBeLessThan(audioAt);
+    }
+    expect(types.indexOf("model_delta")).toBeLessThan(types.indexOf("sentence"));
+    expect(events.find((e) => e.type === "transcript_final")).toMatchObject({
+      turn: 1,
+      text: "what is the status",
+    });
+    expect(types.indexOf("transcript_final")).toBeLessThan(types.indexOf("model_delta"));
+    expect(events.find((e) => e.type === "turn_end")).toMatchObject({ replyMode: "voice" });
+  });
+});
+
+describe("VoiceLoop text replies (replyMode: text)", () => {
+  it("streams the reply as text with no TTS and no audio, and ends the turn when the text is complete", async () => {
+    const { clock, loop, events, tts } = setup({ replyMode: "text" });
+    expect(loop.replyMode).toBe("text");
+    pttTurn(loop, clock);
+    await advance(clock, 300); // final transcript
+    await advance(clock, 500); // the model's reply, all at once
+    await settle();
+    await loop.idle();
+    expect(loop.state).toBe("idle");
+    expect(tts.calls).toHaveLength(0);
+    const types = typesOf(events);
+    expect(types).not.toContain("audio");
+    expect(types).not.toContain("speaking_start");
+    expect(types).not.toContain("speaking_end");
+    expect(
+      events.filter((e) => e.type === "state").map((e) => (e.type === "state" ? e.state : "")),
+    ).toEqual(["listening", "transcribing", "thinking", "idle"]);
+    expect(events.filter((e) => e.type === "model_delta").map((e) => e.text)).toEqual([
+      "All good. ",
+      "Two tasks ",
+      "remain.",
+    ]);
+    expect(events.filter((e) => e.type === "sentence").map((e) => e.text)).toEqual([
+      "All good.",
+      "Two tasks remain.",
+    ]);
+    const end = events.find((e) => e.type === "turn_end");
+    expect(end).toMatchObject({
+      turn: 1,
+      replyMode: "text",
+      entry: { role: "assistant", text: "All good. Two tasks remain." },
+    });
+    expect(end?.type === "turn_end" && end.unspokenText).toBeUndefined();
+    const r = loop.latencies[0];
+    expect(r).toMatchObject({
+      modelFirstTokenMs: 500,
+      firstAudioMs: null,
+      totalToFirstAudioMs: null,
+      ttsFirstByteMs: null,
+      interrupted: false,
+      noResponse: false,
+    });
+    // Nothing waits on a TTS or a sink: the turn ended the moment the text did.
+    expect(clock.pendingTimers()).toBe(0);
+  });
+
+  it("a press while the text streams stops generation, as a typed stop does: the shown text is kept", async () => {
+    let seen: AbortSignal | null = null;
+    const { clock, loop, events, tts } = setup({
+      replyMode: "text",
+      scripts: [{ final: "first" }, { final: "second" }],
+      converse: async function* (_t, signal) {
+        seen = signal;
+        yield "All good. ";
+        yield "Two tasks";
+        await clock.sleep(10_000, signal);
+        yield " remain.";
+      },
+    });
+    pttTurn(loop, clock);
+    await advance(clock, 300);
+    await settle();
+    expect(loop.state).toBe("thinking");
+    loop.pressStart();
+    await settle();
+    expect((seen as AbortSignal | null)?.aborted).toBe(true);
+    expect(events.find((e) => e.type === "barge_in")).toMatchObject({ turn: 1 });
+    const end = events.find((e) => e.type === "turn_end");
+    expect(end).toMatchObject({
+      turn: 1,
+      replyMode: "text",
+      entry: { role: "assistant", text: "All good. Two tasks", interrupted: true },
+    });
+    // Nothing was to be spoken: no unspoken part, on the entry or the event.
+    expect(end?.type === "turn_end" && end.unspokenText).toBeUndefined();
+    expect(end?.type === "turn_end" && end.entry?.unspokenText).toBeUndefined();
+    expect(end?.type === "turn_end" && end.latency.interrupted).toBe(true);
+    expect(tts.calls).toHaveLength(0);
+    expect(loop.state).toBe("listening");
+  });
+
+  it("setReplyMode applies from the next reply: a voice turn, then a text turn", async () => {
+    const { clock, loop, events, tts } = setup({
+      scripts: [{ final: "first" }, { final: "second" }],
+    });
+    expect(loop.replyMode).toBe("voice");
+    pttTurn(loop, clock);
+    await throughFirstAudio(clock);
+    // Switching while a voice reply plays leaves that reply alone.
+    loop.setReplyMode("text");
+    await runUntilIdle(loop, clock);
+    const callsAfterFirst = tts.calls.length;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+    pttTurn(loop, clock);
+    await runUntilIdle(loop, clock);
+    expect(tts.calls).toHaveLength(callsAfterFirst);
+    const ends = events.filter((e) => e.type === "turn_end");
+    expect(ends.map((e) => (e.type === "turn_end" ? e.replyMode : null))).toEqual([
+      "voice",
+      "text",
+    ]);
+    expect(events.filter((e) => e.type === "audio" && e.turn === 2)).toHaveLength(0);
   });
 });

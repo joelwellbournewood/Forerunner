@@ -486,7 +486,9 @@ back afterwards. Its test, in the `unit` project, seeds a SQLite store in a temp
 both first-audio figures (the result decided on the heard one when a turn has it, joined from
 a later `voice.heard` row by voice session and turn, and labelled daemon-side otherwise; turns
 without a heard figure named),
-`--since` and the 24 h default, typed and warm-up turns left out, no transcript or error
+`--since` and the 24 h default, typed and warm-up turns left out, text replies
+(`replyMode: "text"` on the row: no TTS, no audio) left out of both first-audio figures and of
+`--exclude-first` with their count printed, no transcript or error
 message in the output, the refusals (no home, a store outside it, a non-SQLite store, no store
 yet), one run as a script through `tsx`, the median and p90 against `medianTotalToFirstAudio`
 and `nearestRank`, and `check` over a stubbed registry and Python probe (both providers

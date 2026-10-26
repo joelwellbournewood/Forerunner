@@ -1152,6 +1152,13 @@ export type ChangeLogView = z.infer<typeof ChangeLogView>;
 export const VOICE_MODES = ["push_to_talk", "open_mic"] as const;
 export type VoiceModeName = (typeof VOICE_MODES)[number];
 export const VOICE_STATES = ["idle", "listening", "transcribing", "thinking", "speaking"] as const;
+/**
+ * How the agent replies in a voice session: `voice` speaks the reply; `text` streams it as text
+ * only (the `model_delta` and `sentence` frames): no TTS, no audio frames, no first audio and no
+ * heard figure; the turn ends when the text is complete and a press stops the generation.
+ */
+export const VOICE_REPLY_MODES = ["voice", "text"] as const;
+export type VoiceReplyModeName = (typeof VOICE_REPLY_MODES)[number];
 
 /** The provider the registry's policy picked, with the reason the Extensions panel shows. */
 export const VoiceProviderView = z.object({
@@ -1234,10 +1241,16 @@ export const StartVoiceSessionBody = z.object({
   /** BCP-47; the spoken approval rules and the providers use it. */
   language: z.string().optional(),
   mode: z.enum(VOICE_MODES).optional(),
+  /** Default `voice`. */
+  replyMode: z.enum(VOICE_REPLY_MODES).optional(),
 });
 export type StartVoiceSessionBody = z.infer<typeof StartVoiceSessionBody>;
 
-export const VoicePressBody = z.object({ pressed: z.boolean() });
+/** `replyMode` sets how this turn's reply (and the next ones) go out; the session keeps it. */
+export const VoicePressBody = z.object({
+  pressed: z.boolean(),
+  replyMode: z.enum(VOICE_REPLY_MODES).optional(),
+});
 export type VoicePressBody = z.infer<typeof VoicePressBody>;
 
 /** Capture rates real devices produce; the loop resamples to 16 kHz, so an absurd rate is refused. */
@@ -1277,7 +1290,10 @@ export const VoiceHeardView = z.object({
 });
 export type VoiceHeardView = z.infer<typeof VoiceHeardView>;
 
-export const VoiceTextBody = z.object({ text: z.string().min(1) });
+export const VoiceTextBody = z.object({
+  text: z.string().min(1),
+  replyMode: z.enum(VOICE_REPLY_MODES).optional(),
+});
 export type VoiceTextBody = z.infer<typeof VoiceTextBody>;
 
 /** The shell's answer to a read-back without speaking: a tap confirms, "no" cancels. */
@@ -1346,6 +1362,8 @@ export type VoiceApprovalView = z.infer<typeof VoiceApprovalView>;
 export const VoiceTurnView = z.object({
   turn: z.number().int(),
   source: z.enum(["audio", "text"]),
+  /** How the reply went out; a `text` reply played nothing (no first audio, nothing heard). */
+  replyMode: z.enum(VOICE_REPLY_MODES),
   /** The final transcript. */
   said: z.string(),
   /** The assistant line that was played. */
@@ -1374,6 +1392,8 @@ export const VoiceSessionView = z.object({
   state: z.enum(VOICE_STATES),
   turn: z.number().int(),
   mode: z.enum(VOICE_MODES),
+  /** How the next reply goes out (`StartVoiceSessionBody`, `VoicePressBody`). */
+  replyMode: z.enum(VOICE_REPLY_MODES),
   language: z.string().nullable(),
   projectId: z.string().nullable(),
   /** The conversation session whose event log holds the chat, the approvals and the turns. */
@@ -1851,21 +1871,21 @@ export const DAEMON_ROUTES = {
   voiceStatus:
     "GET /voice/status (VoiceStatusView: available with the providers picked, or the reason voice is unavailable)",
   startVoiceSession:
-    "POST /voice/sessions { projectId?, language?, mode? } (201 VoiceSessionView; 503 unavailable with the reason when no provider or no model credential is configured)",
+    "POST /voice/sessions { projectId?, language?, mode?, replyMode?: voice|text } (201 VoiceSessionView; replyMode text streams every reply as text only, no TTS and no audio; 503 unavailable with the reason when no provider or no model credential is configured)",
   voiceSession: "GET /voice/sessions/:id (VoiceSessionView)",
   stopVoiceSession: "POST /voice/sessions/:id/stop (VoiceSessionView; immediate in every state)",
   voicePress:
-    "POST /voice/sessions/:id/press { pressed } (push-to-talk press or release; a press while the agent speaks is the barge-in; VoiceSessionView)",
+    "POST /voice/sessions/:id/press { pressed, replyMode?: voice|text } (push-to-talk press or release; a press while the agent speaks or writes is the barge-in; replyMode applies from this turn's reply on; VoiceSessionView)",
   voiceAudio:
     "POST /voice/sessions/:id/audio { pcm (base64 int16 LE), sampleRate, channels, timestampMs } | application/octet-stream ?sampleRate=&channels=&timestampMs= (one captured chunk; VoiceSessionView)",
   voiceText:
-    "POST /voice/sessions/:id/text { text } (the text fallback: one turn through the same loop, approval rules and TTS; VoiceTurnView once the turn has ended, with the registry's outcome when the line answered a card)",
+    "POST /voice/sessions/:id/text { text, replyMode?: voice|text } (the text fallback: one turn through the same loop, approval rules and TTS (none when the reply mode is text); VoiceTurnView once the turn has ended, with the registry's outcome when the line answered a card)",
   voiceAnswer:
     "POST /voice/sessions/:id/answer { answer: tap|no } (answers the read-back without speaking through the registry, which decides and whose status is on the decision; VoiceAnswerView; 404 without a card)",
   voiceHeard:
-    "POST /voice/sessions/:id/heard { turn, heardFirstAudioMs } (the panel's player: push-to-talk release to the first reply chunk at the speaker, on the page's clock; once per turn; on the voice.turn row as latency.heardFirstAudioMs, or a voice.heard row when the row was written; VoiceHeardView; 404 for an unknown turn, 409 for a second figure or a bad one)",
+    "POST /voice/sessions/:id/heard { turn, heardFirstAudioMs } (the panel's player: push-to-talk release to the first reply chunk at the speaker, on the page's clock; once per turn; on the voice.turn row as latency.heardFirstAudioMs, or a voice.heard row when the row was written; VoiceHeardView; 404 for an unknown turn, 409 for a second figure, a bad one or a turn replied in text)",
   voiceEvents:
-    "GET /voice/sessions/:id/events?afterSeq= (JSON VoiceEventView[]; 409 when afterSeq is not a number; a numeric Last-Event-ID header, which an EventSource sends when it reconnects, resumes after the later of the two) | Accept: text/event-stream (SSE voice.event frames: state, transcript, model deltas, sentences, audio, first audio, read-back = approval needed, approval with the registry's status, answer = the registry's result of a spoken, tapped or cancelled answer, turn = done; heartbeat; ?token= accepted)",
+    "GET /voice/sessions/:id/events?afterSeq= (JSON VoiceEventView[]; 409 when afterSeq is not a number; a numeric Last-Event-ID header, which an EventSource sends when it reconnects, resumes after the later of the two) | Accept: text/event-stream (SSE voice.event frames: state, transcript (partial and final), model deltas and sentences (the reply's text as it is generated, before its audio), audio (with the sentence index), first audio, read-back = approval needed, approval with the registry's status, answer = the registry's result of a spoken, tapped or cancelled answer, turn = done; heartbeat; ?token= accepted)",
   speakProject:
     "POST /projects/:id/speak { language? } (201 SpeakView: the one-screen summary read aloud sentence by sentence through the registry's TTS, the text echoed; a new utterance cancels the one in flight; 403 forbidden for another human's project; 503 unavailable with the reason when no TTS provider can run)",
   speakSession:

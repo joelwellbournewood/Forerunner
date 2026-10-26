@@ -1623,7 +1623,7 @@ export function createDaemonApp(
   app.post("/voice/sessions/:id/press", async (c) => {
     const session = rt.voice.mustGet(c.req.param("id"));
     const body = await parse(c, VoicePressBody);
-    session.bridge.press(body.pressed);
+    session.bridge.press(body.pressed, body.replyMode);
     return c.json(voiceSessionView(session, chf()));
   });
 
@@ -1658,7 +1658,7 @@ export function createDaemonApp(
   app.post("/voice/sessions/:id/text", async (c) => {
     const session = rt.voice.mustGet(c.req.param("id"));
     const body = await parse(c, VoiceTextBody);
-    const turn = await session.bridge.text(body.text);
+    const turn = await session.bridge.text(body.text, body.replyMode);
     if (turn.pending || turn.approval) rt.events.emit("inbox", {});
     return c.json(voiceTurnView(turn, chf()));
   });
