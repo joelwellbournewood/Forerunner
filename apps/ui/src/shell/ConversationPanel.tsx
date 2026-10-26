@@ -7,7 +7,7 @@ import {
   type VoiceTurnView,
 } from "../api/client.ts";
 import { Dialog } from "../components/Dialog.tsx";
-import { Badge, Button, INPUT_CLASS } from "../components/ui.tsx";
+import { Badge, Button, INPUT_CLASS, SegmentedControl } from "../components/ui.tsx";
 import type { AudioOutput } from "../lib/speech.ts";
 import { useClient, useIdentity, useRealtime, useUiState, useUiStore } from "../store/context.tsx";
 import type { VoiceReplyMode } from "../store/store.ts";
@@ -40,7 +40,8 @@ import {
  * next one generated so far follows it), the sentence being heard marked (the player's
  * `onSpeaking`, when its first chunk starts at the speaker). When the reply is cut short
  * (a barge-in, a stop) its `turn_end` says what was heard and what was not: the unspoken part
- * is set apart and labelled; a text reply that was stopped says so. The turn's record
+ * stays fully readable, followed by a small muted "not spoken" marker; a text reply that was
+ * stopped says so. The turn's record
  * (`voice.turn`, or the polled session after the release) completes the lines and never adds
  * them twice (the lines of a voice turn are keyed by session and turn).
  *
@@ -52,11 +53,17 @@ import {
  * ended turn in its `recentTurns` is applied, so a turn cut short by a barge-in while the panel
  * waited for it still shows.
  *
- * "Reply in text" (a toggle with `aria-pressed`, remembered per install, default off) is sent
+ * The reply mode ("Reply: [Voice | Text]", a `radiogroup` of two radios with the chosen side
+ * filled; remembered per install, default Voice) is sent
  * with the session start and every press: in text the daemon calls no TTS and plays nothing, the reply streams as text
  * and the turn ends when it is complete. While a reply is generated or spoken Talk stays
  * available: the press is the barge-in (in text it stops the generation, as a typed stop does).
  */
+
+const REPLY_OPTIONS = [
+  { value: "voice", label: "Voice" },
+  { value: "text", label: "Text" },
+] as const satisfies readonly { value: VoiceReplyMode; label: string }[];
 
 export type VoicePhase = "idle" | "starting" | "listening" | "waiting" | "unavailable";
 
@@ -728,19 +735,14 @@ export function ConversationPanel({
               Talk
             </Button>
           )}
-          <Button
-            onClick={() =>
-              uiStore.dispatch({
-                type: "voiceReply",
-                mode: replyMode === "voice" ? "text" : "voice",
-              })
-            }
-            aria-pressed={replyMode === "text"}
-            title="When on, the agent answers what you say in text only, without speech. Applies from your next turn."
-            data-testid="voice-reply-mode"
-          >
-            Reply in text
-          </Button>
+          <SegmentedControl
+            label="Reply"
+            value={replyMode}
+            options={REPLY_OPTIONS}
+            onChange={(mode) => uiStore.dispatch({ type: "voiceReply", mode })}
+            title="Voice: the agent speaks its answer. Text: it answers in text only, without speech. Applies from your next turn."
+            testId="voice-reply-mode"
+          />
         </div>
         {reason ? (
           <output
@@ -813,12 +815,16 @@ function LineText({ line }: { line: Line }) {
       <>
         {line.text ? <span>{line.text}</span> : null}{" "}
         <span
-          className="text-neutral-500"
           data-testid="conversation-unspoken"
           title="Generated but not spoken: you interrupted the reply"
         >
-          <span className="line-through decoration-neutral-400">{line.unspoken}</span>{" "}
-          <span className="text-xs">(not spoken)</span>
+          <span>{line.unspoken}</span>{" "}
+          <span
+            className="whitespace-nowrap rounded bg-neutral-100 px-1 text-[0.7rem] italic text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+            data-testid="conversation-unspoken-marker"
+          >
+            not spoken
+          </span>
         </span>
       </>
     );

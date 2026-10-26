@@ -374,13 +374,20 @@ reply's sentences are heard; announcing them would talk over the TTS; the turn's
 its `turn_start`), every `error` in either mode, the end of each reply ("End of reply.", "Reply
 interrupted; the rest was not spoken.", "Reply stopped.") and a typed chat's reply once it is
 complete. A reply cut short (its `turn_end` carries
-`unspokenText`) shows what was heard, then the unspoken rest struck through and labelled
-"(not spoken)" (`conversation-unspoken`); one stopped with nothing unspoken (a text reply)
+`unspokenText`) shows what was heard, then the unspoken rest (`conversation-unspoken`) in the
+line's normal text, fully readable (no strike-through, no muting: the real-voice run of
+2026-10-26 found struck-through text hard to read), followed by a small muted "not spoken"
+marker (`conversation-unspoken-marker`); the announcer still says "Reply interrupted; the rest
+was not spoken.". One stopped with nothing unspoken (a text reply)
 says "(stopped)". The lines of a voice turn are keyed by session and turn
 (`<session>:<turn>:<role>`): the `voice.turn` frame and the polled record update them and add
-them only when the stream showed nothing (no EventSource). **Reply in text** (the
-`voice-reply-mode` toggle, one fixed label with `aria-pressed`; `UiState.voiceReply`,
-remembered per install like the theme under `STORAGE_NAMES.voiceReply`, default off) is sent
+them only when the stream showed nothing (no EventSource). **The reply mode** ("Reply:
+[Voice | Text]", the `voice-reply-mode` `SegmentedControl` from `components/ui.tsx`: a
+`role="radiogroup"` named "Reply" holding two visually hidden native radios, so one tab stop
+and the arrow keys move the choice; the chosen side is filled blue with `data-checked="true"`
+in both themes; it replaced a "Reply in text" button with `aria-pressed` that did not read as
+a toggle; `UiState.voiceReply`,
+remembered per install like the theme under `STORAGE_NAMES.voiceReply`, default Voice) is sent
 with the session start and with every press; the daemon applies it to the turn the press
 starts (`voice.md`, "Reply in text"). In text nothing
 plays and nothing is measured as heard (no audio frame comes; the release is forgotten at the
@@ -845,7 +852,7 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
 - The text of a voice reply streams in the panel since 2026-10-26 (it used to appear only
   with the polled record, after the reply had been spoken); exercised in jsdom with the fake
   EventSource (`test/voice-playback.test.tsx`, "the reply's text as it comes", "reply in
-  text"), not yet in a real window. The "(not spoken)" split is the daemon's (sentences whose
+  text"), not yet in a real window. The "not spoken" split is the daemon's (sentences whose
   playback started at its sink, `voice.md` "Known issues"), so it can count as spoken a
   sentence the window had not played yet; the `data-speaking` mark follows the window's own
   schedule. A barge-in reaches a reply the daemon still runs; a reply only the window still

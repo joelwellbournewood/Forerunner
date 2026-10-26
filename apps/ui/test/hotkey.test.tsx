@@ -290,7 +290,7 @@ describe("hotkey press: the conversation and a push-to-talk turn", () => {
     expect(started).toHaveLength(1);
     expect(started[0]?.body).toMatchObject({ mode: "push_to_talk" });
     const session = [...harness.daemon.state.voiceSessions.keys()][0] ?? "";
-    // Every press says how the reply goes out (Reply in text is off by default).
+    // Every press says how the reply goes out (the reply mode starts on Voice).
     expect(postedCalls(harness, `/voice/sessions/${session}/press`).map((c) => c.body)).toEqual([
       { pressed: true, replyMode: "voice" },
     ]);

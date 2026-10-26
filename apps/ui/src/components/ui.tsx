@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, useId } from "react";
 import { formatMoney, type MoneyLike, moneyTooltip, percent, spendRatio } from "../lib/money.ts";
 
 /** Small building blocks shared by every page. Tailwind only; no component library. */
@@ -26,6 +26,68 @@ export function Button({
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
   return <button type={type} className={buttonClassName(variant, className)} {...rest} />;
+}
+
+/**
+ * A choice between a few sides that reads as a switch: "Label: [A | B]", the chosen side filled.
+ * Native radios (visually hidden) in a `radiogroup`: one tab stop, arrow keys move the choice,
+ * each side's text is its accessible name. `data-checked` marks the chosen side.
+ */
+export function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  title,
+  testId,
+}: {
+  label: string;
+  value: T;
+  options: readonly { value: T; label: string }[];
+  onChange: (value: T) => void;
+  title?: string;
+  testId?: string;
+}) {
+  const name = useId();
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      title={title}
+      data-testid={testId}
+      className="inline-flex items-center gap-1.5 text-xs"
+    >
+      <span aria-hidden="true" className="font-medium text-neutral-700 dark:text-neutral-300">
+        {label}:
+      </span>
+      <span className="inline-flex rounded-md border border-neutral-300 bg-neutral-100 p-0.5 dark:border-neutral-700 dark:bg-neutral-800">
+        {options.map((o) => {
+          const checked = o.value === value;
+          return (
+            <label
+              key={o.value}
+              data-checked={checked}
+              className={`cursor-pointer select-none rounded px-2.5 py-1 font-medium transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-blue-500 has-[:focus-visible]:ring-offset-1 dark:has-[:focus-visible]:ring-offset-neutral-900 ${
+                checked
+                  ? "bg-blue-600 text-white shadow-sm dark:bg-blue-500"
+                  : "text-neutral-700 hover:bg-white dark:text-neutral-300 dark:hover:bg-neutral-700"
+              }`}
+            >
+              <input
+                type="radio"
+                className="sr-only"
+                name={name}
+                value={o.value}
+                checked={checked}
+                onChange={() => onChange(o.value)}
+              />
+              {o.label}
+            </label>
+          );
+        })}
+      </span>
+    </div>
+  );
 }
 
 export type Tone = "neutral" | "good" | "warn" | "bad" | "info";

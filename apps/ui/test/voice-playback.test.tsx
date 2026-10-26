@@ -788,7 +788,7 @@ describe("voice reply player: the jitter buffer", () => {
  * The reply's text in the panel (the real-audio run of 2026-10-26: the text showed only once
  * the reply had been spoken): the human's words as the STT recognises them, the reply's text
  * as the model generates it (`model_delta`, `sentence`), the sentence being spoken marked, and
- * after a barge-in what was not spoken set apart. And the reply mode: "Reply: text" asks the
+ * after a barge-in what was not spoken marked (readable, not struck through). And the reply mode: "Reply: Text" asks the
  * daemon for text-only replies (no TTS, no audio), is remembered per install, and a Talk press
  * while the text is written stops it.
  */
@@ -865,6 +865,23 @@ describe("conversation panel: the reply's text as it comes", () => {
     const unspoken = within(agentLine()).getByTestId("conversation-unspoken");
     expect(unspoken.textContent).toContain("Two tasks remain.");
     expect(unspoken.textContent).toMatch(/not spoken/i);
+    // The unspoken words stay fully readable (the real-voice run of 2026-10-26: struck-through
+    // text was hard to read): no strike-through, no muted colour, no <s>/<del>.
+    const words = within(unspoken).getByText("Two tasks remain.");
+    const marker = within(unspoken).getByTestId("conversation-unspoken-marker");
+    for (const el of [unspoken, ...unspoken.querySelectorAll("*")]) {
+      expect(el.className).not.toMatch(/line-through/);
+      expect(["S", "DEL", "STRIKE"]).not.toContain(el.tagName);
+      if (el !== marker) expect(el.className).not.toMatch(/text-neutral-|opacity-/);
+    }
+    // A small, muted marker after it says so, apart from the words.
+    expect(marker.textContent).toMatch(/^\s*not spoken\s*$/);
+    expect(marker.contains(words)).toBe(false);
+    expect(words.compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The announcer still says the reply was cut short.
+    expect(screen.getByTestId("conversation-announcer").textContent).toContain(
+      "Reply interrupted; the rest was not spoken.",
+    );
     // What was spoken stays as it was, outside the unspoken part.
     expect(agentLine().textContent).toMatch(/All good\..*Two tasks remain\./);
     expect(
@@ -936,18 +953,54 @@ describe("conversation panel: the reply's text as it comes", () => {
 });
 
 describe("conversation panel: reply in text", () => {
-  const replyToggle = () => screen.getByTestId("voice-reply-mode");
+  // "Reply: [Voice | Text]": a radio group, the chosen side highlighted (the real-voice run of
+  // 2026-10-26: a pressed "Reply in text" button did not read as a toggle).
+  const replyGroup = () => screen.getByTestId("voice-reply-mode");
+  const replyRadio = (name: "Voice" | "Text") =>
+    within(replyGroup()).getByRole("radio", { name }) as HTMLInputElement;
+  const chosen = () =>
+    within(replyGroup())
+      .getAllByRole("radio")
+      .filter((r) => (r as HTMLInputElement).checked)
+      .map((r) => r.getAttribute("value"));
+  const highlighted = () =>
+    [...replyGroup().querySelectorAll("[data-checked=true]")].map((el) => el.textContent);
+
+  it("shows the reply mode as a two-sided Voice | Text choice, operable from the keyboard", async () => {
+    setup();
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId("talk-open"));
+    const group = screen.getByRole("radiogroup", { name: "Reply" });
+    expect(group).toBe(replyGroup());
+    // The visible label and both sides, the current one highlighted.
+    expect(group.textContent).toMatch(/^Reply:?\s*Voice\s*Text$/);
+    expect(within(group).getAllByRole("radio")).toHaveLength(2);
+    expect(chosen()).toEqual(["voice"]);
+    expect(highlighted()).toEqual(["Voice"]);
+    // Arrow keys move the choice (one tab stop for the group).
+    replyRadio("Voice").focus();
+    await user.keyboard("{ArrowRight}");
+    expect(chosen()).toEqual(["text"]);
+    expect(highlighted()).toEqual(["Text"]);
+    expect(document.activeElement).toBe(replyRadio("Text"));
+    await user.keyboard("{ArrowLeft}");
+    expect(chosen()).toEqual(["voice"]);
+    expect(highlighted()).toEqual(["Voice"]);
+    // Tabbing back into the group lands on the chosen side.
+    await user.tab({ shift: true });
+    expect(replyGroup().contains(document.activeElement)).toBe(false);
+    await user.tab();
+    expect(document.activeElement).toBe(replyRadio("Voice"));
+  });
 
   it("asks the daemon for text replies, remembers the choice per install, and shows the reply as text", async () => {
     const h = setup();
     const user = userEvent.setup();
     await user.click(await screen.findByTestId("talk-open"));
-    // One fixed label; the state is aria-pressed.
-    expect(replyToggle().textContent).toBe("Reply in text");
-    expect(replyToggle().getAttribute("aria-pressed")).toBe("false");
-    await user.click(replyToggle());
-    expect(replyToggle().textContent).toBe("Reply in text");
-    expect(replyToggle().getAttribute("aria-pressed")).toBe("true");
+    expect(chosen()).toEqual(["voice"]);
+    await user.click(replyRadio("Text"));
+    expect(chosen()).toEqual(["text"]);
+    expect(highlighted()).toEqual(["Text"]);
     const key = storageKey(h.harness.store.getState().config.installId, "voiceReply");
     expect(h.harness.storage.get(key)).toBe("text");
     await user.click(await screen.findByTestId("voice-talk"));
@@ -978,7 +1031,7 @@ describe("conversation panel: reply in text", () => {
     // Switching back to voice applies from the next press.
     await user.click(screen.getByTestId("voice-send"));
     await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Press/));
-    await user.click(replyToggle());
+    await user.click(replyRadio("Voice"));
     expect(h.harness.storage.get(key)).toBe("voice");
     await user.click(screen.getByTestId("voice-talk"));
     await waitFor(() =>
@@ -1010,14 +1063,15 @@ describe("conversation panel: reply in text", () => {
     );
     const user = userEvent.setup();
     await user.click(await screen.findByTestId("talk-open"));
-    expect(replyToggle().getAttribute("aria-pressed")).toBe("true");
+    expect(chosen()).toEqual(["text"]);
+    expect(highlighted()).toEqual(["Text"]);
   });
 
   it("Talk while the text is written stops it, as a typed stop does: the line says it stopped", async () => {
     const h = setup();
     const user = userEvent.setup();
     await user.click(await screen.findByTestId("talk-open"));
-    await user.click(replyToggle());
+    await user.click(replyRadio("Text"));
     await user.click(await screen.findByTestId("voice-talk"));
     await waitFor(() =>
       expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
