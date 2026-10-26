@@ -142,7 +142,6 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 - `fr update manifest --version <v>` wrote no manifest: the program's own `--version` took the
   flag (rc.2's publish job, run 40243511397). Program options now count only before a
   subcommand.
-
 - The release workflow's publish job downloads only the build artefacts (the Docker build
   record failed rc.1's run), `SHA256SUMS.txt` covers the signed manifest and never lists
   itself, and the broken manual dispatch trigger is gone.
