@@ -7,7 +7,7 @@ import {
   type PricingTable,
   parsePricingOverrides,
 } from "@forerunner/billing";
-import { join, SimulatedClock } from "@forerunner/platform";
+import { ForerunnerError, join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FAKE_MODELS, FakeProvider, type ScriptedReply } from "@forerunner/testenv";
 import { Command } from "commander";
@@ -34,6 +34,7 @@ import {
   diffModels,
   diffPrices,
   type EvalObservation,
+  type EvalRunInput,
   type EvalRunnerPort,
   isModelWatchRequest,
   MODEL_WATCH_AGENT_ID,
@@ -43,6 +44,7 @@ import {
   type ModelWatchApprovalOutcome,
   type ModelWatchApprovalPort,
   type ModelWatchApprovalRequest,
+  type ModelWatchEvalsRequestedEvent,
   ModelWatchReportSchema,
   recommendLowerEffort,
   recommendSwitch,
@@ -59,7 +61,7 @@ import type {
   ModelRequest,
   ModelResponse,
 } from "../src/provider/types.ts";
-import { Scheduler, type StartRequest } from "../src/session/triggers.ts";
+import { memoryFiredKeys, Scheduler, type StartRequest } from "../src/session/triggers.ts";
 
 // ---------------------------------------------------------------------------------------
 // Fixtures
@@ -295,9 +297,17 @@ function watchFor(
     thresholds?: Partial<typeof DEFAULT_WATCH_THRESHOLDS>;
     evals?: EvalRunnerPort;
     onAdopted?: (event: ModelWatchAdoptedEvent) => void | Promise<void>;
+    /** The human's opt-in to paid evals. The eval maths tests opt in; the consent tests do not. */
+    autoEvals?: (() => boolean) | null;
+    onEvalsRequested?: (event: ModelWatchEvalsRequestedEvent) => void | Promise<void>;
+    signal?: AbortSignal;
   } = {},
 ): ModelWatch {
+  const autoEvals = over.autoEvals === undefined ? () => true : over.autoEvals;
   return new ModelWatch({
+    ...(autoEvals ? { autoEvals } : {}),
+    ...(over.onEvalsRequested ? { onEvalsRequested: over.onEvalsRequested } : {}),
+    ...(over.signal ? { signal: over.signal } : {}),
     clock: w.clock,
     store: w.store,
     providers: w.registry,
@@ -665,6 +675,7 @@ describe("model watch: evals through the evals runner on the fake provider", () 
       pricing: PRICING,
       evalTargets: [{ specialist: "coder", mode: "coder" }],
       evalProvider: "fake",
+      autoEvals: () => true,
     });
     const r = await watch.run();
     expect(r.report.providers.find((p) => p.name === "broken")?.error).toBe("boom");
@@ -1071,6 +1082,182 @@ describe("model watch: weekly trigger", () => {
     await clock.advance(1 * 24 * 60 * 60_000);
     await scheduler.tick();
     expect(started).toHaveLength(2);
+  });
+
+  it("a daemon restarted within the week does not run the watch again: the last run is kept in the fired store", async () => {
+    // 2026-10-26: two short daemon sessions on a fresh install each ran the watch at their
+    // first tick, because the weekly schedule's last run lived only in process memory.
+    const clock = new SimulatedClock("2026-10-26T00:40:00Z");
+    const fired = memoryFiredKeys();
+    const started: StartRequest[] = [];
+    const boot = () => {
+      const s = new Scheduler(
+        { clock, fired, start: async (req) => void started.push(req) },
+        60_000,
+      );
+      scheduleModelWatch(s, { timezone: "Europe/Zurich" });
+      return s;
+    };
+    await boot().tick();
+    expect(started).toHaveLength(1);
+    await clock.advance(90 * 60_000);
+    await boot().tick();
+    expect(started).toHaveLength(1);
+    await clock.advance(3 * 24 * 60 * 60_000);
+    await boot().tick();
+    expect(started).toHaveLength(1);
+    await clock.advance(4 * 24 * 60 * 60_000);
+    const again = boot();
+    await again.tick();
+    expect(started).toHaveLength(2);
+    // Once fired in this process, the in-memory mark still applies.
+    await again.tick();
+    expect(started).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Paid evals need the human's consent (ADR 0089; the 2026-10-26 fresh-install incident)
+// ---------------------------------------------------------------------------------------
+
+/** An eval runner that records its calls and never spends anything. */
+class CountingEvals implements EvalRunnerPort {
+  readonly calls: EvalRunInput[] = [];
+  constructor(private readonly onRun?: (input: EvalRunInput, n: number) => Promise<void> | void) {}
+  async run(input: EvalRunInput) {
+    this.calls.push(input);
+    await this.onRun?.(input, this.calls.length);
+    return {
+      total: 4,
+      passed: 4,
+      failed: 0,
+      needsModel: 0,
+      passRate: 1,
+      costUsdMicro: 1000,
+      durationMs: 1,
+    };
+  }
+}
+
+describe("model watch: paid evals need the human's consent", () => {
+  it("by default (no opt-in) a run checks lists and prices, runs no eval and puts the planned evals to the human", async () => {
+    const w = await make();
+    const evals = new CountingEvals();
+    const approvals = new FakeApprovals({ status: "pending", requestId: "hr-1" });
+    const r = await watchFor(w, { evals, approvals, autoEvals: null }).run();
+    expect(evals.calls).toHaveLength(0);
+    expect(w.provider.calls).toHaveLength(0);
+    expect(r.report.evals).toEqual([]);
+    expect(r.report.eval_cost_usd_micro).toBe(0);
+    // The free part still works: the diff, the repricing proposal and the decision request.
+    expect(r.report.diff.new_models.map((m) => m.id)).toContain("fake-sonnet-6");
+    expect(r.report.recommendations.map((x) => x.kind)).toEqual(["reprice"]);
+    expect(r.report.evals_deferred?.reason).toMatch(/consent/);
+    const planned = r.report.evals_deferred?.planned ?? [];
+    expect(planned.map((p) => `${p.role}:${p.model}@${p.effort}`)).toEqual([
+      "baseline:fake-sonnet@medium",
+      "lower_effort:fake-sonnet@low",
+      "candidate:fake-sonnet-6@medium",
+    ]);
+    expect(r.decision).toBe("pending");
+    expect(approvals.requests[0]?.options).toEqual(["adopt", "evaluate", "ignore", "remind"]);
+    expect(approvals.requests[0]?.steps.join("\n")).toMatch(/Evaluations not run/);
+    expect(ModelWatchReportSchema.safeParse(r.report).success).toBe(true);
+  });
+
+  it("an opt-in setting that is off stays off; an explicit run({ evals: true }) runs them", async () => {
+    const w = await make();
+    const evals = new CountingEvals();
+    const watch = watchFor(w, { evals, autoEvals: () => false });
+    await watch.run();
+    expect(evals.calls).toHaveLength(0);
+    const r = await watch.run({ evals: true });
+    expect(evals.calls.length).toBe(3);
+    expect(r.report.evals_deferred).toBeNull();
+    expect(r.report.evals.every((e) => e.skipped_reason === null)).toBe(true);
+  });
+
+  it("a report with nothing new and evals withheld asks nothing (no weekly nag for lower-effort probes)", async () => {
+    const w = await make({ listed: [...FAKE_MODELS] });
+    const evals = new CountingEvals();
+    const approvals = new FakeApprovals({ status: "pending", requestId: "hr-1" });
+    const r = await watchFor(w, {
+      evals,
+      approvals,
+      autoEvals: null,
+      priceList: { as_of: "2026-10-19", models: {} },
+    }).run();
+    expect(evals.calls).toHaveLength(0);
+    expect(r.decision).toBe("nothing_to_decide");
+    expect(approvals.requests).toHaveLength(0);
+  });
+
+  it("'evaluate' writes nothing and asks the daemon to run the evals; so does 'adopt' on a report whose evals were withheld", async () => {
+    const w = await make();
+    const requested: ModelWatchEvalsRequestedEvent[] = [];
+    const watch = watchFor(w, {
+      evals: new CountingEvals(),
+      autoEvals: null,
+      onEvalsRequested: (ev) => void requested.push(ev),
+    });
+    const first = await watch.run();
+    const ev = await watch.resolve(first.report.id, { decision: "evaluate", by: w.human });
+    expect(ev.decision).toBe("evaluate");
+    expect(ev.applied).toEqual([]);
+    expect(w.settings.writes).toEqual({ pricing: 0, models: 0 });
+    expect(requested).toEqual([{ reportId: first.report.id, by: w.human }]);
+    await expect(watch.resolve(first.report.id, { decision: "evaluate" })).rejects.toMatchObject({
+      code: "approval_required",
+    });
+
+    const second = await watch.run();
+    const adopted = await watch.resolve(second.report.id, { decision: "adopt", by: w.human });
+    expect(adopted.decision).toBe("adopted");
+    expect(w.settings.writes.pricing).toBe(1);
+    expect(requested.map((r) => r.reportId)).toEqual([first.report.id, second.report.id]);
+  });
+
+  it("reads 'evaluate' and 'run evaluations' answers from the inbox", () => {
+    const row = (answer: unknown) =>
+      ({ answer, answered_by: "h1" }) as unknown as Parameters<typeof answerFromHumanRequest>[0];
+    expect(answerFromHumanRequest(row("evaluate"))).toEqual({ decision: "evaluate", by: "h1" });
+    expect(answerFromHumanRequest(row("Run evaluations"))).toEqual({
+      decision: "evaluate",
+      by: "h1",
+    });
+    expect(answerFromHumanRequest(row({ decision: "run evals" }))).toEqual({
+      decision: "evaluate",
+      by: "h1",
+    });
+  });
+
+  it("a cap stop ends the run's evals: no later eval reaches the runner", async () => {
+    const w = await make();
+    const evals = new CountingEvals(() => {
+      throw new ForerunnerError("budget_exceeded", "month cap reached");
+    });
+    const r = await watchFor(w, { evals }).run();
+    expect(evals.calls).toHaveLength(1);
+    expect(r.report.evals.map((e) => e.skipped_reason?.split(":")[0])).toEqual([
+      "budget_exceeded",
+      "budget_exceeded",
+      "budget_exceeded",
+    ]);
+  });
+
+  it("an abort (daemon stopping) ends the run: no eval starts after it and run() rejects", async () => {
+    const w = await make();
+    const stop = new AbortController();
+    const evals = new CountingEvals((input) => {
+      expect(input.signal?.aborted).toBe(false);
+      stop.abort(new ForerunnerError("killed", "daemon stopping"));
+    });
+    const watch = watchFor(w, { evals, signal: stop.signal });
+    await expect(watch.run()).rejects.toMatchObject({ code: "killed" });
+    expect(evals.calls).toHaveLength(1);
+    await watch.settled();
+    const rows = await w.store.release.list({ channel: MODEL_WATCH_CHANNEL }, { limit: 10 });
+    expect(rows).toHaveLength(0);
   });
 });
 

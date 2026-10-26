@@ -88,6 +88,12 @@ export interface RunRequest {
   /** The human's own channel: survives scoped and global stops. */
   protected?: boolean;
   /**
+   * The caller's stop (the model watch's evals when the daemon shuts down, ADR 0089): an abort
+   * ends the run like the kill switch does (`killed`), and a signal already aborted makes no
+   * model call at all.
+   */
+  signal?: AbortSignal;
+  /**
    * Session-scoped context pipeline (ADR 0003): tool results are compressed in the live zone
    * before they join the transcript, by a compressor this run begins on it (cross-turn
    * references never leave the run). Default: a run-private pipeline with the default settings.
@@ -229,6 +235,11 @@ export class LoopAgentDriver {
       () => controller.abort(new ForerunnerError("timeout", "run timeout")),
       req.timeoutMs,
     );
+    const outer = req.signal;
+    const onOuterAbort = () =>
+      controller.abort(new ForerunnerError("killed", "run stopped by its caller"));
+    if (outer?.aborted) onOuterAbort();
+    else outer?.addEventListener("abort", onOuterAbort, { once: true });
 
     // The model the run's records name: the fast-mode variant when the run asks for it.
     const recordedModel = req.speed === "fast" ? fastModeVariantId(req.model) : req.model;
@@ -288,6 +299,8 @@ export class LoopAgentDriver {
           outcome = "max_turns";
           break;
         }
+        // Stopped between calls (the caller's signal, the kill switch, the timeout): no new call.
+        if (controller.signal.aborted) throw controller.signal.reason;
         const inputTokens = req.provider.countTokens(
           req.system + JSON.stringify(messages) + JSON.stringify(toolDefs),
         );
@@ -515,6 +528,7 @@ export class LoopAgentDriver {
         this.logger.error("run failed", { runId: claims.runId, error: error.message });
     } finally {
       cancelTimeout();
+      outer?.removeEventListener("abort", onOuterAbort);
       unregister();
     }
     emit({ type: "run_end", outcome, costUsdMicro: cost, steps: modelCalls + toolCalls });

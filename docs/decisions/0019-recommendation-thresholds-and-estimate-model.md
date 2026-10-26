@@ -121,3 +121,11 @@ Review of the first build found two things the decision above left implicit.
   between a run's end and the critic closing the task, and a window of ids is a few kilobytes.
   The snapshot format moved to version 2 (`folded` carries the finish time); nothing had
   persisted version 1.
+
+## Amendment 2026-10-26: the eval budget bounds a run the human consented to
+
+ADR 0089 changes when the evals run, not the thresholds. A watch run makes no paid eval
+unless the human consented to it: an explicit "run evaluations", an `evaluate` or `adopt`
+answer on a report whose evals were withheld, or the opt-in setting `model_watch.run_evals`
+(default off). The 5 USD `evalBudgetUsdMicro` now caps that consented run. The consequence
+above ("roughly 20 USD a month") holds only for an install that turned the opt-in on.

@@ -1668,6 +1668,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           ].slice(0, r.recommendations)
         : [],
     skipped: [],
+    // A pending report withheld its paid evals (ADR 0089), as the daemon's default run does.
+    evals_deferred:
+      r.decision === "pending"
+        ? {
+            reason: "paid evals need the human's consent",
+            planned: [{ specialist: "coder", model: "sonnet-5.5", effort: "medium" }],
+          }
+        : null,
   });
   const reportHealth = (r: ModelWatchReportSummary) => ({
     decision: r.decision,
@@ -1713,11 +1721,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const r = state.modelWatchReports.find((x) => x.id === c.req.param("id"));
     if (!r) return errorBody(c, 404, "not_found", "no such report");
     const body = (await c.req.json()) as { decision?: string; adopt?: string[]; by?: string };
-    if (!body.by || !["adopt", "ignore", "remind"].includes(body.decision ?? "")) {
+    if (!body.by || !["adopt", "evaluate", "ignore", "remind"].includes(body.decision ?? "")) {
       return errorBody(c, 400, "validation", "answer body is malformed");
     }
     r.decision =
-      body.decision === "adopt" ? "adopted" : body.decision === "ignore" ? "ignored" : "remind";
+      body.decision === "adopt"
+        ? "adopted"
+        : body.decision === "ignore"
+          ? "ignored"
+          : body.decision === "evaluate"
+            ? "evaluate"
+            : "remind";
     r.decided_at = new Date().toISOString();
     r.status = "resolved";
     return c.json({

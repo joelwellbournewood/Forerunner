@@ -464,6 +464,13 @@ export function UpdatesPage() {
                 ))}
               </ul>
             ) : null}
+            {report.evals_deferred ? (
+              <p className="mt-2 text-xs text-neutral-500" data-testid="model-watch-deferred">
+                Evaluations not run: {report.evals_deferred.planned.length} eval set run(s) would
+                cost money and count against your caps. Run evaluations to measure them, or turn on
+                the model_watch run_evals setting.
+              </p>
+            ) : null}
             {health?.decision === "pending" ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button
@@ -474,6 +481,15 @@ export function UpdatesPage() {
                 >
                   Adopt selected
                 </Button>
+                {report.evals_deferred ? (
+                  <Button
+                    disabled={busy !== null}
+                    onClick={() => answer("evaluate")}
+                    data-testid="model-watch-evaluate"
+                  >
+                    Run evaluations
+                  </Button>
+                ) : null}
                 <Button
                   disabled={busy !== null}
                   onClick={() => answer("ignore")}

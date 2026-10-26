@@ -143,6 +143,42 @@ describe("agent loop", () => {
     expect(res.outcome).toBe("killed");
   });
 
+  it("is stopped by the caller's signal mid-run and reports killed; a signal already aborted makes no call", async () => {
+    const h = harness();
+    const provider = new ScriptedProvider(
+      Array.from({ length: 20 }, () => ({
+        ttftMs: 100,
+        tools: [{ name: "echo", input: { text: "again" } }],
+      })),
+      h.clock,
+    );
+    const stop = new AbortController();
+    const run = (signal: AbortSignal) =>
+      driver(h).run({
+        token: issue(h),
+        budget: budget("sess-1", 5_000_000, h.clock),
+        provider,
+        model: "fake-haiku",
+        billingSourceId: "bs",
+        system: "s",
+        messages: [{ role: "user", content: "loop" }],
+        tools: registry(),
+        pricing: flatPricing,
+        timeoutMs: 60_000,
+        signal,
+      });
+    const p = run(stop.signal);
+    await h.clock.advance(250);
+    stop.abort(new Error("daemon stopping"));
+    await h.clock.advance(1000);
+    const res = await p;
+    expect(res.outcome).toBe("killed");
+    const calls = provider.calls.length;
+    const again = await run(stop.signal);
+    expect(again.outcome).toBe("killed");
+    expect(provider.calls.length).toBe(calls);
+  });
+
   it("a call the kill switch cuts off keeps the input tokens its message_start reported in the run's usage and cost", async () => {
     // The Anthropic adapter's shape for a killed call: message_start with the input side of the
     // bill, a first chunk, then `error: aborted` once the signal fires (no message_end).

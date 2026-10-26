@@ -22,13 +22,18 @@ export function registerModelWatchCli(
   models
     .command("watch")
     .description(
-      "Run the model watch now: list provider models, check prices, run the eval sets on new candidates and lower efforts, propose changes",
+      "Run the model watch now: list provider models, check prices and propose changes. The eval sets (paid model calls) run only with --evals or the model_watch run_evals setting",
     )
     .option("--json", "print the report as JSON", false)
-    .action(async (opts: { json: boolean }) => {
+    .option(
+      "--evals",
+      "run the eval sets on new candidates and lower efforts now (costs money, counts against your caps)",
+      false,
+    )
+    .action(async (opts: { json: boolean; evals: boolean }) => {
       const d = await deps();
       const out = d.out ?? ((line: string) => console.log(line));
-      const r = await d.watch.run();
+      const r = await d.watch.run(opts.evals ? { evals: true } : {});
       if (opts.json) {
         out(
           JSON.stringify(

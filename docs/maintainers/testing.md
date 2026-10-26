@@ -1073,7 +1073,9 @@ install: `ListingProvider` over the world's gated provider lists the four fake m
 `fake-sonnet-6` (sonnet tier), `FixturePriceListSource` prices it at half the sonnet rung,
 `WATCH_PRICING` adds the fake models' rows to the built-in table, `StateModelWatchApprovals`
 opens the decision in J's inbox, `FileModelSettingsStore` writes under the install's config
-directory, the eval runner is `evalRunnerOnWorld`: `runEvalSet` over the registry's first four
+directory, `autoEvals: () => true` because Alice's install has opted in to the weekly paid
+evals (`model_watch.run_evals`, ADR 0089; without it the scheduled run is the free check),
+the eval runner is `evalRunnerOnWorld`: `runEvalSet` over the registry's first four
 coder tasks with a driver that asks the provider `model-watch eval <task> at <effort>` and
 writes the task's reference solution on PASS, so the real checks (node on the files) grade
 it and the cost is the usage priced (any answer but PASS or FAIL, such as a bare

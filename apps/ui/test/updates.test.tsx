@@ -138,6 +138,27 @@ describe("Updates screen", () => {
     );
   });
 
+  it("a report whose paid evals were withheld says so and offers Run evaluations, which answers 'evaluate'", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/updates", harness);
+    const latest = await screen.findByTestId("model-watch-latest");
+    expect(within(latest).getByTestId("model-watch-deferred")).toHaveTextContent(
+      "Evaluations not run",
+    );
+    await user.click(screen.getByTestId("model-watch-evaluate"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/model-watch/reports/mw_2/answer")).toHaveLength(1),
+    );
+    expect(postedCalls(harness, "/model-watch/reports/mw_2/answer")[0]?.body).toEqual({
+      decision: "evaluate",
+      by: "human_alice",
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("model-watch-latest")).toHaveAttribute("data-decision", "evaluate"),
+    );
+  });
+
   it("shows the daemon's feed error when the check answers 200 with lastError", async () => {
     const user = userEvent.setup();
     renderApp("/updates", createHarness({ updatesCheckError: "feed unreachable: ETIMEDOUT" }));

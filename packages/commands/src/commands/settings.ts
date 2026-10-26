@@ -61,6 +61,16 @@ export const CalibrationSetting = z.object({
   tier: z.number().int().min(1).max(3).optional(),
   specialists: z.array(z.string().min(1)).optional(),
 });
+/**
+ * The model watch's consent settings (ADR 0089), global in `human.notify_prefs.model_watch`;
+ * the daemon reads them at every run. Both default off.
+ */
+export const ModelWatchSetting = z
+  .object({
+    run_evals: z.boolean().optional(),
+    allow_process_sandbox: z.boolean().optional(),
+  })
+  .strict();
 export const HandoverSetting = z.object({
   ...MonthlyJobFields,
   enabled: z.boolean(),
@@ -222,6 +232,24 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
       return v.enabled === false
         ? "the critic is no longer graded against the eval sets each month"
         : `the critic grades the eval sets on day ${v.day ?? 1} at ${v.time ?? "06:00"} each month`;
+    },
+  },
+  model_watch: {
+    key: "model_watch",
+    label: "the model watch evals",
+    scope: "global",
+    risk: "medium",
+    schema: ModelWatchSetting as unknown as z.ZodType<JsonValue>,
+    description:
+      "Model watch (ADR 0089): run_evals runs the paid eval sets on every weekly run without asking (default off); allow_process_sandbox lets eval tasks run commands in the process stand-in when no container engine exists (default off).",
+    effect: (value) => {
+      const v = (value ?? {}) as { run_evals?: boolean; allow_process_sandbox?: boolean };
+      const evals = v.run_evals
+        ? "the model watch runs its eval sets every week without asking; the spend counts against your caps"
+        : "the model watch checks models and prices only and asks before any paid eval";
+      return v.allow_process_sandbox
+        ? `${evals}, and eval commands may run in the process sandbox when no container engine exists`
+        : evals;
     },
   },
   handover: {

@@ -426,6 +426,35 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("settings.set model_watch: the opt-in to paid model watch evals is the human's, stored in notify_prefs, and undoable", async () => {
+    const w = await world();
+    const on = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "model_watch", value: { run_evals: true } },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    expect(on.sentence).toContain("the model watch runs its eval sets every week");
+    expect(on.sentence).toContain("counts against your caps");
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs.model_watch).toEqual({
+      run_evals: true,
+    });
+    done(await w.executor.undo(on.changeLogId, w.ctx()));
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs.model_watch).toBeUndefined();
+    const bad = refused(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "model_watch", value: { run_evals: "yes" } },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    expect(bad.code).toBe("validation");
+    await w.store.close();
+  });
+
   it("settings.set refuses prototype keys as unknown settings, not as internal errors", async () => {
     const w = await world();
     for (const key of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {

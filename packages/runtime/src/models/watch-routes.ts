@@ -15,11 +15,17 @@ export interface ModelWatchRoutesDeps {
 
 export const ModelWatchAnswerBody = z
   .object({
-    decision: z.enum(["adopt", "ignore", "remind"]),
+    decision: z.enum(["adopt", "evaluate", "ignore", "remind"]),
     adopt: z.array(z.string().min(1)).optional(),
     by: z.string().min(1),
   })
   .strict();
+
+/**
+ * `POST /run`: `evals: true` is the human's explicit "run evaluations" (ADR 0089); without it
+ * the run makes no paid eval unless the human's `model_watch.run_evals` setting is on.
+ */
+export const ModelWatchRunBody = z.object({ evals: z.boolean().optional() }).strict();
 
 function errorBody(e: unknown): {
   code: string;
@@ -59,7 +65,21 @@ export function createModelWatchRoutes(deps: ModelWatchRoutesDeps): Hono {
   });
 
   app.post("/run", async (c) => {
-    const r = await deps.watch.run();
+    const raw = await c.req.text();
+    const parsed = ModelWatchRunBody.safeParse(raw.trim() ? safeJson(raw) : {});
+    if (!parsed.success) {
+      return c.json(
+        {
+          code: "validation",
+          message: "run body is malformed",
+          details: { issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) },
+        },
+        400,
+      );
+    }
+    const r = await deps.watch.run(
+      parsed.data.evals === undefined ? {} : { evals: parsed.data.evals },
+    );
     return c.json({
       report: r.report,
       decision: r.decision,
@@ -87,4 +107,12 @@ export function createModelWatchRoutes(deps: ModelWatchRoutesDeps): Hono {
   app.post("/sync", async (c) => c.json({ resolved: await deps.watch.syncPendingAnswers() }));
 
   return app;
+}
+
+function safeJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }

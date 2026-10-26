@@ -231,7 +231,8 @@ describe("model settings wired into the daemon", () => {
   }, 60_000);
 
   it("the model watch proposes the cheaper sonnet and the lower effort; the human adopts; the next session uses both without a restart", async () => {
-    const result = await rt.modelWatch.run();
+    // The human's explicit "run evaluations" (ADR 0089): without it the run makes no paid eval.
+    const result = await rt.modelWatch.run({ evals: true });
     const kinds = result.report.recommendations.map((r) => r.kind);
     expect(kinds).toContain("switch_model");
     expect(kinds).toContain("lower_effort");

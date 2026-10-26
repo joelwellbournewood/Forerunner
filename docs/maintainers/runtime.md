@@ -184,6 +184,11 @@ for each tool use: `beforeToolCall` → execute with per-tool timeout → `after
 `completed`, `timeout` (partial text kept), `budget_exceeded`, `step_cap_exceeded`, `killed`,
 `needs_human` (approval pending), `max_turns`, `error`. Events stream to the live session view.
 
+`RunRequest.signal` is the caller's stop (ADR 0089: the model watch's evals when the daemon
+closes). Its abort aborts the run's own controller as the kill switch does, so the run ends
+`killed`. The loop also checks the controller before every turn, so a run whose signal is
+already aborted makes no model call. `test/loop.test.ts` covers both cases.
+
 Two options let a run that ends on one recorded answer stay inside a tight budget (the
 critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call-cap.test.ts`):
 - `ToolResult.endRun`: a tool result (not an error) that sets it ends the run after that turn's
@@ -664,7 +669,10 @@ month instead of running at once; seen before or on its day, it is recorded as s
 the catch-up applies. The last fired day or
 month of every schedule lives in a `FiredKeys` store: in memory by default, `fileFiredKeys`
 (`<data dir>/scheduler-fired.json`) in the daemon, so a restart after the due time does not run
-a day's or a month's job twice. `SchedulerDeps.refresh` runs before every tick (an error is
+a day's or a month's job twice. An `every` schedule fires at the first tick of a process unless
+it sets `persist: true`: then the time of its last firing is kept in the same store (an ISO
+timestamp under the schedule id) and a restarted daemon waits out the rest of the interval
+(the weekly model watch, ADR 0089). `SchedulerDeps.refresh` runs before every tick (an error is
 logged, never fatal): the daemon re-reads the settings that decide the monthly jobs' schedules
 there, so a change by any route, command or device applies at the next tick. `state-ports.ts` adapts
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and

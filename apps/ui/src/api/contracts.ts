@@ -258,9 +258,14 @@ export const ModelWatchReportDetail = z.looseObject({
   summary: z.string(),
   recommendations: z.array(z.looseObject({ id: z.string(), kind: z.string(), text: z.string() })),
   skipped: z.array(z.string()).default([]),
+  /** Paid evals the run withheld for want of the human's consent (ADR 0089). */
+  evals_deferred: z
+    .looseObject({ reason: z.string(), planned: z.array(z.unknown()) })
+    .nullable()
+    .default(null),
 });
 export const ModelWatchHealthView = z.looseObject({
-  decision: z.enum(["pending", "nothing_to_decide", "adopted", "ignored", "remind"]),
+  decision: z.enum(["pending", "nothing_to_decide", "adopted", "evaluate", "ignored", "remind"]),
   request_id: z.string().nullable(),
   decided_at: z.string().nullable(),
   by: z.string().nullable(),
@@ -282,7 +287,7 @@ export const ModelWatchRunView = z.looseObject({
 export type ModelWatchRunView = z.infer<typeof ModelWatchRunView>;
 
 export interface ModelWatchAnswerInput {
-  decision: "adopt" | "ignore" | "remind";
+  decision: "adopt" | "evaluate" | "ignore" | "remind";
   adopt?: string[];
   by: string;
 }

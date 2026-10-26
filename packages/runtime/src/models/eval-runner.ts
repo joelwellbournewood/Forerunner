@@ -17,6 +17,7 @@ import type { LoopAgentDriver } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { renderBrief, validateBrief } from "../brief.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
+import type { CapsPort } from "../enforcement/ports.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import type { ProviderRegistry } from "../provider/registry.ts";
 import type { Registry } from "../registry/index.ts";
@@ -180,6 +181,20 @@ export interface LoopEvalRunnerDeps {
    * is not offered to the model and command checks count as errors; nothing executes on the host.
    */
   sandbox?: RunSandboxPort;
+  /**
+   * Whether a task may run in the process stand-in (`engine: "process"`, no container engine
+   * on the machine). Absent or false: such a lease is refused before any model call and the
+   * whole eval set ends `not_supported` (ADR 0089). The daemon reads the human's
+   * `model_watch.allow_process_sandbox` setting (default off).
+   */
+  allowProcessSandbox?: () => boolean | Promise<boolean>;
+  /**
+   * The human's outer caps (the daemon's `DynamicCaps`): checked before every eval task with
+   * the task's budget as the estimate. Anything but "allow" (the month past its 80% line, or
+   * at its cap) starts no further task: the set ends `budget_exceeded`. Each model call is
+   * still checked by the hooks as any run's.
+   */
+  caps?: CapsPort;
   /** Upper bound on tasks per eval set (cost and time); default: the whole set. */
   maxTasks?: number;
   keepWorkDirs?: boolean;
@@ -230,7 +245,21 @@ export class LoopEvalRunner implements EvalRunnerPort {
     const counts = { total: tasks.length, passed: 0, failed: 0, needsModel: 0 };
     let cost = 0;
     for (const task of tasks) {
-      input.signal?.throwIfAborted();
+      if (input.signal?.aborted) throw stopped(input.signal);
+      if (this.deps.caps) {
+        const outer = await this.deps.caps.check(
+          { humanId: this.deps.humanId },
+          task.brief.budgetUsdMicro,
+          { phase: "work" },
+        );
+        if (outer.decision !== "allow") {
+          throw new ForerunnerError(
+            "budget_exceeded",
+            `model watch eval ${task.id} not started: ${outer.message ?? `${outer.level ?? "a"} cap reached`}`,
+            { details: { level: outer.level, decision: outer.decision, task: task.id } },
+          );
+        }
+      }
       const workDir = resolve(
         join(
           this.deps.workRoot,
@@ -286,6 +315,13 @@ export class LoopEvalRunner implements EvalRunnerPort {
             signal: input.signal ?? new AbortController().signal,
           });
           for (const w of lease.warnings) this.logger.warn(w, { task: task.id });
+          if (lease.engine === "process" && (await this.deps.allowProcessSandbox?.()) !== true) {
+            throw new ForerunnerError(
+              "not_supported",
+              `eval ${task.id} needs a container sandbox and only the process stand-in is available; set model_watch.allow_process_sandbox to run evals there`,
+              { details: { reason: PROCESS_SANDBOX_REFUSED, task: task.id } },
+            );
+          }
           if (wantsCommands) tools = withSandboxedCommands(tools, lease.sandbox);
         }
         const runId = newId(clock.now());
@@ -330,15 +366,26 @@ export class LoopEvalRunner implements EvalRunnerPort {
           // Evals measure the model, not the context layer: results stay byte-identical.
           compression: "off",
           label: `eval ${task.id} on ${input.model} at ${input.effort}`,
+          ...(input.signal ? { signal: input.signal } : {}),
         });
         cost += result.costUsdMicro;
+        if (input.signal?.aborted) throw stopped(input.signal);
+        // A cap stop or a kill ends the set, not just the task.
+        if (result.outcome === "budget_exceeded" || result.outcome === "killed") {
+          throw new ForerunnerError(
+            result.outcome,
+            `eval ${task.id} ended ${result.outcome}: ${result.error?.message ?? ""}`.trim(),
+            { details: { task: task.id } },
+          );
+        }
         if (task.grader_files) writeFiles(workDir, task.grader_files);
         status =
           result.outcome === "completed" || result.outcome === "max_turns"
             ? await this.grade(task.checks, workDir, result.finalText, lease)
             : "error";
       } catch (e) {
-        if (e instanceof ForerunnerError && isFatal(e.code)) throw e;
+        if (e instanceof ForerunnerError && (isFatal(e.code) || isRefusal(e))) throw e;
+        if (input.signal?.aborted) throw stopped(input.signal);
         this.logger.warn("eval task failed to run", { task: task.id, error: errorMessage(e) });
         status = "error";
       } finally {
@@ -481,4 +528,16 @@ function pointer(doc: unknown, p: string): { exists: boolean; value?: unknown } 
 
 function isFatal(code: string): boolean {
   return code === "killed" || code === "budget_exceeded";
+}
+
+/** `details.reason` of the refusal to run an eval task in the process stand-in. */
+export const PROCESS_SANDBOX_REFUSED = "process_sandbox_not_allowed";
+
+function isRefusal(e: ForerunnerError): boolean {
+  return e.details?.reason === PROCESS_SANDBOX_REFUSED;
+}
+
+function stopped(signal: AbortSignal): ForerunnerError {
+  const r: unknown = signal.reason;
+  return r instanceof ForerunnerError ? r : new ForerunnerError("killed", "eval run stopped");
 }

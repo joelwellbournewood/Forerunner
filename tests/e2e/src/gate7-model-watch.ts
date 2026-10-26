@@ -361,6 +361,9 @@ export function scenarioModelWatch(
     pricing: WATCH_PRICING,
     evalTargets: [{ specialist: "coder", mode: "coder" }],
     evalProvider: world.gated.name,
+    // Alice's install has opted in to the weekly paid evals (`model_watch.run_evals`, ADR
+    // 0089); without it the scheduled run is the free check and the gate's clause has no data.
+    autoEvals: () => true,
     ...(opts.thresholds ? { thresholds: opts.thresholds } : {}),
     onAdopted: (ev) => {
       adopted.push(ev);

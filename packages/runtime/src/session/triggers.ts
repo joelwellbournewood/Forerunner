@@ -21,6 +21,12 @@ export interface Schedule {
   everyMinutes?: number;
   /** 1 to 31 for "monthly"; a day past the month's end fires on its last day. Default 1. */
   dayOfMonth?: number;
+  /**
+   * "every" only: keep the time of the last firing in the `fired` store (an ISO timestamp), so
+   * a restarted daemon waits out the rest of the interval instead of firing at its first tick.
+   * The weekly model watch sets it (ADR 0089): one boot a day must not mean one run a day.
+   */
+  persist?: boolean;
   timezone: string;
   enabled: boolean;
 }
@@ -188,7 +194,10 @@ export interface StartEntry extends SchedulerLogEntry {
 
 export class Scheduler {
   private readonly schedules = new Map<string, Schedule>();
-  /** Last fired day (daily, weekdays) or month (monthly) per schedule id. */
+  /**
+   * Last fired day (daily, weekdays) or month (monthly) per schedule id, and the last firing
+   * time of an "every" schedule with `persist`.
+   */
   private readonly fired: FiredKeys;
   private readonly lastEvery = new Map<string, number>();
   private readonly active = new Set<string>();
@@ -247,9 +256,10 @@ export class Scheduler {
     for (const s of this.schedules.values()) {
       if (!s.enabled) continue;
       if (s.kind === "every") {
-        const last = this.lastEvery.get(s.id) ?? Number.NEGATIVE_INFINITY;
+        const last = this.lastEvery.get(s.id) ?? this.persistedEvery(s);
         if (now - last >= (s.everyMinutes ?? 60) * 60_000) {
           this.lastEvery.set(s.id, now);
+          if (s.persist) this.fired.set(s.id, new Date(now).toISOString());
           await this.request({
             agentId: s.agentId,
             projectId: s.projectId,
@@ -362,6 +372,14 @@ export class Scheduler {
         if (this.activeStarts.get(req.agentId) === entry) this.activeStarts.delete(req.agentId);
       });
     return entry;
+  }
+
+  /** The persisted last firing of an "every" schedule; never fired (or unreadable) is -Infinity. */
+  private persistedEvery(s: Schedule): number {
+    if (!s.persist) return Number.NEGATIVE_INFINITY;
+    const raw = this.fired.get(s.id);
+    const at = raw ? Date.parse(raw) : Number.NaN;
+    return Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
   }
 
   isActive(agentId: string): boolean {

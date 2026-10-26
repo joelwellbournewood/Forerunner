@@ -252,20 +252,58 @@ describe("daemon wiring", () => {
     expect(denied.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("model watch runs on the fake provider through the daemon: a report with evals, a repricing and a decision in the inbox", async () => {
+  it("model watch on a fresh install runs no paid eval: lists and prices only, the planned evals put to the human", async () => {
+    const spentBefore = (await rt.store.costLedger.sum({ humanId: rt.human.id })).usd_micro;
     const run = await post("/model-watch/run", {});
+    expect(run.status).toBe(200);
+    const body = await json(run);
+    const report = body.report as Json;
+    expect(report.evals).toEqual([]);
+    expect(num(report.eval_cost_usd_micro)).toBe(0);
+    expect((report.evals_deferred as Json).reason).toMatch(/consent/);
+    const repriced = (report.diff as Json).repriced as Json[];
+    expect(repriced.map((r) => r.model)).toContain("claude-haiku-5-5");
+    expect(body.decision).toBe("pending");
+    const request = (await openRequests()).find(
+      (r) => (r.change_card as { key?: string } | null)?.key === `model_watch:${str(report.id)}`,
+    );
+    expect(request).toMatchObject({
+      kind: "decision",
+      options: ["adopt", "evaluate", "ignore", "remind"],
+    });
+    expect((await rt.store.costLedger.sum({ humanId: rt.human.id })).usd_micro).toBe(spentBefore);
+    const audits = await rt.store.auditLog.list({ tool: "model_watch.eval" } as never, {
+      limit: 500,
+    });
+    expect(audits).toHaveLength(0);
+    // The report is closed by the human's answer elsewhere; ignore it here.
+    const ignored = await post(`/model-watch/reports/${str(report.id)}/answer`, {
+      decision: "ignore",
+      by: rt.human.id,
+    });
+    expect(ignored.status).toBe(200);
+  });
+
+  it("model watch runs on the fake provider through the daemon when asked to evaluate: a report with evals, a repricing and a decision in the inbox; coder tasks are refused the process sandbox", async () => {
+    const run = await post("/model-watch/run", { evals: true });
     expect(run.status).toBe(200);
     const body = await json(run);
     const report = body.report as Json;
     expect(body.decision).toBe("pending");
     expect(typeof body.requestId).toBe("string");
     expect(report.price_list).toMatchObject({ models: 1, error: null });
+    expect(report.evals_deferred).toBeNull();
     const repriced = (report.diff as Json).repriced as Json[];
     expect(repriced.map((r) => r.model)).toContain("claude-haiku-5-5");
     const evals = report.evals as Json[];
     expect(evals.length).toBeGreaterThan(0);
     const ran = evals.filter((e) => e.skipped_reason === null && num(e.total) > 0);
     expect(ran.length).toBeGreaterThan(0);
+    expect(ran.every((e) => e.specialist === "researcher")).toBe(true);
+    // No container engine here, and the human has not allowed the process stand-in for evals.
+    const coder = evals.filter((e) => e.specialist === "coder");
+    expect(coder.length).toBeGreaterThan(0);
+    for (const e of coder) expect(str(e.skipped_reason)).toMatch(/^not_supported: .*process/);
     expect(num(report.eval_cost_usd_micro)).toBeGreaterThan(0);
     const request = (await openRequests()).find(
       (r) => (r.change_card as { key?: string } | null)?.key === `model_watch:${str(report.id)}`,
@@ -277,7 +315,7 @@ describe("daemon wiring", () => {
     const audits = await rt.store.auditLog.list({ tool: "model_watch.eval" } as never, {
       limit: 500,
     });
-    expect(audits.length).toBe(evals.length);
+    expect(audits.length).toBe(ran.length);
   });
 
   it("the updates screen lists the app release from the fake feed, the connector update and the model watch entries", async () => {
@@ -674,6 +712,112 @@ describe("daemon wiring", () => {
     expect(bare.offered).not.toContain("run_command");
     expect(sandboxes).toHaveLength(1);
     expect(existsSync(outside)).toBe(false);
+  });
+
+  it("model watch evals never run a coder task in the process stand-in unless the human allowed it; the lease is refused before any model call", async () => {
+    const pricing = await loadPricing(join(dirs.config, "pricing.json"));
+    const destroyed: boolean[] = [];
+    const processPort: RunSandboxPort = {
+      open: async (r) => {
+        const s = new FakeSandbox({ worktree: r.worktree });
+        const destroy = s.destroy.bind(s);
+        s.destroy = async () => {
+          destroyed.push(true);
+          await destroy();
+        };
+        return {
+          sandbox: s,
+          engine: "process",
+          warnings: ["sandbox: process (no container engine)"],
+        };
+      },
+    };
+    const runCoder = async (allow: boolean | undefined) => {
+      const provider = new ScriptedProvider([{ text: "done" }], clock);
+      const runner = new LoopEvalRunner({
+        registry: rt.registry,
+        driver: rt.driver,
+        providers: new ProviderRegistry().register(provider),
+        tokens: rt.tokens,
+        clock,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        billingSourceId: rt.billingSourceId,
+        workRoot: join(home, "eval-work-process"),
+        tools: () => fileTools(),
+        sandbox: processPort,
+        ...(allow === undefined ? {} : { allowProcessSandbox: () => allow }),
+        maxTasks: 2,
+      });
+      const run = runner.run({
+        specialist: "coder",
+        provider: "fake",
+        model: "fake-haiku",
+        effort: "low",
+        pricing,
+      });
+      return { run, provider };
+    };
+    for (const allow of [undefined, false]) {
+      const { run, provider } = await runCoder(allow);
+      await expect(run).rejects.toMatchObject({
+        code: "not_supported",
+        details: { reason: "process_sandbox_not_allowed" },
+      });
+      expect(provider.calls).toHaveLength(0);
+    }
+    expect(destroyed).toHaveLength(2);
+    const allowed = await runCoder(true);
+    const outcome = await allowed.run;
+    expect(outcome.total).toBe(2);
+    expect(allowed.provider.calls.length).toBeGreaterThan(0);
+  });
+
+  it("model watch evals count against the human's monthly cap: the spend lands in the human's month, and a month at 80% starts no eval task", async () => {
+    const pricing = await loadPricing(join(dirs.config, "pricing.json"));
+    const runner = (provider: ScriptedProvider) =>
+      new LoopEvalRunner({
+        registry: rt.registry,
+        driver: rt.driver,
+        providers: new ProviderRegistry().register(provider),
+        tokens: rt.tokens,
+        clock,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        billingSourceId: rt.billingSourceId,
+        workRoot: join(home, "eval-work-caps"),
+        tools: () => fileTools(),
+        caps: rt.caps,
+        maxTasks: 2,
+      });
+    const input = {
+      specialist: "researcher",
+      provider: "fake",
+      model: "fake-haiku",
+      effort: "low" as const,
+      pricing,
+    };
+    const human = await rt.store.human.mustGet(rt.human.id);
+    const before = (await rt.store.costLedger.sum({ humanId: rt.human.id })).usd_micro;
+    const first = new ScriptedProvider([{ text: "done" }], clock);
+    const out = await runner(first).run(input);
+    expect(out.costUsdMicro).toBeGreaterThan(0);
+    const after = (await rt.store.costLedger.sum({ humanId: rt.human.id })).usd_micro;
+    expect(after - before).toBe(out.costUsdMicro);
+
+    // The month cap just below what is spent: the hooks' 80% line is crossed, nothing new starts.
+    await rt.store.human.patch(human.id, { monthly_cap_usd_micro: Math.ceil(after / 0.85) });
+    await clock.advance(61_000); // past the caps cache
+    try {
+      const second = new ScriptedProvider([{ text: "done" }], clock);
+      await expect(runner(second).run(input)).rejects.toMatchObject({ code: "budget_exceeded" });
+      expect(second.calls).toHaveLength(0);
+    } finally {
+      await rt.store.human.patch(human.id, {
+        monthly_cap_usd_micro: human.monthly_cap_usd_micro,
+      });
+      await clock.advance(61_000);
+    }
   });
 
   it("registers fr update, fr models and fr mirror on the program and runs a model watch report through it", async () => {

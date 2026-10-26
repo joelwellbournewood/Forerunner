@@ -115,6 +115,12 @@ the injected `Clock` (`resetSandboxEngineCache()` for tests or after an install)
 It returns `warnings[]` for the session log: the process-sandbox warning (see below) and a note
 when the image fell back to the local default.
 
+The model watch's eval runner (`LoopEvalRunner`, ADR 0089) goes further than the tier rule. An
+eval lease the port answers with `engine: "process"` is refused before any model call, at any
+tier, unless the human's `model_watch.allow_process_sandbox` setting is on. The refusal is
+`not_supported` with `details.reason: "process_sandbox_not_allowed"`, and the lease is
+destroyed. The factory has already logged its warning by then. See `model-watch.md`.
+
 ### Engines per OS
 
 | OS | Engine | Egress route | Notes |

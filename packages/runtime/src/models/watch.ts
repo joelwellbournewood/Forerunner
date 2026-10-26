@@ -53,6 +53,29 @@ const logger = log("model-watch");
 export const MODEL_WATCH_CHANNEL = "model_watch";
 export const MODEL_WATCH_AGENT_ID = "model-watch";
 export const MODEL_WATCH_SCHEDULE_ID = "model-watch-weekly";
+/** The human's model watch settings live under this key of `human.notify_prefs` (ADR 0089). */
+export const MODEL_WATCH_SETTINGS_KEY = "model_watch";
+
+export interface ModelWatchSettings {
+  /** Run the paid evals on every scheduled or manual run without asking. Default off. */
+  runEvals: boolean;
+  /** Let eval tasks that run commands use the process stand-in when no container engine exists. Default off. */
+  allowProcessSandbox: boolean;
+}
+
+/** The human's model watch settings; anything missing or malformed is off. */
+export function modelWatchSettingsOf(prefs: unknown): ModelWatchSettings {
+  const raw =
+    prefs && typeof prefs === "object" && !Array.isArray(prefs)
+      ? (prefs as Record<string, unknown>)[MODEL_WATCH_SETTINGS_KEY]
+      : undefined;
+  const s =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  return {
+    runEvals: s.run_evals === true,
+    allowProcessSandbox: s.allow_process_sandbox === true,
+  };
+}
 export const WEEK_MINUTES = 7 * 24 * 60;
 
 // ---------------------------------------------------------------------------------------
@@ -138,13 +161,17 @@ export interface EvalRunnerPort {
   run(input: EvalRunInput): Promise<EvalRunOutcome>;
 }
 
-export type ModelWatchDecision = "adopt" | "ignore" | "remind";
+/**
+ * "evaluate" is the human's consent to the paid evals a report withheld (ADR 0089): nothing is
+ * written, and the watch asks the daemon (`onEvalsRequested`) to run them.
+ */
+export type ModelWatchDecision = "adopt" | "evaluate" | "ignore" | "remind";
 
 export interface ModelWatchAnswer {
   decision: ModelWatchDecision;
   /** Recommendation ids to adopt; omitted means every recommendation in the report. */
   adopt?: string[];
-  /** Human id that answered. Required for "adopt". */
+  /** Human id that answered. Required for "adopt" and "evaluate". */
   by?: string;
 }
 
@@ -220,6 +247,18 @@ export const EvalObservationSchema = z.object({
   skipped_reason: z.string().nullable(),
 });
 export type EvalObservation = z.infer<typeof EvalObservationSchema>;
+
+/** One eval the run would have made had the human consented (ADR 0089). */
+export const PlannedEvalSchema = z.object({
+  specialist: z.string(),
+  mode: ModeSchema,
+  provider: z.string(),
+  model: z.string(),
+  tier: Tier,
+  effort: Effort,
+  role: z.enum(["baseline", "candidate", "lower_effort"]),
+});
+export type PlannedEval = z.infer<typeof PlannedEvalSchema>;
 
 export const SwitchModelRecommendationSchema = z.object({
   id: z.string(),
@@ -320,6 +359,14 @@ export const ModelWatchReportSchema = z.object({
   pricing_proposal: z.record(z.string(), PricingProposalRowSchema),
   eval_cost_usd_micro: z.number().int().nonnegative(),
   eval_budget_usd_micro: z.number().int().nonnegative(),
+  /**
+   * Set when the run made no paid eval because the human has not consented (ADR 0089): why,
+   * and the evals it would have run. Null when the evals ran (or a report predates the field).
+   */
+  evals_deferred: z
+    .object({ reason: z.string(), planned: z.array(PlannedEvalSchema) })
+    .nullable()
+    .default(null),
   skipped: z.array(z.string()),
   summary: z.string(),
 });
@@ -343,7 +390,7 @@ export type ModelWatchReportSummary = z.infer<typeof ModelWatchReportSummarySche
 
 /** What the release row's `health` column carries for a model watch report. */
 export interface ModelWatchHealth {
-  decision: "pending" | "nothing_to_decide" | "adopted" | "ignored" | "remind";
+  decision: "pending" | "nothing_to_decide" | "adopted" | "evaluate" | "ignored" | "remind";
   request_id: string | null;
   decided_at: string | null;
   by: string | null;
@@ -636,6 +683,29 @@ export interface ModelWatchDeps {
    * stands, since the files are already written.
    */
   onAdopted?: (event: ModelWatchAdoptedEvent) => void | Promise<void>;
+  /**
+   * The human's standing opt-in to paid evals on every run (ADR 0089). Absent, or false: a run
+   * makes no eval unless it is asked to (`run({ evals: true })`), and records what it would
+   * have run in `evals_deferred`. Read at every run, so a settings change applies at the next.
+   */
+  autoEvals?: () => boolean | Promise<boolean>;
+  /**
+   * Called when a human consents to a report's withheld evals: an "evaluate" answer, or an
+   * "adopt" of a report whose evals were withheld. The daemon runs `run({ evals: true })` in
+   * the background; a hook that throws is logged, the decision stands.
+   */
+  onEvalsRequested?: (event: ModelWatchEvalsRequestedEvent) => void | Promise<void>;
+  /**
+   * The owner's stop (the daemon's shutdown): every run is aborted with it, no eval starts
+   * after it, and `settled()` resolves once the runs in flight have ended.
+   */
+  signal?: AbortSignal;
+}
+
+/** A human's consent to run the evals a report withheld. */
+export interface ModelWatchEvalsRequestedEvent {
+  reportId: string;
+  by: string;
 }
 
 /** What an adopt changed and the tables in force afterwards (settings store already written). */
@@ -666,8 +736,12 @@ export interface ModelWatchResolveResult {
   applied: string[];
 }
 
+export const EVALS_DEFERRED_REASON =
+  "paid evals need the human's consent: answer 'evaluate', adopt the report, or turn on the model_watch run_evals setting";
+
 export class ModelWatch {
   readonly thresholds: WatchThresholds;
+  private readonly inFlight = new Set<Promise<unknown>>();
 
   constructor(private readonly deps: ModelWatchDeps) {
     this.thresholds = { ...DEFAULT_WATCH_THRESHOLDS, ...(deps.thresholds ?? {}) };
@@ -693,9 +767,40 @@ export class ModelWatch {
     return mergePricing(this.deps.pricing ?? BUILTIN_PRICING, overrides);
   }
 
-  /** One weekly run. Never throws for a provider or price list failure: those land in the report. */
-  async run(opts: { signal?: AbortSignal } = {}): Promise<ModelWatchRunResult> {
+  /**
+   * One weekly run. Never throws for a provider or price list failure: those land in the
+   * report. Paid evals run only with consent (ADR 0089): `evals: true` is an explicit "run
+   * evaluations"; unset, the human's `autoEvals` setting decides (default off); `false` never.
+   * An abort (the caller's or the owner's signal) ends the run without a report.
+   */
+  run(opts: { signal?: AbortSignal; evals?: boolean } = {}): Promise<ModelWatchRunResult> {
+    const signals = [opts.signal, this.deps.signal].filter((x): x is AbortSignal => !!x);
+    const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+    const p = this.runOnce({ signal, evals: opts.evals });
+    this.inFlight.add(p);
+    void p.then(
+      () => this.inFlight.delete(p),
+      () => this.inFlight.delete(p),
+    );
+    return p;
+  }
+
+  /** Resolves once every run started so far (and any it requested) has ended, either way. */
+  async settled(): Promise<void> {
+    while (this.inFlight.size) {
+      await Promise.allSettled([...this.inFlight]);
+    }
+  }
+
+  private async runOnce(opts: {
+    signal?: AbortSignal;
+    evals?: boolean;
+  }): Promise<ModelWatchRunResult> {
     const { clock, store } = this.deps;
+    throwIfStopped(opts.signal);
+    const evalsAllowed =
+      opts.evals ?? (this.deps.autoEvals ? (await this.deps.autoEvals()) === true : false);
+    const planned: PlannedEval[] = [];
     const id = newId(clock.now());
     const skipped: string[] = [];
     const { config } = await this.effectiveConfig();
@@ -760,6 +865,7 @@ export class ModelWatch {
     const evalPricing = mergePricing(pricing, pricingProposal);
     const evals: EvalObservation[] = [];
     let evalSpent = 0;
+    let halted: ForerunnerError | null = null;
     const cache = new Map<string, EvalObservation>();
     const observe = async (
       base: Omit<
@@ -777,8 +883,36 @@ export class ModelWatch {
       const key = `${base.specialist}|${base.provider}|${base.model}|${base.effort}`;
       const hit = cache.get(key);
       if (hit) return { ...hit, role: base.role, mode: base.mode, tier: base.tier };
+      const unrun = (reason: string): EvalObservation => ({
+        ...base,
+        total: 0,
+        passed: 0,
+        failed: 0,
+        needs_model: 0,
+        pass_rate: 0,
+        cost_usd_micro: 0,
+        duration_ms: 0,
+        skipped_reason: reason,
+      });
+      if (!evalsAllowed) {
+        // No consent: plan it, run nothing. The placeholder never feeds a recommendation.
+        const deferred = unrun("deferred: no consent to paid evals");
+        planned.push({
+          specialist: base.specialist,
+          mode: base.mode,
+          provider: base.provider,
+          model: base.model,
+          tier: base.tier,
+          effort: base.effort,
+          role: base.role,
+        });
+        cache.set(key, deferred);
+        return deferred;
+      }
+      throwIfStopped(opts.signal);
       let obs: EvalObservation;
       try {
+        if (halted) throw halted;
         this.guardEvalBudget(evalSpent, `${base.specialist} on ${base.model} at ${base.effort}`);
         const out = await this.deps.evals.run({
           specialist: base.specialist,
@@ -809,19 +943,14 @@ export class ModelWatch {
           },
         );
       } catch (e) {
+        // Stopped (the daemon is closing, the kill switch): no report, no further eval.
+        throwIfStopped(opts.signal);
         const code = e instanceof ForerunnerError ? e.code : "internal";
+        // A cap stop or a kill applies to every later eval too: none reaches the runner.
+        if (e instanceof ForerunnerError && (code === "budget_exceeded" || code === "killed"))
+          halted = e;
         const reason = `${code}: ${errorMessage(e)}`;
-        obs = {
-          ...base,
-          total: 0,
-          passed: 0,
-          failed: 0,
-          needs_model: 0,
-          pass_rate: 0,
-          cost_usd_micro: 0,
-          duration_ms: 0,
-          skipped_reason: reason,
-        };
+        obs = unrun(reason);
         skipped.push(`eval ${base.specialist} on ${base.model} at ${base.effort}: ${reason}`);
       }
       cache.set(key, obs);
@@ -968,13 +1097,20 @@ export class ModelWatch {
       pricing_proposal: pricingProposal,
       eval_cost_usd_micro: evalSpent,
       eval_budget_usd_micro: this.thresholds.evalBudgetUsdMicro,
+      evals_deferred:
+        !evalsAllowed && planned.length ? { reason: EVALS_DEFERRED_REASON, planned } : null,
       skipped,
       summary: "",
     });
     report.summary = summarizeReport(report);
 
+    throwIfStopped(opts.signal);
+    // Withheld evals alone ask the human only when they would test something new (a candidate);
+    // the weekly lower-effort probes never nag (ADR 0089).
     const needsDecision =
-      report.recommendations.length > 0 || Object.keys(report.pricing_proposal).length > 0;
+      report.recommendations.length > 0 ||
+      Object.keys(report.pricing_proposal).length > 0 ||
+      (report.evals_deferred?.planned.some((p) => p.role === "candidate") ?? false);
     let health: ModelWatchHealth = {
       decision: needsDecision ? "pending" : "nothing_to_decide",
       request_id: null,
@@ -1013,7 +1149,9 @@ export class ModelWatch {
       reportId: report.id,
       humanId: this.deps.humanId,
       summary: report.summary,
-      options: ["adopt", "ignore", "remind"],
+      options: report.evals_deferred
+        ? ["adopt", "evaluate", "ignore", "remind"]
+        : ["adopt", "ignore", "remind"],
       recommendations: report.recommendations,
       pricingProposal: report.pricing_proposal,
       steps: proposalSteps(report),
@@ -1059,7 +1197,16 @@ export class ModelWatch {
     const now = clock.nowIso();
     let next: ModelWatchHealth;
     let applied: string[] = [];
-    if (answer.decision === "adopt") {
+    if (answer.decision === "evaluate") {
+      if (!answer.by) {
+        throw new ForerunnerError(
+          "approval_required",
+          "running the model watch evals costs money and needs a human's recorded answer",
+          { details: { reportId } },
+        );
+      }
+      next = { ...health, decision: "evaluate", decided_at: now, by: answer.by };
+    } else if (answer.decision === "adopt") {
       applied = await this.applyAdoption(report, answer);
       next = {
         ...health,
@@ -1104,7 +1251,29 @@ export class ModelWatch {
     if (answer.decision === "adopt" && answer.by && this.deps.onAdopted) {
       await this.notifyAdopted({ reportId, by: answer.by, applied });
     }
+    // Consent to the withheld evals: "evaluate", or an adopt of a report that withheld them.
+    if (
+      answer.by &&
+      (answer.decision === "evaluate" || (answer.decision === "adopt" && report.evals_deferred))
+    ) {
+      await this.requestEvals({ reportId, by: answer.by });
+    }
     return { release: updated, decision: next.decision, applied };
+  }
+
+  private async requestEvals(event: ModelWatchEvalsRequestedEvent): Promise<void> {
+    await this.audit("model_watch.evals_requested", `report ${event.reportId}`, {
+      result: this.deps.onEvalsRequested ? "requested" : "no runner wired",
+      humanId: event.by,
+    });
+    try {
+      await this.deps.onEvalsRequested?.(event);
+    } catch (e) {
+      logger.warn("model watch evals request failed", {
+        reportId: event.reportId,
+        error: errorMessage(e),
+      });
+    }
   }
 
   /** Hand the tables now in force to the daemon; a failing hook never undoes the adoption. */
@@ -1395,6 +1564,13 @@ export function proposalSteps(report: ModelWatchReport): string[] {
     );
   for (const r of report.diff.retired_models)
     steps.push(`${r.provider}/${r.id} is no longer listed; rung ${r.tier} needs a replacement`);
+  const deferred = report.evals_deferred;
+  if (deferred) {
+    const n = deferred.planned.length;
+    steps.push(
+      `Evaluations not run (they cost money): ${n} eval set run(s) planned, at most USD ${(report.eval_budget_usd_micro / 1e6).toFixed(2)}. Answer "evaluate" to run them; "adopt" applies the price rows and runs them too.`,
+    );
+  }
   return steps;
 }
 
@@ -1408,6 +1584,10 @@ export function summarizeReport(report: ModelWatchReport): string {
       : "No recommendation.",
   ];
   if (report.price_list.error) parts.push(`Price list unavailable: ${report.price_list.error}.`);
+  if (report.evals_deferred)
+    parts.push(
+      `${report.evals_deferred.planned.length} eval run(s) not made: paid evals need consent.`,
+    );
   if (report.skipped.length) parts.push(`${report.skipped.length} item(s) skipped.`);
   return parts.join(" ");
 }
@@ -1438,6 +1618,10 @@ export function formatModelWatchReport(
       `  eval     ${e.role.padEnd(12)} ${e.specialist} ${e.provider}/${e.model} @${e.effort}: ${e.skipped_reason ? `skipped (${e.skipped_reason})` : `${e.passed}/${e.total} passed, USD ${(e.cost_usd_micro / 1e6).toFixed(4)}`}`,
     );
   for (const r of report.recommendations) lines.push(`  => [${r.id}] ${r.text}`);
+  for (const p of report.evals_deferred?.planned ?? [])
+    lines.push(
+      `  planned  ${p.role.padEnd(12)} ${p.specialist} ${p.provider}/${p.model} @${p.effort}: not run (no consent to paid evals)`,
+    );
   for (const s of report.skipped) lines.push(`  skipped: ${s}`);
   return lines.join("\n");
 }
@@ -1455,6 +1639,7 @@ export function answerFromHumanRequest(row: HumanRequestRow): ModelWatchAnswer |
   const decisionOf = (s: string): ModelWatchDecision | null => {
     const t = s.trim().toLowerCase();
     if (/^(adopt|yes|approve|approved|ok)\b/.test(t)) return "adopt";
+    if (/^(evaluate|run (the )?eval(uation)?s?)\b/.test(t)) return "evaluate";
     if (/^(ignore|no|reject|dismiss)\b/.test(t)) return "ignore";
     if (/^(remind|later|next week|snooze)\b/.test(t)) return "remind";
     return null;
@@ -1537,6 +1722,8 @@ export function scheduleModelWatch(
     everyMinutes: opts.everyMinutes ?? WEEK_MINUTES,
     timezone: opts.timezone ?? "UTC",
     enabled: opts.enabled ?? true,
+    // The last run survives a restart (`scheduler-fired.json`): weekly means weekly, not per boot.
+    persist: true,
   };
   scheduler.add(schedule);
   return schedule;
@@ -1547,4 +1734,12 @@ export function isModelWatchRequest(
   agentId: string = MODEL_WATCH_AGENT_ID,
 ): boolean {
   return req.agentId === agentId && req.trigger === "schedule";
+}
+
+/** Throws the signal's reason as a `killed` ForerunnerError when the run was stopped. */
+function throwIfStopped(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const r: unknown = signal.reason;
+  if (r instanceof ForerunnerError) throw r;
+  throw new ForerunnerError("killed", `model watch stopped: ${errorMessage(r)}`);
 }

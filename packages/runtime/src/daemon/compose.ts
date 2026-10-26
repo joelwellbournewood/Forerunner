@@ -136,6 +136,7 @@ import {
   type EvalRunnerPort,
   isModelWatchRequest,
   ModelWatch,
+  modelWatchSettingsOf,
   StateModelWatchApprovals,
   scheduleModelWatch,
 } from "../models/watch.ts";
@@ -602,6 +603,8 @@ export interface RuntimeApp {
   tokens: TokenIssuer;
   kill: KillSwitch;
   hooks: EnforcementHooks;
+  /** The outer caps every model call is checked against (the human's month, the project's budget). */
+  caps: CapsPort;
   driver: LoopAgentDriver;
   providers: ProviderRegistry;
   provider: ModelProvider | null;
@@ -2063,6 +2066,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     ? new FetchPriceListSource({ url: priceListUrl, fetch: opts.fetchImpl })
     : new UnconfiguredPriceListSource();
   const evalWorkRoot = join(dirs.cache, "model-watch");
+  // Paid evals need the human's consent (ADR 0089): the settings are read at each use, so a
+  // change through `settings.set model_watch` applies at the next run without a restart.
+  const watchSettings = async () =>
+    modelWatchSettingsOf((await store.human.get(human.id))?.notify_prefs);
+  // The daemon's stop: close() aborts every model watch run and waits for it to end.
+  const modelWatchStop = new AbortController();
   const evalRunner =
     opts.evalRunner ??
     new LoopEvalRunner({
@@ -2076,8 +2085,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       billingSourceId,
       workRoot: evalWorkRoot,
       tools: () => fileTools(),
-      // Evals run commands where task runs do: inside a lease over the work directory.
+      // Evals run commands where task runs do: inside a lease over the work directory, and
+      // never in the process stand-in unless the human allowed it (ADR 0089).
       sandbox: sandboxPort,
+      allowProcessSandbox: async () => (await watchSettings()).allowProcessSandbox,
+      // The human's month and its 80% line apply before every eval task, as to new work.
+      caps,
     });
   // Proposed specialists (spec C.5, ADR 0071): the approving answer runs the proposal's eval
   // set through the same eval runner as the model watch (every call under the hooks, charged
@@ -2119,6 +2132,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agentId: agent.id,
     pricing: BUILTIN_PRICING,
     ...(provider ? { evalProvider: provider.name } : {}),
+    autoEvals: async () => (await watchSettings()).runEvals,
+    signal: modelWatchStop.signal,
+    // The human consented to the evals a report withheld: run them now, in the background.
+    onEvalsRequested: (ev) => {
+      logger.info("model watch evals requested", { reportId: ev.reportId, by: ev.by });
+      void modelWatch.run({ evals: true }).catch((e: unknown) => {
+        logger.warn("model watch evals did not complete", { error: errorMessage(e) });
+      });
+    },
     onAdopted: (ev) => {
       modelConfig.adopt(ev.config);
       pricingTable = ev.pricing;
@@ -3106,6 +3128,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     tokens,
     kill,
     hooks,
+    caps,
     driver,
     providers,
     provider,
@@ -3212,6 +3235,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     intake,
     specialistApprovals,
     async close() {
+      // First: no model watch run (and no paid eval) outlives the daemon (ADR 0089).
+      modelWatchStop.abort(new ForerunnerError("killed", "daemon stopping"));
+      await modelWatch.settled();
       await voiceRelay.close();
       await voice.close();
       await speechSessions.close();

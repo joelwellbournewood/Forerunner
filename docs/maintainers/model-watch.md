@@ -6,7 +6,8 @@ planner (spec I, phase 7). Code: `packages/runtime/src/models/` (`watch.ts`, `pr
 built-in ladder and effort table) and `packages/runtime/src/estimates/` (`model.ts`, `view.ts`).
 Everything is exported from `@forerunner/runtime` (`src/index.ts`; `settings.ts` as the
 `modelSettings` namespace). ADR 0019 records the recommendation thresholds and the estimate
-model's constants; ADR 0029 records how the daemon wires both.
+model's constants; ADR 0029 records how the daemon wires both; ADR 0089 records that paid evals
+need the human's consent (the fresh-install incident of 2026-10-26).
 
 ## Purpose
 
@@ -24,8 +25,11 @@ Rules enforced in code, never only by prompt text:
 | --- | --- | --- |
 | Nothing changes the ladder, an effort default or a price without a human's recorded `adopt` answer. `ModelWatch.applyAdoption` is the only code path that writes `pricing.json` or `models.json`; it refuses any other decision or an answer without `by`. | `watch.ts` `applyAdoption` | `approval_required` |
 | A price is never assumed. A model on neither the pricing table nor the fetched price list is reported as unpriced, not evaluated and never recommended; the eval runner refuses an unpriced model before its first call (`pricingFor` → `costOf` throws). | `diffModels`, `LoopEvalRunner.run` | `validation` |
-| One watch run spends at most `evalBudgetUsdMicro` on evals (default 5 USD). The check runs before every eval; later evals are skipped and the report says so. The monthly cap, kill switch and audit hooks apply to each eval call as to any run (the runner issues a token per task). | `guardEvalBudget`, `LoopEvalRunner` | `budget_exceeded` |
-| Eval commands never execute on the host: the model's `run_command` and the grader's `command_exit0` checks run in a sandbox lease over the task's work directory with no egress. | `LoopEvalRunner` | see `sandbox.md` |
+| No paid eval without the human's consent (ADR 0089): a run evaluates only when asked (`run({ evals: true })`, `fr models watch --evals`, `POST /run { evals: true }`), after an `evaluate` answer or an `adopt` of a report that withheld its evals, or when `human.notify_prefs.model_watch.run_evals` is true. Default off. Otherwise the report lists what it would have run in `evals_deferred` and no eval reaches the runner. | `ModelWatch.run` (`evalsAllowed`) | |
+| One watch run spends at most `evalBudgetUsdMicro` on evals (default 5 USD). The check runs before every eval; later evals are skipped and the report says so. The monthly cap, kill switch and audit hooks apply to each eval call as to any run (the runner issues a token per task, owned by the human, so every ledger row counts in the human's month). | `guardEvalBudget`, `LoopEvalRunner` | `budget_exceeded` |
+| Eval work is new work under the caps: before every eval task the runner checks the human's outer caps (`LoopEvalRunnerDeps.caps`, the daemon's `DynamicCaps`, the task's budget as the estimate); past the month's 80% line or at the cap no task starts. A cap stop or a kill ends the run's remaining evals without calling the runner. | `LoopEvalRunner.run`, `ModelWatch.run` (`halted`) | `budget_exceeded` |
+| Eval commands never execute on the host: the model's `run_command` and the grader's `command_exit0` checks run in a sandbox lease over the task's work directory with no egress. A lease in the process stand-in (`engine: "process"`) is refused before any model call unless `model_watch.allow_process_sandbox` is true (default off). | `LoopEvalRunner` | `not_supported` (`details.reason: "process_sandbox_not_allowed"`); see `sandbox.md` |
+| A stopping daemon stops the watch: `RuntimeApp.close()` aborts `ModelWatchDeps.signal` and awaits `ModelWatch.settled()` first; the signal reaches every eval run (`RunRequest.signal`), no eval starts after it and no report is written. | `ModelWatch.run`, `compose.ts` `close()` | `killed` |
 | Every outward step appends an `audit_log` row: `model_watch.price_list`, `model_watch.eval` (one per eval, with its cost), `model_watch.report`, `model_watch.request`, `model_watch.decision`, `model_watch.write_pricing`, `model_watch.write_settings`. | `ModelWatch.audit` | |
 | Settings documents are validated on read and round-tripped through their parser before an atomic write (temp file + rename); a hand-edited typo fails loudly instead of changing a model by accident. | `settings.ts` | `validation` |
 
@@ -35,13 +39,19 @@ Rules enforced in code, never only by prompt text:
 
 `scheduleModelWatch(scheduler, { timezone, everyMinutes?, enabled?, agentId? })` adds one
 `Schedule` to the session `Scheduler` (`src/session/triggers.ts`): id `model-watch-weekly`,
-pseudo agent id `model-watch` (`MODEL_WATCH_AGENT_ID`), kind `every`, `WEEK_MINUTES` (10080).
+pseudo agent id `model-watch` (`MODEL_WATCH_AGENT_ID`), kind `every`, `WEEK_MINUTES` (10080),
+`persist: true`: the time of the last run is kept in the scheduler's fired store
+(`<data dir>/scheduler-fired.json`), so a restarted daemon waits out the week instead of
+running at its first tick. A fresh install runs the watch at its first tick, but with no
+consent that run is the free check only.
 The scheduler fires its `start` callback with a `StartRequest` for that agent id;
 `isModelWatchRequest(req)` is true for it and the orchestrator's `startSession` routes it to
 `ModelWatch.run()` instead of starting a session (`compose.ts`). The same `run()` backs
 `fr models watch` and `POST /model-watch/run`.
 
-One run (`ModelWatch.run({ signal? })`):
+One run (`ModelWatch.run({ signal?, evals? })`; `evals: true` is an explicit "run
+evaluations", `false` never evaluates, unset asks `ModelWatchDeps.autoEvals`, which the daemon
+answers from `model_watch.run_evals` and which is off when absent):
 
 1. **Inputs.** `effectiveConfig()` = built-in ladder and effort table (`builtinModelConfig()`,
    or `deps.baseConfig`) with `<config>/models.json` applied (`applyModelSettings`);
@@ -75,8 +85,15 @@ One run (`ModelWatch.run({ signal? })`):
      the provider assigns it, at the mode's default effort. A candidate whose tier has no rung
      model on its provider is skipped.
    The budget guard runs before each eval; a skipped eval is an observation with
-   `skipped_reason` (`budget_exceeded: ...`, `validation: ...`, a provider error) and never
-   feeds a recommendation.
+   `skipped_reason` (`budget_exceeded: ...`, `validation: ...`, `not_supported: ...` for a
+   refused process stand-in, a provider error) and never feeds a recommendation. After a
+   `budget_exceeded` or `killed` from the runner every later eval of the run is skipped with
+   that reason and never reaches the runner. An abort of the run's signal ends the run with
+   `killed` and no report.
+   *Without consent* each of these evals is only planned: it is listed in
+   `evals_deferred.planned` (`{ specialist, mode, provider, model, tier, effort, role }`), the
+   runner is never called, nothing lands in `evals`, and no switch or lower-effort
+   recommendation can follow.
 4. **Recommendations** (`recommendSwitch`, `recommendLowerEffort`, pure; thresholds in ADR 0019):
    - `switch_model` (rung X on provider P from A to B): across the targets with usable pairs,
      the lowest per-target pass-rate delta must not fall below `-qualityTolerancePoints` (0),
@@ -91,8 +108,11 @@ One run (`ModelWatch.run({ signal? })`):
      the human.
    Observations from sets smaller than `minEvalTasks` (3) never earn a recommendation.
 5. **Report, persistence, decision.** The `ModelWatchReport` (zod, below) is persisted, audited
-   and, when it holds a recommendation or a proposal row, put to the human through the approval
-   port. A report with nothing to decide gets `decision: "nothing_to_decide"` and no request.
+   and, when it holds a recommendation, a proposal row or a withheld eval on a new candidate,
+   put to the human through the approval port (options `adopt, evaluate, ignore, remind` when
+   evals were withheld, else `adopt, ignore, remind`). Withheld lower-effort probes alone never
+   raise a request. A report with nothing to decide gets `decision: "nothing_to_decide"` and no
+   request.
 
 ### Report format
 
@@ -120,10 +140,18 @@ One run (`ModelWatch.run({ signal? })`):
   "pricing_proposal": { "claude-sonnet-5-5": { "input_per_mtok_usd": 2.4, "as_of": "2026-10-19", "source": "list", "notes": "model watch: price list ... as of 2026-10-19" }, "claude-sonnet-6": { "...": "full row for a new model" } },
   "eval_cost_usd_micro": 85200,
   "eval_budget_usd_micro": 5000000,
+  "evals_deferred": null,
   "skipped": ["eval coder on claude-x at medium: budget_exceeded: ..."],
   "summary": "Model watch 2026-10-19: 2 new, 1 retired, 1 repriced, 1 unpriced model(s). 3 eval run(s) for USD 0.0852. 3 recommendation(s): ..."
 }
 ```
+
+`evals_deferred` is `null` when the evals ran (and on reports written before ADR 0089; the
+schema defaults it). Without consent it is `{ "reason": "paid evals need the human's consent:
+...", "planned": [{ "specialist": "coder", "mode": "coder", "provider": "anthropic", "model":
+"claude-sonnet-5-5", "tier": "sonnet", "effort": "medium", "role": "baseline" }, ...] }` and
+`evals` is empty; `proposalSteps` adds an "Evaluations not run" line with the count and the
+run's budget, `summarizeReport` a sentence, `formatModelWatchReport` one `planned` line each.
 
 `pricing_proposal` has exactly the shape `<config>/pricing.json` accepts (`PricingOverrides`
 in `@forerunner/billing`): repricings carry only the changed fields, new models a full row.
@@ -137,7 +165,7 @@ A report is one `release` row (`packages/state/src/schema.ts`): `channel = "mode
 `(channel, release_version)`), `changelog = summary`, `artifacts = [report]`,
 `health = ModelWatchHealth`, `status` `draft` → `published` on creation → `installed` after an
 adopt. `ModelWatchHealth` is `{ decision: "pending" | "nothing_to_decide" | "adopted" |
-"ignored" | "remind", request_id, decided_at, by, applied[], remind_at }`.
+"evaluate" | "ignored" | "remind", request_id, decided_at, by, applied[], remind_at }`.
 
 Why `release` and not `queue_item`: a queue item belongs to a project and a human and is
 consumed by the next session, while a model watch report is install-wide, has a lifecycle
@@ -152,7 +180,8 @@ row's JSON columns; a row whose artifact does not parse as a report is `validati
 
 The approval port is `ModelWatchApprovalPort { ask(req) → { status: "answered", answer } |
 { status: "pending", requestId } }`. Production uses `StateModelWatchApprovals`, which inserts a
-`human_request` of kind `decision`, options `["adopt", "ignore", "remind"]`, non-blocking, risk
+`human_request` of kind `decision`, options `["adopt", "ignore", "remind"]` (with `"evaluate"`
+after `"adopt"` when the report withheld its evals), non-blocking, risk
 `medium`, `steps` = `proposalSteps(report)` and `change_card.key = "model_watch:<reportId>"`
 (`MODEL_WATCH_REQUEST_PREFIX`), and answers "pending". Tests use a fake that answers at once.
 
@@ -161,7 +190,8 @@ The loop closes in one of three ways, all ending in `ModelWatch.resolve(reportId
 - the inbox: the human answers the request; `syncPendingAnswers()` reads every published
   `model_watch` release whose health is `pending`, parses the request's answer with
   `answerFromHumanRequest` (`"adopt" | "yes" | "approve"`, `"ignore" | "no" | "reject"`,
-  `"remind" | "later" | "next week"`, as a string or `{ decision | choice | answer, adopt? }`)
+  `"remind" | "later" | "next week"`, `"evaluate" | "run evaluations" | "run evals"`, as a
+  string or `{ decision | choice | answer, adopt? }`)
   and resolves it. The daemon's `syncApprovals()` calls it at compose and after every inbox
   answer; `POST /model-watch/sync` and `fr` one-shots call it on demand;
 - the updates screen: `POST /model-watch/reports/:id/answer { decision, adopt?, by }`; `by`
@@ -184,6 +214,11 @@ The loop closes in one of three ways, all ending in `ModelWatch.resolve(reportId
   what it loaded at compose without a restart. The call is audited as `model_watch.reload`;
   a hook that throws is logged, audited with `allowed=false`, and the adoption stands (the
   files are already written; a restart applies them).
+- `evaluate` (needs `by`, else `approval_required`): records the decision, writes nothing,
+  audits `model_watch.evals_requested` and calls `ModelWatchDeps.onEvalsRequested({ reportId,
+  by })`; the daemon starts `run({ evals: true })` in the background, which produces a new
+  report with the evidence and asks again. An `adopt` of a report whose evals were withheld
+  does the same after applying its rows. A throwing hook is logged; the decision stands.
 - `ignore`: records the decision; nothing is written.
 - `remind`: records the decision and `remind_at = now + 7 days`. There is no separate timer:
   the next weekly run produces a fresh report and asks again as long as the diff still holds.
@@ -253,15 +288,26 @@ only caller; `specialist-approval.test.ts` covers both refusals.
 
 ### CLI and routes
 
-`registerModelWatchCli(program, () => ({ watch, out? }))` adds `fr models watch [--json]`
-(run now, print the report and whether a decision is open) and `fr models report [--id <id>]
+`registerModelWatchCli(program, () => ({ watch, out? }))` adds `fr models watch [--evals]
+[--json]` (run now, print the report and whether a decision is open; `--evals` is the explicit
+"run evaluations", without it the run is the free check unless the opt-in is on) and `fr models report [--id <id>]
 [--list] [--json]` (latest, one, or the list newest first). The orchestrator passes a thunk that
 composes the runtime (`cli/main.ts`).
 
 `createModelWatchRoutes({ watch })` is a Hono sub-app the daemon mounts at `/model-watch`
 (`api-types.ts` lists the paths): `GET /reports?limit=`, `GET /reports/latest`,
-`GET /reports/:id` (404 when unknown), `POST /run`, `POST /reports/:id/answer`
-(`{ decision, adopt?, by }`; 400 malformed, 403 `approval_required`), `POST /sync`.
+`GET /reports/:id` (404 when unknown), `POST /run` (`{ evals?: boolean }`, empty body allowed;
+400 malformed), `POST /reports/:id/answer` (`{ decision: adopt | evaluate | ignore | remind,
+adopt?, by }`; 400 malformed, 403 `approval_required`), `POST /sync`.
+
+### The human's settings (ADR 0089)
+
+`human.notify_prefs.model_watch = { run_evals?: boolean, allow_process_sandbox?: boolean }`,
+read by `modelWatchSettingsOf` (anything missing or malformed is off) at every run and every
+eval lease, so a change applies without a restart. It is the `settings.set` key `model_watch`
+(`commands.md`; global, medium risk, undoable). `run_evals` makes every run evaluate without
+asking; `allow_process_sandbox` lets eval tasks that run commands use the process stand-in on
+a machine without Docker or Podman.
 
 ### Estimate learning (`estimates/model.ts`)
 
@@ -348,6 +394,9 @@ composes the runtime (`cli/main.ts`).
 - **A new provider.** Implement `listModels()` on the `ModelProvider` (`adding-a-provider.md`)
   with the tier the provider's docs assign each model; add its rung ids to `DEFAULT_LADDER` and
   its prices to `BUILTIN_PRICING` (or the price list). The watch needs nothing else.
+- **When evals run.** `ModelWatchDeps.autoEvals` (the standing opt-in), `run({ evals })`
+  (one run) and `onEvalsRequested` (consent on a report). Running evals without one of them is
+  a change of ADR 0089, not a default to flip.
 - **The price list.** Point `FORERUNNER_PRICE_LIST_URL` at a document in the format above;
   `ModelWatchDeps.priceList` takes any `PriceListSource`.
 - **Report storage.** `MODEL_WATCH_CHANNEL`, `reportFromRelease`, `healthOf`,
@@ -403,7 +452,14 @@ unknown ids, 404 for an unknown report; a partial adopt; nothing to decide opens
 the production port opens a `human_request` and `syncPendingAnswers` closes the loop; answer
 parsing in several shapes; `FetchPriceListSource` (fetch, canonical ids, bad document, HTTP
 failure, network failure, bad URL, env parsing) and `FixturePriceListSource`; the weekly
-schedule fires once per week as a model watch request; `fr models watch|report`; the routes
+schedule fires once per week as a model watch request, and a daemon restarted within the week
+(a new `Scheduler` over the same fired store) does not run it again; consent (ADR 0089): with
+no opt-in a run calls no eval, lists the planned evals and offers `evaluate`, an opt-in that is
+off stays off while `run({ evals: true })` evaluates, withheld lower-effort probes alone ask
+nothing, `evaluate` writes nothing and calls `onEvalsRequested` (and needs `by`), an adopt of a
+report that withheld its evals applies its rows and calls it too, `evaluate` answers parse, a
+`budget_exceeded` from the runner ends the run's evals, an abort ends the run with `killed`,
+no report and no further eval; `fr models watch|report`; the routes
 (list, read, answer with `by`, 400 without it, 404); the file settings store; an adopted
 `models.json` changes the rung `modelIdFor` picks and the effort `effortForTask` returns.
 
@@ -422,8 +478,19 @@ refresh inside the window; `sampleForTask` matches the fold's derivation; snapsh
 round-trips and version 1 is refused; the accuracy view (rows, overall error, bias, within-25%
 share, schema, empty model).
 
-`wiring.test.ts` (daemon): a model watch run through `POST /model-watch/run` on the fake
-provider with a repricing and an inbox decision, one audit row per eval; the updates screen
+`model-watch-boot.test.ts` (the daemon composed on a fresh FORERUNNER_HOME, its own
+scheduler ticked by hand): the first tick and a restart 80 minutes later call no eval and
+write one report between them; `evaluate` on a report and the `model_watch.run_evals` setting
+make the daemon run the evals; `close()` while an eval is underway aborts it, the run ends
+`killed` and `close()` returns.
+
+`wiring.test.ts` (daemon): `POST /model-watch/run {}` on a fresh install makes no eval, no
+ledger row and no `model_watch.eval` audit row and offers `evaluate`; `POST /model-watch/run
+{ "evals": true }` on the fake provider with a repricing and an inbox decision, the researcher
+evals run with one audit row each and the coder evals are refused the process stand-in
+(`not_supported`); a process lease is refused before any model call and destroyed unless
+`allowProcessSandbox` answers true; an eval's spend lands in the human's month in the ledger and
+a month past its 80% line starts no eval task; the updates screen
 listing the model watch entries; the eval runner keeping `run_command` inside the sandbox lease
 and offering only the specialist's tools; estimates feeding `GET /costs/estimates`; the CLI
 registration and one-shot composition.
@@ -469,6 +536,15 @@ registration and one-shot composition.
   yet, so a start on a large install pays that one full read.
 - Eval cost is charged to the install's billing source and counts toward the monthly cap like
   any run; the `evalBudgetUsdMicro` cap is per watch run, not per week across manual runs.
+- Without the opt-in, lower-effort savings (spec D.21) are measured only when the human runs
+  evaluations; the weekly report does not find them on its own (ADR 0089).
+- On a machine without Docker or Podman the coder eval set does not run until the human sets
+  `model_watch.allow_process_sandbox` or installs an engine; the researcher set has no command
+  and still runs. The same switch governs the specialist approval gate's evals (ADR 0071).
+- The factory still logs "sandbox: process (no container engine)" when it creates the refused
+  lease; the eval then ends before any model call.
+- Memory consolidation is also a weekly `every` schedule without `persist` and fires at the
+  first tick of each daemon process. It makes no eval.
 
 ## Requirements covered
 
