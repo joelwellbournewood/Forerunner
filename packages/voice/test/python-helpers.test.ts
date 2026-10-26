@@ -26,7 +26,16 @@ describe("bundled Python helpers", () => {
       '    py_compile.compile(f, cfile=sys.argv[1] + str(i) + ".pyc", doraise=True)',
     ].join("\n");
     const r = await run(
-      [py, "-c", code, join(dir, "helper"), DEFAULT_STT_HELPER, DEFAULT_TTS_HELPER],
+      [
+        py,
+        "-c",
+        code,
+        join(dir, "helper"),
+        DEFAULT_STT_HELPER,
+        DEFAULT_TTS_HELPER,
+        // The voice install's model fetcher (ADR 0089) runs in the same interpreter.
+        fileURLToPath(new URL("../python/fr_voice_models.py", import.meta.url)),
+      ],
       { allowFailure: true, timeoutMs: 30_000 },
     );
     await rm(dir, { recursive: true, force: true });

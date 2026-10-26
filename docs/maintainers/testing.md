@@ -490,7 +490,14 @@ without a heard figure named),
 message in the output, the refusals (no home, a store outside it, a non-SQLite store, no store
 yet), one run as a script through `tsx`, the median and p90 against `medianTotalToFirstAudio`
 and `nearestRank`, and `check` over a stubbed registry and Python probe (both providers
-present, packages missing with the venv commands, `FORERUNNER_PYTHON`, no Python, old Node).
+present, packages missing with the venv commands, `FORERUNNER_PYTHON`, no Python, old Node,
+and the voice profile with the GPU and the verified devices, `!!` when the CPU stands in).
+
+`scripts/voice-install.ts` (`pnpm voice:install [--cpu|--gpu|--none]`, ADR 0089) is the
+launcher's install step: the same installer as `fr voice install` in the run's
+`FORERUNNER_HOME`. `scripts/voice-install.test.ts` covers the refusal without a home, the
+profile by flag or by detection, keeping the installed profile without a flag, `--none`, and an
+unknown argument, with the fake process runner of `packages/runtime/test/voice-install-helpers.ts`.
 
 ### Docs close-out (`scripts/closeout-docs.test.ts`)
 

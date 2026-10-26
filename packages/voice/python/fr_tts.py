@@ -10,10 +10,15 @@ Protocol (see packages/voice/src/providers/local/framing.ts):
          kind 0 = audio (int16 little-endian mono PCM at the ready frame's sample rate)
          kind 1 = done
          kind 2 = error (utf-8 message)
-         kind 3 = ready (id 0, payload JSON {"sample_rate":24000,"engine":"kokoro"})
+         kind 3 = ready (id 0, payload JSON {"sample_rate":24000,"engine":"kokoro","device":"cuda"},
+                  with "fallback" when CUDA failed and the CPU took over)
 
 Requests are served one after another in arrival order; a cancel for a running request stops
 it between chunks. Exit code 3 means the kokoro package is not importable.
+
+Device: --device auto|cpu|cuda. "auto" leaves the choice to Kokoro (cuda when torch sees one);
+"cuda" raises when torch cannot use the GPU (a CPU-only torch), unless --cpu-fallback is given:
+then the CPU takes over and the helper says so on stderr and in the ready frame.
 """
 
 import argparse
@@ -77,12 +82,36 @@ def reader_thread(stream, q, cancelled, lock):
             return
 
 
+KOKORO_REPO = "hexgrad/Kokoro-82M"
+
+
 class KokoroEngine:
-    def __init__(self, lang, default_voice):
+    def __init__(self, lang, default_voice, device="auto", cpu_fallback=False):
+        self.default_voice = default_voice
+        self.fallback = None
+        try:
+            self.pipeline = self._pipeline(lang, device)
+        except RuntimeError as e:
+            if device != "cuda" or not cpu_fallback:
+                raise
+            sys.stderr.write("fr_tts: CUDA failed: %s; falling back to the CPU\n" % e)
+            sys.stderr.flush()
+            self.fallback = str(e)
+            self.pipeline = self._pipeline(lang, "cpu")
+        self.device = self._resolved_device(device)
+
+    @staticmethod
+    def _pipeline(lang, device):
         from kokoro import KPipeline
 
-        self.pipeline = KPipeline(lang_code=lang)
-        self.default_voice = default_voice
+        # repo_id given: KPipeline otherwise prints a warning to stdout, the frame channel.
+        return KPipeline(lang_code=lang, repo_id=KOKORO_REPO, device=None if device == "auto" else device)
+
+    def _resolved_device(self, requested):
+        try:
+            return next(self.pipeline.model.parameters()).device.type
+        except Exception:
+            return "cpu" if self.fallback else requested
 
     def chunks(self, text, voice, speed):
         import numpy as np
@@ -102,6 +131,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--lang", default="a", help="kokoro language code (a=American English, b=British, ...)")
     ap.add_argument("--voice", default="af_heart")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    ap.add_argument(
+        "--cpu-fallback",
+        action="store_true",
+        help="with --device cuda: fall back to the CPU when CUDA fails (said on stderr and in ready)",
+    )
     ap.add_argument("--selftest", action="store_true", help="print ready without loading a model")
     args = ap.parse_args()
 
@@ -110,7 +145,7 @@ def main():
         return 0
 
     try:
-        engine = KokoroEngine(args.lang, args.voice)
+        engine = KokoroEngine(args.lang, args.voice, device=args.device, cpu_fallback=args.cpu_fallback)
     except ImportError as e:
         write_frame(OUT_ERROR, 0, ("kokoro not importable: %s" % e).encode("utf-8"))
         return 3
@@ -118,7 +153,10 @@ def main():
         write_frame(OUT_ERROR, 0, ("model load failed: %s" % e).encode("utf-8"))
         return 4
 
-    write_frame(OUT_READY, 0, json.dumps({"sample_rate": SAMPLE_RATE, "engine": "kokoro"}).encode("utf-8"))
+    ready = {"sample_rate": SAMPLE_RATE, "engine": "kokoro", "device": engine.device}
+    if engine.fallback:
+        ready["fallback"] = engine.fallback
+    write_frame(OUT_READY, 0, json.dumps(ready).encode("utf-8"))
 
     q = queue.Queue()
     cancelled = set()

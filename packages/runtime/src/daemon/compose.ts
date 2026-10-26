@@ -243,6 +243,9 @@ import {
   vaultHasSecret,
   voiceExtensionRows,
 } from "../voice/index.ts";
+import type { VoiceProcRunner } from "../voice/install.ts";
+import { VoiceInstallJobs } from "../voice/install-routes.ts";
+import { LocalVoice } from "../voice/local-profile.ts";
 import {
   type AudioSink,
   type LatencyTargets,
@@ -521,6 +524,8 @@ export interface ComposeOptions {
     retainStoppedMs?: number;
     /** How long a read-aloud waits for its player's stream before playing (default 1.5 s). */
     awaitListenerMs?: number;
+    /** The process runner of `POST /voice/install` (tests pass a fake one; ADR 0089). */
+    installRunner?: VoiceProcRunner;
   };
 }
 
@@ -714,6 +719,13 @@ export interface RuntimeApp {
    * command and the voice notification channel. Needs no model credential.
    */
   speech: SpeakSessions;
+  /**
+   * The local voice helpers as the voice profile says (ADR 0089): read from voice.json at
+   * every use; `release()` stops them before `POST /voice/install` deletes their venv.
+   */
+  localVoice: LocalVoice;
+  /** Settings -> Voice's install and switch jobs behind `/voice/install` (ADR 0089). */
+  voiceInstall: VoiceInstallJobs;
   /** Signed updates (spec M) over this process's store. */
   updates: UpdateManager;
   /** Why update.json was ignored at start (updates are then off), or null. */
@@ -2785,11 +2797,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // status read and session start so a toggle applies at the next session. Without a usable
   // pair, or without a model credential, `voice.status()` reports why and a session start is
   // refused with `unavailable`.
+  // The local helpers follow the voice profile (ADR 0089: voice.json, read at every use).
+  const localVoice = new LocalVoice({ dirs, env, clock });
   const voiceRegistry =
     opts.voice?.registry ??
     (opts.voice?.stt || opts.voice?.tts
       ? injectedVoiceRegistry(opts.voice.stt, opts.voice.tts)
-      : buildVoiceRegistry({ env, vault, clock }));
+      : buildVoiceRegistry({ env, vault, clock, local: localVoice }));
   const fixedVoicePreferences = opts.voice?.preferred;
   const voiceRows = voiceExtensionRows(extensions);
   // One source of the preferred providers for the voice sessions and the speaker (below), so
@@ -2825,6 +2839,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       : {}),
   });
   voiceBusy = () => (voice.open().length > 0 ? VOICE_IN_CONVERSATION : null);
+  // Settings -> Voice (ADR 0089): install, switch or remove the local voice stack as a job.
+  // Refused while a voice session is open; the helpers are stopped before a venv is deleted.
+  const voiceInstall = new VoiceInstallJobs({
+    dirs,
+    env,
+    clock,
+    ...(opts.voice?.installRunner ? { run: opts.voice.installRunner } : {}),
+    busy: () =>
+      voice.open().length > 0
+        ? "a voice session is open: stop it before switching the voice profile"
+        : null,
+    release: () => localVoice.release(),
+  });
   // Read aloud (spec A.6, L.6; ADR 0063): one speaker over the same registry, TTS only, no
   // model call; one voice at a time. Every utterance is announced on the bus (`speak`, the
   // `speak.started` frame on `/events`, with who plays it) so a speech player (the UI with
@@ -3187,6 +3214,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     commands,
     voice,
     speech: speechSessions,
+    localVoice,
+    voiceInstall,
     events,
     appVersion,
     startedAt: clock.now(),

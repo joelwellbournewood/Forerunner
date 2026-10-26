@@ -45,6 +45,13 @@ import {
 } from "@forerunner/platform";
 import { MODE_DEFAULTS } from "../packages/runtime/src/models/ladder.ts";
 import { readConfig } from "../packages/runtime/src/setup/wizard.ts";
+import {
+  detectNvidiaGpu,
+  readVoiceSettings,
+  recommendedProfile,
+} from "../packages/runtime/src/voice/install.ts";
+import type { GpuView, VoiceProfile } from "../packages/runtime/src/voice/install-types.ts";
+import { LocalVoice } from "../packages/runtime/src/voice/local-profile.ts";
 import { DEFAULT_LATENCY_TARGETS } from "../packages/runtime/src/voice/pkg.ts";
 import {
   buildVoiceRegistry,
@@ -104,6 +111,8 @@ export interface CheckDeps {
   /** The daemon's registry over an empty vault by default (no cloud key: local or nothing). */
   registry?: VoiceProviderRegistry;
   python?: () => Promise<PythonFacts>;
+  /** The NVIDIA GPU (nvidia-smi by default). */
+  gpu?: () => Promise<GpuView>;
 }
 
 export interface CheckResult {
@@ -112,6 +121,10 @@ export interface CheckResult {
   tts: string | null;
   missing: string[];
   commands: string[];
+  /** The voice profile of this home (ADR 0089); null when none was chosen. */
+  profile: VoiceProfile | null;
+  /** The devices the profile's last check verified. */
+  devices: { stt: string; tts: string } | null;
 }
 
 function versionAtLeast(v: readonly number[], min: readonly number[]): boolean {
@@ -151,7 +164,15 @@ export async function runCheck(deps: CheckDeps): Promise<CheckResult> {
   const home = dedicatedHome(env);
   if (!home) {
     out(REFUSE_HOME);
-    return { ok: false, stt: null, tts: null, missing: ["FORERUNNER_HOME"], commands: [] };
+    return {
+      ok: false,
+      stt: null,
+      tts: null,
+      missing: ["FORERUNNER_HOME"],
+      commands: [],
+      profile: null,
+      devices: null,
+    };
   }
   out(`voice-run check (FORERUNNER_HOME=${home}, ${platform})`);
   const missing: string[] = [];
@@ -175,8 +196,47 @@ export async function runCheck(deps: CheckDeps): Promise<CheckResult> {
     `${py.version ? "ok " : "!! "} python          ${py.version ? `${py.version} (${py.python})` : `not found: ${py.reason}`}${env.FORERUNNER_PYTHON ? " [FORERUNNER_PYTHON]" : ""}`,
   );
 
+  // The voice profile (ADR 0089): what `fr voice install` put in this home and verified.
+  const dirs = appDirs({ env });
+  const voice = readVoiceSettings(dirs);
+  const gpu = await (deps.gpu ?? (() => detectNvidiaGpu({ platform })))();
+  out(
+    `${gpu.present ? "ok " : "-- "} gpu             ${gpu.present ? `${gpu.name ?? "NVIDIA"}${gpu.driver ? `, driver ${gpu.driver}` : ""}` : `none (${gpu.reason})`}`,
+  );
+  const managed = `pnpm fr -- voice install --${recommendedProfile(gpu)}`;
+  if (!voice) {
+    out(
+      `--  voice profile   not chosen (local voice uses the Python found below; for the managed venv with pinned packages: ${managed})`,
+    );
+  } else {
+    out(
+      `${voice.profile === "none" ? "!! " : "ok "} voice profile   ${voice.profile}${voice.profile === "none" ? " (local voice is off: pnpm fr -- voice install --cpu|--gpu)" : ""}`,
+    );
+    if (voice.install) out(`--  venv python     ${voice.install.python}`);
+  }
+  const verified = voice && voice.profile !== "none" ? voice.verified : undefined;
+  const devices = verified ? { stt: verified.stt.device, tts: verified.tts.device } : null;
+  if (verified) {
+    const fellBack = [verified.stt.fallback, verified.tts.fallback].filter((f): f is string => !!f);
+    out(
+      `${fellBack.length ? "!! " : "ok "} devices         speech recognition ${verified.stt.device}${verified.stt.computeType ? ` (${verified.stt.computeType})` : ""}, speech ${verified.tts.device} (verified ${verified.at})`,
+    );
+    for (const f of fellBack)
+      out(
+        `note: the GPU check fell back to the CPU: ${f} (fix the driver, then pnpm fr -- voice install --gpu)`,
+      );
+  } else if (voice && voice.profile !== "none") {
+    out(`!!  devices         not verified (pnpm fr -- voice install --${voice.profile})`);
+  }
+
   const registry =
-    deps.registry ?? buildVoiceRegistry({ env, vault: new MemoryVault(), clock: systemClock });
+    deps.registry ??
+    buildVoiceRegistry({
+      env,
+      vault: new MemoryVault(),
+      clock: systemClock,
+      local: new LocalVoice({ dirs, env, clock: systemClock, platform }),
+    });
   const overrides = (["stt", "tts"] as const)
     .map((side) => ({ side, name: env[VOICE_PREFERENCE_ENV[side]]?.trim() }))
     .filter((o): o is { side: "stt" | "tts"; name: string } => !!o.name);
@@ -279,7 +339,7 @@ export async function runCheck(deps: CheckDeps): Promise<CheckResult> {
   }
 
   // Setup state of the dedicated home, for information (voice also needs the model key).
-  const config = readConfig(appDirs({ env }));
+  const config = readConfig(dirs);
   out(
     config
       ? `-- setup          config present (profile ${config.profile}); Anthropic credential recorded: ${config.credentials?.anthropic ? "yes" : "no"}`
@@ -293,9 +353,18 @@ export async function runCheck(deps: CheckDeps): Promise<CheckResult> {
     out(
       "first use downloads the models: faster-whisper base (about 150 MB) and Kokoro-82M with its voice (about 330 MB) from Hugging Face",
     );
+    out(`or the managed install (venv, pinned packages, models, device check): ${managed}`);
   }
   out(ok ? "VOICE CHECK: ok" : `VOICE CHECK: not ready (${[...new Set(missing)].join(", ")})`);
-  return { ok, stt: stt.name, tts: tts.name, missing: [...new Set(missing)], commands };
+  return {
+    ok,
+    stt: stt.name,
+    tts: tts.name,
+    missing: [...new Set(missing)],
+    commands,
+    profile: voice?.profile ?? null,
+    devices,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------

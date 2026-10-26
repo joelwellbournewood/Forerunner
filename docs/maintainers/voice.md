@@ -171,7 +171,8 @@ to the hangover value.
 | `fake-stt`, `fake-tts` | fake | always | scripted, Clock-driven |
 
 Python lookup: `FORERUNNER_PYTHON`, then `python3`/`python` (Linux) or `python`/`py`/`python3`
-(Windows); an explicit `python` option overrides. A candidate that spawns but never runs
+(Windows); an explicit `python` option overrides. With a voice profile installed (below) the
+daemon passes the managed venv's interpreter as that option, unless `FORERUNNER_PYTHON` is set. A candidate that spawns but never runs
 Python (the Microsoft Store `python` alias exits 9009 with "Python was not found") is skipped
 and the next one tried (`interpreterDidNotRun`). Helpers are spawned with argv arrays through
 `@forerunner/platform` `spawnProcess`, never a shell, and killed with `killTree` on dispose.
@@ -189,6 +190,83 @@ its status row shows (`switched off in Extensions`, `key not granted in Extensio
 excluded provider is not probed, its secret is never asked for, and its status row is
 `available: false` with that reason; with nothing else to pick the selection throws
 `unavailable` as usual. The runtime fills the list from the panel (below), so off means off.
+
+### Voice profiles and the managed install (ADR 0089)
+
+Which local speech stack an install has is its **voice profile**, chosen in `fr setup`
+(asked interactively; `--voice none|cpu|gpu` without asking), in Settings → Voice, or with
+`fr voice install [--cpu|--gpu] [--python <path>]`, `fr voice remove` and `fr voice status`:
+
+| Profile | STT | TTS | Disk (download) |
+| --- | --- | --- | --- |
+| `none` | no local STT (cloud only, with a key) | no local TTS | 0 |
+| `cpu` | faster-whisper `--device cpu --compute-type int8` | Kokoro `--device cpu` | about 2.3 GB (about 1 GB) |
+| `gpu` (NVIDIA) | faster-whisper `--device cuda --compute-type float16 --cpu-fallback` | Kokoro `--device cuda --cpu-fallback` | about 8 GB (about 4.5 GB) |
+
+The sizes are measured (`install-types.ts` says how); the catalog with the trade-offs lives in
+`VOICE_PROFILE_INFO` so the CLI question, the card and the daemon view say the same.
+
+- **Where.** `packages/runtime/src/voice/install.ts` is the one installer. A venv per profile,
+  `<data>/voice/venv-cpu` / `venv-gpu` (`<FORERUNNER_HOME>/data/...` when set), the models in
+  `<data>/voice/models` (the helpers' `HF_HOME`), and `<config>/voice.json`: the profile, what
+  was installed (venv, interpreter, the requirements file's SHA-256) and what the last check
+  verified per side (`device`, `computeType`, `fallback`). No `voice.json` means the profile was
+  never chosen and the helpers run as before profiles (any Python, device `auto`).
+- **What.** `packages/voice/python/requirements-cpu.txt` / `requirements-gpu.txt`, exact pins,
+  PyTorch from its `whl/cpu` or `whl/cu128` index, on gpu `nvidia-cublas-cu12` and
+  `nvidia-cudnn-cu12` at the versions torch 2.11.0+cu128 requires on Linux. Change a pin there
+  and the next install reinstalls (the marker `<venv>/forerunner-voice.json` holds the hash).
+- **Steps** (each streams `VoiceInstallEvent`s: `step`, `log`, `progress`, `warning`, `error`,
+  `result`): the NVIDIA GPU (`nvidia-smi --query-gpu=...`, on Linux also
+  `/proc/driver/nvidia/version`); the venv, reused when its interpreter runs, made again when
+  it does not, from Python 3.10 to 3.12 found in a fixed per-OS order (none: the `winget` or
+  `apt` line); the espeak-ng path check (below); `pip install pip==26.2.2`, then
+  `pip install --progress-bar raw --resume-retries 5 -r <requirements>` unless the marker
+  matches; `python/fr_voice_models.py` fetches faster-whisper's model and Kokoro-82M with the
+  voice, with byte progress, skipping what is cached; then the check.
+- **The check** runs the real helpers: `fr_stt.py` on 0.5 s of silence (ready, then a final)
+  and `fr_tts.py` on one sentence (ready, audio, done). Both report the device in their ready
+  line/frame (`device`, STT also `compute_type`, and `fallback` when the CPU took over). On gpu
+  the check runs without `--cpu-fallback`; a failure prints `WARNING: GPU check failed for
+  speech recognition|speech (Kokoro): <error>`, checks the CPU instead, records the error as
+  `fallback`, and ends with exit code 2 (0 done, 1 failed). A side whose check fell back then
+  starts on the CPU at run time (no CUDA attempt at every start); `fr voice install --gpu`
+  checks the GPU again.
+- **Resumable, idempotent.** pip resumes interrupted downloads and keeps its cache; the marker
+  and `voice.json` are written only after their step succeeded; running the install again
+  finishes an interrupted one, and on an installed, unchanged profile only verifies (`fr setup`
+  with the same answer does nothing at all). `<data>/voice/install.lock` keeps the CLI and the
+  daemon from installing at once. No argument carries a secret.
+- **Switching** builds the new venv beside the old one; the old one is deleted after the new
+  one is verified (the daemon stops its helpers first; a venv a running daemon holds on Windows
+  is left with a warning and removed at the next install). `none` deletes both venvs and the
+  models.
+- **At run time** `LocalVoice` (`packages/runtime/src/voice/local-profile.ts`) stands in the
+  registry as `faster-whisper` and `kokoro` and builds the helpers from `voice.json` at every
+  use (`localVoiceSettings`): the venv's interpreter, the devices above, `HF_HOME`. A change from
+  the CLI or the card applies at the next voice session; the old helper processes are stopped.
+  `none`, or a profile whose venv is missing, reports local voice unavailable with the command
+  that turns it on.
+- **Settings → Voice** (`apps/ui/src/pages/VoiceSettingsCard.tsx`) reads `GET /voice/install`
+  and switches through `POST /voice/install`, a background job of the same installer
+  (`install-routes.ts`: one job at a time, 409 while a voice session is open), following
+  `GET /voice/install/events` (SSE with the bearer header, or JSON). The route was chosen over
+  showing the CLI command because the installer already streams events; the card still shows
+  the command.
+- **CUDA libraries from wheels.** `fr_stt.py` `setup_cuda_libraries()` runs before
+  faster_whisper is imported on any device but the CPU: Windows puts every
+  `site-packages/nvidia/*/bin` through `os.add_dll_directory` and first on `PATH`
+  (ctranslate2 loads `cublas64_12.dll` lazily with a plain `LoadLibrary`, and its bundled
+  `cudnn64_9.dll` loads the cuDNN parts by name); Linux loads `libcublas*.so.12` and
+  `libcudnn.so.9` by absolute path with `RTLD_GLOBAL` (`LD_LIBRARY_PATH` is read only at process
+  start). A non-CPU device then warms the model with a silent transcription so a missing cuBLAS
+  fails at load, where the fallback can still say so in the ready line.
+- **espeak-ng path limit.** Kokoro's English G2P uses espeak-ng through `espeakng_loader`, which
+  passes `<site-packages>/espeakng_loader/espeak-ng-data`; espeak-ng keeps 159 characters of it
+  (229 on Windows) and otherwise exits on the first sentence with "Error processing file
+  '/home/runner/work/espeakng-loader/.../phontab'". The installer refuses such a venv path
+  before downloading (`ESPEAK_PATH_MAX`), naming `FORERUNNER_HOME`. Default data directories
+  are around 105 characters.
 
 ### Which provider is preferred (spec O.4)
 
@@ -347,13 +425,20 @@ human into a real microphone, with the local providers and the live Haiku model.
 refuse to run without `FORERUNNER_HOME`, so the run has its own config, store and vault
 profile (`--profile voice-run`) apart from the everyday install.
 
-1. `pnpm voice:run check`: Node, Python (`FORERUNNER_PYTHON` first, then the lookup above),
-   and the daemon's own registry (`buildVoiceRegistry` over an empty vault, so only local
-   providers can be picked) with every provider's status row and reason, the pair the daemon
-   would pick, and the install commands for what is missing (a venv under the home with
-   `pip install faster-whisper kokoro`; kokoro 0.9.4 needs Python 3.10 to 3.12). It installs
-   nothing. Exit 1 when either side has no local provider.
-2. `pnpm fr setup --non-interactive --profile voice-run` with `FORERUNNER_ANTHROPIC_KEY` in the
+1. `pnpm voice:install --gpu` (or `--cpu`; without a flag the profile installed in the home,
+   else gpu when nvidia-smi finds a GPU): the managed install above, in the run's home
+   (`scripts/voice-install.ts`, which refuses without `FORERUNNER_HOME`). Exit 2 means the GPU
+   check fell back to the CPU; the warning says why.
+2. `pnpm voice:run check`: Node, Python (`FORERUNNER_PYTHON` first, then the lookup above), the
+   GPU, the voice profile with the venv interpreter and the devices its check verified (`!!`
+   and a note when the CPU stands in for the GPU), and the daemon's own registry
+   (`buildVoiceRegistry` over an empty vault with `LocalVoice`, so the profile's helpers are
+   probed and only local providers can be picked) with every provider's status row and reason,
+   the pair the daemon would pick, and the install commands for what is missing (a venv under
+   the home with `pip install faster-whisper kokoro`, or the managed install; kokoro 0.9.4
+   needs Python 3.10 to 3.12). It installs nothing. Exit 1 when either side has no local
+   provider.
+3. `pnpm fr setup --non-interactive --profile voice-run` with `FORERUNNER_ANTHROPIC_KEY` in the
    environment, then `pnpm fr daemon --port 8787`. The UI reads the token from
    `<home>/runtime/daemon.json` and is started with `VITE_DAEMON_URL` and `VITE_DAEMON_TOKEN`
    (`pnpm --filter @forerunner/ui dev`, `http://localhost:1420`). A normal Chromium browser
@@ -362,10 +447,10 @@ profile (`--profile voice-run`) apart from the everyday install.
    not needed. Header **Talk** opens the panel; the panel's **Talk** starts a turn (the
    browser asks for the microphone once), **Send** ends it. The global hotkey exists only in
    the Tauri shell.
-3. One warm-up turn, then ten. The helpers start on first use (the Whisper model loads on the
+4. One warm-up turn, then ten. The helpers start on first use (the Whisper model loads on the
    first press, Kokoro on the first sentence, both download their weights the first time), so
    the first turn of a daemon is a cold start.
-4. Stop the UI and the daemon (Ctrl+C), then `pnpm voice:run report --exclude-first 1`
+5. Stop the UI and the daemon (Ctrl+C), then `pnpm voice:run report --exclude-first 1`
    (`--since <iso>`, default the last 24 h; `--exclude-first <n>` leaves out the first n
    audio turns of the whole window, every voice session together in time order, so a run with
    two daemon starts and a warm-up after each passes 2): one line per `voice.turn` row with
@@ -456,6 +541,8 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/availability.test.ts` | probes return `{ok:false}` for missing interpreter/module/binary/model/key; invalid module names never spawn; the Windows Store alias is recognised (`interpreterDidNotRun`, both OSes) and a stub that only prints "Python was not found" is skipped for the next candidate (stub run on Linux) |
 | `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines); a helper that crashes once mid-transcription (`fixtures/crashing_stt_helper.mjs`) is restarted and the utterance gets its final with all of its audio, the crash logged as a warning with the code in hex and a cause, and a helper that crashes on the retry too fails the utterance with the hex code; a crash at the first audio frame, before the end of speech, retried with all of the audio; a helper that dies in the middle of a stdout line (`--partial-line`) with the retry still getting its final well inside a 3 s ready timeout; a disposed helper's late exit leaving the next utterance on a new helper untouched; `describeHelperExit` for 0xC0000005 (unsigned and signed), 0xC0000409, SIGSEGV, SIGKILL and exit code 1 |
 | `test/python-helpers.test.ts` | `py_compile` of both helpers and `--selftest` (skipped visibly when no Python) |
+| `test/stt-device-fallback.test.ts` | `fr_stt.py`'s `Transcriber` against a stub `faster_whisper`: device `auto` falls back to the CPU at load and at the first transcription, an out-of-memory error keeps the GPU, an explicit device is kept |
+| `test/python-device.test.ts` | `setup_cuda_libraries()` on a fake site-packages: Windows `add_dll_directory` and `PATH` for every `nvidia/*/bin`, Linux cuBLAS and the cuDNN loader preloaded, nothing without the wheels; the gpu profile's `--cpu-fallback` (loud, at load when warmed, reported by `resolved_device()`), an explicit cuda without it raising; `fr_tts.py`'s `KokoroEngine` on cuda falling back with the reason, raising without `--cpu-fallback`, `auto` left to Kokoro |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
 | `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it; `drain()` waits for the play-head, at once on the abort or after `stop()` |
 | `test/loop.test.ts` | PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
@@ -466,15 +553,41 @@ captured traffic. Local model runs (faster-whisper, Kokoro, Piper) are exercised
 protocol stand-ins; a run with the real packages installed is an integration test to add when a
 runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
 
+The voice profile's install, routes and CLI are tested in `packages/runtime/test`:
+`voice-install.test.ts` (the pinned lists per profile, cpu and gpu installs, the GPU check
+failing and falling back with exit 2, idempotency and resuming, a broken venv repaired, no
+Python 3.10 to 3.12 with the winget/apt line, the espeak-ng path limit, switching and removing,
+the GPU detection and the setup question, all with a fake process runner from
+`voice-install-helpers.ts`), `voice-local-profile.test.ts` (what `voice.json` means for the
+helpers' argv, interpreter and `HF_HOME`; rebuilt and stopped on a change), `voice-install-routes.test.ts`
+(the job, its replay as JSON and SSE, 409s, the daemon mount behind the token) and
+`voice-install-cli.test.ts` (`fr voice install/remove/status`, `fr setup --voice` and the
+question); the card in `apps/ui/test/settings-voice.test.tsx`; `pnpm voice:install` in
+`scripts/voice-install.test.ts`; the check's profile lines in `scripts/voice-run.test.ts`.
+
 ## Known issues
+
+- The gpu profile has not run on an NVIDIA GPU yet (2026-10-26): the CUDA path is covered by
+  fake processes and stub modules, and the cpu profile was installed and checked for real on
+  Linux (Python 3.12, the pinned packages, both models, both helpers through `LocalVoice`). The
+  first `fr voice install --gpu` on the human's PC is the hardware check.
+- On Windows the CUDA PyTorch wheel already carries `cublas64_12.dll` and the cuDNN 9 DLLs in
+  `torch/lib`; the separate NVIDIA wheels (about 1.7 GB unpacked) duplicate them. Kept as
+  specified (ADR 0089, Consequences); pointing `setup_cuda_libraries()` at `torch/lib` would
+  save the space.
+- A run-time CUDA fallback (the gpu profile's `--cpu-fallback`) is said on the helper's stderr
+  and in its ready line; the daemon's provider logs helper stderr at debug level and does not
+  read the ready line's `fallback` yet, so the loud signal is the install check and
+  `fr voice status` / Settings → Voice.
 
 - faster-whisper's device `auto` picks CUDA wherever ctranslate2 sees an NVIDIA GPU, even when
   the CUDA libraries (cuBLAS, cuDNN) are not installed, and then fails at load or at the first
   transcription ("Library cublas64_12.dll is not found", the real-audio run of 2026-10-26).
   `fr_stt.py` falls back to the CPU (`int8`) once, with device `auto` only (an explicit
-  `--device` is kept) and not on an out-of-memory error of a working GPU, with a line on stderr
-  (`test/stt-device-fallback.test.ts`, which runs the helper's `Transcriber` against a stub
-  `faster_whisper`). To use the GPU, install the CUDA 12 cuBLAS and cuDNN libraries.
+  `--device` is kept, unless `--cpu-fallback`) and not on an out-of-memory error of a working
+  GPU, with a line on stderr (`test/stt-device-fallback.test.ts`, which runs the helper's
+  `Transcriber` against a stub `faster_whisper`). To use the GPU: `fr voice install --gpu`
+  (ADR 0089), which installs the CUDA 12 cuBLAS and cuDNN wheels and makes them loadable.
 
 - faster-whisper can crash in native code. In the same run, on turn 5, `fr_stt.py` died
   mid-transcription with exit code 3221225477 (0xC0000005, an access violation, Windows, CPU
@@ -597,4 +710,5 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
 | L.6 | TTS for summaries and alerts, STT for voice notes, pluggable provider | `splitSentences()` + the registry's `TtsProvider` through `packages/runtime/src/voice/speak.ts` (the `/speak` routes, `summary.speak`, the `voice` notification channel; ADR 0063); any `SttProvider` (`note.add` keeps the transcript); `registry.ts` | `test/sentences.test.ts`, `test/registry.test.ts`, `packages/runtime/test/speak-route.test.ts`, `packages/runtime/test/notifications-voice.test.ts` |
 | A.6 (readable aloud) | the one-screen summary read aloud | `POST /projects/:id/speak`, `summary.speak` | `packages/runtime/test/speak-route.test.ts`, `packages/commands/test/commands.test.ts` |
 | P.7 | `adding-a-voice-provider.md` | this doc and `adding-a-voice-provider.md` | docs check |
+| O.4 (local install) | the local stack chosen at install (none, cpu, gpu), switchable from Settings and the CLI, verified on its device (ADR 0089) | `packages/runtime/src/voice/install*.ts`, `local-profile.ts`, `python/requirements-*.txt`, `python/fr_voice_models.py`, `fr_stt.py` `setup_cuda_libraries` | `packages/runtime/test/voice-install*.test.ts`, `voice-local-profile.test.ts`, `test/python-device.test.ts`, `apps/ui/test/settings-voice.test.tsx` |
 | checklist "Voice keys" | keys missing -> local only; synthesised speech clips fed to STT in tests | `registry.ts` policy; `wav.synth` fixtures | `test/registry.test.ts`, `test/local-helpers.test.ts` |

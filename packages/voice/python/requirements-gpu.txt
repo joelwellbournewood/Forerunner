@@ -1,0 +1,24 @@
+# Forerunner voice profile "gpu" (NVIDIA only): faster-whisper on CUDA (float16) and Kokoro on
+# CUDA PyTorch. Installed by `fr voice install --gpu` into the managed venv under the data
+# directory (docs/maintainers/voice.md, "Voice profiles"). Python 3.10 to 3.12.
+# PyTorch comes from its CUDA 12.8 wheel index (cu128 has kernels for RTX 20xx to RTX 50xx).
+# ctranslate2 4.8 is built for CUDA 12 and loads cuBLAS 12 at run time (and on Windows the
+# cuDNN 9 parts behind its bundled cudnn64_9.dll): the two NVIDIA wheels below provide them,
+# pinned to the versions torch 2.11.0+cu128 requires on Linux so pip never has to choose.
+# fr_stt.py puts their folders on the library path (setup_cuda_libraries). Needs an NVIDIA
+# driver recent enough for CUDA 12.8 (R570 or later is safe). Change a pin here and the next
+# install reinstalls.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+nvidia-cublas-cu12==12.8.4.1
+nvidia-cudnn-cu12==9.19.0.56
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+kokoro==0.9.4
+misaki[en]==0.9.4
+transformers==5.20.2
+huggingface-hub==2.3.0
+soundfile==0.14.0
+numpy==2.5.4
+# misaki's English G2P loads this spaCy model and otherwise pip-installs it at first use.
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

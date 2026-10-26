@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DEVICES_ROUTES } from "../devices/types.ts";
+import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
 
 /** Settings -> Devices shapes (spec R.2): the daemon's `/devices` routes' bodies and answers. */
 export {
@@ -32,6 +33,23 @@ export {
   SourceView,
   SUPPORTED_SOURCE_KINDS,
 } from "../sources/types.ts";
+/** Settings -> Voice shapes (ADR 0089): the voice profile, its install job and its progress. */
+export {
+  GpuView,
+  VOICE_INSTALL_ROUTES,
+  VOICE_PROFILE_INFO,
+  VOICE_PROFILES,
+  VoiceDeviceView,
+  VoiceInstallBody,
+  VoiceInstallEntryView,
+  VoiceInstallEvent,
+  VoiceInstallJobView,
+  VoiceInstallView,
+  type VoiceProfile,
+  type VoiceProfileInfo,
+  VoiceProfileSchema,
+  voiceInstallCommand,
+} from "../voice/install-types.ts";
 
 /**
  * Local daemon API contract (ADR 0011). The desktop and Android shells, the approvals web
@@ -1803,6 +1821,8 @@ export const DAEMON_ROUTES = {
   removeSource:
     "DELETE /sources/:id ({ ok, id, candidatesRemoved }; projects created from it stay)",
   ...DEVICES_ROUTES,
+  // Settings -> Voice (ADR 0089): the voice profile, its install and progress.
+  ...VOICE_INSTALL_ROUTES,
   dataAssets: "GET /projects/:id/data (DataAssetView[])",
   registerDataAsset:
     "POST /projects/:id/data { locator, kind?, mode?, name?, sizeBytes? } | multipart file (+ kind, name) (201 DataAssetView; 413 above the upload cap)",

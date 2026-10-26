@@ -1,0 +1,17 @@
+# Forerunner voice profile "cpu": faster-whisper (int8 on the CPU) and Kokoro on CPU PyTorch.
+# Installed by `fr voice install --cpu` into the managed venv under the data directory
+# (docs/maintainers/voice.md, "Voice profiles"). Python 3.10 to 3.12 (kokoro 0.9.4 needs < 3.13).
+# The CPU wheel index keeps PyTorch to its CPU build (the default PyPI torch on Linux pulls
+# about 3 GB of CUDA libraries). Change a pin here and the next install reinstalls.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+kokoro==0.9.4
+misaki[en]==0.9.4
+transformers==5.20.2
+huggingface-hub==2.3.0
+soundfile==0.14.0
+numpy==2.5.4
+# misaki's English G2P loads this spaCy model and otherwise pip-installs it at first use.
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

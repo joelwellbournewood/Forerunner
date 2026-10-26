@@ -1,0 +1,205 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { type AppDirs, appDirs, dirname, join, SimulatedClock } from "@forerunner/platform";
+import { MemoryVault } from "@forerunner/vault";
+import { describe, expect, it } from "vitest";
+import {
+  type VoiceSettings,
+  venvPythonPath,
+  voiceDirs,
+  writeVoiceSettings,
+} from "../src/voice/install.ts";
+import {
+  type LocalHelperOptions,
+  LocalVoice,
+  localVoiceSettings,
+} from "../src/voice/local-profile.ts";
+import { buildVoiceRegistry } from "../src/voice/providers.ts";
+
+/**
+ * The daemon's local providers follow the voice profile (ADR 0089): the managed venv's
+ * interpreter, the profile's devices (cuda with a loud CPU fallback on gpu), the models folder
+ * as HF_HOME, or "voice is off" for none. voice.json is read at every use, so a switch from
+ * the CLI or Settings applies at the next voice session without a restart.
+ */
+
+function home(): { dirs: AppDirs; env: NodeJS.ProcessEnv } {
+  const h = mkdtempSync(join(tmpdir(), "fr-voice-local-"));
+  const env = { FORERUNNER_HOME: h };
+  return { dirs: appDirs({ env }), env };
+}
+
+function installed(
+  dirs: AppDirs,
+  profile: "cpu" | "gpu",
+  verified: VoiceSettings["verified"],
+  platform: "linux" | "windows" = "linux",
+): string {
+  const venv = voiceDirs(dirs).venv(profile);
+  const py = venvPythonPath(venv, platform);
+  mkdirSync(dirname(py), { recursive: true });
+  writeFileSync(py, "");
+  writeVoiceSettings(dirs, {
+    version: 1,
+    profile,
+    updatedAt: "2026-10-26T10:00:00.000Z",
+    install: {
+      venv,
+      python: py,
+      pythonVersion: "3.12.7",
+      requirementsSha256: "x",
+      installedAt: "2026-10-26T10:00:00.000Z",
+    },
+    verified,
+  });
+  return py;
+}
+
+const cuda = { device: "cuda", computeType: "float16", fallback: null };
+const ttsCuda = { device: "cuda", computeType: null, fallback: null };
+
+describe("localVoiceSettings: what the profile means for the helpers", () => {
+  it("no voice.json: null (the behaviour from before profiles: any Python, device auto)", () => {
+    const { dirs, env } = home();
+    expect(localVoiceSettings({ dirs, env, platform: "linux" })).toBeNull();
+  });
+
+  it("none: off, with the way to turn it on", () => {
+    const { dirs, env } = home();
+    writeVoiceSettings(dirs, { version: 1, profile: "none", updatedAt: "2026-10-26T10:00:00Z" });
+    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    expect(s?.off).toMatch(/voice is off/);
+    expect(s?.off).toMatch(/fr voice install --cpu/);
+    expect(s?.off).toMatch(/Settings/);
+  });
+
+  it("gpu, verified on cuda: the venv's Python, STT cuda float16 and Kokoro cuda, both with the CPU fallback", () => {
+    const { dirs, env } = home();
+    const py = installed(dirs, "gpu", { at: "t", stt: cuda, tts: ttsCuda });
+    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    expect(s).toMatchObject({
+      profile: "gpu",
+      off: null,
+      python: py,
+      stt: { device: "cuda", computeType: "float16", cpuFallback: true },
+      tts: { device: "cuda", cpuFallback: true },
+    });
+    expect(s?.env.HF_HOME).toBe(voiceDirs(dirs).models);
+  });
+
+  it("gpu whose check fell back: the CPU from the start, no CUDA attempt at every start", () => {
+    const { dirs, env } = home();
+    installed(dirs, "gpu", {
+      at: "t",
+      stt: { device: "cpu", computeType: "int8", fallback: "cublas64_12.dll not found" },
+      tts: ttsCuda,
+    });
+    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    expect(s?.stt).toEqual({ device: "cpu", computeType: "int8", cpuFallback: false });
+    expect(s?.tts).toEqual({ device: "cuda", cpuFallback: true });
+  });
+
+  it("cpu: int8 on the CPU and Kokoro on the CPU", () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", {
+      at: "t",
+      stt: { device: "cpu", computeType: "int8", fallback: null },
+      tts: { device: "cpu", computeType: null, fallback: null },
+    });
+    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    expect(s?.stt).toEqual({ device: "cpu", computeType: "int8", cpuFallback: false });
+    expect(s?.tts).toEqual({ device: "cpu", cpuFallback: false });
+  });
+
+  it("a profile whose venv is gone: off until it is installed again", () => {
+    const { dirs, env } = home();
+    writeVoiceSettings(dirs, { version: 1, profile: "gpu", updatedAt: "t" });
+    const s = localVoiceSettings({ dirs, env, platform: "linux" });
+    expect(s?.off).toMatch(/fr voice install --gpu/);
+  });
+
+  it("FORERUNNER_PYTHON wins over the managed venv (devices still follow the profile)", () => {
+    const { dirs, env } = home();
+    installed(dirs, "gpu", { at: "t", stt: cuda, tts: ttsCuda });
+    const s = localVoiceSettings({
+      dirs,
+      env: { ...env, FORERUNNER_PYTHON: "/opt/py/bin/python" },
+      platform: "linux",
+    });
+    expect(s?.python).toBeNull();
+    expect(s?.stt.device).toBe("cuda");
+  });
+});
+
+describe("LocalVoice: the registry's faster-whisper and kokoro follow voice.json", () => {
+  it("none: the registry reports why local voice is unavailable", async () => {
+    const { dirs, env } = home();
+    writeVoiceSettings(dirs, { version: 1, profile: "none", updatedAt: "t" });
+    const local = new LocalVoice({ dirs, env, clock: new SimulatedClock() });
+    const registry = buildVoiceRegistry({
+      env,
+      vault: new MemoryVault(),
+      clock: new SimulatedClock(),
+      local,
+    });
+    const stt = await registry.statusStt();
+    const tts = await registry.statusTts();
+    expect(stt.find((s) => s.name === "faster-whisper")?.reason).toMatch(/voice is off/);
+    expect(tts.find((s) => s.name === "kokoro")?.reason).toMatch(/voice is off/);
+    expect(stt.find((s) => s.name === "faster-whisper")?.available).toBe(false);
+  });
+
+  it("builds the helpers with the profile's argv and rebuilds them when voice.json changes", async () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", {
+      at: "t",
+      stt: { device: "cpu", computeType: "int8", fallback: null },
+      tts: { device: "cpu", computeType: null, fallback: null },
+    });
+    const built: LocalHelperOptions[] = [];
+    let disposed = 0;
+    const local = new LocalVoice({
+      dirs,
+      env,
+      clock: new SimulatedClock(),
+      factory: (o) => {
+        built.push(o);
+        const fake = {
+          isAvailable: async () => ({ ok: true, reason: "fake" }),
+          dispose: async () => {
+            disposed++;
+          },
+        };
+        return {
+          stt: {
+            name: "faster-whisper",
+            kind: "local",
+            ...fake,
+            start: () => {
+              throw new Error("no");
+            },
+          },
+          tts: { name: "kokoro", kind: "local", ...fake, synthesize: async function* () {} },
+        };
+      },
+    });
+    await local.stt.isAvailable();
+    expect(built).toHaveLength(1);
+    expect(built[0]?.stt).toMatchObject({ device: "cpu", computeType: "int8", extraArgs: [] });
+    expect(built[0]?.tts.extraArgs).toEqual(["--device", "cpu"]);
+    await local.tts.isAvailable();
+    expect(built).toHaveLength(1);
+    // The CLI switches to gpu: the next use builds new helpers and stops the old ones.
+    installed(dirs, "gpu", { at: "t2", stt: cuda, tts: ttsCuda });
+    await local.stt.isAvailable();
+    expect(built).toHaveLength(2);
+    expect(disposed).toBe(2);
+    expect(built[1]?.stt).toMatchObject({
+      device: "cuda",
+      computeType: "float16",
+      extraArgs: ["--cpu-fallback"],
+    });
+    expect(built[1]?.tts.extraArgs).toEqual(["--device", "cuda", "--cpu-fallback"]);
+    expect(built[1]?.env?.HF_HOME).toBe(voiceDirs(dirs).models);
+  });
+});

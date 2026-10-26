@@ -14,6 +14,10 @@ milestone of the 1.0 build; the steps there are the ones already in place.
   will work on. The first-run wizard tells you the exact scopes and where to click.
 - Optional: Docker Desktop (Windows) or Docker/Podman (Linux) so coding tasks run in a sandbox.
   Without it, Forerunner still works; tasks run in a process sandbox with fewer guarantees.
+- Optional, for talking to your agent by voice on this PC: Python 3.10, 3.11 or 3.12 (not
+  3.13 yet), and for the fast option an NVIDIA graphics card with a current driver. Windows:
+  `winget install -e --id Python.Python.3.12`. Debian/Ubuntu:
+  `sudo apt-get install -y python3.12 python3.12-venv`.
 
 ## Install on Windows
 
@@ -81,6 +85,18 @@ checkout). It never asks for something without saying what it is for:
 5. **Where to work.** Connect sources: GitHub organisations or accounts, chosen repositories,
    local folders. A scan proposes a project per repository (coming in this release: import of
    ZIP files and folders).
+6. **Voice.** Whether to install speech on this PC, and how:
+
+   | Choice | Disk | Download | Trade-off |
+   | --- | --- | --- | --- |
+   | None | 0 GB | nothing | No local speech; voice works only with a cloud voice provider set up in Extensions. |
+   | CPU | about 2.3 GB | about 1 GB | Works on any PC. Replies start slower: about 1 s before the first spoken word. |
+   | GPU (NVIDIA) | about 8 GB | about 4.5 GB | Fastest replies. Needs an NVIDIA card and driver; if the card cannot be used, the CPU takes over and setup says why. |
+
+   When an NVIDIA card is found, GPU is the default. The install runs right after with its
+   progress on screen and checks that speech recognition and speech work on the chosen
+   device; it takes a while on the first run. If it is interrupted, run it again: finished
+   downloads are kept. Without asking: `fr setup --non-interactive --voice none|cpu|gpu`.
 
 Credentials go into the operating system's credential store (Windows Credential Manager, or
 GNOME Keyring / KWallet on Linux). They are never written to the configuration file, the
@@ -89,6 +105,15 @@ project repositories or the logs. You can re-run the wizard at any time from Set
 
 Your agent then creates its first project plan from the brief you give it and shows the plan for
 approval before it does anything.
+
+**Changing voice later.** Settings → Voice shows what is installed, on which device, and the
+size of each choice; **Switch** installs the other one with its progress in the card (close any
+voice conversation first). From a terminal: `fr voice install --cpu` or `--gpu`,
+`fr voice remove` (turns local voice off and deletes its packages and models), and
+`fr voice status`. The packages live in your data folder (`voice/venv-cpu` or `voice/venv-gpu`)
+with the models in `voice/models`; nothing is installed into your system Python. If the GPU
+check fails, `fr voice install --gpu` prints a `WARNING` with the reason and voice keeps working
+on the CPU; after updating the NVIDIA driver, run it again.
 
 ## Pairing the phone (coming in this release)
 
@@ -113,10 +138,13 @@ session log.
 | Cache (compressed context, model lists, downloads) | `%LOCALAPPDATA%\forerunner\cache` | `~/.cache/forerunner` |
 | Logs | `%LOCALAPPDATA%\forerunner\logs` | `~/.local/state/forerunner/logs` |
 | Working copies for tasks | `%LOCALAPPDATA%\forerunner\worktrees` | `~/.local/share/forerunner/worktrees` |
+| Voice packages and models (when installed) | `%LOCALAPPDATA%\forerunner\data\voice` | `~/.local/share/forerunner/voice` |
 | Credentials | Credential Manager, entries `forerunner-<profile>` | Keyring, service `forerunner-<profile>` |
 
 Setting `FORERUNNER_HOME` moves all of it under one folder (used to run two installs on one
 machine for testing). `fr dirs` prints the folders in use. Updates never touch these folders.
+With voice installed, keep `FORERUNNER_HOME` short (under about 75 characters on Linux): the speech
+engine cannot read its data from a longer path, and `fr voice install` refuses it with the reason.
 
 Your code and project documents live in git on the host you connected (GitHub), not in
 Forerunner's folders; the shared state used by two people's agents lives in the state service

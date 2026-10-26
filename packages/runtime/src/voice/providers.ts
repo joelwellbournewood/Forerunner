@@ -26,6 +26,7 @@
 import type { Clock } from "@forerunner/platform";
 import { parseSecretRef, type Vault } from "@forerunner/vault";
 import type { InstalledCatalogExtension } from "../extensions/registry.ts";
+import type { LocalVoice } from "./local-profile.ts";
 import {
   CartesiaTts,
   DeepgramStt,
@@ -62,6 +63,11 @@ export interface VoiceRegistryOptions {
   env: NodeJS.ProcessEnv;
   vault: Vault;
   clock: Clock;
+  /**
+   * The local helpers as the voice profile says (ADR 0089; the daemon and `voice:run check`
+   * pass one). Absent: faster-whisper and Kokoro as before profiles (any Python, device auto).
+   */
+  local?: LocalVoice;
 }
 
 /** One side's preferred provider and where the choice came from. */
@@ -325,15 +331,21 @@ export function buildVoiceRegistry(opts: VoiceRegistryOptions): VoiceProviderReg
   const resolveSecret = async (ref: string): Promise<string | undefined> =>
     (await vault.get(parseSecretRef(ref))) ?? undefined;
   const registry = new VoiceProviderRegistry();
-  // Local by default (free, private); each probes its interpreter or binary when asked.
-  const whisperModel = env.FORERUNNER_WHISPER_MODEL?.trim();
-  registry.registerStt(
-    new FasterWhisperStt({ clock, env, ...(whisperModel ? { model: whisperModel } : {}) }),
-  );
-  const kokoroVoice = env.FORERUNNER_KOKORO_VOICE?.trim();
-  registry.registerTts(
-    new KokoroTts({ clock, env, ...(kokoroVoice ? { voice: kokoroVoice } : {}) }),
-  );
+  // Local by default (free, private); each probes its interpreter or binary when asked. With
+  // a voice profile they follow voice.json (the venv, the devices, or off for "none").
+  if (opts.local) {
+    registry.registerStt(opts.local.stt);
+    registry.registerTts(opts.local.tts);
+  } else {
+    const whisperModel = env.FORERUNNER_WHISPER_MODEL?.trim();
+    registry.registerStt(
+      new FasterWhisperStt({ clock, env, ...(whisperModel ? { model: whisperModel } : {}) }),
+    );
+    const kokoroVoice = env.FORERUNNER_KOKORO_VOICE?.trim();
+    registry.registerTts(
+      new KokoroTts({ clock, env, ...(kokoroVoice ? { voice: kokoroVoice } : {}) }),
+    );
+  }
   const piperModel = env.FORERUNNER_PIPER_MODEL?.trim();
   if (piperModel) registry.registerTts(new PiperTts({ modelPath: piperModel, env }));
   // Cloud for the lowest latency, each behind its key by reference.

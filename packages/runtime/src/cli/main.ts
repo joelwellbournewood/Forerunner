@@ -6,7 +6,7 @@ import { registerMirrorCli } from "@forerunner/capabilities";
 import { appDirs, errorMessage, log, osFacts, run, which } from "@forerunner/platform";
 import { openStore, parseStoreUrl } from "@forerunner/state";
 import { openVault } from "@forerunner/vault";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import type { RuntimeApp } from "../daemon/compose.ts";
 import {
   describeIdentityCheck,
@@ -31,6 +31,8 @@ import { registerSourcesCli } from "../sources/cli.ts";
 import { registerUpdateCli } from "../update/cli.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { APP_VERSION } from "../version.ts";
+import type { VoiceProcRunner } from "../voice/install.ts";
+import { registerVoiceCli, voiceSetupStep } from "../voice/install-cli.ts";
 import { registerAuditCli } from "./audit.ts";
 import { registerSpecialistsCli } from "./specialists.ts";
 import { registerVaultCli, type SecretInput } from "./vault.ts";
@@ -71,6 +73,8 @@ export interface CliDeps {
   cwd?: () => string;
   /** Where `fr vault set` reads the value from; the process's stdin by default. */
   stdin?: SecretInput;
+  /** `fr voice` and the voice step of `fr setup`: the process runner and OS (tests fake them). */
+  voice?: { run?: VoiceProcRunner; platform?: "windows" | "linux" | "macos" };
 }
 
 export function buildProgram(deps: CliDeps = {}): Command {
@@ -143,6 +147,12 @@ export function buildProgram(deps: CliDeps = {}): Command {
       "Anthropic workspace id for a user-scoped key (or FORERUNNER_ANTHROPIC_WORKSPACE_ID)",
     )
     .option("--state-url <url>", "sqlite:<path> or postgres://...")
+    .addOption(
+      new Option(
+        "--voice <profile>",
+        "local voice: none (off), cpu (about 2.3 GB, any PC) or gpu (NVIDIA, about 8 GB, fastest); asked when interactive, installed with progress (ADR 0089)",
+      ).choices(["none", "cpu", "gpu"]),
+    )
     .action(async (opts) => {
       const profile: string = opts.profile ?? readConfig()?.profile ?? "default";
       const vault = await openVault({ profile });
@@ -190,6 +200,16 @@ export function buildProgram(deps: CliDeps = {}): Command {
         if (report.skipped.length)
           out(`Not configured yet: ${report.skipped.join(", ")} (run fr setup again any time)`);
         out(report.complete ? "Setup complete." : "Setup saved; credentials can be added later.");
+        // Voice (ADR 0089): the profile, asked or from --voice, installed with its progress.
+        const voice = await voiceSetupStep(
+          {
+            voice: opts.voice,
+            nonInteractive: !!opts.nonInteractive,
+            ...(prompt ? { prompt: (q: string) => prompt(q) } : {}),
+          },
+          { env, out, ...(deps.voice ?? {}) },
+        );
+        if (voice && voice.exitCode !== 0) process.exitCode = voice.exitCode;
       } finally {
         io.rl?.close();
       }
@@ -420,6 +440,9 @@ export function buildProgram(deps: CliDeps = {}): Command {
     out,
     input: deps.stdin,
   });
+
+  // Local voice (ADR 0089): install, switch or remove the speech stack; no daemon needed.
+  registerVoiceCli(program, { env, out, ...(deps.voice ?? {}) });
 
   // Proposed specialists (spec C.5, ADR 0071): approve runs the eval set and promotes on a
   // pass, reject withdraws; the same steps as an inbox answer, as a one-shot.

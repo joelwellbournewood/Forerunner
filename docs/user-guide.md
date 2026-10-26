@@ -71,7 +71,9 @@ lifts the stop.
 
 Push-to-talk voice chat with read-back confirmation, the Android app for approvals and remote
 control of your PC, and tasks by email that run on the cloud runner while your PCs are off.
-Each arrives with its milestone; the setup guide says what to configure.
+Each arrives with its milestone; the setup guide says what to configure. Speech on this PC is
+chosen in the setup wizard and changed in Settings → Voice: none, CPU (any PC, slower replies)
+or GPU (NVIDIA, fastest), each with its disk size shown.
 
 ## Where things live
 

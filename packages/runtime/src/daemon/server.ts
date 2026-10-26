@@ -38,6 +38,7 @@ import { createSourcesRoutes } from "../sources/routes.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
 import type { SchemaSyncStatus } from "../update/sync.ts";
 import type { VoiceBridgeEntry } from "../voice/bridge.ts";
+import { createVoiceInstallRoutes } from "../voice/install-routes.ts";
 import type { AudioChunk } from "../voice/pkg.ts";
 import type { SpeakEntry } from "../voice/speak.ts";
 import {
@@ -481,6 +482,8 @@ export function createDaemonApp(
     }),
   );
   app.route("/model-watch", createModelWatchRoutes({ watch: rt.modelWatch }));
+  // Settings -> Voice (ADR 0089): the voice profile and its install job with progress.
+  app.route("/", createVoiceInstallRoutes({ jobs: rt.voiceInstall }));
   // Notifications (spec R.6, ADR 0017, ADR 0038): preferences, a test send, the recent list.
   app.route(
     "/",

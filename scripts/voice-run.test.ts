@@ -2,9 +2,10 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve, SimulatedClock } from "@forerunner/platform";
+import { appDirs, dirname, join, resolve, SimulatedClock } from "@forerunner/platform";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nearestRank } from "../packages/runtime/src/daemon/views.ts";
+import { writeVoiceSettings } from "../packages/runtime/src/voice/install.ts";
 import { openStore, type StateStore } from "../packages/state/src/index.ts";
 import {
   buildLatencyReport,
@@ -522,6 +523,70 @@ describe("voice-run check", () => {
     expect(b.missing).toEqual(["node", "python", "faster_whisper", "kokoro"]);
     expect(b.commands[1]).toContain("sudo apt-get install -y python3");
     expect(noPy.text()).toContain("!!  node            20.1.0 (needs >= 22.13)");
+  });
+
+  it("reports the voice profile and the devices its last check verified (ADR 0089)", async () => {
+    const gpu = async () => ({
+      present: true,
+      name: "NVIDIA GeForce RTX 4070",
+      driver: "572.83",
+      memoryMb: 12282,
+      reason: "found by nvidia-smi",
+    });
+    const base = {
+      out: () => {},
+      platform: "windows" as const,
+      nodeVersion: "24.14.1",
+      registry: registry({ whisper: true, kokoro: true }),
+      python: async () => ({ python: "py", version: "3.12.7", reason: "runs" }),
+      gpu,
+    };
+    // No profile chosen yet: says so, with the managed install for the GPU found.
+    const fresh = lines();
+    const a = await runCheck({ ...base, env: { FORERUNNER_HOME: home }, out: fresh.out });
+    expect(a.profile).toBeNull();
+    expect(fresh.text()).toContain("ok  gpu             NVIDIA GeForce RTX 4070, driver 572.83");
+    expect(fresh.text()).toContain("--  voice profile   not chosen");
+    expect(fresh.text()).toContain("pnpm fr -- voice install --gpu");
+
+    const env = { FORERUNNER_HOME: home };
+    writeVoiceSettings(appDirs({ env }), {
+      version: 1,
+      profile: "gpu",
+      updatedAt: NOW,
+      verified: {
+        at: NOW,
+        stt: { device: "cuda", computeType: "float16", fallback: null },
+        tts: { device: "cuda", computeType: null, fallback: null },
+      },
+    });
+    const onGpu = lines();
+    const b = await runCheck({ ...base, env, out: onGpu.out });
+    expect(b.profile).toBe("gpu");
+    expect(b.devices).toEqual({ stt: "cuda", tts: "cuda" });
+    expect(onGpu.text()).toContain("ok  voice profile   gpu");
+    expect(onGpu.text()).toContain(
+      `ok  devices         speech recognition cuda (float16), speech cuda (verified ${NOW})`,
+    );
+
+    writeVoiceSettings(appDirs({ env }), {
+      version: 1,
+      profile: "gpu",
+      updatedAt: NOW,
+      verified: {
+        at: NOW,
+        stt: { device: "cpu", computeType: "int8", fallback: "cublas64_12.dll not found" },
+        tts: { device: "cuda", computeType: null, fallback: null },
+      },
+    });
+    const fellBack = lines();
+    await runCheck({ ...base, env, out: fellBack.out });
+    expect(fellBack.text()).toContain(
+      "!!  devices         speech recognition cpu (int8), speech cuda",
+    );
+    expect(fellBack.text()).toContain(
+      "the GPU check fell back to the CPU: cublas64_12.dll not found",
+    );
   });
 
   it("refuses without a dedicated FORERUNNER_HOME", async () => {
