@@ -97,6 +97,32 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 - Build spend: about 8.9 million agent tokens over about nineteen sandbox agents on the
   subscription; no USD figure; nothing charged to an API key (COST.md).
 
+### Where to pick up (handover of 2026-10-27, after the v1.0.0 release)
+v1.0.0 is released (tag on 5b4c267, `release.yml` run 40494452844, signed manifest verified).
+It shipped with known gaps the human accepted; `docs/release/1.0.0-tested.md` is the honest
+record of what was tested live, against stand-ins only, or not at all. Supersedes the
+handovers below where they differ.
+
+Open for 1.0.x / 1.1, in order:
+1. Close the test pull request #2 on the repository (left by the V.8 re-run).
+2. Handover on a PC without a sandbox: the agent cannot run the check command, the critic
+   sends the change back and the retry ladder spends about three more attempts. Go straight
+   to the human when shell is withheld and a check criterion cannot be verified; fix the
+   handover report's wording ("the change was not made") and print the sent-back count.
+3. Email live check (L.3): `scripts/email-live.ts` is written and passes offline (local
+   branch `email-live`, commit 4ceee86, adds `Mailbox.verify()`); needs an independent review,
+   then the human's mailbox (Gmail with 2-Step Verification and an app password; his new
+   Google account could not enable 2FA yet, GMX sign-up failed).
+4. The setup wizard's GitHub check lists "Workflows: read"; the code needs "Commit statuses:
+   read" (`packages/runtime/src/setup/validators.ts`).
+5. Android versionCode ignores the pre-release part (rc.3, rc.4 and 1.0.0 share 1000000).
+6. Voice first audio misses 1.2 s (GPU 1.4 to 2.1 s; the model's first token is the largest
+   stage); the STT helper crash 0xC0000005 is diagnosable now but its cause is unproven.
+7. Cloud runner on Claude Managed Agents (the human's wish); push notifications with a real
+   Firebase project (R.6, K.8).
+8. The human's GitHub token for V.8 has admin rights and expires after 7 days; revoke it when
+   no longer needed.
+
 ### Where to pick up (handover of 2026-10-25 night, the cloud session)
 Written 2026-10-25 ~22:20 UTC by a cloud session working the evening handover below (code head
 50af41b; CI CI run 40239631674 on 50af41b green on ubuntu-latest and windows-latest with gitleaks, the dependency audit and the runner image (https://github.com/joelwellbournewood/Forerunner/actions/runs/40239631674)). It supersedes that handover where they differ. Every code change below
