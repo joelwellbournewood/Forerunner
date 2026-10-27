@@ -37,7 +37,7 @@ on a real phone, one versionCode shared by rc.3, rc.4 and 1.0.0 and a header und
 bar (the header fix, ee056ae, is not confirmed on the phone).
 
 - **Code tested:** the live suite, the tier 1 critic calibration and the emulator smoke ran on
-  a76e259, 94 commits before rc.4. No CI, release or live run exists yet on the 1.0.0 commit.
+  a76e259, 94 commits before rc.4. CI is green on the 1.0.0 code (run 40423095845); the V.8 re-run is the only live run on it.
 - **Email:** tested only against the test mail server. Not tested with a real mailbox (L.3).
 - **Cloud runner:** tested only in process. Not tested on a real host (S.12). Anthropic-hosted
   runs through Claude Managed Agents are planned for 1.1 (the human's wish, reported
@@ -47,8 +47,11 @@ bar (the header fix, ee056ae, is not confirmed on the phone).
 - **Voice:** works end to end on one Windows PC (CPU and NVIDIA GPU profiles), but first audio
   misses the 1.2 s target (GPU median 1383 ms, then 2139 ms, 4 turns each; CPU about 4 s). Not
   tested on Linux or with cloud voice providers.
-- **GitHub:** V.8's one live attempt failed on the bearer header; the fix is included, the live
-  re-run is pending. That run uses a token with admin rights, which the human chose to keep (reported 2026-10-26).
+- **GitHub:** git over HTTPS is fixed and confirmed live (the V.8 re-run of 2026-10-27 cloned,
+  pushed and opened pull request #2). The handover still ends stuck: without a sandbox the
+  agent cannot run the check command, so the critic sends the change back and the retry ladder
+  spends up to about three more attempts before asking you. Workaround: Docker or Podman, or
+  `FORERUNNER_SDK_HOST_COMMANDS=1` (commands then run unsandboxed). That run uses a token with admin rights, which the human chose to keep (reported 2026-10-26).
   Every other pull request in testing went to the fake git host.
 - **Desktop app:** the installers were built and published, but no record shows the installed
   MSI, AppImage or `.deb` being run. No real Linux desktop session was tested. The MSI is

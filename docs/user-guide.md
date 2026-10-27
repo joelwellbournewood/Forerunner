@@ -25,7 +25,8 @@ In short:
 - **Tested live:** chat and coding sessions on an Anthropic API key and on a Claude
   subscription (their pull requests went to a test git host, not GitHub); the critic; voice on
   one Windows PC; installing and updating the Android app on one real phone. Most of these runs
-  used code from before the last release candidate, and none used the 1.0.0 code.
+  used code from before the last release candidate; only the GitHub run below used the 1.0.0
+  code.
 - **Slower than the target:** voice. The first spoken word comes about 1.4 to 2.1 s after you
   release Talk on a GPU, about 4 s on the CPU profile. The target is 1.2 s.
 - **Tested only against stand-ins:** email tasks, the cloud runner, push notifications on the
@@ -34,8 +35,10 @@ In short:
 - **Not tested:** a real mailbox, a real cloud runner host, a real Firebase project, voice on
   Linux, cloud voice providers, pairing a real phone, and running the installed MSI, AppImage
   or `.deb`.
-- **GitHub:** the one live run on a real repository failed on how the token was sent. 1.0.0
-  includes the fix, which has not had a live run yet.
+- **GitHub:** a live run on 1.0.0 cloned this repository, pushed and opened a real pull
+  request. On a PC without Docker or Podman the agent cannot run shell commands, so it cannot
+  run your checks: the critic then sends the change back and it retries a few times before
+  asking you. Install Docker or Podman to avoid that.
 
 The phone shows notices only while the app is open, because push is not set up yet. Email and
 the cloud runner are built and pass their tests, but you are the first to run them for real.
