@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
@@ -118,6 +118,72 @@ describe("fresh-install.sh", () => {
         `would run: git clone --depth 1 https://example.invalid/someone/forerunner.git ${target}`,
       );
       expect(r.stdout).toContain("would run: corepack prepare pnpm@");
+    },
+  );
+
+  // A stale pnpm earlier on PATH (seen on Windows: corepack enable failed without admin, so
+  // pnpm 8.6.7 kept answering and `pnpm install --frozen-lockfile` refused the v9 lockfile).
+  // The fake checkout, pnpm, corepack and npm stand in for the real ones; nothing is installed.
+  function staleCheckout(npmInstallFixes: boolean) {
+    const dir = tempDir();
+    const repo = join(dir, "repo");
+    const bin = join(dir, "bin");
+    const prefix = join(dir, "npm-prefix");
+    for (const d of [join(repo, "scripts"), join(repo, ".git"), bin, join(prefix, "bin")]) {
+      mkdirSync(d, { recursive: true });
+    }
+    writeFileSync(join(repo, "pnpm-workspace.yaml"), "packages: []\n");
+    writeFileSync(join(repo, "AGENTS.md"), "fixture\n");
+    writeFileSync(join(repo, "package.json"), '{ "packageManager": "pnpm@10.28.0" }\n');
+    copyFileSync(join(scriptsDir, "fresh-install.sh"), join(repo, "scripts", "fresh-install.sh"));
+    const tool = (file: string, body: string) => {
+      writeFileSync(file, `#!/usr/bin/env bash\n${body}\n`);
+      chmodSync(file, 0o755);
+    };
+    const fakePnpm = (version: string) =>
+      `if [ "$1" = "--version" ]; then echo ${version}; fi\nexit 0`;
+    tool(join(bin, "pnpm"), fakePnpm("8.6.7"));
+    tool(join(bin, "corepack"), "exit 0");
+    tool(
+      join(bin, "npm"),
+      [
+        `if [ "$1" = "prefix" ]; then echo '${prefix}'; exit 0; fi`,
+        npmInstallFixes
+          ? `printf '%s\\n' '#!/usr/bin/env bash' '${fakePnpm("10.28.0").replace(/\n/g, "' '")}' > '${join(prefix, "bin", "pnpm")}'; chmod +x '${join(prefix, "bin", "pnpm")}'`
+          : "",
+        "exit 0",
+      ].join("\n"),
+    );
+    const nodeDir = dirname(process.execPath);
+    const r = bash(
+      [join(repo, "scripts", "fresh-install.sh"), "--non-interactive", "--skip-tests"],
+      {
+        cwd: repo,
+        env: { ...process.env, HOME: dir, PATH: `${bin}:${nodeDir}:/usr/bin:/bin` },
+      },
+    );
+    return { r, out: r.stdout + r.stderr };
+  }
+
+  it.skipIf(!hasBash)(
+    "replaces a stale pnpm on PATH with the package.json version through npm",
+    () => {
+      const { r, out } = staleCheckout(true);
+      expect(r.status, out).toBe(0);
+      expect(out).toContain("pnpm on PATH is 8.6.7, not 10.28.0");
+      expect(out).toContain("npm install -g pnpm@10.28.0");
+      expect(out).toContain("pnpm 10.28.0");
+    },
+  );
+
+  it.skipIf(!hasBash)(
+    "stops at the pnpm step with a clear message when the stale pnpm still answers",
+    () => {
+      const { r, out } = staleCheckout(false);
+      expect(r.status, out).toBe(1);
+      expect(out).toContain("pnpm 10.28.0 is needed but pnpm on PATH is 8.6.7");
+      expect(out).toContain("FAILED at step 3");
+      expect(out).not.toContain("pnpm install --frozen-lockfile\n      ok");
     },
   );
 

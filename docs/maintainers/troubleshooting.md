@@ -22,6 +22,21 @@ edited by hand). CI always uses `--frozen-lockfile`.
 (`corepack prepare pnpm@<version in package.json> --activate`), commit `pnpm-lock.yaml`, rerun.
 Never commit a lockfile produced by a different pnpm major.
 
+### 1a. `ERR_PNPM_NO_LOCKFILE` with "Ignoring not compatible lockfile"
+
+**Symptom.** `fresh-install` (seen on Windows) stops at `pnpm install --frozen-lockfile` with
+`Cannot install with "frozen-lockfile" because pnpm-lock.yaml is present`, after the pnpm step
+printed an older version such as `pnpm 8.6.7`.
+**Cause.** An older pnpm earlier on PATH answers instead of the `packageManager` version.
+`corepack enable` needs admin rights on Windows (it writes shims next to Node in Program Files),
+so without them `corepack prepare --activate` installs pnpm 10 where nothing on PATH points.
+Before the fix, `Test-NativeOk` also returned the command's stdout with its result, so a failed
+`corepack enable` read as success and the npm fallback never ran.
+**Fix.** The scripts now check the pnpm that actually runs after the step, install the wanted
+version with npm when it differs, and stop at step 3 naming every pnpm on PATH when it still
+differs. By hand: `npm install --global pnpm@<version in package.json>`, check
+`pnpm --version`, and remove the old copy that `where.exe pnpm` (`type -a pnpm`) lists first.
+
 ### 2. `ExperimentalWarning: SQLite is an experimental feature`
 
 **Symptom.** Node prints the warning on every start of the CLI, the tests or the daemon.

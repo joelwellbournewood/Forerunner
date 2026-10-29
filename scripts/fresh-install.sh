@@ -133,6 +133,13 @@ confirm() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+pnpm_matches() {
+  # pnpm_matches <version>: the pnpm on PATH is that exact version, or that major ("10").
+  local v
+  v=$(pnpm --version 2>/dev/null) || return 1
+  [ "$v" = "$1" ] || case "$v" in "$1".*) return 0 ;; *) return 1 ;; esac
+}
+
 need_sudo() {
   if [ "$(id -u)" = 0 ]; then
     SUDO=""
@@ -326,7 +333,20 @@ else
   run npm install -g "pnpm@$PNPM_VERSION"
 fi
 hash -r
-if [ "$DRY_RUN" = 0 ]; then say "pnpm $(pnpm --version)"; fi
+if [ "$DRY_RUN" = 0 ]; then
+  # corepack can succeed while an older pnpm earlier on PATH still answers; check what runs.
+  if ! pnpm_matches "$PNPM_VERSION"; then
+    say "pnpm on PATH is $(pnpm --version 2>/dev/null || echo missing), not $PNPM_VERSION; installing pnpm $PNPM_VERSION with npm"
+    run npm install -g "pnpm@$PNPM_VERSION" || true
+    PATH="$(npm prefix -g 2>/dev/null)/bin:$PATH"
+    hash -r
+  fi
+  if ! pnpm_matches "$PNPM_VERSION"; then
+    echo "fresh-install: pnpm $PNPM_VERSION is needed but pnpm on PATH is $(pnpm --version 2>/dev/null || echo missing) ($(type -ap pnpm 2>/dev/null | tr '\n' ' ' || true)). Remove the old pnpm or run: npm install -g pnpm@$PNPM_VERSION" >&2
+    false
+  fi
+  say "pnpm $(pnpm --version)"
+fi
 step_end
 
 step_begin "pnpm install --frozen-lockfile"

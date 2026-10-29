@@ -120,7 +120,10 @@ function Test-NativeOk {
     return $true
   }
   try {
-    Invoke-Native $File @Arguments
+    # Out-Host keeps the command's stdout out of the return value: a function returns everything
+    # its pipeline emits, so (output, $false) would be truthy and a failed "A" would read as ok
+    # (corepack prints its EPERM error on stdout).
+    Invoke-Native $File @Arguments | Out-Host
     return $true
   } catch {
     Say "failed: $($_.Exception.Message)"
@@ -215,6 +218,19 @@ function Read-PnpmVersion([string]$Dir) {
   return $null
 }
 
+function Get-PnpmVersion {
+  if (-not (Test-Command pnpm)) { return $null }
+  try { $v = (& pnpm --version 2>$null) } catch { return $null }
+  if (-not $v) { return $null }
+  return ([string]($v | Select-Object -First 1)).Trim()
+}
+
+function Test-PnpmVersion([string]$Have, [string]$Want) {
+  # An exact version, or a bare major ("10") from the fallback.
+  if (-not $Have) { return $false }
+  return ($Have -eq $Want) -or $Have.StartsWith("$Want.")
+}
+
 function Stop-WithFailure([string]$Message, [int]$Code) {
   $elapsed = Get-Elapsed $script:StepStart
   Write-Host ""
@@ -305,12 +321,8 @@ try {
     $script:PnpmVersion = "10"
     Say "package.json not readable yet; falling back to pnpm major $($script:PnpmVersion)"
   }
-  $pnpmNow = $null
-  if (Test-Command pnpm) {
-    try { $pnpmNow = (& pnpm --version 2>$null) } catch { $pnpmNow = $null }
-    if ($pnpmNow) { $pnpmNow = $pnpmNow.Trim() }
-  }
-  if ($pnpmNow -eq $script:PnpmVersion) {
+  $pnpmNow = Get-PnpmVersion
+  if (Test-PnpmVersion $pnpmNow $script:PnpmVersion) {
     Say "pnpm $($script:PnpmVersion) already active"
   } elseif ((Test-Command corepack) -and (Test-NativeOk corepack enable) -and (Test-NativeOk corepack prepare "pnpm@$($script:PnpmVersion)" --activate)) {
     Update-PathFromRegistry
@@ -319,7 +331,29 @@ try {
     Invoke-Native npm install --global "pnpm@$($script:PnpmVersion)"
     Update-PathFromRegistry
   }
-  if (-not $DryRun) { Say ("pnpm " + (& pnpm --version)) }
+  if (-not $DryRun) {
+    # corepack can "succeed" while an older pnpm earlier on PATH still answers (enable failed
+    # without admin, so no shim was written). Check what actually runs, not what was installed.
+    $pnpmNow = Get-PnpmVersion
+    if (-not (Test-PnpmVersion $pnpmNow $script:PnpmVersion)) {
+      Say "pnpm on PATH is $(if ($pnpmNow) { $pnpmNow } else { 'missing' }), not $($script:PnpmVersion); installing pnpm $($script:PnpmVersion) with npm"
+      Invoke-Native npm install --global "pnpm@$($script:PnpmVersion)"
+      $npmPrefix = ((& npm prefix --global 2>$null) | Select-Object -First 1)
+      if ($npmPrefix) { $env:Path = $npmPrefix.Trim() + [IO.Path]::PathSeparator + $env:Path }
+      $pnpmNow = Get-PnpmVersion
+    }
+    if (-not (Test-PnpmVersion $pnpmNow $script:PnpmVersion)) {
+      $found = (Get-Command pnpm -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source }) -join "; "
+      throw "pnpm $($script:PnpmVersion) is needed but pnpm on PATH is $(if ($pnpmNow) { $pnpmNow } else { 'missing' }) (found: $found). Remove the old pnpm, or run: npm install --global pnpm@$($script:PnpmVersion), then run this script again."
+    }
+    # npm writes pnpm, pnpm.cmd and pnpm.ps1 into one folder; only other folders are other copies.
+    $dirs = @(Get-Command pnpm -All -ErrorAction SilentlyContinue | ForEach-Object { Split-Path -Parent $_.Source } | Select-Object -Unique)
+    $others = @($dirs | Select-Object -Skip 1)
+    if ($others.Count -gt 0) {
+      Say "NOTE: other pnpm copies are on PATH ($($others -join '; ')); if a new terminal reports a pnpm other than $($script:PnpmVersion), remove them"
+    }
+    Say "pnpm $pnpmNow"
+  }
   Stop-Step
 
   Start-Step "pnpm install --frozen-lockfile"

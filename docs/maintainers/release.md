@@ -179,7 +179,10 @@ Evidence for the gate is the workflow's job summary line `fresh install took Ns`
 - `scripts/fresh-install.test.ts`: `bash -n`, `--help`, `--dry-run` from the checkout lists all
   eight steps and runs nothing, `--with-desktop` adds the Tauri libraries, outside a checkout
   without `FORERUNNER_REPO_URL` exits 2 with the instruction and no hardcoded organisation,
-  with the URL it would clone into `FORERUNNER_INSTALL_DIR`; `dev-postgres.sh --status` on an
+  with the URL it would clone into `FORERUNNER_INSTALL_DIR`; with a stale pnpm 8.6.7 first on
+  PATH (fake pnpm, corepack and npm in a fixture checkout) the pnpm step installs the
+  `packageManager` version through npm, or stops at step 3 naming the copies on PATH when npm
+  does not fix it (troubleshooting.md, entry 1a); `dev-postgres.sh --status` on an
   unused port exits 1; the two `.ps1` files parse with the PowerShell parser and
   `fresh-install.ps1 -DryRun -NonInteractive` exits 0 when `pwsh` exists (skipped with a visible
   reason otherwise; Windows CI runs them).
