@@ -40,7 +40,7 @@ test("plan: the milestone timeline and the dependency graph render", async ({ pa
   await expect(graph.locator("[data-testid=graph-edge]")).toHaveAttribute("data-to", "task_2");
 });
 
-test("data: register a dataset by path and queue an import", async ({ page, request }) => {
+test("data: register a dataset by path and import a folder", async ({ page, request }) => {
   await page.goto("/projects/proj_atlas/data");
   await expect(page.getByTestId("data-row")).toHaveCount(1);
   await page.getByTestId("data-locator").fill("s3://example-bucket/atlas/pages.csv");
@@ -50,13 +50,17 @@ test("data: register a dataset by path and queue an import", async ({ page, requ
   await page.getByTestId("import-source").selectOption("folder");
   await page.getByTestId("import-locator").fill("/home/alice/old-site");
   await page.getByTestId("import-run").click();
-  await expect(page.getByTestId("import-result")).toHaveAttribute("data-status", "queued");
+  // The daemon's import (U-006): what came in and where it went.
+  await expect(page.getByTestId("import-result")).toHaveAttribute("data-source", "folder");
+  await expect(page.getByTestId("import-result")).toContainText(
+    "Imported 1 file (1.2 KB) into /data/projects/proj_atlas/data.",
+  );
   const calls = await recordedCalls(request);
   expect(calls.find((c) => c.path === "/projects/proj_atlas/data")?.body).toEqual({
     locator: "s3://example-bucket/atlas/pages.csv",
     kind: "csv",
   });
-  expect(calls.find((c) => c.path === "/projects/proj_atlas/import")?.body).toEqual({
+  expect(calls.find((c) => c.path === "/projects/proj_atlas/data/import")?.body).toEqual({
     source: "folder",
     locator: "/home/alice/old-site",
   });

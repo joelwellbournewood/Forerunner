@@ -55,7 +55,8 @@ test("the stop button posts to /sessions/:id/stop", async ({ page, request }) =>
       data: { agentId: "agent_alice", projectId: "proj_atlas" },
     },
   );
-  const session = (await res.json()) as { id: string };
+  // The daemon's start answer (U-003): the outcome and the session it began.
+  const { session } = (await res.json()) as { session: { id: string } };
   await page.goto(`/sessions/${session.id}`);
   await expect(page.getByTestId("session-header")).toContainText(`Session ${session.id}`);
   const stop = page.getByTestId("stop-session");
