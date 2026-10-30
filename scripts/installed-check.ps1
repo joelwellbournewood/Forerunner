@@ -38,47 +38,59 @@ $i = 0
 foreach ($c in $cases) {
   $i++
   Write-Host "=== $($c.Name) ==="
-  $log = Join-Path $work "install-$i.log"
-  $msiArgs = @('/i', "`"$Msi`"", '/qn', '/norestart', '/l*v', "`"$log`"")
-  if ($c.Dir) { $msiArgs += "INSTALLDIR=`"$($c.Dir)`"" }
-  $p = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
-  if ($p.ExitCode -ne 0) {
-    Write-Host "msiexec exit $($p.ExitCode)"; Get-Content $log -Tail 40
-    $results += [pscustomobject]@{ Case = $c.Name; Ok = $false; Detail = "install failed ($($p.ExitCode))"; Required = $c.Required }
-    continue
-  }
   $dir = if ($c.Dir) { $c.Dir } else { Join-Path $env:ProgramFiles 'Forerunner' }
-  $exe = Find-Exe $dir
-  if (-not $exe) {
-    $results += [pscustomobject]@{ Case = $c.Name; Ok = $false; Detail = "no .exe in $dir"; Required = $c.Required }
-    continue
-  }
-  $exePath = $exe.FullName
-  if ($c.Unc) {
-    $unc = '\\localhost\' + $dir.Substring(0, 1) + '$' + $dir.Substring(2)
-    if (-not (Test-Path -LiteralPath $unc)) {
-      Write-Host "skipped: $unc is not reachable on this machine"
-      $results += [pscustomobject]@{ Case = $c.Name; Ok = $true; Detail = 'skipped (admin share not reachable)'; Required = $false }
-      Start-Process msiexec.exe -ArgumentList @('/x', "`"$Msi`"", '/qn', '/norestart') -Wait | Out-Null
-      continue
+  $installed = $false
+  $denied = $false
+  try {
+    $log = Join-Path $work "install-$i.log"
+    $msiArgs = @('/i', "`"$Msi`"", '/qn', '/norestart', '/l*v', "`"$log`"")
+    if ($c.Dir) { $msiArgs += "INSTALLDIR=`"$($c.Dir)`"" }
+    $p = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
+    if ($p.ExitCode -ne 0) {
+      Get-Content $log -Tail 40
+      throw "install failed (msiexec exit $($p.ExitCode))"
     }
-    $exePath = Join-Path $unc $exe.Name
+    $installed = $true
+    $exe = Find-Exe $dir
+    if (-not $exe) { throw "no .exe in $dir" }
+    $exePath = $exe.FullName
+    if ($c.Unc) {
+      $unc = '\\localhost\' + $dir.Substring(0, 1) + '$' + $dir.Substring(2)
+      if (-not (Test-Path -LiteralPath $unc)) {
+        Write-Host "skipped: $unc is not reachable on this machine"
+        $results += [pscustomobject]@{ Case = $c.Name; Ok = $true; Detail = 'skipped (admin share not reachable)'; Required = $false }
+        continue
+      }
+      $exePath = Join-Path $unc $exe.Name
+    }
+    # Read-only for this user, like a folder the app cannot write to. Only the specific write
+    # rights: icacls' W and D are generic rights that also carry SYNCHRONIZE and READ_CONTROL,
+    # and denying those stops Windows from starting any program in the folder.
+    & icacls $dir /deny "$($env:USERNAME):(OI)(CI)(WD,AD,WEA,WA,DE,DC)" | Out-Null
+    $denied = $true
+    $home_ = Join-Path $work "home-$i"
+    New-Item -ItemType Directory -Force -Path $home_ | Out-Null
+    $report = Join-Path $work "report-$i.json"
+    $env:FORERUNNER_HOME = $home_
+    Write-Host "running: $exePath --self-test (data in $home_)"
+    $t = Start-Process -FilePath $exePath -ArgumentList @('--self-test', '--report', "`"$report`"") -PassThru
+    $null = $t.Handle # without it ExitCode stays empty after the wait
+    if (-not $t.WaitForExit(240000)) {
+      $t.Kill($true)
+      throw "self-test still running after 240 s"
+    }
+    $json = if (Test-Path $report) { Get-Content $report -Raw } else { '{}' }
+    Write-Host $json
+    $ok = ($t.ExitCode -eq 0) -and ($json -match '"ok":\s*true')
+    $results += [pscustomobject]@{ Case = $c.Name; Ok = $ok; Detail = "exit $($t.ExitCode) from $exePath"; Required = $c.Required }
+  } catch {
+    Write-Host "error: $($_.Exception.Message)"
+    $results += [pscustomobject]@{ Case = $c.Name; Ok = $false; Detail = $_.Exception.Message; Required = $c.Required }
+  } finally {
+    Remove-Item Env:\FORERUNNER_HOME -ErrorAction SilentlyContinue
+    if ($denied) { & icacls $dir /remove:d "$($env:USERNAME)" | Out-Null }
+    if ($installed) { Start-Process msiexec.exe -ArgumentList @('/x', "`"$Msi`"", '/qn', '/norestart') -Wait | Out-Null }
   }
-  # Read-only for this user, like a folder the app cannot write to.
-  & icacls $dir /deny "$($env:USERNAME):(OI)(CI)(W,D,DC)" | Out-Null
-  $home_ = Join-Path $work "home-$i"
-  New-Item -ItemType Directory -Force -Path $home_ | Out-Null
-  $report = Join-Path $work "report-$i.json"
-  $env:FORERUNNER_HOME = $home_
-  Write-Host "running: $exePath --self-test (data in $home_)"
-  $t = Start-Process -FilePath $exePath -ArgumentList @('--self-test', '--report', "`"$report`"") -Wait -PassThru
-  Remove-Item Env:\FORERUNNER_HOME
-  & icacls $dir /remove:d "$($env:USERNAME)" | Out-Null
-  $json = if (Test-Path $report) { Get-Content $report -Raw } else { '{}' }
-  Write-Host $json
-  $ok = ($t.ExitCode -eq 0) -and ($json -match '"ok":\s*true')
-  $results += [pscustomobject]@{ Case = $c.Name; Ok = $ok; Detail = "exit $($t.ExitCode) from $exePath"; Required = $c.Required }
-  Start-Process msiexec.exe -ArgumentList @('/x', "`"$Msi`"", '/qn', '/norestart') -Wait | Out-Null
 }
 
 $results | Format-Table -AutoSize | Out-String | Write-Host
