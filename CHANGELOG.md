@@ -14,7 +14,13 @@ Problems and their status, released or not, are tracked in
 
 ## [Unreleased]
 
-Fixes found in 1.0.2; each names its entry in `docs/status/UPDATE-LOG.md`.
+## [1.0.3] - 2026-10-30
+
+Fixes for what the first days with 1.0.2 found. Install 1.0.3 over 1.0.2; your settings and data
+stay. Each fix names its entry in `docs/status/UPDATE-LOG.md`.
+
+A voice install made with 1.0.2 keeps working where it is. To move it next to Forerunner (and off
+C:), choose the profile again in Settings → Voice; the old copy is removed once the new one works.
 
 ### Fixed
 

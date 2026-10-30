@@ -18,6 +18,14 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-30 (1.0.3 prepared: the batch U-003 to U-011)
+- The owner asked for 1.0.3. Version 1.0.3 everywhere (`scripts/release-version.mjs --set 1.0.3`,
+  both Cargo.lock entries), the `[Unreleased]` batch is the `[1.0.3]` CHANGELOG section, and
+  `docs/status/UPDATE-LOG.md` lists U-003 to U-011 as released in 1.0.3. U-012 stays open.
+- The fixes were verified before the bump (CI 41105628591, desktop 41105634630); the release
+  head is checked again by CI and `desktop.yml`, and `release.yml` runs the installed-app check
+  before it publishes.
+
 ### 2026-10-30 (fixes for 1.0.2's first use, held for the next release; update log started)
 - `docs/status/UPDATE-LOG.md` started: every problem found in a released version gets an ID,
   what the user sees, the action and a status. It becomes `fixed` only with commits, tests and
