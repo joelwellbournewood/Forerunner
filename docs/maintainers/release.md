@@ -152,9 +152,12 @@ after the UI build; it writes `apps/desktop/src-tauri/runtime/` (gitignored), wh
 `bundle.resources` ships as `<resources>/runtime/` (`C:\Program Files\Forerunner\runtime`,
 `/usr/lib/Forerunner/runtime`, inside the AppImage). The builder:
 
-1. `pnpm --filter @forerunner/runtime deploy --prod --legacy --config.node-linker=hoisted` into
-   a temp directory outside the workspace (a target inside it makes pnpm link a stray
-   `packages/runtime/<target>/node_modules/.bin`), and moves its flat `node_modules` in;
+1. `pnpm --filter @forerunner/runtime deploy --prod --config.inject-workspace-packages=true
+   --config.node-linker=hoisted` (the shared lockfile's versions; `--legacy` would resolve the
+   ranges afresh) into a fresh directory beside the repository, outside the workspace (a target
+   inside it makes pnpm link a stray `packages/runtime/<target>/node_modules/.bin`) and on the
+   same drive (on Windows a target on another drive is glued onto the workspace path), and
+   moves its flat `node_modules` in;
 2. drops `node_modules/.*`, `node_modules/@forerunner`, symbolic links, `*.d.ts`, `*.d.mts`,
    `*.d.cts`, `*.map`, `*.tsbuildinfo`, and native packages for another OS, CPU or libc
    (`isForeignPlatformPackage`: the musl builds on Linux; the Agent SDK's alone is 280 MB);

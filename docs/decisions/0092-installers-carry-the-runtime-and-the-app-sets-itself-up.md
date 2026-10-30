@@ -34,8 +34,9 @@ the keys into the app, and everything is up to date.
      laid out as in the repository, without tests;
    - `evals/registry/`;
    - the root `package.json` (the app version);
-   - a flat production `node_modules` from `pnpm deploy --prod --legacy` with
-     `node-linker=hoisted`, made outside the workspace;
+   - a flat production `node_modules` from `pnpm deploy --prod` with
+     `inject-workspace-packages` (so the lockfile's versions ship) and `node-linker=hoisted`,
+     made beside the repository, outside the workspace and on the same drive;
    - a `tsconfig.json` whose `paths` map every `@forerunner/*` import, generated from each
      package's `exports`;
    - `runtime.json` (`schema`, `version`, `platform`, `arch`, `node`, `entry`).

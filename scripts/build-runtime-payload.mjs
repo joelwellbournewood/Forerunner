@@ -154,6 +154,15 @@ function runPnpm(args, cwd) {
   }
 }
 
+/** A fresh directory beside the repository, else in the OS temp directory. */
+function deployTarget(repo) {
+  try {
+    return mkdtempSync(path.join(path.dirname(repo), ".fr-runtime-deploy-"));
+  } catch {
+    return mkdtempSync(path.join(tmpdir(), "fr-runtime-deploy-"));
+  }
+}
+
 /** Rename, or copy and remove when the two sit on different file systems (a temp dir). */
 function moveDir(from, to) {
   try {
@@ -230,10 +239,13 @@ export function build(opts = {}) {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
 
-  // Third-party production dependencies, hoisted (real directories, no .pnpm store links).
-  // Deployed outside the workspace: a target inside it makes pnpm also link a stray
-  // `packages/runtime/<target>/node_modules/.bin` into the package being deployed.
-  const deployDir = mkdtempSync(path.join(tmpdir(), "fr-runtime-deploy-"));
+  // Third-party production dependencies, hoisted (real directories, no .pnpm store links), at
+  // the versions pnpm-lock.yaml pins: `inject-workspace-packages` lets `deploy` use the shared
+  // lockfile (`--legacy` resolves the ranges afresh and ignores it). The target sits next to the
+  // repository: outside the workspace (a target inside it makes pnpm link a stray
+  // `packages/runtime/<target>/node_modules/.bin`) and on the same drive (on Windows a target on
+  // another drive is glued onto the workspace path, `D:\repo\C:\Users\...`).
+  const deployDir = deployTarget(repo);
   try {
     runPnpm(
       [
@@ -241,7 +253,7 @@ export function build(opts = {}) {
         "@forerunner/runtime",
         "deploy",
         "--prod",
-        "--legacy",
+        "--config.inject-workspace-packages=true",
         "--config.node-linker=hoisted",
         deployDir,
       ],
