@@ -209,8 +209,11 @@ dedicated subfolder of the install folder.
   the subfolder survives both. An uninstall leaves it, like the data folder.
 - `voice.json` keeps naming the install it describes, so earlier installs keep working; the
   next install moves them.
-- `scripts/installed-check.*` checks the folder each installed place gives: the subfolder
-  for a writable install folder, the data folder with a note for a read-only one.
+- `scripts/installed-check.*` checks the folder each installed place gives:
+  - every Windows place and the AppImage: the subfolder;
+  - the `.deb` in the read-only `/usr/lib`: the data folder with a note.
+
+  A Windows place cannot be made read-only on the hosted runner (U-012).
 
 **Rejected.**
 - Writing into the install folder itself: replaced by every update.

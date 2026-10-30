@@ -197,18 +197,20 @@ into each of these places:
   is not guaranteed). Not `\\localhost\`: Node turns `file://localhost/D$/...` into
   `file:///D$/...` and cannot load it, a form no real share produces.
 
-Since U-011 one more place stays writable (`D:\AGENT\Forerunner`, "another drive, writable"),
-and every case checks where the self-test says downloaded dependencies go
-(`checks.voiceFolder` from `GET /voice/install`): `<install>\dependencies\voice` for the
-writable one, the case's data folder with a `voiceFolderNote` for the read-only ones. The
-uninstall leaves the folder the app made, so the script removes it before the next case.
+Since U-011 every case also checks where the self-test says downloaded dependencies go
+(`checks.voiceFolder` from `GET /voice/install`): `<install>\dependencies\voice`, or for the
+share and the mapped drive `\\<computer>\D$\AGENT\Forerunner\dependencies\voice`, the path
+the app sees. The uninstall leaves the folder the app made, so the script removes it before the
+next case.
 
-For each read-only place it removes the folder's inherited permissions and grants Everyone
-read and run only (`icacls /inheritance:r /grant:r *S-1-1-0:(OI)(CI)(RX)`; `/reset /T`
-restores them before the uninstall). It then checks the lock by creating a file itself and
-fails the case as a setup error if that works. A deny entry for the job's user did not stop
-an administrator's writes (run 41094877855), so the earlier "read-only" places were never
-read-only; neither the app nor anything else had tried to write there. It then runs
+No Windows place is read-only. Until U-011 the script denied the job's user write access, and
+the docs called the places read-only. They never were: the hosted runner's administrator
+account still created files in the folder after a deny entry (run 41094877855), and after a
+read-and-run-only ACL (run 41101161788). That ACL's reset then failed on thousands of files,
+and every later uninstall and install failed with 1603. Nothing had written into the install
+folder before U-011, so nothing showed it. The read-only fallback is checked on Linux (the
+`.deb` in `/usr/lib`, a real `EACCES`) and in `dependencies.test.ts`. Running the Windows
+self-test as a standard user is U-012 in `docs/status/UPDATE-LOG.md`. For each place it runs
 `<exe> --self-test --report <json>` (at most 240 s) with a fresh `FORERUNNER_HOME` under
 `RUNNER_TEMP`, prints the report, and uninstalls. A failing place does not stop the others. `scripts/installed-check.sh <deb> <AppImage>` (ubuntu-22.04) installs the `.deb` and
 runs `/usr/bin/forerunner-desktop --self-test` as the runner user (`/usr/lib/Forerunner` is

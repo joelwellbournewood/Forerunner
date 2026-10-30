@@ -159,9 +159,10 @@ folder.
    so non-ASCII names survive, and leaves every other form alone. It is applied to the bundled
    runtime's directory, in `from_bundled`, and in `from_install_dir`, so no locator hands Node
    a verbatim path. Paths still go to Node as argv entries, never through a shell.
-2. Nothing is written next to the program. The install folder is read-only in the tests below,
-   and everything the runtime writes lives in the data folder; the registry is seeded there
-   (decision point 1).
+2. Nothing is written next to the program, except the downloaded dependencies of ADR 0090's
+   amendment (U-011: `<install>/dependencies` when the folder can be written). Everything else
+   the runtime writes lives in the data folder; the registry is seeded there (decision point
+   1).
 3. `forerunner-desktop --self-test [--report <file>]` (`selftest.rs`) runs, without a window, the
    same steps a launch runs:
    - Tauri's `resource_dir()`, then `bundled_runtime`;
@@ -172,8 +173,9 @@ folder.
    It then stops the daemon and reports JSON. On failure the report includes the end of
    `daemon-shell.log`.
 4. `scripts/installed-check.ps1` installs the built MSI into each of these places and runs the
-   self-test there, with the install folder made read-only for the user (`icacls /deny`) and a
-   fresh data folder:
+   self-test there with a fresh data folder. (Until 2026-10-30 the script also denied the job's
+   user write access and these places were called read-only; the hosted runner's
+   administrator account wrote there anyway, so they never were. See release.md and U-012.)
    - the default `Program Files` folder;
    - `D:\AGENT\Forerunner`;
    - `D:\My Apps\Forerünner Ä`;

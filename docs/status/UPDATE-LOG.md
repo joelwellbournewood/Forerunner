@@ -46,6 +46,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-009 | 2026-10-30, 1.0.2 | A session ends as soon as it starts and spends nothing, without saying why | The Start dialog says beforehand when no task is ready and how to give the agent work; the session's summary says the same. | open |
 | U-010 | 2026-10-30, 1.0.2 | Moving a task or editing a milestone always asks for a reason, and nothing happens until you type one | The reason becomes optional. Left empty, the app records one for you (what changed, from the app), so the history the agent reads stays complete. | open |
 | U-011 | 2026-10-30, 1.0.2 | The GPU voice install (about 8 GB) always goes to `C:\Users\<you>\AppData\Local\forerunner\data\voice`, even when Forerunner is installed on another drive whose space was the point | Owner's decision: downloaded dependencies go by default into a dedicated `dependencies` subfolder of the install folder; pip's cache and temporary files go there too; the data folder only when the install folder cannot be written. | open |
+| U-012 | 2026-10-30, 1.0.2 | (Release checks.) The Windows installed-app check called its install folders read-only; on the hosted runner they never were, so a Windows-only read-only problem would not be caught. | Run the Windows self-test as a standard (non-administrator) local user, so Program Files is read-only for it as it is for people. Until then the read-only fallback is checked on Linux and in unit tests. | open |
 
 ### U-003 Starting a session reports a contract error
 
@@ -185,6 +186,28 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - An existing install keeps working where `voice.json` recorded it. A new install into the
     new folder removes the old copy once the new one is verified.
   - Settings → Voice shows the folder.
+- **Status:** open.
+
+### U-012 The Windows installed-app check cannot make a folder read-only
+
+- **Found:** 2026-10-30, while verifying U-011.
+- **What happened:** for 1.0.2 the Windows check denied the job's user write access to each
+  install folder, and the CHANGELOG and docs called those folders read-only.
+  - On the hosted runner they never were. Its administrator account still created files after
+    a deny entry (desktop run 41094877855) and after a read-and-run-only ACL (run 41101161788).
+  - Nothing showed it before U-011, because nothing wrote into the install folder.
+  - Resetting that ACL failed on thousands of files ("Access is denied"), so every later
+    uninstall and install failed with error 1603.
+- **What is still covered:**
+  - the fallback code is the same on every platform;
+  - it runs for real on Linux: the `.deb` in `/usr/lib`, `EACCES`, the data folder with the
+    note;
+  - `dependencies.test.ts` covers it as well.
+- **What is not covered:** a Windows-only reason a read-only install folder could misbehave.
+- **Action:** run the Windows self-test as a standard local user (created for the job, with
+  write access to its data folder only), so Program Files is read-only for it as it is for
+  people. The check no longer locks folders; it checks that dependencies go to
+  `<install>\dependencies` (commit after 752b788).
 - **Status:** open.
 
 ## Released
