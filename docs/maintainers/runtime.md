@@ -523,10 +523,37 @@ Every `setup` run also writes the install record `<config>/install.json`
 `installDir` is the checkout this process runs from (derived from `import.meta.url`, so a
 staged version directory records itself) and `node` is `process.execPath`; nothing in it is
 configured or hardcoded. The desktop shell (`apps/desktop/src-tauri/src/install.rs`) reads it
-after `current.json` and `FORERUNNER_INSTALL_DIR` to find `fr` without `pnpm` or `PATH`.
+after `current.json`, `FORERUNNER_INSTALL_DIR` and the runtime the installer carries (ADR 0092)
+to find `fr` without `pnpm` or `PATH`; on an installed app the bundle wins, so a record left by
+an old checkout no longer decides what runs. `runSetup({ installRecord: false })` skips the
+write (the daemon's setup routes do), and a run keeps the `config.json` keys it does not set
+(notifications, `setupAcknowledgedAt`).
 `parseInstallRecord` mirrors the shell's rules (schema must be 1, `installDir` non-empty,
 `node` optional, an empty string counts as absent) and the write is atomic (temp file, fsync,
 rename). `cli.test.ts` covers the written record and the parser.
+
+**The setup assistant's routes** (`src/setup/routes.ts`, shapes in `src/setup/types.ts`,
+ADR 0092), mounted by the daemon behind the bearer check: the app's first-run screens take the
+credentials by paste instead of a terminal. `GET /setup` (`SetupStatusView`: which of
+`github_token`, `anthropic_api_key` and `anthropic_subscription_token` the vault holds,
+`complete` as `fr setup` defines it, `showAssistant` while not complete and not
+`setupAcknowledgedAt`, the name and time zone from the human row, `restartNeeded` when a
+credential was stored after the daemon started, the links: the Claude Console's keys page and
+GitHub's fine-grained token form with `contents=write&pull_requests=write&issues=write&statuses=read&metadata=read`
+filled in, `GITHUB_TOKEN_URL`); `POST /setup/profile { name?, timezone? }` (config.json and
+the human row; an unknown IANA zone is a 400); `POST /setup/anthropic { value }` (a
+`sk-ant-oat…` value is a subscription token, format-checked; anything else an API key checked
+with `GET /v1/models`; a GitHub token is a 400); `POST /setup/github { token, repos? }`
+(`GET /user` and each repository's permissions; an Anthropic credential is a 400); `POST
+/setup/finish` (writes `config.json` when there is none, marks `setupAcknowledgedAt`, and when
+`restartNeeded` restarts the daemon through `rt.restarter` with reason `setup` 300 ms after
+answering, so the model provider and billing sources are composed with the new credential;
+compose's update notice skips that reason). Every credential goes through `runSetup` with
+`installRecord: false` and an environment without `FORERUNNER_GITHUB_TOKEN`,
+`FORERUNNER_ANTHROPIC_KEY` and `FORERUNNER_SUBSCRIPTION_TOKEN`, so only the pasted value counts;
+it is stored only when its check passes; each attempt appends a `setup.credential` audit row
+with the secret's name (allowed true when stored); no answer, log line or file carries the
+value. `test/setup-routes.test.ts` covers all of it with a memory vault and a routed fetch.
 
 `buildProgram(deps)` builds the commander program (tests inspect it; the module parses
 `process.argv` only when it is the entry point). The module commands registered on it:

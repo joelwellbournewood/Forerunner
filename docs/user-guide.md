@@ -102,7 +102,7 @@ Push-to-talk voice chat with read-back confirmation, the Android app for approva
 control of your PC, and tasks by email that run on the cloud runner while your PCs are off.
 The setup guide says what to configure. See "What works and what doesn't yet" above for how
 far each was tested. Speech on this PC is
-chosen in the setup wizard and changed in Settings → Voice: none, CPU (any PC, slower replies)
+chosen in Settings → Voice (or `fr setup` from a source checkout): none, CPU (any PC, slower replies)
 or GPU (NVIDIA, fastest), each with its disk size shown.
 
 In the conversation panel (the Talk button or the global hotkey) your words show as they are

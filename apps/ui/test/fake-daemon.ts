@@ -26,6 +26,7 @@ import type {
   ReviewsView,
   ReviewView,
   SessionView,
+  SetupStatusView,
   SourceCandidateView,
   SourceView,
   TaskView,
@@ -229,6 +230,11 @@ export interface FakeDaemonOptions {
   voiceInstallHold?: boolean;
   /** The first install events request answers 500 (the card shows it, then re-attaches). */
   voiceInstallStreamFailsOnce?: boolean;
+  /**
+   * The setup assistant (ADR 0092): changes to `GET /setup`. By default the install is set up
+   * (`complete`, nothing to show), so the app opens where each test mounts it.
+   */
+  setup?: Partial<SetupStatusView>;
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -3245,6 +3251,94 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     m.version += 1;
     m.updatedAt = new Date().toISOString();
     return c.json(m);
+  });
+
+  // The setup assistant (ADR 0092), mirroring packages/runtime/src/setup/routes.ts: a key is
+  // "valid" unless it contains "bad"; a value pasted in the wrong step is refused with 400.
+  const setup: SetupStatusView = {
+    complete: true,
+    showAssistant: false,
+    name: me.name,
+    timezone: me.timezone,
+    credentials: { github: true, anthropicApiKey: true, subscription: false },
+    restartNeeded: false,
+    links: {
+      anthropicKeys: "https://console.anthropic.com/settings/keys",
+      githubToken: "https://github.com/settings/personal-access-tokens/new?name=Forerunner",
+    },
+    githubPermissions: ["Contents: read and write", "Commit statuses: read (to see CI results)"],
+    ...options.setup,
+  };
+  const setupComplete = () => {
+    const c = setup.credentials;
+    setup.complete = c.github && (c.anthropicApiKey || c.subscription);
+  };
+  app.get("/setup", (c) => c.json(setup));
+  app.post("/setup/profile", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { name?: string; timezone?: string };
+    if (body.timezone === "Mars/Olympus") {
+      return errorBody(c, 400, "validation", `unknown time zone: ${body.timezone}`);
+    }
+    if (body.name) setup.name = body.name;
+    if (body.timezone) setup.timezone = body.timezone;
+    return c.json(setup);
+  });
+  app.post("/setup/anthropic", async (c) => {
+    const { value = "" } = (await c.req.json().catch(() => ({}))) as { value?: string };
+    if (value.startsWith("github_pat_")) {
+      return errorBody(
+        c,
+        400,
+        "validation",
+        "This is a GitHub token. Paste it in the GitHub step.",
+      );
+    }
+    const subscription = value.startsWith("sk-ant-oat");
+    const ok = !value.includes("bad");
+    if (ok) {
+      if (subscription) setup.credentials.subscription = true;
+      else setup.credentials.anthropicApiKey = true;
+      setup.restartNeeded = true;
+      setupComplete();
+    }
+    return c.json({
+      ok,
+      kind: subscription ? "subscription" : "api_key",
+      summary: ok ? "Key works; 12 models visible." : "Anthropic rejected the key (401).",
+      problems: ok ? [] : ["The key is invalid or revoked."],
+      status: setup,
+    });
+  });
+  app.post("/setup/github", async (c) => {
+    const { token: pasted = "" } = (await c.req.json().catch(() => ({}))) as { token?: string };
+    if (pasted.startsWith("sk-ant-")) {
+      return errorBody(
+        c,
+        400,
+        "validation",
+        "This is an Anthropic credential. Paste it in the Claude step.",
+      );
+    }
+    const ok = !pasted.includes("bad");
+    if (ok) {
+      setup.credentials.github = true;
+      setup.restartNeeded = true;
+      setupComplete();
+    }
+    return c.json({
+      ok,
+      kind: "github",
+      summary: ok ? "Token works for joel on 0 repositories." : "GitHub rejected the token (401).",
+      problems: ok ? [] : ["The token is invalid, expired or revoked."],
+      ...(ok ? { login: "joel" } : {}),
+      status: setup,
+    });
+  });
+  app.post("/setup/finish", (c) => {
+    const restarting = setup.restartNeeded;
+    setup.showAssistant = false;
+    setup.restartNeeded = false;
+    return c.json({ status: setup, restarting });
   });
 
   // Settings -> Devices (spec R.2): the daemon's /devices routes, mirroring

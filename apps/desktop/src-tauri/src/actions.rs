@@ -15,7 +15,7 @@ use crate::daemon::{
 };
 use crate::dirs::Platform;
 use crate::env::ProcessEnv;
-use crate::install::{RealFs, locate_fr};
+use crate::install::{self, RealFs, locate_fr};
 use crate::restart::{
     ExitAction, decide_after_exit, external_daemon_gone, external_exit_code, read_restart_request,
     remove_restart_request,
@@ -23,7 +23,8 @@ use crate::restart::{
 use crate::sse::parse_desktop_indicator;
 use crate::state::{Busy, EmailAction, SharedState, StreamMode, lock};
 use crate::supervisor::{
-    EXTERNAL_GRACE, daemon_log_path, spawn_daemon, wait_for_daemon, wait_for_external, watch_exit,
+    EXTERNAL_GRACE, daemon_log_path, spawn_daemon, stop_process, wait_for_daemon,
+    wait_for_external, watch_exit,
 };
 use crate::{events, tray, windows};
 
@@ -84,7 +85,12 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
         .ok()
         .and_then(|f| f.pid)
         .and_then(daemon::pid_alive);
-    let decision = match daemon::precheck(file, alive) {
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|d| install::bundled_runtime(&d));
+    let mut decision = match daemon::precheck(file, alive) {
         Ok(file) => match DaemonClient::from_file(&file) {
             Ok(client) => {
                 let health = client.health().await;
@@ -94,6 +100,36 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
         },
         Err(reason) => AttachDecision::Start { reason },
     };
+    // A daemon older than the runtime this app carries (one left running from an earlier
+    // install or an old checkout) is stopped and replaced (ADR 0092).
+    if allow_start
+        && let AttachDecision::Attach(file, health) = &decision
+        && let Some(reason) = daemon::outdated_reason(
+            &health.version,
+            bundled.as_ref().map(|b| b.version.as_str()),
+        )
+    {
+        log::warn!("replacing the daemon at {}: {reason}", file.url);
+        windows::show_splash(&app, "Updating the Forerunner background service…");
+        let stopped = match (file.pid, DaemonClient::from_file(file)) {
+            (Some(pid), Ok(client)) => stop_process(pid, &client).await,
+            (None, _) => Err("its daemon.json names no pid".into()),
+            (_, Err(e)) => Err(e),
+        };
+        match stopped {
+            Ok(()) => decision = AttachDecision::Start { reason },
+            Err(e) => {
+                log::error!("could not stop the outdated daemon: {e}");
+                fail_dialog(
+                    &app,
+                    "An older Forerunner background service is still running",
+                    &format!(
+                        "{reason}, and it could not be stopped ({e}).\n\nEnd it (the node process in the Task Manager or `fr daemon`), then open Forerunner again. Until then the app may show errors."
+                    ),
+                );
+            }
+        }
+    }
 
     match decision {
         AttachDecision::Attach(file, health) => {
@@ -123,6 +159,7 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
                 &dirs.config,
                 &dirs.data,
                 Platform::current(),
+                bundled.as_ref(),
             ) {
                 Ok(c) => c,
                 Err(e) => {

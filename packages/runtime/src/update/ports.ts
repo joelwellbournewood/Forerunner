@@ -125,7 +125,8 @@ export class FakeUpdateHumanPort implements UpdateHumanPort {
 }
 
 export interface RestartRequest {
-  reason: "update" | "rollback";
+  /** `setup`: the app's setup assistant stored a credential the runtime reads at start (ADR 0092). */
+  reason: "update" | "rollback" | "setup";
   /** Version named by current.json after the write; the shell launches this one. */
   targetVersion: string;
   fromVersion: string | null;

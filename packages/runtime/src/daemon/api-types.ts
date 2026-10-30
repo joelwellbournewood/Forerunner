@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DEVICES_ROUTES } from "../devices/types.ts";
+import { SETUP_ROUTES } from "../setup/types.ts";
 import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
 
 /** Settings -> Devices shapes (spec R.2): the daemon's `/devices` routes' bodies and answers. */
@@ -13,6 +14,16 @@ export {
   RevokeDeviceView,
   StartPairingBody,
 } from "../devices/types.ts";
+/** The setup assistant's shapes (ADR 0092): the `/setup` routes' bodies and answers. */
+export {
+  SETUP_ROUTES,
+  SetupAnthropicBody,
+  SetupCheckView,
+  SetupFinishView,
+  SetupGitHubBody,
+  SetupProfileBody,
+  SetupStatusView,
+} from "../setup/types.ts";
 export type {
   SourceCandidateStatus,
   SourceKind,
@@ -1865,6 +1876,7 @@ export const DAEMON_ROUTES = {
   removeSource:
     "DELETE /sources/:id ({ ok, id, candidatesRemoved }; projects created from it stay)",
   ...DEVICES_ROUTES,
+  ...SETUP_ROUTES,
   // Settings -> Voice (ADR 0090): the voice profile, its install and progress.
   ...VOICE_INSTALL_ROUTES,
   dataAssets: "GET /projects/:id/data (DataAssetView[])",

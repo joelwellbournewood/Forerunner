@@ -3,6 +3,8 @@
 //! `<logs>/daemon-shell.log`; wait for a fresh `daemon.json` that answers `/health`; and
 //! watch the exit code on a thread so the restart contract (`restart.rs`) can be applied.
 //! The daemon is never killed by the shell: closing the window or quitting leaves it running.
+//! The one exception is a daemon older than the runtime the app carries (ADR 0092), which
+//! `stop_process` ends so the bundled one can take its place.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -16,8 +18,12 @@ use crate::daemon::{
 use crate::install::FrCommand;
 
 pub const DAEMON_LOG: &str = "daemon-shell.log";
-/// `tsx` compile plus runtime composition (migrations, vault) on a cold disk.
-pub const START_TIMEOUT: Duration = Duration::from_secs(60);
+/// `tsx` compile plus runtime composition (migrations, vault) on a cold disk. The first start
+/// of a fresh install compiles every source file and, on Windows, has each file scanned by the
+/// antivirus, so the budget is generous; later starts read tsx's cache.
+pub const START_TIMEOUT: Duration = Duration::from_secs(150);
+/// How long an outdated daemon gets to go away after `stop_process`.
+pub const STOP_TIMEOUT: Duration = Duration::from_secs(15);
 pub const POLL: Duration = Duration::from_millis(250);
 /// After a restart exit, how long a user service gets to relaunch the daemon before the shell
 /// does it.
@@ -63,6 +69,9 @@ pub fn spawn_daemon(cmd: &FrCommand, logs_dir: &Path) -> Result<Spawned, String>
         .stderr(Stdio::from(stderr));
     if let Some(cwd) = &cmd.cwd {
         command.current_dir(cwd);
+    }
+    for (key, value) in &cmd.env {
+        command.env(key, value);
     }
     #[cfg(unix)]
     {
@@ -146,6 +155,52 @@ pub async fn wait_for_external(
     }
 }
 
+/// The argv that ends process `pid` and its children: `taskkill /PID <pid> /T /F` on Windows,
+/// `kill -TERM <pid>` elsewhere (the daemon ends its sessions and closes on SIGTERM).
+pub fn stop_argv(pid: u32, windows: bool) -> (String, Vec<String>) {
+    if windows {
+        (
+            "taskkill".into(),
+            vec!["/PID".into(), pid.to_string(), "/T".into(), "/F".into()],
+        )
+    } else {
+        ("kill".into(), vec!["-TERM".into(), pid.to_string()])
+    }
+}
+
+/// End an outdated daemon (ADR 0092) and wait until its `/health` stops answering.
+pub async fn stop_process(pid: u32, client: &DaemonClient) -> Result<(), String> {
+    let (program, args) = stop_argv(pid, cfg!(windows));
+    let mut command = Command::new(&program);
+    command
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let status = command
+        .status()
+        .map_err(|e| format!("could not run {program}: {e}"))?;
+    if !status.success() {
+        return Err(format!("{program} {} ended with {status}", args.join(" ")));
+    }
+    let started = Instant::now();
+    while client.health().await.is_ok() {
+        if started.elapsed() > STOP_TIMEOUT {
+            return Err(format!(
+                "the daemon (pid {pid}) still answers after {} s",
+                STOP_TIMEOUT.as_secs()
+            ));
+        }
+        tokio::time::sleep(POLL).await;
+    }
+    Ok(())
+}
+
 /// Wait for the child on its own thread and report the exit code (`None` for a signal).
 pub fn watch_exit(mut child: Child, on_exit: impl FnOnce(Option<i32>) + Send + 'static) {
     let spawned = std::thread::Builder::new()
@@ -164,6 +219,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stopping_uses_an_argv_and_takes_the_process_tree_on_windows() {
+        assert_eq!(
+            stop_argv(4242, true),
+            (
+                "taskkill".to_string(),
+                vec!["/PID", "4242", "/T", "/F"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect::<Vec<_>>()
+            )
+        );
+        assert_eq!(
+            stop_argv(4242, false),
+            (
+                "kill".to_string(),
+                vec!["-TERM".to_string(), "4242".to_string()]
+            )
+        );
+    }
+
+    #[test]
     fn log_path_is_under_the_logs_dir() {
         assert_eq!(
             daemon_log_path(Path::new("/x/logs")),
@@ -180,6 +256,7 @@ mod tests {
             program: dir.join("definitely-missing-fr"),
             args: vec![],
             cwd: None,
+            env: Vec::new(),
             source: crate::install::FrSource::PathLookup,
         };
         let err = spawn_daemon(&cmd, &dir.join("logs")).unwrap_err();

@@ -1,13 +1,13 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Forerunner",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "app.forerunner.desktop",
   "build": {
     "frontendDist": "../../ui/dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "pnpm --filter @forerunner/ui dev",
-    "beforeBuildCommand": "pnpm --filter @forerunner/ui build"
+    "beforeBuildCommand": "pnpm --filter @forerunner/ui build && pnpm -w run runtime:payload"
   },
   "app": {
     "windows": [],
@@ -19,9 +19,12 @@
   "bundle": {
     "active": true,
     "targets": ["msi", "appimage", "deb"],
+    "resources": {
+      "runtime/": "runtime/"
+    },
     "windows": {
       "wix": {
-        "version": "1.0.0"
+        "version": "1.0.1"
       }
     },
     "icon": [

@@ -24,6 +24,7 @@ mod sse;
 mod state;
 mod supervisor;
 mod tray;
+mod version;
 mod window_state;
 mod windows;
 

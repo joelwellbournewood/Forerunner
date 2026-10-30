@@ -1,0 +1,126 @@
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+
+// The setup assistant (ADR 0092). 1.0.0 had none: a new user of the installer had to find a
+// terminal and `fr setup` before the agent could do anything.
+
+// Credential-shaped values built by concatenation so no scanner sees a token. // not-a-secret
+const API_KEY = ["sk-ant-api03-", "ui", "2".repeat(40)].join(""); // not-a-secret
+const BAD_KEY = ["sk-ant-api03-", "bad", "2".repeat(40)].join(""); // not-a-secret
+const GH_TOKEN = ["github_pat_", "ui_", "1".repeat(40)].join(""); // not-a-secret
+
+const FRESH = {
+  setup: {
+    complete: false,
+    showAssistant: true,
+    name: "Dada-",
+    timezone: "UTC",
+    credentials: { github: false, anthropicApiKey: false, subscription: false },
+  },
+};
+
+describe("setup assistant", () => {
+  it("a fresh install opens the assistant instead of the home page", async () => {
+    renderApp("/", createHarness(FRESH));
+    expect(await screen.findByTestId("setup-page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Set up Forerunner" })).toBeInTheDocument();
+    expect(screen.getByTestId("setup-name")).toHaveValue("Dada-");
+  });
+
+  it("a set-up install and a daemon without the routes stay where the app opened", async () => {
+    renderApp("/settings");
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
+    // Settings links to the assistant for later changes.
+    expect(screen.getByRole("link", { name: "Open the setup assistant" })).toHaveAttribute(
+      "href",
+      "/setup",
+    );
+  });
+
+  it("an older daemon without /setup leaves the app alone", async () => {
+    renderApp("/settings", createHarness({ ...FRESH, missingRoutes: ["/setup"] }));
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
+  });
+
+  it("walks through name, Claude key and GitHub token, checks each on paste and restarts once", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness(FRESH);
+    renderApp("/", harness);
+    await screen.findByTestId("setup-page");
+
+    await user.clear(screen.getByTestId("setup-name"));
+    await user.type(screen.getByTestId("setup-name"), "Joel");
+    await user.clear(screen.getByTestId("setup-timezone"));
+    await user.type(screen.getByTestId("setup-timezone"), "Europe/Zurich");
+    await user.click(screen.getByTestId("setup-next"));
+    await screen.findByTestId("setup-anthropic-input");
+    expect(postedCalls(harness, "/setup/profile").map((c) => c.body)).toEqual([
+      { name: "Joel", timezone: "Europe/Zurich" },
+    ]);
+    // The link to the Claude Console leaves the app.
+    expect(screen.getByTestId("setup-anthropic-link")).toHaveAttribute(
+      "href",
+      "https://console.anthropic.com/settings/keys",
+    );
+
+    // A wrong key is explained and nothing is marked saved.
+    await user.click(screen.getByTestId("setup-anthropic-input"));
+    await user.paste(BAD_KEY);
+    expect(await screen.findByTestId("setup-check-result")).toHaveTextContent(/rejected/);
+    expect(screen.queryByTestId("setup-saved")).not.toBeInTheDocument();
+    // Pasting checks at once; the field is emptied and the key is not shown anywhere.
+    await user.click(screen.getByTestId("setup-anthropic-input"));
+    await user.paste(API_KEY);
+    await waitFor(() =>
+      expect(screen.getByTestId("setup-check-result")).toHaveTextContent("✓ Key works"),
+    );
+    expect(screen.getByTestId("setup-anthropic-input")).toHaveValue("");
+    expect(document.body.textContent).not.toContain(API_KEY);
+    expect(screen.getByTestId("setup-saved")).toHaveTextContent("An API key is saved.");
+    expect(postedCalls(harness, "/setup/anthropic").map((c) => c.body)).toEqual([
+      { value: BAD_KEY },
+      { value: API_KEY },
+    ]);
+
+    await user.click(screen.getByTestId("setup-next"));
+    await screen.findByTestId("setup-github-input");
+    expect(screen.getByTestId("setup-github-link").getAttribute("href")).toContain(
+      "github.com/settings/personal-access-tokens/new",
+    );
+    // An Anthropic key in the GitHub box says where it belongs.
+    await user.click(screen.getByTestId("setup-github-input"));
+    await user.paste(API_KEY);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Anthropic credential/);
+    await user.type(screen.getByTestId("setup-github-input"), GH_TOKEN);
+    await user.click(screen.getByTestId("setup-github-check"));
+    await waitFor(() =>
+      expect(screen.getByTestId("setup-check-result")).toHaveTextContent("✓ Token works"),
+    );
+
+    await user.click(screen.getByTestId("setup-next"));
+    expect(await screen.findByTestId("setup-done")).toHaveTextContent("Claude is connected");
+    expect(screen.getByTestId("setup-done")).toHaveTextContent("GitHub is connected");
+    await user.click(screen.getByTestId("setup-finish"));
+    // The fake comes back at once, so the app lands on Home after the restart wait.
+    await waitFor(() => expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument(), {
+      timeout: 5000,
+    });
+    expect(postedCalls(harness, "/setup/finish")).toHaveLength(1);
+  });
+
+  it("set up later closes the assistant without a restart", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness(FRESH);
+    renderApp("/", harness);
+    await screen.findByTestId("setup-page");
+    await user.click(screen.getByTestId("setup-later"));
+    await waitFor(() => expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument());
+    expect(postedCalls(harness, "/setup/finish")).toHaveLength(1);
+    expect(postedCalls(harness, "/setup/anthropic")).toHaveLength(0);
+  });
+});

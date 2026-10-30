@@ -45,3 +45,6 @@ tmp/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# The runtime the desktop installers carry (scripts/build-runtime-payload.mjs; ADR 0092)
+apps/desktop/src-tauri/runtime/

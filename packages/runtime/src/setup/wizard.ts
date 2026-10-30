@@ -1,7 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { type AppDirs, appDirs, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
 import type { Vault } from "@forerunner/vault";
-import { currentInstallRecord, type InstallRecord, writeInstallRecord } from "./install-record.ts";
+import {
+  currentInstallRecord,
+  INSTALL_RECORD_FILE,
+  type InstallRecord,
+  writeInstallRecord,
+} from "./install-record.ts";
 import {
   assertPlanUsdMonthly,
   DEFAULT_PLAN_USD_MONTHLY,
@@ -72,6 +77,11 @@ export interface SetupConfig {
   stateUrl: string;
   setupCompletedAt?: string;
   /**
+   * When the human finished or closed the app's setup assistant (ADR 0092); the app opens it on
+   * start until then, unless the credentials are already complete.
+   */
+  setupAcknowledgedAt?: string;
+  /**
    * Notification channels (`src/notifications/config.ts`): the Signal sender account and the
    * Telegram bot token reference; `FORERUNNER_SIGNAL_ACCOUNT`, `FORERUNNER_TELEGRAM_TOKEN_REF`
    * and `FORERUNNER_TELEGRAM_API_BASE` override them. Never a secret value.
@@ -107,6 +117,11 @@ export interface SetupInput {
   fetchImpl?: typeof fetch;
   dirs?: AppDirs;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Write `<config>/install.json` for this process (default true: `fr setup` from a checkout).
+   * The daemon's setup routes pass false: a bundled runtime is found by the shell without it.
+   */
+  installRecord?: boolean;
 }
 
 export interface SetupReport {
@@ -210,6 +225,8 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
   const humanEmail = normalizeHumanEmail(input.humanEmail);
   const humanId = input.humanId?.trim() || undefined;
   const config: SetupConfig = {
+    // Keys this function does not set (notifications, the assistant's acknowledgement) are kept.
+    ...(existing ?? {}),
     version: 1,
     profile,
     humanName: input.humanName ?? existing?.humanName,
@@ -420,7 +437,10 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
   // The install record (ADR 0026): on every setup run, from the running process, so the
   // desktop shell finds this checkout and this node binary without an environment variable.
   const installRecord = currentInstallRecord();
-  const installRecordPath = writeInstallRecord(dirs, installRecord);
+  const installRecordPath =
+    input.installRecord === false
+      ? join(dirs.config, INSTALL_RECORD_FILE)
+      : writeInstallRecord(dirs, installRecord);
   logger.info("setup written", {
     configPath: p,
     installRecordPath,

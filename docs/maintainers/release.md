@@ -26,7 +26,7 @@ Triggered by a pushed tag matching `v*` only (the manual `workflow_dispatch` was
 
 | Job | Runner | Produces | Notes |
 | --- | --- | --- | --- |
-| `desktop` | `ubuntu-22.04`, `windows-latest` | `bundle/msi/*.msi`, `bundle/appimage/*.AppImage`, `bundle/deb/*.deb` (`if-no-files-found: error`) | `pnpm --filter @forerunner/desktop tauri build --ci` with the signing env below. Ubuntu 22.04 is the oldest supported glibc for the AppImage. Only the installers are uploaded: `bundle/appimage/` and `bundle/deb/` also hold the AppDir and the deb's staging tree (hundreds of `.so` files, icons, `copyright`), which rc.3 uploaded with `bundle/*/*` and published, so its publish job hit GitHub's secondary rate limit before the APK went up (run 40248159390). |
+| `desktop` | `ubuntu-22.04`, `windows-latest` | `bundle/msi/*.msi`, `bundle/appimage/*.AppImage`, `bundle/deb/*.deb` (`if-no-files-found: error`) | `pnpm --filter @forerunner/desktop tauri build --ci` with the signing env below; its `beforeBuildCommand` builds the UI and the bundled runtime (below), then `node scripts/runtime-payload-smoke.mjs` starts that runtime the way the shell does and fails the job unless it answers `/health` with the payload's version, `/me` with `desktopDeviceId` and `/setup`. Ubuntu 22.04 is the oldest supported glibc for the AppImage. Only the installers are uploaded: `bundle/appimage/` and `bundle/deb/` also hold the AppDir and the deb's staging tree (hundreds of `.so` files, icons, `copyright`), which rc.3 uploaded with `bundle/*/*` and published, so its publish job hit GitHub's secondary rate limit before the APK went up (run 40248159390). |
 | `android` | `ubuntu-latest` | `apk/**/*.apk` | `android-actions/setup-android` with `packages: platform-tools` (the legacy `tools` package it installs by default is gone from the SDK repository, cb6097e), then `node scripts/android-keystore.mjs --require-secret` (the release keystore from the secrets; without `ANDROID_KEYSTORE_BASE64` the step fails and no development key is generated), then `node scripts/android-google-services.mjs` (writes `google-services.json` from `GOOGLE_SERVICES_JSON_BASE64` when set, so the APK carries FCM push; optional), then `tauri android build --apk --ci`, then `node scripts/android-apk-verify.mjs` (`apksigner verify --print-certs`; an unsigned, debug-signed or development-signed release APK fails the job before the upload) |
 | `runner-image` | `ubuntu-latest` | `ghcr.io/<owner>/forerunner-runner:<version>` and `:latest` | `services/cloud-runner/Dockerfile`; the tag is the git tag without `v` |
 | `publish` | `ubuntu-latest` | the GitHub Release | downloads the build artefacts by name (`desktop-*` into `artifacts/desktop-<os>/`, `android` into `artifacts/android/`; an unfiltered download also fetched docker/build-push-action's build record, which failed to download and failed rc.1's run 40229971920, so the image step also sets `DOCKER_BUILD_RECORD_UPLOAD: false`; `scripts/release-notes.test.ts` checks both), runs `node scripts/release-notes.mjs "$GITHUB_REF_NAME" > RELEASE_NOTES.md` with the job-level presence flags `ANDROID_KEYSTORE_BASE64` and `UPDATE_SIGNING_KEY` (`'present'` or empty, never the values; the same flags reach the manifest step's `release-notes.mjs` run, whose output becomes the signed manifest's notes, so both say the same; `WINDOWS_CERTIFICATE` is deliberately not passed while the Windows signing step is not wired), then, after the signed manifest, runs `node scripts/release-files.mjs artifacts` (step id `files`): it picks the `.msi`, `.AppImage`, `.deb`, `.apk` and `forerunner-release.json` under `artifacts/` (the manifest step's `find artifacts -name` picks see the same layout), fails when an installer or the APK is missing or two picked files share a name (release assets are flat), writes `artifacts/SHA256SUMS.txt` over exactly those files by the flat names they are published under (so `sha256sum -c SHA256SUMS.txt --ignore-missing` works in a download folder; never the sums file itself), and returns them plus the sums file as the `files` output. `softprops/action-gh-release` uploads `${{ steps.files.outputs.files }}`, `docs/user-guide.md` and `docs/setup-guide.md`; no glob, so nothing else under `artifacts/` can reach the release. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a pre-release. |
@@ -143,7 +143,41 @@ nine scenarios, then tag `v1.0.0`.
 the state service is the same image with `pnpm state-api` as the command (see
 `state-service.md` and `cloud-runner.md`). Rollback is `docker run` with the previous tag.
 
+### The bundled runtime (ADR 0092)
+
+Every installer carries the runtime, so a new user installs one file and the app starts its own
+daemon: no git, pnpm, PowerShell or Node.js on the machine. `tauri.conf.json`'s
+`beforeBuildCommand` runs `pnpm -w run runtime:payload` (`scripts/build-runtime-payload.mjs`)
+after the UI build; it writes `apps/desktop/src-tauri/runtime/` (gitignored), which
+`bundle.resources` ships as `<resources>/runtime/` (`C:\Program Files\Forerunner\runtime`,
+`/usr/lib/Forerunner/runtime`, inside the AppImage). The builder:
+
+1. `pnpm --filter @forerunner/runtime deploy --prod --legacy --config.node-linker=hoisted` into
+   a temp directory outside the workspace (a target inside it makes pnpm link a stray
+   `packages/runtime/<target>/node_modules/.bin`), and moves its flat `node_modules` in;
+2. drops `node_modules/.*`, `node_modules/@forerunner`, symbolic links, `*.d.ts`, `*.d.mts`,
+   `*.d.cts`, `*.map`, `*.tsbuildinfo`, and native packages for another OS, CPU or libc
+   (`isForeignPlatformPackage`: the musl builds on Linux; the Agent SDK's alone is 280 MB);
+3. copies the sources of `@forerunner/runtime` and the workspace packages it imports (by
+   `workspace:` dependencies, transitively; no `test/`, `scripts/` or `node_modules/`) into
+   `packages/<name>/`, `evals/registry/`, and a root `package.json` with the app version;
+4. writes `tsconfig.json` with a `paths` entry per export of each shipped package
+   (`workspacePaths`; tsx resolves `@forerunner/*` through it, so the packages load once);
+5. copies the Node binary that runs the builder (`--node <path>` for another) to
+   `node/node[.exe]` and checks it runs;
+6. writes `runtime.json` (`schema`, `version`, `platform`, `arch`, `node`, `entry`) last; the
+   shell reads its version.
+
+The result on Linux x64 (1.0.0 sources, Node 22.22): 6,535 files, 471 MiB, most of it the
+Agent SDK's native `claude` (280 MB) and Node (118 MB); the `.deb` is 196 MiB. The payload is
+built per runner, so each installer carries its own OS's binaries. `pnpm runtime:payload --out
+<dir>` builds one anywhere for a look; `node scripts/runtime-payload-smoke.mjs [dir]` starts it.
+
 ### Fresh install scripts (gate: "fresh install in under 15 minutes")
+
+These are for developers and for the CI timing gate. A user installs the MSI, AppImage or
+`.deb`, which carry everything (above).
+
 
 `scripts/fresh-install.sh` (Linux: Ubuntu/Debian via apt, Fedora/RHEL via dnf) and
 `scripts/fresh-install.ps1` (Windows 10/11 via winget, falling back to choco) are the scripted
@@ -268,6 +302,13 @@ prompts and the item briefs it was run with are kept on the `build-briefs` branc
 
 ## Tests
 
+- `scripts/build-runtime-payload.test.ts` (ADR 0092): `paths` for every export of every shipped
+  package, a string or missing export as the package root, the workspace closure through the
+  import cycles (testenv left out), an unknown package refused, foreign-platform packages
+  (musl, another OS or CPU) dropped while the target's and ordinary packages stay, declarations
+  and maps pruned and code kept, the node name per OS and the CLI entry. The payload itself is
+  started by `scripts/runtime-payload-smoke.mjs` in `desktop.yml` and `release.yml` after every
+  `tauri build`, on Windows and Linux.
 - `scripts/fresh-install.test.ts`: `bash -n`, `--help`, `--dry-run` from the checkout lists all
   eight steps and runs nothing, `--with-desktop` adds the Tauri libraries, outside a checkout
   without `FORERUNNER_REPO_URL` exits 2 with the instruction and no hardcoded organisation,

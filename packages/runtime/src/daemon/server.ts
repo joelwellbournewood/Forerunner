@@ -34,6 +34,7 @@ import {
   ProjectPlanBody,
 } from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
+import { createSetupRoutes } from "../setup/routes.ts";
 import { createSourcesRoutes } from "../sources/routes.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
 import type { SchemaSyncStatus } from "../update/sync.ts";
@@ -598,6 +599,22 @@ export function createDaemonApp(
   // Settings -> Devices (spec R.2): list, start a pairing (code, expiry, the fr:// link of the
   // QR) and revoke at once; the state service's admin token stays in this process.
   app.route("/", createDeviceRoutes({ devices: rt.devices }));
+  // The setup assistant (ADR 0092): credentials pasted in the app, checked and stored like
+  // `fr setup`; `finish` restarts the daemon when the runtime must pick up a new credential.
+  app.route(
+    "/",
+    createSetupRoutes({
+      dirs: rt.dirs,
+      vault: rt.vault,
+      env: rt.env,
+      clock: rt.clock,
+      store: rt.store,
+      humanId: rt.human.id,
+      appVersion: rt.appVersion,
+      restarter: rt.restarter,
+      ...(rt.fetchImpl ? { fetchImpl: rt.fetchImpl } : {}),
+    }),
+  );
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);

@@ -14,8 +14,10 @@ short:
 - Email, the cloud runner and push notifications pass their tests against stand-ins only. They
   were never run with a real mailbox, a real host or a real Firebase project.
 - Voice was tested on Windows only, and the first spoken word comes later than the 1.2 s target.
-- Running the installed MSI, AppImage or `.deb` has no recorded test. The scripted install
-  from source was timed on fresh Windows and Linux CI runners, which have no desktop session.
+- Since 1.0.1 the installers carry the runtime and the app sets itself up (no terminal). The
+  installed `.deb` was run against a fresh home and against an old background service left
+  running; the MSI is built and its runtime started in CI, but running the installed MSI on a
+  real Windows desktop has no recorded test yet.
 - The Android app was installed, updated from rc.3 to rc.4 and launched on one real phone.
   Pairing and approvals were tested only on an emulator, on code from before rc.4.
 
@@ -39,110 +41,116 @@ short:
 
 ## Install on Windows
 
-1. Download `Forerunner_<version>_x64_en-US.msi` and `SHA256SUMS.txt` from the release page.
-2. Optional but recommended: check the download. In PowerShell,
-   `Get-FileHash .\Forerunner_<version>_x64_en-US.msi -Algorithm SHA256` and compare with the
-   line in `SHA256SUMS.txt`.
-3. Run the MSI. If the release notes say the installer is unsigned (no code-signing certificate
-   was available for that release), SmartScreen shows "Windows protected your PC": choose
-   "More info", then "Run anyway". A signed release does not show this.
-4. Forerunner starts from the Start menu. It needs the WebView2 runtime, which Windows 11 has
-   and the installer adds on Windows 10.
+1. On the release page, under **Assets**, download `Forerunner_<version>_x64_en-US.msi`.
+   (Not "Source code": that is the project's code, not the app.)
+2. Double-click the MSI. If Windows shows "Windows protected your PC" (the installer is not
+   code-signed yet), click **More info**, then **Run anyway**.
+3. Open Forerunner from the Start menu. The first start takes up to a minute while the
+   background service gets ready; later starts take a few seconds.
 
-Developer install from source (also what our CI times on a clean machine):
+That is all: the installer carries everything Forerunner needs, including its own Node.js. You
+do not need PowerShell, git, Node.js or a copy of the source code. Windows 11 has the WebView2
+runtime the window needs; on Windows 10 the installer adds it.
 
-```powershell
-git clone <your fork or the repository URL> forerunner
-cd forerunner
-pwsh -File scripts\fresh-install.ps1 -NonInteractive   # or: powershell -ExecutionPolicy Bypass -File ...
-```
+Optional: check the download first. In PowerShell,
+`Get-FileHash .\Forerunner_<version>_x64_en-US.msi -Algorithm SHA256`, and compare the result
+with the line in `SHA256SUMS.txt` on the release page.
 
-It installs Node.js 22 (winget or Chocolatey) and pnpm if missing, installs dependencies, runs
-the checks and creates the application folders. It prints every step with its time; the whole
-run must stay under 15 minutes.
+**Installed an earlier version with the setup script?** Install the new MSI. When the app
+starts, it stops the older background service that script left running and uses its own. Your
+settings, keys and projects stay. You can delete the source folder afterwards.
 
 ## Install on Linux
 
-**AppImage (any distribution).** Download `forerunner_<version>_amd64.AppImage` and
-`SHA256SUMS.txt`, verify with `sha256sum -c SHA256SUMS.txt --ignore-missing`, then
-`chmod +x forerunner_*.AppImage && ./forerunner_*.AppImage`. No installation step; move the
-file where you like. The AppImage needs `libfuse2` on some distributions
-(`sudo apt-get install libfuse2`).
+**Debian / Ubuntu.** Download `Forerunner_<version>_amd64.deb`, then
+`sudo apt-get install ./Forerunner_<version>_amd64.deb`. That installs the app, its menu entry
+and the libraries it needs. Remove it with `sudo apt-get remove forerunner`.
 
-**Debian / Ubuntu package.** `sudo apt-get install ./forerunner_<version>_amd64.deb` installs
-the app, its desktop entry and the WebKitGTK dependencies. Remove with
-`sudo apt-get remove forerunner`.
+**Any distribution (AppImage).** Download `Forerunner_<version>_amd64.AppImage`, make it
+executable (`chmod +x Forerunner_*.AppImage`, or Properties → Permissions in your file manager)
+and run it. Nothing is installed; move the file where you like. Some distributions need
+`libfuse2` for AppImages (`sudo apt-get install libfuse2`).
 
-**Fedora.** Use the AppImage (an RPM is not part of this release).
+**Fedora.** Use the AppImage; there is no RPM in this release.
 
-Developer install from source:
+Optional: verify the download with `sha256sum -c SHA256SUMS.txt --ignore-missing`.
+
+## Developer install from source
+
+Only for working on Forerunner itself. The installers above do not need it.
 
 ```bash
 git clone <your fork or the repository URL> forerunner
 cd forerunner
-bash scripts/fresh-install.sh --non-interactive          # add --with-desktop to build the app itself
+bash scripts/fresh-install.sh --non-interactive          # Windows: pwsh -File scripts\fresh-install.ps1 -NonInteractive
 ```
 
-The script uses `apt` or `dnf` (whichever exists) to add Node.js 22 when it is missing, and
-`sudo` only for that. Everything else is installed under your user.
+The script installs Node.js 22 and pnpm when they are missing, installs the dependencies, runs
+the checks and creates the application folders; `pnpm fr setup` then asks for the keys in the
+terminal and `pnpm --filter @forerunner/desktop tauri dev` runs the app from the checkout. CI
+times this on clean machines; it must stay under 15 minutes.
 
 ## First run
 
-The first start opens the setup wizard (the same thing as `pnpm fr setup` from a source
-checkout). It never asks for something without saying what it is for:
+The app opens the **setup assistant**. It takes about five minutes, and every key is checked
+the moment you paste it:
 
-1. **You.** Your name and time zone (used for the daily schedule and summaries).
-2. **GitHub.** A fine-grained token (GitHub → Settings → Developer settings → Personal access
-   tokens → Fine-grained tokens). Under "Repository access" pick only the repositories the
-   agent may work in. Then set these repository permissions:
+1. **Welcome.** Your name and time zone (used for the daily schedule and summaries).
+2. **Claude.** Choose how you pay for Claude:
+   - **API key** (simplest): click **Get an API key**, sign in to the Claude Console, click
+     "Create Key", copy it and paste it into the box (or click **Paste**). It starts with
+     `sk-ant-api`.
+   - **Claude subscription** (Pro or Max): on a computer with Claude Code signed in, run
+     `claude setup-token` and paste the token it prints (`sk-ant-oat…`).
+
+   You can add both; routing prefers the subscription and falls back to the key.
+3. **GitHub.** Click **Create a token on GitHub**. GitHub opens its form for a fine-grained
+   token with Forerunner's permissions already filled in. Under "Repository access", choose
+   "Only select repositories" and pick the ones your agent may work in, then click
+   "Generate token", copy it and paste it. It starts with `github_pat_`. The permissions:
 
    | Permission | Access | Why |
    | --- | --- | --- |
-   | Contents | Read and write | Clone, create branches, push commits. Required: the wizard's check refuses a token without it. |
-   | Pull requests | Read and write | Open, update and comment on pull requests. Required, though the check does not test it. |
-   | Issues | Read and write | Comments and the project mirror. The wizard asks for it. |
+   | Contents | Read and write | Clone, create branches, push commits. Required: the check refuses a token without it. |
+   | Pull requests | Read and write | Open, update and comment on pull requests. |
+   | Issues | Read and write | Comments and the project mirror. |
    | Commit statuses | Read | CI results reported as commit statuses (read before a merge at autonomy level 3). |
    | Metadata | Read | Set by GitHub automatically. |
 
-   **CI results.** The wizard's list says "Workflows: read (to see CI results)". That line is
-   wrong. GitHub's Workflows permission is for changing workflow files, and Forerunner does not
-   need it. Forerunner reads CI results in two ways: check runs (for CI-triggered sessions) and
-   the combined commit status (before a merge). GitHub's API documentation names "Checks: read"
-   for check runs, but GitHub's list of fine-grained token permissions does not appear to include Checks. So
-   CI-triggered sessions may not see check runs on a private repository with a fine-grained
-   token. This was not tested against GitHub. "Actions: read" is not used by Forerunner.
+   Do not give admin rights; the check warns about them. CI-triggered sessions read check runs,
+   which GitHub's fine-grained tokens may not reach on private repositories; this was not
+   tested against GitHub.
+4. **Done.** It shows what is connected. **Start using Forerunner** restarts the background
+   service once so it uses the new keys (a few seconds).
 
-   Do not give admin rights; the check warns about them. The wizard checks the token the moment
-   you paste it and tells you which repositories it can reach and which permission is missing.
-   Nothing is stored until the check passes.
-3. **Models.** Your Anthropic API key or subscription token, verified the same way. You can set
-   both; routing prefers the subscription and falls back to the key.
-4. **Budget.** The monthly cap and the per-session cap (defaults CHF 150 and CHF 5). These are
-   enforced by the program, not by the agent: a session that would exceed them stops.
-5. **Where to work.** Connect sources: GitHub organisations or accounts, chosen repositories,
-   local folders. A scan proposes a project per repository (coming in this release: import of
-   ZIP files and folders).
-6. **Voice.** Whether to install speech on this PC, and how:
+You can skip a step and finish later from **Settings → Accounts and keys**, which opens the
+assistant again; pasting a new key there replaces the old one. Until Claude is connected your
+agent cannot start work.
+
+**Budget.** The monthly cap and the per-session cap start at CHF 150 and CHF 5. They are
+enforced by the program, not by the agent: a session that would exceed them stops. Change
+them in Settings.
+
+**Where to work.** In Settings → Sources, connect GitHub organisations or accounts, chosen
+repositories or local folders; a scan proposes a project per repository. Or create a project
+from Home.
+
+**Voice (optional).** Settings → Voice installs speech on this PC:
 
    | Choice | Disk | Download | Trade-off |
    | --- | --- | --- | --- |
    | None | 0 GB | nothing | No local speech; voice works only with a cloud voice provider set up in Extensions. |
    | CPU | about 2.3 GB | about 1 GB | Works on any PC. Slow: on the one PC measured, about 4 s from releasing Talk to the first spoken word. |
-   | GPU (NVIDIA) | about 8 GB | about 4.5 GB | Fastest replies: about 1.4 to 2.1 s on an RTX 3060. Needs an NVIDIA card and driver; if the card cannot be used, the CPU takes over and setup says why. |
+   | GPU (NVIDIA) | about 8 GB | about 4.5 GB | Fastest replies: about 1.4 to 2.1 s on an RTX 3060. Needs an NVIDIA card and driver; if the card cannot be used, the CPU takes over and says why. |
 
    Both profiles need Python 3.12 on Windows x64 or Linux x86_64 (see "What you need"). The
    times are medians from a few turns on one Windows PC on 2026-10-26; the target is 1.2 s and
    neither profile meets it. Voice has not been tested on Linux.
 
-   When an NVIDIA card is found, GPU is the default. The install runs right after with its
-   progress on screen and checks that speech recognition and speech work on the chosen
-   device; it takes a while on the first run. If it is interrupted, run it again: finished
-   downloads are kept. Without asking: `fr setup --non-interactive --voice none|cpu|gpu`.
-
 Credentials go into the operating system's credential store (Windows Credential Manager, or
 GNOME Keyring / KWallet on Linux). They are never written to the configuration file, the
-project repositories or the logs. You can re-run the wizard at any time from Settings or with
-`fr setup`; skipped steps can be completed later.
+project repositories or the logs. You can open the assistant again at any time from Settings
+(or run `fr setup` from a source checkout); skipped steps can be completed later.
 
 Your agent then creates its first project plan from the brief you give it and shows the plan for
 approval before it does anything.

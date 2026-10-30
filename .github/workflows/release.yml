@@ -46,6 +46,10 @@ jobs:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: pnpm --filter @forerunner/desktop tauri build --ci
+      # The installers carry the runtime (ADR 0092; tauri.conf.json's beforeBuildCommand builds it
+      # into src-tauri/runtime/): start it the way the shell does and check it answers.
+      - name: Bundled runtime starts on its own (scripts/runtime-payload-smoke.mjs)
+        run: node scripts/runtime-payload-smoke.mjs
       # The installers only: bundle/appimage/ and bundle/deb/ also hold the AppDir and the deb's
       # staging tree (hundreds of .so files, icons, `copyright`); rc.3 uploaded them and the
       # publish job hit GitHub's secondary rate limit before the APK went up (run 40248159390).

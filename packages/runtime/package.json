@@ -28,6 +28,7 @@
     "adm-zip": "^0.6.1",
     "commander": "^15.0.0",
     "hono": "^4.13.13",
+    "tsx": "^4.23.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

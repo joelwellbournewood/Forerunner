@@ -109,6 +109,14 @@ import {
   type SessionView,
   SessionView as SessionViewSchema,
   SettingView as SettingViewSchema,
+  type SetupCheckView,
+  SetupCheckView as SetupCheckViewSchema,
+  type SetupFinishView,
+  SetupFinishView as SetupFinishViewSchema,
+  type SetupGitHubBody,
+  type SetupProfileBody,
+  type SetupStatusView,
+  SetupStatusView as SetupStatusViewSchema,
   type SourceCandidateStatus,
   type SourceCandidateView,
   SourceCandidateView as SourceCandidateViewSchema,
@@ -260,6 +268,9 @@ export type {
   RunView,
   ScanResultView,
   SessionView,
+  SetupCheckView,
+  SetupFinishView,
+  SetupStatusView,
   SourceCandidateStatus,
   SourceCandidateView,
   SourceView,
@@ -669,6 +680,14 @@ export interface DaemonClient {
   devices(signal?: AbortSignal): Promise<DeviceListView>;
   startPairing(body?: StartPairingBody): Promise<PairingStartView>;
   revokeDevice(id: string): Promise<RevokeDeviceView>;
+
+  // The setup assistant (ADR 0092): credentials pasted in the app, checked and stored by the
+  // daemon like `fr setup`; values go to the daemon once and never come back.
+  setupStatus(signal?: AbortSignal): Promise<SetupStatusView>;
+  setupProfile(body: SetupProfileBody): Promise<SetupStatusView>;
+  setupAnthropic(value: string): Promise<SetupCheckView>;
+  setupGitHub(body: SetupGitHubBody): Promise<SetupCheckView>;
+  setupFinish(): Promise<SetupFinishView>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -1048,6 +1067,12 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     devices: (signal) => get(routePath("devices"), DeviceListViewSchema, undefined, signal),
     startPairing: (body) => post(routePath("startPairing"), PairingStartViewSchema, body ?? {}),
     revokeDevice: (id) => post(routePath("revokeDevice", { id }), RevokeDeviceViewSchema, {}),
+    setupStatus: (signal) =>
+      get(routePath("setupStatus"), SetupStatusViewSchema, undefined, signal),
+    setupProfile: (body) => post(routePath("setupProfile"), SetupStatusViewSchema, body),
+    setupAnthropic: (value) => post(routePath("setupAnthropic"), SetupCheckViewSchema, { value }),
+    setupGitHub: (body) => post(routePath("setupGitHub"), SetupCheckViewSchema, body),
+    setupFinish: () => post(routePath("setupFinish"), SetupFinishViewSchema, {}),
     auditExport: async (filter, signal) => {
       const format: AuditExportFormat = filter?.format ?? "jsonl";
       const res = await raw({

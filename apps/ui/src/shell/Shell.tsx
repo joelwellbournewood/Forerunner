@@ -4,6 +4,7 @@ import { describeError } from "../api/client.ts";
 import { RunnerAutoUnlock } from "../components/RunnerAutoUnlock.tsx";
 import { Badge, Button } from "../components/ui.tsx";
 import { NewProjectDialog } from "../pages/NewProjectDialog.tsx";
+import { useSetupGate } from "../pages/SetupPage.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { activeProject, type ThemePreference } from "../store/store.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
@@ -50,6 +51,8 @@ export function Shell() {
   const [conversation, setConversation] = useState({ open: false, request: 0 });
   const [hotkeyChord, setHotkeyChord] = useState<string | null>(null);
   const hotkey = useHotkeyBridge();
+  // A fresh install opens the setup assistant first (ADR 0092).
+  useSetupGate();
 
   const talk = useCallback(
     () => setConversation((c) => ({ open: true, request: c.request + 1 })),

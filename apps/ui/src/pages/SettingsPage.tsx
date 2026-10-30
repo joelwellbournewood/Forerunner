@@ -6,6 +6,7 @@ import { Dialog } from "../components/Dialog.tsx";
 import {
   Badge,
   Button,
+  buttonClassName,
   EmptyState,
   ErrorBanner,
   Field,
@@ -586,6 +587,20 @@ export function SettingsPage() {
       <h1 id="settings-title" className="text-xl font-semibold">
         Settings
       </h1>
+
+      <div
+        className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+        data-testid="settings-accounts"
+      >
+        <h2 className="font-semibold">Accounts and keys</h2>
+        <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+          Your Claude key or subscription and your GitHub token. The setup assistant checks a pasted
+          key at once and keeps it in this computer's credential store.
+        </p>
+        <Link to="/setup" className={`${buttonClassName("secondary")} mt-2`}>
+          Open the setup assistant
+        </Link>
+      </div>
 
       <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
         <h2 className="font-semibold">Appearance</h2>

@@ -196,6 +196,31 @@ pub fn decide(file: DaemonFile, health: Result<Health, String>) -> AttachDecisio
     }
 }
 
+/// Why a healthy daemon must be replaced by the bundled runtime, or `None` to attach (ADR
+/// 0091): it reports a version older than the one the installer carries, or no version at all.
+/// 1.0.0's shell attached to whatever answered `/health`, so a daemon left running from an old
+/// checkout (0.1.0) served the 1.0.0 UI a `/me` without `desktopDeviceId`. A newer daemon (a
+/// staged update, a developer's checkout) is kept; without a bundle nothing is replaced.
+pub fn outdated_reason(daemon_version: &str, bundled_version: Option<&str>) -> Option<String> {
+    let bundled = bundled_version?;
+    let running = daemon_version.trim();
+    if running.is_empty() {
+        return Some(format!(
+            "the running daemon reports no version; this app carries {bundled}"
+        ));
+    }
+    if crate::version::compare(running, bundled).is_none() {
+        return Some(format!(
+            "the running daemon reports version {running:?}, which is not a release version; this app carries {bundled}"
+        ));
+    }
+    crate::version::is_older(running, bundled).then(|| {
+        format!(
+            "the running daemon is version {running}, older than the {bundled} this app carries"
+        )
+    })
+}
+
 /// A daemon.json is "fresh" when it is not the file that was there before: a different pid
 /// or start time than `before` (the file read before the spawn or the last one attached to),
 /// or any file at all when there was none. The pid the shell spawned is accepted as well,
@@ -456,6 +481,23 @@ mod tests {
         }
         assert!(parse_health(r#"{"ok":false}"#).is_err());
         assert!(parse_health("nope").is_err());
+    }
+
+    #[test]
+    fn an_older_daemon_is_replaced_and_a_newer_one_kept() {
+        let reason = outdated_reason("0.1.0", Some("1.0.1")).expect("replaced");
+        assert!(
+            reason.contains("0.1.0") && reason.contains("1.0.1"),
+            "{reason}"
+        );
+        assert!(outdated_reason("1.0.0-rc.4", Some("1.0.0")).is_some());
+        assert!(outdated_reason("", Some("1.0.0")).is_some());
+        assert!(outdated_reason("0.0.0-dev+local", Some("1.0.0")).is_some());
+        assert!(outdated_reason("garbage", Some("1.0.0")).is_some());
+        assert_eq!(outdated_reason("1.0.0", Some("1.0.0")), None);
+        assert_eq!(outdated_reason("1.0.2", Some("1.0.1")), None);
+        // A development build (no bundle) attaches to whatever answers, as before.
+        assert_eq!(outdated_reason("0.1.0", None), None);
     }
 
     #[test]

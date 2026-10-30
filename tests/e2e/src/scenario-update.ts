@@ -334,6 +334,8 @@ export class ScenarioRestarter implements updates.Restarter {
   async restart(req: updates.RestartRequest): Promise<void> {
     this.requests.push(req);
     this.running.version = req.targetVersion;
+    // As compose.ts: the setup assistant's restart is no update and raises no notice.
+    if (req.reason === "setup") return;
     await this.notify.producers.updateApplied(this.humanId, {
       reason: req.reason,
       targetVersion: req.targetVersion,

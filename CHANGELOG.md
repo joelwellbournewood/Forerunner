@@ -10,6 +10,51 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-30
+
+Installing Forerunner is now one download: the app carries everything it needs and sets itself
+up. No PowerShell, git, Node.js or source code on the PC (ADR 0092).
+
+### Added
+
+- The installers carry the runtime. The MSI, AppImage and `.deb` include Node.js, the runtime
+  and its dependencies, so the app starts its own background service on a new PC.
+  `scripts/build-runtime-payload.mjs` builds it before every `tauri build`, and
+  `scripts/runtime-payload-smoke.mjs` starts it in CI on Windows and Linux. The installers are
+  larger: about 200 MB instead of 4 to 80 MB, mostly Node.js and the Claude Agent SDK's binary.
+- Setup assistant in the app. A new install opens it on first start:
+  - your name and time zone;
+  - the Claude API key or subscription token;
+  - the GitHub token, with a button that opens GitHub's token form with Forerunner's
+    permissions already filled in.
+
+  Each key is checked the moment it is pasted, with the same checks as `fr setup`, and kept in
+  the OS credential store; it is never shown again. The daemon restarts once to use the new
+  keys. Settings → Accounts and keys opens the assistant again. Daemon routes: `GET /setup`,
+  `POST /setup/{profile,anthropic,github,finish}`.
+
+### Fixed
+
+- "daemon response for GET /me does not match the contract: desktopDeviceId" after installing
+  1.0.0. The shell started whatever checkout an earlier `fr setup` had recorded in
+  `install.json` (a 0.1.0 copy of the repository's stale default branch) and attached to any
+  daemon that answered. The app now runs the runtime it carries ahead of `install.json`. When
+  the background service already running is older than that runtime, the app stops it and
+  starts its own.
+- The GitHub permission list asked for "Workflows: read". It now asks for "Commit statuses:
+  read", which is what Forerunner reads for CI results.
+- The repository's default branch was 722 commits behind the 1.0.0 release, so "Download ZIP"
+  gave a 0.1.0 copy. It now carries the released code.
+- `fr setup` kept only the `config.json` keys it writes, dropping notification settings. It now
+  keeps the others.
+
+### Known issues
+
+- On the desktop, "Update and restart" cannot replace the running build yet. It stages the
+  release's installer file, which holds no runnable runtime, so the update rolls back.
+  Install the new MSI, AppImage or `.deb` over the old one instead; your data stays
+  (`docs/maintainers/updates.md`).
+
 ## [1.0.0] - 2026-10-26
 
 First stable release. It is 1.0.0-rc.4 (ef18b5a) plus the git authentication fix below,

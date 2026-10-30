@@ -603,6 +603,10 @@ export type MirrorSyncOutcome =
 export interface RuntimeApp {
   dirs: AppDirs;
   config: SetupConfig | null;
+  /** The environment this runtime composed with (the setup assistant's routes read it). */
+  env: NodeJS.ProcessEnv;
+  /** The fetch the runtime was given (tests), else the global one. */
+  fetchImpl?: typeof fetch;
   clock: Clock;
   store: StateStore;
   vault: Vault;
@@ -2311,7 +2315,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   kill.onStop((report, reason) =>
     notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch"),
   );
-  events.on("restart", (r: RestartRequestFile) =>
+  events.on("restart", (r: RestartRequestFile) => {
+    // A restart after the setup assistant stored a credential is no update (ADR 0092).
+    if (r.reason === "setup") return;
     notifyLater(
       notifications.updateApplied(human.id, {
         reason: r.reason,
@@ -2319,8 +2325,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         fromVersion: r.fromVersion,
       }),
       `update ${r.reason}`,
-    ),
-  );
+    );
+  });
   // A critic escalation that filed no request of its own (a retry one rung up, a session
   // review the critic hands to the human) is raised to normal so it does not wait for the digest.
   // The bus event names no session; the review row the critic wrote does, so the delivery is
@@ -3188,6 +3194,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   return {
     dirs,
     config,
+    env,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
     clock,
     store,
     vault,

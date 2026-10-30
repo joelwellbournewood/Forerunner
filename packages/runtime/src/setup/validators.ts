@@ -38,7 +38,7 @@ export const CREDENTIAL_REQUESTS: Record<
       "Pull requests: read and write",
       "Issues: read and write",
       "Metadata: read",
-      "Workflows: read (to see CI results)",
+      "Commit statuses: read (to see CI results)",
     ],
     whereToClick:
       "GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token",

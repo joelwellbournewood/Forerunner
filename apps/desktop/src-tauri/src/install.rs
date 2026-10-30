@@ -1,8 +1,12 @@
-//! Where the install's `fr` entry is (ADR 0026): `FORERUNNER_INSTALL_DIR`, then the install
-//! record `fr setup` writes under `<config>/install.json`, then `fr` on `PATH`. The result is
-//! an argv array; the shell never builds a shell string. An install directory is run as
+//! Where the install's `fr` entry is (ADR 0026, ADR 0092): a staged update that is newer than
+//! the bundled runtime, `FORERUNNER_INSTALL_DIR`, the runtime the installer carries
+//! (`<resources>/runtime/`, built by `scripts/build-runtime-payload.mjs`), then the install
+//! record `fr setup` writes under `<config>/install.json` (a source checkout), then `fr` on
+//! `PATH`. The result is an argv array; the shell never builds a shell string. An install
+//! directory is run as
 //! `node <dir>/node_modules/tsx/dist/cli.mjs <dir>/packages/runtime/src/cli/main.ts <args>`,
-//! the same thing `pnpm fr` does, without `pnpm` or a `.cmd` shim in between.
+//! the same thing `pnpm fr` does, without `pnpm` or a `.cmd` shim in between; the bundled
+//! runtime uses its own `node/node[.exe]`.
 
 #[cfg(test)]
 use std::collections::HashSet;
@@ -12,8 +16,55 @@ use serde_json::Value;
 
 use crate::dirs::Platform;
 use crate::env::Env;
+use crate::version;
 
 pub const INSTALL_RECORD_FILE: &str = "install.json";
+/// The runtime's directory under the app's resource directory (`tauri.conf.json` resources).
+pub const BUNDLED_RUNTIME_DIR: &str = "runtime";
+/// `{ "schema": 1, "version": "...", ... }`, written last by the payload builder.
+pub const BUNDLED_MANIFEST_FILE: &str = "runtime.json";
+
+/// The runtime the installer carries (ADR 0092).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundledRuntime {
+    pub dir: PathBuf,
+    pub version: String,
+}
+
+/// The version `runtime.json` names.
+pub fn parse_bundled_manifest(text: &str) -> Result<String, String> {
+    let v: Value = serde_json::from_str(text).map_err(|e| format!("runtime.json: {e}"))?;
+    if v.get("schema").and_then(Value::as_u64) != Some(1) {
+        return Err("runtime.json: schema is not 1".into());
+    }
+    v.get("version")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "runtime.json: version missing".to_string())
+}
+
+/// The runtime under `<resource_dir>/runtime/`, when the build carries one. A development
+/// build (`tauri dev`, `cargo test`) has none and finds the checkout through the install record.
+pub fn bundled_runtime(resource_dir: &Path) -> Option<BundledRuntime> {
+    let dir = resource_dir.join(BUNDLED_RUNTIME_DIR);
+    let text = std::fs::read_to_string(dir.join(BUNDLED_MANIFEST_FILE)).ok()?;
+    match parse_bundled_manifest(&text) {
+        Ok(version) => Some(BundledRuntime { dir, version }),
+        Err(e) => {
+            log::warn!("bundled runtime ignored: {e}");
+            None
+        }
+    }
+}
+
+pub fn bundled_node(dir: &Path, platform: Platform) -> PathBuf {
+    dir.join("node").join(if platform == Platform::Windows {
+        "node.exe"
+    } else {
+        "node"
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallRecord {
@@ -47,6 +98,8 @@ pub enum FrSource {
     /// `<data>/versions/<current.json current>/` (ADR 0015).
     StagedVersion,
     InstallDirEnv,
+    /// `<resources>/runtime/` (ADR 0092).
+    Bundled,
     InstallRecord,
     PathLookup,
 }
@@ -57,6 +110,9 @@ pub struct FrCommand {
     /// Arguments before the `fr` subcommand (the tsx entry and the CLI file for an install dir).
     pub args: Vec<PathBuf>,
     pub cwd: Option<PathBuf>,
+    /// Extra environment for the process (the bundled runtime names its tsconfig, whose
+    /// `paths` resolve the workspace packages).
+    pub env: Vec<(String, PathBuf)>,
     pub source: FrSource,
 }
 
@@ -103,7 +159,7 @@ impl std::fmt::Display for LocateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "no Forerunner install found (tried: {}). Run the fresh install (scripts/fresh-install) or set FORERUNNER_INSTALL_DIR.",
+            "no Forerunner runtime found (tried: {}). Reinstall Forerunner from the release page; from a source checkout, run the fresh install (scripts/fresh-install) or set FORERUNNER_INSTALL_DIR.",
             self.tried.join("; ")
         )
     }
@@ -150,8 +206,26 @@ fn from_install_dir(
         program,
         args: vec![tsx, cli],
         cwd: Some(dir.to_path_buf()),
+        env: Vec::new(),
         source,
     })
+}
+
+fn from_bundled(
+    runtime: &BundledRuntime,
+    fs: &impl Fs,
+    platform: Platform,
+) -> Result<FrCommand, String> {
+    let node = bundled_node(&runtime.dir, platform);
+    if !fs.is_file(&node) {
+        return Err(format!("{} has no Node.js binary", runtime.dir.display()));
+    }
+    let mut cmd = from_install_dir(&runtime.dir, Some(&node), fs, platform, FrSource::Bundled)?;
+    cmd.env.push((
+        "TSX_TSCONFIG_PATH".into(),
+        runtime.dir.join("tsconfig.json"),
+    ));
+    Ok(cmd)
 }
 
 fn path_entries(env: &impl Env, platform: Platform) -> Vec<PathBuf> {
@@ -227,23 +301,64 @@ pub fn staged_version_dir(data_dir: &Path, fs: &impl Fs) -> Option<PathBuf> {
     Some(data_dir.join(VERSIONS_DIR).join(current))
 }
 
-/// Resolve how to run `fr`, in the order ADR 0026 names, after the staged version of ADR 0015
-/// when one is installed: `current.json`, `FORERUNNER_INSTALL_DIR`, `<config>/install.json`,
-/// `fr` on `PATH`.
+/// The Node.js binary a staged version runs on: its own `node/` when it carries one, else the
+/// bundled runtime's, else `node` on `PATH`.
+fn staged_node(
+    dir: &Path,
+    bundled: Option<&BundledRuntime>,
+    fs: &impl Fs,
+    platform: Platform,
+) -> Option<PathBuf> {
+    let own = bundled_node(dir, platform);
+    if fs.is_file(&own) {
+        return Some(own);
+    }
+    bundled
+        .map(|b| bundled_node(&b.dir, platform))
+        .filter(|n| fs.is_file(n))
+}
+
+/// Resolve how to run `fr` (ADR 0026, ADR 0092): the staged version of ADR 0015 unless the
+/// bundled runtime is newer (an installer run over an older in-app update),
+/// `FORERUNNER_INSTALL_DIR`, the bundled runtime, `<config>/install.json`, `fr` on `PATH`. The
+/// bundled runtime comes before the install record so an old checkout named by a source
+/// install never runs in place of the version the installer brought.
 pub fn locate_fr(
     env: &impl Env,
     fs: &impl Fs,
     config_dir: &Path,
     data_dir: &Path,
     platform: Platform,
+    bundled: Option<&BundledRuntime>,
 ) -> Result<FrCommand, LocateError> {
     let mut tried = Vec::new();
 
     match staged_version_dir(data_dir, fs) {
-        Some(dir) => match from_install_dir(&dir, None, fs, platform, FrSource::StagedVersion) {
-            Ok(cmd) => return Ok(cmd),
-            Err(e) => tried.push(format!("staged version: {e}")),
-        },
+        Some(dir) => {
+            let staged_version = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            match bundled.filter(|b| version::is_older(&staged_version, &b.version)) {
+                Some(b) => tried.push(format!(
+                    "staged version {staged_version} is older than the bundled {}",
+                    b.version
+                )),
+                None => {
+                    let node = staged_node(&dir, bundled, fs, platform);
+                    match from_install_dir(
+                        &dir,
+                        node.as_deref(),
+                        fs,
+                        platform,
+                        FrSource::StagedVersion,
+                    ) {
+                        Ok(cmd) => return Ok(cmd),
+                        Err(e) => tried.push(format!("staged version: {e}")),
+                    }
+                }
+            }
+        }
         None => tried.push("no staged version (current.json)".into()),
     }
 
@@ -255,6 +370,14 @@ pub fn locate_fr(
             }
         }
         None => tried.push("FORERUNNER_INSTALL_DIR unset".into()),
+    }
+
+    match bundled {
+        Some(b) => match from_bundled(b, fs, platform) {
+            Ok(cmd) => return Ok(cmd),
+            Err(e) => tried.push(format!("bundled runtime: {e}")),
+        },
+        None => tried.push("no bundled runtime".into()),
     }
 
     let record_path = config_dir.join(INSTALL_RECORD_FILE);
@@ -287,6 +410,7 @@ pub fn locate_fr(
                     program: candidate,
                     args: Vec::new(),
                     cwd: None,
+                    env: Vec::new(),
                     source: FrSource::PathLookup,
                 });
             }
@@ -327,6 +451,7 @@ mod tests {
             Path::new("/cfg"),
             Path::new(NO_DATA),
             Platform::Linux,
+            None,
         )
         .expect("found");
         assert_eq!(cmd.source, FrSource::InstallDirEnv);
@@ -350,6 +475,7 @@ mod tests {
             Path::new("C:\\cfg"),
             Path::new(NO_DATA),
             Platform::Windows,
+            None,
         )
         .expect("found");
         assert_eq!(cmd.program, PathBuf::from("node.exe"));
@@ -362,6 +488,7 @@ mod tests {
             Path::new("C:\\cfg"),
             Path::new(NO_DATA),
             Platform::Windows,
+            None,
         )
         .expect("found");
         assert_eq!(cmd.source, FrSource::PathLookup);
@@ -379,6 +506,7 @@ mod tests {
             Path::new("/cfg"),
             Path::new(NO_DATA),
             Platform::Linux,
+            None,
         )
         .expect("found");
         assert_eq!(cmd.source, FrSource::PathLookup);
@@ -394,14 +522,203 @@ mod tests {
             Path::new("/cfg"),
             Path::new(NO_DATA),
             Platform::Linux,
+            None,
         )
         .unwrap_err();
         let text = err.to_string();
         assert!(text.contains("no staged version"));
         assert!(text.contains("FORERUNNER_INSTALL_DIR unset"));
         assert!(text.contains("install.json absent"));
+        assert!(text.contains("no bundled runtime"));
         assert!(text.contains("fr not on PATH"));
+        assert!(text.contains("Reinstall Forerunner"));
         assert!(text.contains("fresh-install"));
+    }
+
+    fn bundled_fs(dir: &str, platform: Platform) -> (BundledRuntime, FakeFs) {
+        let runtime = BundledRuntime {
+            dir: PathBuf::from(dir),
+            version: "1.0.1".into(),
+        };
+        let mut fs = install_fs(dir);
+        fs.0.insert(bundled_node(&runtime.dir, platform));
+        (runtime, fs)
+    }
+
+    fn record_dir(install: &Path) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("fr-record-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(
+            dir.join(INSTALL_RECORD_FILE),
+            format!(
+                r#"{{"schema":1,"installDir":{}}}"#,
+                serde_json::to_string(&install.to_string_lossy()).unwrap()
+            ),
+        )
+        .expect("write record");
+        dir
+    }
+
+    // 1.0.0's installer carried no runtime: the shell started the checkout an older
+    // install.json named (a 0.1.0 daemon without `/me.desktopDeviceId`). The bundled runtime
+    // now runs ahead of the install record and of PATH, on its own Node.js.
+    #[test]
+    fn the_bundled_runtime_runs_before_an_old_checkout() {
+        let (runtime, mut fs) = bundled_fs("/opt/forerunner/runtime", Platform::Linux);
+        let old_checkout = PathBuf::from("/home/me/Forerunner-main");
+        let cfg = record_dir(&old_checkout);
+        fs.0.extend(install_fs(&old_checkout.to_string_lossy()).0);
+        fs.0.insert(cfg.join(INSTALL_RECORD_FILE));
+        fs.0.insert(Path::new("/usr/bin").join("fr"));
+        let env = MapEnv::new(&[("PATH", "/usr/bin")]);
+        let cmd = locate_fr(
+            &env,
+            &fs,
+            &cfg,
+            Path::new(NO_DATA),
+            Platform::Linux,
+            Some(&runtime),
+        )
+        .expect("found");
+        assert_eq!(cmd.source, FrSource::Bundled);
+        assert_eq!(cmd.program, Path::new("/opt/forerunner/runtime/node/node"));
+        assert_eq!(cmd.cwd.as_deref(), Some(runtime.dir.as_path()));
+        assert!(cmd.args[1].ends_with(Path::new("packages/runtime/src/cli/main.ts")));
+        assert_eq!(
+            cmd.env,
+            vec![(
+                "TSX_TSCONFIG_PATH".to_string(),
+                runtime.dir.join("tsconfig.json")
+            )]
+        );
+
+        // Without the bundle (a development build) the record's checkout runs as before.
+        let cmd =
+            locate_fr(&env, &fs, &cfg, Path::new(NO_DATA), Platform::Linux, None).expect("found");
+        assert_eq!(cmd.source, FrSource::InstallRecord);
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn install_dir_env_still_overrides_the_bundle_and_a_broken_bundle_falls_through() {
+        let (runtime, mut fs) =
+            bundled_fs("C:\\Program Files\\Forerunner\\runtime", Platform::Windows);
+        assert!(fs.is_file(&runtime.dir.join("node").join("node.exe")));
+        fs.0.extend(install_fs("C:\\dev\\forerunner").0);
+        let env = MapEnv::new(&[
+            ("FORERUNNER_INSTALL_DIR", "C:\\dev\\forerunner"),
+            ("PATH", ""),
+        ]);
+        let cmd = locate_fr(
+            &env,
+            &fs,
+            Path::new("C:\\cfg"),
+            Path::new(NO_DATA),
+            Platform::Windows,
+            Some(&runtime),
+        )
+        .expect("found");
+        assert_eq!(cmd.source, FrSource::InstallDirEnv);
+
+        // A bundle without its node binary is reported and skipped.
+        let fs = install_fs("/opt/forerunner/runtime");
+        let runtime = BundledRuntime {
+            dir: PathBuf::from("/opt/forerunner/runtime"),
+            version: "1.0.1".into(),
+        };
+        let err = locate_fr(
+            &MapEnv::new(&[("PATH", "")]),
+            &fs,
+            Path::new("/cfg"),
+            Path::new(NO_DATA),
+            Platform::Linux,
+            Some(&runtime),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("bundled runtime: "));
+        assert!(err.to_string().contains("no Node.js binary"));
+    }
+
+    #[test]
+    fn a_staged_update_runs_only_when_it_is_not_older_than_the_bundle() {
+        let data = std::env::temp_dir().join(format!("fr-staged-bundle-{}", uuid::Uuid::new_v4()));
+        let versions = data.join(VERSIONS_DIR);
+        std::fs::create_dir_all(&versions).expect("temp dir");
+        let pointer = versions.join(POINTER_FILE);
+        let (runtime, mut fs) = bundled_fs("/opt/forerunner/runtime", Platform::Linux);
+        fs.0.insert(pointer.clone());
+        for v in ["1.0.0", "1.0.2"] {
+            fs.0.extend(install_fs(&versions.join(v).to_string_lossy()).0);
+        }
+        let env = MapEnv::new(&[("PATH", "")]);
+
+        std::fs::write(
+            &pointer,
+            r#"{"schema":1,"current":"1.0.0","state":"installed"}"#,
+        )
+        .expect("write");
+        let cmd = locate_fr(
+            &env,
+            &fs,
+            Path::new("/cfg"),
+            &data,
+            Platform::Linux,
+            Some(&runtime),
+        )
+        .expect("found");
+        assert_eq!(
+            cmd.source,
+            FrSource::Bundled,
+            "1.0.0 staged, 1.0.1 installed over it"
+        );
+
+        std::fs::write(
+            &pointer,
+            r#"{"schema":1,"current":"1.0.2","state":"installed"}"#,
+        )
+        .expect("write");
+        let cmd = locate_fr(
+            &env,
+            &fs,
+            Path::new("/cfg"),
+            &data,
+            Platform::Linux,
+            Some(&runtime),
+        )
+        .expect("found");
+        assert_eq!(cmd.source, FrSource::StagedVersion);
+        assert_eq!(cmd.cwd.as_deref(), Some(versions.join("1.0.2").as_path()));
+        // A staged version without its own node runs on the bundled one, not on PATH.
+        assert_eq!(cmd.program, bundled_node(&runtime.dir, Platform::Linux));
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn the_bundled_manifest_names_the_version() {
+        assert_eq!(
+            parse_bundled_manifest(r#"{"schema":1,"version":"1.0.1","platform":"win32"}"#),
+            Ok("1.0.1".to_string())
+        );
+        assert!(parse_bundled_manifest(r#"{"schema":2,"version":"1.0.1"}"#).is_err());
+        assert!(parse_bundled_manifest(r#"{"schema":1,"version":""}"#).is_err());
+        assert!(parse_bundled_manifest("not json").is_err());
+
+        let res = std::env::temp_dir().join(format!("fr-bundle-test-{}", uuid::Uuid::new_v4()));
+        assert_eq!(bundled_runtime(&res), None, "no runtime directory");
+        std::fs::create_dir_all(res.join(BUNDLED_RUNTIME_DIR)).expect("dir");
+        std::fs::write(
+            res.join(BUNDLED_RUNTIME_DIR).join(BUNDLED_MANIFEST_FILE),
+            r#"{"schema":1,"version":"1.0.1"}"#,
+        )
+        .expect("write");
+        assert_eq!(
+            bundled_runtime(&res),
+            Some(BundledRuntime {
+                dir: res.join(BUNDLED_RUNTIME_DIR),
+                version: "1.0.1".into()
+            })
+        );
+        let _ = std::fs::remove_dir_all(&res);
     }
 
     #[test]
@@ -434,7 +751,8 @@ mod tests {
         let mut fs = install_fs(&install.to_string_lossy());
         fs.0.insert(record.clone());
         let env = MapEnv::new(&[("PATH", "")]);
-        let cmd = locate_fr(&env, &fs, &dir, Path::new(NO_DATA), Platform::Linux).expect("found");
+        let cmd =
+            locate_fr(&env, &fs, &dir, Path::new(NO_DATA), Platform::Linux, None).expect("found");
         assert_eq!(cmd.source, FrSource::InstallRecord);
         assert_eq!(cmd.program, dir.join("node"));
         assert_eq!(cmd.cwd.as_deref(), Some(install.as_path()));
@@ -457,7 +775,8 @@ mod tests {
         fs.0.insert(pointer.clone());
         let env = MapEnv::new(&[("FORERUNNER_INSTALL_DIR", "/opt/fr"), ("PATH", "")]);
         // Even with FORERUNNER_INSTALL_DIR set, the staged version wins when it is complete.
-        let cmd = locate_fr(&env, &fs, Path::new("/cfg"), &data, Platform::Linux).expect("found");
+        let cmd =
+            locate_fr(&env, &fs, Path::new("/cfg"), &data, Platform::Linux, None).expect("found");
         assert_eq!(cmd.source, FrSource::StagedVersion);
         assert_eq!(cmd.cwd.as_deref(), Some(staged.as_path()));
 
@@ -467,7 +786,8 @@ mod tests {
             f.0.insert(pointer.clone());
             f
         };
-        let cmd = locate_fr(&env, &fs2, Path::new("/cfg"), &data, Platform::Linux).expect("found");
+        let cmd =
+            locate_fr(&env, &fs2, Path::new("/cfg"), &data, Platform::Linux, None).expect("found");
         assert_eq!(cmd.source, FrSource::InstallDirEnv);
 
         // A null `current` (before the first staged install) is "no staged version".

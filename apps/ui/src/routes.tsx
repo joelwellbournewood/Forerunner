@@ -10,13 +10,15 @@ import { NotFoundPage } from "./pages/PlaceholderPages.tsx";
 import { ProjectPage } from "./pages/ProjectPage.tsx";
 import { SessionPage } from "./pages/SessionPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
+import { SetupPage } from "./pages/SetupPage.tsx";
 import { UpdatesPage } from "./pages/UpdatesPage.tsx";
 import { Shell } from "./shell/Shell.tsx";
 
 /**
  * Routes mirror the spec's Interface module (K): home, project pages with tabs, live session,
  * inbox, memory, extensions, settings (with Capabilities -> Email below it, spec S.15), plus
- * the change log (Q), the performance view (D) and the updates screen (M). Separate from the
+ * the change log (Q), the performance view (D), the updates screen (M) and the setup assistant
+ * (ADR 0092). Separate from the
  * router so tests can mount them in a MemoryRouter.
  */
 export function AppRoutes() {
@@ -33,6 +35,7 @@ export function AppRoutes() {
         <Route path="performance" element={<PerformancePage />} />
         <Route path="updates" element={<UpdatesPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="setup" element={<SetupPage />} />
         <Route path="settings/capabilities/email" element={<EmailSettingsPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

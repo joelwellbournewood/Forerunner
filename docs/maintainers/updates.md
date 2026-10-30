@@ -542,6 +542,14 @@ cases; skipping the open-item lookup in `ensureRequest` fails the "not every tic
 - `GitHubReleasesFeed` fetches one manifest asset per release on every `list`; with many
   releases on the channel that is one request each (bounded by `perPage`, default 30). A
   cache keyed by release id would remove the repeat fetches.
+- On the desktop, "Update and restart" cannot replace the running build yet (ADR 0092). The
+  manifest's `windows-x64` and `linux-x64` artefacts are the MSI and the AppImage, which the
+  installer keeps as one file under `<data>/versions/<version>/`; that directory holds no
+  runnable runtime, so the shell's locator skips it and starts the bundled runtime, and the
+  health check then rolls the update back (the running version is not `current`). Installing
+  the new MSI, AppImage or `.deb` over the old one is the way to update, and the app replaces a
+  daemon older than the one it carries. A desktop artefact the updater can stage (the runtime
+  payload with the UI, or running the downloaded installer) is follow-up work.
 - `health.reportedBy` names a human, not an install: the release row has no install column,
   so two installs of one human over one state cannot be told apart in a refusal (the text
   says "this install's human"). Recording an install id there (and comparing on it) would
