@@ -48,6 +48,10 @@ short:
 3. Open Forerunner from the Start menu. The first start takes up to a minute while the
    background service gets ready; later starts take a few seconds.
 
+You can install it into any folder on any drive, including names with spaces or non-English
+letters; each release is tested that way before it is published. (1.0.1 did not start on
+Windows wherever it was installed; use 1.0.2 or later.)
+
 That is all: the installer carries everything Forerunner needs, including its own Node.js. You
 do not need PowerShell, git, Node.js or a copy of the source code. Windows 11 has the WebView2
 runtime the window needs; on Windows 10 the installer adds it.

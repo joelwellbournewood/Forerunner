@@ -47,7 +47,7 @@ pub fn parse_bundled_manifest(text: &str) -> Result<String, String> {
 /// The runtime under `<resource_dir>/runtime/`, when the build carries one. A development
 /// build (`tauri dev`, `cargo test`) has none and finds the checkout through the install record.
 pub fn bundled_runtime(resource_dir: &Path) -> Option<BundledRuntime> {
-    let dir = resource_dir.join(BUNDLED_RUNTIME_DIR);
+    let dir = without_verbatim_prefix(resource_dir).join(BUNDLED_RUNTIME_DIR);
     let text = std::fs::read_to_string(dir.join(BUNDLED_MANIFEST_FILE)).ok()?;
     match parse_bundled_manifest(&text) {
         Ok(version) => Some(BundledRuntime { dir, version }),
@@ -56,6 +56,28 @@ pub fn bundled_runtime(resource_dir: &Path) -> Option<BundledRuntime> {
             None
         }
     }
+}
+
+/// The plain form of a Windows extended-length ("verbatim") path: `\\?\D:\x` is `D:\x` and
+/// `\\?\UNC\server\share\x` is `\\server\share\x`; anything else is returned as it is. Tauri's
+/// `resource_dir()` is canonicalized on Windows and comes back verbatim, and Node cannot run a
+/// script named that way: 1.0.1's installed daemon died at once with "EISDIR: illegal
+/// operation on a directory, lstat 'D:'" from `realpathSync` on its own entry file.
+pub fn without_verbatim_prefix(p: &Path) -> PathBuf {
+    // Only a path that is valid Unicode is rewritten: a lossy conversion would change the name.
+    let Some(s) = p.to_str() else {
+        return p.to_path_buf();
+    };
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+            return PathBuf::from(rest);
+        }
+    }
+    p.to_path_buf()
 }
 
 pub fn bundled_node(dir: &Path, platform: Platform) -> PathBuf {
@@ -172,6 +194,11 @@ fn from_install_dir(
     platform: Platform,
     source: FrSource,
 ) -> Result<FrCommand, String> {
+    // Whatever named the directory (Tauri's canonicalized resource dir, a record, the
+    // environment), Node gets the plain form.
+    let dir = &without_verbatim_prefix(dir);
+    let node = node.map(without_verbatim_prefix);
+    let node = node.as_deref();
     let tsx = dir
         .join("node_modules")
         .join("tsx")
@@ -216,15 +243,14 @@ fn from_bundled(
     fs: &impl Fs,
     platform: Platform,
 ) -> Result<FrCommand, String> {
-    let node = bundled_node(&runtime.dir, platform);
+    let dir = without_verbatim_prefix(&runtime.dir);
+    let node = bundled_node(&dir, platform);
     if !fs.is_file(&node) {
-        return Err(format!("{} has no Node.js binary", runtime.dir.display()));
+        return Err(format!("{} has no Node.js binary", dir.display()));
     }
-    let mut cmd = from_install_dir(&runtime.dir, Some(&node), fs, platform, FrSource::Bundled)?;
-    cmd.env.push((
-        "TSX_TSCONFIG_PATH".into(),
-        runtime.dir.join("tsconfig.json"),
-    ));
+    let mut cmd = from_install_dir(&dir, Some(&node), fs, platform, FrSource::Bundled)?;
+    cmd.env
+        .push(("TSX_TSCONFIG_PATH".into(), dir.join("tsconfig.json")));
     Ok(cmd)
 }
 
@@ -691,6 +717,85 @@ mod tests {
         // A staged version without its own node runs on the bundled one, not on PATH.
         assert_eq!(cmd.program, bundled_node(&runtime.dir, Platform::Linux));
         let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // 1.0.1 on Windows: Tauri's resource_dir() is verbatim (`\\?\D:\AGENT\Forerunner`) and
+    // Node died at once on its own entry file ("EISDIR: illegal operation on a directory, lstat
+    // 'D:'"). Every install location must reach Node in its plain form.
+    #[test]
+    fn verbatim_windows_paths_become_plain_ones() {
+        for (verbatim, plain) in [
+            (r"\\?\D:\AGENT\Forerunner", r"D:\AGENT\Forerunner"),
+            (
+                r"\\?\C:\Program Files\Forerunner",
+                r"C:\Program Files\Forerunner",
+            ),
+            (r"\\?\d:\My Apps\Forerünner Ä", r"d:\My Apps\Forerünner Ä"),
+            (r"\\?\E:\", r"E:\"),
+            (
+                r"\\?\UNC\server\share\Forerunner",
+                r"\\server\share\Forerunner",
+            ),
+        ] {
+            assert_eq!(
+                without_verbatim_prefix(Path::new(verbatim)),
+                PathBuf::from(plain),
+                "{verbatim}"
+            );
+        }
+        // Anything else is left as it is: plain paths, Linux paths, other device forms.
+        for same in [
+            r"D:\AGENT\Forerunner",
+            r"\\server\share\x",
+            "/usr/lib/Forerunner",
+            "/tmp/.mount_ForeruXYZ/usr/lib/Forerunner",
+            r"\\?\Volume{0d3a}\x",
+            r"\\.\COM1",
+        ] {
+            assert_eq!(
+                without_verbatim_prefix(Path::new(same)),
+                PathBuf::from(same),
+                "{same}"
+            );
+        }
+        // The bundle found under a verbatim resource dir hands out plain paths.
+        let res = std::env::temp_dir().join(format!("fr-verbatim-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(res.join(BUNDLED_RUNTIME_DIR)).expect("dir");
+        std::fs::write(
+            res.join(BUNDLED_RUNTIME_DIR).join(BUNDLED_MANIFEST_FILE),
+            r#"{"schema":1,"version":"1.0.2"}"#,
+        )
+        .expect("write");
+        let found = bundled_runtime(&res).expect("found");
+        assert!(!found.dir.to_string_lossy().starts_with(r"\\?\"));
+        let _ = std::fs::remove_dir_all(&res);
+    }
+
+    #[test]
+    fn the_command_node_receives_never_carries_the_verbatim_prefix() {
+        let plain = r"D:\AGENT\Forerunner\runtime";
+        let (_, fs) = bundled_fs(plain, Platform::Windows);
+        let runtime = BundledRuntime {
+            dir: PathBuf::from(format!(r"\\?\{plain}")),
+            version: "1.0.2".into(),
+        };
+        let cmd = locate_fr(
+            &MapEnv::new(&[("PATH", "")]),
+            &fs,
+            Path::new("C:\\cfg"),
+            Path::new(NO_DATA),
+            Platform::Windows,
+            Some(&runtime),
+        )
+        .expect("found");
+        assert_eq!(cmd.source, FrSource::Bundled);
+        let mut all = vec![cmd.program.clone()];
+        all.extend(cmd.args.iter().cloned());
+        all.extend(cmd.cwd.iter().cloned());
+        all.extend(cmd.env.iter().map(|(_, v)| v.clone()));
+        for p in all {
+            assert!(!p.to_string_lossy().starts_with(r"\\?\"), "{}", p.display());
+        }
     }
 
     #[test]

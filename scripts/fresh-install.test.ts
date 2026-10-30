@@ -151,7 +151,7 @@ describe("PowerShell scripts", () => {
   it.skipIf(!hasPwsh)(
     `parse without errors (${reason})`,
     () => {
-      for (const name of ["fresh-install.ps1", "dev-postgres.ps1"]) {
+      for (const name of ["fresh-install.ps1", "dev-postgres.ps1", "installed-check.ps1"]) {
         const file = join(scriptsDir, name).replace(/'/g, "''");
         const r = spawnSync(
           "pwsh",

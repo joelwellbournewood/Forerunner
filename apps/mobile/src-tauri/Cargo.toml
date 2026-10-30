@@ -1,6 +1,6 @@
 [package]
 name = "forerunner-mobile"
-version = "1.0.1"
+version = "1.0.2"
 description = "Forerunner Android shell"
 authors = ["Forerunner contributors"]
 license = "MIT"

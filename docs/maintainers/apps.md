@@ -935,6 +935,8 @@ apps/desktop/src-tauri/
     install.rs        locate_fr(): staged version (unless older than the bundle), FORERUNNER_INSTALL_DIR,
                       the bundled runtime, install.json, PATH -> argv (+ env); bundled_runtime()
     version.rs        compare(): semver order for the staged-vs-bundled and outdated-daemon checks
+    selftest.rs       `--self-test [--report <file>]`: a launch's start path without a window,
+                      JSON report, exit 0/1 (ADR 0092 amendment)
     supervisor.rs     spawn_daemon() (argv, env, detached, log file), wait_for_daemon(), watch_exit(),
                       stop_process() (an outdated daemon only, ADR 0092)
     restart.rs        restart.json parsing, decide_after_exit() (the restart budget)
@@ -998,6 +1000,22 @@ flat production `node_modules` and a `tsconfig.json` whose `paths` resolve `@for
 older than the bundle, `FORERUNNER_INSTALL_DIR`, the bundle, `install.json`, `PATH`; a staged
 version without its own `node/` runs on the bundled Node. `release.md` covers how the payload
 is built.
+
+Node only gets plain paths (`install::without_verbatim_prefix`, applied in `bundled_runtime`,
+`from_bundled` and `from_install_dir`). On Windows, Tauri's `resource_dir()` is
+`\\?\D:\...`, and Node cannot run a script named that way: 1.0.1 died at once when
+installed into `D:\AGENT\Forerunner`. **Self-test:** `forerunner-desktop --self-test [--report
+<file>]` (`selftest.rs`, handled at the top of `run()` before any window or tray) runs a
+launch's steps:
+- Tauri's `resource_dir()`, `bundled_runtime` and `locate_fr`, which must pick the bundle;
+- `spawn_daemon` and `wait_for_daemon`;
+- `/health` with the bundle's version, `/me` with `desktopDeviceId`, and `/setup`.
+
+It then stops the daemon and prints a JSON report, written to `--report` too, since a Windows
+release build has no console. A failed report carries the end of `daemon-shell.log`.
+`scripts/installed-check.ps1` and `.sh` run it from the installed MSI, `.deb` and AppImage in CI
+(`release.md`). It uses the data folder `FORERUNNER_HOME` names, else the real one; on a user's
+PC, run it only while the app is closed.
 
 **Injection (`inject.rs`).** The main window is built in Rust (not from `tauri.conf.json`)
 with an initialization script that defines a frozen, non-configurable
@@ -1170,7 +1188,10 @@ the tried list, `install.json` parsing and reading, staged version first, the bu
 ahead of an old checkout's install record and of PATH on its own Node with
 `TSX_TSCONFIG_PATH`, `FORERUNNER_INSTALL_DIR` still first, a bundle without Node skipped, a
 staged version older than the bundle skipped and a newer one run on the bundled Node,
-`runtime.json` parsing); `version` (release and pre-release order, non-versions); `restart` (file parsing, exit-code matching, one restart then
+`runtime.json` parsing, verbatim `\\?\` drive and UNC paths made plain while other forms are
+left alone, and no verbatim path in any part of the command Node gets); `version` (release and
+pre-release order, non-versions); `selftest` (the flag and the report path, the log tail a
+failed report carries); `restart` (file parsing, exit-code matching, one restart then
 give up, rollback's extra relaunch, crash/stop, file round trip, the external "gone" rule per
 signal, the external exit code); `actions` (email paths against the route table's source,
 the desktop paths and `desktopControl.active` against the desktop module's source, the

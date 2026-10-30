@@ -2,10 +2,10 @@ name: Desktop app
 
 on:
   pull_request:
-    paths: ["apps/**", "packages/**", "scripts/*runtime-payload*", "evals/registry/**", ".github/workflows/desktop.yml"]
+    paths: ["apps/**", "packages/**", "scripts/*runtime-payload*", "scripts/installed-check.*", "evals/registry/**", ".github/workflows/desktop.yml"]
   push:
     branches: [main]
-    paths: ["apps/**", "packages/**", "scripts/*runtime-payload*", "evals/registry/**", ".github/workflows/desktop.yml"]
+    paths: ["apps/**", "packages/**", "scripts/*runtime-payload*", "scripts/installed-check.*", "evals/registry/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -68,6 +68,18 @@ jobs:
       # into src-tauri/runtime/): start it the way the shell does and check it answers.
       - name: Bundled runtime starts on its own (scripts/runtime-payload-smoke.mjs)
         run: node scripts/runtime-payload-smoke.mjs
+      # The real installer, installed where users put it (another drive, spaces and non-ASCII
+      # letters, a long path, read-only, a network share; the .deb in /usr/lib and the AppImage
+      # from an odd folder) and started with --self-test the way a normal launch does (ADR 0092).
+      - name: Installed app check (scripts/installed-check.*)
+        shell: bash
+        run: |
+          b=apps/desktop/src-tauri/target/release/bundle
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pwsh -File scripts/installed-check.ps1 -Msi "$(ls $b/msi/*.msi | head -n 1)"
+          else
+            bash scripts/installed-check.sh "$(ls $b/deb/*.deb | head -n 1)" "$(ls $b/appimage/*.AppImage | head -n 1)"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}

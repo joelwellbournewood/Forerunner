@@ -50,6 +50,18 @@ jobs:
       # into src-tauri/runtime/): start it the way the shell does and check it answers.
       - name: Bundled runtime starts on its own (scripts/runtime-payload-smoke.mjs)
         run: node scripts/runtime-payload-smoke.mjs
+      # The real installer, installed where users put it (another drive, spaces and non-ASCII
+      # letters, a long path, read-only, a network share; the .deb in /usr/lib and the AppImage
+      # from an odd folder) and started with --self-test the way a normal launch does (ADR 0092).
+      - name: Installed app check (scripts/installed-check.*)
+        shell: bash
+        run: |
+          b=apps/desktop/src-tauri/target/release/bundle
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pwsh -File scripts/installed-check.ps1 -Msi "$(ls $b/msi/*.msi | head -n 1)"
+          else
+            bash scripts/installed-check.sh "$(ls $b/deb/*.deb | head -n 1)" "$(ls $b/appimage/*.AppImage | head -n 1)"
+          fi
       # The installers only: bundle/appimage/ and bundle/deb/ also hold the AppDir and the deb's
       # staging tree (hundreds of .so files, icons, `copyright`); rc.3 uploaded them and the
       # publish job hit GitHub's secondary rate limit before the APK went up (run 40248159390).

@@ -20,6 +20,7 @@ mod install;
 mod media;
 mod restart;
 mod secret;
+mod selftest;
 mod sse;
 mod state;
 mod supervisor;
@@ -107,6 +108,12 @@ fn splash_response(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    // `--self-test` (ADR 0092): start the bundled runtime the way a launch does, report, exit.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(test) = selftest::parse_args(&args) {
+        std::process::exit(selftest::run(context.package_info(), &test));
+    }
     let dirs = app_dirs(&ProcessEnv, &AppDirsOptions::default());
     for d in [&dirs.config, &dirs.logs, &dirs.runtime] {
         let _ = std::fs::create_dir_all(d);
@@ -194,7 +201,7 @@ pub fn run() {
                 _ => {}
             }
         })
-        .build(tauri::generate_context!());
+        .build(context);
 
     let app = match app {
         Ok(app) => app,

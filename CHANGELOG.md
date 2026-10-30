@@ -10,6 +10,31 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-30
+
+Fixes 1.0.1 on Windows: the app now starts wherever it is installed. Install 1.0.2 over 1.0.1;
+your settings and data stay.
+
+### Fixed
+
+- On Windows, 1.0.1 showed "The Forerunner daemon did not start: fr daemon exited with code 1".
+  The app handed Node the folder of its own runtime in Windows' extended form
+  (`\\?\D:\AGENT\Forerunner\...`), and Node cannot start a script named that way
+  ("EISDIR: illegal operation on a directory, lstat 'D:'"). The app now always passes the
+  plain form, for any drive, folders with spaces or non-English letters, and network shares.
+
+### Added
+
+- `forerunner-desktop --self-test`: starts the app's background service the way a normal launch
+  does, without a window, and reports whether it came up. Before every release, CI installs the
+  real installers and runs it from several folders:
+  - Windows: the default `Program Files` folder; `D:\AGENT\Forerunner`; `D:\My Apps\Forerünner Ä`;
+    a long path; a network share. Each install folder is read-only for the test.
+  - Linux: the `.deb` from the read-only `/usr/lib`; the AppImage from a folder with spaces and
+    non-English letters.
+
+  A release is not published unless every case starts.
+
 ## [1.0.1] - 2026-10-30
 
 Installing Forerunner is now one download: the app carries everything it needs and sets itself

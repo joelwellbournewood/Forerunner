@@ -18,6 +18,28 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-30 (1.0.2 prepared: installs anywhere, proven by the installed app)
+- The human installed the 1.0.1 MSI into `D:\AGENT\Forerunner`; the daemon exited at once.
+  `daemon-shell.log`: Node was started on `\\?\D:\AGENT\Forerunner\runtime\...` (Tauri's
+  `resource_dir()` canonicalises the exe path into the verbatim form) and failed with
+  "EISDIR: illegal operation on a directory, lstat 'D:'". The human asked that the app work
+  wherever it is installed, not only in Program Files.
+- Fix (ADR 0092, amendment of 2026-10-30): `install::without_verbatim_prefix` turns `\\?\D:\`
+  and `\\?\UNC\` back into plain paths before anything reaches Node, in `bundled_runtime`,
+  `from_bundled` and `from_install_dir`.
+- `forerunner-desktop --self-test [--report <file>]` (`selftest.rs`) starts the bundled runtime
+  through the same `resource_dir()`, `locate_fr`, `spawn_daemon` and `wait_for_daemon` a launch
+  uses and checks `/health`, `/me` and `/setup`. `scripts/installed-check.ps1` installs the real
+  MSI into Program Files, `D:\AGENT\Forerunner`, a folder with spaces and non-ASCII letters, a
+  long path and (when reachable) a UNC share, each read-only for the test user;
+  `scripts/installed-check.sh` does the `.deb` and the AppImage. Both run in `desktop.yml` and
+  `release.yml` before anything is published.
+- Version 1.0.2 with its CHANGELOG section; 1.0.1 is not re-cut under the same number (the
+  tag is published and Windows Installer does not reinstall over the same version).
+- Evidence before the push: cargo test and clippy (Linux and the Windows target) clean;
+  `installed-check.sh` passed locally as a non-root user on the built `.deb` (read-only
+  `/usr/lib`) and AppImage (`My Apps/Forerünner Ä`). The Windows cases run in `desktop.yml`.
+
 ### 2026-10-30 (1.0.1 prepared: the installers carry the runtime, the app sets itself up)
 - The first real user installed the 1.0.0 MSI, found it needed a daemon, ran
   `fresh-install.ps1` on a ZIP of the default branch (722 commits behind 1.0.0), and the 1.0.0

@@ -141,3 +141,64 @@ the keys into the app, and everything is up to date.
   page did not say the MSI needs it, and it needs a terminal.
 - **Attach to any healthy daemon and warn in the UI.** A broken UI with a banner is still
   broken. Replacing the outdated daemon makes the installed version the one that runs.
+
+## Amendment (2026-10-30): install anywhere, proven by the installed app
+
+**Context.** 1.0.1's MSI, installed into `D:\AGENT\Forerunner`, never started its daemon: "fr
+daemon exited with code 1 before it was ready". The log showed Node failing on its own entry
+file with `EISDIR: illegal operation on a directory, lstat 'D:'`. On Windows, Tauri's
+`resource_dir()` comes from a canonicalized executable path, `\\?\D:\AGENT\Forerunner`, and Node
+cannot run a script named in that extended-length ("verbatim") form. CI had passed. The payload
+smoke test starts the runtime from the build folder with a plain path, and no test ran the
+*installed* app the way a launch does. The human wants Forerunner to install and run from any
+folder.
+
+**Decision.**
+1. Node only ever gets plain paths. `install::without_verbatim_prefix` turns `\\?\D:\x` into
+   `D:\x` and `\\?\UNC\server\share\x` into `\\server\share\x`. It rewrites only valid Unicode,
+   so non-ASCII names survive, and leaves every other form alone. It is applied to the bundled
+   runtime's directory, in `from_bundled`, and in `from_install_dir`, so no locator hands Node
+   a verbatim path. Paths still go to Node as argv entries, never through a shell.
+2. Nothing is written next to the program. The install folder is read-only in the tests below,
+   and everything the runtime writes lives in the data folder; the registry is seeded there
+   (decision point 1).
+3. `forerunner-desktop --self-test [--report <file>]` (`selftest.rs`) runs, without a window, the
+   same steps a launch runs:
+   - Tauri's `resource_dir()`, then `bundled_runtime`;
+   - `locate_fr`, which must choose the bundle;
+   - `spawn_daemon` and `wait_for_daemon`;
+   - `/health` with the bundle's version, `/me` with `desktopDeviceId`, and `/setup`.
+
+   It then stops the daemon and reports JSON. On failure the report includes the end of
+   `daemon-shell.log`.
+4. `scripts/installed-check.ps1` installs the built MSI into five places and runs the self-test
+   in each, with the install folder made read-only for the user (`icacls /deny`) and the data
+   folder on C::
+   - the default `Program Files` folder;
+   - `D:\AGENT\Forerunner`;
+   - `D:\My Apps\Forerünner Ä`;
+   - a path of about 100 characters;
+   - a network-share launch (`\\localhost\D$\...`), which counts only when the admin share is
+     reachable.
+
+   `scripts/installed-check.sh` runs the self-test from the `.deb` (in `/usr/lib`, read-only,
+   as a non-root user) and from the AppImage in a folder named with spaces and non-ASCII
+   letters. `desktop.yml` and `release.yml` run both after `tauri build`; publishing needs the
+   desktop job, so a release whose installer does not start from all of these places is never
+   published.
+
+**Consequences.**
+- 1.0.1 is broken on Windows wherever it is installed; 1.0.2 replaces it. Installing 1.0.2 over
+  1.0.1 keeps the data. A same-version rebuild of 1.0.1 was rejected: Windows Installer does
+  not replace an installed product with one of the same version, and the 1.0.1 tag cannot be
+  moved from here.
+- The self-test starts a real daemon in whatever data folder `FORERUNNER_HOME` names. CI gives
+  each case a fresh one. On a user's PC it uses the real data folder; run it only while the app
+  is closed.
+- Install folders deeper than about 130 characters are not tested. Windows Installer works
+  within 260 characters, and the runtime's deepest file adds about 125.
+
+**Alternatives considered.** Canonicalizing nothing and using `std::env::current_exe` in the
+shell: the resource directory would then differ from what Tauri computes for its own assets.
+Normalizing in one place keeps both in step. Testing with the payload smoke alone: it already
+passed while the installed app failed, because it never went through `resource_dir()`.

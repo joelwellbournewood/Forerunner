@@ -26,7 +26,7 @@ Triggered by a pushed tag matching `v*` only (the manual `workflow_dispatch` was
 
 | Job | Runner | Produces | Notes |
 | --- | --- | --- | --- |
-| `desktop` | `ubuntu-22.04`, `windows-latest` | `bundle/msi/*.msi`, `bundle/appimage/*.AppImage`, `bundle/deb/*.deb` (`if-no-files-found: error`) | `pnpm --filter @forerunner/desktop tauri build --ci` with the signing env below; its `beforeBuildCommand` builds the UI and the bundled runtime (below), then `node scripts/runtime-payload-smoke.mjs` starts that runtime the way the shell does and fails the job unless it answers `/health` with the payload's version, `/me` with `desktopDeviceId` and `/setup`. Ubuntu 22.04 is the oldest supported glibc for the AppImage. Only the installers are uploaded: `bundle/appimage/` and `bundle/deb/` also hold the AppDir and the deb's staging tree (hundreds of `.so` files, icons, `copyright`), which rc.3 uploaded with `bundle/*/*` and published, so its publish job hit GitHub's secondary rate limit before the APK went up (run 40248159390). |
+| `desktop` | `ubuntu-22.04`, `windows-latest` | `bundle/msi/*.msi`, `bundle/appimage/*.AppImage`, `bundle/deb/*.deb` (`if-no-files-found: error`) | `pnpm --filter @forerunner/desktop tauri build --ci` with the signing env below; its `beforeBuildCommand` builds the UI and the bundled runtime (below), then `node scripts/runtime-payload-smoke.mjs` starts that runtime the way the shell does and fails the job unless it answers `/health` with the payload's version, `/me` with `desktopDeviceId` and `/setup`. Then the installed-app check (below) installs the built installers and starts them with `--self-test`; `publish` needs this job, so an installer that does not start is never published. Ubuntu 22.04 is the oldest supported glibc for the AppImage. Only the installers are uploaded: `bundle/appimage/` and `bundle/deb/` also hold the AppDir and the deb's staging tree (hundreds of `.so` files, icons, `copyright`), which rc.3 uploaded with `bundle/*/*` and published, so its publish job hit GitHub's secondary rate limit before the APK went up (run 40248159390). |
 | `android` | `ubuntu-latest` | `apk/**/*.apk` | `android-actions/setup-android` with `packages: platform-tools` (the legacy `tools` package it installs by default is gone from the SDK repository, cb6097e), then `node scripts/android-keystore.mjs --require-secret` (the release keystore from the secrets; without `ANDROID_KEYSTORE_BASE64` the step fails and no development key is generated), then `node scripts/android-google-services.mjs` (writes `google-services.json` from `GOOGLE_SERVICES_JSON_BASE64` when set, so the APK carries FCM push; optional), then `tauri android build --apk --ci`, then `node scripts/android-apk-verify.mjs` (`apksigner verify --print-certs`; an unsigned, debug-signed or development-signed release APK fails the job before the upload) |
 | `runner-image` | `ubuntu-latest` | `ghcr.io/<owner>/forerunner-runner:<version>` and `:latest` | `services/cloud-runner/Dockerfile`; the tag is the git tag without `v` |
 | `publish` | `ubuntu-latest` | the GitHub Release | downloads the build artefacts by name (`desktop-*` into `artifacts/desktop-<os>/`, `android` into `artifacts/android/`; an unfiltered download also fetched docker/build-push-action's build record, which failed to download and failed rc.1's run 40229971920, so the image step also sets `DOCKER_BUILD_RECORD_UPLOAD: false`; `scripts/release-notes.test.ts` checks both), runs `node scripts/release-notes.mjs "$GITHUB_REF_NAME" > RELEASE_NOTES.md` with the job-level presence flags `ANDROID_KEYSTORE_BASE64` and `UPDATE_SIGNING_KEY` (`'present'` or empty, never the values; the same flags reach the manifest step's `release-notes.mjs` run, whose output becomes the signed manifest's notes, so both say the same; `WINDOWS_CERTIFICATE` is deliberately not passed while the Windows signing step is not wired), then, after the signed manifest, runs `node scripts/release-files.mjs artifacts` (step id `files`): it picks the `.msi`, `.AppImage`, `.deb`, `.apk` and `forerunner-release.json` under `artifacts/` (the manifest step's `find artifacts -name` picks see the same layout), fails when an installer or the APK is missing or two picked files share a name (release assets are flat), writes `artifacts/SHA256SUMS.txt` over exactly those files by the flat names they are published under (so `sha256sum -c SHA256SUMS.txt --ignore-missing` works in a download folder; never the sums file itself), and returns them plus the sums file as the `files` output. `softprops/action-gh-release` uploads `${{ steps.files.outputs.files }}`, `docs/user-guide.md` and `docs/setup-guide.md`; no glob, so nothing else under `artifacts/` can reach the release. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a pre-release. |
@@ -177,6 +177,32 @@ The result on Linux x64 (1.0.0 sources, Node 22.22): 6,535 files, 471 MiB, most 
 Agent SDK's native `claude` (280 MB) and Node (118 MB); the `.deb` is 196 MiB. The payload is
 built per runner, so each installer carries its own OS's binaries. `pnpm runtime:payload --out
 <dir>` builds one anywhere for a look; `node scripts/runtime-payload-smoke.mjs [dir]` starts it.
+
+### Installed-app check (ADR 0092, amendment of 2026-10-30)
+
+1.0.1's MSI passed every check and still never started once installed into
+`D:\AGENT\Forerunner`: Tauri's verbatim `\\?\D:\...` resource path reached Node. The payload
+smoke test never goes through `resource_dir()`, so the installed app itself is now started
+before a release.
+
+`scripts/installed-check.ps1 -Msi <msi>` (windows-latest) installs the MSI with `msiexec /qn`
+into each of these places:
+- the default `Program Files` folder;
+- `D:\AGENT\Forerunner`;
+- `D:\My Apps\Forerünner Ä`;
+- a path of about 100 characters (with the runtime's deepest file it stays under the
+  260-character limit Windows Installer works within);
+- `D:\AGENT\Forerunner` started through `\\localhost\D$\...` (counts only when the admin
+  share is reachable).
+
+For each place it denies the user write access to the folder (`icacls /deny`), runs
+`<exe> --self-test --report <json>` with `FORERUNNER_HOME` on C:, prints the report, and
+uninstalls. `scripts/installed-check.sh <deb> <AppImage>` (ubuntu-22.04) installs the `.deb` and
+runs `/usr/bin/forerunner-desktop --self-test` as the runner user (`/usr/lib/Forerunner` is
+read-only for it), then runs the AppImage from `My Apps/Forerünner Ä` with
+`APPIMAGE_EXTRACT_AND_RUN=1`. Both scripts write a line per case to the job summary and exit 1
+when a required case fails. `desktop.yml` and `release.yml` run them right after the payload
+smoke test.
 
 ### Fresh install scripts (gate: "fresh install in under 15 minutes")
 
