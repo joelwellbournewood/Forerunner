@@ -260,7 +260,9 @@ describe("Memory page", () => {
     const lessons = screen
       .getAllByTestId("route-missing")
       .find((m) => m.dataset.route === "memory");
-    expect(lessons).toHaveTextContent("Route not available on this daemon");
+    expect(lessons).toHaveTextContent("Not available in this version");
+    // U-007: no update has these routes, so the state never sends the human to Updates.
+    expect(lessons).not.toHaveTextContent(/Updates/);
     expect(lessons).toHaveTextContent("GET /memory");
   });
 
