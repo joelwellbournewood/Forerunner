@@ -42,6 +42,7 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
     commands: [{ name: "autonomy.set", params: { level: 3, project: "proj_atlas" } }],
     wordsUsed: "Settings: project.autonomy to 3",
     projectId: "proj_atlas",
+    source: "ui",
   });
   expect(calls.find((c) => /\/commands\/pend_\d+\/confirm$/.test(c.path))?.body).toEqual({
     answer: "tap",

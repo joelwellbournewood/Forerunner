@@ -18,6 +18,39 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-30 (1.0.1 prepared: the installers carry the runtime, the app sets itself up)
+- The first real user installed the 1.0.0 MSI, found it needed a daemon, ran
+  `fresh-install.ps1` on a ZIP of the default branch (722 commits behind 1.0.0), and the 1.0.0
+  app attached to a 0.1.0 daemon: "GET /me does not match the contract: desktopDeviceId". The
+  human asked for an install that needs no PowerShell, keys pasted in the app, and everything
+  up to date.
+- Default branch `claude/forerunner-1-0-build-o53s04` fast-forwarded to `adb7c2a` (v1.0.0 plus
+  the handover) on the human's word, so "Download ZIP" is current.
+- ADR 0092 on `claude/optimistic-einstein-zj5xx2`:
+  - the MSI, AppImage and `.deb` carry Node, the runtime's sources and their production
+    dependencies (`scripts/build-runtime-payload.mjs`, run by `beforeBuildCommand`;
+    `scripts/runtime-payload-smoke.mjs` in `desktop.yml` and `release.yml`);
+  - the shell runs that bundle ahead of `install.json` and replaces a daemon older than it;
+  - the installed runtime seeds its registry into `<data>/registry`;
+  - the app's setup assistant (`/setup`) takes the keys by paste through `runSetup`;
+  - the GitHub hint is "Commit statuses: read" (handover item 4 below, done);
+  - version 1.0.1 with its CHANGELOG section.
+- Evidence:
+  - cargo test 100 and clippy clean;
+  - unit tests 3626 passed;
+  - UI tests 492 passed, plus the `mobile-upload` load flake already listed below, which passes
+    alone;
+  - a `.deb` built and installed here and run under Xvfb against a 0.1.0 stand-in daemon: the
+    shell stopped it and the bundled runtime answered in 5 s;
+  - screenshots of the assistant against the bundled daemon.
+
+  Windows evidence comes from `desktop.yml` on the branch.
+- Open:
+  - tag `v1.0.1` (the human's go; `release.yml` builds and publishes);
+  - "Update and restart" on the desktop still stages the installer file, so installing the new
+    MSI over the old one is the update path (`updates.md` Known issues);
+  - the installed MSI has not been run on a real Windows desktop yet.
+
 ### 2026-10-25 (the 2026-10-24 handover worked through: seven items, the triage re-read, ten independent reviews with their fixes, the emulator smoke passing, no release cut)
 - Base: `ccr-4d8a843c-1k9syk` at 647eb16 (the 41 merged items) plus the maintainer's
   `build-item.yml` from the default branch; integration branch `ccr-af5a431d-jc9xqj`, final code
@@ -113,8 +146,8 @@ Open for 1.0.x / 1.1, in order:
    branch `email-live`, commit 4ceee86, adds `Mailbox.verify()`); needs an independent review,
    then the human's mailbox (Gmail with 2-Step Verification and an app password; his new
    Google account could not enable 2FA yet, GMX sign-up failed).
-4. The setup wizard's GitHub check lists "Workflows: read"; the code needs "Commit statuses:
-   read" (`packages/runtime/src/setup/validators.ts`).
+4. Done on 2026-10-30 (ADR 0092): the setup wizard's GitHub check listed "Workflows: read"; it
+   now lists "Commit statuses: read" (`packages/runtime/src/setup/validators.ts`).
 5. Android versionCode ignores the pre-release part (rc.3, rc.4 and 1.0.0 share 1000000).
 6. Voice first audio misses 1.2 s (GPU 1.4 to 2.1 s; the model's first token is the largest
    stage); the STT helper crash 0xC0000005 is diagnosable now but its cause is unproven.

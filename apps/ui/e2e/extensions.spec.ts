@@ -8,7 +8,7 @@ test("extensions: add from the catalog, approve the grant, toggle it off and on"
   request,
 }) => {
   await page.goto("/extensions");
-  await expect(page.getByTestId("extension")).toHaveCount(5);
+  await expect(page.getByTestId("extension")).toHaveCount(6);
   await expect(page.getByTestId("extensions-pending")).toHaveText("1 waiting for your approval");
   await page.getByTestId("add-extension").click();
   const dialog = page.getByTestId("add-extension-dialog");
@@ -39,13 +39,13 @@ test("extensions: the daemon's extension.changed frame reloads the panel", async
   request,
 }) => {
   await page.goto("/extensions");
-  await expect(page.getByTestId("extension")).toHaveCount(5);
+  await expect(page.getByTestId("extension")).toHaveCount(6);
   await page
     .getByTestId("extension")
     .filter({ hasText: "Slack" })
     .getByTestId("extension-deny")
     .click();
-  await expect(page.getByTestId("extension")).toHaveCount(4);
+  await expect(page.getByTestId("extension")).toHaveCount(5);
   const calls = await recordedCalls(request);
   expect(calls.some((c) => c.path === "/extensions/ext_slack/deny")).toBe(true);
 });
