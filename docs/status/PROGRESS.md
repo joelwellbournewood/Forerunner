@@ -36,9 +36,28 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   `release.yml` before anything is published.
 - Version 1.0.2 with its CHANGELOG section; 1.0.1 is not re-cut under the same number (the
   tag is published and Windows Installer does not reinstall over the same version).
-- Evidence before the push: cargo test and clippy (Linux and the Windows target) clean;
-  `installed-check.sh` passed locally as a non-root user on the built `.deb` (read-only
-  `/usr/lib`) and AppImage (`My Apps/Forerünner Ä`). The Windows cases run in `desktop.yml`.
+- Evidence:
+  - cargo test 104 and clippy (Linux and the Windows target) clean;
+  - `installed-check.sh` passed locally as a non-root user on the built `.deb` (read-only
+    `/usr/lib`) and AppImage (`My Apps/Forerünner Ä`);
+  - CI green on both OS on `e152ad4`, `3bad3fc` and `fa439e1` (runs 41062669512, 41064989231,
+    41067878989);
+  - `desktop.yml` run 41067885485 on `fa439e1`, the 1.0.2 MSI installed and started (`ok`,
+    daemon 1.0.2, `/health`, `/me`, `/setup`) from every place:
+    - `C:\Program Files\Forerunner`;
+    - `D:\AGENT\Forerunner`;
+    - `D:\My Apps\Forerünner Ä`;
+    - the 100-character path;
+    - `\\<computer>\D$\AGENT\Forerunner`;
+    - a mapped `Z:`.
+
+    Each place was read-only for the user, and the daemon answered in 7 to 13 s. Linux `.deb`
+    and AppImage green in the same run.
+- Two script bugs found on the way, both in the check, not the app:
+  - run 41062682236: icacls' `W` denies SYNCHRONIZE, so no program in the folder could start;
+    now the specific rights;
+  - run 41064996022: `\\localhost\` is no share (Node drops the `localhost` host); now the
+    machine's name.
 
 ### 2026-10-30 (1.0.1 prepared: the installers carry the runtime, the app sets itself up)
 - The first real user installed the 1.0.0 MSI, found it needed a daemon, ran
