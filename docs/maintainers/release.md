@@ -192,12 +192,16 @@ into each of these places:
 - `D:\My Apps\Forerünner Ä`;
 - a path of about 100 characters (with the runtime's deepest file it stays under the
   260-character limit Windows Installer works within);
-- `D:\AGENT\Forerunner` started through `\\localhost\D$\...` (counts only when the admin
-  share is reachable).
+- `D:\AGENT\Forerunner` started over the network, through `\\<computer name>\D$\...` and
+  through that share mapped as `Z:` (both reported, neither required: a runner's admin share
+  is not guaranteed). Not `\\localhost\`: Node turns `file://localhost/D$/...` into
+  `file:///D$/...` and cannot load it, a form no real share produces.
 
-For each place it denies the user write access to the folder (`icacls /deny`), runs
-`<exe> --self-test --report <json>` with `FORERUNNER_HOME` on C:, prints the report, and
-uninstalls. `scripts/installed-check.sh <deb> <AppImage>` (ubuntu-22.04) installs the `.deb` and
+For each place it denies the user the specific write rights on the folder
+(`icacls /deny user:(OI)(CI)(WD,AD,WEA,WA,DE,DC)`; icacls' `W` and `D` would also deny
+SYNCHRONIZE and READ_CONTROL, and then no program in the folder starts), runs
+`<exe> --self-test --report <json>` (at most 240 s) with a fresh `FORERUNNER_HOME` under
+`RUNNER_TEMP`, prints the report, and uninstalls. A failing place does not stop the others. `scripts/installed-check.sh <deb> <AppImage>` (ubuntu-22.04) installs the `.deb` and
 runs `/usr/bin/forerunner-desktop --self-test` as the runner user (`/usr/lib/Forerunner` is
 read-only for it), then runs the AppImage from `My Apps/Forerünner Ä` with
 `APPIMAGE_EXTRACT_AND_RUN=1`. Both scripts write a line per case to the job summary and exit 1

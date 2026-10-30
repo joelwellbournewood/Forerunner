@@ -24,7 +24,12 @@ $cases = @(
   @{ Name = 'another drive'; Dir = 'D:\AGENT\Forerunner'; Required = $true },
   @{ Name = 'spaces and non-ASCII'; Dir = 'D:\My Apps\Forer' + [char]0x00FC + 'nner ' + [char]0x00C4; Required = $true },
   @{ Name = 'long path'; Dir = $long; Required = $true },
-  @{ Name = 'network share (UNC)'; Dir = 'D:\AGENT\Forerunner'; Unc = $true; Required = $false }
+  # Started over the network: a share named by the machine's name (\\localhost is no test: Node
+  # turns file://localhost/D$/... into file:///D$/..., which no real share produces) and a
+  # mapped drive letter, which canonicalises to \\?\UNC\... as well. Reported, not required:
+  # a runner's admin shares are not guaranteed.
+  @{ Name = 'network share (UNC)'; Dir = 'D:\AGENT\Forerunner'; Via = 'unc'; Required = $false },
+  @{ Name = 'mapped network drive'; Dir = 'D:\AGENT\Forerunner'; Via = 'mapped'; Required = $false }
 )
 
 function Find-Exe([string]$dir) {
@@ -41,6 +46,7 @@ foreach ($c in $cases) {
   $dir = if ($c.Dir) { $c.Dir } else { Join-Path $env:ProgramFiles 'Forerunner' }
   $installed = $false
   $denied = $false
+  $mapped = $false
   try {
     $log = Join-Path $work "install-$i.log"
     $msiArgs = @('/i', "`"$Msi`"", '/qn', '/norestart', '/l*v', "`"$log`"")
@@ -54,14 +60,21 @@ foreach ($c in $cases) {
     $exe = Find-Exe $dir
     if (-not $exe) { throw "no .exe in $dir" }
     $exePath = $exe.FullName
-    if ($c.Unc) {
-      $unc = '\\localhost\' + $dir.Substring(0, 1) + '$' + $dir.Substring(2)
+    if ($c.Via) {
+      $unc = '\\' + $env:COMPUTERNAME + '\' + $dir.Substring(0, 1) + '$' + $dir.Substring(2)
       if (-not (Test-Path -LiteralPath $unc)) {
         Write-Host "skipped: $unc is not reachable on this machine"
         $results += [pscustomobject]@{ Case = $c.Name; Ok = $true; Detail = 'skipped (admin share not reachable)'; Required = $false }
         continue
       }
       $exePath = Join-Path $unc $exe.Name
+      if ($c.Via -eq 'mapped') {
+        $share = '\\' + $env:COMPUTERNAME + '\' + $dir.Substring(0, 1) + '$'
+        & net use Z: $share | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "net use Z: $share failed" }
+        $mapped = $true
+        $exePath = Join-Path ('Z:' + $dir.Substring(2)) $exe.Name
+      }
     }
     # Read-only for this user, like a folder the app cannot write to. Only the specific write
     # rights: icacls' W and D are generic rights that also carry SYNCHRONIZE and READ_CONTROL,
@@ -88,6 +101,7 @@ foreach ($c in $cases) {
     $results += [pscustomobject]@{ Case = $c.Name; Ok = $false; Detail = $_.Exception.Message; Required = $c.Required }
   } finally {
     Remove-Item Env:\FORERUNNER_HOME -ErrorAction SilentlyContinue
+    if ($mapped) { & net use Z: /delete /y | Out-Null }
     if ($denied) { & icacls $dir /remove:d "$($env:USERNAME)" | Out-Null }
     if ($installed) { Start-Process msiexec.exe -ArgumentList @('/x', "`"$Msi`"", '/qn', '/norestart') -Wait | Out-Null }
   }

@@ -171,15 +171,15 @@ folder.
 
    It then stops the daemon and reports JSON. On failure the report includes the end of
    `daemon-shell.log`.
-4. `scripts/installed-check.ps1` installs the built MSI into five places and runs the self-test
-   in each, with the install folder made read-only for the user (`icacls /deny`) and the data
-   folder on C::
+4. `scripts/installed-check.ps1` installs the built MSI into each of these places and runs the
+   self-test there, with the install folder made read-only for the user (`icacls /deny`) and a
+   fresh data folder:
    - the default `Program Files` folder;
    - `D:\AGENT\Forerunner`;
    - `D:\My Apps\Forerünner Ä`;
    - a path of about 100 characters;
-   - a network-share launch (`\\localhost\D$\...`), which counts only when the admin share is
-     reachable.
+   - a launch over the network, through `\\<computer name>\D$\...` and through a mapped
+     drive `Z:`, reported but not required (a runner's admin share is not guaranteed).
 
    `scripts/installed-check.sh` runs the self-test from the `.deb` (in `/usr/lib`, read-only,
    as a non-root user) and from the AppImage in a folder named with spaces and non-ASCII

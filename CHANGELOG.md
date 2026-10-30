@@ -29,11 +29,12 @@ your settings and data stay.
   does, without a window, and reports whether it came up. Before every release, CI installs the
   real installers and runs it from several folders:
   - Windows: the default `Program Files` folder; `D:\AGENT\Forerunner`; `D:\My Apps\Forerünner Ä`;
-    a long path; a network share. Each install folder is read-only for the test.
+    a long path. Each install folder is read-only for the test. A start over a network share and
+    from a mapped network drive is tested and reported too.
   - Linux: the `.deb` from the read-only `/usr/lib`; the AppImage from a folder with spaces and
     non-English letters.
 
-  A release is not published unless every case starts.
+  A release is not published unless every one of these folders starts.
 
 ## [1.0.1] - 2026-10-30
 
