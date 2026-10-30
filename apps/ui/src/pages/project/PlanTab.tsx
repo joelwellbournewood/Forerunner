@@ -509,9 +509,14 @@ export function milestoneFormFor(m: EditableMilestone | null): MilestoneForm {
   };
 }
 
+/** The reason sent with a milestone edit whose reason field was left empty (U-010). */
+export const DEFAULT_MILESTONE_REASON = "Milestone edited in the app";
+
 /**
  * The body `POST /milestones/:id` gets (spec B.5): every editable field with the row's
- * version and the human's reason. Blank criteria lines are dropped; a blank date is null.
+ * version and the human's reason, or `DEFAULT_MILESTONE_REASON` when they gave none (the
+ * daemon keeps a reason on every change). Blank criteria lines are dropped; a blank date is
+ * null.
  */
 export function milestoneChangeBody(
   m: EditableMilestone,
@@ -519,7 +524,7 @@ export function milestoneChangeBody(
 ): ChangeMilestoneInput {
   return {
     version: m.version,
-    reason: form.reason.trim(),
+    reason: form.reason.trim() || DEFAULT_MILESTONE_REASON,
     name: form.name.trim(),
     successCriteria: form.criteria
       .split(/\r?\n/)
@@ -561,8 +566,8 @@ function MilestoneReason({ reason }: { reason: string }) {
 }
 
 /**
- * Edit a milestone (spec B.5): name, target date, status and success criteria under one
- * required reason, posted with the row's version. The daemon's refusal (a stale version, a
+ * Edit a milestone (spec B.5): name, target date, status and success criteria with an
+ * optional reason (U-010), posted with the row's version. The daemon's refusal (a stale version, a
  * bad date) stays in the dialog. Mount with `key={milestone.id}` so the form starts from the row.
  */
 function MilestoneDialog({
@@ -579,7 +584,7 @@ function MilestoneDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const patch = (part: Partial<MilestoneForm>) => setForm((prev) => ({ ...prev, ...part }));
-  const ready = form.reason.trim() !== "" && form.name.trim() !== "";
+  const ready = form.name.trim() !== "";
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!milestone || busy || !ready) return;
@@ -647,12 +652,14 @@ function MilestoneDialog({
             data-testid="milestone-criteria"
           />
         </Field>
-        <Field label="Reason" hint="Required. Recorded on the milestone with you as the author.">
+        <Field
+          label="Reason (optional)"
+          hint={`Recorded on the milestone with you as the author; your agent reads it. Left empty: "${DEFAULT_MILESTONE_REASON}".`}
+        >
           <input
             className={INPUT_CLASS}
             value={form.reason}
             onChange={(e) => patch({ reason: e.target.value })}
-            required
             autoFocus
             data-testid="milestone-change-reason"
           />

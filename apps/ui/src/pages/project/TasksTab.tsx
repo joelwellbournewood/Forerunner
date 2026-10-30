@@ -14,7 +14,12 @@ import {
   statusTone,
 } from "../../components/ui.tsx";
 import type { MoneyLike } from "../../lib/money.ts";
-import { allowedTransitions, TASK_STATUSES, transitionLabel } from "../../lib/task-transitions.ts";
+import {
+  allowedTransitions,
+  defaultTransitionReason,
+  TASK_STATUSES,
+  transitionLabel,
+} from "../../lib/task-transitions.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 import { NewTaskDialog } from "./NewTaskDialog.tsx";
@@ -311,11 +316,12 @@ function TransitionDialog({
   const [error, setError] = useState<string | null>(null);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy || !reason.trim()) return;
+    if (busy || !pending) return;
     setBusy(true);
     setError(null);
     try {
-      await onConfirm(reason.trim());
+      // Optional (U-010): an empty reason is recorded as what changed.
+      await onConfirm(reason.trim() || defaultTransitionReason(pending.to));
       setReason("");
     } catch (err) {
       setError(describeError(err));
@@ -334,12 +340,16 @@ function TransitionDialog({
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {pending ? `${pending.task.status} → ${pending.to}` : ""}
         </p>
-        <Field label="Reason" hint="Recorded on the task and in the change log.">
+        <Field
+          label="Reason (optional)"
+          hint={`Recorded on the task and in the change log; your agent reads it.${
+            pending ? ` Left empty: "${defaultTransitionReason(pending.to)}".` : ""
+          }`}
+        >
           <input
             className={INPUT_CLASS}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            required
             autoFocus
             data-testid="transition-reason"
           />
@@ -347,12 +357,7 @@ function TransitionDialog({
         {error ? <ErrorBanner message={error} /> : null}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>
-          <Button
-            variant="primary"
-            type="submit"
-            disabled={busy || !reason.trim()}
-            data-testid="confirm-transition"
-          >
+          <Button variant="primary" type="submit" disabled={busy} data-testid="confirm-transition">
             {busy ? "Saving…" : "Confirm"}
           </Button>
         </div>

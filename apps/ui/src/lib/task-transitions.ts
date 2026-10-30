@@ -36,3 +36,24 @@ export const TRANSITION_LABELS: Readonly<Record<string, string>> = {
 export function transitionLabel(to: string): string {
   return TRANSITION_LABELS[to] ?? to;
 }
+
+/** What a move was, for the reason the app records when the human gives none (U-010). */
+const DONE_LABELS: Readonly<Record<string, string>> = {
+  ready: "Marked ready",
+  claimed: "Claimed",
+  in_progress: "Started",
+  in_review: "Sent to review",
+  done: "Marked done",
+  needs_human: "Marked as needing you",
+  failed: "Marked failed",
+  cancelled: "Cancelled",
+};
+
+/**
+ * The reason sent with a move whose reason field was left empty (U-010): spec B.5 keeps a
+ * reason and an author on every change, and the daemon refuses an empty one, so the app
+ * records what changed and where.
+ */
+export function defaultTransitionReason(to: string): string {
+  return `${DONE_LABELS[to] ?? `Moved to ${to}`} in the app`;
+}

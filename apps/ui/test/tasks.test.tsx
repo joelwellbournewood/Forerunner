@@ -80,6 +80,24 @@ describe("Tasks tab", () => {
     );
   });
 
+  it("moves a task without a reason, sending what changed as the reason (U-010)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const rows = await screen.findAllByTestId("task-row");
+    await user.click(within(rows[2] as HTMLElement).getByTestId("transition-cancelled"));
+    const dialog = await screen.findByTestId("transition-dialog");
+    expect(within(dialog).getByText(/Left empty: "Cancelled in the app"/)).toBeInTheDocument();
+    expect(within(dialog).getByTestId("confirm-transition")).toBeEnabled();
+    await user.click(within(dialog).getByTestId("confirm-transition"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_3/transition")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/task_3/transition")[0]?.body).toEqual({
+      version: 1,
+      to: "cancelled",
+      reason: "Cancelled in the app",
+    });
+  });
+
   it("creates a task from the dialog with the budget converted at the project's rate", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

@@ -59,7 +59,8 @@ describe("small-project mode (B.6)", () => {
     expect(within(milestone).queryByTestId("milestone-reason")).not.toBeInTheDocument();
     const dialog = await screen.findByTestId("milestone-dialog");
     expect(within(dialog).getByTestId("milestone-name")).toHaveValue("Search works");
-    expect(within(dialog).getByTestId("confirm-milestone")).toBeDisabled();
+    // The reason is optional (U-010); a typed one is sent as it is.
+    expect(within(dialog).getByTestId("confirm-milestone")).toBeEnabled();
     await user.clear(within(dialog).getByTestId("milestone-target-date"));
     await user.type(within(dialog).getByTestId("milestone-target-date"), "2026-11-12");
     await user.type(within(dialog).getByTestId("milestone-change-reason"), "search slipped a week");

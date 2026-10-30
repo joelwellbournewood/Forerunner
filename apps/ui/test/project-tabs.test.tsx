@@ -77,7 +77,7 @@ describe("Plan tab: timeline and dependency graph", () => {
     expect(screen.queryByTestId("route-missing")).not.toBeInTheDocument();
   });
 
-  it("edits a milestone with a required reason: posts the version and the reason, shows the change (B.5)", async () => {
+  it("edits a milestone with a reason: posts the version and the reason, shows the change (B.5)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/projects/proj_atlas/plan", harness);
@@ -100,8 +100,8 @@ describe("Plan tab: timeline and dependency graph", () => {
     expect(within(dialog).getByTestId("milestone-name")).toHaveValue("Search works");
     expect(within(dialog).getByTestId("milestone-target-date")).toHaveValue("2026-11-05");
     expect(within(dialog).getByTestId("milestone-status")).toHaveValue("active");
-    // No reason, no save.
-    expect(within(dialog).getByTestId("confirm-milestone")).toBeDisabled();
+    // The reason is optional (U-010): Save is offered before one is typed.
+    expect(within(dialog).getByTestId("confirm-milestone")).toBeEnabled();
     await user.selectOptions(within(dialog).getByTestId("milestone-status"), "done");
     await user.clear(within(dialog).getByTestId("milestone-target-date"));
     await user.type(within(dialog).getByTestId("milestone-target-date"), "2026-10-28");
@@ -144,6 +144,29 @@ describe("Plan tab: timeline and dependency graph", () => {
         .getAllByTestId("timeline-milestone")
         .find((m) => m.dataset.milestoneId === "ms_search"),
     ).toHaveAttribute("data-status", "done");
+  });
+
+  it("a milestone edit without a reason is sent with the app's own reason (U-010)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/plan", harness);
+    const list = await screen.findByTestId("milestone-list");
+    await waitFor(() => expect(within(list).getAllByTestId("milestone")).toHaveLength(4));
+    const row = within(list)
+      .getAllByTestId("milestone")
+      .find((m) => m.dataset.milestoneId === "ms_search") as HTMLElement;
+    await user.click(within(row).getByTestId("edit-milestone"));
+    const dialog = await screen.findByTestId("milestone-dialog");
+    expect(
+      within(dialog).getByText(/Left empty: "Milestone edited in the app"/),
+    ).toBeInTheDocument();
+    await user.selectOptions(within(dialog).getByTestId("milestone-status"), "done");
+    await user.click(within(dialog).getByTestId("confirm-milestone"));
+    await waitFor(() => expect(postedCalls(harness, "/milestones/ms_search")).toHaveLength(1));
+    expect(postedCalls(harness, "/milestones/ms_search")[0]?.body).toMatchObject({
+      reason: "Milestone edited in the app",
+      status: "done",
+    });
   });
 
   it("a milestone edit the daemon refuses keeps the dialog open with the reason", async () => {
