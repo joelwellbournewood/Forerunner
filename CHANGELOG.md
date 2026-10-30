@@ -14,6 +14,35 @@ Problems and their status, released or not, are tracked in
 
 ## [Unreleased]
 
+Fixes found in 1.0.2; each names its entry in `docs/status/UPDATE-LOG.md`.
+
+### Fixed
+
+- Start session showed "daemon response for POST /sessions does not match the contract". The
+  session now opens, or the dialog says it is queued behind a running one (U-003).
+- The project page's Next session panel and Docs tab showed "Route not available": both work
+  now (U-004, U-005).
+- Import on the Data tab failed; it uses the import the app's service has and says what came in
+  and where it went (U-006).
+- "Not available in this version" no longer sends you to Updates for something no version
+  has (U-007).
+- A session with no ready task ended at once without saying why. The Start dialog now says so
+  first and how to give your agent work, and so does the session's summary (U-009).
+- Voice packages and models (about 8 GB for the GPU profile) always went to C:. They now go
+  into a `dependencies` folder inside the folder Forerunner is installed in, with pip's cache
+  and temporary files. They fall back to your data folder, with the reason in Settings → Voice,
+  when that folder cannot be written (U-011).
+
+### Changed
+
+- Moving a task or editing a milestone no longer requires a typed reason; left empty, the app
+  records what changed (U-010).
+
+### Added
+
+- A test runs the app's own client against the real background service, so a screen and the
+  service can no longer drift apart unnoticed (U-008).
+
 ## [1.0.2] - 2026-10-30
 
 Fixes 1.0.1 on Windows: the app now starts wherever it is installed. Install 1.0.2 over 1.0.1;

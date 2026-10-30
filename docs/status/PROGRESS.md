@@ -18,6 +18,25 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-30 (fixes for 1.0.2's first use, held for the next release; update log started)
+- `docs/status/UPDATE-LOG.md` started: every problem found in a released version gets an ID,
+  what the user sees, the action and a status. It becomes `fixed` only with commits, tests and
+  CI runs. Releases are batches the owner asks for; the default branch moves only with a
+  release. AGENTS.md, CLAUDE.md and CHANGELOG.md point to it.
+- U-003 to U-011 fixed and verified on `claude/optimistic-einstein-zj5xx2`. Their causes:
+  - U-003 to U-006 (start session, queue, docs, import): screens built on routes and shapes the
+    real daemon never had. U-008 is the test that now runs the UI's client against the real
+    daemon.
+  - U-007: a misleading message.
+  - U-009: a session with nothing ready.
+  - U-010: the required reason.
+  - U-011: dependencies beside the install, the owner's rule after a full C:.
+- U-012 open: the Windows installed-app check cannot make a folder read-only on the hosted
+  runner. 1.0.2's "read-only" Windows places never were.
+- Evidence: CI 41091558763 and 41105628591 green on both OS; desktop 41105634630 green
+  (Playwright 30 passed, six Windows places and the `.deb` and AppImage started with the
+  dependencies where each should be). No version bump; 1.0.2 stays the released version.
+
 ### 2026-10-30 (1.0.2 prepared: installs anywhere, proven by the installed app)
 - The human installed the 1.0.1 MSI into `D:\AGENT\Forerunner`; the daemon exited at once.
   `daemon-shell.log`: Node was started on `\\?\D:\AGENT\Forerunner\runtime\...` (Tauri's

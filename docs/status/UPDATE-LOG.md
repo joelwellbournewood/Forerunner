@@ -31,21 +31,22 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.2** (2026-10-30).
-- Next release: not scheduled. The open and fixed entries below are its candidates.
+- Next release: not scheduled. U-003 to U-011 are fixed and verified on the development branch
+  and wait for it; U-012 is open.
 
 ## Open and fixed, not released
 
 | ID | Found | What you see | Action | Status |
 | --- | --- | --- | --- | --- |
-| U-003 | 2026-10-30, 1.0.2 | Start session: "daemon response for POST /sessions does not match the contract: id … agentId … agentName …" | The service answers with the session it started, or says it is queued; the dialog opens the session or says why it waits. | open |
-| U-004 | 2026-10-30, 1.0.2 | Project page, Next session: "Route not available on this daemon … GET /projects/:id/queue" | The service serves the next-session queue: list, add, dismiss. | open |
-| U-005 | 2026-10-30, 1.0.2 | Project page, Docs tab: "Route not available on this daemon … GET /projects/:id/docs" | The service lists the project's docs and returns one doc to read. | open |
-| U-006 | 2026-10-30, 1.0.2 | Project page, Data tab, Import: fails; the screen calls a route the service does not have | The screen uses the import the service has. | open |
-| U-007 | 2026-10-30, 1.0.2 | "Route not available" says "Check Updates for a newer version" even when no version has the feature | The message says the feature is not in this version yet, without sending you to Updates. | open |
-| U-008 | 2026-10-30, 1.0.2 | (Cause of U-003 to U-006.) The app's screen tests run against a stand-in service that drifted from the real one, so they passed while the real app failed. | A test runs the app's own client against the real service for these screens and for the read calls of every screen. | open |
-| U-009 | 2026-10-30, 1.0.2 | A session ends as soon as it starts and spends nothing, without saying why | The Start dialog says beforehand when no task is ready and how to give the agent work; the session's summary says the same. | open |
-| U-010 | 2026-10-30, 1.0.2 | Moving a task or editing a milestone always asks for a reason, and nothing happens until you type one | The reason becomes optional. Left empty, the app records one for you (what changed, from the app), so the history the agent reads stays complete. | open |
-| U-011 | 2026-10-30, 1.0.2 | The GPU voice install (about 8 GB) always goes to `C:\Users\<you>\AppData\Local\forerunner\data\voice`, even when Forerunner is installed on another drive whose space was the point | Owner's decision: downloaded dependencies go by default into a dedicated `dependencies` subfolder of the install folder; pip's cache and temporary files go there too; the data folder only when the install folder cannot be written. | open |
+| U-003 | 2026-10-30, 1.0.2 | Start session: "daemon response for POST /sessions does not match the contract: id … agentId … agentName …" | The service answers with the session it started, or says it is queued; the dialog opens the session or says why it waits. | fixed, not released |
+| U-004 | 2026-10-30, 1.0.2 | Project page, Next session: "Route not available on this daemon … GET /projects/:id/queue" | The service serves the next-session queue: list, add, dismiss. | fixed, not released |
+| U-005 | 2026-10-30, 1.0.2 | Project page, Docs tab: "Route not available on this daemon … GET /projects/:id/docs" | The service lists the project's docs and returns one doc to read. | fixed, not released |
+| U-006 | 2026-10-30, 1.0.2 | Project page, Data tab, Import: fails; the screen calls a route the service does not have | The screen uses the import the service has. | fixed, not released |
+| U-007 | 2026-10-30, 1.0.2 | "Route not available" says "Check Updates for a newer version" even when no version has the feature | The message says the feature is not in this version yet, without sending you to Updates. | fixed, not released |
+| U-008 | 2026-10-30, 1.0.2 | (Cause of U-003 to U-006.) The app's screen tests run against a stand-in service that drifted from the real one, so they passed while the real app failed. | A test runs the app's own client against the real service for these screens and for the read calls of every screen. | fixed, not released |
+| U-009 | 2026-10-30, 1.0.2 | A session ends as soon as it starts and spends nothing, without saying why | The Start dialog says beforehand when no task is ready and how to give the agent work; the session's summary says the same. | fixed, not released |
+| U-010 | 2026-10-30, 1.0.2 | Moving a task or editing a milestone always asks for a reason, and nothing happens until you type one | The reason becomes optional. Left empty, the app records one for you (what changed, from the app), so the history the agent reads stays complete. | fixed, not released |
+| U-011 | 2026-10-30, 1.0.2 | The GPU voice install (about 8 GB) always goes to `C:\Users\<you>\AppData\Local\forerunner\data\voice`, even when Forerunner is installed on another drive whose space was the point | Owner's decision: downloaded dependencies go by default into a dedicated `dependencies` subfolder of the install folder; pip's cache and temporary files go there too; the data folder only when the install folder cannot be written. | fixed, not released |
 | U-012 | 2026-10-30, 1.0.2 | (Release checks.) The Windows installed-app check called its install folders read-only; on the hosted runner they never were, so a Windows-only read-only problem would not be caught. | Run the Windows self-test as a standard (non-administrator) local user, so Program Files is read-only for it as it is for people. Until then the read-only fallback is checked on Linux and in unit tests. | open |
 
 ### U-003 Starting a session reports a contract error
@@ -61,7 +62,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **Action:** `POST /sessions` keeps `202` and `result`, and adds the start's id and, once the
   run has created it, the session. The dialog opens the session, or says the start is queued or
   deferred.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commits d64d0ec, ce13027. Test: `apps/ui/test/real-daemon.test.ts` "start session" failed before the fix with the owner's exact message and passes; `daemon.test.ts` checks the start answer and the kill switch's refusal; `project.test.tsx` the queued notice. CI 41091558763 (on 968cce7) and 41105628591 (on 42d3468), both OS; desktop 41105634630 (installers built and started, Playwright 30 passed, both OS).
 
 ### U-004 Next session queue: route not available
 
@@ -77,7 +79,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 
   The store has the queue (`store.queue`).
 - **Action:** the service serves the three routes over `store.queue`.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commit d64d0ec. Test: `real-daemon.test.ts` "next-session queue" failed before (404) and passes; `queue-docs-routes.test.ts` covers another human's item, a second dismissal and a bad filter. CI 41091558763 (on 968cce7) and 41105628591 (on 42d3468), both OS; desktop 41105634630 (installers built and started, Playwright 30 passed, both OS).
 
 ### U-005 Docs tab: route not available
 
@@ -87,7 +90,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **Cause:** as U-004. `GET /projects/:id/docs` and `GET /projects/:id/docs/:path` are proposed
   routes the service never got.
 - **Action:** the service lists the project's standard docs and returns one doc's text.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commit d64d0ec. Test: `real-daemon.test.ts` "docs" failed before (404) and passes; `queue-docs-routes.test.ts` covers drift, the decisions folder and paths outside the set. CI 41091558763 (on 968cce7) and 41105628591 (on 42d3468), both OS; desktop 41105634630 (installers built and started, Playwright 30 passed, both OS).
 
 ### U-006 Data tab: Import calls a route the service does not have
 
@@ -96,7 +100,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **Cause:** the screen posts to the proposed `POST /projects/:id/import { source, locator }`.
   The service has `POST /projects/:id/data/import` with a different body and answer.
 - **Action:** the screen calls the service's import and shows its answer.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commits d64d0ec, ce13027. Test: `real-daemon.test.ts` "data import" failed before (404) and passes; `project-tabs.test.tsx` and the Playwright data spec read the daemon's answer. CI 41091558763 (on 968cce7) and 41105628591 (on 42d3468), both OS; desktop 41105634630 (installers built and started, Playwright 30 passed, both OS).
 
 ### U-007 The "Route not available" message points to Updates
 
@@ -105,7 +110,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   these routes, so the advice sends you looking for an update that does not exist.
 - **Action:** the message says this part is not in this version of Forerunner yet. It no longer
   sends you to Updates.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commit 8f90e41. Test: `memory.test.tsx` checks the new text and that it names no Updates; added with the fix (the old text named it). CI 41091558763 (on 968cce7) and 41105628591 (on 42d3468), both OS; desktop 41105634630 (installers built and started, Playwright 30 passed, both OS).
 
 ### U-008 The UI's tests use a stand-in that drifted from the real service
 
@@ -120,7 +126,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 
   It must fail on the current code and pass after the fixes. Any further mismatch it finds is
   logged here as its own entry.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commit d64d0ec. Test: `real-daemon.test.ts` failed 5 of 5 before the fixes and passes 5 of 5; its read sweep covers 43 calls of the screens. CI 41091558763 (on 968cce7) and 41105628591 (on 42d3468), both OS; desktop 41105634630 (installers built and started, Playwright 30 passed, both OS).
 
 ### U-009 A session with no ready task ends at once and does not say why
 
@@ -138,7 +145,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - the Start dialog checks the project's ready tasks when it opens, and says when there are
     none and how to add work;
   - the summary of a session that found no ready task says the same.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commit d64d0ec. Test: `project.test.tsx` "warns before a start that no task is ready", added with the fix (the old dialog had no check); the summary text is in `runner.ts`, still matched by `closeout-autonomy.test.ts`. CI 41091558763 (on 968cce7) and 41105628591 (on 42d3468), both OS; desktop 41105634630 (installers built and started, Playwright 30 passed, both OS).
 
 ### U-010 A reason is required for every task move and milestone edit
 
@@ -157,7 +165,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - a typed reason is sent as it is.
 
   The daemon and B.5 are unchanged: every change still carries a reason and its author.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commit 155c568. Test: `tasks.test.tsx` and `project-tabs.test.tsx` move a task and edit a milestone with no reason and check the reason sent; added with the fix (the old dialogs kept Confirm and Save disabled). CI 41091558763 (on 968cce7) and 41105628591 (on 42d3468), both OS; desktop 41105634630 (installers built and started, Playwright 30 passed, both OS).
 
 ### U-011 Voice always installs on C:
 
@@ -186,7 +195,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - An existing install keeps working where `voice.json` recorded it. A new install into the
     new folder removes the old copy once the new one is verified.
   - Settings → Voice shows the folder.
-- **Status:** open.
+- **Status:** fixed, not released (2026-10-30).
+- **Evidence:** Commits c939a1e, 752b788, 42d3468. Test: `dependencies.test.ts` (8), `settings-voice.test.tsx`; added with the fix. Installed apps, desktop run 41105634630: Windows Program Files, `D:\AGENT\Forerunner`, `D:\My Apps\Forerünner Ä`, the long path, a share and a mapped drive all put voice in `<install>\dependencies\voice`; the Linux `.deb` falls back to the data folder with the note (`EACCES` in `/usr/lib`); the AppImage uses `Forerunner-dependencies` beside it. CI 41094872029 (on c939a1e, attempt 2) and 41105628591, both OS. The Windows read-only case is U-012.
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
