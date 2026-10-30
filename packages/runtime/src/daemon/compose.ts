@@ -2577,6 +2577,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           spentUsdMicro: result.spentUsdMicro,
           completed: result.completed,
           needsHuman: result.needsHuman,
+          failed: result.failed,
           projectId: req.projectId ?? null,
           agentName: await agentNameOf(req.agentId),
         }),

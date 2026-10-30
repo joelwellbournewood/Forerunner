@@ -31,7 +31,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.3** (2026-10-30), with U-003 to U-011.
-- Next release: not scheduled. U-012 to U-016 are open.
+- Next release: not scheduled. U-012 to U-017 are open.
 
 ## Open and fixed, not released
 
@@ -41,6 +41,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-014 | 2026-10-30, 1.0.3 | A planned task fails at once, spending nothing: "specialist ops is not in the registry". | The plan's informal names ("ops", "writer", "data analyst") run the registry entry they mean; the planner's prompts list the exact names; a name that means none waits for you and lists the names instead of failing. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
 | U-015 | 2026-10-30, 1.0.3 | In Chat, "add a task: …" (what the app suggests) is not understood without a model for Chat. | The phrase creates a ready task. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
 | U-016 | 2026-10-30, 1.0.3 | "Make this a task" in Chat makes a draft, which no session works on. | It makes a ready task (ADR 0093). | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
+| U-017 | 2026-10-30, 1.0.3 | A session whose only task failed reads as fine: the notification says "0 done, 0 need you", the review says "accept (grade 100)" and shows twice in the log, and project setup plans tasks like "Confirm stack ... with the human" that no specialist can do. | The notification names failed tasks; the review grades a session with every task failed below 100; the log shows the review once; project setup writes such choices into the first decision doc instead. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
 | U-012 | 2026-10-30, 1.0.2 | (Release checks.) The Windows installed-app check called its install folders read-only; on the hosted runner they never were, so a Windows-only read-only problem would not be caught. | Run the Windows self-test as a standard (non-administrator) local user, so Program Files is read-only for it as it is for people. Until then the read-only fallback is checked on Linux and in unit tests. | open |
 
 ### U-013 A task a person claims is never worked on
@@ -105,6 +106,24 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   plan only `ready` tasks, so it waited until someone clicked Mark ready on the Tasks tab.
 - **Action:** both create a `ready` task (ADR 0093). Tests: `intent.test.ts`,
   `conversation.test.ts`, `apps/ui/test/chat.test.tsx`.
+- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
+
+### U-017 A session where everything failed looks like a good one
+
+- **Found:** 2026-10-30, in the owner's session log for U-014.
+- **What happens:**
+  - The notification title counted done and needs-you tasks only: "Alice's session completed:
+    0 done, 0 need you".
+  - The session review found nothing wrong: its only "no task done" check needs money spent,
+    and the task failed before spending any. "accept (grade 100, 0 finding(s))".
+  - The review showed twice: the critic stored a `critic.session_review` event and the runner
+    reported the review under the same type.
+  - The intake prompt let the plan hold a task asking the human to confirm the stack, hosting
+    and repository; it went to a specialist, which cannot answer it.
+- **Action:** the title adds "N failed"; a planned set with none done and some failed is a
+  medium finding; the critic's event is `critic.session_review_metrics` with its own log line;
+  the intake prompt says to record such a choice in `docs/decisions/0001-<slug>.md`. Tests:
+  `notifications-channels.test.ts`, `session-review.test.ts`, `event-lines.test.ts`.
 - **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
 
 ### U-012 The Windows installed-app check cannot make a folder read-only

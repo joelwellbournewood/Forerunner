@@ -707,6 +707,10 @@ describe("producers", () => {
       projectId: "p-1",
       dedupeKey: "session:s-1:ended",
     });
+    // U-017: a failed task is named; with none the title stays as it was.
+    expect(producers.sessionEnded("h-1", { ...facts, failed: ["d"] }).title).toBe(
+      "Alice's session completed: 2 done, 1 needs you, 1 failed",
+    );
     const stop = producers.sessionEnded("h-1", { ...facts, stopReason: "budget_exceeded" });
     expect(stop.kind).toBe("budget_stop");
     expect(stop.title).toBe("Alice stopped: budget cap reached (USD 2.35 spent)");

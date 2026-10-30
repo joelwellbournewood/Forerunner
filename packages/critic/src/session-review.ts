@@ -252,6 +252,16 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       "Say in the summary what the spend bought and what blocks the tasks",
     );
   }
+  // U-017: a session whose every task failed at once spends nothing, and graded 100.
+  const plannedFailed = [...planned].filter((id) => data.tasks.get(id)?.status === "failed");
+  if (plannedDoneTasks === 0 && plannedFailed.length > 0) {
+    add(
+      "medium",
+      `No planned task was done: ${plannedFailed.length} of ${planned.size} failed`,
+      "Read each failed task's reason and fix what stopped it before planning it again",
+      plannedFailed.join(", "),
+    );
+  }
   const costPerDone = doneTasks > 0 ? Math.round(actual / doneTasks) : null;
   evidence.push(
     `cost: actual ${usd(actual)} (${data.ledgerUsdMicro === null ? "session counter" : "ledger"}), estimate ${usd(estimate)}, ${doneTasks} done task(s)${costPerDone !== null ? `, ${usd(costPerDone)} per done task` : ""}`,
@@ -415,7 +425,9 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
   }
   const { patterns, lessonProposals } = await patternsFor(store, out.findings);
   try {
-    await store.event.append(opts.sessionId, "critic.session_review", {
+    // Its own type (U-017): the runner reports the review as `critic.session_review`, and a
+    // second event of that type showed the review twice in the session log.
+    await store.event.append(opts.sessionId, "critic.session_review_metrics", {
       reviewId: review.id,
       grade: out.grade,
       verdict: out.verdict,

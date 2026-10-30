@@ -43,6 +43,8 @@ export interface SessionEndFacts {
   spentUsdMicro: number;
   completed: string[];
   needsHuman: string[];
+  /** Failed tasks; the title names them (U-017: "0 done, 0 need you" hid a failed task). */
+  failed?: string[];
   projectId?: string | null;
   agentName?: string;
 }
@@ -54,7 +56,7 @@ export function sessionEnded(humanId: string, r: SessionEndFacts): Notification 
   return {
     kind: "session_ended",
     humanId,
-    title: `${who} ${r.status}: ${r.completed.length} done, ${r.needsHuman.length} need${r.needsHuman.length === 1 ? "s" : ""} you`,
+    title: `${who} ${r.status}: ${r.completed.length} done, ${r.needsHuman.length} need${r.needsHuman.length === 1 ? "s" : ""} you${r.failed?.length ? `, ${r.failed.length} failed` : ""}`,
     body: cut(r.summary, 1000),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,

@@ -26,6 +26,10 @@ Problems and their status, released or not, are tracked in
   task (U-015).
 - "Make this a task" in Chat (the button and the phrase) made a draft that no session worked
   on. It makes a ready task (U-016).
+- A session whose tasks all failed looked fine: the notification now counts failed tasks, the
+  session review no longer grades it 100, and the review shows once in the log. Project setup
+  no longer plans tasks that ask you something; it records the choice in the first decision
+  doc for you to read before approving (U-017).
 
 ## [1.0.3] - 2026-10-30
 

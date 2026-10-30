@@ -252,6 +252,40 @@ describe("session review (H.6)", () => {
     }
   });
 
+  it("a session whose every planned task failed, spending nothing, is not graded 100 (U-017)", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "failed", title: "Confirm the stack" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [{ taskId: a.id, title: a.title, estimateUsdMicro: 200_000 }],
+          estimateUsdMicro: 200_000,
+          summary: "",
+        },
+        summary: "Done: 0. Failed: 1.",
+        status: "completed",
+        spent_usd_micro: 0,
+      });
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.grade).toBeLessThan(100);
+      expect(out.findings.map((f) => f.description)).toEqual([
+        "No planned task was done: 1 of 1 failed",
+      ]);
+      // The runner reports the review itself; the critic's own event is its measurements.
+      const types = (await w.store.event.list(w.ids.session)).map((e) => e.type);
+      expect(types).toContain("critic.session_review_metrics");
+      expect(types).not.toContain("critic.session_review");
+    } finally {
+      await w.close();
+    }
+  });
+
   it("an honest, in-budget session is accepted with grade 100 and no finding", async () => {
     const w = await world();
     try {

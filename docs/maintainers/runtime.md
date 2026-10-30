@@ -859,7 +859,9 @@ makes one model call on the planning rung (the `planning` mode's tier, effort, t
 output cap from `resolveRunSettings`: the tables in force under the principal's
 `model_config.modes.planning` override, ADR 0072, the effort shifted by the project's
 speed-versus-quality slider, spec D.16; the registry's `project-manager` prompt plus an intake
-section; no tools, `maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or
+section, which lists the registry's specialist names exactly (U-014) and forbids tasks that ask
+the human something, such as confirming the stack: the choice goes in
+`docs/decisions/0001-<slug>.md` instead, which the human reads before approving (U-017); no tools, `maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or
 `project.settings.intake_budget_usd_micro`) through the loop driver and the hooks on a
 session row of its own (`summary: "intake: <project>"`, `planned -> running -> completed |
 failed`, `plan.intake.deadline` the planning timeout plus `INTAKE_DEADLINE_MARGIN_MS`, which

@@ -280,7 +280,10 @@ store and persists a `Review` with `session_id` set and `task_id` null:
   is not a draft; no spend without a plan;
 - cost efficiency: actual spend (cost ledger, else the session counter) against the estimate
   (medium finding above 1.5x and one cent), spend above the cap (high), cost per done task,
-  spend with no planned task done (medium);
+  spend with no planned task done (medium), and a plan whose tasks all failed with none done,
+  even at no cost (medium; U-017: such a session was graded 100). The service's own event is
+  `critic.session_review_metrics` (the measurements); the runner reports the review as
+  `critic.session_review`, so the session log shows it once;
 - honesty: `parseSummaryClaims` reads "Done: N" (also "N tasks done", "completed N tasks"),
   "failed: N" and "Cost: USD x" from the summary and compares them with the task states and the
   ledger. Done tasks are counted over every task the session planned or ran

@@ -336,6 +336,11 @@ export function describeEvent(type: string, p: Record<string, unknown>): string 
       return `Critic verdict: ${s("verdict")} (grade ${n("grade")}, confidence ${n("confidence").toFixed(2)}, ${n("findings")} finding(s), ${n("openFindings")} open) -> ${s("decision")}${s("retry") ? ` (${s("retry")})` : ""}${s("nextTier") ? ` on ${s("nextTier")}` : ""}. ${s("summary")}`;
     case "critic.review_failed":
       return `Critic review failed: ${s("warning")}`;
+    case "critic.session_review_metrics": {
+      const m = (p.metrics ?? {}) as Record<string, unknown>;
+      const k = (key: string) => (typeof m[key] === "number" ? (m[key] as number) : 0);
+      return `Session review measured: ${k("plannedDoneTasks")} of ${k("plannedTasks")} planned task(s) done, ${(k("actualUsdMicro") / 1e6).toFixed(2)} USD spent of a ${(k("estimateUsdMicro") / 1e6).toFixed(2)} USD estimate.`;
+    }
     case "critic.session_review":
       return `Session review: ${s("verdict")} (grade ${n("grade")}, ${n("findings")} finding(s)). ${s("summary")}`;
     case "task.blocked_by_findings":
