@@ -203,9 +203,12 @@ and every case checks where the self-test says downloaded dependencies go
 writable one, the case's data folder with a `voiceFolderNote` for the read-only ones. The
 uninstall leaves the folder the app made, so the script removes it before the next case.
 
-For each place it denies the user the specific write rights on the folder
-(`icacls /deny user:(OI)(CI)(WD,AD,WEA,WA,DE,DC)`; icacls' `W` and `D` would also deny
-SYNCHRONIZE and READ_CONTROL, and then no program in the folder starts), runs
+For each read-only place it removes the folder's inherited permissions and grants Everyone
+read and run only (`icacls /inheritance:r /grant:r *S-1-1-0:(OI)(CI)(RX)`; `/reset /T`
+restores them before the uninstall). It then checks the lock by creating a file itself and
+fails the case as a setup error if that works. A deny entry for the job's user did not stop
+an administrator's writes (run 41094877855), so the earlier "read-only" places were never
+read-only; neither the app nor anything else had tried to write there. It then runs
 `<exe> --self-test --report <json>` (at most 240 s) with a fresh `FORERUNNER_HOME` under
 `RUNNER_TEMP`, prints the report, and uninstalls. A failing place does not stop the others. `scripts/installed-check.sh <deb> <AppImage>` (ubuntu-22.04) installs the `.deb` and
 runs `/usr/bin/forerunner-desktop --self-test` as the runner user (`/usr/lib/Forerunner` is
