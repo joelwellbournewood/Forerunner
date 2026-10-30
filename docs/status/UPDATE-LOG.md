@@ -44,6 +44,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-007 | 2026-10-30, 1.0.2 | "Route not available" says "Check Updates for a newer version" even when no version has the feature | The message says the feature is not in this version yet, without sending you to Updates. | open |
 | U-008 | 2026-10-30, 1.0.2 | (Cause of U-003 to U-006.) The app's screen tests run against a stand-in service that drifted from the real one, so they passed while the real app failed. | A test runs the app's own client against the real service for these screens and for the read calls of every screen. | open |
 | U-009 | 2026-10-30, 1.0.2 | A session ends as soon as it starts and spends nothing, without saying why | The Start dialog says beforehand when no task is ready and how to give the agent work; the session's summary says the same. | open |
+| U-010 | 2026-10-30, 1.0.2 | Moving a task or editing a milestone always asks for a reason, and nothing happens until you type one | The reason becomes optional. Left empty, the app records one for you (what changed, from the app), so the history the agent reads stays complete. | open |
 
 ### U-003 Starting a session reports a contract error
 
@@ -135,6 +136,25 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - the Start dialog checks the project's ready tasks when it opens, and says when there are
     none and how to add work;
   - the summary of a session that found no ready task says the same.
+- **Status:** open.
+
+### U-010 A reason is required for every task move and milestone edit
+
+- **Found:** 2026-10-30 in 1.0.2, by the owner: "it always requires a reason. What is the
+  purpose of that?"
+- **Why the reason exists:** spec requirement B.5, "every change to plan, task or milestone is
+  versioned with author and reason". The reason is stored on the row and in the change log,
+  and the agent reads it in its next session's brief (why a task was cancelled or put back).
+  The daemon refuses a change without one (`TransitionTaskBody`, `ChangeMilestoneBody`).
+- **What happens:** the Tasks tab's move dialog and the Plan tab's milestone dialog keep
+  Confirm and Save disabled until a reason is typed, even for a routine move.
+- **Action:**
+  - the field is optional in both dialogs;
+  - left empty, the app sends a reason that says what changed, for example "Marked ready in
+    the app" or "Milestone edited in the app";
+  - a typed reason is sent as it is.
+
+  The daemon and B.5 are unchanged: every change still carries a reason and its author.
 - **Status:** open.
 
 ## Released
