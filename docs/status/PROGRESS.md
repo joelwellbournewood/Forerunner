@@ -44,7 +44,21 @@ Updated by the build agent at every milestone and at least daily. Newest first.
     shell stopped it and the bundled runtime answered in 5 s;
   - screenshots of the assistant against the bundled daemon.
 
-  Windows evidence comes from `desktop.yml` on the branch.
+  Windows evidence: `desktop.yml` run 40982952184 on c2d154d, green on windows-latest and
+  ubuntu-22.04. It ran:
+  - the UI and Playwright tests;
+  - cargo fmt, clippy and tests;
+  - `tauri build` (MSI; AppImage and `.deb`);
+  - the bundled runtime started from `src-tauri/runtime/` (`runtime-payload-smoke.mjs`).
+
+  That run needed three fixes found on the way, each red on the released code too or
+  Windows-only:
+  - four Playwright specs behind their fixtures;
+  - clippy's dead-code error on `linux_display_missing` on Windows;
+  - `pnpm deploy` gluing a temp dir on C: onto the D: workspace path.
+
+  The payload now ships the lockfile's versions: `inject-workspace-packages` instead of
+  `--legacy`.
 - Open:
   - tag `v1.0.1` (the human's go; `release.yml` builds and publishes);
   - "Update and restart" on the desktop still stages the installer file, so installing the new
