@@ -6,3 +6,4 @@
 *.wav binary
 *.mp3 binary
 *.keystore binary
+*.cmd text eol=crlf

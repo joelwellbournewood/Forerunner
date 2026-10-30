@@ -281,7 +281,14 @@ prompts and the item briefs it was run with are kept on the `build-briefs` branc
 ## How to change it
 
 - **Cut a release.** Move the `Unreleased` entries into a `## [X.Y.Z] - date` section, bump
-  the versions listed above, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. Watch the
+  the versions listed above, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The owner's
+  one click for the last step is `scripts/publish-release.cmd` (Windows, double-click) or
+  `scripts/publish-release.sh`: a shallow clone of the default branch in a temporary folder,
+  then refuse unless `CHANGELOG.md` has the version's section and the tag is new (the `.sh`
+  also runs `release-version.mjs --check`), one confirmation, the tag pushed, the release run
+  opened in the browser. It needs only Git; sign-in is Git's own (Git Credential Manager on
+  Windows). Agent sessions whose git proxy refuses tag pushes hand the release to it.
+  `scripts/publish-release.test.ts` runs the `.sh` against a local bare repository. Watch the
   four jobs; the Release appears as a draft-free release (pre-release when the tag has a `-`).
 - **Add or drop an artefact.** `bundle.targets` in the desktop `tauri.conf.json`, the
   `upload-artifact` paths in `release.yml` (the file pattern, never a whole bundle directory),
