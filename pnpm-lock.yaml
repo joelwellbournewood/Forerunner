@@ -139,6 +139,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@forerunner/platform':
+        specifier: workspace:*
+        version: link:../../packages/platform
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)

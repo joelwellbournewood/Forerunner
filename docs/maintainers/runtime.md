@@ -2148,6 +2148,47 @@ and `{killActive}` from the kill routes.
 enforce containment. `fr daemon [--provider fake] [--port N]` starts the server; `fr status`
 reads `daemon.json` and reports health.
 
+**Starting a session from the app (`POST /sessions`; U-003 in `docs/status/UPDATE-LOG.md`).**
+The route calls `Scheduler.requestStart` and answers `202 StartSessionView`: `result`
+(`started`, `queued` behind the agent's running session, `deferred` by quiet hours), `startId`
+(the scheduler entry's id, the identity the undo of a start names) and `session`. A started
+start is waited for until the first of: the run's `session.started` bus event (its row exists
+then, found with `sessionOfStart` from `loop/commands.ts`, the rule the undo uses), the run's
+end, or `SESSION_START_WAIT_MS` (15 s) on the runtime clock. The listener is attached before
+the request, since a run can begin before `requestStart` returns. A run that fails before its
+session begins answers that error through the daemon's error mapping (the kill switch:
+`killed`, "kill switch is active for this agent; resume it first"; no model credential:
+`provider_auth`). The run's outcome comes from `Scheduler.runOutcome(startId)`, which keeps the
+last 50 runs' `{ ok }` or `{ ok: false, error }`; the scheduler still logs a failure as before.
+1.0.2 answered `{ result }` only, and the start dialog, which parses a session, showed "does
+not match the contract". A session plans only the project's ready tasks (`StaticPlanner`), so
+an empty plan ends it `completed` at $0.00; its summary says how to give the agent work
+(U-009), and the start dialog says it before the start.
+
+**Next-session queue and Docs tab routes (`src/daemon/queue-routes.ts`,
+`src/daemon/docs-routes.ts`; U-004, U-005).** Both are mounted on the daemon with its human as
+the actor; another human's project answers 403 `forbidden`.
+- `GET /projects/:id/queue?status=`: the daemon's human's items of the project, newest first,
+  up to `QUEUE_LIST_LIMIT` (200); an unknown status is `validation` with `bad_query` (400).
+- `POST /projects/:id/queue { kind, text, priority? }` (`EnqueueBody`: text trimmed, 1 to 4000
+  characters; priority 0 to 9, default 5): one `queued` row with the human as author and a
+  `project` bus event. `SessionRunner.consumeQueue` (above) consumes it at the next session.
+- `POST /queue/:id/dismiss`: `queued -> dismissed`. Another human's item answers 403; one no
+  longer queued answers `validation` (409).
+- `GET /projects/:id/docs`: one `DocView` per `STANDARD_DOCS` entry, the decisions folder as
+  its `README.md`. Each is read from the first root of `ProjectDocs.docsDirsFor` that has it: a
+  linked folder, this install's docs clone, or the workspace. Nothing is cloned or fetched, so
+  a repository's docs show as this install last wrote them. `note` says where the doc was
+  read, or "not written yet". `drift` is an open finding of the project's reviews whose
+  description starts "Doc drift" and names the doc.
+- `GET /projects/:id/docs/:path` (the path URL-encoded): a doc of the set only, so a path
+  outside it, a `..` among them, is `not_found` before anything is joined onto a root. The text
+  is cut at `DOC_CONTENT_MAX_BYTES` (512 KiB); the decisions README is followed by the list of
+  the folder's records.
+
+The queue kinds and statuses in `api-types.ts` mirror `@forerunner/state`'s (the file stays
+browser-safe); `queue-docs-routes.test.ts` keeps them equal.
+
 **Mounted routes beyond ADR 0011** (all in `DAEMON_ROUTES`, all behind the bearer check):
 the Extensions panel sub-app (`GET /extensions`, `GET /extensions/catalog`,
 `GET|DELETE /extensions/:id`, `POST /extensions`, `POST /extensions/:id/toggle|approve|deny`,

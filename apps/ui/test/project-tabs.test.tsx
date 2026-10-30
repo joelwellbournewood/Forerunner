@@ -273,25 +273,40 @@ describe("Data tab", () => {
     expect(postedCalls(harness, "/data/da_1")[0]?.method).toBe("DELETE");
   });
 
-  it("queues an import from a repository and reports the task", async () => {
+  it("imports a repository through the daemon's import and says where it went (U-006)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/projects/proj_atlas/data", harness);
     await screen.findAllByTestId("data-row");
-    await user.selectOptions(screen.getByTestId("import-source"), "repo");
+    await user.selectOptions(screen.getByTestId("import-source"), "github");
     await user.type(screen.getByTestId("import-locator"), "https://example.test/org/legacy");
     await user.click(screen.getByTestId("import-run"));
     await waitFor(() =>
-      expect(postedCalls(harness, "/projects/proj_atlas/import")).toHaveLength(1),
+      expect(postedCalls(harness, "/projects/proj_atlas/data/import")).toHaveLength(1),
     );
-    expect(postedCalls(harness, "/projects/proj_atlas/import")[0]?.body).toEqual({
-      source: "repo",
+    expect(postedCalls(harness, "/projects/proj_atlas/data/import")[0]?.body).toEqual({
+      source: "github",
       locator: "https://example.test/org/legacy",
     });
     const result = await screen.findByTestId("import-result");
-    expect(result).toHaveAttribute("data-status", "queued");
-    expect(result).toHaveTextContent("migration specialist runs it on a branch");
-    expect(harness.daemon.state.tasks[0]?.title).toContain("Import repo");
+    expect(result).toHaveAttribute("data-source", "github");
+    expect(result).toHaveTextContent(
+      "Imported org/legacy on branch forerunner/migration-2026-10-30. The default branch main is untouched.",
+    );
+  });
+
+  it("imports a folder and says how much came in", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/data", harness);
+    await screen.findAllByTestId("data-row");
+    await user.selectOptions(screen.getByTestId("import-source"), "folder");
+    await user.type(screen.getByTestId("import-locator"), "/home/me/site");
+    await user.click(screen.getByTestId("import-run"));
+    const result = await screen.findByTestId("import-result");
+    expect(result).toHaveTextContent(
+      /Imported 1 file \(.+\) into \/data\/projects\/proj_atlas\/data\./,
+    );
   });
 
   it("degrades when the data route is missing", async () => {

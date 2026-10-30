@@ -388,6 +388,74 @@ export const StartSessionBody = z.object({
 });
 export type StartSessionBody = z.infer<typeof StartSessionBody>;
 
+/**
+ * The answer of `POST /sessions` (U-003): the scheduler's outcome, the start's id (what its
+ * undo names), and the session the start began. `session` is null while the start is queued
+ * behind a running session or deferred by quiet hours, and when the run has not created its
+ * session within the wait (`SESSION_START_WAIT_MS`); the session list shows it then.
+ */
+export const StartSessionView = z.object({
+  result: z.enum(["started", "queued", "deferred"]),
+  startId: z.string(),
+  session: SessionView.nullable(),
+});
+export type StartSessionView = z.infer<typeof StartSessionView>;
+
+// ---------------------------------------------------------------------------------------
+// Next-session queue (spec J.2; U-004): notes, tasks, corrections and ideas the human leaves
+// for the agent's next session. The literals mirror `QUEUE_KINDS` and `QUEUE_STATUSES` of
+// @forerunner/state (this file stays importable by the browser); a test keeps them equal.
+
+export const QUEUE_ITEM_KINDS = ["note", "task", "correction", "idea", "voice_note"] as const;
+export const QUEUE_ITEM_STATUSES = ["queued", "consumed", "dismissed"] as const;
+
+export const QueueItemView = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  humanId: z.string(),
+  kind: z.enum(QUEUE_ITEM_KINDS),
+  text: z.string(),
+  priority: z.number().int(),
+  status: z.enum(QUEUE_ITEM_STATUSES),
+  consumedBySession: z.string().nullable(),
+  createdAt: z.string(),
+  version: z.number().int(),
+});
+export type QueueItemView = z.infer<typeof QueueItemView>;
+
+export const EnqueueBody = z.object({
+  kind: z.enum(QUEUE_ITEM_KINDS),
+  text: z.string().trim().min(1).max(4000),
+  /** 0 (lowest) to 9; the panel offers 1 to 9 and starts at 5. */
+  priority: z.number().int().min(0).max(9).default(5),
+});
+export type EnqueueBody = z.infer<typeof EnqueueBody>;
+
+// ---------------------------------------------------------------------------------------
+// Project docs (spec G.5, K.2 Docs tab; U-005): the standard doc set as this install has it.
+
+export const DocView = z.object({
+  /** Repository-relative, as `STANDARD_DOCS` names it ("docs/decisions/" is a folder). */
+  path: z.string(),
+  title: z.string(),
+  exists: z.boolean(),
+  sizeBytes: z.number().int(),
+  updatedAt: z.string().nullable(),
+  /** An open critic finding names this doc as drifted. */
+  drift: z.boolean(),
+  /** The finding when it drifted, else where the doc was read or why it is missing. */
+  note: z.string(),
+});
+export type DocView = z.infer<typeof DocView>;
+
+export const DocContentView = z.object({
+  path: z.string(),
+  /** The file's text (cut at 512 KiB), or the list of files of the decisions folder. */
+  content: z.string(),
+  updatedAt: z.string().nullable(),
+});
+export type DocContentView = z.infer<typeof DocContentView>;
+
 export const KillBody = z.object({
   scope: z.union([
     z.literal("all"),
@@ -1754,13 +1822,22 @@ export const DAEMON_ROUTES = {
   planProject:
     "POST /projects/:id/plan (ProjectPlanBody -> 201 PlanProjectView: the plan written as milestone and task rows; one milestone and a flat task list in small-project mode, spec B.6, where a later plan joins the project's open milestone (reusedMilestone), which keeps its name and takes the plan's new success criteria and a later target date (merged says what was added; an audit row project.plan carries the plan's reason); an unknown dependency, a cycle, an empty plan or one over the caps is refused as 409 conflict with cause validation (ADR 0025) and nothing is written; 404 for an unknown project)",
   transitionTask: "POST /tasks/:id/transition",
+  queue:
+    "GET /projects/:id/queue?status= (QueueItemView[]: this human's items of the project, newest first, up to 200; status narrows to queued, consumed or dismissed; 404 for an unknown project, 403 forbidden for another human's)",
+  enqueue:
+    "POST /projects/:id/queue { kind, text, priority? } (EnqueueBody -> 201 QueueItemView: queued for the agent's next session, which reads it at its start)",
+  dismissQueueItem:
+    "POST /queue/:id/dismiss (QueueItemView: dismissed; 409 conflict when it is no longer queued, 403 forbidden for another human's item)",
+  docs: "GET /projects/:id/docs (DocView[]: the standard doc set in order, read from the project's linked folder, this install's docs clone or its workspace, without fetching; drift from the open critic findings)",
+  doc: "GET /projects/:id/docs/:path (DocContentView: one doc of the set, the path URL-encoded; 404 for a path outside the set or a doc not written yet)",
   milestones:
     "GET /projects/:id/milestones (MilestoneView[] in planning order, each with the reason and author of its last change, spec B.5; 404 for an unknown project)",
   changeMilestone:
     "POST /milestones/:id (ChangeMilestoneBody { version, reason, name?, successCriteria?, targetDate?, status? } -> MilestoneView: the change recorded with the human as author and the reason on the row, spec B.5; a missing or blank reason and a stale version are 409 conflict with cause validation / version_conflict, ADR 0025, and nothing moves; 404 for an unknown milestone)",
   runs: "GET /projects/:id/runs?limit=",
   sessions: "GET /sessions?agentId=&projectId=&status=",
-  startSession: "POST /sessions",
+  startSession:
+    "POST /sessions (StartSessionBody -> 202 StartSessionView: started, queued behind the agent's running session, or deferred by quiet hours; a started one waits up to 15 s for its session and carries it; a run that fails before its session begins answers that error)",
   session: "GET /sessions/:id",
   sessionEvents: "GET /sessions/:id/events?afterSeq= (JSON) | Accept: text/event-stream (SSE)",
   stopSession: "POST /sessions/:id/stop",

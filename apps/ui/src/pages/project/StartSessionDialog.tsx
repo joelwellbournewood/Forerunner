@@ -1,12 +1,28 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { describeError } from "../../api/client.ts";
+import { describeError, type StartSessionView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS } from "../../components/ui.tsx";
 import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
+import { useAsync } from "../../lib/use-async.ts";
 import { useClient, useIdentity } from "../../store/context.tsx";
 
-/** Start a session for the project -> POST /sessions, then open the live view. */
+/** What the dialog says when the start did not hand back a session to open (U-003). */
+export function startNotice(result: StartSessionView["result"]): string {
+  switch (result) {
+    case "queued":
+      return "Queued: your agent is in another session. This one starts when that one ends.";
+    case "deferred":
+      return "Deferred: it is quiet hours. The session starts when they end.";
+    default:
+      return "Starting: the session appears under Sessions in a moment.";
+  }
+}
+
+/**
+ * Start a session for the project -> POST /sessions, then open the live view of the session the
+ * start began, or say why there is none yet (queued, deferred, still starting).
+ */
 export function StartSessionDialog({
   open,
   onClose,
@@ -26,6 +42,17 @@ export function StartSessionDialog({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // A session works only on ready tasks (U-009): look before the human starts one for nothing.
+  const ready = useAsync(
+    (signal) =>
+      open ? client.tasks(projectId, { status: "ready", limit: 1 }, signal) : Promise.resolve(null),
+    [client, projectId, open],
+  );
+  const noReadyTask = Array.isArray(ready.data) && ready.data.length === 0;
+  useEffect(() => {
+    if (!open) setNotice(null);
+  }, [open]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -37,8 +64,9 @@ export function StartSessionDialog({
     }
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      const session = await client.startSession({
+      const started = await client.startSession({
         agentId: identity.agentId,
         projectId,
         trigger: "manual",
@@ -47,8 +75,12 @@ export function StartSessionDialog({
       });
       setBudget("");
       setReason("");
-      onClose();
-      navigate(`/sessions/${encodeURIComponent(session.id)}`);
+      if (started.session) {
+        onClose();
+        navigate(`/sessions/${encodeURIComponent(started.session.id)}`);
+      } else {
+        setNotice(startNotice(started.result));
+      }
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -83,7 +115,34 @@ export function StartSessionDialog({
         {!identity ? (
           <p className="text-xs text-neutral-500">Waiting for the daemon to report your agent…</p>
         ) : null}
+        {noReadyTask ? (
+          <div
+            role="note"
+            className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+            data-testid="start-session-no-work"
+          >
+            <p className="font-medium">No task in this project is ready.</p>
+            <p className="mt-1">
+              A session works only on ready tasks, so it would end at once and spend nothing. Give
+              your agent work first:
+            </p>
+            <ul className="mt-1 list-disc pl-5">
+              <li>add a task in the Tasks tab;</li>
+              <li>or ask in Chat, for example "add a task: write the README";</li>
+              <li>or approve the plan waiting in the Inbox, if you gave a brief.</li>
+            </ul>
+          </div>
+        ) : null}
         {error ? <ErrorBanner message={error} /> : null}
+        {notice ? (
+          <p
+            role="status"
+            className="rounded border border-blue-200 bg-blue-50 p-2 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
+            data-testid="start-session-notice"
+          >
+            {notice}
+          </p>
+        ) : null}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>
           <Button

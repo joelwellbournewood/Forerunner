@@ -1989,7 +1989,12 @@ function summarize(x: {
     ...(x.stopReason === "plan_awaiting_approval"
       ? ["The plan awaits your approval in the inbox; nothing ran."]
       : []),
-    ...(x.plan && x.plan.items.length === 0 ? ["Nothing to plan: no task is ready."] : []),
+    // U-009: a session works only on ready tasks; say how to give it some.
+    ...(x.plan && x.plan.items.length === 0
+      ? [
+          'Nothing to plan: no task is ready. Give the agent work first: add a task (the Tasks tab, or "add a task: ..." in Chat), or approve the plan waiting in the Inbox.',
+        ]
+      : []),
     `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}. Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
     ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
     ...(x.blockedByFindings.length

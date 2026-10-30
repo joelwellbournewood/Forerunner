@@ -93,6 +93,37 @@ describe("Project page", () => {
     expect(screen.queryByTestId("placeholder")).not.toBeInTheDocument();
   });
 
+  it("warns before a start that no task is ready and says how to give the agent work (U-009)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    // proj_beacon's only task is a draft: a session would plan nothing and end at once.
+    renderApp("/projects/proj_beacon", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    const warning = await within(dialog).findByTestId("start-session-no-work");
+    expect(warning).toHaveTextContent(/No task in this project is ready/);
+    expect(warning).toHaveTextContent(/Tasks tab/);
+    expect(warning).toHaveTextContent(/add a task: write the README/);
+    expect(warning).toHaveTextContent(/Inbox/);
+  });
+
+  it("says a start is queued instead of opening a session that does not exist yet (U-003)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ startOutcome: "queued" });
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    await waitFor(() => expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled());
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
+      /Queued: your agent is in another session/,
+    );
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
+  });
+
   it("starts a session from the dialog and opens the live view", async () => {
     const user = userEvent.setup();
     const harness = createHarness({ eventDelayMs: 10 });
@@ -101,6 +132,8 @@ describe("Project page", () => {
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
     await waitFor(() => expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled());
+    // proj_atlas has a ready task: no warning.
+    expect(within(dialog).queryByTestId("start-session-no-work")).not.toBeInTheDocument();
     await user.type(within(dialog).getByLabelText(/Session budget/), "4");
     await user.type(within(dialog).getByLabelText(/Reason/), "try the plan");
     await user.click(within(dialog).getByTestId("confirm-start-session"));

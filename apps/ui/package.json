@@ -26,6 +26,7 @@
     "@forerunner/vault": "workspace:*"
   },
   "devDependencies": {
+    "@forerunner/platform": "workspace:*",
     "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^6.9.0",

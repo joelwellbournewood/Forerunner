@@ -14,6 +14,7 @@ import { createDeviceRoutes } from "../devices/routes.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
+import { sessionOfStart } from "../loop/commands.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { speedQualityOffsetOf } from "../models/ladder.ts";
@@ -34,6 +35,7 @@ import {
   ProjectPlanBody,
 } from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
+import type { StartRequest } from "../session/triggers.ts";
 import { createSetupRoutes } from "../setup/routes.ts";
 import { createSourcesRoutes } from "../sources/routes.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
@@ -93,6 +95,7 @@ import {
   SpeakBody,
   type SpeakStartedView,
   StartSessionBody,
+  type StartSessionView,
   StartVoiceSessionBody,
   type SyncHealth,
   TransitionTaskBody,
@@ -109,8 +112,10 @@ import { createAuditRoutes } from "./audit-export.ts";
 import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
+import { createDocsRoutes } from "./docs-routes.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
+import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
@@ -188,6 +193,9 @@ export function isLocalOrigin(origin: string | undefined): boolean {
     return false;
   }
 }
+
+/** How long `POST /sessions` waits for a started run to create its session (U-003). */
+export const SESSION_START_WAIT_MS = 15_000;
 
 export function createDaemonApp(
   rt: RuntimeApp,
@@ -569,6 +577,18 @@ export function createDaemonApp(
       actor: () => ({ humanId: rt.human.id }),
     }),
   );
+  // The project page's Next session panel (spec J.2, U-004) and Docs tab (spec G.5, U-005): the
+  // daemon's human's queue items, and the standard doc set as this install has it.
+  const daemonWho = () => ({ humanId: rt.human.id, agentId: rt.agent.id });
+  app.route("/", createQueueRoutes({ store: rt.store, who: daemonWho, events: rt.events }));
+  app.route(
+    "/",
+    createDocsRoutes({
+      store: rt.store,
+      docsDirsFor: (project) => rt.docs.docsDirsFor(project),
+      who: daemonWho,
+    }),
+  );
   // Source discovery (spec A.4, ADR 0056): connected sources, scans, proposals and accepts;
   // the daemon's human is the actor and another human's source answers 403 forbidden.
   app.route(
@@ -865,16 +885,50 @@ export function createDaemonApp(
     return c.json(out);
   });
 
+  // The start dialog opens the session it started (U-003): a started run is waited for until its
+  // `session.started` (its row exists then), its end, or SESSION_START_WAIT_MS. A run that fails
+  // before its session begins (the kill switch, no model credential) answers that error.
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
-    const result = await rt.scheduler.request({
-      agentId: body.agentId,
-      projectId: body.projectId,
-      trigger: body.trigger,
-      reason: body.reason ?? "started from the app",
-      ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
-    } as never);
-    return c.json({ result }, 202);
+    let begun: () => void = () => undefined;
+    const sessionBegun = new Promise<"begun">((resolve) => {
+      begun = () => resolve("begun");
+    });
+    const onSession = (e: { type?: string; agentId?: string }) => {
+      if (e.type === "session.started" && e.agentId === body.agentId) begun();
+    };
+    // Listen before asking: the run can begin before `requestStart` returns.
+    rt.events.on("session", onSession);
+    const waited = new AbortController();
+    try {
+      const entry = await rt.scheduler.requestStart({
+        agentId: body.agentId,
+        projectId: body.projectId,
+        trigger: body.trigger,
+        reason: body.reason ?? "started from the app",
+        ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
+      } as StartRequest);
+      let session: StartSessionView["session"] = null;
+      if (entry.result === "started") {
+        const ended = rt.scheduler.runOutcome(entry.id) ?? new Promise<never>(() => undefined);
+        const timedOut = rt.clock.sleep(SESSION_START_WAIT_MS, waited.signal).then(
+          () => "timeout" as const,
+          () => "timeout" as const,
+        );
+        const first = await Promise.race([sessionBegun, ended, timedOut]);
+        if (typeof first === "object" && !first.ok) throw first.error;
+        const row = await sessionOfStart(rt.store, body.agentId, entry);
+        if (row) {
+          const name = (await rt.store.agent.get(row.agent_id))?.name ?? row.agent_id;
+          session = sessionView(row, name, chf());
+        }
+      }
+      const view: StartSessionView = { result: entry.result, startId: entry.id, session };
+      return c.json(view, 202);
+    } finally {
+      waited.abort();
+      rt.events.off("session", onSession);
+    }
   });
 
   app.get("/sessions/:id", async (c) => {

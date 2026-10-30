@@ -187,6 +187,12 @@ export interface SchedulerLogEntry {
 /** What `request` answers: the start ran, waits behind a running session, or waits for daytime. */
 export type StartOutcome = "started" | "queued" | "deferred";
 
+/** How a start's run ended: it returned, or the error that ended it (logged as `error`). */
+export type StartRunOutcome = { ok: true } | { ok: false; error: unknown };
+
+/** How many recent runs `runOutcome` remembers. */
+const RUN_OUTCOMES_KEPT = 50;
+
 /** The log entry of a request just made (`requestStart`): never cancelled or in error yet. */
 export interface StartEntry extends SchedulerLogEntry {
   result: StartOutcome;
@@ -205,6 +211,8 @@ export class Scheduler {
   private readonly activeStarts = new Map<string, SchedulerLogEntry>();
   /** The request waiting per agent (queued or deferred), as its log entry so the id follows it. */
   private readonly pending = new Map<string, SchedulerLogEntry>();
+  /** How the runs of the most recent starts ended, by start id (`runOutcome`). */
+  private readonly runs = new Map<string, Promise<StartRunOutcome>>();
   private cancel: (() => void) | null = null;
   private readonly logger = log("scheduler");
   readonly log: SchedulerLogEntry[] = [];
@@ -363,22 +371,40 @@ export class Scheduler {
     const entry: StartEntry = { id, at, req, result: "started" };
     this.log.push(entry);
     this.activeStarts.set(req.agentId, entry);
-    void this.deps
+    const run = this.deps
       .start(req)
-      .catch((e) => {
-        this.log.push({
-          id,
-          at: new Date(this.deps.clock.now()).toISOString(),
-          req,
-          result: "error",
-          detail: errorMessage(e),
-        });
-      })
+      .then(
+        (): StartRunOutcome => ({ ok: true }),
+        (e: unknown): StartRunOutcome => {
+          this.log.push({
+            id,
+            at: new Date(this.deps.clock.now()).toISOString(),
+            req,
+            result: "error",
+            detail: errorMessage(e),
+          });
+          return { ok: false, error: e };
+        },
+      )
       .finally(() => {
         this.active.delete(req.agentId);
         if (this.activeStarts.get(req.agentId) === entry) this.activeStarts.delete(req.agentId);
       });
+    this.runs.set(id, run);
+    for (const old of this.runs.keys()) {
+      if (this.runs.size <= RUN_OUTCOMES_KEPT) break;
+      this.runs.delete(old);
+    }
     return entry;
+  }
+
+  /**
+   * How the run of a start ended, for a caller that waits on it (`POST /sessions` answers a
+   * start whose run failed before its session began with that error). Undefined for a start
+   * that has not run (queued or deferred) or one older than the last 50.
+   */
+  runOutcome(startId: string): Promise<StartRunOutcome> | undefined {
+    return this.runs.get(startId);
   }
 
   /** The persisted last firing of an "every" schedule; never fired (or unreadable) is -Infinity. */

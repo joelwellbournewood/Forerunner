@@ -127,6 +127,8 @@ import {
   SpeakView as SpeakViewSchema,
   type StartPairingBody,
   type StartSessionBody as StartSessionBodySchema,
+  type StartSessionView,
+  StartSessionView as StartSessionViewSchema,
   type TaskView,
   TaskView as TaskViewSchema,
   type TransitionTaskBody as TransitionTaskBodySchema,
@@ -184,7 +186,6 @@ import {
   OkView,
   type ProjectSettingsView,
   ProjectSettingsView as ProjectSettingsViewSchema,
-  proposedPath,
   type QueueItemView,
   QueueItemView as QueueItemViewSchema,
   QueueList,
@@ -275,6 +276,7 @@ export type {
   SourceCandidateView,
   SourceView,
   SpeakView,
+  StartSessionView,
   TaskView,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
@@ -475,7 +477,8 @@ export interface DaemonClient {
     filter?: { agentId?: string; projectId?: string; status?: string },
     signal?: AbortSignal,
   ): Promise<SessionView[]>;
-  startSession(body: StartSessionInput): Promise<SessionView>;
+  /** The start's outcome and, once its run has made it, the session (U-003). */
+  startSession(body: StartSessionInput): Promise<StartSessionView>;
   session(id: string, signal?: AbortSignal): Promise<SessionView>;
   sessionEvents(id: string, afterSeq?: number, signal?: AbortSignal): Promise<EventView[]>;
   stopSession(id: string, reason?: string): Promise<SessionView>;
@@ -636,7 +639,7 @@ export interface DaemonClient {
   // wraps the runner's vault key to the challenge; the key never crosses this API.
   runnerKeyStatus(runnerId: string, signal?: AbortSignal): Promise<RunnerKeyStatusView>;
   wrapRunnerKey(body: RunnerUnlockWrapBody): Promise<RunnerUnlockAnswerView>;
-  // Proposed routes (ADR 0032); pages degrade when `isRouteMissing(error)`.
+  // The project page's panels (U-004 to U-006); pages still degrade when `isRouteMissing(error)`.
   queue(
     projectId: string,
     filter?: { status?: string },
@@ -841,7 +844,7 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { agentId: filter?.agentId, projectId: filter?.projectId, status: filter?.status },
         signal,
       ),
-    startSession: (body) => post(routePath("startSession"), SessionViewSchema, body),
+    startSession: (body) => post(routePath("startSession"), StartSessionViewSchema, body),
     session: (id, signal) =>
       get(routePath("session", { id }), SessionViewSchema, undefined, signal),
     sessionEvents: (id, afterSeq, signal) =>
@@ -1022,11 +1025,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("runnerKeyStatus", { runnerId }), RunnerKeyStatusViewSchema, undefined, signal),
     wrapRunnerKey: (body) => post(routePath("wrapRunnerKey"), RunnerUnlockAnswerViewSchema, body),
     queue: (projectId, filter, signal) =>
-      get(proposedPath("queue", { id: projectId }), QueueList, { status: filter?.status }, signal),
+      get(routePath("queue", { id: projectId }), QueueList, { status: filter?.status }, signal),
     enqueue: (projectId, body) =>
-      post(proposedPath("enqueue", { id: projectId }), QueueItemViewSchema, body),
-    dismissQueueItem: (id) =>
-      post(proposedPath("dismissQueueItem", { id }), QueueItemViewSchema, {}),
+      post(routePath("enqueue", { id: projectId }), QueueItemViewSchema, body),
+    dismissQueueItem: (id) => post(routePath("dismissQueueItem", { id }), QueueItemViewSchema, {}),
     milestones: (projectId, signal) =>
       get(routePath("milestones", { id: projectId }), MilestoneList, undefined, signal),
     changeMilestone: (id, body) =>
@@ -1038,12 +1040,16 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     removeDataAsset: async (id) => {
       await del(routePath("removeDataAsset", { id }), OkView);
     },
+    // The daemon's import (U-006): the locator travels as `locator`, which it reads as the path.
     importProject: (projectId, body) =>
-      post(proposedPath("importProject", { id: projectId }), ImportResultViewSchema, body),
+      post(routePath("importData", { id: projectId }), ImportResultViewSchema, {
+        source: body.source,
+        locator: body.locator,
+      }),
     docs: (projectId, signal) =>
-      get(proposedPath("docs", { id: projectId }), DocList, undefined, signal),
+      get(routePath("docs", { id: projectId }), DocList, undefined, signal),
     doc: (projectId, path, signal) =>
-      get(proposedPath("doc", { id: projectId, path }), DocContentViewSchema, undefined, signal),
+      get(routePath("doc", { id: projectId, path }), DocContentViewSchema, undefined, signal),
     performance: (filter, signal) =>
       get(
         routePath("performance"),

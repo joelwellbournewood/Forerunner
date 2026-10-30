@@ -11,7 +11,6 @@ import {
   PROPOSED_ROUTES,
   parseChangeCard,
   pathFromSpec,
-  proposedPath,
   routeSpec,
   UpdatesView,
   verbFromSpec,
@@ -87,22 +86,29 @@ describe("proposed routes", () => {
       "milestones",
       "changeMilestone",
       "performance",
+      // Served since U-004 to U-006 (docs/status/UPDATE-LOG.md).
+      "queue",
+      "enqueue",
+      "dismissQueueItem",
+      "docs",
+      "doc",
+      "importData",
     ]) {
       expect(served in DAEMON_ROUTES).toBe(true);
       expect(served in PROPOSED_ROUTES).toBe(false);
     }
     expect(routeSpec("reviews")).toBe(DAEMON_ROUTES.reviews);
-    expect(routeSpec("queue")).toBe(PROPOSED_ROUTES.queue);
+    expect(routeSpec("queue")).toBe(DAEMON_ROUTES.queue);
   });
 
   it("fills params and drops the query hints", () => {
-    expect(proposedPath("queue", { id: "p 1" })).toBe("/projects/p%201/queue");
-    expect(proposedPath("doc", { id: "p", path: "docs/overview.md" })).toBe(
+    expect(pathFromSpec(routeSpec("queue"), { id: "p 1" })).toBe("/projects/p%201/queue");
+    expect(pathFromSpec(routeSpec("doc"), { id: "p", path: "docs/overview.md" })).toBe(
       "/projects/p/docs/docs%2Foverview.md",
     );
     expect(pathFromSpec("GET /performance?projectId= (PerformanceView)")).toBe("/performance");
     expect(verbFromSpec(DAEMON_ROUTES.removeDataAsset)).toBe("DELETE");
-    expect(() => proposedPath("docs", {})).toThrow(/missing param id/);
+    expect(() => pathFromSpec(routeSpec("docs"), {})).toThrow(/missing param id/);
   });
 });
 

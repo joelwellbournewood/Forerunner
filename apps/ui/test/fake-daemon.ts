@@ -47,6 +47,7 @@ import {
   KillBody,
   RunnerUnlockWrapBody,
   StartSessionBody,
+  StartSessionView,
   StartVoiceSessionBody,
   TransitionTaskBody,
   VoiceAudioBody,
@@ -60,6 +61,7 @@ import {
   csvLine,
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
+import { ImportResultView } from "@forerunner/runtime/data/types";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import {
   decodeStoredKey,
@@ -153,6 +155,11 @@ export interface FakeDaemonOptions {
   token?: string;
   /** Spacing of the scripted events after POST /sessions; 150 ms by default. */
   eventDelayMs?: number;
+  /**
+   * What `POST /sessions` answers, as the real daemon's scheduler does (U-003): `started` (the
+   * default) carries the new session; `queued` and `deferred` carry none.
+   */
+  startOutcome?: "started" | "queued" | "deferred";
   /** Heartbeat cadence on /events; 1 s by default. */
   heartbeatMs?: number;
   /** Delay between streamed chat tokens; 5 ms by default. */
@@ -951,6 +958,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    const startId = nextId("start");
+    const outcome = options.startOutcome ?? "started";
+    if (outcome !== "started") {
+      // The real daemon's answer, checked against its schema so the two cannot drift (U-008).
+      return c.json(StartSessionView.parse({ result: outcome, startId, session: null }), 202);
+    }
     const session: SessionView = {
       id: nextId("sess"),
       agentId: agent.id,
@@ -972,7 +985,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.sessions.push(session);
     emit("session.changed", clone(session));
     scheduleScriptedEvents(session);
-    return c.json(session, 201);
+    return c.json(StartSessionView.parse({ result: "started", startId, session }), 202);
   });
   app.get("/sessions/:id", (c) => {
     const s = state.sessions.find((x) => x.id === c.req.param("id"));
@@ -3590,48 +3603,57 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.dataAssets = state.dataAssets.filter((a) => a.id !== asset.id);
     return c.json({ ok: true });
   });
-  app.post("/projects/:id/import", async (c) => {
+  // The daemon's import (`POST /projects/:id/data/import`, U-006), answered in its own schema so
+  // the two cannot drift: a github source on a migration branch, a zip or folder copied in.
+  app.post("/projects/:id/data/import", async (c) => {
     const id = c.req.param("id");
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
-    const body = (await c.req.json()) as { source?: string; locator?: string };
-    if (!body.locator?.trim() || !["zip", "folder", "repo"].includes(body.source ?? "")) {
-      return errorBody(c, 400, "validation", "source and locator are required");
+    const body = (await c.req.json()) as { source?: string; locator?: string; path?: string };
+    const locator = (body.path ?? body.locator ?? "").trim();
+    if (!locator || !["zip", "folder", "github"].includes(body.source ?? "")) {
+      return errorBody(c, 400, "validation", "source and path or locator are required");
     }
-    const task: TaskView = {
-      id: nextId("task"),
-      projectId: id,
-      milestoneId: null,
-      title: `Import ${body.source} ${body.locator.trim()}`,
-      outcome: "The original is preserved; the migration runs on a branch.",
-      acceptanceCriteria: ["Original untouched", "Migration branch opened"],
-      riskTier: 1,
-      status: "ready",
-      priority: 6,
-      claimedBy: null,
-      claimExpires: null,
-      dependsOn: [],
-      budget: money(0),
-      estimate: money(0),
-      actual: money(0),
-      specialist: "migration",
-      attempt: 0,
-      prUrl: null,
-      branch: null,
-      reason: "import requested from the app",
-      updatedAt: new Date().toISOString(),
-      version: 1,
-    };
-    state.tasks.unshift(task);
+    if (body.source === "github") {
+      const slug = locator.replace(/^https?:\/\/[^/]+\//, "").replace(/\.git$/, "");
+      return c.json(
+        ImportResultView.parse({
+          source: "github",
+          projectId: id,
+          destination: `/data/projects/${id}/repos/${slug}`,
+          imported: [],
+          skipped: [],
+          totalBytes: 0,
+          entryCount: 1,
+          gitignore: null,
+          note: null,
+          repository: {
+            slug,
+            url: `https://example.test/${slug}.git`,
+            worktree: `/data/projects/${id}/repos/${slug}`,
+            branch: "forerunner/migration-2026-10-30",
+            defaultBranch: "main",
+            headSha: "0123456789abcdef0123456789abcdef01234567",
+            assetId: null,
+            reused: false,
+          },
+        }),
+      );
+    }
     return c.json(
-      {
-        status: "queued",
-        taskId: task.id,
-        requestId: null,
-        message: `Import queued as ${task.id}; the migration specialist runs it on a branch.`,
-      },
-      202,
+      ImportResultView.parse({
+        source: body.source,
+        projectId: id,
+        destination: `/data/projects/${id}/data`,
+        imported: [{ rel: "site/index.html", sizeBytes: 1200, assetId: null }],
+        skipped: [],
+        totalBytes: 1200,
+        entryCount: 1,
+        gitignore: null,
+        note: null,
+        repository: null,
+      }),
     );
   });
 

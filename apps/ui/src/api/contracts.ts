@@ -1,4 +1,17 @@
-import { DAEMON_ROUTES, Money } from "@forerunner/runtime/daemon/api-types";
+import {
+  DAEMON_ROUTES,
+  DocContentView,
+  DocView,
+  type EnqueueBody,
+  Money,
+  QUEUE_ITEM_KINDS,
+  QUEUE_ITEM_STATUSES,
+  QueueItemView,
+} from "@forerunner/runtime/daemon/api-types";
+import {
+  IMPORT_SOURCES as DAEMON_IMPORT_SOURCES,
+  ImportResultView,
+} from "@forerunner/runtime/data/types";
 import { z } from "zod";
 
 /**
@@ -12,13 +25,15 @@ import { z } from "zod";
  *    mirror is kept field for field; `test/contracts.test.ts` parses the fixtures with both the
  *    runtime's schema and the mirror so drift fails a test before it reaches a screen.
  *
- * 2. Proposed shapes for routes the daemon does not serve yet (the next-session queue,
- *    imports, project docs). The paths live in
+ * 2. Proposed shapes for routes the daemon does not serve yet. The paths live in
  *    `PROPOSED_ROUTES`; `proposedPath()` prefers the daemon's `DAEMON_ROUTES` entry of the same
  *    name as soon as one exists, and the pages render a visible "route not available" state
- *    (`isRouteMissing`) until the daemon serves the route. Reviews, memory, commands and the
- *    change log, milestones, data assets and performance were proposed here first and now
- *    come from `api-types.ts` directly.
+ *    (`isRouteMissing`) until the daemon serves the route. None is proposed at present.
+ *    Reviews, memory, commands and the change log, milestones, data assets, performance, the
+ *    next-session queue, the docs and the import were proposed here first and now come from
+ *    `api-types.ts` (and `data/types.ts`) directly. A screen built on a proposal shipped
+ *    without its route in 1.0.2 (U-004 to U-006 in docs/status/UPDATE-LOG.md);
+ *    `test/real-daemon.test.ts` now runs the client against the real daemon.
  */
 
 // ---------------------------------------------------------------------------------------
@@ -392,31 +407,14 @@ export function parseChangeCard(card: unknown): ChangeCardView | null {
 }
 
 // ---------------------------------------------------------------------------------------
-// Proposed: next-session queue (spec J.2)
+// Next-session queue (spec J.2): the daemon's shapes (U-004)
 // ---------------------------------------------------------------------------------------
 
-export const QUEUE_KINDS = ["note", "task", "correction", "idea", "voice_note"] as const;
-export const QUEUE_STATUSES = ["queued", "consumed", "dismissed"] as const;
-
-export const QueueItemView = z.object({
-  id: z.string(),
-  projectId: z.string(),
-  humanId: z.string(),
-  kind: z.enum(QUEUE_KINDS),
-  text: z.string(),
-  priority: z.number().int(),
-  status: z.enum(QUEUE_STATUSES),
-  consumedBySession: z.string().nullable(),
-  createdAt: z.string(),
-  version: z.number().int(),
-});
-export type QueueItemView = z.infer<typeof QueueItemView>;
+export { QueueItemView };
+export const QUEUE_KINDS = QUEUE_ITEM_KINDS;
+export const QUEUE_STATUSES = QUEUE_ITEM_STATUSES;
 export const QueueList = z.array(QueueItemView);
-export interface EnqueueInput {
-  kind: (typeof QUEUE_KINDS)[number];
-  text: string;
-  priority?: number;
-}
+export type EnqueueInput = z.input<typeof EnqueueBody>;
 
 // ---------------------------------------------------------------------------------------
 // Milestones (spec B, K.2 Plan tab; B.5 reasons): a mirror of the daemon's MilestoneView
@@ -466,41 +464,21 @@ export interface RegisterDataAssetInput {
   kind: string;
 }
 
-export const IMPORT_SOURCES = ["zip", "folder", "repo"] as const;
+/** The daemon's import (`POST /projects/:id/data/import`, U-006): zip, folder or github. */
+export const IMPORT_SOURCES = DAEMON_IMPORT_SOURCES;
 export interface ImportInput {
   source: (typeof IMPORT_SOURCES)[number];
+  /** The archive or folder path, or the repository URL or owner/name. */
   locator: string;
 }
-export const ImportResultView = z.object({
-  status: z.enum(["queued", "done"]),
-  taskId: z.string().nullable(),
-  requestId: z.string().nullable(),
-  message: z.string(),
-});
-export type ImportResultView = z.infer<typeof ImportResultView>;
+export { ImportResultView };
 
 // ---------------------------------------------------------------------------------------
-// Proposed: project docs (spec G.5, K.2 Docs tab)
+// Project docs (spec G.5, K.2 Docs tab): the daemon's shapes (U-005)
 // ---------------------------------------------------------------------------------------
 
-export const DocView = z.object({
-  path: z.string(),
-  title: z.string(),
-  exists: z.boolean(),
-  sizeBytes: z.number().int(),
-  updatedAt: z.string().nullable(),
-  /** The critic's drift check: the module changed and the doc did not. */
-  drift: z.boolean(),
-  note: z.string(),
-});
-export type DocView = z.infer<typeof DocView>;
+export { DocContentView, DocView };
 export const DocList = z.array(DocView);
-export const DocContentView = z.object({
-  path: z.string(),
-  content: z.string(),
-  updatedAt: z.string().nullable(),
-});
-export type DocContentView = z.infer<typeof DocContentView>;
 
 // ---------------------------------------------------------------------------------------
 // Proposed routes
@@ -511,14 +489,7 @@ export type DocContentView = z.infer<typeof DocContentView>;
  * the daemon gains a route of the same name, `proposedPath()` follows the daemon's path and
  * `test/contracts.test.ts` fails if the two disagree.
  */
-export const PROPOSED_ROUTES = {
-  queue: "GET /projects/:id/queue?status= (QueueItemView[])",
-  enqueue: "POST /projects/:id/queue { kind, text, priority? }",
-  dismissQueueItem: "POST /queue/:id/dismiss",
-  importProject: "POST /projects/:id/import { source, locator } (202 ImportResultView)",
-  docs: "GET /projects/:id/docs (DocView[])",
-  doc: "GET /projects/:id/docs/:path",
-} as const;
+export const PROPOSED_ROUTES = {} as const satisfies Record<string, string>;
 export type ProposedRouteName = keyof typeof PROPOSED_ROUTES;
 /** A route the pages may report as missing: proposed here or listed by the daemon. */
 export type KnownRouteName = ProposedRouteName | keyof typeof DAEMON_ROUTES;

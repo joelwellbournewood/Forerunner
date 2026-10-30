@@ -62,10 +62,11 @@ describe("Live session view", () => {
     const user = userEvent.setup();
     // Events 2 s apart: the session is still running when Stop is pressed.
     const harness = createHarness({ eventDelayMs: 2000 });
-    const session = await harness.client.startSession({
+    const { session } = await harness.client.startSession({
       agentId: "agent_alice",
       projectId: "proj_atlas",
     });
+    if (!session) throw new Error("the fake daemon started no session");
     renderApp(`/sessions/${session.id}`, harness);
     const header = await screen.findByTestId("session-header");
     expect(within(header).getByTestId("session-status")).toHaveTextContent("running");

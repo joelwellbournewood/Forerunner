@@ -516,6 +516,36 @@ export interface SessionCommandPorts extends Pick<CommandPorts, "startSession" |
 const nothingStopped = () => ({ stoppedRuns: 0, killedProcesses: 0 });
 
 /**
+ * The session row a running start began, if its run has made it yet: the agent's active row of
+ * this install's runner kind with the start's trigger, begun at or after the start (the
+ * earliest such). The undo of a `session.start` stops it; `POST /sessions` answers with it.
+ */
+export async function sessionOfStart(
+  store: Pick<StateStore, "session">,
+  agentId: string,
+  start: Pick<SchedulerLogEntry, "at" | "req">,
+  runner: SessionRow["runner"] = "pc",
+): Promise<SessionRow | undefined> {
+  const rows = (await store.session.active(agentId)).filter(
+    (s) =>
+      s.summary !== CONVERSATION_SUMMARY &&
+      s.runner === runner &&
+      s.trigger === start.req.trigger &&
+      (s.started_at ?? s.created_at) >= start.at,
+  );
+  rows.sort((a, b) =>
+    (a.started_at ?? a.created_at) < (b.started_at ?? b.created_at)
+      ? -1
+      : (a.started_at ?? a.created_at) > (b.started_at ?? b.created_at)
+        ? 1
+        : a.id < b.id
+          ? -1
+          : 1,
+  );
+  return rows[0];
+}
+
+/**
  * The `startSession` and `kill` ports of the command registry over the scheduler, the kill
  * switch and the store's sessions. `session.start` reports the scheduler's outcome and the
  * start's identity (`startId`; the session id is never known synchronously); its undo
@@ -556,26 +586,8 @@ export function sessionCommandPorts(deps: {
     if (deps.scheduler.activeStart(agentId)?.id === startId) return "running";
     return "ended";
   };
-  /** The session row of this runner that the active start began, if the runner made it yet. */
-  const sessionOf = async (agentId: string, start: SchedulerLogEntry) => {
-    const rows = (await deps.store.session.active(agentId)).filter(
-      (s) =>
-        s.summary !== CONVERSATION_SUMMARY &&
-        s.runner === runner &&
-        s.trigger === start.req.trigger &&
-        (s.started_at ?? s.created_at) >= start.at,
-    );
-    rows.sort((a, b) =>
-      (a.started_at ?? a.created_at) < (b.started_at ?? b.created_at)
-        ? -1
-        : (a.started_at ?? a.created_at) > (b.started_at ?? b.created_at)
-          ? 1
-          : a.id < b.id
-            ? -1
-            : 1,
-    );
-    return rows[0];
-  };
+  const sessionOf = (agentId: string, start: SchedulerLogEntry) =>
+    sessionOfStart(deps.store, agentId, start, runner);
   return {
     startSession: async (req) => {
       const entry = await deps.scheduler.requestStart({

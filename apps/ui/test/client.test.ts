@@ -8,7 +8,6 @@ import {
   routePath,
 } from "../src/api/client.ts";
 import { DEFAULT_DAEMON_URL, resolveDaemonConfig } from "../src/api/config.ts";
-import { PROPOSED_ROUTES } from "../src/api/contracts.ts";
 import { createFakeDaemon } from "./fake-daemon.ts";
 import { ME } from "./fixtures.ts";
 import { fetchFromApp, testConfig } from "./helpers.tsx";
@@ -231,9 +230,10 @@ describe("daemon client", () => {
     await expect(
       client.transitionTask(task.id, { version: task.version, to: "ready", reason: "stale" }),
     ).rejects.toMatchObject({ code: "conflict" });
-    const session = await client.startSession({ agentId: "agent_alice", projectId: project.id });
-    expect(session.status).toBe("running");
-    const stopped = await client.stopSession(session.id, "test");
+    const started = await client.startSession({ agentId: "agent_alice", projectId: project.id });
+    expect(started.result).toBe("started");
+    expect(started.session?.status).toBe("running");
+    const stopped = await client.stopSession(started.session?.id ?? "", "test");
     expect(stopped.status).toBe("stopped");
     const kill = await client.kill({ scope: "all" });
     expect(kill.killActive).toBe(true);
@@ -251,10 +251,9 @@ describe("daemon client", () => {
   });
 
   it("tells a missing route apart from a typed not_found", async () => {
-    // The example is a route the daemon does not serve yet (milestones and performance are
-    // served now): `docs` is still proposed.
-    expect("docs" in PROPOSED_ROUTES).toBe(true);
-    expect("docs" in DAEMON_ROUTES).toBe(false);
+    // The example is `docs`, served since U-005; the fake is told to lack it, as a daemon
+    // without the route would.
+    expect("docs" in DAEMON_ROUTES).toBe(true);
     const daemon = createFakeDaemon({
       token: "tok",
       missingRoutes: ["/projects/proj_atlas/docs"],
@@ -448,7 +447,7 @@ describe("daemon client", () => {
       source: "zip",
       locator: "/tmp/site.zip",
     });
-    expect(imported.status).toBe("queued");
+    expect(imported).toMatchObject({ source: "zip", projectId: "proj_atlas", entryCount: 1 });
     expect((await client.docs("proj_atlas")).length).toBe(8);
     expect((await client.doc("proj_atlas", "README.md")).content).toContain("# Atlas");
     expect((await client.performance({ projectId: "proj_atlas" })).projectId).toBe("proj_atlas");

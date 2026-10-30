@@ -92,14 +92,14 @@ apps/ui/
 | Route | Page | Data |
 | --- | --- | --- |
 | `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog (a pasted brief sends `intake: true`, so the PM intake drafts the plan, the doc set and the first-session plan in the background and the proposal lands in the inbox; spec A.2, ADR 0055) | store (`GET /projects`), `POST /projects` |
-| `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active | `GET /projects/:id` and the tab routes below |
-| `summary` tab | the cached one-screen summary with Read aloud (the daemon's voice provider reads it, `POST /projects/:id/speak`; the text being read is shown and Stop cancels it; the browser's speech is the fallback on 503); **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (question, chosen option, the others, rationale, who, supersedes) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (proposed), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
+| `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active. **Start session** (`StartSessionDialog`): a budget and a reason; when it opens it reads the project's ready tasks and, with none, says a session would end at once and how to give the agent work (Tasks tab, "add a task: …" in Chat, the plan in the Inbox; U-009); a started session opens its live view, a queued or deferred start says so in the dialog (`startNotice`, U-003) | `GET /projects/:id` and the tab routes below; `GET /projects/:id/tasks?status=ready&limit=1`, `POST /sessions` |
+| `summary` tab | the cached one-screen summary with Read aloud (the daemon's voice provider reads it, `POST /projects/:id/speak`; the text being read is shown and Stop cancels it; the browser's speech is the fallback on 503); **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (question, chosen option, the others, rationale, who, supersedes) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (served since U-004), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
 | `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests); in **small-project mode** (spec B.6, the card's `smallProjectMode`) the tab shows instead the one milestone (the open one from the route, or the card's next milestone without it; milestones on file from before the mode are named, not hidden), the tasks as a **flat list** in the daemon's order with no grouping and no timeline, and the graph; every milestone the route served (never a derived one) has **Edit**: a dialog with name, target date, status and success criteria (one per line) under a **required reason**, posted with the row's `version` (spec B.5; the daemon's refusal, a stale version or a bad date, stays in the dialog), and the reason of the last change is shown under the milestone | `GET /projects/:id/tasks`, `GET /projects/:id/milestones`, `POST /milestones/:id` |
 | `tasks` tab | task log table with filters, transitions with a reason, New task dialog (its risk tier offers "project default (tier N)" from the card's `defaultRiskTier` and sends no `riskTier` unless one is picked, so the daemon applies the project's default: 0 in small-project mode, B.6) | `GET /projects/:id/tasks`, `/runs`, `POST /projects/:id/tasks`, `POST /tasks/:id/transition` |
-| `docs` tab | the standard doc set with present/missing/drift state, size and date; a document opens in a reader | `GET /projects/:id/docs`, `GET /projects/:id/docs/:path` (proposed) |
+| `docs` tab | the standard doc set with present/missing/drift state, size and date, and where each was read (the linked folder, the project folder, or this PC's copy of the repository); a document opens in a reader | `GET /projects/:id/docs`, `GET /projects/:id/docs/:path` (served since U-005) |
 | `reviews` tab | counts (reviews, open findings, average grade, verdicts), the grade trend chart with the accept line, every review newest first (grade, verdict, tier, confidence, model, task, session link, summary, evidence, findings with severity and status), verdict filter | `GET /projects/:id/reviews` |
 | `costs` tab | totals, by model / specialist / task with accepted share and cost per accepted task, savings apart | `GET /costs?projectId=` |
-| `data` tab | registered datasets (name, kind, size, locator, sample, who), register by path or URI, remove (two clicks), import from zip/folder/repo with the result | `GET /projects/:id/data`, `POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import` (proposed) |
+| `data` tab | registered datasets (name, kind, size, locator, sample, who), register by path or URI, remove (two clicks), import from github/zip/folder with the result in one line (`importSummary`: the repository and its migration branch with the default branch untouched, or the files and bytes and where they went, and the daemon's note) | `GET /projects/:id/data`, `POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/data/import` (since U-006) |
 | `chat` tab | quick chat with streaming, read-back confirmation, make-this-a-task | `POST /chat/stream` |
 | `/sessions/:id` | Live session view: header (status, agent, current task + specialist, steps/stepCap, spent/cap bar, Stop), event stream with level chips, raw JSON toggle, follow/auto-scroll | `GET /sessions/:id`, `GET /sessions/:id/events` (JSON backlog, then SSE), `POST /sessions/:id/stop` |
 | `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads when the install stream reports a blocking count the page has not seen. An intake proposal (spec A.2, ADR 0055: a card whose `key` is `intake:<project>`) renders as a plan card (`IntakeCard`, `intakeCardOf`): phases with their tasks (tier, priority, specialist, dependencies), the docs and where they go, the first session with estimates, the planning call's cost; the raw card stays behind "Change card" and the options are the ordinary approve / reject buttons. A cloud runner vault unlock (spec S.12, ADR 0068: a `credential` request whose card is the runner's challenge, `unlockChallengeOf`) renders as the **unlock card** (`UnlockCard`) instead of the options and the free-text box: the runner, the project, when it was filed, the challenge's age and time left; Unlock once / Unlock and allow for 1, 8 or 24 h / Unlock and clear the window / Deny. The key never reaches the page: `daemonRunnerKeys(client)` asks the daemon, which holds the OS keyring, to wrap it (`POST /runner-unlock/wrap { requestId }`: the page names the request, the daemon reads the challenge from its store) and the page sends the wrapped answer as the request's answer; the window it set is recorded in browser storage (`runnerUnlockWindow.<human>`) only after the answer was accepted. While that window is open the next challenge is answered once, without a choice, with a notice, on whatever page is open: `RunnerAutoUnlock` in the `Shell` (not the inbox page) reads the inbox on mount, on every streamed blocking count and every minute while the window is open, and runs `useAutoUnlock`; the page and the shell share the window record through `desktopUnlockWindowStore` / `useUnlockWindow`, so a window set on a card applies at once. Without the key on this computer (`GET /runner-unlock/:runnerId/key`) or after the challenge expired, the card is read-only with the reason. `InboxPage` takes `runnerKeys`, `unlockWindows` and `now` props for tests | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read`, `GET /runner-unlock/:runnerId/key`, `POST /runner-unlock/wrap` |
@@ -118,8 +118,12 @@ apps/ui/
 `DAEMON_ROUTES` (phase-1 routes, decisions, peers, project settings and the mirror, estimates,
 extensions, updates, model watch, reviews, memory and consolidation, commands and the change
 log, `milestones` and `changeMilestone`, the data assets `dataAssets`, `registerDataAsset`,
-`removeDataAsset`) plus the proposed routes (`queue`, `enqueue`, `dismissQueueItem`,
-`importProject`, `docs`, `doc`), `performance(filter?)` (`GET /performance?projectId=&days=`
+`removeDataAsset`), the project page's panels (`queue`, `enqueue`, `dismissQueueItem`,
+`docs`, `doc` over the daemon's routes since U-004 and U-005, with `QueueItemView`, `DocView`
+and `DocContentView` from `api-types.ts`; `importProject` over `importData`,
+`POST /projects/:id/data/import`, with the runtime's `ImportResultView`, since U-006),
+`startSession` (`StartSessionView`: the scheduler's outcome, the start's id and the session it
+began, U-003), `performance(filter?)` (`GET /performance?projectId=&days=`
 from `DAEMON_ROUTES`, validated with the runtime's `PerformanceView`, no mirror), the source discovery methods (spec A.4: `sources`, `addSource`, `scanSource`,
 `sourceCandidates`, `acceptCandidate`, `removeSource` over `DAEMON_ROUTES`, their schemas
 read straight from `daemon/api-types`, no mirror), the agent email routes (`emailSettings`,
@@ -135,7 +139,7 @@ are admin-only and the admin token stays in the daemon, ADR 0009), `auditExport(
 `Content-Disposition`, `filenameFromDisposition` / `countExportRows`) and `url()` / `raw()`
 for the stream helpers. Paths come from `routePath(name,
 params)` over `DAEMON_ROUTES` or `proposedPath(name, params)` over `PROPOSED_ROUTES` (which
-follows the daemon's entry as soon as one exists), URL-encoded; the client sends
+follows the daemon's entry as soon as one exists; empty since U-004 to U-006), URL-encoded; the client sends
 `Authorization: Bearer <token>` and validates every JSON body with the contract's zod schema.
 Failures are `ApiError { code, status, details }`: the daemon's `ErrorBody.code` when it sent
 one (flat, or wrapped under `error` as the capability routes for email and desktop answer
@@ -513,7 +517,10 @@ resets at `POST /__test/reset`, can push an event with `POST /__test/emit`, can 
 "no route"; the real daemon registers no `notFound` handler and answers Hono's plain-text 404,
 which `isRouteMissing` reads the same way) and can fail exact routes with a status and body
 (`failing` option or `POST /__test/fail`). `POST /sessions` starts a scripted run (six events
-including a warning and an escalation, `eventDelayMs` apart, then `completed`);
+including a warning and an escalation, `eventDelayMs` apart, then `completed`) and answers
+the real daemon's `202 StartSessionView`, parsed with its schema (`startOutcome: "queued"` or
+`"deferred"` answers no session, U-003); `POST /projects/:id/data/import` answers the
+runtime's `ImportResultView`, parsed with it (U-006);
 `/chat/stream` streams word tokens and scripts a read-back confirmation when the text contains
 "start a session", answered by "yes"/"no". The extension routes file a `capability_grant`
 request in the inbox for pending installs (answering it approves or denies), widen permissions
@@ -585,10 +592,13 @@ without a webview prompt (WebKitGTK would otherwise deny it).
 - **Add a route to the client**: the contract changes first (`api-types.ts`, ADR); then add the
   method to `DaemonClient` in `api/client.ts` using `routePath` and the schema, the fixture in
   `test/fixtures.ts`, the handler in `test/fake-daemon.ts`, a round-trip assertion plus a
-  malformed-body rejection in `test/client.test.ts`. A route the daemon does not serve yet goes
-  into `PROPOSED_ROUTES` with its schema in `contracts.ts` and `proposedPath`; when the daemon
-  gains it, `test/contracts.test.ts` fails until the proposal is removed and the page uses the
-  daemon's shape.
+  malformed-body rejection in `test/client.test.ts`, and the call in
+  `test/real-daemon.test.ts` (the read sweep, or a flow of its own). A route the daemon does
+  not serve yet goes into `PROPOSED_ROUTES` with its schema in `contracts.ts` and
+  `proposedPath`; when the daemon gains it, `test/contracts.test.ts` fails until the proposal
+  is removed and the page uses the daemon's shape. A screen never ships on a proposal alone:
+  in 1.0.2 the Next session panel, the Docs tab and the Data tab's import did, and failed in
+  the app while their fake-daemon tests passed (U-004 to U-006).
 - **Mirror a runtime schema** the browser cannot import: copy it into `contracts.ts`, add the
   fixture to the two-sided parse in `test/contracts.test.ts`.
 - **A new command from a screen**: build the body for `executeCommands`, show the result with
@@ -632,11 +642,16 @@ streamed progress and the new devices, a stream that drops mid-job resumed from 
 `reattachDelay`, the GPU fallback warning, a 409
 while a voice session is open, `installProgress`).
 
-Unit tests (`test/*.test.ts[x]`): `client` (config resolution, route paths, token header,
+Unit tests (`test/*.test.ts[x]`): `real-daemon` (U-008: the whole runtime composed as
+`fr daemon` composes it, with the scripted provider, and the UI's own `createClient` over
+`app.request`; 43 read calls of the screens parsed with the UI's schemas, a route missing or
+an answer of another shape failing the test; the flows of U-003 to U-006: a start answered
+with the session it began, the queue added, listed and dismissed, the docs listed and one
+read, a folder imported), `client` (config resolution, route paths, token header,
 contract validation rejects malformed bodies, `/health` with its sandbox and extensions
 sections, decisions and peers, phase-1 mutations, a missing route vs a typed not_found incl.
-the real daemon's plain-text and empty-body 404 (on `docs`, a route still proposed: the test
-checks it is in `PROPOSED_ROUTES` and not in `DAEMON_ROUTES`), round trips for reviews / memory / commands /
+the real daemon's plain-text and empty-body 404 (on `docs`, which the fake is told to lack),
+round trips for reviews / memory / commands /
 the change log, the proposed routes, `performance` with its window and the daemon's 400 for a
 `days` that is not decimal digits, extensions / updates / model watch), `contracts`
 (two-sided parse of the extension, updates and estimate fixtures with key-set comparison,
@@ -827,10 +842,9 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   `not_found` "no route" body. `isRouteMissing` accepts both (untyped 404/405/501, or a typed
   one saying "no route"), so the pages degrade the same way against either; an `app.notFound`
   in `server.ts` matching the fake would make the two identical and belongs to the daemon.
-- Proposed routes the daemon does not serve yet (the pages show "route not available" until
-  it does): `GET/POST /projects/:id/queue`, `POST /queue/:id/dismiss`,
-  `POST /projects/:id/import`, `GET /projects/:id/docs[/:path]`. Shapes are in `contracts.ts`
-  and the fixtures. `GET /projects/:id/milestones` is served since B.5 landed; the Plan tab
+- No route is proposed at present. The queue, docs and import routes that were (and showed
+  "route not available" in 1.0.2) are served since U-004 to U-006, and the state now reads
+  "Not available in this version" without sending the human to Updates (U-007). `GET /projects/:id/milestones` is served since B.5 landed; the Plan tab
   still derives the timeline and the milestones from the tasks and the card against an older
   daemon without it, and offers no Edit on those derived rows. The data asset routes
   (`GET/POST /projects/:id/data`, `DELETE /data/:id`) and `GET /performance`

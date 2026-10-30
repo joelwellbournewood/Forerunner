@@ -191,7 +191,13 @@ describe("local daemon", () => {
       body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: 1_000_000 }),
     });
     expect(started.status).toBe(202);
-    expect(await json(started)).toEqual({ result: "started" });
+    // The answer carries the session the start began, which the start dialog opens (U-003).
+    const answer = await json(started);
+    expect(answer).toMatchObject({
+      result: "started",
+      startId: expect.any(String),
+      session: { agentId: rt.agent.id, agentName: "Alice", projectId },
+    });
     await new Promise((r) => setTimeout(r, 200));
     const sessions = await jsonList(await req(`/sessions?agentId=${rt.agent.id}`));
     expect(sessions.length).toBeGreaterThanOrEqual(1);
@@ -214,6 +220,22 @@ describe("local daemon", () => {
     expect((await json(await req("/health", {}, false))).killActive).toBe(false);
     const costs = await json(await req(`/costs?projectId=${projectId}`));
     expect(num((costs.totals as Json).usdMicro)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("answers a start whose run fails before its session begins with that error (U-003)", async () => {
+    await req("/kill", { method: "POST", body: JSON.stringify({ scope: "all", reason: "test" }) });
+    try {
+      const refused = await req("/sessions", {
+        method: "POST",
+        body: JSON.stringify({ agentId: rt.agent.id, projectId }),
+      });
+      expect(refused.status).not.toBe(202);
+      const body = await json(refused);
+      expect(body.code).toBe("killed");
+      expect(str(body.message)).toContain("kill switch is active");
+    } finally {
+      await req("/kill/resume", { method: "POST" });
+    }
   });
 
   it("follows the UI conventions (ADR 0025): CORS for local origins, ?token only on the SSE routes, JSON chat frames, conflict code, killActive", async () => {

@@ -10,6 +10,19 @@ import { useClient } from "../../store/context.tsx";
 
 const DATA_KINDS = ["folder", "csv", "parquet", "sqlite", "zip", "dataset", "other"] as const;
 
+/** One line for the daemon's import result (U-006): what came in and where it went. */
+export function importSummary(r: ImportResultView): string {
+  if (r.repository) {
+    const reused = r.repository.reused ? " (already imported; reused)" : "";
+    return `Imported ${r.repository.slug} on branch ${r.repository.branch}${reused}. The default branch ${r.repository.defaultBranch} is untouched.`;
+  }
+  const what = `${r.imported.length} file${r.imported.length === 1 ? "" : "s"} (${formatBytes(r.totalBytes)})`;
+  const skipped = r.skipped.length ? `, ${r.skipped.length} skipped` : "";
+  return r.destination
+    ? `Imported ${what} into ${r.destination}${skipped}.`
+    : `Linked ${what} in place${skipped}.`;
+}
+
 /**
  * Data tab (spec L.1, A.3): datasets registered by path or URI (agents see metadata and a
  * sample, never the whole file; large data stays where it is), plus imports from a ZIP, a
@@ -23,7 +36,7 @@ export function DataTab({ projectId }: { projectId: string }) {
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
-  const [importSource, setImportSource] = useState<(typeof IMPORT_SOURCES)[number]>("repo");
+  const [importSource, setImportSource] = useState<(typeof IMPORT_SOURCES)[number]>("github");
   const [importLocator, setImportLocator] = useState("");
   const [importResult, setImportResult] = useState<ImportResultView | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -252,11 +265,11 @@ export function DataTab({ projectId }: { projectId: string }) {
           <output
             className="mt-2 block rounded border border-emerald-200 p-2 text-sm dark:border-emerald-900"
             data-testid="import-result"
-            data-status={importResult.status}
+            data-source={importResult.source}
           >
-            {importResult.message}
-            {importResult.taskId ? (
-              <span className="ml-1 text-xs text-neutral-500">(task {importResult.taskId})</span>
+            {importSummary(importResult)}
+            {importResult.note ? (
+              <span className="mt-1 block text-xs text-neutral-500">{importResult.note}</span>
             ) : null}
           </output>
         ) : null}
