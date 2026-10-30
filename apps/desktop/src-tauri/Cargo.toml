@@ -1,6 +1,6 @@
 [package]
 name = "forerunner-desktop"
-version = "1.0.3"
+version = "1.0.4"
 description = "Forerunner desktop shell (Windows, Linux)"
 authors = ["Forerunner contributors"]
 license = "MIT"

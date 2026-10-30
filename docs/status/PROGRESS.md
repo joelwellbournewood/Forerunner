@@ -18,6 +18,16 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-30 (1.0.4 prepared: the batch U-013 to U-017)
+- The owner asked for 1.0.4. Version 1.0.4 everywhere (`scripts/release-version.mjs --set 1.0.4`,
+  both Cargo.lock entries), the `[Unreleased]` batch is the `[1.0.4]` CHANGELOG section, and
+  `docs/status/UPDATE-LOG.md` lists U-013 to U-017 as released in 1.0.4. U-012 stays open.
+- The fixes came from the owner's first use of 1.0.3: claims a person made stranded tasks, plan
+  specialist names did not match the registry, Chat's task phrases made nothing or drafts, and a
+  session where everything failed read as fine.
+- The fixes were verified before the bump (CI 41144554642, Windows and Linux); `release.yml`
+  builds the installers and runs the installed-app check before it publishes.
+
 ### 2026-10-30 (1.0.3 prepared: the batch U-003 to U-011)
 - The owner asked for 1.0.3. Version 1.0.3 everywhere (`scripts/release-version.mjs --set 1.0.3`,
   both Cargo.lock entries), the `[Unreleased]` batch is the `[1.0.3]` CHANGELOG section, and

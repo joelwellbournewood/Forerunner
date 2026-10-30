@@ -14,6 +14,15 @@ Problems and their status, released or not, are tracked in
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-30
+
+Fixes for what the first sessions with 1.0.3 found. Install 1.0.4 over 1.0.3; your settings and
+data stay. Each fix names its entry in `docs/status/UPDATE-LOG.md`.
+
+Tasks you clicked Claim on in 1.0.3 go back to ready by themselves at the start of your next
+session. Tasks a 1.0.3 plan gave to "ops", "writer" or a similar name run with the right
+specialist.
+
 ### Fixed
 
 - Clicking Claim on a task took it out of every session's plan for good ("Nothing to plan: no

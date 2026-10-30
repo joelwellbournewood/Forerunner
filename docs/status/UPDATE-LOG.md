@@ -30,101 +30,14 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 
 ## Current version
 
-- Released: **1.0.3** (2026-10-30), with U-003 to U-011.
-- Next release: not scheduled. U-012 to U-017 are open.
+- Released: **1.0.4** (2026-10-30), with U-013 to U-017.
+- Next release: not scheduled. U-012 is open.
 
 ## Open and fixed, not released
 
 | ID | Found | What you see | Action | Status |
 | --- | --- | --- | --- | --- |
-| U-013 | 2026-10-30, 1.0.3 | After clicking Claim on tasks, every session says "Nothing to plan: no task is ready"; the tasks stay claimed forever. | People cannot claim (the button is gone, the service refuses it); a session puts claimed tasks nobody holds, and lapsed claims, back to ready before it plans. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
-| U-014 | 2026-10-30, 1.0.3 | A planned task fails at once, spending nothing: "specialist ops is not in the registry". | The plan's informal names ("ops", "writer", "data analyst") run the registry entry they mean; the planner's prompts list the exact names; a name that means none waits for you and lists the names instead of failing. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
-| U-015 | 2026-10-30, 1.0.3 | In Chat, "add a task: …" (what the app suggests) is not understood without a model for Chat. | The phrase creates a ready task. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
-| U-016 | 2026-10-30, 1.0.3 | "Make this a task" in Chat makes a draft, which no session works on. | It makes a ready task (ADR 0093). | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
-| U-017 | 2026-10-30, 1.0.3 | A session whose only task failed reads as fine: the notification says "0 done, 0 need you", the review says "accept (grade 100)" and shows twice in the log, and project setup plans tasks like "Confirm stack ... with the human" that no specialist can do. | The notification names failed tasks; the review grades a session with every task failed below 100; the log shows the review once; project setup writes such choices into the first decision doc instead. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
 | U-012 | 2026-10-30, 1.0.2 | (Release checks.) The Windows installed-app check called its install folders read-only; on the hosted runner they never were, so a Windows-only read-only problem would not be caught. | Run the Windows self-test as a standard (non-administrator) local user, so Program Files is read-only for it as it is for people. Until then the read-only fallback is checked on Linux and in unit tests. | open |
-
-### U-013 A task a person claims is never worked on
-
-- **Found:** 2026-10-30 in 1.0.3, by the owner: "I get the message that there is no task to do,
-  even though I claimed a bunch of tasks".
-- **What happens:** the Tasks tab offered every move of the workflow graph, Claim and Start
-  included. A claim is an agent's lock (spec §347): the agent's id in `claimed_by`, an expiry,
-  renewals while it works. The button only moved the status to `claimed`, with no holder and
-  no expiry. A session plans only `ready` tasks, so it ended with "Nothing to plan", and the
-  expiry sweep needs a holder and an expiry, so nothing put the task back. The sweep
-  (`expireClaims`) was also never called outside tests, so a crashed session's claim never
-  lapsed either.
-- **Action:**
-  - `TaskRepo.transition` refuses a person's move to `claimed` or `in_progress`
-    (`AGENT_ONLY_STATUSES`); the app offers only the moves a person may make
-    (`humanTransitions`).
-  - `expireClaims` also returns a `claimed` task nobody holds to `ready`, and the session runs
-    it before it plans (event `task.claims_released`), so rows 1.0.3 left behind recover on the
-    next session.
-  - Tests: `packages/state/test/suite.ts` ("a person cannot move a task to claimed ..."),
-    `packages/runtime/test/session-stuck-claims.test.ts`, `apps/ui/test/tasks.test.tsx`; each
-    fails without the fix.
-- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
-
-### U-014 Planned tasks fail with "specialist ops is not in the registry"
-
-- **Found:** 2026-10-30 in 1.0.3, by the owner, in a session's log: "Finished task: failed
-  (0.00 USD). specialist ops is not in the registry".
-- **What happens:** the project manager's prompt listed the specialists by informal names
-  (ops, writer, data analyst, science evaluator, migration specialist), and the intake prompt
-  named none. The registry's entries are `ops-deploy`, `writer-marketing`, `data-analyst`,
-  `science-evaluator`, `migration-specialist`. Plans stored whatever name the model wrote, and
-  the executor threw on a name it did not have, so the task failed, and failed again when marked
-  ready.
-- **Action:**
-  - `canonicalSpecialistName` (`packages/runtime/src/registry/specialist-names.ts`) maps the
-    informal names; plans store the registry name, and the executor resolves the name of a task
-    planned before, then records the resolved one on the task.
-  - A name that means no entry ends the task `needs_human` with the registry's names, nothing
-    run, instead of `failed`.
-  - The PM prompt (`project-manager` 1.0.1) and the intake prompt list the exact names.
-  - Tests: `packages/runtime/test/executor-specialist-names.test.ts`, the updated case in
-    `executor.test.ts`.
-- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet. The registry
-  prompt change must also go to `forerunner-registry` (`scripts/sync-registry.ts --apply`).
-
-### U-015 "add a task: …" in Chat is not understood
-
-- **Found:** 2026-10-30, while looking into U-013. The Start dialog and the session summary
-  (U-009) tell people to say it in Chat.
-- **What happens:** the intent parser had no pattern for it; without a model for Chat the
-  answer is "I did not understand".
-- **Action:** "add a task: …", "create a [new] task: …", "new task: …" and "neue Aufgabe: …"
-  create a `ready` task (`intent.test.ts`).
-- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
-
-### U-016 "Make this a task" makes a task no session works on
-
-- **Found:** 2026-10-30, while looking into U-013; the owner decided the action.
-- **What happens:** the Chat button and the phrase created a `draft` task (spec J.1). Sessions
-  plan only `ready` tasks, so it waited until someone clicked Mark ready on the Tasks tab.
-- **Action:** both create a `ready` task (ADR 0093). Tests: `intent.test.ts`,
-  `conversation.test.ts`, `apps/ui/test/chat.test.tsx`.
-- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
-
-### U-017 A session where everything failed looks like a good one
-
-- **Found:** 2026-10-30, in the owner's session log for U-014.
-- **What happens:**
-  - The notification title counted done and needs-you tasks only: "Alice's session completed:
-    0 done, 0 need you".
-  - The session review found nothing wrong: its only "no task done" check needs money spent,
-    and the task failed before spending any. "accept (grade 100, 0 finding(s))".
-  - The review showed twice: the critic stored a `critic.session_review` event and the runner
-    reported the review under the same type.
-  - The intake prompt let the plan hold a task asking the human to confirm the stack, hosting
-    and repository; it went to a specialist, which cannot answer it.
-- **Action:** the title adds "N failed"; a planned set with none done and some failed is a
-  medium finding; the critic's event is `critic.session_review_metrics` with its own log line;
-  the intake prompt says to record such a choice in `docs/decisions/0001-<slug>.md`. Tests:
-  `notifications-channels.test.ts`, `session-review.test.ts`, `event-lines.test.ts`.
-- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -163,6 +76,93 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-009 | A session ends as soon as it starts and spends nothing, without saying why | 1.0.3: the Start dialog and the summary say when no task is ready and how to add work. |
 | U-010 | Moving a task or editing a milestone always asks for a reason, and nothing happens until you type one | 1.0.3: the reason is optional; an empty one records what changed. |
 | U-011 | The GPU voice install (about 8 GB) always goes to `C:\Users\<you>\AppData\Local\forerunner\data\voice`, even when Forerunner is installed on another drive whose space was the point | 1.0.3: dependencies go to `<install folder>\dependencies`, with pip's cache and temporary files. |
+| U-013 | After clicking Claim on tasks, every session says "Nothing to plan: no task is ready"; the tasks stay claimed forever. | 1.0.4: people cannot claim (the button is gone, the service refuses it); a session puts claimed tasks nobody holds, and lapsed claims, back to ready before it plans. |
+| U-014 | A planned task fails at once, spending nothing: "specialist ops is not in the registry". | 1.0.4: the plan's informal names ("ops", "writer", "data analyst") run the registry entry they mean; the planner's prompts list the exact names; a name that means none waits for you and lists the names instead of failing. |
+| U-015 | In Chat, "add a task: …" (what the app suggests) is not understood without a model for Chat. | 1.0.4: the phrase creates a ready task. |
+| U-016 | "Make this a task" in Chat makes a draft, which no session works on. | 1.0.4: it makes a ready task (ADR 0093). |
+| U-017 | A session whose only task failed reads as fine: the notification says "0 done, 0 need you", the review says "accept (grade 100)" and shows twice in the log, and project setup plans tasks like "Confirm stack ... with the human" that no specialist can do. | 1.0.4: the notification names failed tasks; the review grades a session with every task failed below 100; the log shows the review once; project setup writes such choices into the first decision doc instead. |
+
+### U-013 A task a person claims is never worked on
+
+- **Found:** 2026-10-30 in 1.0.3, by the owner: "I get the message that there is no task to do,
+  even though I claimed a bunch of tasks".
+- **What happens:** the Tasks tab offered every move of the workflow graph, Claim and Start
+  included. A claim is an agent's lock (spec §347): the agent's id in `claimed_by`, an expiry,
+  renewals while it works. The button only moved the status to `claimed`, with no holder and
+  no expiry. A session plans only `ready` tasks, so it ended with "Nothing to plan", and the
+  expiry sweep needs a holder and an expiry, so nothing put the task back. The sweep
+  (`expireClaims`) was also never called outside tests, so a crashed session's claim never
+  lapsed either.
+- **Action:**
+  - `TaskRepo.transition` refuses a person's move to `claimed` or `in_progress`
+    (`AGENT_ONLY_STATUSES`); the app offers only the moves a person may make
+    (`humanTransitions`).
+  - `expireClaims` also returns a `claimed` task nobody holds to `ready`, and the session runs
+    it before it plans (event `task.claims_released`), so rows 1.0.3 left behind recover on the
+    next session.
+  - Tests: `packages/state/test/suite.ts` ("a person cannot move a task to claimed ..."),
+    `packages/runtime/test/session-stuck-claims.test.ts`, `apps/ui/test/tasks.test.tsx`; each
+    fails without the fix.
+- **Status:** released 1.0.4 (2026-10-30). Commits 24cd928, 5240bc4, 48debf9; CI 41144554642 green on Windows and Linux.
+
+### U-014 Planned tasks fail with "specialist ops is not in the registry"
+
+- **Found:** 2026-10-30 in 1.0.3, by the owner, in a session's log: "Finished task: failed
+  (0.00 USD). specialist ops is not in the registry".
+- **What happens:** the project manager's prompt listed the specialists by informal names
+  (ops, writer, data analyst, science evaluator, migration specialist), and the intake prompt
+  named none. The registry's entries are `ops-deploy`, `writer-marketing`, `data-analyst`,
+  `science-evaluator`, `migration-specialist`. Plans stored whatever name the model wrote, and
+  the executor threw on a name it did not have, so the task failed, and failed again when marked
+  ready.
+- **Action:**
+  - `canonicalSpecialistName` (`packages/runtime/src/registry/specialist-names.ts`) maps the
+    informal names; plans store the registry name, and the executor resolves the name of a task
+    planned before, then records the resolved one on the task.
+  - A name that means no entry ends the task `needs_human` with the registry's names, nothing
+    run, instead of `failed`.
+  - The PM prompt (`project-manager` 1.0.1) and the intake prompt list the exact names.
+  - Tests: `packages/runtime/test/executor-specialist-names.test.ts`, the updated case in
+    `executor.test.ts`.
+- **Status:** released 1.0.4 (2026-10-30). Commits 24cd928, 5240bc4, 48debf9; CI 41144554642 green on Windows and Linux. The registry
+  prompt change must also go to `forerunner-registry` (`scripts/sync-registry.ts --apply`).
+
+### U-015 "add a task: …" in Chat is not understood
+
+- **Found:** 2026-10-30, while looking into U-013. The Start dialog and the session summary
+  (U-009) tell people to say it in Chat.
+- **What happens:** the intent parser had no pattern for it; without a model for Chat the
+  answer is "I did not understand".
+- **Action:** "add a task: …", "create a [new] task: …", "new task: …" and "neue Aufgabe: …"
+  create a `ready` task (`intent.test.ts`).
+- **Status:** released 1.0.4 (2026-10-30). Commits 24cd928, 5240bc4, 48debf9; CI 41144554642 green on Windows and Linux.
+
+### U-016 "Make this a task" makes a task no session works on
+
+- **Found:** 2026-10-30, while looking into U-013; the owner decided the action.
+- **What happens:** the Chat button and the phrase created a `draft` task (spec J.1). Sessions
+  plan only `ready` tasks, so it waited until someone clicked Mark ready on the Tasks tab.
+- **Action:** both create a `ready` task (ADR 0093). Tests: `intent.test.ts`,
+  `conversation.test.ts`, `apps/ui/test/chat.test.tsx`.
+- **Status:** released 1.0.4 (2026-10-30). Commits 24cd928, 5240bc4, 48debf9; CI 41144554642 green on Windows and Linux.
+
+### U-017 A session where everything failed looks like a good one
+
+- **Found:** 2026-10-30, in the owner's session log for U-014.
+- **What happens:**
+  - The notification title counted done and needs-you tasks only: "Alice's session completed:
+    0 done, 0 need you".
+  - The session review found nothing wrong: its only "no task done" check needs money spent,
+    and the task failed before spending any. "accept (grade 100, 0 finding(s))".
+  - The review showed twice: the critic stored a `critic.session_review` event and the runner
+    reported the review under the same type.
+  - The intake prompt let the plan hold a task asking the human to confirm the stack, hosting
+    and repository; it went to a specialist, which cannot answer it.
+- **Action:** the title adds "N failed"; a planned set with none done and some failed is a
+  medium finding; the critic's event is `critic.session_review_metrics` with its own log line;
+  the intake prompt says to record such a choice in `docs/decisions/0001-<slug>.md`. Tests:
+  `notifications-channels.test.ts`, `session-review.test.ts`, `event-lines.test.ts`.
+- **Status:** released 1.0.4 (2026-10-30). Commits 24cd928, 5240bc4, 48debf9; CI 41144554642 green on Windows and Linux.
 
 ### U-003 Starting a session reports a contract error
 

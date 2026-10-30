@@ -1,6 +1,6 @@
 {
   "name": "@forerunner/ui",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "description": "The one React UI for desktop (Windows, Linux) and Android, built with Vite and Tailwind.",
