@@ -38,8 +38,10 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 - Evidence:
   - cargo test 100 and clippy clean;
   - unit tests 3626 passed;
-  - UI tests 492 passed, plus the `mobile-upload` load flake already listed below, which passes
-    alone;
+  - UI tests 495 passed. The `mobile-upload` load flake already listed below hit once here and
+    once in CI. Its cause: the harness's 40 ms poll also flushes the outbox and sent a third copy
+    during the lost-answer step. That test now turns the poll off and passes under two
+    concurrent full UI runs;
   - a `.deb` built and installed here and run under Xvfb against a 0.1.0 stand-in daemon: the
     shell stopped it and the bundled runtime answered in 5 s;
   - screenshots of the assistant against the bundled daemon.

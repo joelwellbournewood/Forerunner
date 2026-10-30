@@ -1831,7 +1831,7 @@ warnings and messages, suppressed inside quiet hours.
   `mobile-upload.test.tsx` (nav link, cap shown, a renamed file signed as multipart to the
   chosen project with its bytes stored, a camera photo as kind photo, a file over the cap
   refused before a byte leaves, offline queued and sent once on reconnect even after a lost
-  answer, a queued file over the storage budget shown as held in memory only and still sent
+  answer (with the harness's background poll off, so only the test's own flushes send), a queued file over the storage budget shown as held in memory only and still sent
   on reconnect); `mobile-reviews.test.tsx` (nav link, reviews of the project with PR link and
   findings, the waiting approval shown, a signed comment, approve with a comment answering the
   task's request at its version, a high-risk reject that asks the prompt first: cancel sends

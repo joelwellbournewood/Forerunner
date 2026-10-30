@@ -108,7 +108,10 @@ describe("Upload screen", () => {
   });
 
   it("queues the file offline and uploads it once on reconnect, even after a lost answer", async () => {
-    const h = await createMobileHarness();
+    // The test drives every flush itself. The harness's 40 ms poll also flushes the outbox, and
+    // under load one landed inside the lost-answer step and sent a third copy (harmless, the
+    // service answers it by clientId, but not the two this test counts), so it is off here.
+    const h = await createMobileHarness({ env: { pollIntervalMs: 1_000_000 } });
     const realFetch = h.env.fetch as NonNullable<typeof h.env.fetch>;
     let mode: "online" | "offline" | "lose-answer" = "online";
     h.env.fetch = async (input, init) => {
