@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Read `AGENTS.md` first; it is the single source of working rules for this repository.
-Then read `docs/status/PROGRESS.md`, `docs/requirements.md`, `docs/status/BLOCKERS.md`,
+Then read `docs/status/UPDATE-LOG.md`, `docs/status/PROGRESS.md`, `docs/requirements.md`, `docs/status/BLOCKERS.md`,
 `docs/status/gates.md`, `docs/status/COST.md` and the recent git log before picking up work.
 
 Quick reference:

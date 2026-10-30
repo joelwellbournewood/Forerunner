@@ -36,7 +36,7 @@ tests/e2e/             the nine release scenarios
 docs/spec              the spec (authoritative text)
 docs/maintainers       one file per area; CI fails a PR that changes a module without its doc
 docs/decisions         ADRs, numbered
-docs/status            PROGRESS.md, gates.md, BLOCKERS.md, COST.md, reports/
+docs/status            UPDATE-LOG.md, PROGRESS.md, gates.md, BLOCKERS.md, COST.md, reports/
 scripts/               docs-check, secret-scan, link-check, gates-verify, install scripts
 ```
 
@@ -90,6 +90,11 @@ skip with a visible reason when no daemon is reachable and CI records that in th
 - Errors use `ForerunnerError` with a stable `code`.
 - Commit messages: `area: what changed` with a body explaining why. Bugs: failing test first,
   fix, keep the test, root cause in the PR.
+- Problems found in a released version go into `docs/status/UPDATE-LOG.md` first:
+  - an ID (`U-NNN`), what the user sees, the action, and status `open`;
+  - commits that work on it name the ID;
+  - it becomes `fixed` only with commits, the failing-then-passing test and CI runs;
+  - releases are cut in batches when the owner asks, never one per fix.
 
 ## Definition of done (per change)
 

@@ -8,6 +8,10 @@ All notable changes to Forerunner are recorded here. The format follows
 every release needs a `## [x.y.z] - YYYY-MM-DD` section here before the tag is pushed. Entries
 go under Added, Changed, Deprecated, Removed, Fixed or Security.
 
+Problems and their status, released or not, are tracked in
+[`docs/status/UPDATE-LOG.md`](docs/status/UPDATE-LOG.md). Each fix under `[Unreleased]` names its
+`U-NNN` entry there.
+
 ## [Unreleased]
 
 ## [1.0.2] - 2026-10-30
