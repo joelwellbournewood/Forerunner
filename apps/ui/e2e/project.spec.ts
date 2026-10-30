@@ -22,13 +22,14 @@ test("opening a project shows the tabs; the tasks tab lists the tasks", async ({
 test("a task transition asks for a reason and posts it", async ({ page, request }) => {
   await page.goto("/projects/proj_atlas/tasks");
   const ready = page.getByTestId("task-row").nth(2);
-  await ready.getByTestId("transition-claimed").click();
-  await page.getByTestId("transition-reason").fill("taking it myself");
+  await expect(ready.getByTestId("transition-claimed")).toHaveCount(0);
+  await ready.getByTestId("transition-needs_human").click();
+  await page.getByTestId("transition-reason").fill("I need to decide this");
   await page.getByTestId("confirm-transition").click();
-  await expect(page.getByTestId("task-row").nth(2)).toHaveAttribute("data-status", "claimed");
+  await expect(page.getByTestId("task-row").nth(2)).toHaveAttribute("data-status", "needs_human");
   const calls = await recordedCalls(request);
   const move = calls.find((c) => c.path === "/tasks/task_3/transition");
-  expect(move?.body).toEqual({ version: 1, to: "claimed", reason: "taking it myself" });
+  expect(move?.body).toEqual({ version: 1, to: "needs_human", reason: "I need to decide this" });
 });
 
 test("the plan tab shows the timeline, milestones and graph; the reviews tab is filled", async ({

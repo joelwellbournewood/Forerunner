@@ -14,6 +14,17 @@ Problems and their status, released or not, are tracked in
 
 ## [Unreleased]
 
+### Fixed
+
+- Clicking Claim on a task took it out of every session's plan for good ("Nothing to plan: no
+  task is ready"). Claiming is the agent's job, so the Tasks tab no longer offers Claim or
+  Start; the next session puts tasks claimed that way back to ready and works on them (U-013).
+- A planned task failed at once with "specialist ops is not in the registry". The planner's
+  names for specialists now run the specialist they mean; a name that means none waits for you
+  and lists the specialists instead of failing (U-014).
+- "add a task: ..." in Chat was not understood without a model for Chat. It creates a ready
+  task (U-015).
+
 ## [1.0.3] - 2026-10-30
 
 Fixes for what the first days with 1.0.2 found. Install 1.0.3 over 1.0.2; your settings and data

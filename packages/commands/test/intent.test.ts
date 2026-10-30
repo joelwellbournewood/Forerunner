@@ -224,6 +224,26 @@ describe("IntentParser: English and German phrases", () => {
     expect(r.commands).toEqual([expected]);
   });
 
+  it("'add a task: …' creates a ready task, so the next session takes it (U-015)", async () => {
+    const r = await parser.parse("add a task: write the README", ctx());
+    expect(r.commands).toEqual([
+      {
+        name: "task.create",
+        params: { title: "write the README", outcome: "write the README", status: "ready" },
+      },
+    ]);
+    for (const line of [
+      "please create a new task: set up CI and deploy",
+      "new task - Add a CSV export",
+      "neue Aufgabe: README schreiben",
+    ]) {
+      const m = await parser.parse(line, ctx());
+      expect(m.commands[0]?.name, line).toBe("task.create");
+      expect(m.commands[0]?.params.status, line).toBe("ready");
+    }
+    expect((await parser.parse("set up CI and deploy", ctx())).commands).toEqual([]);
+  });
+
   it("'make this a task' turns the last message into a draft task, or asks for a title", async () => {
     const r = await parser.parse(
       "make this a task",

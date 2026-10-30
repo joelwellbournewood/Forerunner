@@ -1877,6 +1877,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         hostCommands: sdkHostCommands,
       },
       specialists,
+      specialistNames: () => registry.runnableSpecialists().map((d) => d.name),
       ...(withMemory ? { memory } : {}),
       modelConfig: () => modelConfig.get(),
       // The project's escalation ceiling (`critic_ceiling`, spec D.3): a retry climbs the

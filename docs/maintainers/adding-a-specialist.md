@@ -350,7 +350,12 @@ makes both variants reproducible without a model.
    checks and a seeded defect that fails at least one; the test suite enforces both.
 4. Run `pnpm vitest run --project unit packages/runtime/test/registry.test.ts evals/test`.
 5. Update the loader test's list of specialists if the set of starting specialists changes,
-   `docs/requirements.md` (C.3) and this file.
+   `docs/requirements.md` (C.3) and this file. Add the name to the list the project manager
+   picks from (`principals/project-manager.md`, rule 4) and the intake prompt
+   (`systemPrompt` in `packages/runtime/src/session/intake.ts`), written exactly; give any
+   informal name people or the PM use for it an entry in `SPECIALIST_ALIASES`
+   (`packages/runtime/src/registry/specialist-names.ts`). A plan naming "ops" while the entry
+   was `ops-deploy` failed every such task at once (U-014).
 6. Sync to `forerunner-registry` (below).
 
 ### Prompt rules

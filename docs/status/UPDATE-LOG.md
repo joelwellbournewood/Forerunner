@@ -31,13 +31,71 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.3** (2026-10-30), with U-003 to U-011.
-- Next release: not scheduled. U-012 is open.
+- Next release: not scheduled. U-012 to U-015 are open.
 
 ## Open and fixed, not released
 
 | ID | Found | What you see | Action | Status |
 | --- | --- | --- | --- | --- |
+| U-013 | 2026-10-30, 1.0.3 | After clicking Claim on tasks, every session says "Nothing to plan: no task is ready"; the tasks stay claimed forever. | People cannot claim (the button is gone, the service refuses it); a session puts claimed tasks nobody holds, and lapsed claims, back to ready before it plans. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
+| U-014 | 2026-10-30, 1.0.3 | A planned task fails at once, spending nothing: "specialist ops is not in the registry". | The plan's informal names ("ops", "writer", "data analyst") run the registry entry they mean; the planner's prompts list the exact names; a name that means none waits for you and lists the names instead of failing. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
+| U-015 | 2026-10-30, 1.0.3 | In Chat, "add a task: …" (what the app suggests) is not understood without a model for Chat. | The phrase creates a ready task. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
 | U-012 | 2026-10-30, 1.0.2 | (Release checks.) The Windows installed-app check called its install folders read-only; on the hosted runner they never were, so a Windows-only read-only problem would not be caught. | Run the Windows self-test as a standard (non-administrator) local user, so Program Files is read-only for it as it is for people. Until then the read-only fallback is checked on Linux and in unit tests. | open |
+
+### U-013 A task a person claims is never worked on
+
+- **Found:** 2026-10-30 in 1.0.3, by the owner: "I get the message that there is no task to do,
+  even though I claimed a bunch of tasks".
+- **What happens:** the Tasks tab offered every move of the workflow graph, Claim and Start
+  included. A claim is an agent's lock (spec §347): the agent's id in `claimed_by`, an expiry,
+  renewals while it works. The button only moved the status to `claimed`, with no holder and
+  no expiry. A session plans only `ready` tasks, so it ended with "Nothing to plan", and the
+  expiry sweep needs a holder and an expiry, so nothing put the task back. The sweep
+  (`expireClaims`) was also never called outside tests, so a crashed session's claim never
+  lapsed either.
+- **Action:**
+  - `TaskRepo.transition` refuses a person's move to `claimed` or `in_progress`
+    (`AGENT_ONLY_STATUSES`); the app offers only the moves a person may make
+    (`humanTransitions`).
+  - `expireClaims` also returns a `claimed` task nobody holds to `ready`, and the session runs
+    it before it plans (event `task.claims_released`), so rows 1.0.3 left behind recover on the
+    next session.
+  - Tests: `packages/state/test/suite.ts` ("a person cannot move a task to claimed ..."),
+    `packages/runtime/test/session-stuck-claims.test.ts`, `apps/ui/test/tasks.test.tsx`; each
+    fails without the fix.
+- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
+
+### U-014 Planned tasks fail with "specialist ops is not in the registry"
+
+- **Found:** 2026-10-30 in 1.0.3, by the owner, in a session's log: "Finished task: failed
+  (0.00 USD). specialist ops is not in the registry".
+- **What happens:** the project manager's prompt listed the specialists by informal names
+  (ops, writer, data analyst, science evaluator, migration specialist), and the intake prompt
+  named none. The registry's entries are `ops-deploy`, `writer-marketing`, `data-analyst`,
+  `science-evaluator`, `migration-specialist`. Plans stored whatever name the model wrote, and
+  the executor threw on a name it did not have, so the task failed, and failed again when marked
+  ready.
+- **Action:**
+  - `canonicalSpecialistName` (`packages/runtime/src/registry/specialist-names.ts`) maps the
+    informal names; plans store the registry name, and the executor resolves the name of a task
+    planned before, then records the resolved one on the task.
+  - A name that means no entry ends the task `needs_human` with the registry's names, nothing
+    run, instead of `failed`.
+  - The PM prompt (`project-manager` 1.0.1) and the intake prompt list the exact names.
+  - Tests: `packages/runtime/test/executor-specialist-names.test.ts`, the updated case in
+    `executor.test.ts`.
+- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet. The registry
+  prompt change must also go to `forerunner-registry` (`scripts/sync-registry.ts --apply`).
+
+### U-015 "add a task: …" in Chat is not understood
+
+- **Found:** 2026-10-30, while looking into U-013. The Start dialog and the session summary
+  (U-009) tell people to say it in Chat.
+- **What happens:** the intent parser had no pattern for it; without a model for Chat the
+  answer is "I did not understand".
+- **Action:** "add a task: …", "create a [new] task: …", "new task: …" and "neue Aufgabe: …"
+  create a `ready` task (`intent.test.ts`).
+- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 

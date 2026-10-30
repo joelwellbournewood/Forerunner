@@ -594,9 +594,15 @@ E.4 carry-over (`carriedFromLastEnd`) reads the same row. The `Planner` port pro
 (`StaticPlanner` = ready tasks by priority; a model planner uses the principal prompt); plans
 over the work budget (cap minus the review reserve) are cut before starting. Autonomy 0 and
 level 1 without an approval of this plan file it as a HumanRequest and end `stopped` (below,
-"Plan approval"). Execution claims each task
+"Plan approval"). Before the checklist, `expireClaims` puts lapsed claims and `claimed`
+tasks nobody holds back to `ready` (event `task.claims_released`; U-013: nothing called it
+before, so a crashed session's task, or one a person clicked Claim on, stayed out of every
+plan). Execution claims each task
 (atomic, renewed every ttl/6), transitions it to in progress, runs the `TaskExecutor`
-(`LoopTaskExecutor`: validated brief, the billing source picked for the task and the driver
+(`LoopTaskExecutor`: the plan's specialist name resolved through `canonicalSpecialistName`
+(`src/registry/specialist-names.ts`: "ops" is `ops-deploy`, "Data Analyst" is `data-analyst`;
+U-014), a name that means no registry entry returned as `needs_human` with the registry's
+names and nothing run, validated brief, the billing source picked for the task and the driver
 that follows it, derived narrower token, specialist prompt and model from the registry, Run
 row recorded; ADR 0044), then moves it to done (tier 0 with checks passed), in review,
 needs human or failed; the inbox is re-checked between tasks and a human "stop" ends the

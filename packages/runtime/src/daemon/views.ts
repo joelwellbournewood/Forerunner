@@ -310,6 +310,8 @@ export function describeEvent(type: string, p: Record<string, unknown>): string 
       return `Started "${s("title")}" with ${s("specialist")} (estimate ${(n("estimateUsdMicro") / 1e6).toFixed(2)} USD).`;
     case "task.finished":
       return `Finished task: ${s("outcome")} (${(n("costUsdMicro") / 1e6).toFixed(2)} USD). ${s("summary").slice(0, 200)}`;
+    case "task.claims_released":
+      return `Put ${n("count")} task(s) back to ready: their claim had lapsed or no agent held it.`;
     case "task.skipped":
       return `Skipped task: ${s("reason")}${s("holder") ? ` (held by ${s("holder")})` : ""}.`;
     case "inbox.message":

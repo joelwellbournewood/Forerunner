@@ -15,8 +15,8 @@ import {
 } from "../../components/ui.tsx";
 import type { MoneyLike } from "../../lib/money.ts";
 import {
-  allowedTransitions,
   defaultTransitionReason,
+  humanTransitions,
   TASK_STATUSES,
   transitionLabel,
 } from "../../lib/task-transitions.ts";
@@ -260,7 +260,7 @@ export function TasksTab({
                     </td>
                     <td className="py-1.5">
                       <div className="flex flex-wrap gap-1">
-                        {allowedTransitions(t.status).map((to) => (
+                        {humanTransitions(t.status).map((to) => (
                           <Button
                             key={to}
                             variant={to === "cancelled" || to === "failed" ? "ghost" : "secondary"}

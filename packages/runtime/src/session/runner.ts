@@ -547,6 +547,15 @@ export class SessionRunner {
     };
 
     try {
+      // 0. Lapsed claims (a crashed session's) and claims nobody holds go back to ready
+      // first, so the brief and the plan see them (spec §347; U-013).
+      const released = await store.task.expireClaims(clock.now());
+      if (released.length) {
+        await emit("task.claims_released", {
+          count: released.length,
+          tasks: released.slice(0, 20).map((t) => ({ id: t.id, reason: t.reason })),
+        });
+      }
       // 1. Startup checklist (code, not the model).
       brief = await runStartupChecklist({
         store,
@@ -1992,7 +2001,7 @@ function summarize(x: {
     // U-009: a session works only on ready tasks; say how to give it some.
     ...(x.plan && x.plan.items.length === 0
       ? [
-          'Nothing to plan: no task is ready. Give the agent work first: add a task (the Tasks tab, or "add a task: ..." in Chat), or approve the plan waiting in the Inbox.',
+          'Nothing to plan: no task is ready. Give the agent work first: add a task (the Tasks tab, or "add a task: ..." in Chat), mark a draft task ready on the Tasks tab, or approve the plan waiting in the Inbox.',
         ]
       : []),
     `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}. Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,

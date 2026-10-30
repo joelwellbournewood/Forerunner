@@ -177,7 +177,7 @@ describe("LoopTaskExecutor", () => {
     await store.close();
   });
 
-  it("refuses unknown specialists and caps the brief budget at the specialist maximum", async () => {
+  it("runs nothing for an unknown specialist (it waits for the person) and caps the brief budget at the specialist maximum", async () => {
     const h = harness();
     const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
     const exec = new LoopTaskExecutor({
@@ -218,7 +218,12 @@ describe("LoopTaskExecutor", () => {
         item: { taskId: "t", title: "t", specialist: "nope", estimateUsdMicro: 1 },
         signal: new AbortController().signal,
       }),
-    ).rejects.toMatchObject({ code: "not_found" });
+    ).resolves.toEqual({
+      // U-014: nothing ran, so the task waits for the person instead of failing.
+      outcome: "needs_human",
+      summary: 'No specialist is named "nope", so nothing ran.',
+      costUsdMicro: 0,
+    });
     await store.close();
   });
 });

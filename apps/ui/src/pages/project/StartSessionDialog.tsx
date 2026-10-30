@@ -128,6 +128,7 @@ export function StartSessionDialog({
             </p>
             <ul className="mt-1 list-disc pl-5">
               <li>add a task in the Tasks tab;</li>
+              <li>or click Mark ready on a draft task there (a session skips drafts);</li>
               <li>or ask in Chat, for example "add a task: write the README";</li>
               <li>or approve the plan waiting in the Inbox, if you gave a brief.</li>
             </ul>

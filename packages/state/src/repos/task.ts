@@ -16,6 +16,11 @@ export type ClaimResult =
 const CLAIMABLE: readonly TaskStatus[] = ["ready", "claimed", "in_progress"];
 /** Statuses that keep the claim when transitioned to. */
 const KEEPS_CLAIM: readonly TaskStatus[] = ["claimed", "in_progress", "in_review"];
+/**
+ * Statuses only an agent's claim puts a task in. A person moving a task there left it with no
+ * holder and no expiry: no session would pick it up and nothing returned it to ready.
+ */
+export const AGENT_ONLY_STATUSES: readonly TaskStatus[] = ["claimed", "in_progress"];
 
 /**
  * Tasks: the workflow graph, atomic claims with expiry, dependency-aware readiness and
@@ -122,9 +127,12 @@ export class TaskRepo extends Repository<TaskRow> {
     });
   }
 
-  /** Expire lapsed claims: claimed / in_progress tasks whose claim_expires is in the past go back to ready. */
+  /**
+   * Expire lapsed claims: claimed / in_progress tasks whose claim_expires is in the past go back
+   * to ready. A `claimed` task nobody holds (a person clicked Claim, U-013) goes back too.
+   */
   async expireClaims(now: number = this.clock.now()): Promise<TaskRow[]> {
-    return this.rows(
+    const lapsed = await this.rows(
       `UPDATE ${this.qt}
          SET "claimed_by" = NULL, "claim_expires" = NULL, "status" = 'ready',
              "updated_at" = ?, "version" = "version" + 1, "reason" = 'claim expired'
@@ -132,6 +140,16 @@ export class TaskRepo extends Repository<TaskRow> {
        RETURNING *`,
       [this.clock.nowIso(), new Date(now).toISOString()],
     );
+    const unheld = await this.rows(
+      `UPDATE ${this.qt}
+         SET "claim_expires" = NULL, "status" = 'ready',
+             "updated_at" = ?, "version" = "version" + 1,
+             "reason" = 'claimed by no agent: back to ready'
+       WHERE "claimed_by" IS NULL AND "status" = 'claimed'
+       RETURNING *`,
+      [this.clock.nowIso()],
+    );
+    return [...lapsed, ...unheld];
   }
 
   /**
@@ -148,6 +166,13 @@ export class TaskRepo extends Repository<TaskRow> {
   ): Promise<TaskRow> {
     const current = await this.mustGet(id);
     assertTransition(TASK_TRANSITIONS, "task", current.status, to);
+    if (actor.humanId && !actor.agentId && AGENT_ONLY_STATUSES.includes(to)) {
+      throw new ForerunnerError(
+        "validation",
+        `only an agent's session moves a task to ${to}; mark it ready and start a session`,
+        { details: { taskId: id, status: current.status, to, reason: "agent_only_status" } },
+      );
+    }
     if (to === "done") {
       const open = await this.findings.openFor(id);
       if (open.length > 0) {

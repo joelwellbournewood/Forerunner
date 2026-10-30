@@ -462,6 +462,33 @@ export function defineStateSuite(target: SuiteTarget): void {
         expect(await store.task.expireClaims()).toHaveLength(0);
       });
 
+      it("a person cannot move a task to claimed or in_progress; a claimed task nobody holds goes back to ready (U-013)", async () => {
+        const t = await readyTask("clicked claim");
+        const err = await expectCode(
+          store.task.transition(t.id, t.version, "claimed", "Claimed in the app", {
+            humanId: s.human.id,
+          }),
+          "validation",
+        );
+        expect(err.details).toMatchObject({ reason: "agent_only_status", to: "claimed" });
+        expect((await store.task.mustGet(t.id)).status).toBe("ready");
+        // A row 1.0.3 left behind: claimed by a person's click, so no holder and no expiry.
+        const stuck = await store.task.transition(t.id, t.version, "claimed", "Claimed in the app");
+        expect(stuck.claimed_by).toBeNull();
+        expect(await store.task.readyTasks(s.project.id)).toEqual([]);
+        const back = await store.task.expireClaims();
+        expect(back.map((x) => x.id)).toEqual([t.id]);
+        expect(await store.task.mustGet(t.id)).toMatchObject({
+          status: "ready",
+          reason: "claimed by no agent: back to ready",
+        });
+        expect((await store.task.readyTasks(s.project.id)).map((x) => x.id)).toEqual([t.id]);
+        // A live claim is left alone.
+        const held = await store.task.claim(t.id, s.alice.id, 60_000);
+        expect(held.ok).toBe(true);
+        expect(await store.task.expireClaims()).toEqual([]);
+      });
+
       it("releaseClaim returns the task to ready; only the holder may release", async () => {
         const t = await readyTask("release");
         await store.task.claim(t.id, s.alice.id, 60_000);

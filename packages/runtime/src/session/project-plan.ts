@@ -1,6 +1,7 @@
 import { ForerunnerError, redact } from "@forerunner/platform";
 import type { MilestoneRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
+import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 
 /**
  * Small-project mode (spec B.6) and the plan writer.
@@ -192,7 +193,8 @@ function shapeRows(
     priority: t.priority,
     dependsOn: t.dependsOn,
     budgetUsdMicro: t.budgetUsdMicro,
-    specialist: t.specialist ?? null,
+    // Stored as the registry names it: the PM's "ops" is `ops-deploy` (U-014).
+    specialist: t.specialist ? canonicalSpecialistName(t.specialist) : null,
     status: t.status,
   });
   if (!project.small_project_mode) {

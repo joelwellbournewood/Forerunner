@@ -259,6 +259,7 @@ export class IntentParser {
     const whole =
       this.matchLesson(clean(trimmed)) ??
       this.matchNote(clean(trimmed)) ??
+      this.matchAddTask(clean(trimmed)) ??
       this.matchTask(clean(trimmed), ctx);
     if (whole) return this.finish([whole], ctx, []);
 
@@ -524,6 +525,22 @@ export class IntentParser {
     // The active project is the default; naming it keeps the command's own resolution plain.
     const params = m[1]?.trim() || !current ? { project } : {};
     return { command: { name: "summary.speak", params } };
+  }
+
+  /**
+   * "add a task: write the README", "new task: …", "neue Aufgabe: …" (U-015). The task is
+   * created ready: asking for it is giving the agent the work, and a session takes only ready
+   * tasks.
+   */
+  private matchAddTask(c: string): Match | null {
+    const m =
+      /^(?:(?:add|create|make)\s+(?:a\s+)?(?:new\s+)?task|new\s+task|(?:neue|erstelle\s+(?:eine\s+)?)\s*aufgabe)\s*[:,-]?\s+(.+)$/is.exec(
+        c,
+      );
+    const text = m?.[1]?.trim();
+    if (!text || text.length < 3) return null;
+    const title = text.split(/\n/)[0]?.slice(0, 120) ?? text.slice(0, 120);
+    return { command: { name: "task.create", params: { title, outcome: text, status: "ready" } } };
   }
 
   private matchTask(c: string, ctx: IntentContext): Match | null {

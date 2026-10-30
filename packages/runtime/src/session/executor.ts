@@ -70,6 +70,7 @@ import {
   type SpeedMode,
   type Usage,
 } from "../provider/types.ts";
+import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { RUN_COMMAND_TOOL, type SpecialistDriver, TOOL_UNMAPPED_AUDIT } from "../registry/tools.ts";
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
@@ -243,6 +244,8 @@ export interface LoopTaskExecutorDeps {
    * `cc:` names as written; "loop": the built-in equivalents); omitted, the default applies.
    */
   specialists: (name: string, driver?: SpecialistDriver) => SpecialistSpec | undefined;
+  /** The registry's runnable specialist names, for the message when a task names none of them. */
+  specialistNames?: () => string[];
   /** Static model ceiling (spec D); `projectCeiling` takes precedence when it answers. */
   ceiling?: ModelTier;
   /**
@@ -327,13 +330,23 @@ export class LoopTaskExecutor implements TaskExecutor {
 
   async execute(ctx: Parameters<TaskExecutor["execute"]>[0]): Promise<TaskExecutionResult> {
     const { store, clock } = this.deps;
-    const { task, session, token, budget, item } = ctx;
+    const { task, session, token, budget } = ctx;
+    // A plan's "ops" or "Data Analyst" is the registry's `ops-deploy` or `data-analyst` (U-014).
+    const named = ctx.item.specialist;
+    const item = this.deps.specialists(named)
+      ? ctx.item
+      : { ...ctx.item, specialist: canonicalSpecialistName(named) };
     const defaultSpec = this.deps.specialists(item.specialist);
-    if (!defaultSpec)
-      throw new ForerunnerError(
-        "not_found",
-        `specialist ${item.specialist} is not in the registry`,
-      );
+    if (!defaultSpec) {
+      // Not a failure of the work: nothing ran. The task waits for the person, who is told
+      // which names exist; running it again unchanged would only fail again.
+      const known = this.deps.specialistNames?.() ?? [];
+      return {
+        outcome: "needs_human",
+        summary: `No specialist is named "${named}", so nothing ran.${known.length ? ` The specialists are: ${known.join(", ")}.` : ""}`,
+        costUsdMicro: 0,
+      };
+    }
 
     // Retry ladder (spec D.2): the open findings of the task become constraints of the brief
     // (rung 1, "improve the brief"), the rung is named, and the model rung is derived from the

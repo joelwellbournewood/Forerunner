@@ -1,7 +1,10 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { TASK_TRANSITIONS as UI_TRANSITIONS } from "../src/lib/task-transitions.ts";
+import {
+  AGENT_ONLY_STATUSES as UI_AGENT_ONLY,
+  TASK_TRANSITIONS as UI_TRANSITIONS,
+} from "../src/lib/task-transitions.ts";
 import { filterTasks, latestRunByTask } from "../src/pages/project/TasksTab.tsx";
 import { RUNS, TASKS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
@@ -10,6 +13,11 @@ describe("task transitions mirror", () => {
   it("matches the state package's TASK_TRANSITIONS graph", async () => {
     const state = await import("../../../packages/state/src/workflow.ts");
     expect(UI_TRANSITIONS).toEqual(state.TASK_TRANSITIONS);
+  });
+
+  it("matches the state package's agent-only statuses (U-013)", async () => {
+    const task = await import("../../../packages/state/src/repos/task.ts");
+    expect(UI_AGENT_ONLY).toEqual(task.AGENT_ONLY_STATUSES);
   });
 });
 
@@ -64,19 +72,21 @@ describe("Tasks tab", () => {
       within(ready)
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["Claim", "Needs me", "Mark failed", "Cancel"]);
-    await user.click(within(ready).getByTestId("transition-claimed"));
+    ).toEqual(["Needs me", "Mark failed", "Cancel"]);
+    // U-013: Claim is an agent's lock; a person's left the task held by nobody.
+    expect(within(ready).queryByTestId("transition-claimed")).toBeNull();
+    await user.click(within(ready).getByTestId("transition-needs_human"));
     const dialog = await screen.findByTestId("transition-dialog");
-    await user.type(within(dialog).getByTestId("transition-reason"), "picking it up myself");
+    await user.type(within(dialog).getByTestId("transition-reason"), "I need to decide this");
     await user.click(within(dialog).getByTestId("confirm-transition"));
     await waitFor(() => expect(postedCalls(harness, "/tasks/task_3/transition")).toHaveLength(1));
     expect(postedCalls(harness, "/tasks/task_3/transition")[0]?.body).toEqual({
       version: 1,
-      to: "claimed",
-      reason: "picking it up myself",
+      to: "needs_human",
+      reason: "I need to decide this",
     });
     await waitFor(() =>
-      expect(screen.getAllByTestId("task-row")[2]).toHaveAttribute("data-status", "claimed"),
+      expect(screen.getAllByTestId("task-row")[2]).toHaveAttribute("data-status", "needs_human"),
     );
   });
 

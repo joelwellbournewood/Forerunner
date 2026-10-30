@@ -43,6 +43,7 @@ import {
   type ModelTier,
   providerCapabilities,
 } from "../provider/types.ts";
+import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
 import { markAnswer } from "./answer-mark.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
@@ -953,7 +954,10 @@ export class IntakeService {
       '  "items": [ { "key": string, "estimateUsdMicro": int, "rationale": string? } ] } }',
       "",
       "Rules: every task has a unique key; dependsOn names keys of this plan only; leave riskTier",
-      `out unless the task clearly needs a higher one. docs may name only: ${INTAKE_DOC_PATHS.join(", ")}`,
+      `out unless the task clearly needs a higher one. specialist is a registry name, written exactly:`,
+      "coder, tester, reviewer, researcher, science-evaluator, designer, writer-marketing,",
+      "data-analyst, migration-specialist, ops-deploy (left out, coder). docs may name only:",
+      `${INTAKE_DOC_PATHS.join(", ")}`,
       "and docs/decisions/0001-<slug>.md for the first decision; draft each from the brief, concrete",
       "to this project, markdown with a title line. firstSession lists the ready tasks the first",
       "session takes, in order, with a cost estimate in USD micro-units (1000000 = $1).",
@@ -1123,7 +1127,7 @@ export class IntakeService {
           task_id: taskId,
           key: item.key,
           title: t.title,
-          specialist: t.specialist,
+          specialist: t.specialist ? canonicalSpecialistName(t.specialist) : null,
           estimate_usd_micro: item.estimateUsdMicro,
           ...(item.rationale ? { rationale: item.rationale } : {}),
         };
