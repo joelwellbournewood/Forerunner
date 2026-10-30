@@ -43,6 +43,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-006 | 2026-10-30, 1.0.2 | Project page, Data tab, Import: fails; the screen calls a route the service does not have | The screen uses the import the service has. | open |
 | U-007 | 2026-10-30, 1.0.2 | "Route not available" says "Check Updates for a newer version" even when no version has the feature | The message says the feature is not in this version yet, without sending you to Updates. | open |
 | U-008 | 2026-10-30, 1.0.2 | (Cause of U-003 to U-006.) The app's screen tests run against a stand-in service that drifted from the real one, so they passed while the real app failed. | A test runs the app's own client against the real service for these screens and for the read calls of every screen. | open |
+| U-009 | 2026-10-30, 1.0.2 | A session ends as soon as it starts and spends nothing, without saying why | The Start dialog says beforehand when no task is ready and how to give the agent work; the session's summary says the same. | open |
 
 ### U-003 Starting a session reports a contract error
 
@@ -116,6 +117,24 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 
   It must fail on the current code and pass after the fixes. Any further mismatch it finds is
   logged here as its own entry.
+- **Status:** open.
+
+### U-009 A session with no ready task ends at once and does not say why
+
+- **Found:** 2026-10-30 in 1.0.2, by the owner: "as soon as I start a session it just ends,
+  spending no money".
+- **What happens:** a session works only on the project's tasks with status `ready` (the
+  daemon's planner, `StaticPlanner`). A project created without a brief, or whose plan is still
+  waiting for approval in the Inbox, has none. The session plans nothing, ends `completed` and
+  spends $0.00. Its summary says "Nothing to plan: no task is ready." but not what to do.
+- **Ways to give a project work today:**
+  - Tasks tab → New task;
+  - in Chat, "add a task: …";
+  - approving the plan in the Inbox, when the project was created with a brief.
+- **Action:**
+  - the Start dialog checks the project's ready tasks when it opens, and says when there are
+    none and how to add work;
+  - the summary of a session that found no ready task says the same.
 - **Status:** open.
 
 ## Released
