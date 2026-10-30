@@ -5,7 +5,7 @@ import { Button, ErrorBanner, Field, INPUT_CLASS } from "../../components/ui.tsx
 import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
 import { useClient } from "../../store/context.tsx";
 
-/** Prefill for "make this a task" from chat: a draft with the message as the outcome. */
+/** Prefill for "make this a task" from chat: a ready task with the message as the outcome (U-016). */
 export interface TaskSeed {
   title: string;
   outcome: string;
@@ -22,7 +22,7 @@ export function seedFromMessage(text: string): TaskSeed {
   return {
     title: title.length >= 3 ? title : `${title} (from chat)`,
     outcome: text.trim(),
-    status: "draft",
+    status: "ready",
   };
 }
 

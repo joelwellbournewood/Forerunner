@@ -244,7 +244,7 @@ describe("IntentParser: English and German phrases", () => {
     expect((await parser.parse("set up CI and deploy", ctx())).commands).toEqual([]);
   });
 
-  it("'make this a task' turns the last message into a draft task, or asks for a title", async () => {
+  it("'make this a task' turns the last message into a ready task, or asks for a title (U-016)", async () => {
     const r = await parser.parse(
       "make this a task",
       ctx({ lastMessage: "Add a CSV export to the dashboard" }),
@@ -255,7 +255,7 @@ describe("IntentParser: English and German phrases", () => {
         params: {
           title: "Add a CSV export to the dashboard",
           outcome: "Add a CSV export to the dashboard",
-          status: "draft",
+          status: "ready",
         },
       },
     ]);

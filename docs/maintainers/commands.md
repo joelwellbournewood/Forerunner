@@ -316,7 +316,7 @@ and each clause goes through the patterns, in English and German:
 | note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |
 | read me the summary [of X] [aloud], speak the project summary for X, summary, lies mir die Zusammenfassung [von X] vor | `summary.speak` (the active project unless one is named; "Which project?" when neither) |
 | add a task: ..., create a [new] task: ..., new task: ..., neue Aufgabe: ... | `task.create` with status `ready` (U-015: the app told people to say it, and nothing matched it) |
-| make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage` (a draft) |
+| make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage`, status `ready` (U-016, ADR 0093) |
 
 A lesson ("remember that", "lesson:") is matched before a note, so "remember that X" records X
 in memory while "remember to X" and "note that X" stay next-session notes (ADR 0061). The nouns

@@ -565,14 +565,14 @@ describe("conversation agent over the command registry", () => {
     await w.store.close();
   });
 
-  it("a note and a task by pattern: the previous chat line becomes the draft task", async () => {
+  it("a note and a task by pattern: the previous chat line becomes a ready task (U-016)", async () => {
     const w = await setup([textReply("The menu flickers on resize; fix the redraw order.")]);
     await w.chat("why does the menu flicker?");
     const r = await w.chat("make this a task");
     expect(r.actions[0]?.kind).toBe("task.create");
-    const drafts = await w.store.task.list({ project_id: w.game, status: "draft" } as never);
-    expect(drafts).toHaveLength(1);
-    expect(drafts[0]?.title).toContain("menu flickers");
+    const ready = await w.store.task.list({ project_id: w.game, status: "ready" } as never);
+    expect(ready).toHaveLength(1);
+    expect(ready[0]?.title).toContain("menu flickers");
     const n = await w.chat("note: try the new renderer");
     expect(n.actions[0]?.kind).toBe("note.add");
     expect((await w.store.queue.pending(w.game)).map((q) => q.text)).toContain(

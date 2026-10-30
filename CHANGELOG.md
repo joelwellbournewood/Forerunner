@@ -24,6 +24,8 @@ Problems and their status, released or not, are tracked in
   and lists the specialists instead of failing (U-014).
 - "add a task: ..." in Chat was not understood without a model for Chat. It creates a ready
   task (U-015).
+- "Make this a task" in Chat (the button and the phrase) made a draft that no session worked
+  on. It makes a ready task (U-016).
 
 ## [1.0.3] - 2026-10-30
 

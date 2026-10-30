@@ -460,7 +460,7 @@ Effort trades depth for speed and cost. The rule is the lowest effort that passe
 
 ### J. Human interaction
 
-- **Quick chat** per project: read-only by default, fast model plus project summary and docs search. Voice works here too (module O). A "make this a task" button turns a chat message into a draft task.
+- **Quick chat** per project: read-only by default, fast model plus project summary and docs search. Voice works here too (module O). A "make this a task" button turns a chat message into a ready task (ADR 0093; was a draft task).
 - **Next-session queue**: notes, tasks, corrections, ideas, each with priority and type. Voice notes supported.
 - **Human requests**: one inbox across projects. Each has context, why it matters, options (multiple choice when possible), and whether it blocks work.
 - Answered decisions go to the Decision log and are never asked again unless superseded.

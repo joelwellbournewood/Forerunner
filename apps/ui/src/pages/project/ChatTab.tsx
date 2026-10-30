@@ -208,7 +208,7 @@ export function ChatTab({
           className="text-xs text-emerald-700 dark:text-emerald-300"
           data-testid="task-created"
         >
-          Draft task created: {created.title} ·{" "}
+          {created.status === "draft" ? "Draft task" : "Task"} created: {created.title} ·{" "}
           <Link to={`/projects/${encodeURIComponent(projectId)}/tasks`} className="underline">
             open tasks
           </Link>

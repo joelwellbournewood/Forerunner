@@ -73,7 +73,7 @@ describe("Quick chat", () => {
     expect(second?.text).toBe("no");
   });
 
-  it("turns a message into a draft task through the prefilled dialog", async () => {
+  it("turns a message into a ready task through the prefilled dialog (U-016)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/projects/proj_atlas/chat", harness);
@@ -90,21 +90,21 @@ describe("Quick chat", () => {
     expect(within(dialog).getByTestId("task-outcome")).toHaveValue(
       "Add a dark mode toggle to the docs site",
     );
-    expect(within(dialog).getByTestId("task-status")).toHaveValue("draft");
+    expect(within(dialog).getByTestId("task-status")).toHaveValue("ready");
     await user.click(within(dialog).getByTestId("create-task"));
     await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(1));
     expect(postedCalls(harness, "/projects/proj_atlas/tasks")[0]?.body).toMatchObject({
       title: "Add a dark mode toggle to the docs site",
-      status: "draft",
+      status: "ready",
     });
-    expect(await screen.findByTestId("task-created")).toHaveTextContent("Draft task created");
+    expect(await screen.findByTestId("task-created")).toHaveTextContent("Task created");
   });
 
   it("derives a short title from the first line", () => {
     const seed = seedFromMessage(`${"x".repeat(100)}\nsecond line`);
     expect(seed.title).toHaveLength(80);
     expect(seed.title.endsWith("…")).toBe(true);
-    expect(seed.status).toBe("draft");
+    expect(seed.status).toBe("ready");
     expect(seedFromMessage("ok").title).toBe("ok (from chat)");
   });
 });

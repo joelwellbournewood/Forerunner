@@ -31,7 +31,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.3** (2026-10-30), with U-003 to U-011.
-- Next release: not scheduled. U-012 to U-015 are open.
+- Next release: not scheduled. U-012 to U-016 are open.
 
 ## Open and fixed, not released
 
@@ -40,6 +40,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-013 | 2026-10-30, 1.0.3 | After clicking Claim on tasks, every session says "Nothing to plan: no task is ready"; the tasks stay claimed forever. | People cannot claim (the button is gone, the service refuses it); a session puts claimed tasks nobody holds, and lapsed claims, back to ready before it plans. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
 | U-014 | 2026-10-30, 1.0.3 | A planned task fails at once, spending nothing: "specialist ops is not in the registry". | The plan's informal names ("ops", "writer", "data analyst") run the registry entry they mean; the planner's prompts list the exact names; a name that means none waits for you and lists the names instead of failing. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
 | U-015 | 2026-10-30, 1.0.3 | In Chat, "add a task: …" (what the app suggests) is not understood without a model for Chat. | The phrase creates a ready task. | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
+| U-016 | 2026-10-30, 1.0.3 | "Make this a task" in Chat makes a draft, which no session works on. | It makes a ready task (ADR 0093). | open: fix on `claude/wizardly-planck-gzi0u5`, CI not run yet |
 | U-012 | 2026-10-30, 1.0.2 | (Release checks.) The Windows installed-app check called its install folders read-only; on the hosted runner they never were, so a Windows-only read-only problem would not be caught. | Run the Windows self-test as a standard (non-administrator) local user, so Program Files is read-only for it as it is for people. Until then the read-only fallback is checked on Linux and in unit tests. | open |
 
 ### U-013 A task a person claims is never worked on
@@ -95,6 +96,15 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   answer is "I did not understand".
 - **Action:** "add a task: …", "create a [new] task: …", "new task: …" and "neue Aufgabe: …"
   create a `ready` task (`intent.test.ts`).
+- **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
+
+### U-016 "Make this a task" makes a task no session works on
+
+- **Found:** 2026-10-30, while looking into U-013; the owner decided the action.
+- **What happens:** the Chat button and the phrase created a `draft` task (spec J.1). Sessions
+  plan only `ready` tasks, so it waited until someone clicked Mark ready on the Tasks tab.
+- **Action:** both create a `ready` task (ADR 0093). Tests: `intent.test.ts`,
+  `conversation.test.ts`, `apps/ui/test/chat.test.tsx`.
 - **Status:** open: fixed on `claude/wizardly-planck-gzi0u5`, CI not run yet.
 
 ### U-012 The Windows installed-app check cannot make a folder read-only

@@ -557,7 +557,8 @@ export class IntentParser {
       };
     }
     const title = last.split(/\n/)[0]?.slice(0, 120) ?? last.slice(0, 120);
-    return { command: { name: "task.create", params: { title, outcome: last, status: "draft" } } };
+    // Ready, not draft (U-016, ADR 0093): asking for a task is giving the agent the work.
+    return { command: { name: "task.create", params: { title, outcome: last, status: "ready" } } };
   }
 
   private matchMonthlyCap(c: string): Match | null {
