@@ -4,9 +4,10 @@
 # /setup. 1.0.1 died at once when installed into D:\AGENT\Forerunner (Tauri's verbatim
 # \\?\D:\... path reached Node); no installer is published again without this passing.
 #
-# Each place is installed, made read-only for this user (an install folder is not writable by the
-# app; everything it writes goes to the data folder), tested with a data folder on another drive,
-# then uninstalled. Exit 1 when any required place fails.
+# Each place is installed, made read-only for this user (one case stays writable), tested with a
+# fresh data folder, then uninstalled. The self-test reports where downloaded dependencies go
+# (U-011): `<install>\dependencies` when the folder can be written, else the data folder with the
+# reason; each case checks the one it should give. Exit 1 when any required place fails.
 #
 # Usage: pwsh -File scripts/installed-check.ps1 -Msi <path to the .msi>
 param([Parameter(Mandatory = $true)][string]$Msi)
@@ -24,6 +25,8 @@ $cases = @(
   @{ Name = 'another drive'; Dir = 'D:\AGENT\Forerunner'; Required = $true },
   @{ Name = 'spaces and non-ASCII'; Dir = 'D:\My Apps\Forer' + [char]0x00FC + 'nner ' + [char]0x00C4; Required = $true },
   @{ Name = 'long path'; Dir = $long; Required = $true },
+  # Not read-only: downloaded dependencies (voice) go into a subfolder of the install (U-011).
+  @{ Name = 'another drive, writable'; Dir = 'D:\AGENT\Forerunner'; ReadOnly = $false; Required = $true },
   # Started over the network: a share named by the machine's name (\\localhost is no test: Node
   # turns file://localhost/D$/... into file:///D$/..., which no real share produces) and a
   # mapped drive letter, which canonicalises to \\?\UNC\... as well. Reported, not required:
@@ -79,8 +82,11 @@ foreach ($c in $cases) {
     # Read-only for this user, like a folder the app cannot write to. Only the specific write
     # rights: icacls' W and D are generic rights that also carry SYNCHRONIZE and READ_CONTROL,
     # and denying those stops Windows from starting any program in the folder.
-    & icacls $dir /deny "$($env:USERNAME):(OI)(CI)(WD,AD,WEA,WA,DE,DC)" | Out-Null
-    $denied = $true
+    $readOnly = $c.ReadOnly -ne $false
+    if ($readOnly) {
+      & icacls $dir /deny "$($env:USERNAME):(OI)(CI)(WD,AD,WEA,WA,DE,DC)" | Out-Null
+      $denied = $true
+    }
     $home_ = Join-Path $work "home-$i"
     New-Item -ItemType Directory -Force -Path $home_ | Out-Null
     $report = Join-Path $work "report-$i.json"
@@ -95,7 +101,22 @@ foreach ($c in $cases) {
     $json = if (Test-Path $report) { Get-Content $report -Raw } else { '{}' }
     Write-Host $json
     $ok = ($t.ExitCode -eq 0) -and ($json -match '"ok":\s*true')
-    $results += [pscustomobject]@{ Case = $c.Name; Ok = $ok; Detail = "exit $($t.ExitCode) from $exePath"; Required = $c.Required }
+    # Where dependencies go (U-011): beside the install when it can be written, else the data
+    # folder (under this case's FORERUNNER_HOME) with the reason.
+    $folder = $null
+    if ($ok) {
+      $checks = ($json | ConvertFrom-Json).checks
+      $folder = [string]$checks.voiceFolder
+      if ($readOnly) {
+        $want = $home_
+        $ok = $folder.StartsWith($home_, [StringComparison]::OrdinalIgnoreCase) -and $checks.voiceFolderNote
+      } else {
+        $want = Join-Path $dir 'dependencies\voice'
+        $ok = [string]::Equals($folder, $want, [StringComparison]::OrdinalIgnoreCase)
+      }
+      if (-not $ok) { Write-Host "dependencies folder: $folder, expected $(if ($readOnly) { "under $want with a note" } else { $want })" }
+    }
+    $results += [pscustomobject]@{ Case = $c.Name; Ok = $ok; Detail = "exit $($t.ExitCode) from $exePath; dependencies in $folder"; Required = $c.Required }
   } catch {
     Write-Host "error: $($_.Exception.Message)"
     $results += [pscustomobject]@{ Case = $c.Name; Ok = $false; Detail = $_.Exception.Message; Required = $c.Required }
@@ -104,6 +125,8 @@ foreach ($c in $cases) {
     if ($mapped) { & net use Z: /delete /y | Out-Null }
     if ($denied) { & icacls $dir /remove:d "$($env:USERNAME)" | Out-Null }
     if ($installed) { Start-Process msiexec.exe -ArgumentList @('/x', "`"$Msi`"", '/qn', '/norestart') -Wait | Out-Null }
+    # The app made it, so the uninstall leaves it; the next case starts clean.
+    Remove-Item -LiteralPath (Join-Path $dir 'dependencies') -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
 

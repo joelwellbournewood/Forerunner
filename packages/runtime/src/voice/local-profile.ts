@@ -18,6 +18,7 @@ import {
   type AppDirs,
   type Clock,
   currentPlatform,
+  dirname,
   ForerunnerError,
   log,
   type Platform,
@@ -32,7 +33,7 @@ import {
   type TtsOptions,
   type TtsProvider,
 } from "@forerunner/voice";
-import { readVoiceSettings, venvPythonPath, voiceDirs } from "./install.ts";
+import { readVoiceSettings, recordedVoiceRoot, venvPythonPath, voiceDirs } from "./install.ts";
 import { type VoiceProfile, voiceInstallCommand } from "./install-types.ts";
 
 export interface LocalVoiceSettings {
@@ -57,7 +58,9 @@ export interface LocalVoiceDeps {
 export function localVoiceSettings(deps: LocalVoiceDeps): LocalVoiceSettings | null {
   const s = readVoiceSettings(deps.dirs);
   if (!s) return null;
-  const vd = voiceDirs(deps.dirs);
+  // Where the install was made (voice.json records it, U-011); 1.0.2's data folder without one.
+  const recorded = recordedVoiceRoot(s);
+  const vd = voiceDirs(deps.dirs, recorded ? dirname(recorded) : deps.dirs.data);
   const platform = deps.platform ?? currentPlatform();
   const base = {
     profile: s.profile,

@@ -197,6 +197,12 @@ into each of these places:
   is not guaranteed). Not `\\localhost\`: Node turns `file://localhost/D$/...` into
   `file:///D$/...` and cannot load it, a form no real share produces.
 
+Since U-011 one more place stays writable (`D:\AGENT\Forerunner`, "another drive, writable"),
+and every case checks where the self-test says downloaded dependencies go
+(`checks.voiceFolder` from `GET /voice/install`): `<install>\dependencies\voice` for the
+writable one, the case's data folder with a `voiceFolderNote` for the read-only ones. The
+uninstall leaves the folder the app made, so the script removes it before the next case.
+
 For each place it denies the user the specific write rights on the folder
 (`icacls /deny user:(OI)(CI)(WD,AD,WEA,WA,DE,DC)`; icacls' `W` and `D` would also deny
 SYNCHRONIZE and READ_CONTROL, and then no program in the folder starts), runs

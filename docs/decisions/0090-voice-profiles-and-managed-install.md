@@ -189,3 +189,30 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
   version, and nothing was hashed. Replaced by the torch-alone file and the PyPI-only lock.
 - **A second numpy pin for Python 3.10 and 3.11.** Possible with markers; rejected for one
   supported Python (above).
+
+## Amendment (2026-10-30): dependencies beside the install (U-011)
+
+**Context.** The owner installed Forerunner on D: because C: was full. The GPU profile (about
+8 GB) still went to `%LOCALAPPDATA%\forerunner\data\voice`, and pip unpacked its wheels into
+`%TEMP%`, so the install could not finish. The owner's rule: dependencies go by default into a
+dedicated subfolder of the install folder.
+
+**Decision.**
+- `resolveDependenciesDir` (`packages/runtime/src/dependencies.ts`) picks the folder, in order:
+  - `FORERUNNER_DEPENDENCIES_DIR`;
+  - `<install folder>/dependencies` when the runtime is an installer's payload and the folder
+    can be written (beside an AppImage: `Forerunner-dependencies` next to the `.AppImage`
+    file, since an AppImage's own folder is a read-only mount or a temporary extraction);
+  - the data folder, with the reason.
+- The voice venvs, models, pip cache and temporary files all live under `<deps>/voice`.
+- An update or uninstall replaces only the files the installer put in the install folder, so
+  the subfolder survives both. An uninstall leaves it, like the data folder.
+- `voice.json` keeps naming the install it describes, so earlier installs keep working; the
+  next install moves them.
+- `scripts/installed-check.*` checks the folder each installed place gives: the subfolder
+  for a writable install folder, the data folder with a note for a read-only one.
+
+**Rejected.**
+- Writing into the install folder itself: replaced by every update.
+- A folder picker before every install: the owner asked for a default.
+

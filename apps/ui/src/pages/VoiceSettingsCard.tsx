@@ -237,6 +237,21 @@ export function VoiceSettingsCard() {
               install the GPU profile again.
             </p>
           ))}
+          <p
+            className="mt-2 text-xs text-neutral-600 dark:text-neutral-400"
+            data-testid="voice-folder"
+          >
+            {v.profile && v.profile !== "none" && v.installedAt ? "Installed in" : "Installs into"}{" "}
+            <code className="font-mono">{v.folder}</code>
+          </p>
+          {v.folderNote ? (
+            <p
+              className="mt-1 text-xs text-amber-800 dark:text-amber-200"
+              data-testid="voice-folder-note"
+            >
+              {v.folderNote}
+            </p>
+          ) : null}
           {v.pythonOverride ? (
             <p
               className="mt-2 text-xs text-neutral-600 dark:text-neutral-400"

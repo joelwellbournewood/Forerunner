@@ -2401,6 +2401,8 @@ export const VOICE_INSTALL: VoiceInstallView = {
   stt: { device: "cpu", computeType: "int8", fallback: null },
   tts: { device: "cpu", computeType: null, fallback: null },
   pythonOverride: null,
+  folder: "D:\\AGENT\\Forerunner\\dependencies\\voice",
+  folderNote: null,
   job: null,
   cli: "fr voice install --cpu",
 };

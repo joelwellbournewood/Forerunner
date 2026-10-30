@@ -276,12 +276,28 @@ Which local speech stack an install has is its **voice profile**, chosen in `fr 
 The sizes are measured (`install-types.ts` says how); the catalog with the trade-offs lives in
 `VOICE_PROFILE_INFO` so the CLI question, the card and the daemon view say the same.
 
-- **Where.** `packages/runtime/src/voice/install.ts` is the one installer. A venv per profile,
-  `<data>/voice/venv-cpu` / `venv-gpu` (`<FORERUNNER_HOME>/data/...` when set), the models in
-  `<data>/voice/models` (the helpers' `HF_HOME`), and `<config>/voice.json`: the profile, what
+- **Where.** `packages/runtime/src/voice/install.ts` is the one installer. Everything it
+  downloads goes under the dependencies folder (`packages/runtime/src/dependencies.ts`,
+  `resolveDependenciesDir`; U-011 in `docs/status/UPDATE-LOG.md`):
+  - `FORERUNNER_DEPENDENCIES_DIR` when set;
+  - else `<install folder>/dependencies`, when the runtime is an installer's payload (the
+    folder above the one holding `runtime.json`) and it can be written; beside an AppImage,
+    `<folder of the .AppImage>/Forerunner-dependencies`;
+  - else the data folder, with a note saying why (`folderNote` in `GET /voice/install`).
+
+  Under it: a venv per profile, `voice/venv-cpu` / `venv-gpu`, the models in `voice/models`
+  (the helpers' `HF_HOME`), pip's cache in `voice/pip-cache` (`PIP_CACHE_DIR`) and its
+  temporary files in `voice/tmp` (`TMP`, `TEMP`, `TMPDIR`; removed after the install; 1.0.2
+  unpacked the GPU wheels into `%TEMP%` on C:). `<config>/voice.json` holds the profile, what
   was installed (venv, interpreter, the requirements file's SHA-256) and what the last check
   verified per side (`device`, `computeType`, `fallback`). No `voice.json` means the profile was
-  never chosen and the helpers run as before profiles (any Python, device `auto`).
+  never chosen and the helpers run as before profiles (any Python, device `auto`). The helpers
+  and `fr voice status` read an install where `voice.json` recorded it (`recordedVoiceRoot`:
+  only a path of the installer's own shape, `.../voice/venv-cpu|gpu`, since its folders are
+  deleted on a move or a remove), so a 1.0.2 install in `<data>/voice` keeps working. `fr setup`
+  never moves a working install. An install from Settings or `fr voice install` builds in the
+  dependencies folder and, once verified, removes the copies elsewhere. `fr voice remove`
+  removes them from every place: now, recorded, and `<data>/voice`.
 - **What** (all in `packages/voice/python`, every file pinned by sha256):
   `torch-<profile>.txt` is PyTorch alone (`2.11.0+cpu` / `+cu128`, the cp312 Windows and Linux
   x86_64 wheels), installed with `--no-deps --require-hashes` from its own index (`TORCH` in

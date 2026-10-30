@@ -12,7 +12,13 @@
  * A daemon that is running picks the new profile up at its next voice use (voice.json is read
  * every time); on Windows a venv its helpers hold is removed at the next install.
  */
-import { type AppDirs, appDirs, ForerunnerError, type Platform } from "@forerunner/platform";
+import {
+  type AppDirs,
+  appDirs,
+  dirname,
+  ForerunnerError,
+  type Platform,
+} from "@forerunner/platform";
 import type { Command } from "commander";
 import {
   detectNvidiaGpu,
@@ -21,6 +27,7 @@ import {
   parseVoiceProfileAnswer,
   readVoiceSettings,
   recommendedProfile,
+  recordedVoiceRoot,
   removeVoice,
   VOICE_PROFILE_QUESTION,
   type VoiceProcRunner,
@@ -194,7 +201,8 @@ export function registerVoiceCli(program: Command, deps: VoiceCliDeps): void {
         tts: s?.verified?.tts ?? null,
         verifiedAt: s?.verified?.at ?? null,
         venv: s?.install?.venv ?? null,
-        models: voiceDirs(dirs).models,
+        // Where the install was made (voice.json, U-011); 1.0.2's data folder without one.
+        models: voiceDirs(dirs, dirname(recordedVoiceRoot(s) ?? voiceDirs(dirs).root)).models,
         pythonOverride: deps.env.FORERUNNER_PYTHON?.trim() || null,
         gpu,
       };

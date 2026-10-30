@@ -2,11 +2,15 @@
  * The local voice stack's installer (ADR 0090): `fr voice install [--cpu|--gpu]`,
  * `fr voice remove`, `fr setup --voice`, and the daemon's `POST /voice/install` all run this.
  *
- * A profile is a managed venv under the data directory (`<data>/voice/venv-<profile>`, one per
- * profile, so a switch never rewrites the interpreter a running helper uses), the pinned
- * hashed pins of `packages/voice/python` (torch-<profile>.txt alone from the PyTorch index,
- * requirements-<profile>.txt from PyPI only, pip.txt), the models in `<data>/voice/models`
- * (HF_HOME for the helpers), and a verify run of both helpers on the profile's device. What is
+ * A profile is a managed venv under the dependencies folder (`<deps>/voice/venv-<profile>`, one
+ * per profile, so a switch never rewrites the interpreter a running helper uses; `<deps>` is
+ * `<install folder>/dependencies` by default and the data folder when the install folder cannot
+ * be written, `dependencies.ts`, U-011), the pinned hashed pins of `packages/voice/python`
+ * (torch-<profile>.txt alone from the PyTorch index, requirements-<profile>.txt from PyPI only,
+ * pip.txt), the models in `<deps>/voice/models` (HF_HOME for the helpers), pip's cache and
+ * temporary files in `<deps>/voice/pip-cache` and `<deps>/voice/tmp` (a GPU install unpacks
+ * several GB, which a full C: refused), and a verify run of both helpers on the profile's
+ * device. What is
  * installed and verified is written to `<config>/voice.json`, which the daemon's local
  * providers read at every use (local-profile.ts).
  *
@@ -34,6 +38,7 @@ import {
 } from "node:fs";
 import {
   type AppDirs,
+  basename,
   type Clock,
   currentPlatform,
   dirname,
@@ -54,6 +59,7 @@ import {
   TTS_IN,
   TTS_OUT,
 } from "@forerunner/voice";
+import { type DependenciesDir, resolveDependenciesDir } from "../dependencies.ts";
 import {
   type GpuView,
   VOICE_PROFILE_INFO,
@@ -92,17 +98,27 @@ export type InstalledProfile = Exclude<VoiceProfile, "none">;
 export interface VoiceDirs {
   root: string;
   models: string;
+  /** pip's download cache (PIP_CACHE_DIR), kept for a re-run. */
+  pipCache: string;
+  /** TMP, TEMP and TMPDIR of the install's processes; removed after the install. */
+  tmp: string;
   venv(profile: InstalledProfile): string;
   /** `<config>/voice.json`: the profile and what was installed and verified. */
   settings: string;
   lock: string;
 }
 
-export function voiceDirs(dirs: AppDirs): VoiceDirs {
-  const root = join(dirs.data, "voice");
+/**
+ * The voice folders under `dependenciesDir` (`resolveDependenciesDir`; the data folder by
+ * default, where 1.0.2 put them). `settings` stays in the config folder.
+ */
+export function voiceDirs(dirs: AppDirs, dependenciesDir: string = dirs.data): VoiceDirs {
+  const root = join(dependenciesDir, "voice");
   return {
     root,
     models: join(root, "models"),
+    pipCache: join(root, "pip-cache"),
+    tmp: join(root, "tmp"),
     venv: (profile) => join(root, `venv-${profile}`),
     settings: join(dirs.config, "voice.json"),
     lock: join(root, "install.lock"),
@@ -319,6 +335,19 @@ export interface VoiceSettings {
   };
   verified?: { at: string; stt: VoiceDeviceView; tts: VoiceDeviceView };
   gpu?: { name: string | null; driver: string | null } | null;
+}
+
+/**
+ * The voice folder an install recorded in voice.json (the parent of its venv), so an install
+ * keeps working where it was made whatever the default is now; null without a record. Only a
+ * path of the shape this installer writes (`.../voice/venv-cpu|gpu`) counts: the folders under
+ * it are deleted on a move or a remove, so an edited file never names another folder.
+ */
+export function recordedVoiceRoot(settings: VoiceSettings | null): string | null {
+  const venv = settings?.install?.venv;
+  if (!venv || !/^venv-(cpu|gpu)$/.test(basename(venv))) return null;
+  const root = dirname(venv);
+  return basename(root) === "voice" ? root : null;
 }
 
 export function readVoiceSettings(dirs: AppDirs): VoiceSettings | null {
@@ -651,6 +680,14 @@ export interface InstallDeps {
   ifChanged?: boolean;
   gpu?: GpuView;
   signal?: AbortSignal;
+  /** Where the packages and models go; `resolveDependenciesDir(env, dirs)` by default (U-011). */
+  dependencies?: DependenciesDir;
+}
+
+/** The voice folders of every place an install may have put them: now, recorded, 1.0.2's. */
+function voiceRootsOf(deps: InstallDeps, current: VoiceSettings | null, root: string): string[] {
+  const roots = [root, recordedVoiceRoot(current), voiceDirs(deps.dirs).root];
+  return [...new Set(roots.filter((r): r is string => !!r))];
 }
 
 export interface InstallResult {
@@ -778,7 +815,8 @@ export async function installVoice(
   const run = deps.run ?? defaultVoiceRunner;
   const clock = deps.clock ?? systemClock;
   const helpersDir = deps.helpersDir ?? DEFAULT_HELPERS_DIR;
-  const vd = voiceDirs(deps.dirs);
+  const dependencies = deps.dependencies ?? resolveDependenciesDir(deps.env, deps.dirs);
+  const vd = voiceDirs(deps.dirs, dependencies.dir);
   const venv = vd.venv(profile);
   const vpy = venvPythonPath(venv, platform);
   const reqFile = requirementsFile(profile, helpersDir);
@@ -797,12 +835,13 @@ export async function installVoice(
     return { ok: exitCode !== 1, exitCode, profile, message };
   };
 
+  // Up to date where it was installed: `fr setup` never moves a working install.
   if (
     deps.ifChanged &&
     current?.profile === profile &&
     current.verified &&
     current.install?.requirementsSha256 === reqSha &&
-    existsSync(vpy)
+    existsSync(venvPythonPath(current.install.venv, platform))
   ) {
     out({
       type: "log",
@@ -818,9 +857,16 @@ export async function installVoice(
     // environment could otherwise offer a same-named package (the hashes would refuse it, but
     // nothing else is ever consulted).
     const { PIP_EXTRA_INDEX_URL: _extra, PIP_FIND_LINKS: _links, ...inherited } = deps.env;
+    // Everything the install writes stays in the dependencies folder, temporary files and
+    // pip's cache included (U-011: with C: full, pip failed unpacking into %TEMP%).
+    mkdirSync(vd.tmp, { recursive: true });
     const env: NodeJS.ProcessEnv = {
       ...inherited,
       HF_HOME: vd.models,
+      PIP_CACHE_DIR: vd.pipCache,
+      TMP: vd.tmp,
+      TEMP: vd.tmp,
+      TMPDIR: vd.tmp,
       PIP_NO_INPUT: "1",
       PYTHONUTF8: "1",
       PYTHONIOENCODING: "utf-8",
@@ -862,6 +908,8 @@ export async function installVoice(
           ),
         );
     };
+    out({ type: "log", message: `dependencies folder: ${vd.root}` });
+    if (dependencies.note) out({ type: "warning", message: dependencies.note });
     // 1. The venv: reused when its interpreter runs, made again when it does not.
     out({ type: "step", step: "venv", message: `managed Python environment: ${venv}` });
     let pythonVersion: string | null = null;
@@ -1182,22 +1230,31 @@ export async function installVoice(
       gpu: gpu.present ? { name: gpu.name, driver: gpu.driver } : null,
     });
 
-    // 5. The other profile's venv goes once this one works.
-    const others = (["cpu", "gpu"] as const).filter((p) => p !== profile && existsSync(vd.venv(p)));
-    if (others.length) {
+    // 5. The other profile's venv goes once this one works, and so does a copy of the voice
+    // folders in another place (recorded by an earlier install, or 1.0.2's data folder).
+    const stale = [
+      ...(["cpu", "gpu"] as const).filter((p) => p !== profile).map((p) => vd.venv(p)),
+      ...voiceRootsOf(deps, current, vd.root)
+        .filter((r) => r !== vd.root)
+        .flatMap((r) => {
+          const old = voiceDirs(deps.dirs, dirname(r));
+          return [old.venv("cpu"), old.venv("gpu"), old.models, old.pipCache, old.tmp];
+        }),
+    ].filter((p) => existsSync(p));
+    if (stale.length) {
       out({
         type: "step",
         step: "cleanup",
-        message: `removing the ${others.join(" and ")} environment`,
+        message: `removing what this install replaces: ${stale.join(", ")}`,
       });
       await deps.beforeCleanup?.();
-      for (const p of others) {
+      for (const p of stale) {
         try {
-          rmSync(vd.venv(p), { recursive: true, force: true });
+          rmSync(p, { recursive: true, force: true });
         } catch (e) {
           out({
             type: "warning",
-            message: `could not remove ${vd.venv(p)} (${errorMessage(e)}); it may be in use by a running daemon. It is removed at the next install.`,
+            message: `could not remove ${p} (${errorMessage(e)}); it may be in use by a running daemon. It is removed at the next install.`,
           });
         }
       }
@@ -1215,6 +1272,7 @@ export async function installVoice(
     out({ type: "error", message });
     return finish(1, `voice profile ${profile} not installed: ${message.split("\n")[0]}`);
   } finally {
+    rmSync(vd.tmp, { recursive: true, force: true });
     release?.();
   }
 }
@@ -1223,7 +1281,8 @@ export async function installVoice(
 export async function removeVoice(deps: InstallDeps): Promise<InstallResult> {
   const out = deps.out;
   const clock = deps.clock ?? systemClock;
-  const vd = voiceDirs(deps.dirs);
+  const dependencies = deps.dependencies ?? resolveDependenciesDir(deps.env, deps.dirs);
+  const vd = voiceDirs(deps.dirs, dependencies.dir);
   let release: (() => void) | null = null;
   const finish = (exitCode: 0 | 1, message: string): InstallResult => {
     out({ type: "result", ok: exitCode === 0, profile: "none", exitCode, message });
@@ -1239,7 +1298,13 @@ export async function removeVoice(deps: InstallDeps): Promise<InstallResult> {
       updatedAt: clock.nowIso(),
       gpu: previous?.gpu ?? null,
     });
-    const targets = [vd.venv("cpu"), vd.venv("gpu"), vd.models].filter((p) => existsSync(p));
+    // Every place an install may have put them: now, recorded in voice.json, 1.0.2's.
+    const targets = voiceRootsOf(deps, previous, vd.root)
+      .flatMap((r) => {
+        const d = voiceDirs(deps.dirs, dirname(r));
+        return [d.venv("cpu"), d.venv("gpu"), d.models, d.pipCache, d.tmp];
+      })
+      .filter((p) => existsSync(p));
     if (targets.length) await deps.beforeCleanup?.();
     const left: string[] = [];
     for (const t of targets) {

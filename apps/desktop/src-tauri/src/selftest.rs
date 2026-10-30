@@ -3,9 +3,10 @@
 //! and without touching a daemon that is already running, and say whether it came up. Tauri's
 //! own `resource_dir()` finds the runtime (the call that returned the verbatim `\\?\D:\...`
 //! path 1.0.1 died on), `install::locate_fr` builds the command, `supervisor::spawn_daemon` starts
-//! it and `wait_for_daemon` waits for `/health`; then `/me` and `/setup` must answer and the
-//! daemon is stopped again. The result is one JSON object, printed and, with `--report`, written
-//! to a file (a release build on Windows has no console). Exit code 0 when it passed, 1 when not.
+//! it and `wait_for_daemon` waits for `/health`; then `/me`, `/setup` and `/voice/install` must
+//! answer (the last reports where dependencies go, U-011) and the daemon is stopped again. The
+//! result is one JSON object, printed and, with `--report`, written to a file (a release build
+//! on Windows has no console). Exit code 0 when it passed, 1 when not.
 //! CI installs the real MSI, `.deb` and AppImage into awkward places and runs this
 //! (`scripts/installed-check.*`), so an installer that cannot start is never published.
 
@@ -194,7 +195,20 @@ async fn answers(client: &DaemonClient, bundled: &str, running: &str) -> Result<
     if status != 200 || !setup.get("showAssistant").is_some_and(Value::is_boolean) {
         return Err(format!("/setup answered {status} without showAssistant"));
     }
-    Ok(json!({ "health": true, "me": true, "setup": true }))
+    // Where downloaded dependencies go (U-011): the install folder's `dependencies` subfolder
+    // when it can be written, else the data folder with the reason. Reported for
+    // `scripts/installed-check.*`, which knows which of the two each place should give.
+    let (status, voice) = client.get_json("/voice/install").await?;
+    let Some(folder) = voice.get("folder").and_then(Value::as_str) else {
+        return Err(format!("/voice/install answered {status} without folder"));
+    };
+    Ok(json!({
+        "health": true,
+        "me": true,
+        "setup": true,
+        "voiceFolder": folder,
+        "voiceFolderNote": voice.get("folderNote").cloned().unwrap_or(Value::Null),
+    }))
 }
 
 #[cfg(test)]

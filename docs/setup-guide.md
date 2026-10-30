@@ -163,8 +163,15 @@ approval before it does anything.
 size of each choice; **Switch** installs the other one with its progress in the card (close any
 voice conversation first). From a terminal: `fr voice install --cpu` or `--gpu`,
 `fr voice remove` (turns local voice off and deletes its packages and models), and
-`fr voice status`. The packages live in your data folder (`voice/venv-cpu` or `voice/venv-gpu`)
-with the models in `voice/models`; nothing is installed into your system Python. If the GPU
+`fr voice status`. The packages and models go into a `dependencies` folder inside the folder
+Forerunner is installed in, for example `D:\AGENT\Forerunner\dependencies\voice`, so
+installing Forerunner on another drive keeps the large GPU download (about 8 GB) off C: too.
+pip's download cache and temporary files go there as well. When that folder cannot be written
+(Forerunner in `C:\Program Files`, or the Linux `.deb`), they go to your data folder instead and
+Settings → Voice says so; beside an AppImage they go into `Forerunner-dependencies` next to the
+`.AppImage` file. Settings → Voice shows the folder. Nothing is installed into your system
+Python. A voice install from before 1.0.3 keeps working where it is and moves at its next
+install. If the GPU
 check fails, `fr voice install --gpu` prints a `WARNING` with the reason and voice keeps working
 on the CPU; after updating the NVIDIA driver, run it again.
 

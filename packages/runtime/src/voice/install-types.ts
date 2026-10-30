@@ -140,6 +140,14 @@ export const VoiceInstallView = z.object({
   tts: VoiceDeviceView.nullable(),
   /** FORERUNNER_PYTHON is set: the helpers use that interpreter, not the managed venv. */
   pythonOverride: z.string().nullable(),
+  /**
+   * The voice folder (U-011): where the installed profile is, else where the next install goes
+   * (`<install folder>/dependencies/voice` by default, the data folder when the install folder
+   * cannot be written).
+   */
+  folder: z.string(),
+  /** Why the folder is the data folder although the app is installed; null otherwise. */
+  folderNote: z.string().nullable(),
   job: VoiceInstallJobView.nullable(),
   /** The same change from a terminal. */
   cli: z.string(),

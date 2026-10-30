@@ -41,6 +41,32 @@ describe("Settings: voice", () => {
     const none = await profileRow("none");
     expect(within(none).getByTestId("voice-profile-switch")).toHaveTextContent("Turn off");
     expect(within(card).getByTestId("voice-cli")).toHaveTextContent("fr voice install --cpu");
+    // U-011: where the packages and models are, beside the install by default.
+    expect(within(card).getByTestId("voice-folder")).toHaveTextContent(
+      "Installed in D:\\AGENT\\Forerunner\\dependencies\\voice",
+    );
+    expect(within(card).queryByTestId("voice-folder-note")).not.toBeInTheDocument();
+  });
+
+  it("says why voice goes to the data folder when the install folder cannot be written (U-011)", async () => {
+    const note =
+      "The install folder C:\\Program Files\\Forerunner cannot be written (EPERM), so dependencies go to the data folder.";
+    renderApp(
+      "/settings",
+      createHarness({
+        voiceInstall: {
+          profile: null,
+          installedAt: null,
+          folder: "C:\\Users\\me\\AppData\\Local\\forerunner\\data\\voice",
+          folderNote: note,
+        },
+      }),
+    );
+    const card = await screen.findByTestId("voice-settings");
+    expect(await within(card).findByTestId("voice-folder")).toHaveTextContent(
+      "Installs into C:\\Users\\me\\AppData\\Local\\forerunner\\data\\voice",
+    );
+    expect(within(card).getByTestId("voice-folder-note")).toHaveTextContent(note);
   });
 
   it("a switch is confirmed first, then streams the install's progress and shows the new devices", async () => {

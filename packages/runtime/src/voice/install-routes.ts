@@ -16,13 +16,16 @@ import {
 } from "@forerunner/platform";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { type DependenciesDir, resolveDependenciesDir } from "../dependencies.ts";
 import {
   detectNvidiaGpu,
   type InstallDeps,
   installVoice,
   readVoiceSettings,
   recommendedProfile,
+  recordedVoiceRoot,
   type VoiceProcRunner,
+  voiceDirs,
 } from "./install.ts";
 import {
   type GpuView,
@@ -48,6 +51,8 @@ export interface VoiceInstallJobsDeps {
   /** Stops the local helpers (LocalVoice.release). */
   release: () => Promise<void>;
   detectGpu?: () => Promise<GpuView>;
+  /** Where the next install goes (U-011); `resolveDependenciesDir(env, dirs)` by default. */
+  dependencies?: () => DependenciesDir;
 }
 
 interface Job {
@@ -70,8 +75,17 @@ export class VoiceInstallJobs {
   /** Called with each event, and with null when the job has ended. */
   private listeners = new Set<(e: VoiceInstallEntryView | null) => void>();
   private gpu: GpuView | null = null;
+  private dependencies: DependenciesDir | null = null;
 
   constructor(private readonly deps: VoiceInstallJobsDeps) {}
+
+  /** Resolved once: whether the install folder can be written does not change while running. */
+  private dependenciesDir(): DependenciesDir {
+    this.dependencies ??= (
+      this.deps.dependencies ?? (() => resolveDependenciesDir(this.deps.env, this.deps.dirs))
+    )();
+    return this.dependencies;
+  }
 
   private async gpuView(refresh = false): Promise<GpuView> {
     if (!this.gpu || refresh)
@@ -86,6 +100,8 @@ export class VoiceInstallJobs {
     const s = readVoiceSettings(this.deps.dirs);
     const gpu = await this.gpuView();
     const profile = s?.profile ?? null;
+    const recorded = s?.profile && s.profile !== "none" ? recordedVoiceRoot(s) : null;
+    const next = this.dependenciesDir();
     return {
       profile,
       profiles: VOICE_PROFILES.map((p) => ({ ...VOICE_PROFILE_INFO[p] })),
@@ -96,6 +112,8 @@ export class VoiceInstallJobs {
       stt: s?.verified?.stt ?? null,
       tts: s?.verified?.tts ?? null,
       pythonOverride: this.deps.env.FORERUNNER_PYTHON?.trim() || null,
+      folder: recorded ?? voiceDirs(this.deps.dirs, next.dir).root,
+      folderNote: recorded ? null : next.note,
       job: this.jobView(),
       cli: voiceInstallCommand(profile ?? recommendedProfile(gpu)),
     };
@@ -157,6 +175,7 @@ export class VoiceInstallJobs {
       out,
       beforeCleanup: () => this.deps.release(),
       signal: job.abort.signal,
+      dependencies: this.dependenciesDir(),
       ...(this.deps.platform ? { platform: this.deps.platform } : {}),
       ...(this.deps.run ? { run: this.deps.run } : {}),
     };

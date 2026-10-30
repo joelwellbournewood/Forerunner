@@ -14,9 +14,11 @@ work="$(mktemp -d)"
 fail=0
 summary=()
 
+# run_case <name> <expected dependencies folder, or "data"> <command...>
 run_case() {
   local name="$1"
-  shift
+  local want="$2"
+  shift 2
   local home="$work/home $RANDOM"
   local report="$work/report-$RANDOM.json"
   mkdir -p "$home"
@@ -25,9 +27,20 @@ run_case() {
   FORERUNNER_HOME="$home" "$@" --self-test --report "$report"
   local code=$?
   set -e
-  if [ "$code" -eq 0 ] && grep -q '"ok": true' "$report" 2>/dev/null; then
-    summary+=("- $name: ok")
+  # Where downloaded dependencies go (U-011): beside the install when it can be written, else
+  # the data folder (under this case's FORERUNNER_HOME) with the reason.
+  local folder=""
+  [ -f "$report" ] && folder="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("checks",{}).get("voiceFolder",""))' "$report")"
+  local placed=1
+  if [ "$want" = "data" ]; then
+    case "$folder" in "$home"/*) placed=0 ;; esac
+  elif [ "$folder" = "$want" ]; then
+    placed=0
+  fi
+  if [ "$code" -eq 0 ] && grep -q '"ok": true' "$report" 2>/dev/null && [ "$placed" -eq 0 ]; then
+    summary+=("- $name: ok (dependencies in $folder)")
   else
+    echo "dependencies folder: $folder, expected $want"
     echo "self-test exit $code"
     [ -f "$report" ] && cat "$report"
     summary+=("- $name: FAILED (exit $code)")
@@ -41,7 +54,7 @@ if [ "$(id -u)" -eq 0 ]; then
   echo "run this as a non-root user: the install folder must be read-only for the app" >&2
   exit 2
 fi
-run_case ".deb in /usr/lib (read-only)" /usr/bin/forerunner-desktop
+run_case ".deb in /usr/lib (read-only)" data /usr/bin/forerunner-desktop
 sudo apt-get remove -y forerunner >/dev/null || sudo dpkg -r forerunner >/dev/null || true
 
 # 2. The AppImage from a folder with spaces and non-ASCII letters. Without FUSE (CI) it
@@ -50,7 +63,8 @@ dir="$work/My Apps/Forerünner Ä"
 mkdir -p "$dir"
 cp "$appimage" "$dir/Forerunner.AppImage"
 chmod +x "$dir/Forerunner.AppImage"
-APPIMAGE_EXTRACT_AND_RUN=1 run_case "AppImage from a folder with spaces and non-ASCII" "$dir/Forerunner.AppImage"
+APPIMAGE_EXTRACT_AND_RUN=1 run_case "AppImage from a folder with spaces and non-ASCII" \
+  "$dir/Forerunner-dependencies/voice" "$dir/Forerunner.AppImage"
 
 printf '%s\n' "${summary[@]}"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
