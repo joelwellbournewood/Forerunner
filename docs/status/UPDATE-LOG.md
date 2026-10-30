@@ -45,7 +45,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-008 | 2026-10-30, 1.0.2 | (Cause of U-003 to U-006.) The app's screen tests run against a stand-in service that drifted from the real one, so they passed while the real app failed. | A test runs the app's own client against the real service for these screens and for the read calls of every screen. | open |
 | U-009 | 2026-10-30, 1.0.2 | A session ends as soon as it starts and spends nothing, without saying why | The Start dialog says beforehand when no task is ready and how to give the agent work; the session's summary says the same. | open |
 | U-010 | 2026-10-30, 1.0.2 | Moving a task or editing a milestone always asks for a reason, and nothing happens until you type one | The reason becomes optional. Left empty, the app records one for you (what changed, from the app), so the history the agent reads stays complete. | open |
-| U-011 | 2026-10-30, 1.0.2 | The GPU voice install (about 8 GB) always goes to `C:\Users\<you>\AppData\Local\forerunner\data\voice`, even when Forerunner is installed on another drive | Proposed: Settings → Voice lets you choose the folder for voice (default unchanged), for example on the drive Forerunner is installed on. Waiting for the owner's go-ahead. | open |
+| U-011 | 2026-10-30, 1.0.2 | The GPU voice install (about 8 GB) always goes to `C:\Users\<you>\AppData\Local\forerunner\data\voice`, even when Forerunner is installed on another drive whose space was the point | Owner's decision: downloaded dependencies go by default into a dedicated `dependencies` subfolder of the install folder; pip's cache and temporary files go there too; the data folder only when the install folder cannot be written. | open |
 
 ### U-003 Starting a session reports a contract error
 
@@ -172,11 +172,19 @@ stands. Each entry says what you see first, then the cause and the fix for maint
     (settings, data, logs). After that the app starts as a new install.
 - **What is wrong:** someone who installs on D: to keep C: free has no way to put the largest
   download on D: too.
-- **Proposed action (not started; waits for the owner):**
-  - Settings → Voice gets a "Voice folder" choice before an install, kept in `voice.json`;
-  - the default stays `<data>\voice`;
-  - a folder inside the install folder is refused, with the reason;
-  - switching folders moves or reinstalls the packages.
+- **Owner's decision (2026-10-30):** "dependencies by default being stored in the same folder,
+  in a dedicated subfolder, as the install. My C drive was full."
+- **Action:**
+  - Downloaded dependencies go into `<install folder>\dependencies` by default, for example
+    `D:\AGENT\Forerunner\dependencies\voice` for the voice packages and models.
+  - pip's download cache and its temporary files (a GPU install unpacks several GB) go there
+    too, so a full C: no longer stops the install.
+  - The data folder is used only when the install folder cannot be written (Program Files
+    for a normal user, `/usr/lib` and the AppImage on Linux), and Settings → Voice says why.
+  - `FORERUNNER_DEPENDENCIES_DIR` overrides both.
+  - An existing install keeps working where `voice.json` recorded it. A new install into the
+    new folder removes the old copy once the new one is verified.
+  - Settings → Voice shows the folder.
 - **Status:** open.
 
 ## Released
