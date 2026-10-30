@@ -129,8 +129,13 @@ Strictness, by directory (decision recorded below):
 `resolveRegistryDir(env)` returns `{ dir, source }`: `FORERUNNER_REGISTRY_DIR` when set
 (`env`); the checkout's `evals/registry` when the runtime runs from the repository, found by
 walking up from the loader's own file to the `evals/registry/specialists` marker (`repo`);
-otherwise `appDirs().data/registry` (`app`), the bundled copy the installer and
-`scripts/sync-registry.ts` keep there.
+when that checkout also has `runtime.json` it is the runtime a desktop installer carries (ADR
+0092), whose directory may be read-only, so the answer is `appDirs().data/registry`
+(`bundled`) with `seed` naming the installer's copy, and compose runs `seedRegistry(seed, dir)`
+before loading: every file of the seed is written, files only the install has (proposals,
+promoted specialists) are kept, and a file the last seed brought (`.bundled.json`) that the new
+one lacks is removed; otherwise `appDirs().data/registry` (`app`) as it is.
+`registry-seed.test.ts` covers the order and the seeding.
 
 `readSpecialistFile` and `readPromptDefFile` are exported for tools that validate one file;
 `validateSpecialistText(text, file, registryDir, location, opts)` runs the same checks on
@@ -390,7 +395,7 @@ whose hash moved since then unless `--force` is given, so edits made in the wron
 noticed rather than lost. The second repository itself is still a blocker in
 `docs/status/BLOCKERS.md`.
 Installed apps receive the registry as part of the release (copied to
-`appDirs().data/registry`); `FORERUNNER_REGISTRY_DIR` points a running instance at a checkout
+`appDirs().data/registry` at every start, `seedRegistry`); `FORERUNNER_REGISTRY_DIR` points a running instance at a checkout
 for development. Prompts and task files are text with LF endings (`.gitattributes`), so hashes
 agree across platforms.
 

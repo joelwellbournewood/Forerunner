@@ -166,7 +166,9 @@ after the UI build; it writes `apps/desktop/src-tauri/runtime/` (gitignored), wh
 5. copies the Node binary that runs the builder (`--node <path>` for another) to
    `node/node[.exe]` and checks it runs;
 6. writes `runtime.json` (`schema`, `version`, `platform`, `arch`, `node`, `entry`) last; the
-   shell reads its version.
+   shell reads its version, and the runtime takes it as the sign that it runs from an install
+   (the registry then lives in `<data>/registry`, seeded from the bundle at every start;
+   `adding-a-specialist.md`).
 
 The result on Linux x64 (1.0.0 sources, Node 22.22): 6,535 files, 471 MiB, most of it the
 Agent SDK's native `claude` (280 MB) and Node (118 MB); the `.deb` is 196 MiB. The payload is

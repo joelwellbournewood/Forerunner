@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   appDirs,
@@ -442,12 +451,26 @@ export function loadRegistry(dir: string, opts: LoadRegistryOptions = {}): Regis
   };
 }
 
-export type RegistrySource = "env" | "repo" | "app";
+export type RegistrySource = "env" | "repo" | "bundled" | "app";
 
 export interface ResolvedRegistryDir {
   dir: string;
   source: RegistrySource;
+  /**
+   * `bundled`: the registry the desktop installer carries, read-only where the app is installed;
+   * `seedRegistry(seed, dir)` copies it into the writable `dir` at start (ADR 0092).
+   */
+  seed?: string;
 }
+
+/**
+ * The file the runtime payload of the desktop installers carries at its root
+ * (`scripts/build-runtime-payload.mjs`, ADR 0092). A checkout with it is an installed app, not a
+ * development checkout: its directory may be read-only (Program Files, /usr/lib).
+ */
+export const BUNDLED_RUNTIME_MARKER = "runtime.json";
+/** In a seeded registry: the bundle's files as of the last seeding, so a dropped one is removed. */
+export const SEED_MANIFEST = ".bundled.json";
 
 export interface ResolveRegistryOptions {
   /** Where to start the upward search for a repository checkout. Default: this file's directory. */
@@ -463,8 +486,10 @@ export const REPO_REGISTRY_MARKER = join(EVALS_DIR, "registry", SPECIALISTS_DIR)
 
 /**
  * Where the registry lives, in order: `FORERUNNER_REGISTRY_DIR`; the checkout's `evals/registry`
- * when the runtime runs from the repository; otherwise the app's bundled copy under
- * `appDirs().data/registry` (kept there by `scripts/sync-registry.ts`).
+ * when the runtime runs from the repository; `appDirs().data/registry` seeded from the
+ * installer's copy when the runtime is the one a desktop installer carries (the checkout has
+ * `runtime.json`; proposals and promotions write into the registry, and the install directory
+ * is read-only); otherwise `appDirs().data/registry` as it is.
  */
 export function resolveRegistryDir(
   env: NodeJS.ProcessEnv = process.env,
@@ -476,11 +501,73 @@ export function resolveRegistryDir(
   let current = opts.startDir ?? dirname(fileURLToPath(import.meta.url));
   for (let depth = 0; depth < (opts.maxDepth ?? 8); depth++) {
     if (exists(join(current, REPO_REGISTRY_MARKER))) {
-      return { dir: join(current, EVALS_DIR, "registry"), source: "repo" };
+      const seed = join(current, EVALS_DIR, "registry");
+      if (exists(join(current, BUNDLED_RUNTIME_MARKER))) {
+        return { dir: join(appDirs({ env }).data, "registry"), source: "bundled", seed };
+      }
+      return { dir: seed, source: "repo" };
     }
     const parent = dirname(current);
     if (parent === current) break;
     current = parent;
   }
   return { dir: join(appDirs({ env }).data, "registry"), source: "app" };
+}
+
+export interface SeedReport {
+  copied: number;
+  removed: number;
+}
+
+function listFiles(root: string, rel = ""): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(join(root, fromPosix(rel)), { withFileTypes: true })) {
+    const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...listFiles(root, childRel));
+    else if (entry.isFile()) out.push(childRel);
+  }
+  return out;
+}
+
+/**
+ * Copy the installer's registry (`seed`) into the writable `dir` (ADR 0092). Every file of the
+ * seed is written, so a new release's prompts and specialists replace the old ones; files that
+ * exist only in `dir` (proposals under `proposed/`, promoted specialists, which the registry
+ * only ever adds) are kept; a file an earlier seed brought and this one no longer has is
+ * removed (`SEED_MANIFEST` lists the last seed's files). Paths in the manifest are POSIX.
+ */
+export function seedRegistry(seed: string, dir: string): SeedReport {
+  const files = listFiles(seed)
+    .filter((f) => f !== SEED_MANIFEST)
+    .sort();
+  const manifestPath = join(dir, SEED_MANIFEST);
+  let previous: string[] = [];
+  if (existsSync(manifestPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as { files?: unknown };
+      if (Array.isArray(parsed.files)) {
+        previous = parsed.files.filter((f): f is string => typeof f === "string");
+      }
+    } catch {
+      previous = [];
+    }
+  }
+  for (const rel of files) {
+    const target = join(dir, fromPosix(rel));
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(join(seed, fromPosix(rel)), target);
+  }
+  const current = new Set(files);
+  let removed = 0;
+  for (const rel of previous) {
+    // Only names the seed brought, never one that walks out of the registry.
+    if (current.has(rel) || rel.split("/").includes("..") || rel.startsWith("/")) continue;
+    const target = join(dir, fromPosix(rel));
+    if (existsSync(target)) {
+      rmSync(target, { force: true });
+      removed++;
+    }
+  }
+  writeFileSync(manifestPath, `${JSON.stringify({ schema: 1, files }, null, 2)}\n`);
+  return { copied: files.length, removed };
 }

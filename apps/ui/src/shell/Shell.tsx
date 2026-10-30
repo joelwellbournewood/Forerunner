@@ -388,8 +388,14 @@ export function Shell() {
               className="w-full rounded bg-blue-50 px-2 py-1 text-xs text-blue-900 dark:bg-blue-950 dark:text-blue-200"
               data-testid="restart-banner"
             >
-              Daemon restarting ({state.restart.reason}): {state.restart.fromVersion} →{" "}
-              {state.restart.targetVersion}. The app reconnects on its own.
+              {state.restart.reason === "setup" ? (
+                "Restarting the background service to use your new keys. The app reconnects on its own."
+              ) : (
+                <>
+                  Daemon restarting ({state.restart.reason}): {state.restart.fromVersion} →{" "}
+                  {state.restart.targetVersion}. The app reconnects on its own.
+                </>
+              )}
             </output>
           ) : null}
         </header>

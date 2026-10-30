@@ -50,6 +50,13 @@ the keys into the app, and everything is up to date.
    catalog, registry and voice helpers relative to its own files, so they work unchanged. A
    development build has no payload: `build.rs` creates an empty `runtime/` so the resource entry
    stays valid.
+
+   The install directory is read-only (Program Files, `/usr/lib`), but specialist proposals and
+   promotions write into the registry. So when the checkout carries `runtime.json`,
+   `resolveRegistryDir` answers `<data>/registry` (`bundled`). At every start, compose's
+   `seedRegistry` copies the bundle's registry into it: the bundle's files are written, files
+   only the install added are kept, and files a previous bundle brought and this one dropped are
+   removed (`.bundled.json`).
 2. **The shell prefers the bundled runtime** (`install.rs`). The lookup order is:
    1. the staged update, unless it is older than the bundle (an installer run over an older
       in-app update);

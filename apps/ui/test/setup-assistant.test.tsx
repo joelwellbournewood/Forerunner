@@ -113,6 +113,19 @@ describe("setup assistant", () => {
     expect(postedCalls(harness, "/setup/finish")).toHaveLength(1);
   });
 
+  it("the restart after setup is announced as such, not as an update", async () => {
+    const harness = createHarness();
+    renderApp("/settings", harness);
+    await screen.findByRole("heading", { name: "Settings" });
+    harness.store.dispatch({
+      type: "restart",
+      restart: { reason: "setup", targetVersion: "1.0.1", fromVersion: "1.0.1", exitCode: 86 },
+    });
+    const banner = await screen.findByTestId("restart-banner");
+    expect(banner).toHaveTextContent("to use your new keys");
+    expect(banner).not.toHaveTextContent("1.0.1 → 1.0.1");
+  });
+
   it("set up later closes the assistant without a restart", async () => {
     const user = userEvent.setup();
     const harness = createHarness(FRESH);

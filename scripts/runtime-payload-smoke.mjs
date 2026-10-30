@@ -3,7 +3,7 @@
 // `from_bundled`: its own node, tsx, the CLI, cwd and TSX_TSCONFIG_PATH set to the payload) in
 // an empty FORERUNNER_HOME, waits for daemon.json, and checks that the daemon answers
 // `GET /health` with the payload's version, `GET /me` with `desktopDeviceId` and `GET /setup`
-// with the assistant open. Then stops it. CI runs it on Windows and Linux after `tauri build`,
+// with the assistant open, with the registry seeded into the data folder. Then stops it. CI runs it on Windows and Linux after `tauri build`,
 // so a payload that cannot start never reaches an installer.
 //
 // Usage: node scripts/runtime-payload-smoke.mjs [payload dir]
@@ -96,6 +96,10 @@ async function main() {
   }
   const me = await get("/me");
   if (typeof me.desktopDeviceId !== "string") throw new Error("/me has no desktopDeviceId");
+  // The installed runtime's registry is a writable copy in the data folder (ADR 0092).
+  if (!existsSync(path.join(home, "data", "registry", ".bundled.json"))) {
+    throw new Error("the registry was not seeded into the data folder");
+  }
   const setup = await get("/setup");
   if (setup.showAssistant !== true)
     throw new Error("/setup does not open the assistant on a fresh install");

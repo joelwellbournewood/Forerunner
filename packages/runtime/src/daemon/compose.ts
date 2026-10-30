@@ -175,6 +175,7 @@ import {
   resolveRegistryDir,
   type SpecialistDef,
   type SpecialistDriver,
+  seedRegistry,
   TOOL_UNMAPPED_AUDIT,
 } from "../registry/index.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
@@ -1142,6 +1143,19 @@ export class DynamicCaps implements CapsPort {
   }
 }
 
+/**
+ * The registry directory `resolveRegistryDir` names; the runtime a desktop installer carries
+ * first copies its read-only registry there (ADR 0092).
+ */
+function seededRegistryDir(env: NodeJS.ProcessEnv): string {
+  const resolved = resolveRegistryDir(env);
+  if (resolved.seed) {
+    const report = seedRegistry(resolved.seed, resolved.dir);
+    log("compose").info("registry seeded from the installer", { dir: resolved.dir, ...report });
+  }
+  return resolved.dir;
+}
+
 export async function composeRuntime(opts: ComposeOptions = {}): Promise<RuntimeApp> {
   const logger = log("compose");
   const env = opts.env ?? process.env;
@@ -1524,8 +1538,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
 
   // Registry and tools. A run starts with the built-in tools plus whatever the enabled
   // connectors bridge at that moment; the gate covers runs already in flight.
-  const registryDir =
-    opts.registryDir ?? env.FORERUNNER_REGISTRY_DIR ?? resolveRegistryDir(env).dir;
+  const registryDir = opts.registryDir ?? env.FORERUNNER_REGISTRY_DIR ?? seededRegistryDir(env);
   const tools = fileTools();
   // Cloudflare deploys (spec J.9, J.10, S.5, S.6, ADR 0035): the four tools go through the
   // same hooks and gate as every other tool; the deployer reads `project.settings.cloudflare`
