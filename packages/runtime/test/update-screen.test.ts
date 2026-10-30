@@ -105,6 +105,8 @@ describe("updates view: app, connectors and models on one screen", () => {
       });
       expect(view.app.available?.sizeBytes).toBeGreaterThan(0);
       expect(view.app.available?.artifactName).toContain("linux-x64");
+      // The download URL comes with it: the desktop runs its installer by hand (ADR 0092).
+      expect(view.app.available?.artifactUrl).toMatch(/^https?:\/\/.+linux-x64/);
       // only rows whose catalog version is newer; a non-semver installed version counts as an update
       expect(
         view.connectors.map((c) => [c.kind, c.name, c.installedVersion, c.availableVersion]),

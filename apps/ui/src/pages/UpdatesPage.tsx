@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { describeError } from "../api/client.ts";
 import type { AppUpdateView, ModelWatchAnswerInput, UpdatesView } from "../api/contracts.ts";
+import { ExternalLink } from "../components/ExternalLink.tsx";
 import { Badge, Button, ErrorBanner, Loading, type Tone } from "../components/ui.tsx";
 import { formatBytes } from "../lib/format.ts";
 import { formatDateTime } from "../lib/time.ts";
@@ -23,6 +24,15 @@ export function appStateTone(state: AppUpdateView["state"]): Tone {
     default:
       return "neutral";
   }
+}
+
+/**
+ * A release whose artefact for this platform is an OS installer (the desktop's MSI, AppImage or
+ * `.deb`): the staged install of ADR 0015 cannot run it, so the screen offers the download
+ * instead of "Update and restart", which would roll back (ADR 0092; updates.md Known issues).
+ */
+export function isInstallerArtifact(name: string | null): boolean {
+  return name !== null && /\.(msi|exe|appimage|deb|rpm)$/i.test(name);
 }
 
 /**
@@ -195,22 +205,39 @@ export function UpdatesPage() {
                   {app.available.sizeBytes ? ` · ${formatBytes(app.available.sizeBytes)}` : ""}
                   {app.available.artifactName ? ` · ${app.available.artifactName}` : ""}
                 </span>
-                <Button
-                  variant="primary"
-                  className="ml-auto"
-                  disabled={busy !== null || restart !== null}
-                  onClick={() => {
-                    const version = app.available?.version;
-                    void act("apply", async () => {
-                      const r = await client.applyUpdate(version);
-                      return `Staged ${r.version} (${r.state}); ${r.restarting ? "restarting now" : "restart pending"}.`;
-                    });
-                  }}
-                  data-testid="update-and-restart"
-                >
-                  Update and restart
-                </Button>
+                {isInstallerArtifact(app.available.artifactName) ? (
+                  <span className="ml-auto">
+                    {app.available.artifactUrl ? (
+                      <ExternalLink href={app.available.artifactUrl} testId="download-installer">
+                        Download the installer
+                      </ExternalLink>
+                    ) : null}
+                  </span>
+                ) : (
+                  <Button
+                    variant="primary"
+                    className="ml-auto"
+                    disabled={busy !== null || restart !== null}
+                    onClick={() => {
+                      const version = app.available?.version;
+                      void act("apply", async () => {
+                        const r = await client.applyUpdate(version);
+                        return `Staged ${r.version} (${r.state}); ${r.restarting ? "restarting now" : "restart pending"}.`;
+                      });
+                    }}
+                    data-testid="update-and-restart"
+                  >
+                    Update and restart
+                  </Button>
+                )}
               </div>
+              {isInstallerArtifact(app.available.artifactName) ? (
+                <p className="mt-1 text-sm" data-testid="installer-note">
+                  This release updates through its installer: download it, close Forerunner and run
+                  it. Your settings, keys and projects stay. The app replaces its background service
+                  when it starts.
+                </p>
+              ) : null}
               <details className="mt-2 text-sm" open>
                 <summary className="cursor-pointer text-neutral-600 dark:text-neutral-400">
                   Changelog

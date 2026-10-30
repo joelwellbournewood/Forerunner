@@ -6,8 +6,9 @@ import {
   type SetupCheckView,
   type SetupStatusView,
 } from "../api/client.ts";
-import { Button, buttonClassName, ErrorBanner, INPUT_CLASS, Loading } from "../components/ui.tsx";
-import { useClient, useUiState } from "../store/context.tsx";
+import { ExternalLink } from "../components/ExternalLink.tsx";
+import { Button, ErrorBanner, INPUT_CLASS, Loading } from "../components/ui.tsx";
+import { useClient } from "../store/context.tsx";
 
 /**
  * The setup assistant (ADR 0092): the first thing a new install shows. The human pastes the
@@ -27,33 +28,6 @@ function localTimezone(): string {
   } catch {
     return "UTC";
   }
-}
-
-/**
- * A link that leaves the app. In the desktop shell a plain link is intercepted and opened in
- * the system browser (`windows.rs`, `on_navigation`); elsewhere it opens a new tab.
- */
-export function ExternalLink({
-  href,
-  children,
-  testId,
-}: {
-  href: string;
-  children: ReactNode;
-  testId?: string;
-}) {
-  const inShell = useUiState((s) => s.config.source === "shell");
-  return (
-    <a
-      href={href}
-      data-testid={testId}
-      className={buttonClassName("secondary")}
-      {...(inShell ? {} : { target: "_blank", rel: "noreferrer" })}
-    >
-      {children}
-      <span aria-hidden>↗</span>
-    </a>
-  );
 }
 
 function StepDots({ step }: { step: Step }) {

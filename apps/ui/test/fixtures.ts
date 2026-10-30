@@ -942,6 +942,8 @@ export const UPDATES_FEED: UpdatesView = {
       publishedAt: "2026-10-19T18:00:00.000Z",
       sizeBytes: 48_000_000,
       artifactName: "forerunner-0.2.0-linux-x64.tar.gz",
+      artifactUrl:
+        "https://example.test/releases/download/v0.2.0/forerunner-0.2.0-linux-x64.tar.gz",
       minSchema: 3,
     },
     rejected: [{ version: "0.1.9", reason: "signature", message: "signature did not verify" }],

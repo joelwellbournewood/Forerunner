@@ -235,6 +235,8 @@ export interface FakeDaemonOptions {
    * (`complete`, nothing to show), so the app opens where each test mounts it.
    */
   setup?: Partial<SetupStatusView>;
+  /** The available release's artefact for this platform, e.g. the desktop's MSI (ADR 0092). */
+  updateArtifact?: { name: string; url: string };
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -1881,6 +1883,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       base.app.previousVersion = HEALTH.version;
       base.app.available = null;
       base.app.state = feed ? "up_to_date" : "unknown";
+    }
+    if (base.app.available && options.updateArtifact) {
+      base.app.available.artifactName = options.updateArtifact.name;
+      base.app.available.artifactUrl = options.updateArtifact.url;
     }
     return base;
   };

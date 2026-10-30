@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { appStateTone } from "../src/pages/UpdatesPage.tsx";
+import { appStateTone, isInstallerArtifact } from "../src/pages/UpdatesPage.tsx";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Updates screen", () => {
@@ -10,6 +10,27 @@ describe("Updates screen", () => {
     expect(appStateTone("available")).toBe("info");
     expect(appStateTone("rolled_back")).toBe("bad");
     expect(appStateTone("unknown")).toBe("neutral");
+  });
+
+  // On the desktop the release's artefact is the installer, which the staged install cannot
+  // run: "Update and restart" would roll back (ADR 0092). The screen offers the download.
+  it("a desktop release offers its installer instead of Update and restart", async () => {
+    expect(isInstallerArtifact("Forerunner_1.0.2_x64_en-US.msi")).toBe(true);
+    expect(isInstallerArtifact("Forerunner_1.0.2_amd64.AppImage")).toBe(true);
+    expect(isInstallerArtifact("Forerunner_1.0.2_amd64.deb")).toBe(true);
+    expect(isInstallerArtifact("forerunner-0.2.0-linux-x64.tar.gz")).toBe(false);
+    expect(isInstallerArtifact(null)).toBe(false);
+    const url = "https://github.com/o/r/releases/download/v1.0.2/Forerunner_1.0.2_x64_en-US.msi";
+    const user = userEvent.setup();
+    const harness = createHarness({
+      updateArtifact: { name: "Forerunner_1.0.2_x64_en-US.msi", url },
+    });
+    renderApp("/updates", harness);
+    await user.click(await screen.findByTestId("updates-check"));
+    await screen.findByTestId("available-update");
+    expect(screen.getByTestId("download-installer")).toHaveAttribute("href", url);
+    expect(screen.getByTestId("installer-note")).toHaveTextContent("run it");
+    expect(screen.queryByTestId("update-and-restart")).toBeNull();
   });
 
   it("the Updates menu entry opens the screen without asking the feed", async () => {

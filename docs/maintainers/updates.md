@@ -548,7 +548,10 @@ cases; skipping the open-item lookup in `ensureRequest` fails the "not every tic
   runnable runtime, so the shell's locator skips it and starts the bundled runtime, and the
   health check then rolls the update back (the running version is not `current`). Installing
   the new MSI, AppImage or `.deb` over the old one is the way to update, and the app replaces a
-  daemon older than the one it carries. A desktop artefact the updater can stage (the runtime
+  daemon older than the one it carries. So the Updates screen offers **Download the installer**
+  (the artefact's URL, `AppUpdateView.available.artifactUrl`) instead of "Update and restart"
+  when the artefact is an installer (`isInstallerArtifact`: `.msi`, `.exe`, `.AppImage`, `.deb`,
+  `.rpm`). A desktop artefact the updater can stage (the runtime
   payload with the UI, or running the downloaded installer) is follow-up work.
 - `health.reportedBy` names a human, not an install: the release row has no install column,
   so two installs of one human over one state cannot be told apart in a refusal (the text

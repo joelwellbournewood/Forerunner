@@ -35,6 +35,8 @@ export const AppUpdateView = z.object({
       publishedAt: z.string(),
       sizeBytes: z.number().int().nullable(),
       artifactName: z.string().nullable(),
+      /** Where the artefact is downloaded from (the desktop's installer is run by hand, ADR 0092). */
+      artifactUrl: z.string().nullable(),
       minSchema: z.number().int(),
     })
     .nullable(),
@@ -144,6 +146,7 @@ export async function composeUpdatesView(deps: UpdatesViewDeps): Promise<Updates
         publishedAt: check.available.publishedAt,
         sizeBytes: artifact?.size ?? null,
         artifactName: artifact?.name ?? null,
+        artifactUrl: artifact?.url ?? null,
         minSchema: check.available.minSchema,
       };
     }

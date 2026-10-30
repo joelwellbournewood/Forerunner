@@ -50,10 +50,10 @@ up. No PowerShell, git, Node.js or source code on the PC (ADR 0092).
 
 ### Known issues
 
-- On the desktop, "Update and restart" cannot replace the running build yet. It stages the
-  release's installer file, which holds no runnable runtime, so the update rolls back.
-  Install the new MSI, AppImage or `.deb` over the old one instead; your data stays
-  (`docs/maintainers/updates.md`).
+- On the desktop, "Update and restart" cannot replace the running build yet. It would stage
+  the release's installer file, which holds no runnable runtime, so the update would roll back.
+  The Updates screen therefore offers **Download the installer** for such a release: run it
+  over the old version and your data stays (`docs/maintainers/updates.md`).
 
 ## [1.0.0] - 2026-10-26
 

@@ -163,6 +163,7 @@ export const AppUpdateView = z.object({
       publishedAt: z.string(),
       sizeBytes: z.number().int().nullable(),
       artifactName: z.string().nullable(),
+      artifactUrl: z.string().nullable(),
       minSchema: z.number().int(),
     })
     .nullable(),
