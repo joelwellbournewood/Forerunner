@@ -308,7 +308,9 @@ pub fn startup_chord(saved: Option<&str>) -> (String, Option<String>) {
 
 /// Linux only: global shortcuts go through X11 (XWayland on a Wayland desktop). Without a
 /// display the plugin's register call "succeeds" while nothing ever fires, so the shell does
-/// not register and says why instead of reporting a shortcut that cannot work.
+/// not register and says why instead of reporting a shortcut that cannot work. Called only on
+/// Linux (`hotkey_shell::register`); kept on every OS so its tests run everywhere.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn linux_display_missing(display: Option<&str>) -> Option<String> {
     match display.map(str::trim) {
         Some(d) if !d.is_empty() => None,
