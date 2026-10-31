@@ -15,6 +15,7 @@ import type {
   EmailSettingsView,
   EventView,
   HumanRequestView,
+  IntakeStatusView,
   LessonOfferView,
   LessonView,
   MemoryScopeView,
@@ -271,6 +272,11 @@ export interface FakeDaemonState {
   sessions: SessionView[];
   events: EventView[];
   requests: HumanRequestView[];
+  /**
+   * `GET /projects/:id/intake` per project (U-046); a project without an entry has had no
+   * intake (`none`). `POST /projects/:id/intake/retry` moves a failed one to `drafting`.
+   */
+  intake: Record<string, IntakeStatusView>;
   messages: MessageView[];
   killActive: boolean;
   calls: RecordedCall[];
@@ -533,6 +539,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     sessions: clone(SESSIONS),
     events: clone(EVENTS),
     requests: clone(REQUESTS),
+    intake: {},
     messages: clone(MESSAGES),
     killActive: false,
     calls: [],
@@ -657,6 +664,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.sessions = clone(SESSIONS);
     state.events = clone(EVENTS);
     state.requests = clone(REQUESTS);
+    state.intake = {};
     state.messages = clone(MESSAGES);
     state.killActive = false;
     state.calls = [];
@@ -955,12 +963,50 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       repos: parsed.data.repos ?? [],
     };
     state.projects.push(project);
+    // As the daemon: a brief with `intake: true` is drafted in the background (U-046).
+    if (parsed.data.intake === true)
+      state.intake[project.id] = {
+        projectId: project.id,
+        state: "drafting",
+        requestId: null,
+        outcome: null,
+        appliedAt: null,
+        docs: null,
+        error: null,
+      };
     emit("project.changed", { id: project.id });
     return c.json(project, 201);
   });
   app.get("/projects/:id", (c) => {
     const p = state.projects.find((x) => x.id === c.req.param("id"));
     return p ? c.json(p) : errorBody(c, 404, "not_found", "no such project");
+  });
+  // The plan from the brief (U-046), as the daemon's intake status and Retry answer it.
+  const intakeOf = (projectId: string): IntakeStatusView =>
+    state.intake[projectId] ?? {
+      projectId,
+      state: "none",
+      requestId: null,
+      outcome: null,
+      appliedAt: null,
+      docs: null,
+      error: null,
+    };
+  app.get("/projects/:id/intake", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id))
+      return errorBody(c, 404, "not_found", "no such project");
+    return c.json(intakeOf(id));
+  });
+  app.post("/projects/:id/intake/retry", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id))
+      return errorBody(c, 404, "not_found", "no such project");
+    const current = intakeOf(id);
+    // As the daemon: only a failed (or never run) intake is drafted again.
+    if (current.state !== "failed" && current.state !== "none") return c.json(current, 202);
+    state.intake[id] = { ...current, state: "drafting", requestId: null, error: null };
+    return c.json(state.intake[id], 202);
   });
   app.get("/projects/:id/summary", (c) => {
     const id = c.req.param("id");

@@ -6,6 +6,7 @@ import { Button, ErrorBanner, Field, INPUT_CLASS, Money } from "../../components
 import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient, useIdentity } from "../../store/context.tsx";
+import { useIntakeStatus } from "./IntakeBanner.tsx";
 
 /**
  * What the dialog says when the start did not hand back a session to open (U-003). A waiting
@@ -116,6 +117,9 @@ export function StartSessionDialog({
     !noReadyTask &&
     !nothingRuns &&
     check.data.waiting.length + check.data.overBudget.length > 0;
+  // U-046: the dialog names the plan from the brief only as it really stands: it said a plan
+  // waits in the Inbox when none did (the intake had failed, or was never asked for).
+  const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;
   useEffect(() => {
     if (!open) setNotice(null);
   }, [open]);
@@ -195,9 +199,23 @@ export function StartSessionDialog({
             <ul className="mt-1 list-disc pl-5">
               <li>add a task in the Tasks tab;</li>
               <li>or click Mark ready on a draft task there (a session skips drafts);</li>
-              <li>or ask in Chat, for example "add a task: write the README";</li>
-              <li>or approve the plan waiting in the Inbox, if you gave a brief.</li>
+              <li>or ask in Chat, for example "add a task: write the README".</li>
             </ul>
+            {intake === "pending" ? (
+              <p className="mt-1" data-testid="start-session-intake">
+                The plan from your brief waits for your approval in the Inbox; approving it adds its
+                tasks.
+              </p>
+            ) : intake === "drafting" ? (
+              <p className="mt-1" data-testid="start-session-intake">
+                The plan from your brief is being drafted; it lands in the Inbox when it is ready.
+              </p>
+            ) : intake === "failed" ? (
+              <p className="mt-1" data-testid="start-session-intake">
+                The plan from your brief could not be drafted; the project page says why and has a
+                Retry.
+              </p>
+            ) : null}
           </div>
         ) : null}
         {nothingRuns && check.data ? (

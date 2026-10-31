@@ -10,6 +10,7 @@ import { CostsTab } from "./project/CostsTab.tsx";
 import { CreateRepoDialog } from "./project/CreateRepoDialog.tsx";
 import { DataTab } from "./project/DataTab.tsx";
 import { DocsTab } from "./project/DocsTab.tsx";
+import { IntakeBanner } from "./project/IntakeBanner.tsx";
 import { PlanTab } from "./project/PlanTab.tsx";
 import { ReviewsTab } from "./project/ReviewsTab.tsx";
 import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
@@ -97,6 +98,8 @@ export function ProjectPage() {
         </div>
         {project.error ? <ErrorBanner message={project.error} onRetry={project.reload} /> : null}
       </header>
+      {/* U-046: the plan from the brief, drafting, waiting in the Inbox or failed with a Retry. */}
+      <IntakeBanner projectId={id} />
       <nav
         className="mb-3 flex gap-1 overflow-x-auto border-b border-neutral-200 dark:border-neutral-800"
         aria-label="Project tabs"

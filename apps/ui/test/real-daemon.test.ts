@@ -127,6 +127,7 @@ describe("the UI client against the real daemon", () => {
       ["devices", () => client.devices()],
       ["setupStatus", () => client.setupStatus()],
       ["desktopAllowlist", () => client.desktopAllowlist(humanId)],
+      ["intakeStatus", () => client.intakeStatus(projectId)],
     ];
     const failures: string[] = [];
     for (const [name, call] of reads) {
@@ -565,6 +566,25 @@ describe("the UI client against the real daemon", () => {
         (r) => r.taskId === task.id && r.status === "open",
       ),
     ).toBe(false);
+  });
+
+  it("a failed plan from the brief: the project page reads why, and Retry drafts it again (U-046)", async () => {
+    // The scripted model answers no plan, so the intake a new project asks for fails.
+    const project = await client.createProject({
+      name: "Briefed",
+      goal: "Plan from a brief",
+      brief: "A small site for the club.",
+      intake: true,
+    });
+    expect((await client.intakeStatus(project.id)).state).toBe("drafting");
+    await rt.intake.inFlight(project.id)?.catch(() => undefined);
+    const failed = await client.intakeStatus(project.id);
+    expect(failed).toMatchObject({ projectId: project.id, state: "failed", requestId: null });
+    expect(failed.error).toEqual(expect.any(String));
+    const retried = await client.retryIntake(project.id);
+    expect(retried).toMatchObject({ projectId: project.id, state: "drafting", error: null });
+    await rt.intake.inFlight(project.id)?.catch(() => undefined);
+    expect((await client.intakeStatus(project.id)).state).toBe("failed");
   });
 
   it("every Inbox card names its task beside its project (U-073)", async () => {

@@ -658,6 +658,43 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(String(status.error)).toContain("JSON");
   });
 
+  it("a failed intake can be retried from the project page: drafting, then the plan waits in the Inbox (U-046)", async () => {
+    // The intake a new project asked for fails (the model's reply is no plan).
+    replies.push({ text: "no json here" });
+    const id = await createProject({
+      name: "Retried",
+      goal: "Retry",
+      brief: "Plan me.",
+      intake: true,
+    });
+    // While it runs the project page says the plan is being drafted.
+    expect(await json(await req(`/projects/${id}/intake`))).toMatchObject({ state: "drafting" });
+    await expect(rt.intake.inFlight(id)).rejects.toMatchObject({ code: "validation" });
+    const failed = await json(await req(`/projects/${id}/intake`));
+    expect(failed).toMatchObject({ state: "failed", requestId: null });
+    expect(String(failed.error)).toContain("JSON");
+    // Retry: drafted again in the background, the answer at once.
+    replies.push({ text: JSON.stringify(proposal()) });
+    const callsBefore = provider.calls.length;
+    const retried = await req(`/projects/${id}/intake/retry`, { method: "POST", body: "{}" });
+    expect(retried.status).toBe(202);
+    expect(await json(retried)).toMatchObject({ projectId: id, state: "drafting", error: null });
+    await rt.intake.inFlight(id);
+    expect(provider.calls.length).toBe(callsBefore + 1);
+    const pending = await json(await req(`/projects/${id}/intake`));
+    expect(pending).toMatchObject({ state: "pending", requestId: expect.any(String), error: null });
+    // A second Retry while the plan waits in the Inbox drafts nothing new.
+    const again = await req(`/projects/${id}/intake/retry`, { method: "POST", body: "{}" });
+    expect(again.status).toBe(202);
+    expect(await json(again)).toMatchObject({ state: "pending", requestId: pending.requestId });
+    expect(rt.intake.inFlight(id)).toBeNull();
+    expect(provider.calls.length).toBe(callsBefore + 1);
+    // An unknown project is 404.
+    expect((await req("/projects/nope/intake/retry", { method: "POST", body: "{}" })).status).toBe(
+      404,
+    );
+  });
+
   it("on the built-in prompt the intake Run row names the built-in prompt version", async () => {
     replies.push({ text: "no json here" });
     const service = new IntakeService({
@@ -787,6 +824,12 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     });
     const projectId = await createProject({ name: "Kappa", goal: "g", brief: "b" });
     await expect(service.propose(projectId)).rejects.toMatchObject({ code: "unavailable" });
+    // U-046: the project page's Retry says why, and where to fix it, before anything starts.
+    await expect(service.retry(projectId)).rejects.toMatchObject({
+      code: "unavailable",
+      message: expect.stringContaining("setup assistant"),
+    });
+    expect(service.inFlight(projectId)).toBeNull();
   });
 
   it("keeps the principal's planning rung under the project's ceiling (spec D.3)", async () => {

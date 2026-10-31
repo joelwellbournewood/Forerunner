@@ -65,6 +65,8 @@ import {
   HumanView as HumanViewSchema,
   type InboxView,
   InboxView as InboxViewSchema,
+  type IntakeStatusView,
+  IntakeStatusView as IntakeStatusViewSchema,
   type KillBody as KillBodySchema,
   type LessonOfferView,
   LessonOfferView as LessonOfferViewSchema,
@@ -258,6 +260,7 @@ export type {
   HumanRequestView,
   ImportResultView,
   InboxView,
+  IntakeStatusView,
   LessonOfferView,
   LessonView,
   MemoryScopeView,
@@ -482,6 +485,13 @@ export interface DaemonClient {
   renameAgent(id: string, name: string): Promise<AgentView>;
   projects(signal?: AbortSignal): Promise<ProjectCard[]>;
   createProject(body: CreateProjectBody): Promise<ProjectCard>;
+  /**
+   * The project's plan from its brief (U-046): drafting, waiting in the Inbox, or failed with
+   * the reason (`GET /projects/:id/intake`).
+   */
+  intakeStatus(projectId: string, signal?: AbortSignal): Promise<IntakeStatusView>;
+  /** Retry a failed plan (U-046): drafted again in the background; answers `drafting`. */
+  retryIntake(projectId: string): Promise<IntakeStatusView>;
   project(id: string, signal?: AbortSignal): Promise<ProjectCard>;
   projectSummary(id: string, signal?: AbortSignal): Promise<ProjectSummary>;
   // Read aloud (spec A.6, L.6; ADR 0063): the daemon's voice provider reads a summary;
@@ -869,6 +879,9 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(routePath("renameAgent", { id }), AgentViewSchema, { name } satisfies RenameAgentBody),
     projects: (signal) => get(routePath("projects"), ProjectList, undefined, signal),
     createProject: (body) => post(routePath("createProject"), ProjectCardSchema, body),
+    intakeStatus: (id, signal) =>
+      get(routePath("intakeStatus", { id }), IntakeStatusViewSchema, undefined, signal),
+    retryIntake: (id) => post(routePath("intakeRetry", { id }), IntakeStatusViewSchema, {}),
     project: (id, signal) =>
       get(routePath("project", { id }), ProjectCardSchema, undefined, signal),
     projectSummary: (id, signal) =>

@@ -116,6 +116,11 @@ says which task got which. The first-session plan you approve with a new project
 decides the first session: it runs those tasks, in that order, and later sessions go by
 priority.
 
+When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox for your
+approval. Above the project's tabs you see where it stands: being drafted, waiting in the Inbox,
+or, if drafting failed, what went wrong and a **Retry** button. Without a Claude key the failure
+says so; add one in Settings → Accounts and keys → Open the setup assistant, then Retry.
+
 With the GitHub Projects mirror turned on in a project's settings, Forerunner asks once in the
 Inbox before it creates the board. **Do not mirror this project** turns the mirror off for that
 project, and nothing is asked again; turn it on again in the settings (or `fr mirror enable`)

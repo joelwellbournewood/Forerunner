@@ -594,7 +594,8 @@ export type IntakeProposalView = z.infer<typeof IntakeProposalView>;
 /** `GET /projects/:id/intake`: the project's latest intake and what became of it. */
 export const IntakeStatusView = z.object({
   projectId: z.string(),
-  state: z.enum(["none", "pending", "approved", "rejected", "skipped", "failed"]),
+  /** `drafting`: the plan is being drafted in the background now (U-046). */
+  state: z.enum(["none", "drafting", "pending", "approved", "rejected", "skipped", "failed"]),
   requestId: z.string().nullable(),
   /** The card's outcome once answered: `approved`, `rejected`, or why it was skipped. */
   outcome: z.string().nullable(),
@@ -2092,7 +2093,9 @@ export const DAEMON_ROUTES = {
   intake:
     "POST /projects/:id/intake (IntakeRequestBody -> 202 IntakeProposalView: PM intake, spec A.2, ADR 0055; one planning-rung model call turns the brief into the plan, the standard doc set and a first-session plan, filed as one blocking approval request whose card carries the whole proposal (change_card.key intake:<project>); an open proposal is reused without a call; nothing is written until the answer in the inbox: approve writes milestones and tasks (applyProjectPlan), the docs as a pull request on the project's repository or into its workspace directory, and the first-session plan onto the summary cache and the next-session queue; reject writes a queue note only; 409 conflict with cause validation when the model's reply is malformed or its plan cannot be written (a dependency cycle), with cause claim_conflict when a brief is given while a proposal is open; 503 without a model provider; 404 for an unknown project)",
   intakeStatus:
-    "GET /projects/:id/intake (IntakeStatusView: the latest intake request and its outcome, where the docs went, or why the last automatic intake failed or an approved proposal could not be written: state failed, outcome apply_failed, the error)",
+    "GET /projects/:id/intake (IntakeStatusView: the latest intake request and its outcome, where the docs went, or why the last automatic intake failed or an approved proposal could not be written: state failed, outcome apply_failed, the error; state drafting while the background draft runs)",
+  intakeRetry:
+    "POST /projects/:id/intake/retry (-> 202 IntakeStatusView: U-046, the project page's Retry after a failed intake; drafts the proposal again in the background and answers drafting at once; a plan waiting in the Inbox, a running draft or an answered intake is answered as it stands with no model call; 503 without a model provider, 404 for an unknown project)",
   extensions: "GET /extensions?kind=",
   extensionCatalog: "GET /extensions/catalog",
   extension: "GET /extensions/:id",

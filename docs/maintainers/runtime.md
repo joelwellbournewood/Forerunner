@@ -1092,10 +1092,20 @@ that died during the call left it; the call cannot outlive its timeout), so the 
 one-session rule is never held by a dead call for longer than one planning timeout. Triggers:
 `POST /projects/:id/intake` (202 `IntakeProposalView`), `GET /projects/:id/intake`
 (`IntakeStatusView`: the latest request, its outcome, where the docs went, or why a
-background run or an apply failed), and `POST /projects` with `intake: true` (`enqueue`: the
+background run or an apply failed; `drafting` while this daemon's background job runs), and
+`POST /projects` with `intake: true` (`enqueue`: the
 proposal is drafted in the background, the card answers at once, a failure lands on
 `summary_cache.intake`); the flag is off by default so nothing creates a model call unasked.
-Tests: `intake.test.ts`. Requirement: A.2. Reviewed 2026-10-25
+**A failed intake is visible and can be retried (U-046).** Before, a background intake that
+failed left no card and no error anywhere a person looked, and the Start dialog said a plan
+waited in the Inbox. The project page reads `GET /projects/:id/intake` and shows the draft,
+the plan waiting in the Inbox, or the failure with its error and a Retry:
+`POST /projects/:id/intake/retry` (`IntakeService.retry`, 202 `IntakeStatusView`) drafts again
+in the background through `enqueue` and answers `drafting` at once; it acts only on a `failed`
+or `none` intake (a plan waiting, a draft running or an answered intake is answered as it
+stands, no call), and without a provider it is refused `unavailable` with
+`INTAKE_NEEDS_A_MODEL` (the setup assistant) before anything starts.
+Tests: `intake.test.ts` (U-046: drafting, failed with the error, Retry drafting again and the plan reaching the Inbox, a second Retry calling nothing, the refusal without a provider). Requirement: A.2. Reviewed 2026-10-25
 (`docs/status/reviews/w2-a2-intake.md`; the ADR 0055 amendment of that date).
 
 **Questions only the person can answer (U-022, [ADR 0095](../decisions/0095-questions-only-the-person-can-answer.md); `src/session/person-questions.ts`).**

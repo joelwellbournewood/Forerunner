@@ -77,6 +77,9 @@ export const intakeKey = (projectId: string): string => `${INTAKE_KEY_PREFIX}${p
 export const isIntakeKey = (key: string): boolean => key.startsWith(INTAKE_KEY_PREFIX);
 /** `tool` of the audit rows the intake writes: the proposal filed, the answer applied. */
 export const INTAKE_AUDIT_TOOL = "project.intake";
+/** Why an intake cannot run on this install: no Claude key or subscription (`unavailable`). */
+export const INTAKE_NEEDS_A_MODEL =
+  "Planning from the brief needs a Claude key or subscription; add one in the setup assistant (Settings -> Accounts and keys -> Open the setup assistant), then retry.";
 export const INTAKE_OPTIONS = ["approve", "reject"] as const;
 /** The one model call's hard cap unless `project.settings.intake_budget_usd_micro` says otherwise. */
 export const DEFAULT_INTAKE_BUDGET_USD_MICRO = 2_000_000;
@@ -241,7 +244,18 @@ export interface IntakeProposalOutcome {
   docsTarget: "repository" | "workspace";
 }
 
-export type IntakeState = "none" | "pending" | "approved" | "rejected" | "skipped" | "failed";
+/**
+ * Where a project's intake stands. `drafting`: the background job (`enqueue`, `retry`) is
+ * running in this daemon, so the plan is on its way to the Inbox (U-046).
+ */
+export type IntakeState =
+  | "none"
+  | "drafting"
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "skipped"
+  | "failed";
 
 /** The latest intake of a project, as `GET /projects/:id/intake` serves it. */
 export interface IntakeStatus {
@@ -448,6 +462,18 @@ export class IntakeService {
   async status(projectId: string): Promise<IntakeStatus> {
     const project = await this.deps.store.project.mustGet(projectId);
     const row = await this.latestFor(projectId);
+    // A draft running in this daemon wins: the project page says the plan is on its way
+    // (U-046), whatever an earlier attempt left behind.
+    if (this.jobs.has(projectId))
+      return {
+        projectId,
+        state: "drafting",
+        requestId: null,
+        outcome: null,
+        appliedAt: null,
+        docs: null,
+        error: null,
+      };
     const failure = (project.summary_cache as { intake?: JsonObject }).intake;
     const failedAt = typeof failure?.failed_at === "string" ? failure.failed_at : null;
     if (!row) {
@@ -563,6 +589,23 @@ export class IntakeService {
     return job;
   }
 
+  /**
+   * The project page's Retry after a failed intake (U-046): the proposal is drafted again in
+   * the background (`enqueue`, which records a new failure on the project) and the status is
+   * answered at once, `drafting`. Only a project whose intake failed, or never ran, is drafted
+   * again: a plan waiting in the Inbox, a draft running, or an intake answered already is
+   * answered as it stands and nothing is called. Without a model provider the retry is refused
+   * (`unavailable`) before anything starts, so the page says why.
+   */
+  async retry(projectId: string): Promise<IntakeStatus> {
+    const current = await this.status(projectId);
+    if (current.state !== "failed" && current.state !== "none") return current;
+    if (!this.deps.provider || !this.deps.pricing)
+      throw new ForerunnerError("unavailable", INTAKE_NEEDS_A_MODEL);
+    void this.enqueue(projectId).catch(() => undefined);
+    return this.status(projectId);
+  }
+
   /** The background job of a project while it runs (tests await it), else null. */
   inFlight(projectId: string): Promise<IntakeProposalOutcome> | null {
     return this.jobs.get(projectId) ?? null;
@@ -618,10 +661,7 @@ export class IntakeService {
       };
     }
     if (!this.deps.provider || !this.deps.pricing) {
-      throw new ForerunnerError(
-        "unavailable",
-        "intake needs a model provider; add a model credential in setup",
-      );
+      throw new ForerunnerError("unavailable", INTAKE_NEEDS_A_MODEL);
     }
     // A session a dead daemon left running past its deadline is closed before the new call.
     await this.closeExpired();

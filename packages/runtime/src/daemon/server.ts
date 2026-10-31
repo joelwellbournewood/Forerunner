@@ -822,9 +822,8 @@ export function createDaemonApp(
     };
     return c.json(view, 202);
   });
-  app.get("/projects/:id/intake", async (c) => {
-    const s = await rt.intake.status(c.req.param("id"));
-    const view: IntakeStatusView = {
+  const intakeStatusView = (s: Awaited<ReturnType<RuntimeApp["intake"]["status"]>>) =>
+    ({
       projectId: s.projectId,
       state: s.state,
       requestId: s.requestId,
@@ -832,8 +831,16 @@ export function createDaemonApp(
       appliedAt: s.appliedAt,
       docs: s.docs,
       error: s.error,
-    };
-    return c.json(view);
+    }) satisfies IntakeStatusView;
+  app.get("/projects/:id/intake", async (c) =>
+    c.json(intakeStatusView(await rt.intake.status(c.req.param("id")))),
+  );
+  // U-046: the project page's Retry after a failed intake. The draft runs in the background
+  // as at creation; the answer is the status at once (`drafting`), which the page follows.
+  app.post("/projects/:id/intake/retry", async (c) => {
+    const s = await rt.intake.retry(c.req.param("id"));
+    rt.events.emit("project", { id: s.projectId });
+    return c.json(intakeStatusView(s), 202);
   });
 
   app.get("/projects/:id", async (c) =>

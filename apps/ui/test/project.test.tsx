@@ -105,7 +105,81 @@ describe("Project page", () => {
     expect(warning).toHaveTextContent(/No task in this project is ready/);
     expect(warning).toHaveTextContent(/Tasks tab/);
     expect(warning).toHaveTextContent(/add a task: write the README/);
-    expect(warning).toHaveTextContent(/Inbox/);
+    // U-046: no plan from a brief was asked for, so the dialog does not send the person to
+    // the Inbox for one (it did, for every project).
+    expect(warning).not.toHaveTextContent(/Inbox/);
+  });
+
+  describe("the plan from the brief (U-046)", () => {
+    const intake = (state: "drafting" | "pending" | "failed", error: string | null = null) => ({
+      projectId: "proj_beacon",
+      state,
+      requestId: state === "pending" ? "req_intake" : null,
+      outcome: null,
+      appliedAt: null,
+      docs: null,
+      error,
+    });
+    const FAILURE = "The model's reply was not a plan: no JSON object in it.";
+
+    it("a failed intake shows on the project page with what failed, and Retry drafts it again", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.intake.proj_beacon = intake("failed", FAILURE);
+      renderApp("/projects/proj_beacon", harness);
+      const banner = await screen.findByTestId("intake-banner");
+      expect(banner).toHaveAttribute("data-state", "failed");
+      expect(banner).toHaveTextContent("The plan from your brief could not be drafted.");
+      expect(within(banner).getByTestId("intake-error")).toHaveTextContent(FAILURE);
+      await user.click(within(banner).getByTestId("intake-retry"));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/projects/proj_beacon/intake/retry")).toHaveLength(1),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("intake-banner")).toHaveAttribute("data-state", "drafting"),
+      );
+      expect(screen.getByTestId("intake-banner")).toHaveTextContent(
+        "Drafting the plan from your brief",
+      );
+      // The daemon files the plan: the page follows without a reload.
+      harness.daemon.state.intake.proj_beacon = intake("pending");
+      await waitFor(
+        () => expect(screen.getByTestId("intake-banner")).toHaveAttribute("data-state", "pending"),
+        { timeout: 6000 },
+      );
+      expect(screen.getByTestId("intake-banner")).toHaveTextContent(
+        "The plan from your brief waits for your approval in the Inbox.",
+      );
+      expect(
+        within(screen.getByTestId("intake-banner")).getByRole("link", { name: "Inbox" }),
+      ).toHaveAttribute("href", "/inbox");
+    }, 15_000);
+
+    it("a project without an intake shows no banner", async () => {
+      renderApp("/projects/proj_atlas");
+      await screen.findByTestId("summary");
+      expect(screen.queryByTestId("intake-banner")).toBeNull();
+    });
+
+    for (const [state, text] of [
+      ["pending", /plan from your brief waits for your approval in the Inbox/],
+      ["drafting", /plan from your brief is being drafted/],
+      ["failed", /plan from your brief could not be drafted; the project page says why/],
+    ] as const) {
+      it(`the Start dialog names the plan as it stands: ${state}`, async () => {
+        const user = userEvent.setup();
+        const harness = createHarness();
+        harness.daemon.state.intake.proj_beacon = intake(
+          state,
+          state === "failed" ? FAILURE : null,
+        );
+        renderApp("/projects/proj_beacon", harness);
+        await screen.findByTestId("summary");
+        await user.click(screen.getByTestId("start-session"));
+        const dialog = await screen.findByTestId("start-session-dialog");
+        expect(await within(dialog).findByTestId("start-session-intake")).toHaveTextContent(text);
+      });
+    }
   });
 
   it("warns when ready tasks exist but none can run: what each waits on, what the budget leaves out (U-040)", async () => {
