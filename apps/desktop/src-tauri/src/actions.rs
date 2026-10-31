@@ -25,8 +25,9 @@ use crate::state::{
     Busy, EmailAction, SharedState, StreamMode, begin_bootstrap, lock, record_child,
 };
 use crate::supervisor::{
-    EXTERNAL_GRACE, POLL, QUIT_CHILD_WAIT, QuitOutcome, daemon_log_path, end_own_tree,
-    spawn_daemon, stop_for_quit, stop_process, wait_for_daemon, wait_for_external, watch_exit,
+    EXTERNAL_GRACE, POLL, QUIT_CHILD_WAIT, QuitOutcome, SlowWait, daemon_log_path, end_own_tree,
+    spawn_daemon, stop_for_quit, stop_process, wait_for_answer, wait_for_daemon, wait_for_external,
+    watch_exit,
 };
 use crate::{events, tray, windows};
 
@@ -105,6 +106,14 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
         },
         Err(reason) => AttachDecision::Start { reason },
     };
+    // A daemon that runs but answers slowly is waited for, never joined by a second one on the
+    // same data (U-065).
+    if let AttachDecision::Wait { file, reason } = decision {
+        match settle_slow_daemon(&app, file, &reason, allow_start).await {
+            Some(settled) => decision = settled,
+            None => return,
+        }
+    }
     // A daemon older than the runtime this app carries (one left running from an earlier
     // install or an old checkout) is stopped and replaced (ADR 0092).
     if allow_start
@@ -245,6 +254,66 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
                     );
                 }
             }
+        }
+        AttachDecision::Wait { reason, .. } => {
+            // Settled above; kept so a new path cannot start a second daemon by accident.
+            log::warn!("daemon not attached ({reason}); not starting another");
+            lock(&state).busy = None;
+            tray::refresh(&app);
+        }
+    }
+}
+
+/// How long the shell waits for a daemon that runs but answers `/health` too slowly before
+/// it tells the person (U-065).
+pub const SLOW_DAEMON_WAIT: Duration = Duration::from_secs(60);
+
+/// The recorded daemon accepts connections but does not answer in time: it runs. Wait for its
+/// answer and attach; start another only once it is gone; else tell the person, without
+/// starting a second daemon beside it (U-065). The health monitor (`allow_start` false) only
+/// re-attaches, so it looks again on its next round. `None` when there is nothing more to do.
+async fn settle_slow_daemon(
+    app: &AppHandle,
+    file: DaemonFile,
+    reason: &str,
+    allow_start: bool,
+) -> Option<AttachDecision> {
+    log::warn!("{reason}; waiting for it instead of starting another");
+    let state = shared(app);
+    if !allow_start {
+        let mut s = lock(&state);
+        s.busy = None;
+        s.status.reachable = false;
+        drop(s);
+        tray::refresh(app);
+        return None;
+    }
+    let client = match DaemonClient::from_file(&file) {
+        Ok(c) => c,
+        Err(reason) => return Some(AttachDecision::Start { reason }),
+    };
+    windows::show_splash(
+        app,
+        "Waiting for the Forerunner background service to answer…",
+    );
+    match wait_for_answer(&client, SLOW_DAEMON_WAIT).await {
+        SlowWait::Answered(health) => Some(AttachDecision::Attach(file, health)),
+        SlowWait::Gone(e) => Some(AttachDecision::Start {
+            reason: format!("the daemon at {} stopped answering: {e}", file.url),
+        }),
+        SlowWait::StillSlow => {
+            fail_dialog(
+                app,
+                "The Forerunner background service does not answer",
+                &format!(
+                    "It is running{} but has not answered for {} s, so no second one was started beside it.\n\nWait a moment and choose Open in the tray. If it still does not answer, end its node process in the Task Manager (or Quit Forerunner from the tray), then open Forerunner again.",
+                    file.pid
+                        .map(|p| format!(" (process {p})"))
+                        .unwrap_or_default(),
+                    SLOW_DAEMON_WAIT.as_secs()
+                ),
+            );
+            None
         }
     }
 }

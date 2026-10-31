@@ -2258,7 +2258,23 @@ fail the run.
 `server.ts` is the HTTP surface the desktop, Android and web shells talk to. Hono, bound to
 `127.0.0.1` only; every request carries `Authorization: Bearer <token>` compared with
 `timingSafeEqual`. The token is written to `<runtime dir>/daemon.json` (mode 0600) together
-with the base URL, so a shell on the same machine finds the daemon without configuration.
+with the base URL, so a shell on the same machine finds the daemon without configuration. At
+stop the daemon removes that file only while it still names this daemon, its pid and its token
+(`removeOwnDaemonFile`; U-065): a daemon that started meanwhile wrote its own address there.
+One daemon per data folder (U-065, `daemon/instance-lock.ts`): `fr daemon` takes
+`acquireDaemonLock(dirs)` before it composes anything, an operating-system lock named
+`daemon.lock` in the runtime folder and in the data folder (`acquireExclusiveLock` in
+`@forerunner/platform`: an exclusive-share open on Windows, an abstract Unix socket on Linux),
+held until the process ends and released by the OS on a crash too. A second `fr daemon` exits 1
+with "Another Forerunner background service (process N) is already running on the data folder
+<data>. Only one can run per data folder, so this one does not start. Quit Forerunner from the
+tray, or end that process, then start it again." (`ForerunnerError("unavailable")`, `reason:
+"daemon_running"`). Before, a daemon slow to answer could get a second one started beside it on
+the same store, and whichever stopped first deleted the other's `daemon.json`; the shell now
+also tells a slow daemon from a gone one (apps.md). `daemon-lock.test.ts` covers the refusal,
+a crashed holder leaving no lock (a killed child process), `fr daemon` refusing before it
+composes, and the conditional removal of `daemon.json`. A `startDaemon` in tests is not
+locked: the lock is the CLI's, so one process may serve several test daemons.
 Routes follow `DAEMON_ROUTES` in `api-types.ts`; response shapes are the zod views in the
 same file (`ProjectCard`, `TaskView`, `SessionView`, `EventView`, `InboxView`, `CostView`,
 ...) so the UI and the daemon share one contract. `views.ts` maps store rows to those views

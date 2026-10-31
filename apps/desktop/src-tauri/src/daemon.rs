@@ -198,18 +198,57 @@ pub fn precheck(
     Ok(file)
 }
 
+/// Why `/health` gave no usable answer (U-065). A refused connection means nothing listens
+/// there: the daemon is gone. A time-out means something accepted the connection and did not
+/// answer in time: a daemon that runs but is slow or busy. Only the first may lead to starting
+/// another daemon; starting one beside a slow daemon put two on the same data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HealthError {
+    /// The connection was refused or failed: nothing answers at that address.
+    Unreachable(String),
+    /// Connected, but no answer within `HEALTH_TIMEOUT`.
+    Slow(String),
+    /// An answer that is not a healthy `/health` (a status, not JSON, `ok` not true).
+    Bad(String),
+}
+
+impl std::fmt::Display for HealthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HealthError::Unreachable(e) => write!(f, "nothing answers ({e})"),
+            HealthError::Slow(e) => write!(f, "no answer in time ({e})"),
+            HealthError::Bad(e) => write!(f, "{e}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum AttachDecision {
     Attach(DaemonFile, Health),
-    Start { reason: String },
+    Start {
+        reason: String,
+    },
+    /// The recorded daemon accepts connections but answers too slowly: it runs. Wait for it;
+    /// never start a second one beside it (U-065).
+    Wait {
+        file: DaemonFile,
+        reason: String,
+    },
 }
 
-/// After probing: a healthy answer attaches; anything else starts a daemon.
-pub fn decide(file: DaemonFile, health: Result<Health, String>) -> AttachDecision {
+/// After probing: a healthy answer attaches, a slow one waits, anything else starts a daemon.
+pub fn decide(file: DaemonFile, health: Result<Health, HealthError>) -> AttachDecision {
     match health {
         Ok(h) if h.ok => AttachDecision::Attach(file, h),
         Ok(_) => AttachDecision::Start {
             reason: "the daemon answered /health without ok: true".into(),
+        },
+        Err(HealthError::Slow(e)) => AttachDecision::Wait {
+            reason: format!(
+                "the daemon at {} runs but /health gave no answer in time ({e})",
+                file.url
+            ),
+            file,
         },
         Err(e) => AttachDecision::Start {
             reason: format!("the daemon at {} did not answer /health: {}", file.url, e),
@@ -337,20 +376,30 @@ impl DaemonClient {
         redact(&e.to_string(), &[&self.token])
     }
 
-    pub async fn health(&self) -> Result<Health, String> {
+    pub async fn health(&self) -> Result<Health, HealthError> {
         let res = self
             .health_http
             .get(self.url("/health"))
             .bearer_auth(self.token.expose())
             .send()
             .await
-            .map_err(|e| self.scrub(e))?;
+            .map_err(|e| self.classify(e))?;
         let status = res.status();
-        let text = res.text().await.map_err(|e| self.scrub(e))?;
+        let text = res.text().await.map_err(|e| self.classify(e))?;
         if !status.is_success() {
-            return Err(format!("/health answered {status}"));
+            return Err(HealthError::Bad(format!("/health answered {status}")));
         }
-        parse_health(&text)
+        parse_health(&text).map_err(HealthError::Bad)
+    }
+
+    /// A time-out (the connection was accepted, or the listen queue is full) is a slow daemon;
+    /// any other failure means nothing usable answers there.
+    fn classify(&self, e: reqwest::Error) -> HealthError {
+        if e.is_timeout() {
+            HealthError::Slow(self.scrub(e))
+        } else {
+            HealthError::Unreachable(self.scrub(e))
+        }
     }
 
     /// POST a JSON body (or `{}`); returns the status and the parsed body (`null` when empty).
@@ -524,13 +573,20 @@ mod tests {
             decide(f.clone(), Ok(healthy)),
             AttachDecision::Attach(_, _)
         ));
-        match decide(f, Err("connection refused".into())) {
+        match decide(
+            f.clone(),
+            Err(HealthError::Unreachable("connection refused".into())),
+        ) {
             AttachDecision::Start { reason } => {
                 assert!(reason.contains("connection refused"));
                 assert!(!reason.contains(&token()));
             }
             other => panic!("expected Start, got {other:?}"),
         }
+        assert!(matches!(
+            decide(f, Err(HealthError::Bad("/health answered 500".into()))),
+            AttachDecision::Start { .. }
+        ));
         assert!(parse_health(r#"{"ok":false}"#).is_err());
         assert!(parse_health("nope").is_err());
     }
@@ -636,6 +692,37 @@ mod tests {
         assert_eq!(status, 202);
         let (status, me) = client.get_json("/me").await.expect("a read waits too");
         assert_eq!((status, me["agent"]["id"].as_str()), (200, Some("a-1")));
+    }
+
+    /// U-065: a daemon slow to answer `/health` was taken for "not running", and the shell
+    /// started a second one beside it on the same data. A slow answer waits; only a refused
+    /// connection starts another.
+    #[test]
+    fn a_slow_daemon_is_waited_for_never_started_beside() {
+        let f = parse_daemon_file(&good_file()).expect("parses");
+        match decide(f, Err(HealthError::Slow("operation timed out".into()))) {
+            AttachDecision::Wait { file, reason } => {
+                assert_eq!(file.pid, Some(4242));
+                assert!(reason.contains("runs"), "{reason}");
+            }
+            other => panic!("expected Wait, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_and_a_time_out_are_told_apart() {
+        use crate::test_http::{Route, TestServer, refused_url};
+        let refused = DaemonClient::new(&refused_url(), Secret::new(token())).expect("client");
+        assert!(matches!(
+            refused.health().await,
+            Err(HealthError::Unreachable(_))
+        ));
+        let hung = TestServer::start(vec![Route::json("GET", "/health", 200, "{}").hanging()]);
+        let slow = DaemonClient::new(&hung.url, Secret::new(token())).expect("client");
+        assert!(matches!(slow.health().await, Err(HealthError::Slow(_))));
+        let broken = TestServer::start(vec![Route::json("GET", "/health", 500, "{}")]);
+        let bad = DaemonClient::new(&broken.url, Secret::new(token())).expect("client");
+        assert!(matches!(bad.health().await, Err(HealthError::Bad(m)) if m.contains("500")));
     }
 
     #[test]

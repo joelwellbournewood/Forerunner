@@ -12,7 +12,8 @@
     "./os": "./src/os.ts",
     "./ids": "./src/ids.ts",
     "./errors": "./src/errors.ts",
-    "./log": "./src/log.ts"
+    "./log": "./src/log.ts",
+    "./lock": "./src/lock.ts"
   },
   "scripts": {
     "test": "pnpm -w exec vitest run --project unit packages/platform/test"

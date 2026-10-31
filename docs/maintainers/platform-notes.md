@@ -31,6 +31,7 @@ which the daemon and the state service answer with 403.
 | Killing a tree | `taskkill /T /F` | `kill -9 -pgid`, fallback to pid | `shell.killTree` |
 | A killed command's return | `run()` resolves at the child's `exit` once it killed it (time limit or abort), with the stdio streams destroyed, instead of waiting for `close`, which a grandchild holding the inherited pipes (git's remote helper) would keep open; a command that ends by itself still resolves at `close` with all its output | same | `shell.run` |
 | Finding binaries | `where` | `command -v` | `shell.which` |
+| A lock held for a process's lifetime | `<dir>\<name>` opened with an exclusive share mode (libuv `UV_FS_O_EXLOCK`, `0x10000000`): any other open is `EBUSY` | a listening Unix socket in the abstract namespace named after the lock file's real path and a random key in `<name>.key` (0600) (`EADDRINUSE` on a second bind); the file only records the holder's pid | `lock.acquireExclusiveLock` (U-065); macOS: an exclusive-create pid file, stale when its pid is gone |
 | Keychain | Credential Manager | libsecret (GNOME Keyring, KWallet) | `vault` (see security.md) |
 | Display server | win32 | wayland or x11 from env | `os.osFacts` (desktop control limits on Wayland) |
 | Shell for user scripts | PowerShell | sh | `scripts/*.ps1` and `*.sh` pairs |
@@ -63,6 +64,22 @@ masked; `public_key`, `PUBLICKEY`, `monkey` and `MONKEY` stay). There is no dept
 one that throws never stops the others or the caller. `pnpm secrets:scan` checks the
 repository and the logs afterwards.
 
+### Locks (`src/lock.ts`)
+
+`acquireExclusiveLock(dir, name)` gives one process a lock for as long as it runs; the
+operating system releases it when the process ends, a crash or a kill included, so no recorded
+pid has to be trusted and nothing is left behind (the daemon's one-per-data-folder lock, U-065).
+A held lock is `ForerunnerError("unavailable")` with `details.reason` `"locked"` and the
+lock file's path; `release()` is idempotent. The Linux socket is unreferenced (it never keeps
+the process alive) and not inherited by children (Node opens sockets close-on-exec), so a tool
+a daemon started cannot keep its lock after the daemon is gone; on Windows the handle is not
+inherited either (libuv opens files non-inheritable). Linux names the socket by the real path
+of the folder, so two spellings of one folder share a lock, and by a random key kept in
+`<name>.key` (mode 0600, created once and exclusively, `lockKey`): an abstract socket has no
+permissions, so a name another local user could work out from the path alone could be taken
+by them first and keep this user's daemon from starting. A damaged key file is replaced. The
+socket is per network namespace, which only matters inside containers.
+
 ### Errors (`src/errors.ts`)
 
 `ForerunnerError` carries a stable `code` from the `ErrorCode` union, `details` and `retryable`;
@@ -78,7 +95,9 @@ that exercises both branches by passing `platform`/`env` explicitly (see `test/p
 
 ## Tests
 
-`packages/platform/test/*.test.ts` run on both CI runners. Path tests pass `platform` explicitly
+`packages/platform/test/*.test.ts` run on both CI runners. `lock.test.ts` takes a lock twice
+in one process (refused until released), per folder and name, and across processes: a child
+holds it, this process is refused, the child is killed, and the lock is free again. Path tests pass `platform` explicitly
 so Windows behaviour is checked on Linux too and the other way round. `shell.test.ts` runs
 node through `run()`: argv passed verbatim, the exit code, the output cap, the wall-clock limit,
 and the limit holding while a grandchild that inherited the pipes lives on (`run()` returns at

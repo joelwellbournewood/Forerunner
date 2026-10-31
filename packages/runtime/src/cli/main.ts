@@ -313,6 +313,10 @@ export function buildProgram(deps: CliDeps = {}): Command {
     .option("--port <n>", "port on 127.0.0.1 (default: random free port)")
     .option("--provider <name>", "fake | anthropic (default: anthropic when a credential exists)")
     .action(async (opts) => {
+      // One daemon per data folder (U-065): refused before anything is composed when another
+      // runs. The lock is held until the process ends; the operating system releases it.
+      const { acquireDaemonLock } = await import("../daemon/instance-lock.ts");
+      await acquireDaemonLock(appDirs({ env }));
       const { startDaemon } = await import("../daemon/server.ts");
       let daemon: RunningDaemon | null = null;
       let keep: RuntimeApp | null = null;

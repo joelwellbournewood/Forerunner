@@ -233,7 +233,7 @@ async fn run_monitor(app: AppHandle) {
                 let failures = {
                     let mut s = lock(&state);
                     s.status.failures += 1;
-                    s.status.last_error = Some(e.clone());
+                    s.status.last_error = Some(e.to_string());
                     let failures = s.status.failures;
                     if failures >= FAILURES_BEFORE_UNREACHABLE {
                         s.status.reachable = false;

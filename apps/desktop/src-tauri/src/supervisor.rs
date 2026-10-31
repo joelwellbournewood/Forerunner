@@ -15,7 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::daemon::{
-    DaemonClient, DaemonFile, Health, daemon_file_path, is_fresh, read_daemon_file,
+    DaemonClient, DaemonFile, Health, HealthError, daemon_file_path, is_fresh, read_daemon_file,
 };
 use crate::install::FrCommand;
 
@@ -152,6 +152,34 @@ pub async fn wait_for_external(
         }
         if started.elapsed() > grace {
             return None;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+/// What came of waiting for a daemon that runs but answers slowly (U-065).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SlowWait {
+    /// It answered `/health`: attach.
+    Answered(Health),
+    /// It no longer accepts connections (or answers badly): it is gone, another may start.
+    Gone(HealthError),
+    /// Still no answer in time after the whole budget.
+    StillSlow,
+}
+
+/// Probe `/health` until it answers, stops listening, or `budget` passes. A time-out is never
+/// taken for "gone": only a refused connection or a bad answer is.
+pub async fn wait_for_answer(client: &DaemonClient, budget: Duration) -> SlowWait {
+    let started = Instant::now();
+    loop {
+        match client.health().await {
+            Ok(h) => return SlowWait::Answered(h),
+            Err(HealthError::Slow(_)) => {}
+            Err(e) => return SlowWait::Gone(e),
+        }
+        if started.elapsed() > budget {
+            return SlowWait::StillSlow;
         }
         tokio::time::sleep(POLL).await;
     }
@@ -574,6 +602,33 @@ mod tests {
         );
         let seen = server.seen();
         assert_eq!(seen[..2], ["GET /health", "POST /shutdown"]);
+    }
+
+    /// U-065: a slow daemon is waited for. Its answer attaches; a refused connection means it
+    /// is gone; a daemon that keeps not answering is reported, never replaced.
+    #[tokio::test]
+    async fn waiting_for_a_slow_daemon_tells_answered_gone_and_still_slow_apart() {
+        use crate::test_http::{Route, TestServer, health_body, refused_url};
+        let token = || crate::secret::Secret::new("t");
+        let up = TestServer::start(vec![Route::json("GET", "/health", 200, &health_body(2))]);
+        let client = DaemonClient::new(&up.url, token()).expect("client");
+        match wait_for_answer(&client, Duration::from_secs(5)).await {
+            SlowWait::Answered(h) => assert_eq!(h.active_sessions, 2),
+            other => panic!("expected an answer, got {other:?}"),
+        }
+        let gone = DaemonClient::new(&refused_url(), token()).expect("client");
+        assert!(matches!(
+            wait_for_answer(&gone, Duration::from_secs(5)).await,
+            SlowWait::Gone(HealthError::Unreachable(_))
+        ));
+        let hung = TestServer::start(vec![Route::json("GET", "/health", 200, "{}").hanging()]);
+        let slow = DaemonClient::new(&hung.url, token()).expect("client");
+        let started = Instant::now();
+        assert_eq!(
+            wait_for_answer(&slow, Duration::from_secs(2)).await,
+            SlowWait::StillSlow
+        );
+        assert!(started.elapsed() >= Duration::from_secs(2));
     }
 
     #[test]

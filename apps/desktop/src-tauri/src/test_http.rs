@@ -109,6 +109,14 @@ impl Drop for TestServer {
     }
 }
 
+/// A port nothing listens on: bound once, then released.
+pub fn refused_url() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}")
+}
+
 fn serve(mut stream: TcpStream, routes: &[Route], reqs: &Mutex<Vec<String>>, stop: &AtomicBool) {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));

@@ -1011,7 +1011,16 @@ both tables change.
 
 **Lifecycle (`actions::bootstrap`).** Read `daemon.json` (`url`, `token`, `pid`, `version`,
 `startedAt`; the url must be loopback `http://`). A pid known to be dead (Linux `/proc`) is a
-stale file; otherwise `GET /health` with a 1.5 s timeout. Healthy → attach, unless the build
+stale file; otherwise `GET /health` with a 1.5 s timeout. A time-out is not a refused
+connection (U-065, `daemon::HealthError`): `Slow` (connected, no answer in time) means the
+daemon runs, so the shell waits for it (`AttachDecision::Wait`, `settle_slow_daemon`: the splash
+says "Waiting for the Forerunner background service to answer…", up to `SLOW_DAEMON_WAIT`,
+60 s, probing through `supervisor::wait_for_answer`), attaches once it answers, starts a new one
+only once it stops listening, and otherwise says it runs but does not answer, without starting
+a second daemon on the same data; the health monitor only re-attaches. `Unreachable` (refused)
+and `Bad` (a status or a body that is not a healthy `/health`) still lead to a start, and the
+daemon's own lock refuses a second one on the same data folder (runtime.md). Healthy → attach,
+unless the build
 carries a runtime (`install::bundled_runtime`, `<resources>/runtime/runtime.json`) and the
 daemon reports an older version or none (`daemon::outdated_reason`, ADR 0092): then the shell
 shows "Updating the Forerunner background service…", ends that daemon
@@ -1246,7 +1255,7 @@ cd apps/desktop/src-tauri && cargo check           # Linux here; Windows in CI (
 
 Unit tests live next to the code (`#[cfg(test)]`): `dirs` (override on every platform,
 relative `FORERUNNER_HOME`, empty override ignored, the Windows/XDG cases of `paths.test.ts`,
-the full fixture table per platform, home fallback, app name); `daemon` (a zombie counts as ended; an action and a read answered after 2 s arrive while a
+the full fixture table per platform, home fallback, app name); `daemon` (a zombie counts as ended; a refused connection, a time-out and a bad answer told apart and a slow daemon waited for, never started beside, U-065; an action and a read answered after 2 s arrive while a
 `/health` that slow is a miss, against a local HTTP server, and the two time limits, U-064; the file
 `startDaemon` writes, missing/bad JSON/bad shape, off-machine URL refused, stale pid, attach vs
 start, freshness as a changed file, a grandchild pid written after the spawn attaches, daemon
@@ -1276,7 +1285,7 @@ on off, "the desktop" without an app and a new `on` replacing the names, the las
 but not stoppable while unreachable, a status read never overwriting a newer frame (and the
 later of two reads winning), when a restart announcement starts the external watch, nothing opening or starting during
 Quit, a launch during Quit remembered, a spawn that raced Quit not recorded (U-062), `Debug`
-hides the token); `supervisor` (log path, spawn failure logged, the stop argv per OS, the group argv for the shell's own child; Quit against real process trees: during the splash with no client, with a hung daemon (a local HTTP server that accepts and never answers; the `daemon.json` pid is left alone) and with a daemon that answers and goes after `POST /shutdown`, U-062); `events` (reconnect backoff);
+hides the token); `supervisor` (log path, spawn failure logged, the stop argv per OS, the group argv for the shell's own child; Quit against real process trees: during the splash with no client, with a hung daemon (a local HTTP server that accepts and never answers; the `daemon.json` pid is left alone) and with a daemon that answers and goes after `POST /shutdown`, U-062; waiting for a slow daemon ends answered, gone or still slow, U-065); `events` (reconnect backoff);
 `secret`; `env`; `lib` (install id persisted, 0600); `hotkey` (O.1: the default chord is the
 shared one; every accepted and refused case of `apps/ui/test/hotkey-chords.json` with the
 same canonical form or reason as the UI; messages name the token; every canonical chord over

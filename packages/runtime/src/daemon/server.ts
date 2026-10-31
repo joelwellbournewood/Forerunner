@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
 import { errorMessage, ForerunnerError, join, log, osFacts, redact } from "@forerunner/platform";
 import type { LessonStatus, MilestoneRow, SessionRow } from "@forerunner/state";
@@ -2023,6 +2023,36 @@ export function createDaemonApp(
   return { app, token, closeStreams };
 }
 
+export const DAEMON_FILE = "daemon.json";
+
+/**
+ * Remove `daemon.json` at stop only while it still names this daemon (its pid and its token):
+ * another daemon that started meanwhile wrote its own address there, and deleting that would
+ * leave the shells with no way to find it (U-065). Returns whether the file was removed.
+ */
+export function removeOwnDaemonFile(file: string, own: { pid: number; token: string }): boolean {
+  let recorded: { pid?: unknown; token?: unknown };
+  try {
+    recorded = JSON.parse(readFileSync(file, "utf8")) as typeof recorded;
+  } catch {
+    // Gone already, or not ours to judge: leave whatever is there.
+    return false;
+  }
+  if (recorded.pid !== own.pid || recorded.token !== own.token) {
+    log("daemon").warn("daemon.json names another daemon; leaving it", {
+      file,
+      pid: typeof recorded.pid === "number" ? recorded.pid : null,
+    });
+    return false;
+  }
+  try {
+    unlinkSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface RunningDaemon {
   url: string;
   token: string;
@@ -2054,7 +2084,7 @@ export async function startDaemon(
     server.once("error", reject);
   });
   mkdirSync(rt.dirs.runtime, { recursive: true });
-  const file = join(rt.dirs.runtime, "daemon.json");
+  const file = join(rt.dirs.runtime, DAEMON_FILE);
   writeFileSync(
     file,
     JSON.stringify(
@@ -2099,11 +2129,7 @@ export async function startDaemon(
         server.close(done);
         sockets.closeIdleConnections?.();
       });
-      try {
-        unlinkSync(file);
-      } catch {
-        // already gone
-      }
+      removeOwnDaemonFile(file, { pid: process.pid, token });
     },
   };
 }
