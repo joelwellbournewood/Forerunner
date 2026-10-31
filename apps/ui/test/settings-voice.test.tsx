@@ -190,6 +190,47 @@ describe("Settings: voice", () => {
   });
 });
 
+describe("Settings: voice providers (U-023)", () => {
+  it("shows the providers in force with where each comes from, and where a cloud one is chosen", async () => {
+    const harness = createHarness();
+    renderApp("/settings", harness);
+    const card = await screen.findByTestId("voice-settings");
+    // One place for voice: install state and the providers in force are both on this card.
+    const providers = await within(card).findByTestId("voice-providers");
+    expect(within(providers).getByTestId("voice-available")).toHaveTextContent("available");
+    expect(within(providers).getByTestId("voice-stt")).toHaveTextContent(
+      'deepgram (cloud; "deepgram" selected in Extensions (voice-deepgram))',
+    );
+    expect(within(providers).getByTestId("voice-tts")).toHaveTextContent(
+      'kokoro (local; local provider "kokoro": kokoro importable)',
+    );
+    // A cloud provider is chosen by its voice extension; the link goes there.
+    expect(within(providers).getByRole("link", { name: "Extensions" })).toHaveAttribute(
+      "href",
+      "/extensions",
+    );
+    expect(within(providers).getByTestId("voice-providers-note")).toHaveTextContent(
+      "Local voice (above) is used unless a cloud voice extension is on",
+    );
+    // A change reported by the daemon (a cloud row switched off elsewhere) is read again.
+    harness.daemon.state.voiceStatus = {
+      ...harness.daemon.state.voiceStatus,
+      available: false,
+      reason: "no STT provider available",
+      stt: null,
+      tts: null,
+    };
+    harness.store.dispatch({ type: "extension.changed" });
+    await waitFor(() =>
+      expect(within(providers).getByTestId("voice-available")).toHaveTextContent("unavailable"),
+    );
+    expect(within(providers).getByTestId("voice-reason")).toHaveTextContent(
+      "no STT provider available",
+    );
+    expect(within(providers).getByTestId("voice-stt")).toHaveTextContent("none");
+  });
+});
+
 describe("reattachDelay", () => {
   it("backs off from half a second to ten seconds", () => {
     expect([0, 1, 2, 3, 4, 5, 6, 20].map(reattachDelay)).toEqual([

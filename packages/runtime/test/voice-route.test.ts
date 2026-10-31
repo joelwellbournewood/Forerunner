@@ -1682,40 +1682,15 @@ describe("voice providers chosen in the Extensions panel", () => {
     expect(s.tts).toMatchObject({ name: "elevenlabs", policy: "preferred" });
   });
 
-  it("a row whose providers this daemon does not register is reported, not silently ignored", async () => {
-    const id = await enable("voice-local");
-    const s = await status();
-    // Cloud rows win over the local one; the local row says so for STT, and for TTS that
-    // none of its providers is registered here would be the reason without the cloud row.
-    expect(s.stt).toMatchObject({ name: "deepgram", policy: "preferred" });
-    expect(s.preferences.skipped).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          extensionId: id,
-          extension: "voice-local",
-          side: "stt",
-          reason: expect.stringContaining('"deepgram" (voice-deepgram) is preferred'),
-        }),
-        expect.objectContaining({
-          extensionId: id,
-          side: "tts",
-          reason: expect.stringContaining('"elevenlabs" (voice-elevenlabs) is preferred'),
-        }),
-      ]),
-    );
+  it("local voice is not an extension (U-023): voice-local is refused with where it lives, and a switched-off cloud row is skipped", async () => {
+    // Settings -> Voice installs and chooses local voice; the panel row switched nothing.
+    const refused = await post("/extensions", { catalogId: "voice-local" });
+    expect(refused.status).toBe(400);
+    expect(String((await json(refused)).message)).toContain("Settings → Voice");
     await post(`/extensions/${rows["voice-elevenlabs"]}/toggle`, { enabled: false });
     const alone = await status();
     expect(alone.preferences.tts).toBeNull();
-    expect(alone.preferences.skipped).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          extensionId: id,
-          side: "tts",
-          provider: null,
-          reason: "none of kokoro, piper is registered in this daemon",
-        }),
-      ]),
-    );
+    expect(JSON.stringify(alone.preferences)).not.toContain("voice-local");
     // Nothing chosen for TTS, and both cloud TTS rows are switched off: the policy must not
     // reach for their keys (off means off), so the fake is what is left.
     expect(alone.preferences.skipped).toEqual(

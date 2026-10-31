@@ -54,7 +54,13 @@ describe("Extensions panel", () => {
     expect(github).toHaveTextContent("CHF 1.00");
     expect(within(github).getByTestId("extension-permissions")).toHaveTextContent("2 tools");
     expect(within(github).getByTestId("extension-toggle")).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByTestId("extensions-group-model_provider")).toHaveTextContent("Anthropic");
+    // U-023: the model provider is set in setup; the group says so and lists no switch.
+    const models = screen.getByTestId("extensions-group-model_provider");
+    expect(within(models).getByTestId("extensions-model-pointer")).toHaveTextContent(
+      "set in Settings",
+    );
+    expect(within(models).queryByTestId("extension")).toBeNull();
+    expect(screen.getByTestId("extensions-group-skill")).toHaveTextContent("pdf-tools");
     expect(screen.getByTestId("extensions-group-specialist")).toHaveTextContent("researcher");
     expect(screen.getByTestId("extensions-pending")).toHaveTextContent(
       "1 waiting for your approval",
@@ -95,50 +101,32 @@ describe("Extensions panel", () => {
     expect(postedCalls(harness, "/extensions/ext_browser")[0]?.method).toBe("DELETE");
   });
 
-  it("says which voice provider is in force and why a voice row is not (spec O.4)", async () => {
+  it("points to Settings → Voice for voice, and each cloud voice row says whether it is in force (U-023, spec O.4)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/extensions", harness);
-    const card = await screen.findByTestId("voice-providers");
-    expect(within(card).getByTestId("voice-available")).toHaveTextContent("available");
-    expect(within(card).getByTestId("voice-stt")).toHaveTextContent(
-      'deepgram (cloud; "deepgram" selected in Extensions (voice-deepgram))',
-    );
-    expect(within(card).getByTestId("voice-tts")).toHaveTextContent("kokoro (local;");
-    // The card sits with the capabilities, where the voice rows are.
-    expect(screen.getByTestId("extensions-group-capability")).toContainElement(card);
     const rows = await screen.findAllByTestId("extension");
+    // One place for voice: the providers in force are shown in Settings -> Voice, not here.
+    const capabilities = screen.getByTestId("extensions-group-capability");
+    expect(screen.queryByTestId("voice-providers")).toBeNull();
+    const pointer = within(capabilities).getByTestId("extensions-voice-pointer");
+    expect(pointer).toHaveTextContent("Settings → Voice");
+    expect(within(pointer).getByRole("link", { name: "Settings → Voice" })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
     const deepgram = rows.find((r) => r.dataset.extensionId === "ext_voice_deepgram");
     if (!deepgram) throw new Error("no voice row");
-    expect(within(deepgram).getByTestId("extension-voice")).toHaveTextContent("in force for STT");
+    await waitFor(() =>
+      expect(within(deepgram).getByTestId("extension-voice")).toHaveTextContent("in force for STT"),
+    );
     const browser = rows.find((r) => r.dataset.extensionId === "ext_browser");
     expect(browser && within(browser).queryByTestId("extension-voice")).toBeNull();
 
-    // Switched off in the panel: the daemon reports the row skipped as switched off, keeps
-    // Deepgram out of the policy's fallback (its status row says so, the key not looked at)
-    // and the local STT is in force; the toggle re-reads the status.
+    // Switched off in the panel: the daemon reports the row skipped as switched off and the
+    // toggle re-reads the status, so the row says why it is no longer in force.
     harness.daemon.state.voiceStatus = {
       ...LOCAL_STT_STATUS,
-      statuses: {
-        ...VOICE_STATUS.statuses,
-        stt: [
-          {
-            name: "faster-whisper",
-            kind: "local",
-            available: true,
-            reason: "faster_whisper importable",
-            selected: true,
-          },
-          {
-            name: "deepgram",
-            kind: "cloud",
-            available: false,
-            reason: "switched off in Extensions",
-            secretRef: "secret:deepgram_api_key",
-            selected: false,
-          },
-        ],
-      },
       preferences: {
         stt: null,
         tts: null,
@@ -159,43 +147,10 @@ describe("Extensions panel", () => {
         "not in force for STT: switched off in Extensions",
       ),
     );
-    expect(within(card).getByTestId("voice-stt")).toHaveTextContent("faster-whisper (local;");
-    // A change the daemon reports (no toggle here) reloads it too.
-    harness.daemon.state.voiceStatus = {
-      ...VOICE_STATUS,
-      available: false,
-      reason: "no model credential configured; run fr setup",
-      stt: null,
-      tts: null,
-    };
-    harness.store.dispatch({ type: "extension.changed" });
-    await waitFor(() =>
-      expect(screen.getByTestId("voice-available")).toHaveTextContent("unavailable"),
-    );
-    expect(screen.getByTestId("voice-reason")).toHaveTextContent("no model credential");
-    expect(screen.getByTestId("voice-stt")).toHaveTextContent("none");
-  });
-
-  it("removing a voice row re-reads the voice status: the card drops its provider at once", async () => {
-    const user = userEvent.setup();
-    const harness = createHarness();
-    renderApp("/extensions", harness);
-    const card = await screen.findByTestId("voice-providers");
-    expect(within(card).getByTestId("voice-stt")).toHaveTextContent("deepgram (cloud;");
-    const rows = await screen.findAllByTestId("extension");
-    const deepgram = rows.find((r) => r.dataset.extensionId === "ext_voice_deepgram");
-    if (!deepgram) throw new Error("no voice row");
-    // With the row gone the policy picks the local STT; the panel shows that right after the
-    // removal, without waiting for the daemon's extension.changed frame.
+    // A change the daemon reports (no toggle here) re-reads it too.
     harness.daemon.state.voiceStatus = LOCAL_STT_STATUS;
-    await user.click(within(deepgram).getByTestId("extension-remove"));
-    await user.click(within(deepgram).getByTestId("extension-remove-confirm"));
-    await waitFor(() => expect(screen.getAllByTestId("extension")).toHaveLength(5));
-    expect(postedCalls(harness, "/extensions/ext_voice_deepgram")[0]?.method).toBe("DELETE");
-    await waitFor(() =>
-      expect(screen.getByTestId("voice-stt")).toHaveTextContent("faster-whisper (local;"),
-    );
-    expect(screen.getByTestId("voice-available")).toHaveTextContent("available");
+    harness.store.dispatch({ type: "extension.changed" });
+    await waitFor(() => expect(within(deepgram).queryByTestId("extension-voice")).toBeNull());
   });
 
   it("voiceBadges: in force, preferred but fallen back, skipped with the reason, nothing for other rows", () => {

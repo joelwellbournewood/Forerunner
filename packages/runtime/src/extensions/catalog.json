@@ -100,27 +100,6 @@
       "tags": ["deploy"]
     },
     {
-      "id": "voice-local",
-      "kind": "capability",
-      "name": "voice-local",
-      "description": "Local voice: faster-whisper for STT, Kokoro or Piper for TTS. Free and private; runs on this machine.",
-      "version": "1.0.0",
-      "module": "@forerunner/voice/local",
-      "voice": {
-        "stt": ["faster-whisper"],
-        "tts": ["kokoro", "piper"]
-      },
-      "permissions": {
-        "tools": [],
-        "actionClasses": ["read"],
-        "domains": [],
-        "paths": [],
-        "secrets": [],
-        "scopes": ["microphone and speaker on this machine"]
-      },
-      "tags": ["voice"]
-    },
-    {
       "id": "voice-deepgram",
       "kind": "capability",
       "name": "voice-deepgram",
@@ -181,23 +160,6 @@
       "tags": ["voice"]
     },
     {
-      "id": "anthropic",
-      "kind": "model_provider",
-      "name": "anthropic",
-      "description": "Anthropic Messages API (API key) or a Claude subscription token.",
-      "version": "1.0.0",
-      "module": "@forerunner/runtime/provider/anthropic",
-      "permissions": {
-        "tools": [],
-        "actionClasses": [],
-        "domains": ["api.anthropic.com"],
-        "paths": [],
-        "secrets": ["anthropic_api_key"],
-        "scopes": ["model calls billed to the selected billing source"]
-      },
-      "tags": ["model"]
-    },
-    {
       "id": "mcp-filesystem",
       "kind": "connector",
       "name": "filesystem",
@@ -247,7 +209,7 @@
       "id": "mcp-github",
       "kind": "connector",
       "name": "github",
-      "description": "GitHub MCP server over a fine-grained token stored in the vault as github_token, the name fr setup --github-token stores (scoped to the repositories you select).",
+      "description": "Extra GitHub tools for agents (issues, PRs, search); the built-in GitHub features do not need it. Runs the GitHub MCP server with the fine-grained token stored in the vault as github_token, the name fr setup --github-token stores (scoped to the repositories you select).",
       "version": "latest",
       "homepage": "https://github.com/github/github-mcp-server",
       "transport": {

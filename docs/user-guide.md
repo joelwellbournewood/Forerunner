@@ -147,6 +147,26 @@ without speech: you still talk, the reply appears as it is written, and Talk sto
 choice applies from your next turn and is remembered on this computer. With a screen reader, the panel reads
 out your words, each finished sentence of the reply and the end of the reply.
 
+## Extensions and Settings
+
+Each thing has one place. **Settings** is how Forerunner itself works; **Extensions** is what
+your agents may reach beyond their built-in tools.
+
+- **Settings**: your agent's name, the model and its key or subscription (set in the setup),
+  budgets and autonomy, **Voice** (installing local voice, CPU or GPU, and which voice providers
+  are in force), **Email** (your agent's mailbox and mode, on the Email page) and your paired
+  devices.
+- **Extensions**: each extra capability with what it is granted (tools, domains, secrets,
+  scopes), what it has cost, and an On/Off switch that takes effect at once, also for a session
+  that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice
+  providers (Deepgram, Cartesia, ElevenLabs: used instead of local voice while on, each with its
+  key) and connectors (MCP servers) such as filesystem, fetch and GitHub.
+- The **GitHub** connector gives agents extra GitHub tools (issues, pull requests, search). The
+  built-in GitHub features (your repositories, pull requests, the Projects mirror) do not need
+  it.
+- Local voice and the model provider had rows in Extensions that switched nothing. They are no
+  longer there; the first start of this version removes such a row an earlier version added.
+
 ## Your agent's name
 
 Settings → **Your agent**: type a new name (one line, up to 60 characters) and click **Save**. The

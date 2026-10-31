@@ -6,7 +6,8 @@ import {
   voiceInstallCommand,
 } from "@forerunner/runtime/daemon/api-types";
 import { useEffect, useRef, useState } from "react";
-import { describeError } from "../api/client.ts";
+import { Link } from "react-router";
+import { describeError, type VoiceStatusView } from "../api/client.ts";
 import {
   cancelVoiceInstall,
   followVoiceInstall,
@@ -15,8 +16,8 @@ import {
 } from "../api/voice-install.ts";
 import { RouteMissing } from "../components/RouteMissing.tsx";
 import { Badge, Button, ErrorBanner, Loading } from "../components/ui.tsx";
-import { useAsync } from "../lib/use-async.ts";
-import { useClient } from "../store/context.tsx";
+import { type AsyncState, useAsync } from "../lib/use-async.ts";
+import { useClient, useUiState } from "../store/context.tsx";
 
 /** "cuda (float16)", with the CPU fallback's reason when the GPU check fell back. */
 export function deviceLabel(d: VoiceDeviceView | null): string {
@@ -62,6 +63,73 @@ export function installProgress(entries: VoiceInstallEntryView[]): {
   return { bars: [...bars.values()], lines: lines.slice(-8), result };
 }
 
+const VOICE_SIDES = ["stt", "tts"] as const;
+const SIDE_LABELS: Record<(typeof VOICE_SIDES)[number], string> = { stt: "STT", tts: "TTS" };
+
+/**
+ * The providers the next voice session uses (spec O.4), on the card that installs local voice
+ * (U-023: one place for voice): each side's pick with its kind and the reason, available or why
+ * not. A cloud provider is chosen by its voice extension in Extensions; the environment
+ * variables override both.
+ */
+function VoiceProviders({ voice }: { voice: AsyncState<VoiceStatusView> }) {
+  // An older daemon without the route: the profile above still works, nothing to show here.
+  if (voice.routeMissing) return null;
+  if (voice.error && !voice.data) {
+    return (
+      <p className="mt-3 text-xs text-neutral-500" data-testid="voice-providers">
+        Voice providers: {voice.error}
+      </p>
+    );
+  }
+  const v = voice.data;
+  if (!v) return null;
+  const pick = (side: (typeof VOICE_SIDES)[number]) => {
+    const p = v[side];
+    return p ? `${p.name} (${p.kind}; ${p.reason})` : "none";
+  };
+  return (
+    <div
+      className="mt-3 rounded border border-neutral-100 p-2 text-sm dark:border-neutral-800"
+      data-testid="voice-providers"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">Voice providers in force</span>
+        <Badge tone={v.available ? "good" : "warn"} testId="voice-available">
+          {v.available ? "available" : "unavailable"}
+        </Badge>
+        {v.sessions > 0 ? (
+          <span className="text-xs text-neutral-500">
+            {v.sessions} of {v.maxSessions} sessions open
+          </span>
+        ) : null}
+      </div>
+      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+        {VOICE_SIDES.map((side) => (
+          <div key={side} className="contents">
+            <dt className="text-neutral-500">{SIDE_LABELS[side]}</dt>
+            <dd data-testid={`voice-${side}`}>{pick(side)}</dd>
+          </div>
+        ))}
+      </dl>
+      {!v.available ? (
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300" data-testid="voice-reason">
+          {v.reason}
+        </p>
+      ) : null}
+      <p className="mt-1 text-xs text-neutral-500" data-testid="voice-providers-note">
+        Local voice (above) is used unless a cloud voice extension is on in{" "}
+        <Link to="/extensions" className="text-blue-700 hover:underline dark:text-blue-300">
+          Extensions
+        </Link>{" "}
+        (voice-deepgram for speech recognition, voice-cartesia or voice-elevenlabs for speech); a
+        cloud one needs its key. A change applies at the next voice session. FORERUNNER_VOICE_STT
+        and FORERUNNER_VOICE_TTS override both.
+      </p>
+    </div>
+  );
+}
+
 const LINE_TONES = {
   neutral: "text-neutral-700 dark:text-neutral-300",
   good: "text-emerald-800 dark:text-emerald-300",
@@ -73,11 +141,15 @@ const LINE_TONES = {
  * Settings → Voice (ADR 0090): the voice profile in force (none, cpu, gpu) with the devices its
  * check verified, each profile's disk size and trade-off, and a switch that runs the same
  * install as `fr voice install` through the daemon with its progress streamed here. A switch
- * downloads gigabytes, so it is confirmed first; the terminal command is shown too.
+ * downloads gigabytes, so it is confirmed first; the terminal command is shown too. Below, the
+ * providers the next voice session uses (U-023: voice has one place, this card).
  */
 export function VoiceSettingsCard() {
   const client = useClient();
   const view = useAsync((signal) => voiceInstallView(client, signal), [client]);
+  // The providers in force follow the cloud voice rows in Extensions and the install here.
+  const extensionsVersion = useUiState((s) => s.extensionsVersion);
+  const voice = useAsync((signal) => client.voiceStatus(signal), [client, extensionsVersion]);
   const [entries, setEntries] = useState<VoiceInstallEntryView[]>([]);
   const [following, setFollowing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +229,7 @@ export function VoiceSettingsCard() {
         }
         setFollowing(false);
         view.reload();
+        voice.reload();
       });
   };
 
@@ -333,6 +406,7 @@ export function VoiceSettingsCard() {
             The same from a terminal: <code>fr voice install --cpu</code>, <code>--gpu</code> or{" "}
             <code>fr voice remove</code>; <code>fr voice status</code> shows what is installed.
           </p>
+          <VoiceProviders voice={voice} />
         </>
       ) : null}
       {error ? <ErrorBanner message={error} testId="voice-install-error" /> : null}

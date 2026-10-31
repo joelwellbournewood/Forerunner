@@ -8,6 +8,7 @@ import {
   loadBuiltinCatalog,
   parseCatalog,
   parseCatalogEntry,
+  RETIRED_CATALOG_ENTRIES,
 } from "../src/extensions/catalog.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { fakeCatalogEntry, startHttpFixture } from "./extensions-helpers.ts";
@@ -23,17 +24,23 @@ describe("extension catalog", () => {
       "email",
       "desktop-control",
       "cloudflare",
-      "voice-local",
       "voice-deepgram",
       "voice-cartesia",
       "voice-elevenlabs",
-      "anthropic",
       "mcp-filesystem",
       "mcp-fetch",
       "mcp-github",
     ]) {
       expect(ids).toContain(id);
     }
+    // U-023: one place for each thing. Local voice is installed and chosen in Settings ->
+    // Voice, and the model provider is set in setup; their rows switched nothing, so the
+    // catalog no longer offers them (an installed one is retired at the next start).
+    for (const gone of ["voice-local", "anthropic"]) {
+      expect(ids).not.toContain(gone);
+      expect(RETIRED_CATALOG_ENTRIES[gone]).toEqual(expect.any(String));
+    }
+    expect(RETIRED_CATALOG_ENTRIES["voice-local"]).toContain("Settings → Voice");
     const connectors = file.entries.filter((e) => e.kind === "connector");
     expect(connectors.length).toBeGreaterThanOrEqual(3);
     for (const c of connectors) expect(c.transport).toBeDefined();
@@ -47,15 +54,15 @@ describe("extension catalog", () => {
     }
     expect(github?.permissions.secrets).toEqual([SECRET_NAMES.github]);
     expect(github?.description).toContain(SECRET_NAMES.github);
+    // U-023: the panel says what the connector adds and that the built-in GitHub works without it.
+    expect(github?.description).toContain(
+      "Extra GitHub tools for agents (issues, PRs, search); the built-in GitHub features do not need it.",
+    );
     expect(JSON.stringify(github)).not.toContain("github_pat");
     expect(file.entries.find((e) => e.id === "desktop-control")?.requiresAutonomy).toBe(3);
     // The voice entries name the providers they stand for (spec O.4: chosen in the panel); a
     // cloud entry's key is the secret its row is granted, by reference.
     const voice = (id: string) => file.entries.find((e) => e.id === id);
-    expect(voice("voice-local")?.voice).toEqual({
-      stt: ["faster-whisper"],
-      tts: ["kokoro", "piper"],
-    });
     expect(voice("voice-deepgram")?.voice).toEqual({ stt: ["deepgram"] });
     expect(voice("voice-deepgram")?.permissions.secrets).toEqual(["deepgram_api_key"]);
     expect(voice("voice-cartesia")?.voice).toEqual({ tts: ["cartesia"] });

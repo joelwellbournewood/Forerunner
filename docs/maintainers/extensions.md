@@ -27,10 +27,10 @@ ToolSpecs, how classes are inferred and who may be started for discovery.
 | File | What it holds |
 | --- | --- |
 | `types.ts` | zod shapes: `ExtensionPermissions`, `PermissionReview`, `ReviewedTool`, `ExtensionView`, kinds, statuses, grant stages, the approval port, events, `widens()` |
-| `catalog.ts`, `catalog.json` | the built-in catalog, `CatalogEntry`/`CatalogFile` schemas, `ConnectorTransport` (stdio argv or http), bounded `fetchJson`, remote catalog fetch and `ExtensionCatalog` (`isBuiltin`) |
+| `catalog.ts`, `catalog.json` | the built-in catalog, `CatalogEntry`/`CatalogFile` schemas, `ConnectorTransport` (stdio argv or http), bounded `fetchJson`, remote catalog fetch and `ExtensionCatalog` (`isBuiltin`); `RETIRED_CATALOG_ENTRIES` / `retiredReason()` (entries another screen owns, U-023) |
 | `mcp.ts` | `McpConnector` (connect, list tools and resources, `review()`, `bridgeTools()`, `callTool()`, `close()`, `child`), `StdioMcpTransport` over the platform shell, class and field inference, `assignBridgedNames`, `withoutSecretRefs`, `toolPrefixOf`/`ownsToolName`, `DefaultMcpConnectorFactory` |
 | `approvals.ts` | `HumanRequestExtensionApprovals` (production port over `HumanRequestRepo`) and `MemoryExtensionApprovals` (tests) |
-| `registry.ts` | `ExtensionRegistry`: list, get, add from catalog or URL, approve/deny (two stages), toggle, remove, updatePermissions, recordCost, start/close, bridged tools, tool ownership index, `installedCatalogEntries(kind?)` and `enabledCatalogEntries(kind?)` (the installed catalog rows with their entry, on or off, and the enabled ones among them, for the voice preferences); `grantedToolNames()`, `extensionCostKey()`, `ledgerCostByExtension()`, `KillPort`, `EXTENSIONS_KILL_AGENT` |
+| `registry.ts` | `ExtensionRegistry`: list, get, add from catalog or URL, approve/deny (two stages), toggle, remove, updatePermissions, recordCost, start/close, bridged tools, tool ownership index, `installedCatalogEntries(kind?)` and `enabledCatalogEntries(kind?)` (the installed catalog rows with their entry, on or off, and the enabled ones among them, for the voice preferences); `retireEntries()` (the rows of retired catalog entries, removed at start); `grantedToolNames()`, `extensionCostKey()`, `ledgerCostByExtension()`, `KillPort`, `EXTENSIONS_KILL_AGENT` |
 | `gate.ts` | `ExtensionGate.check()`, `GatedEnforcementHooks` (hooks with the gate in front of `beforeToolCall`), `gateTool()` |
 | `routes.ts` | `createExtensionsRoutes(deps)`: the Hono sub-app for the panel |
 
@@ -40,8 +40,11 @@ Kinds (`EXTENSION_PANEL_KINDS`): `connector` (an MCP server; the state alias `mc
 shown as a connector), `skill`, `specialist`, `capability` (browser, email, desktop control,
 cloudflare, voice providers), `model_provider`. `(kind, name)` is unique.
 
-**Voice rows (spec O.4).** Enabling a `voice-*` capability is how the human chooses a voice
-provider, and switching it off is how they rule one out: `installedCatalogEntries("capability")`
+**Voice rows (spec O.4).** Enabling a cloud `voice-*` capability (`voice-deepgram`,
+`voice-cartesia`, `voice-elevenlabs`) is how the human chooses a cloud voice provider, and
+switching it off is how they rule one out. Local voice has no row (U-023): it is installed and
+chosen in Settings -> Voice, which also shows the providers in force; the policy prefers it
+whenever no cloud row is on. `installedCatalogEntries("capability")`
 hands the installed rows, on or off, with their catalog entry (a fresh read each call) to
 `src/voice/providers.ts`, which takes the entry's `voice` provider names, the row's `enabled`
 flag and its granted `secrets` and resolves the preferred STT and TTS at every voice status
@@ -204,9 +207,19 @@ until a capability module charges through the ledger.
 `permissions` (declared, same shape as the row), optional `requiresAutonomy`, optional
 `voice` (capabilities only: `{ stt?: [names], tts?: [names] }`, the voice registry's provider
 names the entry stands for, in order of preference; at least one side), `tags`. The
-built-in file ships browser, email, desktop-control, cloudflare, voice-local,
-voice-deepgram, voice-cartesia, voice-elevenlabs, anthropic, mcp-filesystem, mcp-fetch and
-mcp-github. A remote catalog (`FORERUNNER_EXTENSION_CATALOG_URL`, or
+built-in file ships browser, email, desktop-control, cloudflare, voice-deepgram,
+voice-cartesia, voice-elevenlabs, mcp-filesystem, mcp-fetch and mcp-github. `mcp-github`'s
+description says what it adds and that the built-in GitHub features do not need it (U-023).
+
+**Retired entries (U-023).** `RETIRED_CATALOG_ENTRIES` names the built-in ids that were taken
+out because another screen owns what they stood for, with the reason a person reads:
+`voice-local` (Settings -> Voice) and `anthropic` (the setup; nothing read the row). They
+cannot be added again (`mustGet` answers `validation` with the reason, 400 on the route) and a
+remote catalog cannot bring them back (`refresh()` skips them like built-in ids). At every
+start the daemon calls `registry.retireEntries()` (`compose.ts`, before `start()`): a row whose
+`config.catalogId` is retired, on, off or pending, has its tokens revoked as on `remove()`, is
+deleted, its open Inbox card withdrawn, and an `extensions.retire` audit row (with the reason)
+and an `extension.removed` event are written; a later start finds nothing. A remote catalog (`FORERUNNER_EXTENSION_CATALOG_URL`, or
 `ExtensionCatalogOptions.remoteUrl`) is fetched by `ExtensionCatalog.refresh()`; its entries
 never override built-in ids and are not trusted for an early start (`isBuiltin()` is false).
 Nothing in the catalog names an org, host or user path.
@@ -288,7 +301,15 @@ concatenation):
   capabilities and the `voice` provider names of the `voice-*` entries (and none elsewhere);
   a `voice` field on a non-capability, or naming no provider, is rejected; bad entries rejected; remote catalog over `node:http` merges without
   overriding built-ins and is not built-in; env URL; `fetchJson` refuses by content-length and
-  cuts a chunked stream at the cap.
+  cuts a chunked stream at the cap; the retired entries (`voice-local`, `anthropic`) are not
+  shipped and carry their reason, and `mcp-github` says the built-in GitHub does not need it
+  (U-023).
+- `extensions-retired.test.ts` (U-023, across restarts on one file-backed home): an installed
+  `voice-local` row and a pending `anthropic` row with its Inbox card, as 1.0.4 wrote them, are
+  gone from `GET /extensions` after the next start, the card is withdrawn, each has an
+  `extensions.retire` audit row with the reason, `/voice/status` names neither, adding
+  `voice-local` again answers 400 naming Settings -> Voice, another row is untouched, and a third
+  start retires nothing more.
 - `extensions-mcp.test.ts`: inference table (name first, annotations only tighten, conflicts
   recorded), conflict flagged in the summary, colliding names renamed deterministically,
   prefix helpers, `withoutSecretRefs`, field inference, schema, review contents, bridged

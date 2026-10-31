@@ -19,7 +19,7 @@ import {
   type Tone,
 } from "../components/ui.tsx";
 import { formatDateTime } from "../lib/time.ts";
-import { type AsyncState, useAsync } from "../lib/use-async.ts";
+import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState } from "../store/context.tsx";
 
 export const KIND_LABELS: Record<ExtensionKind, string> = {
@@ -64,11 +64,11 @@ const VOICE_SIDES = ["stt", "tts"] as const;
 const SIDE_LABELS: Record<(typeof VOICE_SIDES)[number], string> = { stt: "STT", tts: "TTS" };
 
 /**
- * What the daemon's voice status says about one `voice-*` row (spec O.4): in force for a
- * side (the pick is any provider the row stands for: Piper for voice-local after a Kokoro
- * that does not import), preferred but not usable (the pick fell back, with the registry's
- * reason), or not in force with the reason the daemon gives (switched off, no key or key not
- * granted, another row preferred, an override).
+ * What the daemon's voice status says about one cloud `voice-*` row (spec O.4): in force for a
+ * side (the pick is any provider the row stands for), preferred but not usable (the pick fell
+ * back, with the registry's reason), or not in force with the reason the daemon gives (switched
+ * off, no key or key not granted, another row preferred, an override). Which providers are in
+ * force overall is shown in Settings -> Voice (U-023).
  */
 export function voiceBadges(
   extension: Pick<ExtensionView, "id">,
@@ -96,61 +96,6 @@ export function voiceBadges(
     out.push({ tone: "warn", text: `not in force for ${SIDE_LABELS[s.side]}: ${s.reason}` });
   }
   return out;
-}
-
-/** The providers the next voice session uses, above the capabilities (where the voice rows are). */
-function VoiceProvidersCard({ voice }: { voice: AsyncState<VoiceStatusView> }) {
-  // An older daemon without the route: the rows still work, nothing to show here.
-  if (voice.routeMissing) return null;
-  if (voice.error && !voice.data) {
-    return (
-      <p className="mt-1 text-xs text-neutral-500" data-testid="voice-providers">
-        Voice providers: {voice.error}
-      </p>
-    );
-  }
-  const v = voice.data;
-  if (!v) return null;
-  const pick = (side: (typeof VOICE_SIDES)[number]) => {
-    const p = v[side];
-    return p ? `${p.name} (${p.kind}; ${p.reason})` : "none";
-  };
-  return (
-    <div
-      className="mt-1 rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800"
-      data-testid="voice-providers"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">Voice providers</span>
-        <Badge tone={v.available ? "good" : "warn"} testId="voice-available">
-          {v.available ? "available" : "unavailable"}
-        </Badge>
-        {v.sessions > 0 ? (
-          <span className="text-xs text-neutral-500">
-            {v.sessions} of {v.maxSessions} sessions open
-          </span>
-        ) : null}
-      </div>
-      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-        {VOICE_SIDES.map((side) => (
-          <div key={side} className="contents">
-            <dt className="text-neutral-500">{SIDE_LABELS[side]}</dt>
-            <dd data-testid={`voice-${side}`}>{pick(side)}</dd>
-          </div>
-        ))}
-      </dl>
-      {!v.available ? (
-        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300" data-testid="voice-reason">
-          {v.reason}
-        </p>
-      ) : null}
-      <p className="mt-1 text-xs text-neutral-500">
-        Enable a voice capability below to choose a provider; a cloud one needs its key (fr setup).
-        A change applies at the next voice session. FORERUNNER_VOICE_STT and FORERUNNER_VOICE_TTS
-        override the panel.
-      </p>
-    </div>
-  );
 }
 
 function PermissionList({ permissions }: { permissions: ExtensionPermissions }) {
@@ -527,9 +472,10 @@ function AddExtensionDialog({
  * Extensions panel (spec K.6, L.5): every connector, MCP server, skill, specialist, capability
  * and model provider with status, permissions, cost, version, toggle, remove, and add from the
  * catalog or a URL. Connectors and permission widenings wait for the human's approval (202);
- * the list reloads on every `extension.changed` frame from the daemon. The capabilities
- * group shows the voice providers in force (spec O.4) and each `voice-*` row whether it is
- * the one in force, or why not; both follow every change in the list.
+ * the list reloads on every `extension.changed` frame from the daemon. Each cloud `voice-*`
+ * row says whether it is the one in force, or why not, following every change in the list;
+ * local voice and the providers in force are in Settings -> Voice, and the model provider in
+ * the setup (U-023: one place for each thing).
  */
 export function ExtensionsPage() {
   const client = useClient();
@@ -612,9 +558,33 @@ export function ExtensionsPage() {
       {grouped.map((g) => (
         <div key={g.kind} data-testid={`extensions-group-${g.kind}`}>
           <h2 className="font-semibold">{KIND_LABELS[g.kind]}</h2>
-          {g.kind === "capability" ? <VoiceProvidersCard voice={voice} /> : null}
+          {g.kind === "capability" ? (
+            <p
+              className="mt-1 text-xs text-neutral-600 dark:text-neutral-400"
+              data-testid="extensions-voice-pointer"
+            >
+              Local voice is installed and chosen in{" "}
+              <Link to="/settings" className="text-blue-700 hover:underline dark:text-blue-300">
+                Settings → Voice
+              </Link>
+              , which also shows the voice providers in force. A cloud voice capability here
+              (voice-deepgram, voice-cartesia, voice-elevenlabs) is used instead while it is on; it
+              needs its key.
+            </p>
+          ) : null}
+          {g.kind === "model_provider" ? (
+            <p
+              className="mt-1 text-xs text-neutral-600 dark:text-neutral-400"
+              data-testid="extensions-model-pointer"
+            >
+              The model provider and its API key or subscription token are set in Settings (the
+              setup); nothing here changes them.
+            </p>
+          ) : null}
           {g.rows.length === 0 ? (
-            <p className="text-xs text-neutral-500">None installed.</p>
+            g.kind === "model_provider" ? null : (
+              <p className="text-xs text-neutral-500">None installed.</p>
+            )
           ) : (
             <ul className="mt-1 space-y-2">
               {g.rows.map((e) => (

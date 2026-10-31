@@ -27,6 +27,7 @@ import {
   fetchJson,
   parseCatalog,
   parseCatalogEntry,
+  retiredReason,
 } from "./catalog.ts";
 import {
   type BridgedToolSpec,
@@ -832,6 +833,36 @@ export class ExtensionRegistry {
     await this.withdrawRequest(row, configOf(row).pendingRequestId);
     await this.audit("extensions.remove", row, actor, { revokedTokens: revoked.length });
     this.emit("extension.removed", row, actor, { revokedTokens: revoked });
+  }
+
+  /**
+   * Take out the rows of catalog entries another screen now owns (`RETIRED_CATALOG_ENTRIES`,
+   * U-023): local voice is Settings -> Voice, the model provider is setup. Called at every
+   * start; the first start of a version that retired an entry removes the rows an earlier
+   * version installed, on or off or still pending: their tokens are revoked as on `remove()`,
+   * an open Inbox card is withdrawn, and an `extensions.retire` audit row carries the reason.
+   * Nothing else is touched, so later starts find nothing to do. Returns the retired row ids.
+   */
+  async retireEntries(actor: Actor = {}): Promise<string[]> {
+    const retired: string[] = [];
+    for (const row of await this.deps.extensions.list(undefined, { orderBy: "created_at" })) {
+      const cfg = configOf(row);
+      const reason = cfg.catalogId ? retiredReason(cfg.catalogId) : null;
+      if (!reason) continue;
+      const revoked = await this.revokeLive(row);
+      await this.deps.extensions.delete(row.id);
+      this.toolIndex = null;
+      await this.withdrawRequest(row, cfg.pendingRequestId);
+      await this.audit("extensions.retire", row, actor, {
+        catalogId: cfg.catalogId,
+        reason,
+        revokedTokens: revoked.length,
+      });
+      this.emit("extension.removed", row, actor, { retired: true, reason, revokedTokens: revoked });
+      retired.push(row.id);
+    }
+    if (retired.length) this.logger.info("retired extension rows", { rows: retired.length });
+    return retired;
   }
 
   /**

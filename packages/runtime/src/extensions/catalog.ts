@@ -150,6 +150,27 @@ export function parseCatalogEntry(json: unknown, source = "manifest"): CatalogEn
   return parsed.data;
 }
 
+/**
+ * Built-in entries that were taken out of the catalog because another screen owns what they
+ * stood for, each with the reason a person reads (U-023: one place for each thing). They can
+ * no longer be added (`mustGet` refuses them with the reason, and a remote catalog cannot bring
+ * them back), and a row an earlier version installed is retired at the next start
+ * (`ExtensionRegistry.retireEntries`).
+ */
+export const RETIRED_CATALOG_ENTRIES: Readonly<Record<string, string>> = {
+  "voice-local":
+    "local voice is installed and chosen in Settings → Voice, which also shows the voice providers in force",
+  anthropic:
+    "the model provider and its key or subscription token are set in Settings (setup); nothing read this row",
+};
+
+/** The reason a retired catalog id gives, or null for any other id. */
+export function retiredReason(catalogId: string): string | null {
+  return Object.hasOwn(RETIRED_CATALOG_ENTRIES, catalogId)
+    ? (RETIRED_CATALOG_ENTRIES[catalogId] ?? null)
+    : null;
+}
+
 /** The catalog shipped with this build (`catalog.json` next to this file). */
 export function loadBuiltinCatalog(): CatalogFile {
   const text = readFileSync(new URL("./catalog.json", import.meta.url), "utf8");
@@ -313,6 +334,12 @@ export class ExtensionCatalog {
   }
 
   mustGet(id: string): CatalogEntry {
+    const retired = retiredReason(id);
+    if (retired) {
+      throw new ForerunnerError("validation", `${id} is no longer an extension: ${retired}`, {
+        details: { catalogId: id, retired: true },
+      });
+    }
     const e = this.get(id);
     if (!e) {
       throw new ForerunnerError("not_found", `catalog entry ${id} not found`, {
@@ -333,7 +360,7 @@ export class ExtensionCatalog {
     const next = new Map<string, CatalogEntry>();
     const skipped: string[] = [];
     for (const e of file.entries) {
-      if (this.builtin.has(e.id)) skipped.push(e.id);
+      if (this.builtin.has(e.id) || retiredReason(e.id)) skipped.push(e.id);
       else next.set(e.id, e);
     }
     this.remote = next;

@@ -420,9 +420,12 @@ so a toggle in the Extensions panel applies at the next voice session without a 
    that wins over the panel for that side; every enabled row for the side is reported as
    `overridden by FORERUNNER_VOICE_TTS=<name>`.
 2. **The `voice-*` rows.** Each built-in voice catalog entry names the providers it stands
-   for (`voice: { stt: [...], tts: [...] }`, in order of preference; `voice-local` names
-   faster-whisper, kokoro and piper). Rows that need a key (the cloud ones) are considered
-   before the local row, then by name. Per side the first enabled row whose provider's own
+   for (`voice: { stt: [...], tts: [...] }`, in order of preference): `voice-deepgram`,
+   `voice-cartesia` and `voice-elevenlabs`. Local voice has no row since U-023: it is installed
+   and chosen in Settings -> Voice, and the policy prefers it whenever no cloud row is on (the
+   `voice-local` row of 1.0.4 is retired at the next start, `extensions.md`). The resolver
+   still handles a row that stands for several providers or for local ones (rows that need a
+   key are considered first, then by name). Per side the first enabled row whose provider's own
    key (`VOICE_SECRET_REFS`) is granted on the row and has a value in the vault, and one of
    whose providers is registered in this daemon, is in force; the preference carries every
    registered provider the row stands for (`providers`), so the panel counts the row in force
@@ -435,16 +438,16 @@ so a toggle in the Extensions panel applies at the next voice session without a 
    `preferences.excluded` for its side and the registry's fallback never reaches it: with no
    local provider the selection ends at `unavailable` (the fake in tests) rather than at a key
    in the vault, and the key is never read, not even for the probe. The local helpers are
-   never excluded (free, private, the policy's default): switching `voice-local` off removes
-   the preference only. A provider the environment or an enabled row put in force is never
+   never excluded (free, private, the policy's default). A provider the environment or an enabled row put in force is never
    excluded by another row that stands for it.
 4. **Nothing chosen.** The registry's policy above picks.
 
 `GET /voice/status` carries the result as `preferences: { stt, tts, skipped }` (each preference
 with the row's `providers`; `excluded` stays inside the daemon, the providers' status rows carry
-its reason); the Extensions panel shows the pair in force above the capabilities and a badge on
-every voice row (in force, preferred but fallen back with the registry's reason, or not in force
-with the reason).
+its reason); Settings -> Voice shows the pair in force under the voice profile (U-023: one place
+for voice; it re-reads on every `extension.changed` frame and after an install), and the
+Extensions panel a badge on every cloud voice row (in force, preferred but fallen back with the
+registry's reason, or not in force with the reason) with a line pointing to Settings -> Voice.
 
 Cloud keys are secret references (`secret:deepgram_api_key`) resolved through the injected
 `SecretResolver` right before a connection. Values never go into URLs (unless Cartesia's

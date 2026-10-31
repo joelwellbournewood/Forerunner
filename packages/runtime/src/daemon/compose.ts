@@ -3143,6 +3143,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const killWatcher = new KillFileWatcher(kill, clock, dirs.runtime);
   if (services) killWatcher.start();
   mkdirSync(evalWorkRoot, { recursive: true });
+  // Rows of catalog entries another screen now owns (U-023: local voice, the model provider)
+  // leave the panel before anything reconnects; a later start finds none.
+  await extensions.retireEntries({ humanId: human.id }).catch((e: unknown) => {
+    logger.warn("retired extension rows not removed", { error: errorMessage(e) });
+  });
   if (services) await extensions.start();
   // The command table and the reverts of temporary changes whose window is still open.
   await commands.start();
