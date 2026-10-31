@@ -440,6 +440,11 @@ stands. Each entry says what you see first, then the cause and the fix for maint
     plan skips what does not fit; the Start dialog and summary name what waits on what.
   - U-041 (d61f3cc): priority is Low / Medium / High; old numbers map in the same order.
   - U-042 (470a508): a task's budget caps its runs; the Tasks tab shows the cap.
+    Found by Windows CI later: the phase 1 gate's overspend test still expected a task's
+    overspend to end the session; it now covers both rules (a stop at the session's budget ends
+    the session with a handoff; a stop at the task's own budget files the task for the person
+    and the session goes on). Nobody had run the integration suite after U-042; it is now in
+    the run before every push (`validation.md`).
   - U-043 (fed28d0): waiting starts run in order, none replaced; the dialog says how many wait.
   - U-044 (953fd99, 053c098): after two failed attempts the task goes to another specialist that
     can do the work, else to you; no web research is planned without web tools.
@@ -472,6 +477,10 @@ stands. Each entry says what you see first, then the cause and the fix for maint
     through Claude Code (Anthropic allows the token only there); the token is never sent to the
     API directly. Not yet run with a real token.
   - U-049 (c884954): a replaced key is used from the next request ("In use from the next request").
+    Found by CI on Linux and Windows later: leaving the assistant through the sidebar could
+    land back on its first step. The setup check ran again on every page (react-router gives a
+    new `navigate` per path) and raced the finish; it now runs once, when the app starts
+    (ADR 0092), so a person who leaves without saving is not sent back on every click either.
   - U-050 (51cf619): a lost data folder no longer stops the service from starting.
   - U-051 (2ad3a24): the GitHub check lists the repositories the token reaches and warns.
   - U-052 (367e4e2): Settings → Claude subscription allowance, in CHF.
