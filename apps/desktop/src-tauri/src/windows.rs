@@ -12,9 +12,7 @@ use crate::actions::shared;
 use crate::deeplink::{SPLASH_SCHEME, navigate_script, navigation_allowed, route_for_deep_link};
 use crate::inject::{Injection, app_origins, initialization_script};
 use crate::state::{OpenAction, defer_launch_during_quit, lock, open_action};
-use crate::window_state::{
-    self, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH, Rect, WindowState,
-};
+use crate::window_state::{self, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH, Rect};
 
 pub const MAIN: &str = "main";
 /// Marker under `<config>`: the "still running in the tray" notice was shown once.
@@ -184,12 +182,23 @@ pub fn hide_all(app: &AppHandle) {
     }
 }
 
-/// True the first time it is called for a config directory, false after: the marker file is
-/// written on the first call. A marker that cannot be written means the notice may show again,
-/// which is better than never.
-pub fn take_first_close_hint(config_dir: &std::path::Path) -> bool {
+/// The first-close notice, shown while it is due (no marker under `config_dir` yet) through
+/// `show`; the marker is written only once `show` succeeded, so a notice the operating system
+/// refused is tried again at the next close (U-077; it was written before showing, and a
+/// refused notice was never shown again). A marker that cannot be written means the notice may
+/// show again, which is better than never. Returns whether it was shown.
+pub fn first_close_hint(
+    config_dir: &std::path::Path,
+    show: impl FnOnce() -> Result<(), String>,
+) -> bool {
     let marker = config_dir.join(TRAY_HINT_FILE);
     if marker.exists() {
+        return false;
+    }
+    if let Err(e) = show() {
+        log::warn!(
+            "the first-close notice was not shown ({e}); it is tried again at the next close"
+        );
         return false;
     }
     if let Err(e) =
@@ -200,43 +209,49 @@ pub fn take_first_close_hint(config_dir: &std::path::Path) -> bool {
     true
 }
 
+pub const FIRST_CLOSE_TITLE: &str = "Forerunner is still running";
+pub const FIRST_CLOSE_BODY: &str = "It keeps working in the tray. To stop it completely, right-click the tray icon and choose Quit Forerunner.";
+
 /// The window was closed: it is hidden and Forerunner keeps running in the tray. The first
-/// time, a notification says so and how to stop it (U-018).
+/// time, a notification says so and how to stop it (U-018). It waits for the operating
+/// system's answer (`actions::show_notification_now`) off the event loop.
 pub fn closed_to_tray(app: &AppHandle) {
     let config = lock(&shared(app)).dirs.config.clone();
-    if take_first_close_hint(&config) {
-        crate::actions::notify(
-            app,
-            "Forerunner is still running",
-            "It keeps working in the tray. To stop it completely, right-click the tray icon and choose Quit Forerunner.",
-        );
-    }
+    let identifier = app.config().identifier.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        first_close_hint(&config, || {
+            crate::actions::show_notification_now(&identifier, FIRST_CLOSE_TITLE, FIRST_CLOSE_BODY)
+        });
+    });
 }
 
-/// Capture the main window's geometry into `<config>/window-state.json`.
+/// Capture the main window's geometry into `<config>/window-state.json`; a minimised window
+/// keeps what was saved last (`window_state::capture`, U-077).
 pub fn save_main_state(app: &AppHandle) {
     let Some(w) = app.get_webview_window(MAIN) else {
         return;
     };
-    let (Ok(pos), Ok(size), Ok(maximized)) = (w.outer_position(), w.outer_size(), w.is_maximized())
-    else {
+    let (Ok(pos), Ok(size), Ok(maximized), Ok(minimized)) = (
+        w.outer_position(),
+        w.outer_size(),
+        w.is_maximized(),
+        w.is_minimized(),
+    ) else {
         return;
     };
-    if size.width == 0 || size.height == 0 {
+    let Some(ws) = window_state::capture(
+        (pos.x, pos.y),
+        (size.width, size.height),
+        maximized,
+        minimized,
+    ) else {
         return;
-    }
+    };
     let state = shared(app);
     let path = {
         let mut s = lock(&state);
         s.window_saved_at = Some(Instant::now());
         s.dirs.config.join(window_state::FILE)
-    };
-    let ws = WindowState {
-        x: pos.x,
-        y: pos.y,
-        width: size.width,
-        height: size.height,
-        maximized,
     };
     if let Err(e) = window_state::save(&path, &ws) {
         log::warn!("window state not saved: {e}");
@@ -339,6 +354,38 @@ pub fn handle_deep_link(app: &AppHandle, raw: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// U-077: the marker was written before the notice was shown, so a notice the operating
+    /// system refused was never shown again. Now it is written only after a shown notice.
+    #[test]
+    fn the_first_close_notice_is_marked_only_once_it_was_shown() {
+        let dir = std::env::temp_dir().join(format!("fr-tray-hint-{}", uuid::Uuid::new_v4()));
+        let mut shown = 0;
+        assert!(!first_close_hint(&dir, || {
+            shown += 1;
+            Err("no notification service".into())
+        }));
+        assert!(!dir.join(TRAY_HINT_FILE).exists());
+        // The next close tries again, and this time it is shown and marked.
+        assert!(first_close_hint(&dir, || {
+            shown += 1;
+            Ok(())
+        }));
+        assert!(dir.join(TRAY_HINT_FILE).exists());
+        // Never again after that.
+        assert!(!first_close_hint(&dir, || {
+            shown += 1;
+            Ok(())
+        }));
+        assert_eq!(shown, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_first_close_notice_says_how_to_stop_forerunner() {
+        assert!(FIRST_CLOSE_BODY.contains("Quit Forerunner"));
+        assert!(FIRST_CLOSE_TITLE.contains("still running"));
+    }
 
     #[test]
     fn splash_is_self_contained() {

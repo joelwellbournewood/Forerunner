@@ -46,6 +46,40 @@ pub(crate) fn notify(app: &AppHandle, title: &str, body: &str) {
     }
 }
 
+/// Show a notification and wait for the operating system's answer: `notify-rust` directly,
+/// since the notification plugin hands it to a task and answers Ok whatever happens. An error
+/// means the OS did not take it (no notification service on Linux, a toast Windows could not
+/// create). Blocking: call it off the event loop. Used for the first-close notice (U-077).
+pub(crate) fn show_notification_now(
+    identifier: &str,
+    title: &str,
+    body: &str,
+) -> Result<(), String> {
+    let mut n = notify_rust::Notification::new();
+    n.summary(title).body(body).auto_icon();
+    #[cfg(windows)]
+    windows_app_id(&mut n, identifier);
+    #[cfg(not(windows))]
+    let _ = identifier;
+    n.show().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// As the notification plugin does: the installed app's AppUserModelID, so Windows shows the
+/// toast as Forerunner's; a development build (under `target\debug` or `target\release`) has none.
+#[cfg(windows)]
+fn windows_app_id(n: &mut notify_rust::Notification, identifier: &str) {
+    let dev = tauri::utils::platform::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+        .is_some_and(|dir| {
+            dir.ends_with(std::path::Path::new("target").join("debug"))
+                || dir.ends_with(std::path::Path::new("target").join("release"))
+        });
+    if !dev {
+        n.app_id(identifier);
+    }
+}
+
 /// An error the human must see; the tray stays so "Open" can try again. During Quit it is only
 /// logged: the start Quit interrupted fails by design, and the app is about to end (U-062).
 pub fn fail_dialog(app: &AppHandle, title: &str, message: &str) {
@@ -476,29 +510,52 @@ pub fn quit_confirm_text(active_sessions: u64) -> Option<String> {
     }
 }
 
-/// Tray: "Quit Forerunner" (U-018, ADR 0094). Asks first while a session runs, then stops the
-/// daemon and everything it started, then ends the shell, so nothing keeps files in the
-/// install folder open.
+/// The number of running sessions Quit asks about: `/health` read now, because the tray's copy
+/// comes from the monitor and can be 10 s old (U-077): a session started since would be
+/// stopped without the question, and one that ended since would be asked about. The last
+/// known count when the daemon does not answer.
+pub async fn sessions_running_now(client: Option<&DaemonClient>, last_known: u64) -> u64 {
+    match client {
+        Some(c) => c
+            .health()
+            .await
+            .map(|h| h.active_sessions)
+            .unwrap_or(last_known),
+        None => last_known,
+    }
+}
+
+/// Tray: "Quit Forerunner" (U-018, ADR 0094). Asks first while a session runs (counted right
+/// before asking), then stops the daemon and everything it started, then ends the shell, so
+/// nothing keeps files in the install folder open.
 pub fn quit(app: AppHandle) {
-    let active = lock(&shared(&app)).status.active_sessions;
-    let Some(question) = quit_confirm_text(active) else {
-        tauri::async_runtime::spawn(finish_quit(app));
-        return;
-    };
-    let app2 = app.clone();
-    app.dialog()
-        .message(question)
-        .title("Quit Forerunner")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Quit and stop".into(),
-            "Cancel".into(),
-        ))
-        .show(move |confirmed| {
-            if confirmed {
-                tauri::async_runtime::spawn(finish_quit(app2));
-            }
-        });
+    tauri::async_runtime::spawn(async move {
+        let state = shared(&app);
+        let (client, last_known) = {
+            let s = lock(&state);
+            (s.client.clone(), s.status.active_sessions)
+        };
+        let active = sessions_running_now(client.as_ref(), last_known).await;
+        lock(&state).status.active_sessions = active;
+        let Some(question) = quit_confirm_text(active) else {
+            finish_quit(app).await;
+            return;
+        };
+        let app2 = app.clone();
+        app.dialog()
+            .message(question)
+            .title("Quit Forerunner")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Quit and stop".into(),
+                "Cancel".into(),
+            ))
+            .show(move |confirmed| {
+                if confirmed {
+                    tauri::async_runtime::spawn(finish_quit(app2));
+                }
+            });
+    });
 }
 
 async fn finish_quit(app: AppHandle) {
@@ -921,6 +978,33 @@ mod tests {
         assert!(one.contains("close the window instead"), "{one}");
         let three = quit_confirm_text(3).expect("asks");
         assert!(three.starts_with("3 sessions are running"), "{three}");
+    }
+
+    /// U-077: Quit asked from the tray's copy of the session count, up to 10 s old. A session
+    /// started since was stopped without the question. The count is read when Quit is chosen.
+    #[tokio::test]
+    async fn quit_asks_from_the_session_count_read_when_it_is_chosen() {
+        use crate::test_http::{Route, TestServer, health_body};
+        let server = TestServer::start(vec![Route::json("GET", "/health", 200, &health_body(1))]);
+        let client =
+            DaemonClient::new(&server.url, crate::secret::Secret::new("t")).expect("client");
+        // The tray still says 0: the question is asked all the same.
+        let active = sessions_running_now(Some(&client), 0).await;
+        assert_eq!(active, 1);
+        assert!(
+            quit_confirm_text(active)
+                .expect("asks")
+                .starts_with("A session is running")
+        );
+        assert_eq!(server.seen(), vec!["GET /health"]);
+        // No daemon to ask: the last known count decides.
+        assert_eq!(sessions_running_now(None, 2).await, 2);
+        let gone = DaemonClient::new(
+            &crate::test_http::refused_url(),
+            crate::secret::Secret::new("t"),
+        )
+        .expect("client");
+        assert_eq!(sessions_running_now(Some(&gone), 3).await, 3);
     }
 
     #[test]

@@ -40,6 +40,43 @@ pub fn daemon_log_path(logs_dir: &Path) -> PathBuf {
     logs_dir.join(DAEMON_LOG)
 }
 
+/// Every daemon the shell starts appends to `daemon-shell.log`; above this size the file is
+/// rotated before the next start (U-077), keeping one older file.
+pub const DAEMON_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+/// `daemon-shell.log.1`: the one older log kept.
+pub fn rotated_log_path(path: &Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(".1");
+    path.with_file_name(name)
+}
+
+/// Rotate `path` when it is larger than `max`: it becomes `<name>.1` (replacing an older one)
+/// and the next write starts a new file. Returns whether it rotated. A daemon still writing to
+/// it keeps writing to the renamed file, which is fine.
+pub fn rotate_log(path: &Path, max: u64) -> Result<bool, String> {
+    let size = match std::fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(_) => return Ok(false),
+    };
+    if size <= max {
+        return Ok(false);
+    }
+    let old = rotated_log_path(path);
+    // `rename` replaces an existing file on Windows and Unix alike.
+    std::fs::rename(path, &old).map_err(|e| {
+        format!(
+            "could not rotate {} to {}: {e}",
+            path.display(),
+            old.display()
+        )
+    })?;
+    Ok(true)
+}
+
 #[derive(Debug)]
 pub struct Spawned {
     pub child: Child,
@@ -52,6 +89,11 @@ pub fn spawn_daemon(cmd: &FrCommand, logs_dir: &Path) -> Result<Spawned, String>
     std::fs::create_dir_all(logs_dir)
         .map_err(|e| format!("could not create {}: {e}", logs_dir.display()))?;
     let log_path = daemon_log_path(logs_dir);
+    match rotate_log(&log_path, DAEMON_LOG_MAX_BYTES) {
+        Ok(true) => log::info!("{} rotated", log_path.display()),
+        Ok(false) => {}
+        Err(e) => log::warn!("{e}; appending to it"),
+    }
     let mut log = OpenOptions::new()
         .create(true)
         .append(true)
@@ -629,6 +671,44 @@ mod tests {
             SlowWait::StillSlow
         );
         assert!(started.elapsed() >= Duration::from_secs(2));
+    }
+
+    /// U-077: `daemon-shell.log` grew without bound, one block per daemon start. Above 5 MB it
+    /// is rotated when the next daemon starts, keeping one older file.
+    #[test]
+    fn the_daemon_log_is_rotated_above_its_limit_keeping_one_older_file() {
+        let dir = temp_dir("daemon-log");
+        let logs = dir.join("logs");
+        std::fs::create_dir_all(&logs).expect("logs");
+        let log = daemon_log_path(&logs);
+        let old = rotated_log_path(&log);
+        assert_eq!(old, logs.join("daemon-shell.log.1"));
+        // Small: left alone.
+        std::fs::write(&log, "small\n").expect("write");
+        assert_eq!(rotate_log(&log, 1024), Ok(false));
+        assert!(log.exists() && !old.exists());
+        // Missing: nothing to do.
+        assert_eq!(rotate_log(&logs.join("none.log"), 1), Ok(false));
+        // A start with a log above the limit rotates it (the spawn itself fails here).
+        std::fs::write(&old, "the one before\n").expect("write");
+        let big = vec![b'x'; usize::try_from(DAEMON_LOG_MAX_BYTES).expect("size") + 1];
+        std::fs::write(&log, &big).expect("write");
+        let cmd = FrCommand {
+            program: dir.join("definitely-missing-fr"),
+            args: vec![],
+            cwd: None,
+            env: Vec::new(),
+            source: crate::install::FrSource::PathLookup,
+        };
+        assert!(spawn_daemon(&cmd, &logs).is_err());
+        assert_eq!(
+            std::fs::metadata(&old).expect("rotated").len(),
+            DAEMON_LOG_MAX_BYTES + 1,
+            "the older file is replaced by the big one"
+        );
+        let fresh = std::fs::read_to_string(&log).expect("new log");
+        assert!(fresh.starts_with("[shell] starting:"), "{fresh}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

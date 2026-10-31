@@ -25,6 +25,9 @@ tauri = { version = "2.12.4", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 # Plugins pinned to the releases of 2026-09-26 (the last ones before 2026-10); all need tauri ^2.12.
 tauri-plugin-notification = "=2.5.0"
+# The plugin's own backend (same version, no new crate), called directly for the first-close
+# notice: its answer says whether the OS took the notification (U-077).
+notify-rust = "4.11"
 tauri-plugin-dialog = "=2.8.0"
 tauri-plugin-deep-link = "=2.5.0"
 tauri-plugin-single-instance = { version = "=2.5.0", features = ["deep-link"] }

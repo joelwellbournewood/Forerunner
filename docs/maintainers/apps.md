@@ -1033,7 +1033,8 @@ newer daemon (a staged update, a developer's checkout) is kept. Else, when start
 is allowed, show the splash window (served by the shell's own `frshell://` protocol, no
 scripts), locate `fr` (`install::locate_fr`), spawn it with an argv array (`… daemon`),
 detached (own process group on Unix, `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` on
-Windows), stdout and stderr appended to `<logs>/daemon-shell.log`, then poll every 250 ms for a
+Windows), stdout and stderr appended to `<logs>/daemon-shell.log` (rotated before a start once
+it is above 5 MB, keeping `daemon-shell.log.1`; U-077), then poll every 250 ms for a
 `daemon.json` that is fresh and answers `/health` (150 s budget, for the first `tsx` compile
 of a fresh install; the child exiting first is a failure). Fresh (`daemon::is_fresh`) means a different `pid` or `startedAt` than the file on
 disk before the spawn (else the last file attached to; any file when there was none). The pid
@@ -1087,10 +1088,11 @@ so `windows::ensure_main` rebuilds the window when the url or token changed.
 `POST /kill/resume`); Pause email / Resume email (one item; `POST /agents/<id>/email/pause|resume`
 where `<id>` is `/me`'s `agent.id`; enabled only after `GET /agents/<id>/email/settings`
 answered 200, disabled with the reason in its text otherwise, since menu items have no
-tooltips; a test reads `emailRouteTable()`'s source so a route rename fails it); Update and
-restart (confirm dialog → `POST /updates/apply {}`; 202 expected); Quit Forerunner (U-018,
-ADR 0094: `actions::quit` asks first while `/health` reports active sessions
-(`quit_confirm_text`), sets `ShellState.quitting` so the daemon's exit triggers no restart or
+tooltips; a test reads `emailRouteTable()`'s source so a route rename fails it); Updates…
+(opens the Updates screen; the shell posts no `/updates/apply` itself); Quit Forerunner (U-018,
+ADR 0094: `actions::quit` reads `/health` right then (`sessions_running_now`; the tray's copy
+can be 10 s old, U-077) and asks first while sessions run (`quit_confirm_text`), sets
+`ShellState.quitting` so the daemon's exit triggers no restart or
 dialog, hides the windows, then `supervisor::stop_for_quit`: `POST /shutdown`, wait up to 15 s
 for `/health` to stop answering, else end `quit_targets` (the `daemon.json` pid and the spawned
 pid, each once; `taskkill /T /F` on Windows, `kill -TERM` elsewhere) while it still answers.
@@ -1103,7 +1105,13 @@ stale). That child pid is the shell's own: it is recorded only while the shell h
 `QUIT_CHILD_WAIT` (10 s) for that before ending its tree. Then `app.exit(0)`, or
 `app.request_restart()` when Forerunner was launched again during Quit). Closing the window
 hides it to the tray; the first close shows a
-notification (`windows::closed_to_tray`, marker `<config>/tray-hint-shown`). Below Open, desktop control (spec S.32, ADR 0067): an item `Desktop control:
+notification (`windows::closed_to_tray`, marker `<config>/tray-hint-shown`), written only once
+the notice was shown (`first_close_hint`, U-077): it goes through `notify-rust` directly
+(`actions::show_notification_now`, off the event loop), whose answer says whether the OS took
+it, so a refused notice (no notification service, a toast Windows could not create) is tried
+again at the next close. A toast Windows takes but keeps quiet (Focus Assist) counts as shown;
+the shell cannot see that. Below Open, desktop control (spec S.32, ADR 0067): an item `Desktop
+control:
 active (<app>)` while the daemon reports it on (enabled; it opens the window, where the banner
 names the session) and `Desktop control: off` (disabled) otherwise, and "Stop desktop control"
 (`POST /desktop/revoke {reason}`; enabled only while on and reachable). The icon tooltip reads
@@ -1206,7 +1214,9 @@ characters `A-Z a-z 0-9 . _ ~ -`. The UI is navigated with `history.pushState` +
 
 **Window and theme.** `<config>/window-state.json` (`x, y, width, height, maximized`) is
 written when the window closes to the tray, on Quit and at most every 2 s while it moves or
-resizes; on build the size is lifted to the 900×600 minimum and the position is applied only
+resizes, never while it is minimised (`window_state::capture`: Windows parks a minimised window
+at -32000, -32000, which would make the next start open at the default place, U-077); on build the
+size is lifted to the 900×600 minimum and the position is applied only
 when it still lands on a connected monitor. Dark mode is the UI's toggle (ADR 0025): the shell
 sets no theme and the webview follows the OS until the UI's stored override says otherwise.
 
@@ -1298,7 +1308,9 @@ cd apps/desktop/src-tauri && cargo check           # Linux here; Windows in CI (
 
 Unit tests live next to the code (`#[cfg(test)]`): `dirs` (override on every platform,
 relative `FORERUNNER_HOME`, empty override ignored, the Windows/XDG cases of `paths.test.ts`,
-the full fixture table per platform, home fallback, app name); `daemon` (a zombie counts as ended; a refused connection, a time-out and a bad answer told apart and a slow daemon waited for, never started beside, U-065; an action and a read answered after 2 s arrive while a
+the full fixture table per platform, home fallback, app name); `daemon` (a zombie counts as ended;
+a refused connection, a time-out and a bad answer told apart and a slow daemon waited for, never
+started beside, U-065; an action and a read answered after 2 s arrive while a
 `/health` that slow is a miss, against a local HTTP server, and the two time limits, U-064; the file
 `startDaemon` writes, missing/bad JSON/bad shape, off-machine URL refused, stale pid, attach vs
 start, freshness as a changed file, a grandchild pid written after the spawn attaches, daemon
@@ -1322,13 +1334,21 @@ truncation, restart/inbox/heartbeat/unknown, `desktop.indicator` on with names a
 without them, malformed refused, control characters and the cap, the status view's
 `desktopControl` read the same way); `deeplink` (documented links, rejections,
 safe routes, navigate script, navigation policy); `window_state` (monitor check, minimum size,
-file round trip); `state` (tray view for unreachable, kill/resume, email availability and
+file round trip, a minimised window never remembered, U-077); `windows` (the first-close notice
+marked only once shown, U-077); `actions` (Quit asks from the count `/health` gives when it is
+chosen, U-077); `state` (tray view for unreachable, kill/resume, email availability and
 toggle, busy, desktop control on (title, tooltip first line, item, stop enabled) and cleared
 on off, "the desktop" without an app and a new `on` replacing the names, the last report kept
 but not stoppable while unreachable, a status read never overwriting a newer frame (and the
-later of two reads winning), when a restart announcement starts the external watch, nothing opening or starting during
+later of two reads winning), when a restart announcement starts the external watch, nothing
+opening or starting during
 Quit, a launch during Quit remembered, a spawn that raced Quit not recorded (U-062), `Debug`
-hides the token); `supervisor` (log path, spawn failure logged, the stop argv per OS, the group argv for the shell's own child; Quit against real process trees: during the splash with no client, with a hung daemon (a local HTTP server that accepts and never answers; the `daemon.json` pid is left alone) and with a daemon that answers and goes after `POST /shutdown`, U-062; waiting for a slow daemon ends answered, gone or still slow, U-065); `events` (reconnect backoff);
+hides the token); `supervisor` (log path, the log rotated above 5 MB keeping one older file
+(U-077), spawn failure logged, the stop argv per OS, the group argv for the shell's own child;
+Quit against real process trees: during the splash with no client, with a hung daemon (a local
+HTTP server that accepts and never answers; the `daemon.json` pid is left alone) and with a daemon
+that answers and goes after `POST /shutdown`, U-062; waiting for a slow daemon ends answered, gone
+or still slow, U-065); `events` (reconnect backoff);
 `secret`; `env`; `lib` (install id persisted, 0600); `hotkey` (O.1: the default chord is the
 shared one; every accepted and refused case of `apps/ui/test/hotkey-chords.json` with the
 same canonical form or reason as the UI; messages name the token; every canonical chord over

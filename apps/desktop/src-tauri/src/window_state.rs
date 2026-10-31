@@ -49,6 +49,35 @@ pub struct Placement {
     pub maximized: bool,
 }
 
+/// Where Windows puts a minimised window: off every screen.
+pub const MINIMIZED_POSITION: i32 = -32000;
+
+/// What to remember of the window as it is now, or `None` to keep what was saved last (U-077):
+/// a minimised window reports a position off every screen (Windows: -32000, -32000), which
+/// would make the next start ignore the saved place and open at the default one; an empty size
+/// is nothing to remember either.
+pub fn capture(
+    position: (i32, i32),
+    size: (u32, u32),
+    maximized: bool,
+    minimized: bool,
+) -> Option<WindowState> {
+    let ((x, y), (width, height)) = (position, size);
+    if minimized || width == 0 || height == 0 {
+        return None;
+    }
+    if x <= MINIMIZED_POSITION && y <= MINIMIZED_POSITION {
+        return None;
+    }
+    Some(WindowState {
+        x,
+        y,
+        width,
+        height,
+        maximized,
+    })
+}
+
 pub fn load(path: &Path) -> Option<WindowState> {
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
@@ -132,6 +161,35 @@ mod tests {
         let p = placement(&s, &[]);
         assert_eq!(p.size, (MIN_WIDTH, MIN_HEIGHT));
         assert!(p.maximized);
+    }
+
+    /// U-077: minimising saved Windows' parking place (-32000, -32000); the next start found
+    /// it on no monitor and opened the window at the default place instead of the last one.
+    #[test]
+    fn a_minimised_window_is_never_remembered() {
+        assert_eq!(
+            capture((120, 80), (1000, 700), false, false),
+            Some(state(120, 80))
+        );
+        assert_eq!(capture((120, 80), (1000, 700), false, true), None);
+        assert_eq!(capture((-32000, -32000), (160, 28), false, false), None);
+        assert_eq!(capture((120, 80), (0, 700), false, false), None);
+        // A monitor left of the primary one has negative coordinates: kept.
+        assert_eq!(
+            capture((-1800, 40), (1000, 700), false, false),
+            Some(state(-1800, 40))
+        );
+        // The last good place survives a minimise, so the next start opens there.
+        let monitors = [Rect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        }];
+        let saved = capture((120, 80), (1000, 700), false, false)
+            .or(capture((-32000, -32000), (160, 28), false, true))
+            .expect("kept");
+        assert_eq!(placement(&saved, &monitors).position, Some((120, 80)));
     }
 
     #[test]
