@@ -99,6 +99,22 @@ the larger of the month's `MAX(plan_usage_share)` on the source's ledger rows an
 A subscription pick runs the task on the Agent SDK driver, anything else on the loop driver;
 the pick is the Run row's `billing_source_id` and an audit row `billing.pick` with the reason.
 
+**Every other call, the person's order and the rest (U-078, ADR 0100).** The same
+`RouterTaskBilling.pick` serves every non-task call too: the runtime's `RoutedProvider` asks it
+per call with the caller's purpose (`chat`, `interactive`, `critic`, `batch`), so chat, the
+intake, the critic, the model watch and the monthly jobs pay with the source the router picks
+and their ledger rows name it, with the ledger kind of that source (`api`, `subscription` with
+the plan share after the call, `plan_credits`). The pick reads the person's order
+(`human.notify_prefs.billing_order`) every time and passes it as `RouteContext.order`; without
+one, task runs keep the policy's order and the non-task calls use `CALL_FALLBACK_ORDER` (API
+key, plan credits, subscription: ADR 0098's choice kept). `exclude` withholds a source the same
+call just failed on (skipped `cooldown`). A source whose provider answered
+`provider_usage_limit` rests: `RouterTaskBilling.rest` writes `limits.restingUntil` (the reset
+the error named when it is ahead, else one hour, at most 32 days) and a `billing.rest` audit
+row, and `VaultLedgerProbe` reports `restingUntil` while it is ahead, so the router skips the
+source until then, also after a restart. `GET /settings/billing-order` shows each source with
+whether a pick could use it now and why not, from the same rules.
+
 ### Pricing (`src/pricing.ts`)
 
 `BUILTIN_PRICING` is keyed by canonical model id (`canonicalModelId` strips `anthropic.`,
@@ -318,3 +334,10 @@ defaults. All time comes from `SimulatedClock`. The runtime's `views.test.ts` an
   `limits.planUsdMicro` (always seeded: the setup input, else a default of USD 50), an estimate
   that may stop subscription work before the real plan would until a probe reports the
   provider's share; the live harness checks the plan level with a real token (BLOCKERS.md).
+- The rest after a usage limit (ADR 0100) is read off what the providers say: Claude Code's
+  `rate_limit_event` (`status: "rejected"`, `resetsAt`) and its "You've hit your limit" text,
+  and the Messages API's documented 400/402/429 bodies. These were checked against the Agent
+  SDK 0.3.304 binary and the API docs on 2026-10-31, with stand-ins in the tests; a real
+  subscription at its limit and a real key with an empty balance have not been seen yet (the
+  live harness, BLOCKERS.md). A limit the classification does not recognise stays the call's
+  error, shown to the person, and nothing rests.

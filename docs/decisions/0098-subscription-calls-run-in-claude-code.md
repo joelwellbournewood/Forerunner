@@ -3,6 +3,12 @@
 Date: 2026-10-31
 Status: accepted
 
+Amended 2026-10-31 by ADR 0100 (U-078): compose no longer picks one provider for the non-task
+calls. Every call asks the billing router in the person's order (without one, this ADR's choice
+stays: the API key when there is one, else the subscription) and runs on `ClaudeCodeProvider`
+for the subscription or the Messages adapter for a key; item 1's rule holds per call (the token
+only in Claude Code), and an API key is now never run through Claude Code either.
+
 ## Context
 
 U-048: an install whose only Claude credential is a subscription token (`claude setup-token`,
