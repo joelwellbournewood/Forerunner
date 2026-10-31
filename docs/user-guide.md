@@ -154,6 +154,13 @@ usage, so it estimates against this amount and stops subscription work at 95% of
 key takes over when you have one. The default (USD 50, about CHF 40) is low on purpose: enter
 what your plan covers, or a Max plan's work stops early.
 
+A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
+never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
+without a budget stops each run at its specialist's limit, and the Tasks tab says so ("no
+budget; each run stops at CHF 2.40 (coder limit)"). The estimate a plan shows is only a
+forecast. When a task reaches its budget it waits for you with what it spent: raise the budget
+and set it back to ready, split it, or cancel it; the session goes on with the other tasks.
+
 ## Kill switch
 
 The tray icon and the red button in the header stop every session of one agent or of

@@ -1163,6 +1163,26 @@ items, consumed and dismissed out, ids not rendered), and the state suite's queu
 both dialects (version conflict, dismissed never consumed, rollback inside a transaction).
 Requirements: J.2, E.2.
 
+**What a run is capped at (U-042).** `runCapOf` (`session/executor.ts`) decides the brief's
+budget, which becomes the run token's `budgetUsdMicro` and the hooks' run cap: a task with a
+budget of its own is capped at what is left of it (`budget_usd_micro` less
+`actual_cost_usd_micro`, so the spend of all its runs together stops at the budget; the
+person's budget replaces the specialist's limit); a task without one is capped at its
+specialist's per-run limit (registry `max_budget_usd`). Both are then capped by the session
+token and what the session has left. The plan's estimate (`item.estimateUsdMicro`, learned or
+the task's `est_cost_usd_micro`) is a forecast for fitting the plan and never caps a run:
+before U-042 the brief took `estimate || budget || limit`, so a run stopped at the estimate
+while the Tasks tab showed the budget. A task whose budget is spent runs nothing and returns
+`needs_human` with the spend and what to do; a run that stops at the task's own cap while the
+session still has room returns `needs_human` (the session goes on with the next task, where
+`budget_exceeded` would have ended it); a stop at the session's budget stays
+`budget_exceeded`. `taskView(t, chf, specialistLimit)` carries the cap to the Tasks tab
+(`cap`, `capSource`: `task_budget`, `specialist_limit`, or `unknown` when neither a budget nor
+a runnable specialist is known), which shows "of CHF x budget" or "no budget; each run stops
+at CHF y (coder limit)". Tests: `task-budget-cap.test.ts` (past the estimate within the
+budget, no budget, the budget reached mid-run, a spent budget, the session's own stop),
+`real-daemon.test.ts` and `tasks.test.tsx` in `apps/ui`.
+
 **The Run row.** `LoopTaskExecutor` inserts the task's Run row as `running` before the driver
 starts (model, effort, prompt version, the billing source the task picked, depth) and patches
 it with the result afterwards: tokens, cost, `ttft_ms`, `duration_ms`, outcome, `timed_out`,

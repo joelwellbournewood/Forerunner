@@ -177,6 +177,34 @@ describe("the UI client against the real daemon", () => {
     );
   });
 
+  it("tasks: each task says what stops its runs, its budget or its specialist's limit (U-042)", async () => {
+    const budgeted = await client.createTask(projectId, {
+      title: "Cap from the budget",
+      outcome: "The cap is shown",
+      acceptanceCriteria: [],
+      priority: 5,
+      status: "draft",
+      dependsOn: [],
+      budgetUsdMicro: 2_000_000,
+    });
+    expect(budgeted.capSource).toBe("task_budget");
+    expect(budgeted.cap.usdMicro).toBe(2_000_000);
+    const open = await client.createTask(projectId, {
+      title: "Cap from the specialist",
+      outcome: "The cap is shown",
+      acceptanceCriteria: [],
+      priority: 5,
+      status: "draft",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    // No budget and no specialist named: the planner's coder, whose registry limit is USD 3.
+    expect(open.capSource).toBe("specialist_limit");
+    expect(open.cap.usdMicro).toBe(3_000_000);
+    const listed = await client.tasks(projectId);
+    expect(listed.find((t) => t.id === budgeted.id)?.capSource).toBe("task_budget");
+  });
+
   it("docs: lists the standard doc set and reads one (U-005)", async () => {
     const docs = await client.docs(projectId);
     const readme = docs.find((d) => d.path === "README.md");

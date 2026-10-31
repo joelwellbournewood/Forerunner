@@ -36,6 +36,7 @@ import { priorityLevel } from "../priority.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import type { Registry } from "../registry/types.ts";
 import { countsList } from "../session/counts.ts";
+import { runCapOf } from "../session/executor.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { optionLabel } from "../wiring/request-answers.ts";
@@ -205,7 +206,19 @@ export async function projectSummary(
   };
 }
 
-export function taskView(t: TaskRow, chfPerUsd: number): TaskView {
+/**
+ * A task as the UI shows it. `cap` is what a run of the task stops at (U-042): what is left of
+ * the task's own budget, else the per-run limit of its specialist (`specialistLimit`: the
+ * registry's `max_budget_usd` in micro-USD; the planner's default "coder" when the task names
+ * none). Without a budget and without a known specialist, `capSource` is "unknown".
+ */
+export function taskView(
+  t: TaskRow,
+  chfPerUsd: number,
+  specialistLimit?: (name: string) => number | undefined,
+): TaskView {
+  const limit = specialistLimit?.(t.specialist ?? "coder");
+  const cap = t.budget_usd_micro > 0 || limit !== undefined ? runCapOf(t, limit ?? 0) : null;
   return {
     id: t.id,
     projectId: t.project_id,
@@ -223,6 +236,8 @@ export function taskView(t: TaskRow, chfPerUsd: number): TaskView {
     budget: money(t.budget_usd_micro, chfPerUsd),
     estimate: money(t.est_cost_usd_micro, chfPerUsd),
     actual: money(t.actual_cost_usd_micro, chfPerUsd),
+    cap: money(cap?.usdMicro ?? 0, chfPerUsd),
+    capSource: cap?.source ?? "unknown",
     specialist: t.specialist,
     attempt: t.attempt,
     prUrl: t.pr_url,

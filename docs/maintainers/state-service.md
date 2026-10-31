@@ -50,7 +50,7 @@ mirror, status and comments sync back), phase 2 gate (48 simulated hours offline
 | `src/realtime.ts` | `ChangeBus` (buffer, resume), `PostgresNotifier` (LISTEN/NOTIFY), `ChangePoller` (2 s fallback; resolves the human an event concerns, for `session` and `event` rows the session's agent's owner) |
 | `src/sse.ts` | one SSE loop: initial batch, wake on push, poll, heartbeat, abort; `stillAllowed` re-checked before every flush (`deviceStillActive`: a revoked device's stream ends) |
 | `src/routes/*.ts` | health, devices and pairing, projects / tasks / decisions / queue / uploads, inbox and requests, remote commands, sessions and live log, `/events`, costs, reviews, `/sync/outbox` |
-| `src/views.ts` | row to view mapping (`ProjectCard`, `TaskView`, `MessageView`, ... from ADR 0011) |
+| `src/views.ts` | row to view mapping (`ProjectCard`, `TaskView`, `MessageView`, ... from ADR 0011); a task's `cap` is what is left of its budget (U-042), and `capSource: "unknown"` for a task without one, since this service holds no registry to name the specialist's limit |
 | `src/http.ts` | the route context, principal and body parsing; `agentName`, the agent names the session and message views show, cached per store for `AGENT_NAME_TTL_MS` (30 s) on the store's clock, so an agent renamed in the desktop app's Settings (U-025, `POST /agents/:id/rename` on the daemon) shows on the phone within 30 s without a restart (`routes.test.ts`) |
 | `src/mirror/github.ts` | `GitHubMirror`: push tasks and milestones to issues, pull comments and closes |
 | `src/mirror/scheduler.ts` | `MirrorScheduler`: one pass over every active project on the clock; started by `main.ts` |

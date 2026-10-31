@@ -723,7 +723,8 @@ describe("what you say during a live session (spec O.9)", () => {
     expect(warnings.some((m) => m.includes("m2") && m.includes("ignore_previous"))).toBe(true);
     expect(warnings.some((m) => m.includes("delete the repo"))).toBe(false); // the rules, never the words
     // The brief's own limits are untouched by what was said.
-    expect(userText).toContain("- Budget: USD 0.30 (hard cap, enforced)");
+    // The task's budget (USD 0.50) caps the run, not the plan's estimate (USD 0.30): U-042.
+    expect(userText).toContain("- Budget: USD 0.50 (hard cap, enforced)");
     await store.close();
   });
 });

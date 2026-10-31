@@ -73,6 +73,15 @@ export function taskView(t: TaskRow, rate: number): TaskViewType {
     budget: money(t.budget_usd_micro, rate),
     estimate: money(t.est_cost_usd_micro, rate),
     actual: money(t.actual_cost_usd_micro, rate),
+    // What stops the task's runs (U-042), as the daemon's `runCapOf`: what is left of its own
+    // budget. This service holds no registry, so a task without a budget reads "unknown"
+    // here; the daemon names the specialist's per-run limit.
+    ...(t.budget_usd_micro > 0
+      ? {
+          cap: money(Math.max(0, t.budget_usd_micro - t.actual_cost_usd_micro), rate),
+          capSource: "task_budget" as const,
+        }
+      : { cap: money(0, rate), capSource: "unknown" as const }),
     specialist: t.specialist,
     attempt: t.attempt,
     prUrl: t.pr_url,

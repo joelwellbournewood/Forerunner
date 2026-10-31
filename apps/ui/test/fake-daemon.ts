@@ -1066,6 +1066,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       budget: money(parsed.data.budgetUsdMicro),
       estimate: money(0),
       actual: money(0),
+      // Like the daemon (U-042): the task's budget caps its runs; without one, the per-run
+      // limit of the default specialist (the registry's coder: USD 3).
+      ...(parsed.data.budgetUsdMicro > 0
+        ? { cap: money(parsed.data.budgetUsdMicro), capSource: "task_budget" as const }
+        : { cap: money(3_000_000), capSource: "specialist_limit" as const }),
       specialist: null,
       attempt: 0,
       prUrl: null,

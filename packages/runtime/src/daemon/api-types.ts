@@ -165,6 +165,12 @@ export const TaskView = z.object({
   budget: Money,
   estimate: Money,
   actual: Money,
+  /**
+   * What a run of the task stops at (U-042): what is left of `budget` when the task has one,
+   * else its specialist's per-run limit. The estimate never caps a run.
+   */
+  cap: Money,
+  capSource: z.enum(["task_budget", "specialist_limit", "unknown"]),
   specialist: z.string().nullable(),
   attempt: z.number().int(),
   prUrl: z.string().nullable(),

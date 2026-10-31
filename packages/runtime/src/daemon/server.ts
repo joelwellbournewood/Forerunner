@@ -835,6 +835,12 @@ export function createDaemonApp(
     c.json(await projectSummary(rt.store, c.req.param("id"), chf())),
   );
 
+  // A runnable specialist's per-run limit (registry `max_budget_usd`): a task's cap without a
+  // budget of its own (U-042).
+  const specialistLimit = (name: string): number | undefined => {
+    const d = rt.registry.specialists.get(name);
+    return d?.runnable ? Math.round(d.max_budget_usd * 1_000_000) : undefined;
+  };
   app.get("/projects/:id/tasks", async (c) => {
     const status = c.req.query("status");
     const limit = intQuery(c, "limit", 200, 1000);
@@ -842,7 +848,7 @@ export function createDaemonApp(
       { project_id: c.req.param("id"), ...(status ? { status } : {}) } as never,
       { limit, orderBy: [{ column: "priority", direction: "desc" }, { column: "created_at" }] },
     );
-    return c.json(rows.map((t) => taskView(t, chf())));
+    return c.json(rows.map((t) => taskView(t, chf(), specialistLimit)));
   });
 
   app.post("/projects/:id/tasks", async (c) => {
@@ -870,7 +876,7 @@ export function createDaemonApp(
       author_human: rt.human.id,
     });
     rt.events.emit("project", { id: project.id });
-    return c.json(taskView(t, chf()), 201);
+    return c.json(taskView(t, chf(), specialistLimit), 201);
   });
 
   // The plan writer (spec B.6): a plan becomes milestone and task rows shaped by the project's
@@ -885,7 +891,7 @@ export function createDaemonApp(
       milestones: applied.milestones.map(milestoneView),
       reusedMilestone: applied.reusedMilestone ? milestoneView(applied.reusedMilestone) : null,
       merged: applied.merged,
-      tasks: applied.tasks.map((t) => taskView(t, chf())),
+      tasks: applied.tasks.map((t) => taskView(t, chf(), specialistLimit)),
     };
     return c.json(view, 201);
   });
@@ -939,7 +945,7 @@ export function createDaemonApp(
     // one is going; the session goes on with its other tasks and leaves the task as set (U-039).
     rt.kill.stopTask(t.id, `${t.status} by you: ${body.reason}`);
     rt.events.emit("project", { id: t.project_id });
-    return c.json(taskView(t, chf()));
+    return c.json(taskView(t, chf(), specialistLimit));
   });
 
   // The tasks a task waits on, changed after it was created (U-040): checked as at creation,

@@ -61,6 +61,34 @@ describe("Tasks tab", () => {
     expect(screen.getAllByTestId("task-row")[0]).toHaveAttribute("data-task-id", "task_3");
   });
 
+  it("shows what stops a task's runs: its budget, else the specialist's limit, never the estimate (U-042)", async () => {
+    renderApp("/projects/proj_atlas/tasks");
+    const rows = await screen.findAllByTestId("task-row");
+    // A budget of USD 6 (CHF 4.80) and an estimate of USD 4 (CHF 3.20): the budget stops it.
+    const withBudget = within(rows[1] as HTMLElement).getByTestId("task-cap");
+    expect(withBudget).toHaveTextContent("of CHF 4.80 budget");
+    expect(withBudget).not.toHaveTextContent("CHF 3.20");
+    // No budget: each run stops at the researcher's limit per run (USD 2.50, CHF 2.00).
+    expect(within(rows[2] as HTMLElement).getByTestId("task-cap")).toHaveTextContent(
+      "no budget; each run stops at CHF 2.00 (researcher limit)",
+    );
+  });
+
+  it("a task created with a budget shows that budget as what stops it (U-042)", async () => {
+    const user = userEvent.setup();
+    renderApp("/projects/proj_atlas/tasks");
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    await user.type(within(dialog).getByTestId("task-title"), "Write the cap check");
+    await user.type(within(dialog).getByTestId("task-outcome"), "The cap is shown");
+    await user.type(within(dialog).getByLabelText(/Budget/), "4");
+    await user.click(within(dialog).getByTestId("create-task"));
+    const title = await screen.findByText("Write the cap check");
+    const row = title.closest("[data-testid=task-row]") as HTMLElement;
+    expect(within(row).getByTestId("task-cap")).toHaveTextContent("of CHF 4.00 budget");
+  });
+
   it("offers only legal transitions and posts the move with version and reason", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

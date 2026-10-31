@@ -50,6 +50,39 @@ export interface TaskFilter {
   text: string;
 }
 
+/**
+ * What a run of the task stops at (U-042), under its cost: the task's budget when it has one
+ * (the spend of all its runs together stops there), else the specialist's limit per run. The
+ * estimate is the plan's forecast and never stops a run, so it is not shown as a limit.
+ */
+function TaskCap({ task, specialist }: { task: TaskView; specialist: string | null }) {
+  if (task.capSource === "task_budget")
+    return (
+      <div
+        className="text-xs text-neutral-500"
+        data-testid="task-cap"
+        title="Runs of this task stop when its spend reaches this budget"
+      >
+        of <Money value={task.budget} /> budget
+      </div>
+    );
+  if (task.capSource === "specialist_limit")
+    return (
+      <div
+        className="text-xs text-neutral-500"
+        data-testid="task-cap"
+        title="The task has no budget: each run stops at its specialist's limit. Set a budget to change it."
+      >
+        no budget; each run stops at <Money value={task.cap} /> ({specialist ?? "coder"} limit)
+      </div>
+    );
+  return (
+    <div className="text-xs text-neutral-500" data-testid="task-cap">
+      no budget
+    </div>
+  );
+}
+
 export function filterTasks(tasks: TaskView[], filter: TaskFilter): TaskView[] {
   const text = filter.text.trim().toLowerCase();
   return tasks.filter((t) => {
@@ -235,11 +268,7 @@ export function TasksTab({
                     <td className="py-1.5 pr-2">{t.specialist ?? run?.specialist ?? "—"}</td>
                     <td className="py-1.5 pr-2 whitespace-nowrap">
                       <Money value={t.actual} />
-                      {t.budget.chfMicro > 0 ? (
-                        <div className="text-xs text-neutral-500">
-                          of <Money value={t.budget} />
-                        </div>
-                      ) : null}
+                      <TaskCap task={t} specialist={t.specialist ?? run?.specialist ?? null} />
                     </td>
                     <td className="py-1.5 pr-2">
                       {run?.verdict ? (

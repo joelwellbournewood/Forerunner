@@ -299,6 +299,38 @@ export function retryConstraints(
   return lines;
 }
 
+/** Where the cap of a task's run comes from (U-042). */
+export type RunCapSource = "task_budget" | "specialist_limit";
+
+export interface RunCap {
+  /** The most this run may spend, before the session's own remaining budget caps it further. */
+  usdMicro: number;
+  source: RunCapSource;
+}
+
+/**
+ * The cap of a task's next run (U-042). A task with its own budget is capped at what is left
+ * of that budget (the budget less what its earlier runs spent): the person set it, so it
+ * replaces the specialist's default limit. A task without a budget is capped at the
+ * specialist's per-run limit from the registry (`max_budget_usd`). The estimate is a forecast
+ * the plan uses to fit the session's budget; it never caps a run (before U-042 it did, so a
+ * run stopped at the estimate while the Tasks tab showed the budget). The session's remaining
+ * budget and the session token still cap every run (`LoopTaskExecutor.execute`).
+ */
+export function runCapOf(
+  task: Pick<TaskRow, "budget_usd_micro" | "actual_cost_usd_micro">,
+  specialistLimitUsdMicro: number,
+): RunCap {
+  if (task.budget_usd_micro > 0)
+    return {
+      usdMicro: Math.max(0, task.budget_usd_micro - task.actual_cost_usd_micro),
+      source: "task_budget",
+    };
+  return { usdMicro: Math.max(0, specialistLimitUsdMicro), source: "specialist_limit" };
+}
+
+const usdText = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
+
 /** What either driver came back with, in the shape the Run row and the result need. */
 interface DriverOutcome {
   outcome: RunOutcome;
@@ -410,6 +442,17 @@ export class LoopTaskExecutor implements TaskExecutor {
         });
       }
     }
+    // The run's cap (U-042): the task's own budget (what is left of it), else the specialist's
+    // per-run limit; then the session token and what the session has left.
+    const cap = runCapOf(task, defaultSpec.maxBudgetUsdMicro);
+    if (cap.source === "task_budget" && cap.usdMicro <= 0) {
+      return {
+        outcome: "needs_human",
+        summary: `This task's budget of ${usdText(task.budget_usd_micro)} is spent (${usdText(task.actual_cost_usd_micro)} so far), so nothing ran. Raise its budget on the Tasks tab and set it back to ready, or cancel it.`,
+        costUsdMicro: 0,
+      };
+    }
+    const sessionLeftUsdMicro = Math.min(token.claims.budgetUsdMicro, budget.remainingUsdMicro());
     const brief: DelegationBrief = validateBrief({
       goal: `${task.title}: ${task.outcome}`,
       contextLinks: [
@@ -426,15 +469,7 @@ export class LoopTaskExecutor implements TaskExecutor {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
         : ["The outcome described in the goal is achieved and verified."],
-      budgetUsdMicro: Math.max(
-        1,
-        Math.min(
-          item.estimateUsdMicro || task.budget_usd_micro || defaultSpec.maxBudgetUsdMicro,
-          defaultSpec.maxBudgetUsdMicro,
-          token.claims.budgetUsdMicro,
-          budget.remainingUsdMicro(),
-        ),
-      ),
+      budgetUsdMicro: Math.max(1, Math.min(cap.usdMicro, sessionLeftUsdMicro)),
       riskTier: task.risk_tier as 0 | 1 | 2 | 3,
       specialist: defaultSpec.name,
       timeoutMs,
@@ -782,6 +817,26 @@ export class LoopTaskExecutor implements TaskExecutor {
     // redaction layer, so both are redacted here before they become the task's summary, the
     // report the critic reads and the lesson candidates (ADR 0044 item 9).
     const finalText = redact(result.finalText);
+    // A run that stopped at the task's own cap (its budget, or the specialist's limit) while the
+    // session still had room is this task's matter (U-042): it waits for the person with what
+    // was spent and what to do, and the session goes on with the rest. Only a stop at the
+    // session's budget ends the session.
+    if (outcome === "budget_exceeded" && cap.usdMicro < sessionLeftUsdMicro) {
+      const what =
+        cap.source === "task_budget"
+          ? `this task's budget of ${usdText(task.budget_usd_micro)}`
+          : `the ${spec.name}'s limit of ${usdText(cap.usdMicro)} per run (the task has no budget of its own)`;
+      return {
+        outcome: "needs_human",
+        summary: `The run stopped at ${what}, after spending ${usdText(result.costUsdMicro)}. Raise the task's budget on the Tasks tab and set it back to ready, split the task, or cancel it.`,
+        costUsdMicro: result.costUsdMicro,
+        checksPassed: false,
+        runId: run.id,
+        ...(worktree ? { worktree } : {}),
+        finalReport: finalText,
+        lessons: [],
+      };
+    }
     return {
       outcome,
       summary:
