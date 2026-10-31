@@ -70,7 +70,12 @@ describe("POST /shutdown (U-018)", () => {
     let called = 0;
     const { app, token } = createDaemonApp(rt, { onShutdown: () => called++ });
     const ac = new AbortController();
-    rt.kill.register({ agentId: rt.agent.id, sessionId: "s_quit", controller: ac });
+    rt.kill.register({
+      agentId: rt.agent.id,
+      sessionId: "s_quit",
+      label: "quit test",
+      controller: ac,
+    });
     const res = await post(app, token, "/shutdown");
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({ stopping: true, stoppedRuns: 1 });
