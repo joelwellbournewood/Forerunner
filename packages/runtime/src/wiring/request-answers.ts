@@ -67,6 +67,8 @@ export const ANSWER_CARD_KEYS = {
   intakePrefix: "intake:",
   specialistPrefix: "specialist:",
   modelWatchPrefix: "model_watch:",
+  /** The agent's proposal of a repository for a project without one (U-037, `loop/repo-create.ts`). */
+  repoCreatePrefix: "repo:create:",
   /**
    * Cards whose readers act only on their options and live outside this module: the rebase
    * conflict (`REBASE_CONFLICT_KEY`, `@forerunner/capabilities`) and the merge left open
@@ -142,6 +144,19 @@ export function planAnswer(answer: JsonValue | null): PlanAnswer | null {
 }
 
 /** The answer of a specialist proposal (`registry/approval.ts`) as one of the options, or null. */
+/**
+ * The answer of a repository proposal (`loop/repo-create.ts`, U-037): "Create the repository"
+ * creates it, "Not now" declines; null when it is neither.
+ */
+export function repoProposalAnswer(answer: JsonValue | null): "create" | "decline" | null {
+  const v = optionWord(answer);
+  if (v === null) return null;
+  const w = v.replace(/\s+/g, " ");
+  if (/^(create the repository|create it|create|yes|approve|approved|ok)$/.test(w)) return "create";
+  if (/^(not now|later|no|reject|rejected|decline|declined|deny|denied)$/.test(w)) return "decline";
+  return null;
+}
+
 export function specialistAnswer(answer: JsonValue | null): SpecialistAnswer | null {
   const v = optionWord(answer);
   if (v === null) return null;
@@ -249,6 +264,7 @@ const READERS: ReadonlyArray<{
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.intakePrefix), read: intakeAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.specialistPrefix), read: specialistAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.modelWatchPrefix), read: modelWatchAnswerOf },
+  { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.repoCreatePrefix), read: repoProposalAnswer },
 ];
 
 /**

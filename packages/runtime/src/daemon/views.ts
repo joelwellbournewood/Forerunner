@@ -152,6 +152,7 @@ export async function projectCard(
     active: p.active,
     smallProjectMode: p.small_project_mode,
     defaultRiskTier: defaultRiskTier(p),
+    repos: p.repos,
   };
 }
 

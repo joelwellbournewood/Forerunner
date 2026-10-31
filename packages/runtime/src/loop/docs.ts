@@ -34,6 +34,14 @@ export const DOCS_SCAFFOLD_BRANCH = "fr/docs-scaffold";
 /** Directory under the project's data root holding the doc set of a project without a repo. */
 export const WORKSPACE_DIR = "workspace";
 
+/**
+ * `<projectsRoot>/<project id>/workspace`: the folder of a project without a repository, where
+ * the intake and the doc scaffold write the docs and where its tasks run (U-037).
+ */
+export function projectWorkspaceDir(projectsRoot: string, projectId: string): string {
+  return join(projectsRoot, safeSegment(projectId, "project"), WORKSPACE_DIR);
+}
+
 /** The branch of a session's own status PR (the whole id: a prefix could collide). */
 export function statusBranchFor(sessionId: string): string {
   return `fr/status-${safeSegment(sessionId, "session")}`;

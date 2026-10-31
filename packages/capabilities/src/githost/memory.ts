@@ -113,6 +113,7 @@ export class MemoryGitHost implements GitHost {
     name: string;
     private: boolean;
     description?: string;
+    autoInit?: boolean;
     cloneUrl?: string;
   }): Promise<RepoInfo> {
     const owner = opts.owner ?? this.login;

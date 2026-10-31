@@ -435,6 +435,7 @@ export class IntentParser {
       this.matchLesson(clause) ??
       this.matchNote(clause) ??
       this.matchTask(clause, ctx) ??
+      this.matchRepoCreate(clause, ctx, project) ??
       this.matchMonthlyCap(clause) ??
       this.matchScopedBudget(clause, ctx, project) ??
       this.matchGive(clause, ctx, project) ??
@@ -609,6 +610,32 @@ export class IntentParser {
     const title = last.split(/\n/)[0]?.slice(0, 120) ?? last.slice(0, 120);
     // Ready, not draft (U-016, ADR 0093): asking for a task is giving the agent the work.
     return { command: { name: "task.create", params: { title, outcome: last, status: "ready" } } };
+  }
+
+  /**
+   * "create a repository [for X]", "make a private GitHub repo", "set up a public repository
+   * for X", "erstelle ein Repository für X" (U-037): `repo.create` for the named or the active
+   * project, private unless "public" / "öffentlich" is said. The change card asks for the yes.
+   */
+  private matchRepoCreate(c: string, ctx: IntentContext, current: string | null): Match | null {
+    const m =
+      /^(?:please\s+)?(?:create|make|set\s+up|open)\s+(?:a\s+|the\s+)?(?:new\s+)?(?:(private|public)\s+)?(?:github\s+)?repo(?:sitory)?(?:\s+(?:for|on)\s+(?:the\s+)?(.+?)(?:\s+project)?)?$/i.exec(
+        c,
+      ) ??
+      /^(?:bitte\s+)?(?:erstelle|erstell|lege|leg)\s+(?:ein(?:\s+neues)?\s+)?(?:(privates|öffentliches)\s+)?(?:github[- ]?)?repo(?:sitory)?(?:\s+(?:für|zu)\s+(?:das\s+|den\s+|die\s+)?(.+?)(?:\s+projekt)?)?(?:\s+an)?$/i.exec(
+        c,
+      );
+    if (!m) return null;
+    const visibility = (m[1] ?? "").toLowerCase();
+    const isPublic = visibility === "public" || visibility === "öffentliches";
+    const project = this.projectIdFor(m[2]?.trim() || undefined, ctx, current);
+    if (project !== null && typeof project === "object") return { question: project };
+    return {
+      command: {
+        name: "repo.create",
+        params: { private: !isPublic, ...(project ? { project } : {}) },
+      },
+    };
   }
 
   private matchMonthlyCap(c: string): Match | null {

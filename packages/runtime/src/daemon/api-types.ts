@@ -126,6 +126,12 @@ export const ProjectCard = z.object({
   smallProjectMode: z.boolean().optional(),
   /** The tier a new task of this project gets when it names none (`defaultRiskTier`). */
   defaultRiskTier: z.number().int().min(0).max(3).optional(),
+  /**
+   * The project's repository links (`owner/name`, a clone URL or a linked local folder); empty
+   * for a project without one, which the project page offers to create a repository for
+   * (U-037). Absent on a card the state service serves.
+   */
+  repos: z.array(z.string()).optional(),
 });
 export type ProjectCard = z.infer<typeof ProjectCard>;
 

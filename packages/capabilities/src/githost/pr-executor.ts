@@ -94,6 +94,12 @@ export interface PrTaskExecutorDeps {
   inner: TaskExecutor & { withWorktree?: (dir: string) => TaskExecutor };
   /** Resolves a project's repository: clone URL, owner/name, base branch. */
   repoFor: (task: TaskRow) => Promise<{ clone: string; repo: RepoRef; base: string } | null>;
+  /**
+   * The folder a task of a project without a repository works in (U-037): the project's
+   * workspace, `<data>/projects/<id>/workspace`, where the intake writes its docs. Null (or
+   * absent) runs the inner executor with no folder, as before.
+   */
+  workspaceFor?: (task: TaskRow) => Promise<string | null>;
   worktreeRoot: string;
   token?: string;
   identity?: { name: string; email: string };
@@ -119,7 +125,9 @@ export class PrTaskExecutor implements TaskExecutor {
     const { task } = ctx;
     const target = await this.deps.repoFor(task);
     if (!target) {
-      // Tasks without a repository (research, docs elsewhere) run the inner executor as is.
+      const workspace = (await this.deps.workspaceFor?.(task)) ?? null;
+      if (workspace) return this.inWorkspace(ctx, workspace);
+      // Tasks without a repository or a workspace run the inner executor as is.
       return this.deps.inner.execute(ctx);
     }
     const branch =
@@ -204,6 +212,41 @@ export class PrTaskExecutor implements TaskExecutor {
     if (answered) await this.consume(answered.row);
     this.logger.info("pull request ready", { taskId: task.id, branch, prUrl });
     return { ...result, outcome: "in_review", prUrl, branch, changedFiles };
+  }
+
+  /**
+   * A task of a project without a repository (U-037): the specialist works in the project's
+   * workspace folder, which the run's token allows to read and write. The folder is kept as a
+   * local git repository so the critic can review the change set: what was there before the
+   * run is committed as the baseline ("Workspace before ..."), and what the run changed is staged
+   * afterwards, so the critic's diff (`git diff HEAD` in the worktree it is given) shows exactly
+   * this run's change, new files included, and the result names the changed files. Before
+   * U-037 such a run had no folder: every read and write was refused on the loop driver, and on
+   * the Agent SDK driver it worked in an empty folder of its own that nothing read afterwards.
+   */
+  private async inWorkspace(ctx: ExecuteCtx, dir: string): Promise<TaskExecutionResult> {
+    const { task } = ctx;
+    mkdirSync(dir, { recursive: true });
+    const git = new GitOps({ cwd: dir, identity: this.deps.identity });
+    if (!existsSync(join(dir, ".git"))) await git.init("main");
+    const before = `Workspace before "${task.title}" (task ${task.id})`;
+    await git.commitAll(before, { allowEmpty: !(await git.hasCommits()) });
+    const inner = this.deps.inner.withWorktree
+      ? this.deps.inner.withWorktree(dir)
+      : this.deps.inner;
+    const result = await inner.execute(ctx);
+    let changedFiles: string[] = [];
+    try {
+      await git.stageAll();
+      changedFiles = await git.stagedFiles();
+    } catch (e) {
+      // The change set is evidence for the critic; a git failure here never fails the work.
+      this.logger.warn("workspace change set not read", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+    }
+    return { ...result, worktree: dir, ...(changedFiles.length ? { changedFiles } : {}) };
   }
 
   /**

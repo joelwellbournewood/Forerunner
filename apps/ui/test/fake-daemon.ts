@@ -937,6 +937,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       active: false,
       smallProjectMode: false,
       defaultRiskTier: 1,
+      repos: parsed.data.repos ?? [],
     };
     state.projects.push(project);
     emit("project.changed", { id: project.id });
@@ -2796,6 +2797,56 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           project.autonomyLevel = level;
           emit("project.changed", { id: project.id });
           return { before: { autonomyLevel: from }, after: { autonomyLevel: level } };
+        },
+      };
+    }
+    if (name === "repo.create") {
+      // As the daemon's `repo.create` (U-037): a project without a repository, the name from
+      // the project's, under the token's account (the fake host's alice) unless an owner is
+      // named; private is medium risk (a yes or a tap), public high (a paired device).
+      const project = projectByRef(projectRef);
+      if (!project) return refuse("no such project", "not_found");
+      if ((project.repos ?? []).length > 0)
+        return refuse(
+          `${project.name} already has a repository (${project.repos?.[0]}); one is created only for a project without one`,
+        );
+      const isPrivate = params.private !== false;
+      const owner = typeof params.owner === "string" && params.owner ? params.owner : "alice";
+      const repoName =
+        typeof params.name === "string" && params.name
+          ? params.name
+          : project.name
+              .toLowerCase()
+              .replace(/[^a-z0-9._-]+/g, "-")
+              .replace(/^-+|-+$/g, "");
+      const full = `${owner}/${repoName}`;
+      const under = owner === "alice" ? "your GitHub account alice" : `the organization ${owner}`;
+      const risk: Risk = isPrivate ? "medium" : "high";
+      const visibility = isPrivate ? "private" : "public";
+      return {
+        name,
+        params,
+        risk,
+        card: card(
+          {
+            command: name,
+            what: `a GitHub repository for ${project.name}`,
+            oldValue: "no repository",
+            newValue: `${full} (${visibility}, under ${under})`,
+            scope: "project",
+            sentence: `Create the ${visibility} GitHub repository ${full} under ${under} for ${project.name}, push its workspace as the first commit and link it to the project.`,
+            projectId: project.id,
+            projectName: project.name,
+            usesActiveProject: projectRef === undefined,
+            reversible: false,
+            undoHint: "This cannot be undone here.",
+          },
+          risk,
+        ),
+        apply: () => {
+          project.repos = [full];
+          emit("project.changed", { id: project.id });
+          return { before: { repos: [] }, after: { repo: full } };
         },
       };
     }

@@ -8,6 +8,7 @@ import { memoryRecord } from "./memory.ts";
 import { modelSettingsSet } from "./model-settings.ts";
 import { noteAdd } from "./note.ts";
 import { projectCreate, projectSwitch } from "./project.ts";
+import { repoCreate } from "./repo.ts";
 import { requestAnswer } from "./request.ts";
 import { sessionPause, sessionStart, sessionStop } from "./session.ts";
 import { settingsSet } from "./settings.ts";
@@ -24,6 +25,7 @@ export * from "./memory.ts";
 export * from "./model-settings.ts";
 export * from "./note.ts";
 export * from "./project.ts";
+export * from "./repo.ts";
 export * from "./request.ts";
 export * from "./session.ts";
 export * from "./settings.ts";
@@ -53,5 +55,6 @@ export function defaultRegistry(): CommandRegistry {
     .register(deviceRevoke)
     .register(memoryRecord)
     .register(modelSettingsSet)
-    .register(specialistPropose);
+    .register(specialistPropose)
+    .register(repoCreate);
 }

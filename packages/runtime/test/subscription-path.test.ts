@@ -18,6 +18,7 @@ import type { QueryLike } from "../src/agent/sdk.ts";
 import { billingSourcesLine, buildProgram } from "../src/cli/main.ts";
 import { composeRuntime, type RuntimeApp, TOOL_UNMAPPED_AUDIT } from "../src/daemon/compose.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
+import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import { BILLING_PICK_AUDIT_TOOL, planShareAfter } from "../src/session/billing.ts";
 import { planItemFor, SDK_RUN_PROVIDER } from "../src/session/executor.ts";
 import {
@@ -195,7 +196,8 @@ describe("the subscription path (ADR 0044)", () => {
       // The daemon's session grant: the loop tools plus the Claude Code names (a derived token
       // only narrows, so the SDK run's `cc:` names must be here).
       allowedTools: [...rt.toolsForRun().names(), ...claudeCodeToolNames()],
-      allowedPaths: [rt.dirs.worktrees],
+      // The daemon's paths: the worktrees root and, since U-037, the project's workspace.
+      allowedPaths: (await rt.sessionGrant(projectId))?.allowedPaths ?? [],
       allowedDomains: [],
       grantedSecrets: [],
       budgetUsdMicro: 2_000_000,
@@ -288,8 +290,9 @@ describe("the subscription path (ADR 0044)", () => {
     expect(call.options.model).toBe("claude-sonnet-5-5");
     expect(call.options.maxTurns).toBe(80);
     expect(call.options.permissionMode).toBe("dontAsk");
-    // No worktree: the run works in its own directory under the worktrees root, and only there.
-    expect(String(call.options.cwd).startsWith(join(rt.dirs.worktrees, "sdk-runs"))).toBe(true);
+    // No repository: the run works in the project's workspace folder, where its docs are (U-037;
+    // before, it worked in an empty folder of its own under the worktrees root).
+    expect(call.options.cwd).toBe(projectWorkspaceDir(rt.data.assets.projectsRoot, projectId));
     expect(call.prompt).toContain("Add a greeting");
     // The Run row cites the subscription source and the SDK provider, with whole-ms timings.
     const sources = await rt.billing.sources();

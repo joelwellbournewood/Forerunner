@@ -1188,6 +1188,38 @@ approved during the session is not overwritten by the copy read at its start. Te
 reads, the first session's order and its mark across a reopened store), the U-038 case in
 `intake.test.ts` (the planner on a real approval).
 
+**A project without a repository (U-037, [ADR 0097](../decisions/0097-a-repository-for-a-project-without-one.md)).**
+Its tasks run in the project's workspace folder (`projectWorkspaceDir(projectsRoot, id)`,
+`<data>/projects/<id>/workspace`, where the intake and the doc scaffold write the docs): the
+composition's `PrTaskExecutor` gets `workspaceFor` (a project with no `repos`; a linked local
+folder gets none), and `sessionGrant(project)` adds the folder to `allowedPaths`, so the run
+token derived for the task keeps it on both drivers (the loop's `cwd`, the SDK subprocess's
+working directory, a sandbox lease's mount). The folder is a local git repository (see
+`capabilities.md`), so the critic's `GitDiffPort` reviews the run's change set. Before U-037 the
+loop run's token had no path and the SDK run worked in `<worktrees>/sdk-runs/<run>`.
+`RepoCreator` (`src/loop/repo-create.ts`) is the `repo.create` command's port: `preview` refuses
+a project that has a repository and an install without the GitHub token (the next step in the
+message), and names the repository (`repoNameFor`, the token's login from `whoAmI`, or an
+organization); `create` calls `createRepo({ autoInit: false })`, pushes a copy of the workspace
+(without its `.git`; a README for an empty folder) from `<worktrees>/repo-init/<project>` as one
+commit, sets `repos: [fullName]`, emits `project` and writes a `repo.create` audit row (a failed
+first push leaves the repository unlinked, says so and audits `allowed: false`).
+`RepoProposals` files the agent's proposal: the runner's new `onPlanned` hook (after
+`session.planned`, never fatal) calls `consider` with the plan; code work (an entry with
+`cc:Bash` and `cc:Edit` or `cc:MultiEdit`) on a project without a repository, not declined
+before (`settings.repo_proposal`) and not already asked, becomes one non-blocking `approval`
+card keyed `repo:create:<project>` (options `REPO_PROPOSAL_OPTIONS`: "Create the repository",
+"Not now"; the steps name the repository, the account or organization and "private"), or, where
+`decideAutonomy("external_send")` allows (level 4), `repo.create` run as the agent. `sync`
+(in `syncApprovals`, `repos`) runs `repo.create` for an approval with the answer as a tap, records
+a decline on the project, marks each card `applied_at` with its outcome and tells the person a
+failure. `repoProposalAnswer` (`wiring/request-answers.ts`, `ANSWER_CARD_KEYS.repoCreatePrefix`)
+is the card's reader, so `acceptsAnswer` refuses any other word. The project card carries
+`repos` for the project page's button. Tests: `workspace-runs.test.ts` (both drivers, the change
+set, a second task's baseline), `repo-create.test.ts` (the fake git host: the grant, a card and
+nothing created without a yes, "Not now" not asked again, the first commit, the link, the next
+run's clone, the page's command with a tap, Autopilot, a refused typed answer, the Chat phrase).
+
 **What a run is capped at (U-042).** `runCapOf` (`session/executor.ts`) decides the brief's
 budget, which becomes the run token's `budgetUsdMicro` and the hooks' run cap: a task with a
 budget of its own is capped at what is left of it (`budget_usd_micro` less

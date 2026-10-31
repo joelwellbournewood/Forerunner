@@ -221,6 +221,8 @@ export interface GitHost {
     name: string;
     private: boolean;
     description?: string;
+    /** Start the repository with a README commit (the host default); false: empty, for a first push. */
+    autoInit?: boolean;
   }): Promise<RepoInfo>;
   listBranches(repo: RepoRef): Promise<{ name: string; sha: string }[]>;
   getFile(repo: RepoRef, path: string, ref?: string): Promise<FileContent | null>;

@@ -87,6 +87,17 @@ again as soon as the service answers.
   own conversation in this window: switching tabs or reloading keeps it, a Yes/No question you
   have not answered yet included.
 
+**A project without a repository** works in its own folder on this computer (where its docs
+are): the agents read and write there, and the critic reviews what each task changed. To give
+it a GitHub repository, click **Create a repository** on the project page: it shows the name
+(from the project's), your GitHub account (or an organization you name) and private, and **Yes**
+creates it with your GitHub token, puts the project's folder in it as the first commit and links
+it; from then on tasks work on branches with pull requests. "create a repository" in Chat does
+the same. When a session plans code work for such a project, your agent asks in the Inbox
+(**Create the repository** or **Not now**); "Not now" is not asked again. At autonomy 4
+(Autopilot) the agent creates a private repository itself and tells you. A public repository
+always needs your confirmation on this device.
+
 **Next session** on the Summary tab holds notes, tasks, corrections and ideas for the next
 session; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. Each reaches the
 brief of the task it names, by the task's title or id ("Add the login page: reuse the session

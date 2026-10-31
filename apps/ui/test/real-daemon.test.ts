@@ -205,6 +205,21 @@ describe("the UI client against the real daemon", () => {
     expect(listed.find((t) => t.id === budgeted.id)?.capSource).toBe("task_budget");
   });
 
+  it("create a repository: the card names the project's repos, and without a GitHub token the command says what to do (U-037)", async () => {
+    // The project page shows "Create a repository" for a card whose repos are empty.
+    expect((await client.project(projectId)).repos).toEqual([]);
+    // This daemon has no GitHub token: the dialog's call is refused with the next step.
+    const r = await client.executeCommands({
+      commands: [{ name: "repo.create", params: { project: projectId, private: true } }],
+      wordsUsed: "Create a repository (project page)",
+      source: "ui",
+      projectId,
+    });
+    expect(r.status).toBe("refused");
+    expect(r.reason).toContain("add one in the setup assistant (the GitHub step)");
+    expect((await client.project(projectId)).repos).toEqual([]);
+  });
+
   it("docs: lists the standard doc set and reads one (U-005)", async () => {
     const docs = await client.docs(projectId);
     const readme = docs.find((d) => d.path === "README.md");

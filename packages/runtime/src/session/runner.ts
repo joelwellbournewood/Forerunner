@@ -345,6 +345,16 @@ export interface SessionRunnerDeps {
    */
   chfPerUsd?: () => number;
   /**
+   * Called once the plan is written (`session.planned`); failures are logged, never fatal. The
+   * daemon proposes a repository here for a project without one whose plan holds code work
+   * (U-037, `loop/repo-create.ts`).
+   */
+  onPlanned?: (info: {
+    sessionId: string;
+    projectId: string | null;
+    plan: SessionPlan;
+  }) => void | Promise<void>;
+  /**
    * Context layer (ADR 0003): probes Headroom at session start when the project asks for it and
    * turns the proxy's counter delta into `session.headroom_saved_tokens` at the end.
    */
@@ -825,6 +835,15 @@ export class SessionRunner {
             }
           : {}),
       });
+      try {
+        await this.deps.onPlanned?.({
+          sessionId: session.id,
+          projectId: project?.id ?? null,
+          plan,
+        });
+      } catch (e) {
+        this.logger.warn("plan hook failed", { sessionId: session.id, error: errorMessage(e) });
+      }
 
       // Levels 0 and 1 run nothing the human has not approved (spec J.6, J.7; ADR 0053): the
       // plan is filed as one blocking request whose card names it (`plan_id`), and the

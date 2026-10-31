@@ -7,6 +7,7 @@ import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { ChatTab } from "./project/ChatTab.tsx";
 import { CostsTab } from "./project/CostsTab.tsx";
+import { CreateRepoDialog } from "./project/CreateRepoDialog.tsx";
 import { DataTab } from "./project/DataTab.tsx";
 import { DocsTab } from "./project/DocsTab.tsx";
 import { PlanTab } from "./project/PlanTab.tsx";
@@ -39,6 +40,7 @@ export function ProjectPage() {
   const cached = useUiState((s) => s.projects.find((p) => p.id === id) ?? null);
   const project = useAsync((signal) => client.project(id, signal), [client, id]);
   const [startOpen, setStartOpen] = useState(false);
+  const [repoOpen, setRepoOpen] = useState(false);
 
   useEffect(() => {
     if (id) store.dispatch({ type: "activeProject", id });
@@ -71,6 +73,15 @@ export function ProjectPage() {
             autonomy: {autonomyLabel(view.autonomyLevel).label}
           </Badge>
           <div className="ml-auto flex gap-2">
+            {view.repos && view.repos.length === 0 ? (
+              <Button
+                onClick={() => setRepoOpen(true)}
+                data-testid="create-repo"
+                title="The project has no repository: its tasks run in the project's folder on this computer"
+              >
+                Create a repository
+              </Button>
+            ) : null}
             <Button
               variant="primary"
               onClick={() => setStartOpen(true)}
@@ -122,6 +133,15 @@ export function ProjectPage() {
           <ChatTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />
         ) : null}
       </div>
+      {repoOpen ? (
+        <CreateRepoDialog
+          open={repoOpen}
+          onClose={() => setRepoOpen(false)}
+          projectId={id}
+          projectName={view.name}
+          onCreated={project.reload}
+        />
+      ) : null}
       <StartSessionDialog
         open={startOpen}
         onClose={() => setStartOpen(false)}

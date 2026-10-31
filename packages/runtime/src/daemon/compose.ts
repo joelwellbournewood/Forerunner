@@ -114,7 +114,7 @@ import {
 import { expireOrphanedCards, syncAnsweredCards } from "../loop/answered-cards.ts";
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
-import { ProjectDocs, parseRepoRef } from "../loop/docs.ts";
+import { ProjectDocs, parseRepoRef, projectWorkspaceDir } from "../loop/docs.ts";
 import {
   isMemoryConsolidationRequest,
   MemoryLoop,
@@ -124,6 +124,7 @@ import {
   scheduleMemoryConsolidation,
 } from "../loop/memory.ts";
 import { MERGE_PR_TOOL, ReviewedPrMerge } from "../loop/merge.ts";
+import { RepoCreator, RepoProposals } from "../loop/repo-create.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
 import { modelIdFor } from "../models/ladder.ts";
 import {
@@ -182,6 +183,7 @@ import {
   seedRegistry,
   TOOL_UNMAPPED_AUDIT,
 } from "../registry/index.ts";
+import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
@@ -919,6 +921,8 @@ export interface RuntimeApp {
     intake: IntakeSyncResult;
     /** Answered specialist proposals (ADR 0071): the daemon runs them in the background; a one-shot applies none. */
     specialists: SpecialistSyncResult;
+    /** Answered repository proposals (U-037, ADR 0097): created, declined, failed. */
+    repos?: { created: number; declined: number; failed: number };
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -2002,11 +2006,43 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         if (!full?.includes("/") || isAbsolute(full)) return null;
         return repoOfProject(project);
       },
+      // U-037: a project without a repository works in its workspace folder (where the intake
+      // writes its docs); the session grant carries the folder, so the run token keeps it. A
+      // project linked to a local folder is not given the workspace: its folder is the
+      // person's own, which a run never writes to unasked.
+      workspaceFor: async (task) => {
+        const project = await store.project.get(task.project_id);
+        if (!project || project.repos.length > 0) return null;
+        return projectWorkspaceDir(dataAssets.projectsRoot, project.id);
+      },
       worktreeRoot: dirs.worktrees,
       token: ghToken ?? undefined,
       identity: gitIdentity,
     });
   const executor = prExecutor(true);
+  // A repository for a project that has none (U-037, ADR 0097): the `repo.create` command's
+  // port, with the person's GitHub token; the project's agent proposes one (`repoProposals`,
+  // below) when a plan holds code work.
+  const repoCreator = new RepoCreator({
+    store,
+    clock,
+    host: gitHost,
+    token: () => ghToken ?? null,
+    identity: gitIdentity,
+    projectsRoot: dataAssets.projectsRoot,
+    worktreeRoot: dirs.worktrees,
+    onLinked: (projectId) => events.emit("project", { id: projectId }),
+  });
+  // Assigned once the command loop exists (the runner is built before it).
+  let repoProposals: RepoProposals | null = null;
+  /** Code work: the specialist's entry edits files and runs commands (coder, tester, ...). */
+  const isCodeWork = (specialist: string): boolean => {
+    const d =
+      registry.specialists.get(specialist) ??
+      registry.specialists.get(canonicalSpecialistName(specialist));
+    const t = d?.allowed_tools ?? [];
+    return t.includes("cc:Bash") && (t.includes("cc:Edit") || t.includes("cc:MultiEdit"));
+  };
   // Project docs (spec G.5, ADR 0058): the standard doc set on a branch and PR of the
   // project's repository, or under the project's data dir without one.
   const docs = new ProjectDocs({
@@ -2047,6 +2083,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     docs,
     merge,
     schemaSync,
+    // U-037: a plan with code work on a project without a repository gets the agent's
+    // proposal of one (a card, or the repository itself at Autopilot).
+    onPlanned: async ({ sessionId, projectId, plan }) => {
+      if (!projectId || !repoProposals || plan.items.length === 0) return;
+      await repoProposals.consider({ projectId, sessionId, items: plan.items });
+    },
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
       const planned = estimates.estimate({
@@ -2515,7 +2557,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // allowlist (`settings.browser.allowedDomains`) joins the domains (ADR 0047).
   // The shared secrets active for this agent join the grant by name (spec S.13): the hooks'
   // granted-names rule is unchanged, the resolver finds the value by reference.
-  const sessionGrant = (project: { settings: JsonObject } | null, sharedNames: string[]) => ({
+  const sessionGrant = (
+    project: { id: string; settings: JsonObject } | null,
+    sharedNames: string[],
+  ) => ({
     allowedTools: [
       ...tools.names(),
       ...capabilityTools().map((t) => t.name),
@@ -2524,7 +2569,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // The runtime's merge step (J.9, ADR 0062); no model is offered it (no registry has it).
       MERGE_PR_TOOL,
     ],
-    allowedPaths: [dirs.worktrees],
+    // The project's workspace folder joins the paths (U-037): a project without a repository
+    // runs its tasks there, and a run token derived from this grant keeps only paths inside it.
+    allowedPaths: [
+      dirs.worktrees,
+      ...(project ? [projectWorkspaceDir(dataAssets.projectsRoot, project.id)] : []),
+    ],
     allowedDomains: [
       ...new Set([
         hostOf(config?.githubApiBase ?? "https://api.github.com"),
@@ -2796,7 +2846,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         );
         return { commandsSwitchedOff: before.commands.enabled && !next.commands.enabled };
       },
+      // repo.create (U-037, ADR 0097): the project page's button, Chat ("create a repository")
+      // and the agent's proposal create the repository through the git host.
+      repos: repoCreator,
     },
+  });
+  repoProposals = new RepoProposals({
+    store,
+    clock,
+    creator: repoCreator,
+    commands,
+    humanId: human.id,
+    agentId: agent.id,
+    isCodeWork,
   });
   const mirrorSchedules = new Set<string>();
   const refreshMirrorSchedules = async (): Promise<string[]> => {
@@ -2910,6 +2972,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         opts.startServices !== false
           ? await syncSpecialistApprovals()
           : { promoted: 0, failed: 0, rejected: 0, skipped: 0, running: 0 },
+      // A repository proposal answered in the Inbox (U-037): created through `repo.create`
+      // with the answer as the confirmation, or "Not now" remembered on the project.
+      repos: repoProposals ? await repoProposals.sync() : { created: 0, declined: 0, failed: 0 },
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();

@@ -123,7 +123,16 @@ with their milestone.
   branch and retry from scratch" starts the branch again from the base, runs the inner
   executor and replaces the old branch on the host (force with lease); "Cancel the task" is the
   runtime's alone. A request filed before the key (the same options) is read the same way. No
-  changes means `failed`; tasks without a repository run the inner executor directly.
+  changes means `failed`. A task without a repository runs in the folder `workspaceFor` names
+  (U-037, ADR 0097: the runtime passes the project's workspace for a project with no repository
+  link), kept as a local git repository: `inWorkspace` commits what is there as the baseline
+  ("Workspace before ..."; an empty first commit for a fresh folder), runs the inner executor
+  with that folder as its worktree, stages the run's change (`GitOps.stageAll`) and returns the
+  folder as `worktree` with the staged files as `changedFiles`, so the critic's `git diff HEAD`
+  there is that run's change; without `workspaceFor` the inner executor runs directly, as before.
+  `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
+  and `setRemote` for it and for the repository creation; `createRepo` takes `autoInit` (default
+  true, the host's README commit; false: an empty repository for a first push).
 - `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests
   of callers.
 - Project operations on the same contract (`ensureProject`, `ensureFields`, `listProjectItems`,

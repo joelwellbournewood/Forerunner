@@ -328,12 +328,13 @@ export class GitHubHost implements GitHost {
     name: string;
     private: boolean;
     description?: string;
+    autoInit?: boolean;
   }): Promise<RepoInfo> {
     const body = {
       name: opts.name,
       private: opts.private,
       description: opts.description ?? "",
-      auto_init: true,
+      auto_init: opts.autoInit ?? true,
     };
     const r = opts.owner
       ? await this.request<Json>("POST", `/orgs/${encodeURIComponent(opts.owner)}/repos`, body)

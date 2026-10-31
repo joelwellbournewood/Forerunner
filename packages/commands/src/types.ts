@@ -49,6 +49,7 @@ export const COMMAND_NAMES = [
   "memory.record",
   "model.settings.set",
   "specialist.propose",
+  "repo.create",
 ] as const;
 export type CommandName = (typeof COMMAND_NAMES)[number];
 
@@ -151,6 +152,43 @@ export interface SpecialistCommandPort {
   withdraw(req: { name: string; humanId: string }): Promise<{ outcome: string }>;
 }
 
+/**
+ * A repository for a project that has none (`repo.create`, U-037, ADR 0097), as the card shows
+ * it before anything is created: the name, the account or organization, private or public.
+ */
+export interface RepoPreview {
+  projectId: string;
+  projectName: string;
+  owner: string;
+  name: string;
+  fullName: string;
+  private: boolean;
+  accountKind: "account" | "organization";
+}
+
+/**
+ * The runtime's repository creator (`RepoCreator`, `src/loop/repo-create.ts`): `preview` checks
+ * that the project has no repository and the person's GitHub token is there, and names the
+ * repository; `create` creates it on the git host, pushes the project's workspace as the first
+ * commit and links it to the project. Absent: `repo.create` is refused as unavailable.
+ */
+export interface RepoCommandPort {
+  preview(req: {
+    projectId: string;
+    name?: string;
+    owner?: string;
+    private: boolean;
+  }): Promise<RepoPreview>;
+  create(req: {
+    projectId: string;
+    name: string;
+    owner?: string;
+    private: boolean;
+    humanId: string;
+    agentId: string | null;
+  }): Promise<{ fullName: string; htmlUrl: string; files: number }>;
+}
+
 /** The memory the registry writes to: the runtime's `MemoryLoop` behind `memoryCommandPort`. */
 export interface MemoryCommandPort {
   recordLesson(req: LessonRecordPortRequest): Promise<LessonRecordPortResult>;
@@ -243,6 +281,8 @@ export interface CommandPorts {
    * rule and audit row, without the notification.
    */
   emailMode?(req: EmailModePortRequest): Promise<EmailModePortResult>;
+  /** Creates a project's repository (`repo.create`, U-037); absent, the command is unavailable. */
+  repos?: RepoCommandPort;
 }
 
 export interface EmailModePortRequest {

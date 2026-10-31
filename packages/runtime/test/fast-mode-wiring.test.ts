@@ -133,8 +133,11 @@ describe("Opus fast mode wired into the daemon (D.20)", () => {
     const card = await json(await post("/projects", { name: "Urgent", goal: "Fix the outage" }));
     const project = str(card.id);
     const row = await rt.store.project.mustGet(project);
+    // The project has no repository, so since U-037 its tier-3 task runs in the project's
+    // workspace folder, in a sandbox lease: with no container engine here, the project allows
+    // the process stand-in, as a person without Docker would.
     await rt.store.project.update(project, row.version, {
-      settings: { ...row.settings, fast_mode: true },
+      settings: { ...row.settings, fast_mode: true, allowProcessSandbox: true },
     });
     const task = await json(
       await post(`/projects/${project}/tasks`, {

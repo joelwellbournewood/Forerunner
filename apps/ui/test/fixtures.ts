@@ -114,6 +114,7 @@ export const PROJECTS: ProjectCard[] = [
     active: true,
     smallProjectMode: false,
     defaultRiskTier: 1,
+    repos: ["org/atlas"],
   },
   {
     id: "proj_beacon",
@@ -130,6 +131,7 @@ export const PROJECTS: ProjectCard[] = [
     latestCriticGrade: null,
     lastSessionAt: null,
     active: false,
+    repos: [],
   },
 ];
 

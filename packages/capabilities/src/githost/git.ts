@@ -366,12 +366,44 @@ export class GitOps {
     return { dirty: files.length > 0, files };
   }
 
-  async commitAll(message: string): Promise<{ sha: string; committed: boolean }> {
+  async commitAll(
+    message: string,
+    opts: { allowEmpty?: boolean } = {},
+  ): Promise<{ sha: string; committed: boolean }> {
     this.must(await this.git(["add", "-A"]), "add");
     const st = await this.status();
-    if (!st.dirty) return { sha: await this.headSha(), committed: false };
-    this.must(await this.git(["commit", "-q", "-m", message]), "commit");
+    if (!st.dirty && !opts.allowEmpty) return { sha: await this.headSha(), committed: false };
+    this.must(
+      await this.git(["commit", "-q", ...(st.dirty ? [] : ["--allow-empty"]), "-m", message]),
+      "commit",
+    );
     return { sha: await this.headSha(), committed: true };
+  }
+
+  /** Whether the repository has a commit yet (a fresh `init` has none). */
+  async hasCommits(): Promise<boolean> {
+    return (await this.git(["rev-parse", "--verify", "--quiet", "HEAD"])).code === 0;
+  }
+
+  /** Stage every change, new and deleted files included (`git add -A`). */
+  async stageAll(): Promise<void> {
+    this.must(await this.git(["add", "-A"]), "add");
+  }
+
+  /** The files the index changes against `base` (default HEAD): what `stageAll` staged. */
+  async stagedFiles(base = "HEAD"): Promise<string[]> {
+    return this.must(await this.git(["diff", "--cached", "--name-only", base]), "diff --cached")
+      .stdout.split(/\r?\n/)
+      .filter(Boolean);
+  }
+
+  /** Add a remote, or point an existing one at `url`. */
+  async setRemote(name: string, url: string): Promise<void> {
+    const has = (await this.git(["remote", "get-url", name])).code === 0;
+    this.must(
+      await this.git(has ? ["remote", "set-url", name, url] : ["remote", "add", name, url]),
+      `remote ${has ? "set-url" : "add"} ${name}`,
+    );
   }
 
   /** Rebase the current branch onto `base`; on conflicts, abort and report the files. */
