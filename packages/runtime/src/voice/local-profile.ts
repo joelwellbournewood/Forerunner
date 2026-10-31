@@ -33,7 +33,14 @@ import {
   type TtsOptions,
   type TtsProvider,
 } from "@forerunner/voice";
-import { readVoiceSettings, recordedVoiceRoot, venvPythonPath, voiceDirs } from "./install.ts";
+import {
+  readVoiceSettings,
+  recordedVoiceRoot,
+  venvPythonPath,
+  voiceDirs,
+  whisperModelDir,
+  whisperModelName,
+} from "./install.ts";
 import { type VoiceProfile, voiceInstallCommand } from "./install-types.ts";
 
 /** Why local voice refuses while a voice install runs (`LocalVoiceOptions.blocked`, compose.ts). */
@@ -48,6 +55,12 @@ export interface LocalVoiceSettings {
   python: string | null;
   /** Added to the helpers' environment (HF_HOME: the managed models folder). */
   env: Record<string, string>;
+  /**
+   * The plain folder of the speech recognition model (U-024), passed as `--model-dir`: the
+   * install fetched it there; `fr_stt.py` loads it from there (an install from before, without
+   * it, loads from the cache by name) and fetches it once more when it cannot be opened.
+   */
+  whisperDir: string;
   stt: { device: string; computeType: string; cpuFallback: boolean };
   tts: { device: string; cpuFallback: boolean };
 }
@@ -70,6 +83,7 @@ export function localVoiceSettings(deps: LocalVoiceDeps): LocalVoiceSettings | n
     profile: s.profile,
     python: null,
     env: { HF_HOME: vd.models },
+    whisperDir: whisperModelDir(vd.models, whisperModelName(deps.env)),
     stt: { device: "cpu", computeType: "int8", cpuFallback: false },
     tts: { device: "cpu", cpuFallback: false },
   };
@@ -333,7 +347,7 @@ export class LocalVoice {
         model,
         device: s.stt.device,
         computeType: s.stt.computeType,
-        extraArgs: s.stt.cpuFallback ? ["--cpu-fallback"] : [],
+        extraArgs: ["--model-dir", s.whisperDir, ...(s.stt.cpuFallback ? ["--cpu-fallback"] : [])],
       },
       tts: {
         voice,

@@ -293,7 +293,8 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
   - else the data folder, with a note saying why (`folderNote` in `GET /voice/install`).
 
   Under it: a venv per profile, `voice/venv-cpu` / `venv-gpu`, the models in `voice/models`
-  (the helpers' `HF_HOME`), pip's cache in `voice/pip-cache` (`PIP_CACHE_DIR`) and its
+  (the helpers' `HF_HOME`; the speech recognition model in its own plain folder
+  `voice/models/faster-whisper/<model>`, `whisperModelDir`, U-024), pip's cache in `voice/pip-cache` (`PIP_CACHE_DIR`) and its
   temporary files in `voice/tmp` (`TMP`, `TEMP`, `TMPDIR`; removed after the install; 1.0.2
   unpacked the GPU wheels into `%TEMP%` on C:). `<config>/voice.json` holds the profile, what
   was installed (venv, interpreter, the requirements file's SHA-256) and what the last check
@@ -346,7 +347,16 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
   `python` on Linux (none: the `winget` or `apt` line); the espeak-ng path check (below); pip,
   torch and the lock as above (`--progress-bar raw --resume-retries 5`) and `pip check`, unless
   the marker matches; `python/fr_voice_models.py` fetches faster-whisper's model and Kokoro-82M
-  with the voice, with byte progress, skipping what is cached; then the check. Between steps and
+  with the voice, with byte progress, skipping what is cached; then the check. The speech model
+  (U-024) goes into the plain folder (`--whisper-dir`, `download_model(..., output_dir=...)`:
+  real files, never the cache's `snapshots/<rev>/model.bin` links to blobs, which a later run
+  skipped even when an interrupted run had left them broken). After the download the folder is
+  checked (`model.bin` and `config.json` present, real files, not empty, the sizes the Hub
+  lists); a broken one is deleted and fetched once more (a `retry` line, shown as a warning:
+  "the speech recognition model was downloaded broken (<why>); fetched it once more") before the
+  step fails with the reason. The sizes found are written to `forerunner-model.json` in the
+  folder, and the model's copy in the old cache (`hub/models--Systran--faster-whisper-<model>`)
+  is removed once the folder is good. Between steps and
   after each process the run checks its `AbortSignal`: a cancel kills the running process,
   records nothing and frees the lock.
 - **The check** runs the real helpers: `fr_stt.py` on 0.5 s of silence (ready, then a final)
@@ -368,7 +378,13 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
   models.
 - **At run time** `LocalVoice` (`packages/runtime/src/voice/local-profile.ts`) stands in the
   registry as `faster-whisper` and `kokoro` and builds the helpers from `voice.json` at every
-  use (`localVoiceSettings`): the venv's interpreter, the devices above, `HF_HOME`. A change from
+  use (`localVoiceSettings`): the venv's interpreter, the devices above, `HF_HOME`, and
+  `--model-dir <whisperDir>` (U-024). `fr_stt.py` loads the model from that folder when it
+  holds one, and by name from the cache otherwise (an install from before keeps working); a
+  folder `forerunner-model.json` says is broken (a link, a missing, empty or short file), or a
+  model CTranslate2 answers "Unable to open file" for, is deleted and fetched once more into the
+  folder (a stderr line says so; a model from the old cache is moved there the same way and its
+  cache copy dropped) before the load fails with "model load failed: <why>". A change from
   the CLI or the card applies at the next voice session; the old helper processes are stopped.
   `none`, or a profile whose venv is missing, reports local voice unavailable with the command
   that turns it on, unless `FORERUNNER_PYTHON` is set: it wins in every case (with `none` or no
@@ -699,6 +715,7 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/python-helper-crashes.test.ts` | the real `fr_stt.py` and `fr_tts.py` run as scripts against stub `faster_whisper` / `kokoro` modules that fault in native code (`ctypes.string_at(0)`), with `PYTHONFAULTHANDLER` unset: stderr carries faulthandler's header and the helper's frames (`_run`, `main`; `_pipeline`); and what `fr_stt.py` hands to native code: every transcription on the main thread, each on its own float32 array (no view of the utterance buffer) that later audio leaves unchanged; a decode frame making one utterance `beam_size=1, temperature=[0.0]` while the next, after a reset, decodes with `--beam-size` and faster-whisper's default temperatures; `parse_decode` refusing NaN, infinite and negative temperatures, empty or boolean lists, a beam size below 1 or not an integer, unknown keys and a non-object (skipped visibly without a Python with numpy) |
 | `test/stt-device-fallback.test.ts` | `fr_stt.py`'s `Transcriber` against a stub `faster_whisper`: device `auto` falls back to the CPU at load and at the first transcription, an out-of-memory error keeps the GPU, an explicit device is kept |
 | `test/disposed-providers.test.ts` | a retired `FasterWhisperStt` ends a new session with `unavailable` and a retired `KokoroTts` refuses a sentence, neither spawning its helper (a script that records whether it ran); `retire()` while the first utterance's interpreter probe runs (no `python` option, `FORERUNNER_PYTHON` set to node) ends the utterance with an error and spawns no helper after the probe; after `dispose()` alone a new utterance starts a new helper |
+| `test/python-models.test.ts` | U-024, the real `fr_voice_models.py` and `fr_stt.py` against stand-in `faster_whisper` and `huggingface_hub` packages (no network): a `model.bin` downloaded as a link to nothing (where links can be made), empty or truncated is deleted and fetched once more (one `retry` line, two downloads, then a real file); a good download fetched once, recorded in `forerunner-model.json`, and 1.0.4's cache copy removed; still broken after the second fetch fails with the reason after two downloads only; `fr_stt.py --model-dir` loads the folder, fetches once more for a link to nothing or a short file and is ready, loads an install from before by name from its good cache with no download, moves a cache that cannot be opened into the folder (and drops it), and reports a folder still broken after one more fetch as `model load failed` (exit 4) without fetching again |
 | `test/python-device.test.ts` | `setup_cuda_libraries()` on a fake site-packages: Windows `add_dll_directory` and `PATH` for every `nvidia/*/bin`, Linux cuBLAS and the cuDNN loader preloaded, nothing without the wheels; the gpu profile's `--cpu-fallback` (loud, at load when warmed, reported by `resolved_device()`), an explicit cuda without it raising; `fr_tts.py`'s `KokoroEngine` on cuda falling back with the reason, raising without `--cpu-fallback`, `auto` left to Kokoro; the warm-up sentence on cuda falling back loudly when synthesis fails there, the CPU never warmed |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
 | `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it; `drain()` waits for the play-head, at once on the abort or after `stop()` |
@@ -717,9 +734,12 @@ failing and falling back with exit 2, idempotency and resuming, a broken venv re
 Python 3.12 (3.10 and 3.11 refused) with the winget/apt line, the torch-alone and PyPI-only
 hashed pip runs, `pip check`, the environment's extra index dropped, cancelling, the lock file
 named in a refusal, the atomic `voice.json`, the espeak-ng path limit, switching and removing,
-the GPU detection and the setup question, all with a fake process runner from
-`voice-install-helpers.ts`), `voice-local-profile.test.ts` (what `voice.json` means for the
-helpers' argv, interpreter and `HF_HOME`; rebuilt and stopped on a change; `FORERUNNER_PYTHON`
+the GPU detection and the setup question, U-024's plain model folder passed to the fetcher
+(`--whisper-dir`) and the check (`--model-dir`) with a broken download fetched once more shown
+as a warning, all with a fake process runner from `voice-install-helpers.ts`, whose
+`modelsRetry` makes the fetcher report a retry), `voice-local-profile.test.ts` (what
+`voice.json` means for the helpers' argv (`--model-dir` included, U-024), interpreter and
+`HF_HOME`; rebuilt and stopped on a change; `FORERUNNER_PYTHON`
 winning; a swap deferred while a session or a sentence is in use; refused while an install
 runs), `voice-install-routes.test.ts` (the job, its replay as JSON and SSE, 409s, the cancel
 route, a daemon stop cancelling a running install and local voice blocked meanwhile, the
@@ -731,6 +751,11 @@ question); the card in `apps/ui/test/settings-voice.test.tsx`; `pnpm voice:insta
 
 ## Known issues
 
+- U-024's fetch at run time (a model folder `fr_stt.py` cannot open) happens before the helper's
+  ready line, inside `FasterWhisperStt`'s 120 s ready timeout: the base model fits on most lines,
+  a large model on a slow one may not; Settings -> Voice's **Check again** fetches it with
+  progress and no timeout. The real `download_model(output_dir=...)` has not been run on Windows
+  yet (the tests use stand-ins); the owner's next install is that check.
 - The gpu profile has not run on an NVIDIA GPU yet (2026-10-26): the CUDA path is covered by
   fake processes and stub modules, and the cpu profile was installed and checked for real on
   Linux (Python 3.12, the pinned packages, both models, both helpers through `LocalVoice`). The
@@ -959,5 +984,5 @@ question); the card in `apps/ui/test/settings-voice.test.tsx`; `pnpm voice:insta
 | L.6 | TTS for summaries and alerts, STT for voice notes, pluggable provider | `splitSentences()` + the registry's `TtsProvider` through `packages/runtime/src/voice/speak.ts` (the `/speak` routes, `summary.speak`, the `voice` notification channel; ADR 0063); any `SttProvider` (`note.add` keeps the transcript); `registry.ts` | `test/sentences.test.ts`, `test/registry.test.ts`, `packages/runtime/test/speak-route.test.ts`, `packages/runtime/test/notifications-voice.test.ts` |
 | A.6 (readable aloud) | the one-screen summary read aloud | `POST /projects/:id/speak`, `summary.speak` | `packages/runtime/test/speak-route.test.ts`, `packages/commands/test/commands.test.ts` |
 | P.7 | `adding-a-voice-provider.md` | this doc and `adding-a-voice-provider.md` | docs check |
-| O.4 (local install) | the local stack chosen at install (none, cpu, gpu), switchable from Settings and the CLI, verified on its device (ADR 0090) | `packages/runtime/src/voice/install*.ts`, `local-profile.ts`, `python/requirements-*.txt`, `python/fr_voice_models.py`, `fr_stt.py` `setup_cuda_libraries` | `packages/runtime/test/voice-install*.test.ts`, `voice-local-profile.test.ts`, `test/python-device.test.ts`, `apps/ui/test/settings-voice.test.tsx` |
+| O.4 (local install) | the local stack chosen at install (none, cpu, gpu), switchable from Settings and the CLI, verified on its device (ADR 0090) | `packages/runtime/src/voice/install*.ts`, `local-profile.ts`, `python/requirements-*.txt`, `python/fr_voice_models.py`, `fr_stt.py` `setup_cuda_libraries` | `packages/runtime/test/voice-install*.test.ts`, `voice-local-profile.test.ts`, `test/python-device.test.ts`, `test/python-models.test.ts`, `apps/ui/test/settings-voice.test.tsx` |
 | checklist "Voice keys" | keys missing -> local only; synthesised speech clips fed to STT in tests | `registry.ts` policy; `wav.synth` fixtures | `test/registry.test.ts`, `test/local-helpers.test.ts` |

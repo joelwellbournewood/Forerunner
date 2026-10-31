@@ -36,6 +36,11 @@ export interface FakeOptions {
   pipError?: string;
   /** `pip check` reports this broken requirement. */
   pipCheckError?: string;
+  /**
+   * The model fetcher found the first speech model download broken with this reason and fetched
+   * it once more (its `retry` line, U-024), then succeeded.
+   */
+  modelsRetry?: string;
 }
 
 export function fakeRunner(opts: FakeOptions = {}) {
@@ -117,6 +122,9 @@ export function fakeRunner(opts: FakeOptions = {}) {
     if (script.endsWith("fr_voice_models.py")) {
       const lines = [
         { type: "start", what: "whisper", repo: "Systran/faster-whisper-base", total: 100 },
+        ...(opts.modelsRetry
+          ? [{ type: "retry", what: "whisper", message: opts.modelsRetry }]
+          : []),
         { type: "progress", what: "whisper", bytes: 50, total: 100 },
         { type: "done", what: "whisper", bytes: 100 },
         { type: "start", what: "kokoro", repo: "hexgrad/Kokoro-82M", total: 300 },

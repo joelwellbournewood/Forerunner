@@ -722,9 +722,24 @@ function sha256(...files: string[]): string {
   return h.digest("hex");
 }
 
+/** The faster-whisper model the install fetches and the helper loads (`FORERUNNER_WHISPER_MODEL`). */
+export function whisperModelName(env: NodeJS.ProcessEnv): string {
+  return env.FORERUNNER_WHISPER_MODEL?.trim() || "base";
+}
+
+/**
+ * The plain folder the speech recognition model is fetched into and loaded from (U-024):
+ * `<models>/faster-whisper/<model>`, real files with no links, beside the Hugging Face cache
+ * (`HF_HOME`) where Kokoro stays. A model named by its repository (`Systran/...`) gets one
+ * folder, its separators replaced.
+ */
+export function whisperModelDir(models: string, model: string): string {
+  return join(models, "faster-whisper", model.replace(/[^A-Za-z0-9._-]+/g, "--"));
+}
+
 function modelNames(env: NodeJS.ProcessEnv): { whisper: string; voice: string } {
   return {
-    whisper: env.FORERUNNER_WHISPER_MODEL?.trim() || "base",
+    whisper: whisperModelName(env),
     voice: env.FORERUNNER_KOKORO_VOICE?.trim() || "af_heart",
   };
 }
@@ -1107,7 +1122,13 @@ export async function installVoice(
             type: "log",
             message: fetched ? `${what} ready` : `${what} ready (already downloaded)`,
           });
-        } else if (m.type === "error") errors.push(`${what}: ${m.message ?? "failed"}`);
+        } else if (m.type === "retry")
+          // U-024: a model.bin the speech library could not open is deleted and fetched again.
+          out({
+            type: "warning",
+            message: `the ${what === "whisper" ? "speech recognition model" : what} was downloaded broken (${m.message ?? "unknown"}); fetched it once more`,
+          });
+        else if (m.type === "error") errors.push(`${what}: ${m.message ?? "failed"}`);
       });
       const r = await run({
         argv: [
@@ -1115,6 +1136,8 @@ export async function installVoice(
           join(helpersDir, "fr_voice_models.py"),
           "--whisper",
           names.whisper,
+          "--whisper-dir",
+          whisperModelDir(vd.models, names.whisper),
           "--kokoro-voice",
           names.voice,
         ],
@@ -1145,6 +1168,7 @@ export async function installVoice(
         vpy,
         join(helpersDir, "fr_stt.py"),
         names.whisper,
+        whisperModelDir(vd.models, names.whisper),
         device,
         computeType,
         env,
@@ -1347,6 +1371,7 @@ async function sttCheck(
   python: string,
   helper: string,
   model: string,
+  modelDir: string,
   device: string,
   computeType: string,
   env: NodeJS.ProcessEnv,
@@ -1363,6 +1388,8 @@ async function sttCheck(
       helper,
       "--model",
       model,
+      "--model-dir",
+      modelDir,
       "--device",
       device,
       "--compute-type",

@@ -35,6 +35,13 @@ crash warning and in the turn's error details.
 All native work (model load, warm-up, every transcription) runs on the main thread, one call
 at a time; the reader thread only reads stdin. The audio handed to faster-whisper is a fresh
 float32 array copied out of the utterance buffer (pcm_to_float), which nothing else touches.
+
+Model (U-024): with --model-dir the model is loaded from that plain folder of real files, where
+the install put it (fr_voice_models.py); an install from before, whose folder holds no model
+yet, loads --model by name from the Hugging Face cache as it did. A folder the last check's
+record (forerunner-model.json) says is broken (a link, a missing or short file), or a model
+CTranslate2 answers "Unable to open file" for, is deleted and fetched once more into the folder
+before the load fails; the stderr line says so.
 """
 
 import argparse
@@ -45,6 +52,7 @@ import math
 import os
 import queue
 import re
+import shutil
 import site
 import struct
 import sys
@@ -221,6 +229,14 @@ def setup_cuda_libraries(site_dirs=None, platform=None, add_dll_directory=None, 
     return dirs
 
 
+def model_source(model_name, model_dir):
+    """The plain folder when it holds a model (a broken one included: it is fetched again), else
+    the name, which faster-whisper resolves in the Hugging Face cache (an install from before)."""
+    if model_dir and os.path.lexists(os.path.join(model_dir, "model.bin")):
+        return model_dir
+    return model_name
+
+
 def _silence():
     import numpy as np
 
@@ -234,8 +250,21 @@ class Transcriber:
     # cpu_fallback (the voice profile "gpu"), the helper then falls back to the CPU once and
     # says so on stderr and in `fallback`; an explicit device without cpu_fallback is kept.
     # `warm` runs a short silent transcription on a non-CPU device so the failure shows at load.
-    def __init__(self, model_name, device, compute_type, language, beam_size, cpu_fallback=False, warm=False):
+    def __init__(
+        self,
+        model_name,
+        device,
+        compute_type,
+        language,
+        beam_size,
+        cpu_fallback=False,
+        warm=False,
+        model_dir=None,
+    ):
         self.model_name = model_name
+        self.model_dir = model_dir
+        self.source = model_source(model_name, model_dir)
+        self.refetched = False
         self.device = device
         self.compute_type = compute_type
         self.language = language
@@ -259,7 +288,51 @@ class Transcriber:
     def _load(self, device, compute_type):
         from faster_whisper import WhisperModel
 
-        return WhisperModel(self.model_name, device=device, compute_type=compute_type)
+        problem = self._folder_problem()
+        if problem is None:
+            try:
+                return WhisperModel(self.source, device=device, compute_type=compute_type)
+            except Exception as e:
+                if not self._may_refetch(e):
+                    raise
+                problem = str(e)
+        self._refetch(problem)
+        return WhisperModel(self.source, device=device, compute_type=compute_type)
+
+    def _folder_problem(self):
+        """Why the plain model folder cannot be loaded as it is (a link, a missing, empty or short
+        file against the install's record), checked before CTranslate2 opens it; None when it
+        looks whole, after a refetch, or when the model is loaded by name."""
+        if self.refetched or not self.model_dir or self.source != self.model_dir:
+            return None
+        from fr_voice_models import model_dir_problem
+
+        return model_dir_problem(self.model_dir)
+
+    def _may_refetch(self, e):
+        return bool(self.model_dir) and not self.refetched and "unable to open file" in str(e).lower()
+
+    def _refetch(self, problem):
+        """Delete the model's folder and fetch it once more into it (U-024); a model loaded from
+        the old cache that cannot be opened is fetched into the folder and its cache copy dropped.
+        Raises when the fresh copy is still broken: the load then fails with that reason."""
+        from fr_voice_models import WHISPER_REQUIRED, download_whisper, hub_cache_dir, repo_sizes, whisper_repo
+
+        self.refetched = True
+        sys.stderr.write(
+            "fr_stt: the speech model cannot be opened (%s); fetching it once more into %s\n"
+            % (problem, self.model_dir)
+        )
+        sys.stderr.flush()
+        from_cache = self.source != self.model_dir
+        shutil.rmtree(self.model_dir, ignore_errors=True)
+        repo = whisper_repo(self.model_name)
+        sizes = repo_sizes(repo) or {}
+        expected = {k: v for k, v in sizes.items() if k in WHISPER_REQUIRED} or None
+        download_whisper(self.model_name, self.model_dir, expected, attempts=1)
+        if from_cache:
+            shutil.rmtree(hub_cache_dir(repo), ignore_errors=True)
+        self.source = self.model_dir
 
     def _fall_back(self, e):
         sys.stderr.write("fr_stt: CUDA failed on device %s: %s; falling back to the CPU (int8)\n" % (self.device, e))
@@ -318,6 +391,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample-rate", type=int, default=16000)
     ap.add_argument("--model", default="base")
+    ap.add_argument(
+        "--model-dir",
+        default=None,
+        help="plain folder holding the model (the install's); fetched once more when it cannot be opened",
+    )
     ap.add_argument("--device", default="auto")
     ap.add_argument("--compute-type", default="default")
     ap.add_argument("--language", default=None)
@@ -347,6 +425,7 @@ def main():
             args.beam_size,
             cpu_fallback=args.cpu_fallback,
             warm=True,
+            model_dir=args.model_dir,
         )
     except ImportError as e:
         emit({"type": "error", "message": "faster_whisper not importable: %s" % e})

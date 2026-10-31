@@ -173,7 +173,12 @@ Settings → Voice says so; beside an AppImage they go into `Forerunner-dependen
 Python. A voice install from before 1.0.3 keeps working where it is and moves at its next
 install. If the GPU
 check fails, `fr voice install --gpu` prints a `WARNING` with the reason and voice keeps working
-on the CPU; after updating the NVIDIA driver, run it again.
+on the CPU; after updating the NVIDIA driver, run it again. The speech recognition model is
+kept as plain files in `voice\models\faster-whisper\<model>`; a download that arrives broken (an
+interrupted one, say) is deleted and fetched once more, and the install shows a warning saying
+so. If speech recognition ever reports "Unable to open file 'model.bin'", it fetches the model
+once more by itself; an install from 1.0.4 or earlier keeps using its old copy until the next
+install moves it there (**Check again** in Settings → Voice).
 
 ## Email (optional)
 

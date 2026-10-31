@@ -20,6 +20,7 @@ import {
   VOICE_PROFILE_QUESTION,
   venvPythonPath,
   voiceDirs,
+  whisperModelDir,
   writeVoiceSettings,
 } from "../src/voice/install.ts";
 import type { VoiceInstallEvent } from "../src/voice/install-types.ts";
@@ -494,6 +495,41 @@ describe("fr voice install", () => {
     // A torn temporary file from a crash is never what is read.
     writeFileSync(`${target}.tmp-123`, "{ torn");
     expect(readVoiceSettings(dirs)?.profile).toBe("gpu");
+  });
+
+  it("U-024: the speech model goes into a plain folder the check loads, and a broken download fetched once more is a warning, not a failure", async () => {
+    const { dirs, env } = home();
+    const broken = "model.bin is a link to a file that is not there";
+    const fake = fakeRunner({ modelsRetry: broken });
+    const { events, out } = collect();
+    const r = await installVoice("cpu", {
+      dirs,
+      env,
+      platform: "linux",
+      run: fake.run,
+      out,
+      clock: new SimulatedClock("2026-10-31T10:00:00Z"),
+    });
+    expect(r).toMatchObject({ ok: true, exitCode: 0 });
+    const vd = voiceDirs(dirs);
+    const dir = whisperModelDir(vd.models, "base");
+    expect(dir).toBe(join(vd.models, "faster-whisper", "base"));
+    // Fetched into that folder (real files, not the cache's links) and loaded from it.
+    const models = fake.calls.find((c) => c.argv[1]?.endsWith("fr_voice_models.py"));
+    expect(models?.argv).toEqual(
+      expect.arrayContaining(["--whisper", "base", "--whisper-dir", dir]),
+    );
+    const stt = fake.calls.find((c) => c.argv[1]?.endsWith("fr_stt.py"));
+    expect(stt?.argv).toEqual(expect.arrayContaining(["--model", "base", "--model-dir", dir]));
+    // The person sees that the first download was broken and fetched again, and why.
+    const warnings = messages(events, "warning");
+    expect(warnings).toContainEqual(expect.stringContaining(broken));
+    expect(warnings.join("\n")).toContain("fetched it once more");
+    expect(readVoiceSettings(dirs)?.verified?.stt.device).toBe("cpu");
+    // A model named by its repository gets a folder of its own, with no separator in the name.
+    expect(whisperModelDir(vd.models, "Systran/faster-whisper-large-v3")).toBe(
+      join(vd.models, "faster-whisper", "Systran--faster-whisper-large-v3"),
+    );
   });
 
   it("switching profiles removes the other venv after the new one is verified", async () => {

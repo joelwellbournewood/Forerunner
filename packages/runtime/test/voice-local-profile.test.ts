@@ -15,6 +15,7 @@ import {
   type VoiceSettings,
   venvPythonPath,
   voiceDirs,
+  whisperModelDir,
   writeVoiceSettings,
 } from "../src/voice/install.ts";
 import {
@@ -100,6 +101,8 @@ describe("localVoiceSettings: what the profile means for the helpers", () => {
       tts: { device: "cuda", cpuFallback: true },
     });
     expect(s?.env.HF_HOME).toBe(voiceDirs(dirs).models);
+    // U-024: the plain folder of the speech model, under the models folder.
+    expect(s?.whisperDir).toBe(whisperModelDir(voiceDirs(dirs).models, "base"));
   });
 
   it("gpu whose check fell back: the CPU from the start, no CUDA attempt at every start", () => {
@@ -213,7 +216,13 @@ describe("LocalVoice: the registry's faster-whisper and kokoro follow voice.json
     });
     await local.stt.isAvailable();
     expect(built).toHaveLength(1);
-    expect(built[0]?.stt).toMatchObject({ device: "cpu", computeType: "int8", extraArgs: [] });
+    // U-024: the speech model is loaded from the plain folder the install put it in.
+    const modelDir = whisperModelDir(voiceDirs(dirs).models, "base");
+    expect(built[0]?.stt).toMatchObject({
+      device: "cpu",
+      computeType: "int8",
+      extraArgs: ["--model-dir", modelDir],
+    });
     expect(built[0]?.tts.extraArgs).toEqual(["--device", "cpu"]);
     await local.tts.isAvailable();
     expect(built).toHaveLength(1);
@@ -225,7 +234,7 @@ describe("LocalVoice: the registry's faster-whisper and kokoro follow voice.json
     expect(built[1]?.stt).toMatchObject({
       device: "cuda",
       computeType: "float16",
-      extraArgs: ["--cpu-fallback"],
+      extraArgs: ["--model-dir", modelDir, "--cpu-fallback"],
     });
     expect(built[1]?.tts.extraArgs).toEqual(["--device", "cuda", "--cpu-fallback"]);
     expect(built[1]?.env?.HF_HOME).toBe(voiceDirs(dirs).models);
