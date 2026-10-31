@@ -211,6 +211,7 @@ import {
   reportingPlanStartFailures,
   syncPlanApprovals,
 } from "../session/plan-approval.ts";
+import { syncPrAnswers } from "../session/pr-answers.ts";
 import {
   SessionRunner,
   type SessionRunnerDeps,
@@ -2779,6 +2780,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       memoryOffers: await memory.syncOffers(),
       findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
       signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
+      // A rebase conflict and a reviewed PR left open (U-028): each option does what it says.
+      pullRequests: await syncPrAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
       // An approved session plan (spec J.6, J.7; ADR 0053) becomes a "message" start bound to
       // that plan; the scheduler keeps one session per agent. A CLI one-shot
       // (`startServices: false`) is no place to start a session from: the daemon does it.

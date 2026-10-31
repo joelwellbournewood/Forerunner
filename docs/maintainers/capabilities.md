@@ -106,9 +106,19 @@ with their milestone.
   or fetch into a per-task worktree, branch from the base (or the existing PR branch), run the
   inner executor inside the worktree, commit, rebase onto the base, push and open a pull
   request whose body carries the outcome and acceptance criteria; a second run on the same
-  task updates the PR. A rebase conflict becomes a blocking human request with options and the
-  task outcome `needs_human`; no changes means `failed`; tasks without a repository run the
-  inner executor directly.
+  task updates the PR. A rebase conflict pushes the branch as it is (so the person can fetch
+  and resolve it; the steps name the worktree when the push fails) and becomes a blocking
+  `decision` request (`change_card.key` `REBASE_CONFLICT_KEY`, the branch, base, files and
+  whether it was pushed) with the task outcome `needs_human`. Its options each lead somewhere
+  (U-028): the runtime's `syncPrAnswers` applies the answer (`runtime.md`), and the task's next
+  run reads it from the card (`outcome`, then `consumed_at` once a run used it). "I resolved
+  it" takes the person's branch (the host's, else the worktree's; `GitOps.hasRef`), checks the
+  base is in it (rebasing when not; a conflict that is still there files a new request), pushes
+  and opens the PR without running the inner executor again (`costUsdMicro: 0`); "Drop the
+  branch and retry from scratch" starts the branch again from the base, runs the inner
+  executor and replaces the old branch on the host (force with lease); "Cancel the task" is the
+  runtime's alone. A request filed before the key (the same options) is read the same way. No
+  changes means `failed`; tasks without a repository run the inner executor directly.
 - `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests
   of callers.
 - Project operations on the same contract (`ensureProject`, `ensureFields`, `listProjectItems`,
@@ -357,7 +367,9 @@ called (the old code asked it to `get` and then `erase`) and the stale credentia
 
 `pr-executor.test.ts` runs `PrTaskExecutor` against local bare repositories and
 `MemoryGitHost`: the PR flow end to end, a rebase conflict as a blocking human request with no
-PR, and no changes as a failure. Like `git.test.ts` it spawns dozens of git processes, so both
+PR, and no changes as a failure. What each of the conflict request's options does, answered
+through the daemon's route with the strings the Inbox shows and followed by the task's next
+run, is `packages/runtime/test/pr-answers.test.ts` (U-028). Like `git.test.ts` it spawns dozens of git processes, so both
 suites carry a 120 s timeout rather than the unit default of 20 s: loaded Windows runners have
 run them several times slower than usual.
 

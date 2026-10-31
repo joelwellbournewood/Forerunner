@@ -17,7 +17,7 @@ import {
   newId,
   safeSegment,
 } from "@forerunner/platform";
-import type { StateStore, TaskRow } from "@forerunner/state";
+import type { HumanRequestRow, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
 import type { ToolExecutionContext, ToolResult, ToolSpec } from "../agent/tools.ts";
 import type { EnforcementHooks, RunContext } from "../enforcement/hooks.ts";
@@ -510,21 +510,12 @@ export class ReviewedPrMerge implements MergePort {
     const { task, session } = req;
     let out = outcome;
     if (ASKS_HUMAN.has(outcome.status)) {
-      const request = await store.humanRequest.insert({
-        human_id: req.token.claims.ownerHumanId,
-        project_id: task.project_id,
-        task_id: task.id,
-        session_id: session.id,
-        kind: "decision",
-        why: `The critic accepted "${task.title}", but its pull request ${outcome.prUrl} was not merged: ${outcome.reason.replace(/^PR left open for you: /, "")}.`.slice(
-          0,
-          4000,
-        ),
-        steps: STEPS[outcome.status] ?? [],
-        options: ["I merged it", "Leave it open"],
-        blocking: false,
-        risk: "medium",
-        author_agent: req.agentId,
+      const request = await fileLeftOpenRequest(store, {
+        task,
+        sessionId: session.id,
+        humanId: req.token.claims.ownerHumanId,
+        agentId: req.agentId,
+        outcome,
       });
       out = { ...outcome, humanRequestId: request.id };
     }
@@ -546,6 +537,52 @@ export class ReviewedPrMerge implements MergePort {
     });
     return out;
   }
+}
+
+/**
+ * The request for a reviewed PR the merge step left open (U-028). Its card carries
+ * `MERGE_LEFT_OPEN_KEY`, so `syncPrAnswers` (`session/pr-answers.ts`, from the daemon's
+ * `syncApprovals`) applies the answer: "I merged it" records the merge on the task (its
+ * `reason` names the PR and the person; the task stays `done`, which is where an accepted task
+ * is), "Leave it open" records that the person keeps it open.
+ */
+export const MERGE_LEFT_OPEN_KEY = "merge:left_open";
+export const MERGE_LEFT_OPEN_OPTIONS = ["I merged it", "Leave it open"] as const;
+
+export async function fileLeftOpenRequest(
+  store: Pick<StateStore, "humanRequest">,
+  input: {
+    task: TaskRow;
+    sessionId: string | null;
+    humanId: string;
+    agentId: string;
+    outcome: MergeOutcome;
+  },
+): Promise<HumanRequestRow> {
+  const { task, outcome } = input;
+  return store.humanRequest.insert({
+    human_id: input.humanId,
+    project_id: task.project_id,
+    task_id: task.id,
+    session_id: input.sessionId,
+    kind: "decision",
+    why: `The critic accepted "${task.title}", but its pull request ${outcome.prUrl} was not merged: ${outcome.reason.replace(/^PR left open for you: /, "")}.`.slice(
+      0,
+      4000,
+    ),
+    steps: STEPS[outcome.status] ?? [],
+    options: [...MERGE_LEFT_OPEN_OPTIONS],
+    blocking: false,
+    risk: "medium",
+    change_card: {
+      key: MERGE_LEFT_OPEN_KEY,
+      task_id: task.id,
+      pr_url: outcome.prUrl,
+      status: outcome.status,
+      applied_at: null,
+    },
+    author_agent: input.agentId,
+  });
 }
 
 /** Refusals the human hears about as a request; the hooks' refusal is the level's normal course. */

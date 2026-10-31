@@ -1222,8 +1222,9 @@ has no CI; after a rebase every check and status the reviewed head had must pass
 new head, and a host still showing the old head right after the push is waited for);
 `mergeable: false` is a conflict; the
 merge is pinned to the checked head (`mergePullRequest(…, { sha })`). Every refusal of the tool
-files one non-blocking `decision` request for the human (why, steps, "I merged it" / "Leave it
-open"); every outcome is written on the task row (`reason`, versioned with the agent), comes
+files one non-blocking `decision` request for the human (`fileLeftOpenRequest`: why, steps,
+"I merged it" / "Leave it open", `change_card.key` `MERGE_LEFT_OPEN_KEY` with the PR URL and
+the status; `syncPrAnswers` applies the answer, below); every outcome is written on the task row (`reason`, versioned with the agent), comes
 back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or `pr.left_open` event
 (`pr.merge_failed` when the port threw; never fatal) and is counted in the summary ("Merged 1
 reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). A merged
@@ -1758,7 +1759,7 @@ already:
 
 `syncApprovals()` (the change cards of the command executor, extension grants, model watch
 decisions, memory consolidations, the blocked-findings answers, the critic sign-off answers,
-the session plan answers and the intake answers) runs at compose, after every `POST /requests/:id/answer` and after every
+the pull-request cards, the session plan answers and the intake answers) runs at compose, after every `POST /requests/:id/answer` and after every
 `request.answer` command (chat, voice, the palette, the phone's relayed chat: the command
 calls `CommandPorts.requestAnswered`, which the daemon wires to `syncApprovals`), so an answer
 takes effect at once whichever way it is given, and on the approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
@@ -1799,6 +1800,27 @@ expire the first one's cards at its start (Known issues). Tests:
 route on a default local install, the change, its change log row and undo; `no` and `reject`
 changing nothing; a high-risk card confirmed as the desktop row; a restart expiring the card
 and telling the human once).
+
+**Pull-request cards (`syncPrAnswers`, `src/session/pr-answers.ts`, U-028).** Two `decision`
+requests had options no code read. `syncPrAnswers` (a step of `syncApprovals()`, returned as
+`pullRequests`) scans the human's answered `decision` requests whose card key is
+`REBASE_CONFLICT_KEY` (`PrTaskExecutor`, capabilities.md) or `MERGE_LEFT_OPEN_KEY` (the merge
+step, above), or that carry those options without a key (filed before it), and applies each
+once, the task move and the card's `applied_at`/`outcome` in one transaction. A rebase
+conflict (task `needs_human`): "I resolved it" moves it to `ready` (`resolved`; the task's
+next run takes the person's branch, checks it against the base and opens the PR without
+running the specialist again), "Drop the branch and retry from scratch" moves it to `ready`
+(`dropped`; the next run starts the branch again from the base and replaces it on the host),
+"Cancel the task" cancels it; a task no longer `needs_human` is `task_moved_on`. A PR left
+open (task `done`): "I merged it" writes `merged by you: <PR> (request <id>)` on the task's
+`reason` (the person's act, `author_human`), "Leave it open" writes `left open by you: ...`;
+the task stays `done`. An answer outside the options is recorded `unrecognized_answer` and
+changes nothing. Tests: `pr-answers.test.ts` (a real rebase conflict on a local bare
+repository; each option clicked through `POST /requests/:id/answer` with the Inbox's strings,
+then the task's next run: the person's resolved branch opened as the PR after a restart with
+the specialist not run, a branch that still conflicts asked again, a drop redone from the
+current base with the old commit gone, a cancel; both merge options on a card filed the old
+way and one filed by `fileLeftOpenRequest`).
 
 **Plan answers (`syncPlanApprovals`, `src/session/plan-approval.ts`, ADR 0053).** The step
 scans the human's answered blocking approvals whose card key starts with `plan:` and that

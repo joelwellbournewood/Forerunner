@@ -340,6 +340,15 @@ export class GitOps {
       .sort();
   }
 
+  /** True when `ref` names a commit in this checkout (`origin/<branch>`, a local branch, a sha). */
+  async hasRef(ref: string): Promise<boolean> {
+    const r = await this.git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    if (r.code === 0) return true;
+    if (r.code === 1) return false;
+    this.must(r, `rev-parse --verify ${ref}`);
+    return false;
+  }
+
   async createBranch(name: string, from = "HEAD"): Promise<void> {
     this.must(await this.git(["checkout", "-B", name, from]), `checkout -B ${name}`);
   }
