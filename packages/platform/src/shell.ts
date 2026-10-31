@@ -1,4 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
+import { ForerunnerError } from "./errors.ts";
 import { currentPlatform } from "./os.ts";
 
 /**
@@ -44,32 +47,103 @@ export class ShellError extends Error {
 }
 
 const WINDOWS_SCRIPT_EXT = /\.(cmd|bat)$/i;
+/** Bare names that are batch shims on a usual Windows install (npm's, corepack's, tsx's). */
+const WINDOWS_SHIMS = ["npm", "pnpm", "npx", "yarn", "tsx", "corepack"];
+/** What cmd.exe reads specially, escaped with `^` (cross-spawn's set; a space and `,;` too). */
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
 
-function resolveWindowsCommand(cmd: string): { file: string; argsPrefix: string[] } {
-  // npm, pnpm, npx, etc. are .cmd shims on Windows. Run them through cmd.exe
-  // without shell string interpolation of our own arguments.
-  if (
-    WINDOWS_SCRIPT_EXT.test(cmd) ||
-    ["npm", "pnpm", "npx", "yarn", "tsx", "corepack"].includes(cmd)
-  ) {
-    return { file: process.env.ComSpec ?? "cmd.exe", argsPrefix: ["/d", "/s", "/c", cmd] };
+/**
+ * The path of the batch file as `cmd /c` reads it: every metacharacter, spaces included,
+ * escaped once with `^` (U-068).
+ */
+export function escapeCmdCommand(command: string): string {
+  return command.replace(CMD_META, "^$1");
+}
+
+/**
+ * One argument for a batch file run through `cmd /d /s /c "..."`, so that it arrives unchanged
+ * (U-068): quoted with the C runtime's rules (a quote becomes `\"`, the backslashes before it
+ * and at the end are doubled), then every cmd metacharacter escaped with `^` twice: once for
+ * cmd's own parse of the /c line, and once for the batch file's parse of the line its `%*` or
+ * `%1` lands in (npm's, npx's and pnpm's shims hand `%*` to node), so `&`, `|`, `%PATH%` and a
+ * quote are never read by either.
+ */
+export function escapeCmdArgument(arg: string): string {
+  const quoted = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1")}"`;
+  return quoted.replace(CMD_META, "^$1").replace(CMD_META, "^$1");
+}
+
+/**
+ * cmd.exe's arguments that run the batch file `script` with `args`, to be passed verbatim
+ * (`windowsVerbatimArguments`). A line break cannot be carried through cmd (it would end the
+ * command there), so such an argument is refused.
+ */
+export function cmdArgv(script: string, args: readonly string[]): string[] {
+  for (const a of args) {
+    if (/[\r\n]/.test(a))
+      throw new ForerunnerError(
+        "validation",
+        `an argument with a line break cannot be passed to ${script} through cmd.exe`,
+        { details: { reason: "line_break_for_cmd" } },
+      );
   }
-  return { file: cmd, argsPrefix: [] };
+  const line = [escapeCmdCommand(script), ...args.map(escapeCmdArgument)].join(" ");
+  return ["/d", "/s", "/c", `"${line}"`];
+}
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const key = Object.keys(env).find((k) => k.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : env[key];
+}
+
+/**
+ * How a command runs on Windows. A `.cmd` or `.bat` file runs through cmd.exe. The bare shim
+ * names are looked up as cmd would (the working folder, then `PATH`, each with `PATHEXT`): a
+ * batch file runs through cmd, an `.exe` found first (a standalone `pnpm.exe`) runs directly,
+ * since cmd's escaping would reach it as carets. Anything else is spawned directly.
+ */
+export function resolveWindowsCommand(
+  cmd: string,
+  opts: { env: NodeJS.ProcessEnv; cwd: string; isFile?: (p: string) => boolean },
+): { file: string; viaCmd: boolean } {
+  if (WINDOWS_SCRIPT_EXT.test(cmd)) return { file: cmd, viaCmd: true };
+  if (!WINDOWS_SHIMS.includes(cmd)) return { file: cmd, viaCmd: false };
+  const isFile = opts.isFile ?? ((p: string) => existsSync(p) && statSync(p).isFile());
+  const dirs = [opts.cwd, ...(envValue(opts.env, "PATH") ?? "").split(";")].filter(Boolean);
+  const exts = (envValue(opts.env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = path.win32.join(dir, `${cmd}${ext}`);
+      if (isFile(candidate)) return { file: candidate, viaCmd: WINDOWS_SCRIPT_EXT.test(ext) };
+    }
+  }
+  return { file: cmd, viaCmd: true };
 }
 
 export function spawnProcess(argv: readonly string[], opts: RunOptions = {}): ChildProcess {
   const [cmd, ...args] = argv;
   if (!cmd) throw new Error("spawnProcess: empty argv");
-  const win = currentPlatform() === "windows";
-  const { file, argsPrefix } = win ? resolveWindowsCommand(cmd) : { file: cmd, argsPrefix: [] };
-  return spawn(file, [...argsPrefix, ...args], {
+  const env = opts.env ?? process.env;
+  const common = {
     cwd: opts.cwd,
-    env: opts.env ?? process.env,
-    stdio: ["pipe", "pipe", "pipe"],
+    env,
+    stdio: ["pipe", "pipe", "pipe"] as ("pipe" | "ignore")[],
     windowsHide: true,
-    // never a shell: arguments are passed verbatim
+    // never a shell: arguments are passed as an argv
     shell: false,
-  });
+  };
+  if (currentPlatform() === "windows") {
+    const target = resolveWindowsCommand(cmd, { env, cwd: opts.cwd ?? process.cwd() });
+    if (target.viaCmd) {
+      // The line is escaped for cmd here (U-068), so Node must not quote it again.
+      return spawn(process.env.ComSpec ?? "cmd.exe", cmdArgv(target.file, args), {
+        ...common,
+        windowsVerbatimArguments: true,
+      });
+    }
+    return spawn(target.file, args, common);
+  }
+  return spawn(cmd, args, common);
 }
 
 export async function run(argv: readonly string[], opts: RunOptions = {}): Promise<RunResult> {

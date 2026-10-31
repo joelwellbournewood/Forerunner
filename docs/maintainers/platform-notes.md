@@ -27,7 +27,7 @@ which the daemon and the state service answer with 403.
 | App directories | `%APPDATA%\forerunner\config`, `%LOCALAPPDATA%\forerunner\{data,cache,logs}` | XDG: `~/.config/forerunner`, `~/.local/share/forerunner`, `~/.cache/forerunner`, `~/.local/state/forerunner/logs` | `paths.appDirs` (override: `FORERUNNER_HOME`) |
 | Path separators | `\` | `/` | `paths.join`, `toPosix`, `fromPosix`; CI greps for hand-built paths |
 | Line endings | normalised to LF on write | LF | `paths.normalizeNewlines`, `.gitattributes` |
-| Spawning | `.cmd` shims (npm, pnpm, npx, tsx) go through `cmd.exe /d /s /c` with argv passed verbatim | direct exec | `shell.spawnProcess` |
+| Spawning | `.cmd`/`.bat` files and the bare shim names (npm, pnpm, npx, yarn, tsx, corepack, found as cmd finds them: the working folder, then `PATH` with `PATHEXT`; an `.exe` found first runs directly) go through `cmd.exe /d /s /c "<script> <args>"`, passed verbatim: the script's path escaped with `^`, each argument quoted with the C runtime's rules and its cmd metacharacters escaped with `^` twice (cmd's parse, then the batch file's own parse of `%*`), so `&`, `\|`, `%VAR%` and quotes arrive unchanged (U-068); an argument with a line break is refused | direct exec | `shell.spawnProcess`, `cmdArgv`, `escapeCmdArgument`, `resolveWindowsCommand` |
 | Killing a tree | `taskkill /T /F` | `kill -9 -pgid`, fallback to pid | `shell.killTree` |
 | A killed command's return | `run()` resolves at the child's `exit` once it killed it (time limit or abort), with the stdio streams destroyed, instead of waiting for `close`, which a grandchild holding the inherited pipes (git's remote helper) would keep open; a command that ends by itself still resolves at `close` with all its output | same | `shell.run` |
 | Finding binaries | `where` | `command -v` | `shell.which` |
@@ -95,7 +95,11 @@ that exercises both branches by passing `platform`/`env` explicitly (see `test/p
 
 ## Tests
 
-`packages/platform/test/*.test.ts` run on both CI runners. `lock.test.ts` takes a lock twice
+`packages/platform/test/*.test.ts` run on both CI runners. `shell-cmd.test.ts` (U-068) pins
+the cmd escaping as pure units (`a&b`, `%PATH%`, `x"y`, trailing backslashes, the script's
+path, the line break refused, which commands go through cmd) and on Windows sends `a&b`,
+`a|b`, `%PATH%`, `x"y`, `x"&calc` and more through a real `.cmd` in a folder named `R&D x`
+that hands `%*` to node, as npm's shims do: every argument comes back unchanged. `lock.test.ts` takes a lock twice
 in one process (refused until released), per folder and name, and across processes: a child
 holds it, this process is refused, the child is killed, and the lock is free again. Path tests pass `platform` explicitly
 so Windows behaviour is checked on Linux too and the other way round. `shell.test.ts` runs
