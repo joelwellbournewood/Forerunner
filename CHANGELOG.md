@@ -27,6 +27,9 @@ Problems and their status, released or not, are tracked in
   model call follows the order and falls back to the next when one hits its limit. An API key
   always goes straight to the API, never through Claude Code, so promotional credits apply
   (U-078, ADR 0100).
+- **Settings → Sandbox (Docker)**: tasks that need a full review run their tests and builds
+  in Docker, which the app now checks and sets up (it downloads its sandbox); until Docker is
+  ready those tasks wait instead of failing (U-079, ADR 0101).
 - Settings shows every setting with its own control, the Claude subscription allowance, and
   fields for the mailbox password and cloud voice keys; Settings → Devices explains what
   pairing a phone needs (U-052, U-054, U-055, U-060).

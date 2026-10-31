@@ -349,7 +349,32 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   4. While the sandbox is not ready, full-review tasks wait (not failed, no retry used); the
      Start dialog and the session summary say which tasks wait for Docker and what to do.
   5. Tests do not depend on the CI machine's Docker: they pin the sandbox they test.
-- **Status:** open.
+- **Fix (ADR 0101, ADR 0007 amended; e92bfa3, 7f0efdc, be80ef1):**
+  - Tier 2+ tasks never use the process fallback; the per-project `allowProcessSandbox` is no
+    longer read (a test-only option remains). Tier 0/1 use the container when it is ready.
+  - The desktop build writes the published image (`ghcr.io/<owner>/forerunner-runner:<version>`,
+    `latest` when that tag does not exist) into the runtime's `runtime.json`; the app pulls it in
+    the background with progress, and says "the package must be public" when the registry refuses.
+  - Readiness: not installed, not running, Windows containers (never usable), image missing,
+    downloading, ready; checked at start, before every plan and on **Check again**.
+  - While not ready, tier 2+ tasks wait: left out of the plan with their attempts unchanged, named
+    in the Start dialog and the summary with the next step, one Inbox notice per state; tasks an
+    earlier version failed with the old sandbox message go back to ready.
+  - Tests pin their sandbox (`FakeContainerEngine`, "no engine") instead of using the CI
+    machine's Docker. New: `sandbox-readiness`, `sandbox-waiting`, `sandbox-ci-docker`,
+    `settings-sandbox`, a real-daemon case, the payload test; they failed before with CI's own
+    errors.
+- **Owner action:** make the GitHub package `forerunner-runner` public (steps in
+  `docs/maintainers/release.md`); otherwise the download is refused. Until a release publishes
+  it, the image exists only from the earlier releases' `latest`.
+- **Check in the app:** with Docker Desktop stopped, Start session lists a full-review task under
+  "Not in this session" with "start Docker Desktop"; the session runs the other tasks and the
+  waiting one stays ready. Settings → Sandbox (Docker) → Check again names the step (start
+  Docker, switch to Linux containers, Download). After Download it says Ready, and the next
+  session runs the task.
+- **Only a real Windows PC with Docker Desktop can prove:** the switch to Linux containers,
+  WSL 2, the bind mount of a Windows folder, the real download and its size.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-078 Choose which Claude credential is used first
 
