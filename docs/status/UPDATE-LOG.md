@@ -452,6 +452,11 @@ stands. Each entry says what you see first, then the cause and the fix for maint
     a project without a repository would have failed. Every git call now gets git's own
     `EMAIL` fallback (never overriding a configured address) and the workspace has a default
     identity. Test: `git.test.ts` runs real git with no configuration.
+  - Found by Linux CI after that: an account with no name (a container user) still failed every
+    commit ("empty ident name not allowed"); git has no low-priority fallback for the name. A
+    command that writes a commit now runs with `-c user.name=Forerunner` when no level sets a
+    name, never over a configured one. Test: `git.test.ts` checks author and committer after a
+    commit and a merge, and a configured name kept.
 - **Check in the app:** a project without a repository: **Create a repository** → Yes → it is on
   GitHub. Cancel a running task: the session's next task still runs. New task offers Low /
   Medium / High. Cancel a task another depends on: Start session names both. With no Claude
@@ -503,6 +508,12 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - U-062 (17ee69d): Quit ends the service the app started in any state; reopening during Quit
     restarts cleanly. U-063 (a430904): Quit releases only your own agents' claims. U-064
     (e536c41): actions wait 30 s. U-065 (37bf2aa): one service per data folder (a lock).
+  - Found by Windows CI after U-065: Windows refuses a connection to a port where nothing
+    listens only after about 2 s, beyond the probe's 1.5 s, so a service that had gone looked
+    slow and the app would have waited a minute and then said it runs but does not answer,
+    instead of starting it. The probe now has 5 s to connect and 1.5 s for the answer
+    (`daemon.rs`, `HEALTH_CONNECT_TIMEOUT`). Tests: the refusal and the slow answer told apart,
+    on Windows in the Desktop app workflow.
   - U-066 (2295b82): the installer step compares paths without wildcards, ends the service's
     process tree, runs hidden; the CI check installs, upgrades and uninstalls with Forerunner
     running and checks exit codes and leftovers. U-067 (9c1abb4): uninstall removes

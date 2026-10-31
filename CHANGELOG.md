@@ -53,6 +53,10 @@ Problems and their status, released or not, are tracked in
 
 ### Fixed
 
+- On Windows, the app no longer waits for a background service that has stopped, believing it
+  slow, instead of starting it (U-065). Commits in a project's folder work on a computer
+  where git knows neither your name nor your address; they are made as "Forerunner" unless
+  you set your own (U-037).
 - Inbox cards and buttons that did nothing or the wrong thing: Approve on a review from the
   phone (U-027), the rebase conflict and merge cards (U-028), a yes to a change from Chat on a
   normal install (U-029), cards left open after deciding in Extensions or on Updates (U-030,
