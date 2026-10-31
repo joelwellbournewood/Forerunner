@@ -349,8 +349,13 @@ the word beside it; blue when there is no target) for the Performance view. Both
 
 ### Shell, palette, shortcuts, theme
 
-The header always shows the active project (button opens a switcher listing every project and
-"+ New project"), the nav (Home, Inbox with the blocking badge, Memory, Extensions, Changes,
+The header always shows the active project, the one of every channel (U-056): at start the one
+`/me.activeProjectId` names (the daemon's record) over this window's stored choice, and the
+switcher, the palette's "Switch project", Home's Make active and Open and a new project from
+the dialog run `project.switch` (`switchActiveProject` in `store/context.tsx`, `source: "ui"`,
+logged in Changes) so chat, voice and the phone use it too; opening a project page does not
+switch it, and that page's Chat tab sends `projectTab: true` so its turn is about that project
+(the button opens a switcher listing every project and "+ New project"), the nav (Home, Inbox with the blocking badge, Memory, Extensions, Changes,
 Performance, Updates, Settings; collapses behind a menu button under 768 px), the connection
 badge, the palette button and the kill switch (`POST /kill {scope:"all"}`; the button then
 reads "Resume" and posts `/kill/resume`), plus the kill banner and the restart banner.

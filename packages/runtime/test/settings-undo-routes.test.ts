@@ -50,7 +50,7 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     });
     ({ app, token } = createDaemonApp(rt));
   };
-  const _restart = async () => {
+  const restart = async () => {
     await rt.close();
     await compose();
   };
@@ -70,21 +70,60 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     CommandResultViewSchema.parse(
       await post("/commands/execute", { commands, source: "ui", ...extra }),
     );
-  const _chat = async (body: Json) =>
+  const chat = async (body: Json) =>
     ChatReplyView.parse(
       await post("/chat", { humanId: rt.human.id, agentId: rt.agent.id, ...body }),
     );
   const createProject = async (name: string) =>
     ProjectCard.parse(await post("/projects", { name, goal: `${name} goal` }));
-  const _taskTitles = async (projectId: string) =>
+  const taskTitles = async (projectId: string) =>
     ((await get(`/projects/${projectId}/tasks`)) as { title: string }[]).map((t) => t.title);
-  const _activeProjectId = async () => ((await get("/me")) as Json).activeProjectId;
+  const activeProjectId = async () => ((await get("/me")) as Json).activeProjectId;
 
   beforeAll(async () => {
     await compose();
   }, 120_000);
   afterAll(async () => {
     await rt?.close();
+  });
+
+  it("U-056: the header's switch is the one active project; a project's Chat tab wins for its turn only", async () => {
+    const alpha = await createProject("Alpha");
+    const beta = await createProject("Beta");
+    // Switched by chat to Alpha: Chat, voice and the phone use Alpha.
+    const switched = await chat({ text: "switch to Alpha" });
+    expect(switched.activeProjectId).toBe(alpha.id);
+    expect(await activeProjectId()).toBe(alpha.id);
+
+    // Beta's own Chat tab: "add a task" lands in Beta; the active project stays Alpha.
+    const inTab = await chat({
+      projectId: beta.id,
+      projectTab: true,
+      text: "add a task: write the Beta README",
+    });
+    expect(inTab.actions.map((a) => a.kind)).toEqual(["task.create"]);
+    expect(await taskTitles(beta.id)).toContain("write the Beta README");
+    expect(await taskTitles(alpha.id)).not.toContain("write the Beta README");
+    expect(inTab.activeProjectId).toBe(alpha.id);
+    expect(await activeProjectId()).toBe(alpha.id);
+
+    // The conversation panel (no tab) follows the active project, whatever it names.
+    await chat({ projectId: beta.id, text: "add a task: write the Alpha changelog" });
+    expect(await taskTitles(alpha.id)).toContain("write the Alpha changelog");
+
+    // The header's switcher and the palette run project.switch: the daemon records it, logged as ui.
+    const header = await execute([{ name: "project.switch", params: { project: beta.id } }], {
+      wordsUsed: "Switch project: Beta",
+    });
+    expect(header.status).toBe("done");
+    expect(await activeProjectId()).toBe(beta.id);
+    const row = await rt.store.changeLog.mustGet(header.changeLogId ?? "");
+    expect(row.source).toBe("ui");
+    // Chat now uses Beta too, and so does the next daemon after a restart.
+    await chat({ text: "add a task: plan the Beta launch" });
+    expect(await taskTitles(beta.id)).toContain("plan the Beta launch");
+    await restart();
+    expect(await activeProjectId()).toBe(beta.id);
   });
 
   it("U-057: undoing a lowered monthly cap waits for this PC's confirmation; a tap is refused", async () => {

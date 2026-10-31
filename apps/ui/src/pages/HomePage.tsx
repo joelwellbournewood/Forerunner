@@ -12,11 +12,12 @@ import {
 import { autonomyLabel } from "../lib/plain-words.ts";
 import { relativeTime } from "../lib/time.ts";
 import { useShell } from "../shell/ShellContext.ts";
-import { useUiState, useUiStore } from "../store/context.tsx";
+import { switchActiveProject, useClient, useUiState, useUiStore } from "../store/context.tsx";
 
 /** Home (spec K.1): every project as a card. */
 export function HomePage() {
   const { projects, projectsLoaded, connection, activeProjectId } = useUiState((s) => s);
+  const client = useClient();
   const store = useUiStore();
   const shell = useShell();
 
@@ -45,7 +46,7 @@ export function HomePage() {
             key={p.id}
             project={p}
             isActive={p.id === activeProjectId}
-            onActivate={() => store.dispatch({ type: "activeProject", id: p.id })}
+            onActivate={() => void switchActiveProject(client, store, p.id)}
           />
         ))}
       </div>

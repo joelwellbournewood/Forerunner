@@ -47,7 +47,16 @@ the cloud runner are built and pass their tests, but you are the first to run th
 ## Home
 
 Every project is a card: stage, next milestone, health, spend against budget, how many things
-wait on you, and the latest critic grade. The active project is always shown in the header.
+wait on you, and the latest critic grade. "New project" asks for a name, a goal, a short brief
+and a repository link; the project starts at your default autonomy (Settings) and becomes the
+active project.
+
+The active project is always shown in the header. It is one project for every channel: what
+you pick in the header (or the palette's "Switch project", or Make active on Home) is the
+project chat, voice and the phone talk about, and saying "switch to …" in chat or by voice
+changes the header too. Opening a project's page does not change it; that page's **Chat** tab
+always talks about that page's project. Each switch is listed in Changes.
+
 A project reads **blocked** only while something waits for your answer in the Inbox. A task
 that needs you but has no Inbox card (for example one you marked "Needs me") shows as
 **needs you: <task>**; click it to open the project's tasks.
@@ -56,24 +65,25 @@ The header says **connected** while Forerunner's background service answers. Whe
 answering (or refuses this window after a restart) the header says **not connected** with a
 **Retry** button and a line saying why; the app keeps trying on its own and says **connected**
 again as soon as the service answers.
-"New project" asks for a name, a goal, a short brief and a repository link.
 
 ## A project
 
 - **Summary**: one screen the agent keeps current. "Read aloud" speaks it.
 - **Plan**: milestones and their dependencies.
 - **Tasks**: every task with status, specialist, cost, verdict and links to the pull request
-  and the review. Transitions you may make by hand are buttons. **Cancel**, **Mark failed**,
-  **Needs me** or **Send to review** on a task a session is working on stops that task's run
-  at once; the session goes on with its other tasks and leaves the task as you set it, and its
-  summary names the task you moved. The same move from the phone or Chat stops the run within
-  a few seconds. A task shows the tasks it waits on by title ("after …"); **Depends on…**
-  changes them, from a list of the project's tasks. A task that waits on a cancelled or failed
-  task says so, since no session runs it until you change what it depends on (or mark the
-  failed one ready again). A task cannot wait on itself, on a cancelled task, or on a task
-  that already waits on it. A task's priority is **Low**, **Medium** or **High**; High runs
-  first. New tasks are Medium unless you pick another; in Chat say it at the end: "add a task:
-  fix the login, priority high".
+  and the review. Transitions you may make by hand are buttons. Each move is listed in Changes
+  with the reason you gave; the line under the filters says what moved, with **Undo** while it
+  can be taken back (a cancelled task is reopened; a task marked done stays done).
+  **Cancel**, **Mark failed**, **Needs me** or **Send to review** on a task a session is working
+  on stops that task's run at once; the session goes on with its other tasks and leaves the
+  task as you set it, and its summary names the task you moved. The same move from the phone
+  or Chat stops the run within a few seconds. A task shows the tasks it waits on by title
+  ("after …"); **Depends on…** changes them, from a list of the project's tasks. A task that
+  waits on a cancelled or failed task says so, since no session runs it until you change what
+  it depends on (or mark the failed one ready again). A task cannot wait on itself, on a
+  cancelled task, or on a task that already waits on it. A task's priority is **Low**,
+  **Medium** or **High**; High runs first. New tasks are Medium unless you pick another; in
+  Chat say it at the end: "add a task: fix the login, priority high".
 - **Docs**: the standard document set the agent maintains.
 - **Reviews**: critic findings and grades over time.
 - **Costs**: spend by model, specialist and task, in CHF, with the savings from caching and

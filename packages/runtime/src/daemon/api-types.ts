@@ -895,6 +895,11 @@ export const HumanView = z.object({
    * with `answer: "device"`). Null only when the daemon registered none.
    */
   desktopDeviceId: z.string().nullable(),
+  /**
+   * The one active project of every channel (U-056): what `project.switch` recorded, by the
+   * header, the palette, chat, voice or the phone. The header shows it at start.
+   */
+  activeProjectId: z.string().nullable().optional(),
 });
 
 export const SettingView = z.object({

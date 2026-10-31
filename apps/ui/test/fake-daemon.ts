@@ -721,7 +721,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       },
     }),
   );
-  app.get("/me", (c) => c.json(me));
+  // The active project every channel uses (U-056): the one `project.switch` recorded.
+  app.get("/me", (c) =>
+    c.json({ ...me, activeProjectId: state.projects.find((p) => p.active)?.id ?? null }),
+  );
   app.get("/agents", (c) => c.json(state.agents));
   // Settings -> Your agent (U-025), as the daemon answers it: 404 unknown, 403 `forbidden` for
   // another human's agent before the body is read, 409 `conflict` (cause validation) for a
@@ -1596,12 +1599,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/chat", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    return c.json(chatReply(parsed.data.text, parsed.data.projectId));
+    return c.json(chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab));
   });
   app.post("/chat/stream", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    const reply = chatReply(parsed.data.text, parsed.data.projectId);
+    const reply = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     return streamSSE(c, async (stream) => {
       const words = reply.reply.split(/(\s+)/).filter((w) => w.length > 0);
       for (const w of words) {

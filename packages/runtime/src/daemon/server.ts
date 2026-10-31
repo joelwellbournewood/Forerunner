@@ -1439,6 +1439,7 @@ export function createDaemonApp(
       humanId: body.humanId,
       agentId: body.agentId,
       projectId: body.projectId,
+      ...(body.projectTab ? { projectTab: true } : {}),
       text: body.text,
       source: body.source,
     });
@@ -1459,6 +1460,7 @@ export function createDaemonApp(
           humanId: body.humanId,
           agentId: body.agentId,
           projectId: body.projectId,
+          ...(body.projectTab ? { projectTab: true } : {}),
           text: body.text,
           source: body.source,
           onToken: (t) =>

@@ -6,7 +6,7 @@ import { Badge, Button } from "../components/ui.tsx";
 import { NewProjectDialog } from "../pages/NewProjectDialog.tsx";
 import { StartSessionDialog } from "../pages/project/StartSessionDialog.tsx";
 import { useSetupGate } from "../pages/SetupPage.tsx";
-import { useClient, useUiState, useUiStore } from "../store/context.tsx";
+import { switchActiveProject, useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { activeProject, type ThemePreference } from "../store/store.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
 import { ConversationPanel } from "./ConversationPanel.tsx";
@@ -86,9 +86,11 @@ export function Shell() {
     (theme: ThemePreference) => store.dispatch({ type: "theme", theme }),
     [store],
   );
+  // The header's switcher and the palette's "Switch project" (U-056): the daemon records the
+  // switch, so chat, voice and the phone use the same project.
   const setActiveProject = useCallback(
-    (id: string) => store.dispatch({ type: "activeProject", id }),
-    [store],
+    (id: string) => void switchActiveProject(client, store, id),
+    [client, store],
   );
 
   const toggleKill = useCallback(async () => {

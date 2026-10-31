@@ -32,7 +32,11 @@ function isTab(value: string | undefined): value is ProjectTabId {
   return PROJECT_TABS.some((t) => t.id === value);
 }
 
-/** Project page (spec K.2): `/projects/:id/:tab?`. Opening a project makes it active. */
+/**
+ * Project page (spec K.2): `/projects/:id/:tab?`. Opening a project does not change the active
+ * project (U-056): that is the header's switcher, which every channel follows; this page's Chat
+ * tab speaks about this project whatever is active.
+ */
 export function ProjectPage() {
   const { id = "", tab } = useParams();
   const client = useClient();
@@ -41,10 +45,6 @@ export function ProjectPage() {
   const project = useAsync((signal) => client.project(id, signal), [client, id]);
   const [startOpen, setStartOpen] = useState(false);
   const [repoOpen, setRepoOpen] = useState(false);
-
-  useEffect(() => {
-    if (id) store.dispatch({ type: "activeProject", id });
-  }, [id, store]);
 
   useEffect(() => {
     if (project.data) store.dispatch({ type: "project.upsert", project: project.data });

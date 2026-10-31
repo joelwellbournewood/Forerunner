@@ -818,6 +818,29 @@ describe("the UI client against the real daemon: a task a session is running", (
     });
   });
 
+  it("one active project: the header's switch is /me's, a project's Chat tab wins for its turn (U-056)", async () => {
+    const tab = await client.createProject({ name: "Tab project", goal: "Its own chat tab" });
+    const switched = await client.executeCommands({
+      commands: [{ name: "project.switch", params: { project: projectId } }],
+      wordsUsed: "Switch project: Contract",
+      source: "ui",
+    });
+    expect(switched.status).toBe("done");
+    expect((await client.me()).activeProjectId).toBe(projectId);
+    const reply = await client.chat({
+      humanId,
+      agentId,
+      projectId: tab.id,
+      projectTab: true,
+      text: "add a task: write the tab README",
+      source: "text",
+    });
+    expect(reply.actions.map((a) => a.kind)).toEqual(["task.create"]);
+    expect((await client.tasks(tab.id)).map((t) => t.title)).toContain("write the tab README");
+    expect(reply.activeProjectId).toBe(projectId);
+    expect((await client.me()).activeProjectId).toBe(projectId);
+  });
+
   it("undo of a lowered monthly cap waits for this PC; Changes logs it as ui (U-057, U-061)", async () => {
     const lowered = await client.executeCommands({
       commands: [{ name: "budget.set", params: { scope: "month", amountChf: 90 } }],

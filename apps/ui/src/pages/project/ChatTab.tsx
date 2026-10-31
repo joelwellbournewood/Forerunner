@@ -83,6 +83,8 @@ export function ChatTab({
           humanId: identity.humanId,
           agentId: identity.agentId,
           projectId,
+          // This tab's project wins for the turn, whatever is active (U-056).
+          projectTab: true,
           text: text.trim(),
           source: "text",
         },

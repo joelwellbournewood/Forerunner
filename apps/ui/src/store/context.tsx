@@ -254,6 +254,12 @@ export async function bootstrapStore(
   if (projects.status === "fulfilled") {
     store.dispatch({ type: "projects", projects: projects.value });
   }
+  // One active project for every channel (U-056): the daemon's record (a switch by the header,
+  // chat, voice or the phone) wins over this window's last choice.
+  const recorded = me.status === "fulfilled" ? me.value.activeProjectId : null;
+  if (recorded && store.getState().projects.some((p) => p.id === recorded)) {
+    store.dispatch({ type: "activeProject", id: recorded });
+  }
   const firstFailure = results.find((r) => r.status === "rejected");
   if (firstFailure && firstFailure.status === "rejected") {
     store.dispatch({
@@ -352,6 +358,43 @@ export async function refreshIdentity(client: DaemonClient, store: UiStore): Pro
   if (agents.status === "fulfilled") store.dispatch({ type: "agents", agents: agents.value });
   if (me.status === "rejected") throw me.reason;
   if (agents.status === "rejected") throw agents.reason;
+}
+
+/**
+ * Make a project the active one for every channel (U-056): the header's switcher, the palette
+ * and Home's "Make active" run the registry's `project.switch`, which the daemon records, so
+ * chat, voice and the phone use the same project; the change log has it (source `ui`). The
+ * header follows at once; when the daemon refuses, it shows the daemon's record again.
+ */
+export async function switchActiveProject(
+  client: DaemonClient,
+  store: UiStore,
+  projectId: string,
+): Promise<void> {
+  const state = store.getState();
+  if (state.activeProjectId === projectId && state.me?.activeProjectId === projectId) return;
+  const name = state.projects.find((p) => p.id === projectId)?.name ?? projectId;
+  store.dispatch({ type: "activeProject", id: projectId });
+  let switched = false;
+  try {
+    const r = await client.executeCommands({
+      commands: [{ name: "project.switch", params: { project: projectId } }],
+      wordsUsed: `Switch project: ${name}`,
+      source: "ui",
+    });
+    switched = r.status === "done";
+  } catch {
+    // unreachable daemon: the header shows its record again below, once it answers
+  }
+  try {
+    const me = await client.me();
+    store.dispatch({ type: "me", me });
+    if (!switched && me.activeProjectId) {
+      store.dispatch({ type: "activeProject", id: me.activeProjectId });
+    }
+  } catch {
+    // the next start reads the record
+  }
 }
 
 /** Reload the project list (after a create, a transition, or a project.changed event). */

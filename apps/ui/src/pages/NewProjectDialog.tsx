@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { describeError } from "../api/client.ts";
 import { Dialog } from "../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS } from "../components/ui.tsx";
-import { refreshProjects, useClient, useUiStore } from "../store/context.tsx";
+import { refreshProjects, switchActiveProject, useClient, useUiStore } from "../store/context.tsx";
 
 /** "New project": name, goal, brief, repo link -> POST /projects, then open the project. */
 export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -41,7 +41,8 @@ export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: ()
         ...(brief.trim() ? { intake: true } : {}),
       });
       store.dispatch({ type: "project.upsert", project });
-      store.dispatch({ type: "activeProject", id: project.id });
+      // The new project is the active one for chat, voice and the phone too (U-056).
+      void switchActiveProject(client, store, project.id);
       void refreshProjects(client, store).catch(() => {});
       reset();
       onClose();

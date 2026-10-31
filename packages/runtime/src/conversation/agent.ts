@@ -165,6 +165,11 @@ export interface ChatRequest {
   /** The principal agent this conversation speaks for. */
   agentId: string;
   projectId?: string;
+  /**
+   * The line was typed in that project's own Chat tab (U-056): `projectId` is this turn's
+   * project, whatever the active project is; the active project itself does not change.
+   */
+  projectTab?: boolean;
   text: string;
   source?: "text" | "voice" | "phone";
   /** The paired device the request came from (a phone routes session commands remotely). */
@@ -347,12 +352,19 @@ export class ConversationAgent {
     const { store, clock } = this.deps;
     const human = await store.human.mustGet(req.humanId);
     const agent = await store.agent.mustGet(req.agentId);
-    // The active project: what the registry recorded for this human (a switch by chat, voice
-    // or the UI all land there), else what this process remembers, else the request's.
+    // The active project: what the registry recorded for this human (a switch by chat, voice,
+    // the phone or the header's switcher all land there, U-056), else what this process
+    // remembers, else the request's. A line typed in a project's own Chat tab is about that
+    // project: its project wins for this turn and the active project stays as it is.
     const recorded = (await this.deps.commands?.activeProject(req.humanId)) ?? null;
     if (recorded) this.activeProject.set(req.humanId, recorded);
-    else if (req.projectId) this.activeProject.set(req.humanId, req.projectId);
-    const projectId = this.getActiveProject(req.humanId) ?? req.projectId ?? null;
+    else if (req.projectId && !req.projectTab) this.activeProject.set(req.humanId, req.projectId);
+    const projectId =
+      req.projectTab && req.projectId
+        ? req.projectId
+        : (this.getActiveProject(req.humanId) ?? req.projectId ?? null);
+    // What the reply names as the active project: never the tab's project, which only won the turn.
+    const activeFallback = req.projectTab ? null : projectId;
     // The conversation this turn belongs to: the same one until a pause of CONVERSATION_IDLE_MS.
     const convKey = `${req.humanId}|${agent.id}`;
     let conv = this.conversations.get(convKey);
@@ -400,7 +412,7 @@ export class ConversationAgent {
         ttftMs: 0,
         costUsdMicro: 0,
         transcriptId,
-        activeProjectId: await this.currentProject(req.humanId, projectId),
+        activeProjectId: await this.currentProject(req.humanId, activeFallback),
         forwarded: null,
         ...extra,
       };
@@ -743,7 +755,7 @@ export class ConversationAgent {
       ttftMs: ttft,
       costUsdMicro: result.costUsdMicro,
       transcriptId,
-      activeProjectId: await this.currentProject(req.humanId, projectId),
+      activeProjectId: await this.currentProject(req.humanId, activeFallback),
       forwarded,
       sources: context.sources,
     };
