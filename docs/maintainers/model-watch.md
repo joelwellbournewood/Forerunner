@@ -266,6 +266,13 @@ The loop closes in one of three ways, all ending in `ModelWatch.resolve(reportId
   the watch sees it;
 - the CLI and tests: `watch.resolve(id, { decision, by, adopt? })`.
 
+The inbox card and the updates screen are one question (U-035): once `resolve` has recorded a
+decision it withdraws the report's request if it is still open (`closeRequest`), so a decision
+on the updates screen takes the card out of the inbox, where a click would do nothing. A card
+answered in the inbox is left answered. The first `syncPendingAnswers()` of a process also
+withdraws the open cards of reports already decided (1.0.4 left them open when the updates
+screen decided). The fake daemon's answer route does the same.
+
 `resolve`:
 
 - `adopt` (needs `by`; `adopt: [ids]` restricts it to those recommendations, an unknown id is
@@ -290,8 +297,16 @@ The loop closes in one of three ways, all ending in `ModelWatch.resolve(reportId
   whose evals were withheld: it applies the rows and stops. A throwing hook is logged; the
   decision stands.
 - `ignore`: records the decision; nothing is written.
-- `remind`: records the decision and `remind_at = now + 7 days`. There is no separate timer:
-  the next weekly run produces a fresh report and asks again as long as the diff still holds.
+- `remind`: records the decision and `remind_at = now + 7 days`. `fileDueReminders()` asks
+  again once it has passed (U-035): the report is set back to `pending` under its row version
+  (so a second call, or a second daemon on a shared store, finds nothing due, and the updates
+  screen shows its buttons again), then the same question is filed through the approval port
+  (audited `model_watch.request`, "reminder: ...") and its id stored as `request_id`. The
+  scheduler runs it every hour (`scheduleModelWatchReminders`, pseudo agent
+  `MODEL_WATCH_REMINDER_AGENT_ID`, not persisted, so a daemon that was off when the reminder
+  fell due files it at its first tick); `compose.ts` routes the scheduled request
+  (`isModelWatchReminderRequest`) to it instead of starting a session. The approvals poll
+  cannot be used for this: it only runs where remote commands are on, not on a local install.
 
 ### The settings documents
 
@@ -524,7 +539,13 @@ writes `pricing.json` and `models.json` that parse back; ignore and remind chang
 adopt is refused without a human (`approval_required`), cannot be applied twice, rejects
 unknown ids, 404 for an unknown report; a partial adopt; nothing to decide opens no request;
 the production port opens a `human_request` and `syncPendingAnswers` closes the loop; answer
-parsing in several shapes; `FetchPriceListSource` (fetch, canonical ids, bad document, HTTP
+parsing in several shapes; U-035: adopt, ignore and remind sent as the updates screen sends
+them withdraw the inbox card, a card left open by 1.0.4 is withdrawn by the next sync, remind
+answered with the card's own option is asked again once after the week (in a new `ModelWatch`
+on the same store, as after a restart) and the new card's options work, remind on the updates
+screen comes back the same way, and the reminder schedule fires hourly as its own request
+(`wiring.test.ts` runs it through the daemon: the updates screen's remind, then the scheduled
+job files the card again); `FetchPriceListSource` (fetch, canonical ids, bad document, HTTP
 failure, network failure, bad URL, env parsing) and `FixturePriceListSource`; the weekly
 schedule fires once per week as a model watch request, and a daemon restarted within the week
 (a new `Scheduler` over the same fired store) does not run it again; consent (ADR 0089): with
@@ -636,8 +657,8 @@ registration and one-shot composition.
   until the human ignores it.
 - A pending pre-upgrade report with a repricing is not closed by the baseline even when its
   new models are all in it; the human answers it as before.
-- `remind` is not a timer; the next weekly run re-proposes. A reminder for a report whose
-  diff has disappeared by then is silently moot.
+- A reminder asks about the report as it was: a newer weekly report may by then ask about
+  the same rows too, so the inbox can hold both cards.
 - Lower-effort probes exist only for modes that have an eval target (coder, researcher).
   Chat, routing, planning and critic modes have no eval set, so their efforts are never
   tested; a `lower_effort` recommendation names the mode, not the specialist.

@@ -23,6 +23,7 @@ import type { RunContext } from "../src/enforcement/hooks.ts";
 import { EstimateAccuracyViewSchema } from "../src/estimates/view.ts";
 import { bridgedToolName } from "../src/extensions/mcp.ts";
 import { LoopEvalRunner } from "../src/models/eval-runner.ts";
+import { MODEL_WATCH_REMINDER_SCHEDULE_ID } from "../src/models/watch.ts";
 import { ProviderRegistry } from "../src/provider/registry.ts";
 import { FakeSandbox } from "../src/sandbox/fake.ts";
 import {
@@ -329,6 +330,44 @@ describe("daemon wiring", () => {
       limit: 500,
     });
     expect(audits.length).toBe(ran.length);
+  });
+
+  it("model watch: Remind me on the Updates page takes the card out of the inbox, and the daemon's hourly job files it again when due (U-035)", async () => {
+    const latest = await json(await req("/model-watch/reports/latest"));
+    const reportId = str((latest.report as Json).id);
+    const cards = async () =>
+      ((await json(await req("/inbox"))).requests as Json[]).filter(
+        (r) => (r.changeCard as { key?: string } | null)?.key === `model_watch:${reportId}`,
+      );
+    const [card] = await cards();
+    expect(card?.options).toEqual(["adopt", "ignore", "remind"]);
+
+    const answered = await post(`/model-watch/reports/${reportId}/answer`, {
+      decision: "remind",
+      by: rt.human.id,
+    });
+    expect(answered.status).toBe(200);
+    expect(await cards()).toEqual([]);
+
+    // A week on (the stored remind_at moved into the past), the scheduler's hourly job runs.
+    const { release, health } = await rt.modelWatch.getReport(reportId);
+    await rt.store.release.patch(release.id, {
+      health: { ...health, remind_at: new Date(clock.now() - 60_000).toISOString() } as never,
+    });
+    const job = rt.scheduler.list().find((s) => s.id === MODEL_WATCH_REMINDER_SCHEDULE_ID);
+    if (!job) throw new Error("no model watch reminder schedule");
+    const fired = await rt.scheduler.requestStart({
+      agentId: job.agentId,
+      trigger: "schedule",
+      reason: `every ${job.everyMinutes} min`,
+    });
+    expect(await rt.scheduler.runOutcome(fired.id)).toEqual({ ok: true });
+    const again = await cards();
+    expect(again).toHaveLength(1);
+    expect(again[0]?.id).not.toBe(card?.id);
+    expect(again[0]?.options).toEqual(["adopt", "ignore", "remind"]);
+    const now = await json(await req("/model-watch/reports/latest"));
+    expect(now.health).toMatchObject({ decision: "pending", request_id: again[0]?.id });
   });
 
   it("the updates screen lists the app release from the fake feed, the connector update and the model watch entries", async () => {

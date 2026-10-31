@@ -135,11 +135,13 @@ import {
 import { type EffectiveModelConfig, FileModelSettingsStore } from "../models/settings.ts";
 import {
   type EvalRunnerPort,
+  isModelWatchReminderRequest,
   isModelWatchRequest,
   ModelWatch,
   modelWatchSettingsOf,
   StateModelWatchApprovals,
   scheduleModelWatch,
+  scheduleModelWatchReminders,
 } from "../models/watch.ts";
 import {
   bindProducers,
@@ -2551,6 +2553,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // install's providers and this human's memory); only a session syncs with peers, so only
     // it waits on the gate (the handover's own session does, inside the job).
     if (isModelWatchRequest(req)) return modelWatch.run();
+    if (isModelWatchReminderRequest(req)) return modelWatch.fileDueReminders();
     if (isMemoryConsolidationRequest(req)) return memory.propose();
     if (isCalibrationRequest(req)) return calibrationJob.run();
     if (isHandoverRequest(req)) return handoverJob.run(req.projectId as string);
@@ -2640,6 +2643,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     },
   });
   scheduleModelWatch(scheduler, { timezone: human.timezone });
+  // A model watch report the human put off ("remind me") is asked again when due (U-035).
+  scheduleModelWatchReminders(scheduler, { timezone: human.timezone });
   // Weekly memory consolidation (spec G.4): report only; the human applies it from the inbox.
   scheduleMemoryConsolidation(scheduler, { timezone: human.timezone });
   // The command registry (spec Q): every change by chat, voice, the UI or the phone runs here.

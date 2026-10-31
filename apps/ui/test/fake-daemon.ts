@@ -2075,6 +2075,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             : "remind";
     r.decided_at = new Date().toISOString();
     r.status = "resolved";
+    // As the daemon: the report's open Inbox card is the same question and is withdrawn (U-035).
+    const card = state.requests.find((q) => q.id === r.request_id && q.status === "open");
+    if (card) {
+      card.status = "withdrawn";
+      card.version += 1;
+      emit("inbox.changed", { blockingCount: blockingCount() });
+    }
     return c.json({
       decision: r.decision,
       applied: body.decision === "adopt" ? ["routing: haiku-5.6"] : [],

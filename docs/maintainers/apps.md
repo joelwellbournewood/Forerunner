@@ -661,7 +661,8 @@ read, a folder imported; U-025: Settings' `renameAgent` renames the principal, t
 words; the live view's Stop answered with the session it shows while Stop all stays in force
 until Resume (U-032); Approve and Deny in the Extensions panel leaving no card for the
 extension in the Inbox (U-030), which the fake mirrors: a panel decision or a removal
-withdraws the extension's open card, one answered in the Inbox stays answered),
+withdraws the extension's open card, one answered in the Inbox stays answered; the fake's
+model watch answer likewise withdraws the report's open card, as the daemon does since U-035),
 `client` (config resolution, route paths, token header,
 contract validation rejects malformed bodies, `/health` with its sandbox and extensions
 sections, decisions and peers, phase-1 mutations, a missing route vs a typed not_found incl.

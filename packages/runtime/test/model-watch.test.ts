@@ -13,6 +13,7 @@ import { FAKE_MODELS, FakeProvider, type ScriptedReply } from "@forerunner/teste
 import { Command } from "commander";
 import { afterEach, describe, expect, it } from "vitest";
 import { type EvalDriver, type EvalTask, runEvalSet } from "../../../evals/src/index.ts";
+import { requestView } from "../src/daemon/views.ts";
 import { effortForTask, modelIdFor } from "../src/models/ladder.ts";
 import {
   FetchPriceListSource,
@@ -36,10 +37,12 @@ import {
   type EvalObservation,
   type EvalRunInput,
   type EvalRunnerPort,
+  isModelWatchReminderRequest,
   isModelWatchRequest,
   MODEL_WATCH_AGENT_ID,
   MODEL_WATCH_BASELINE_CHANNEL,
   MODEL_WATCH_CHANNEL,
+  MODEL_WATCH_REMINDER_AGENT_ID,
   ModelWatch,
   type ModelWatchAdoptedEvent,
   type ModelWatchApprovalOutcome,
@@ -52,6 +55,7 @@ import {
   recordModelWatchBaseline,
   StateModelWatchApprovals,
   scheduleModelWatch,
+  scheduleModelWatchReminders,
   WEEK_MINUTES,
 } from "../src/models/watch.ts";
 import { registerModelWatchCli } from "../src/models/watch-cli.ts";
@@ -1138,6 +1142,150 @@ describe("model watch: weekly trigger", () => {
     await clock.advance(60_000);
     await s.tick();
     expect(started).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// U-035: one question, answered in either place; "remind me" reminds
+// ---------------------------------------------------------------------------------------
+
+describe("model watch: the Inbox card and the Updates page are one question (U-035)", () => {
+  const DAY_MS = 24 * 60 * 60_000;
+  /** A pending report with its card in the Inbox, as the weekly run leaves it. */
+  async function pendingReport(w: World) {
+    const watch = watchFor(w, { approvals: new StateModelWatchApprovals(w.store) });
+    const r = await watch.run();
+    expect(r.decision).toBe("pending");
+    const cards = await inbox(w);
+    expect(cards).toHaveLength(1);
+    const card = cards[0] as NonNullable<(typeof cards)[number]>;
+    expect(card.change_card).toMatchObject({ key: `model_watch:${r.report.id}` });
+    return { watch, reportId: r.report.id, card };
+  }
+  const inbox = (w: World) => w.store.humanRequest.open({ humanId: w.human });
+  /** What the Updates page sends for a button (`client.modelWatchAnswer`). */
+  const updatesPage = (watch: ModelWatch, reportId: string, decision: string, by: string) =>
+    createModelWatchRoutes({ watch }).request(`/reports/${reportId}/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decision, by }),
+    });
+  /** Click the card's option in the Inbox, then let the daemon's sync apply it. */
+  const clickInInbox = async (w: World, watch: ModelWatch, label: string) => {
+    const [card] = await inbox(w);
+    if (!card) throw new Error("no card in the inbox");
+    const option = requestView(card, null).options.find((o) => o === label);
+    if (!option) throw new Error(`the card offers no "${label}"`);
+    await w.store.humanRequest.answer(card.id, card.version, option, w.human);
+    return watch.syncPendingAnswers();
+  };
+
+  for (const decision of ["adopt", "ignore", "remind"]) {
+    it(`"${decision}" on the Updates page takes the card out of the Inbox`, async () => {
+      const w = await make();
+      const { watch, reportId, card } = await pendingReport(w);
+      expect(requestView(card, null).options).toContain(decision);
+      const res = await updatesPage(watch, reportId, decision, w.human);
+      expect(res.status).toBe(200);
+      expect(await inbox(w)).toEqual([]);
+      expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("withdrawn");
+      expect(await watch.syncPendingAnswers()).toBe(0);
+    });
+  }
+
+  it("a card an Updates page answer left open before the fix is closed by the next sync", async () => {
+    const w = await make();
+    const { watch, reportId, card } = await pendingReport(w);
+    // 1.0.4's resolve(): the decision recorded, the card left open.
+    const { release, health } = await watch.getReport(reportId);
+    await w.store.release.patch(release.id, {
+      health: { ...health, decision: "ignored", decided_at: w.clock.nowIso() } as never,
+    });
+    expect(await inbox(w)).toHaveLength(1);
+    expect(await watch.syncPendingAnswers()).toBe(0);
+    expect(await inbox(w)).toEqual([]);
+    expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("withdrawn");
+    expect((await watch.getReport(reportId)).health.decision).toBe("ignored");
+  });
+
+  it('"remind" in the Inbox asks again once when the week is over, also after a restart', async () => {
+    const w = await make();
+    const { watch, reportId, card } = await pendingReport(w);
+    expect(await clickInInbox(w, watch, "remind")).toBe(1);
+    expect(await inbox(w)).toEqual([]);
+    expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("answered");
+    expect((await watch.getReport(reportId)).health.decision).toBe("remind");
+
+    await w.clock.advance(6 * DAY_MS);
+    expect(await watch.fileDueReminders()).toEqual([]);
+    expect(await inbox(w)).toEqual([]);
+
+    // A week later, in a daemon started since: the same question, once.
+    await w.clock.advance(DAY_MS);
+    const restarted = watchFor(w, { approvals: new StateModelWatchApprovals(w.store) });
+    expect(await restarted.fileDueReminders()).toEqual([reportId]);
+    const again = await inbox(w);
+    expect(again).toHaveLength(1);
+    const reminder = again[0] as NonNullable<(typeof again)[number]>;
+    expect(reminder.id).not.toBe(card.id);
+    expect(reminder.change_card).toMatchObject({ key: `model_watch:${reportId}` });
+    expect(requestView(reminder, null).options).toEqual(requestView(card, null).options);
+    expect(reminder.why).toBe(card.why);
+    // The Updates page shows the report's buttons again.
+    expect((await restarted.getReport(reportId)).health).toMatchObject({
+      decision: "pending",
+      request_id: reminder.id,
+      remind_at: null,
+    });
+    expect(await restarted.fileDueReminders()).toEqual([]);
+    expect(await inbox(w)).toHaveLength(1);
+
+    // Its buttons work like the first card's.
+    expect(await clickInInbox(w, restarted, "ignore")).toBe(1);
+    expect(await inbox(w)).toEqual([]);
+    expect((await restarted.getReport(reportId)).health.decision).toBe("ignored");
+  });
+
+  it('"remind" on the Updates page closes the card now and files it again when due', async () => {
+    const w = await make();
+    const { watch, reportId } = await pendingReport(w);
+    expect((await updatesPage(watch, reportId, "remind", w.human)).status).toBe(200);
+    expect(await inbox(w)).toEqual([]);
+    await w.clock.advance(WEEK_MINUTES * 60_000);
+    expect(await watch.fileDueReminders()).toEqual([reportId]);
+    expect(await inbox(w)).toHaveLength(1);
+  });
+
+  it("the daemon looks for due reminders every hour through the Scheduler", async () => {
+    const clock = new SimulatedClock("2026-10-19T06:00:00Z");
+    const started: StartRequest[] = [];
+    const scheduler = new Scheduler(
+      { clock, start: async (req) => void started.push(req) },
+      60_000,
+    );
+    expect(scheduleModelWatchReminders(scheduler, { timezone: "Europe/Zurich" })).toMatchObject({
+      agentId: MODEL_WATCH_REMINDER_AGENT_ID,
+      kind: "every",
+      everyMinutes: 60,
+      enabled: true,
+    });
+    await scheduler.tick();
+    expect(started).toHaveLength(1);
+    expect(isModelWatchReminderRequest(started[0] as StartRequest)).toBe(true);
+    expect(isModelWatchRequest(started[0] as StartRequest)).toBe(false);
+    expect(
+      isModelWatchReminderRequest({
+        agentId: MODEL_WATCH_AGENT_ID,
+        trigger: "schedule",
+        reason: "",
+      }),
+    ).toBe(false);
+    await clock.advance(59 * 60_000);
+    await scheduler.tick();
+    expect(started).toHaveLength(1);
+    await clock.advance(60_000);
+    await scheduler.tick();
+    expect(started).toHaveLength(2);
   });
 });
 

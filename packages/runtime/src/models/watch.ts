@@ -59,6 +59,10 @@ export const MODEL_WATCH_CHANNEL = "model_watch";
 export const MODEL_WATCH_BASELINE_CHANNEL = "model_watch_baseline";
 export const MODEL_WATCH_AGENT_ID = "model-watch";
 export const MODEL_WATCH_SCHEDULE_ID = "model-watch-weekly";
+/** The hourly look for "remind me" answers that are due (U-035): its own pseudo agent. */
+export const MODEL_WATCH_REMINDER_AGENT_ID = "model-watch-reminders";
+export const MODEL_WATCH_REMINDER_SCHEDULE_ID = "model-watch-reminders";
+export const MODEL_WATCH_REMINDER_EVERY_MINUTES = 60;
 /** The human's model watch settings live under this key of `human.notify_prefs` (ADR 0089). */
 export const MODEL_WATCH_SETTINGS_KEY = "model_watch";
 
@@ -776,6 +780,8 @@ export class ModelWatch {
     [];
   /** Serialises the paid-or-free decision of each run in call order. */
   private decisions: Promise<void> = Promise.resolve();
+  /** Whether `syncPendingAnswers` withdrew the open cards of decided reports in this process. */
+  private staleCardsSwept = false;
 
   constructor(private readonly deps: ModelWatchDeps) {
     this.thresholds = { ...DEFAULT_WATCH_THRESHOLDS, ...(deps.thresholds ?? {}) };
@@ -1356,21 +1362,7 @@ export class ModelWatch {
       return { report, release, decision: health.decision, requestId: null, applied: [] };
     }
 
-    const outcome = await this.deps.approvals.ask({
-      reportId: report.id,
-      humanId: this.deps.humanId,
-      summary: report.summary,
-      options: report.evals_deferred
-        ? ["adopt", "evaluate", "ignore", "remind"]
-        : ["adopt", "ignore", "remind"],
-      recommendations: report.recommendations,
-      pricingProposal: report.pricing_proposal,
-      steps: proposalSteps(report),
-    });
-    await this.audit("model_watch.request", `report ${report.id}`, {
-      result:
-        outcome.status === "pending" ? `pending (${outcome.requestId ?? "no id"})` : "answered",
-    });
+    const outcome = await this.ask(report);
     if (outcome.status === "pending") {
       health = { ...health, request_id: outcome.requestId };
       release = await store.release.patch(release.id, { health: health as unknown as JsonValue });
@@ -1386,10 +1378,56 @@ export class ModelWatch {
     };
   }
 
+  /** Put the report's question to the human (the Inbox card in production) and audit it. */
+  private async ask(report: ModelWatchReport, note?: string): Promise<ModelWatchApprovalOutcome> {
+    const outcome = await this.deps.approvals.ask({
+      reportId: report.id,
+      humanId: this.deps.humanId,
+      summary: report.summary,
+      options: report.evals_deferred
+        ? ["adopt", "evaluate", "ignore", "remind"]
+        : ["adopt", "ignore", "remind"],
+      recommendations: report.recommendations,
+      pricingProposal: report.pricing_proposal,
+      steps: proposalSteps(report),
+    });
+    const result =
+      outcome.status === "pending" ? `pending (${outcome.requestId ?? "no id"})` : "answered";
+    await this.audit("model_watch.request", `report ${report.id}`, {
+      result: note ? `${note}: ${result}` : result,
+    });
+    return outcome;
+  }
+
+  /**
+   * Take the report's card out of the Inbox while it is still open: the question was decided
+   * elsewhere (the Updates page), so a click there would do nothing (U-035). An answered card
+   * is left as it is. A failure is logged; the decision stands.
+   */
+  private async closeRequest(reportId: string, requestId: string | null): Promise<boolean> {
+    if (!requestId) return false;
+    const { store } = this.deps;
+    try {
+      const req = await store.humanRequest.get(requestId);
+      if (req?.status !== "open") return false;
+      await store.humanRequest.withdraw(req.id, req.version);
+      return true;
+    } catch (e) {
+      logger.warn("model watch request not withdrawn", {
+        reportId,
+        requestId,
+        error: errorMessage(e),
+      });
+      return false;
+    }
+  }
+
   /**
    * Apply a human's answer to a report. "adopt" writes the pricing overrides and the model
-   * settings; "ignore" and "remind" only record the decision. A report that was already
-   * adopted cannot be decided again.
+   * settings; "ignore" and "remind" only record the decision ("remind" sets `remind_at` a week
+   * out, and `fileDueReminders` asks again then). A report that was already adopted cannot be
+   * decided again. The answer may come from the Inbox card (`syncPendingAnswers`) or from the
+   * Updates page; once it is recorded the card leaves the Inbox if it is still open (U-035).
    */
   async resolve(reportId: string, answer: ModelWatchAnswer): Promise<ModelWatchResolveResult> {
     const { store, clock } = this.deps;
@@ -1463,6 +1501,8 @@ export class ModelWatch {
     } else {
       updated = await store.release.patch(release.id, { health: next as unknown as JsonValue });
     }
+    // Decided on the Updates page: the Inbox card is the same question and leaves the Inbox.
+    await this.closeRequest(reportId, health.request_id);
     await this.audit("model_watch.decision", `report ${reportId}: ${answer.decision}`, {
       result: applied.length ? applied.join("; ") : answer.decision,
       humanId: answer.by,
@@ -1542,18 +1582,28 @@ export class ModelWatch {
 
   /**
    * Close the loop for reports whose HumanRequest was answered since the last check (the
-   * production approval port returns "pending"). Returns the number of reports resolved.
+   * production approval port returns "pending"). Returns the number of reports resolved. The
+   * first call in a process also withdraws the cards of reports already decided (1.0.4 left a
+   * card open when the Updates page decided its report, and a click there did nothing; U-035).
    */
   async syncPendingAnswers(): Promise<number> {
     const { store } = this.deps;
+    const sweep = !this.staleCardsSwept;
+    this.staleCardsSwept = true;
     const rows = await store.release.list(
-      { channel: MODEL_WATCH_CHANNEL, status: "published" },
+      sweep
+        ? { channel: MODEL_WATCH_CHANNEL }
+        : { channel: MODEL_WATCH_CHANNEL, status: "published" },
       { orderBy: "created_at desc", limit: 50 },
     );
     let resolved = 0;
     for (const row of rows) {
       const health = healthOf(row);
-      if (health.decision !== "pending" || !health.request_id) continue;
+      if (!health.request_id) continue;
+      if (health.decision !== "pending") {
+        if (sweep) await this.closeRequest(row.release_version, health.request_id);
+        continue;
+      }
       const req = await store.humanRequest.get(health.request_id);
       if (req?.status !== "answered") continue;
       const answer = answerFromHumanRequest(req);
@@ -1565,6 +1615,62 @@ export class ModelWatch {
       resolved += 1;
     }
     return resolved;
+  }
+
+  /**
+   * "Remind me" (U-035): each report the human put off whose `remind_at` has passed is asked
+   * again, once. The report is pending again first, under its row version, so a second call
+   * finds nothing due and the Updates page shows its buttons again; then the same question is
+   * filed in the Inbox. The scheduler calls this every hour (`scheduleModelWatchReminders`).
+   * Returns the ids of the reports asked again.
+   */
+  async fileDueReminders(): Promise<string[]> {
+    const { store, clock } = this.deps;
+    const rows = await store.release.list(
+      { channel: MODEL_WATCH_CHANNEL, status: "published" },
+      { orderBy: "created_at desc", limit: 200 },
+    );
+    const asked: string[] = [];
+    for (const row of rows) {
+      const health = healthOf(row);
+      if (health.decision !== "remind" || !health.remind_at) continue;
+      const due = Date.parse(health.remind_at);
+      if (!Number.isFinite(due) || due > clock.now()) continue;
+      let report: ModelWatchReport;
+      try {
+        report = reportFromRelease(row);
+      } catch {
+        continue;
+      }
+      const pending: ModelWatchHealth = {
+        ...health,
+        decision: "pending",
+        request_id: null,
+        decided_at: null,
+        by: null,
+        remind_at: null,
+      };
+      try {
+        const claimed = await store.release.update(row.id, row.version, {
+          health: pending as unknown as JsonValue,
+        });
+        const outcome = await this.ask(report, "reminder");
+        if (outcome.status === "pending") {
+          await store.release.patch(claimed.id, {
+            health: { ...pending, request_id: outcome.requestId } as unknown as JsonValue,
+          });
+        } else {
+          await this.resolve(report.id, outcome.answer);
+        }
+        asked.push(report.id);
+      } catch (e) {
+        logger.warn("model watch reminder not filed", {
+          reportId: report.id,
+          error: errorMessage(e),
+        });
+      }
+    }
+    return asked;
   }
 
   /** Reports newest first, as the updates screen shows them. */
@@ -2203,6 +2309,32 @@ export function isModelWatchRequest(
   agentId: string = MODEL_WATCH_AGENT_ID,
 ): boolean {
   return req.agentId === agentId && req.trigger === "schedule";
+}
+
+/**
+ * Register the hourly look for due reminders (U-035): the scheduler calls its `start` with a
+ * StartRequest for MODEL_WATCH_REMINDER_AGENT_ID, which the orchestrator routes
+ * (`isModelWatchReminderRequest`) to `ModelWatch.fileDueReminders()`. Not persisted: a daemon
+ * that starts looks at once, and a reminder due while it was off is filed then.
+ */
+export function scheduleModelWatchReminders(
+  scheduler: Scheduler,
+  opts: { timezone?: string; enabled?: boolean } = {},
+): Schedule {
+  const schedule: Schedule = {
+    id: MODEL_WATCH_REMINDER_SCHEDULE_ID,
+    agentId: MODEL_WATCH_REMINDER_AGENT_ID,
+    kind: "every",
+    everyMinutes: MODEL_WATCH_REMINDER_EVERY_MINUTES,
+    timezone: opts.timezone ?? "UTC",
+    enabled: opts.enabled ?? true,
+  };
+  scheduler.add(schedule);
+  return schedule;
+}
+
+export function isModelWatchReminderRequest(req: StartRequest): boolean {
+  return req.agentId === MODEL_WATCH_REMINDER_AGENT_ID && req.trigger === "schedule";
 }
 
 /** Throws the signal's reason as a `killed` ForerunnerError when the run was stopped. */
