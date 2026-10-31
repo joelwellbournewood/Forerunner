@@ -31,13 +31,16 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012 is open.
+- Next release: not scheduled. U-012 and U-018 to U-020 are open.
 
 ## Open and fixed, not released
 
 | ID | Found | What you see | Action | Status |
 | --- | --- | --- | --- | --- |
 | U-012 | 2026-10-30, 1.0.2 | (Release checks.) The Windows installed-app check called its install folders read-only; on the hosted runner they never were, so a Windows-only read-only problem would not be caught. | Run the Windows self-test as a standard (non-administrator) local user, so Program Files is read-only for it as it is for people. Until then the read-only fallback is checked on Linux and in unit tests. | open |
+| U-018 | 2026-10-31, 1.0.4 | After closing Forerunner, background processes keep running, so the install folder cannot be deleted and the next version cannot be installed over it. | Quit stops the background service and everything it started (asking first when a session is running); closing the window still hides to the tray, and says so the first time; the installer stops what runs from the install folder before it replaces files (ADR 0094). | open |
+| U-019 | 2026-10-31, 1.0.4 | "kill switch is active for this agent; resume it first" when starting a session, even after clicking Resume: the kill switch comes back every time the app starts. | Resume removes the kill request file, so a restart no longer applies an old kill again. | open |
+| U-020 | 2026-10-31, 1.0.4 | The inbox has no way to mark every message read; each needs its own click. | A "Mark all read" button above the messages. | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -59,6 +62,44 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   write access to its data folder only), so Program Files is read-only for it as it is for
   people. The check no longer locks folders; it checks that dependencies go to
   `<install>\dependencies` (commit after 752b788).
+- **Status:** open.
+
+### U-018 Background processes keep running after Forerunner is closed
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner: after closing Forerunner the folder cannot be
+  deleted and updates fail.
+- **What happens:**
+  - The window's close button hid the window to the tray; `Forerunner.exe` kept running.
+  - Quit in the tray ended the window process only ("Quit (the daemon keeps running)", ADR 0026,
+    ADR 0031). The background service (`node.exe` from `<install>\runtime`, and what it
+    started) kept running with files in the install folder open.
+  - Windows refuses to replace or delete a file a process has open, so deleting the folder and
+    installing the next version over it failed.
+- **Action (owner's choice, ADR 0094):**
+  - Quit stops the service: it asks first when a session is running, ends the sessions, closes
+    the service (`POST /shutdown`), and ends the process tree if it does not go within 15 s.
+  - The close button still hides to the tray, and the first time it says so in a notification
+    ("Quit from the tray to stop it").
+  - The Windows installer ends the processes that run from the install folder before it
+    checks for files in use, on upgrade and on uninstall.
+- **Status:** open.
+
+### U-019 The kill switch comes back after every restart
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner: "kill switch is active for this agent; resume it
+  first".
+- **What happens:** the kill switch (Stop all in the header, the tray, `fr kill`) writes
+  `<runtime>\kill.json`, which every runtime reads at start so a kill survives a crash. Resume
+  only lifted the kill in the running service and left the file, so the next start (opening the
+  app, a restart, an update) read it and stopped everything again. Sessions then refuse to
+  start.
+- **Action:** Resume removes the file; a kill written after the one being resumed is kept.
+- **Status:** open.
+
+### U-020 The inbox has no "mark all read"
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner.
+- **Action:** a "Mark all read" button over the messages marks every unread message read.
 - **Status:** open.
 
 ## Released
