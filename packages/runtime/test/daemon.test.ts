@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { KILL_ACTIVE_START_MESSAGE } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { RESTART_EXIT_CODE } from "../src/daemon/restart.ts";
 import { createDaemonApp, startDaemon } from "../src/daemon/server.ts";
@@ -229,10 +230,11 @@ describe("local daemon", () => {
         method: "POST",
         body: JSON.stringify({ agentId: rt.agent.id, projectId }),
       });
-      expect(refused.status).not.toBe(202);
+      // A 409 with what to do, not a server error (U-077).
+      expect(refused.status).toBe(409);
       const body = await json(refused);
       expect(body.code).toBe("killed");
-      expect(str(body.message)).toContain("kill switch is active");
+      expect(str(body.message)).toBe(KILL_ACTIVE_START_MESSAGE);
     } finally {
       await req("/kill/resume", { method: "POST" });
     }

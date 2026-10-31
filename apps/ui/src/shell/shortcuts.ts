@@ -98,6 +98,20 @@ export function createSequenceMatcher(
   };
 }
 
+/**
+ * Whether the window runs on macOS: the shell's injected platform when there is one, else the
+ * browser's. Windows and Linux read "Ctrl", macOS "⌘" (U-077: the palette showed ⌘K everywhere).
+ */
+export function isMacPlatform(platform: string | null | undefined): boolean {
+  if (platform) return platform.toLowerCase() === "macos";
+  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+}
+
+/** The palette's shortcut as this platform writes it. */
+export function paletteShortcut(platform: string | null | undefined): string {
+  return isMacPlatform(platform) ? "⌘K" : "Ctrl+K";
+}
+
 export function formatKeys(keys: readonly string[]): string[] {
   const isMac =
     typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform ?? "");

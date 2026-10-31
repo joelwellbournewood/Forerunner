@@ -497,6 +497,26 @@ describe("estimate model: bounded incremental refresh and live learning", () => 
 });
 
 describe("estimate accuracy view", () => {
+  it("the overall error agrees with the rows: their sample-weighted mean, never beyond them (U-077)", () => {
+    const m = new EstimateModel({ defaults });
+    // Steady runs, then one far over its estimate: the row's error is its smoothed figure, and
+    // a 40x overrun is clamped there; the overall said several hundred percent beside it.
+    for (let i = 0; i < 6; i++) m.observe(sample({ i, actualUsdMicro: 1_000_000 }));
+    m.observe(sample({ i: 6, actualUsdMicro: 40_000_000 }));
+    for (let i = 7; i < 10; i++)
+      m.observe(sample({ i, specialist: "researcher", kind: "tier2", actualUsdMicro: 1_100_000 }));
+    const view = estimateAccuracyView(m, "2026-10-19T06:00:00.000Z");
+    const rows = view.rows;
+    expect(view.overall.samples).toBe(rows.reduce((a, r) => a + r.samples, 0));
+    const weighted =
+      rows.reduce((a, r) => a + r.mean_abs_error_pct * r.samples, 0) /
+      rows.reduce((a, r) => a + r.samples, 0);
+    expect(view.overall.mean_abs_error_pct).toBeCloseTo(weighted, 1);
+    const errors = rows.map((r) => r.mean_abs_error_pct);
+    expect(view.overall.mean_abs_error_pct).toBeLessThanOrEqual(Math.max(...errors));
+    expect(view.overall.mean_abs_error_pct).toBeGreaterThanOrEqual(Math.min(...errors));
+  });
+
   it("renders per-key rows, overall error, bias and the within-25% share, validating its schema", () => {
     const m = new EstimateModel({ defaults });
     for (let i = 0; i < 10; i++)
@@ -521,6 +541,7 @@ describe("estimate accuracy view", () => {
     expect(view.recent).toHaveLength(5);
     expect(view.recent[0]).toMatchObject({ specialist: "researcher", error_pct: 100 });
     const empty = estimateAccuracyView(new EstimateModel(), "2026-10-19T06:00:00.000Z");
+    expect(EstimateAccuracyViewSchema.safeParse(empty).success).toBe(true);
     expect(empty.overall).toEqual({
       samples: 0,
       mean_abs_error_pct: 0,

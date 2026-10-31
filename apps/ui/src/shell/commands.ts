@@ -23,6 +23,8 @@ export interface CommandContext {
   openConversation?: () => void;
   /** The global hotkey as it reads here, shown as the hint; null without one. */
   hotkeyLabel?: string | null;
+  /** Opens the Start session dialog for the active project (U-077). */
+  openStartSession?: () => void;
 }
 
 export function buildCommands(ctx: CommandContext): Command[] {
@@ -114,6 +116,16 @@ export function buildCommands(ctx: CommandContext): Command[] {
       hint: ctx.hotkeyLabel ?? undefined,
       group: "Actions",
       run: ctx.openConversation,
+    });
+  }
+  const active = state.projects.find((p) => p.id === state.activeProjectId);
+  if (active && ctx.openStartSession) {
+    commands.push({
+      id: "action.startSession",
+      title: `Start session: ${active.name}`,
+      hint: "the active project",
+      group: "Actions",
+      run: ctx.openStartSession,
     });
   }
   commands.push(

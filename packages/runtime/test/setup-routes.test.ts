@@ -127,6 +127,16 @@ describe("setup assistant routes (ADR 0092)", () => {
     expect(view.githubPermissions.join("\n")).not.toContain("Workflows");
   });
 
+  it("a human the daemon named with its placeholder gets an empty name field, not 'me' (U-077)", async () => {
+    const h = harness();
+    h.human.name = "me";
+    const view = (await h.call("GET", "/setup")).body as unknown as SetupStatusView;
+    expect(view.name).toBe("");
+    // A name the person gave is shown as it is.
+    h.human.name = "Joel";
+    expect(((await h.call("GET", "/setup")).body as unknown as SetupStatusView).name).toBe("Joel");
+  });
+
   it("an API key that passes is stored by name and never echoed; a wrong one is explained and not stored", async () => {
     const h = harness();
     const bad = await h.call("POST", "/setup/anthropic", { value: `${API_KEY}x` });

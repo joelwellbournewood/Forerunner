@@ -303,6 +303,7 @@ import { statePorts } from "../wiring/state-ports.ts";
 import type { SpeakStartedView } from "./api-types.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord, scaffoldProjectDocs } from "./create-project.ts";
+import { PLACEHOLDER_HUMAN_NAME } from "./human-name.ts";
 import {
   bindInstallHuman,
   type InstallIdentity,
@@ -1226,7 +1227,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   try {
     ({ human, identity } = await bindInstallHuman(store, identitySelectors, (email) =>
       store.human.insert({
-        name: opts.identity?.humanName ?? config?.humanName ?? env.USERNAME ?? env.USER ?? "me",
+        name:
+          opts.identity?.humanName ??
+          config?.humanName ??
+          env.USERNAME ??
+          env.USER ??
+          PLACEHOLDER_HUMAN_NAME,
         email: email ?? "",
         timezone: opts.identity?.timezone ?? config?.timezone ?? "UTC",
         notify_prefs: {},

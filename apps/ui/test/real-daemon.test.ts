@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import { MemoryVault } from "@forerunner/vault";
@@ -450,6 +451,34 @@ describe("the UI client against the real daemon", () => {
     const blocked = await client.project(own.id);
     expect(blocked.health).toBe("blocked");
     expect(blocked.needsYou).toBeNull();
+  });
+
+  it("setup: a human the daemon named with its placeholder gets an empty name field, not 'me' (U-077)", async () => {
+    const before = await rt.store.human.mustGet(humanId);
+    await rt.store.human.patch(humanId, { name: "me" });
+    try {
+      expect((await client.setupStatus()).name).toBe("");
+    } finally {
+      await rt.store.human.patch(humanId, { name: before.name });
+    }
+    expect((await client.setupStatus()).name).toBe(before.name);
+  });
+
+  it("start session under Stop all: 409 with what to do, not a server error (U-077)", async () => {
+    expect((await client.kill({ scope: "all", reason: "stop all from the UI" })).killActive).toBe(
+      true,
+    );
+    try {
+      const refused = await client.startSession({ agentId, projectId, trigger: "manual" }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(refused).toBeInstanceOf(ApiError);
+      expect(refused).toMatchObject({ status: 409, code: "killed" });
+      expect((refused as ApiError).message).toBe(KILL_ACTIVE_START_MESSAGE);
+    } finally {
+      await client.resume();
+    }
   });
 
   it("answering a request: an answer that is none of a card's options is refused with them, the card stays (U-034)", async () => {

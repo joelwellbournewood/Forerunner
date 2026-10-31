@@ -684,7 +684,9 @@ export function ExtensionsPage() {
   const extensions = useAsync((signal) => client.extensions(undefined, signal), [client, version]);
   const voice = useAsync((signal) => client.voiceStatus(signal), [client, version]);
   const [addOpen, setAddOpen] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  // The note after an Add; one about an approval goes once the extension is no longer waiting
+  // (approved here or in the Inbox, denied, removed; U-077: it stayed after Approve).
+  const [notice, setNotice] = useState<{ id: string; text: string; waits: boolean } | null>(null);
   const [kindFilter, setKindFilter] = useState<string>("all");
   /** The grant being confirmed in the panel (U-026), and whether Add opened it. */
   const [confirming, setConfirming] = useState<{
@@ -710,6 +712,11 @@ export function ExtensionsPage() {
 
   const rows = extensions.data ?? [];
   const pending = rows.filter((e) => e.status === "pending_approval").length;
+  const shownNotice =
+    notice &&
+    (!notice.waits || rows.some((e) => e.id === notice.id && e.status === "pending_approval"))
+      ? notice.text
+      : null;
   const grouped = EXTENSION_KINDS.filter((k) => kindFilter === "all" || k === kindFilter).map(
     (k) => ({
       kind: k,
@@ -749,12 +756,12 @@ export function ExtensionsPage() {
           Add
         </Button>
       </div>
-      {notice ? (
+      {shownNotice ? (
         <output
           className="block rounded border border-blue-200 p-2 text-sm dark:border-blue-900"
           data-testid="extensions-notice"
         >
-          {notice}
+          {shownNotice}
         </output>
       ) : null}
       {extensions.loading && !extensions.data ? <Loading what="extensions" /> : null}
@@ -788,7 +795,18 @@ export function ExtensionsPage() {
             </p>
           ) : null}
           {g.rows.length === 0 ? (
-            g.kind === "model_provider" ? null : (
+            g.kind === "model_provider" ? null : g.kind === "specialist" ? (
+              // The built-in specialists are not extensions (U-077: "None installed" read as
+              // if there were none, while Settings lists them).
+              <p className="text-xs text-neutral-500" data-testid="specialists-builtin">
+                None added here. The built-in specialists come with Forerunner and are not listed as
+                extensions; their models are in{" "}
+                <Link to="/settings" className="text-blue-700 hover:underline dark:text-blue-300">
+                  Settings → Models per agent and specialist
+                </Link>
+                .
+              </p>
+            ) : (
               <p className="text-xs text-neutral-500">None installed.</p>
             )
           ) : (
@@ -818,11 +836,14 @@ export function ExtensionsPage() {
             setConfirming({ extension: view, fromAdd: true });
             return;
           }
-          setNotice(
-            view.status === "pending_approval"
+          const waits = view.status === "pending_approval";
+          setNotice({
+            id: view.id,
+            waits,
+            text: waits
               ? `${view.name} was added and waits for your approval: review its permissions below or in the inbox.`
               : `${view.name} was added and is enabled.`,
-          );
+          });
         }}
       />
       {confirming ? (
@@ -834,14 +855,18 @@ export function ExtensionsPage() {
           onDone={(view) => {
             upsert(view);
             setConfirming(null);
-            setNotice(`${view.name} is added and enabled.`);
+            setNotice({ id: view.id, waits: false, text: `${view.name} is added and enabled.` });
           }}
           onClose={(removed) => {
             const name = confirming.extension.name;
             setConfirming(null);
             if (removed) {
               drop(confirming.extension.id);
-              setNotice(`Cancelled: ${name} was not added.`);
+              setNotice({
+                id: confirming.extension.id,
+                waits: false,
+                text: `Cancelled: ${name} was not added.`,
+              });
             }
           }}
         />

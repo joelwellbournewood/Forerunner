@@ -11,6 +11,7 @@ import type { Vault } from "@forerunner/vault";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { z } from "zod";
+import { shownHumanName } from "../daemon/human-name.ts";
 import type { Restarter } from "../update/ports.ts";
 import {
   SetupAnthropicBody as AnthropicBody,
@@ -139,7 +140,8 @@ export function createSetupRoutes(deps: SetupRoutesDeps): Hono {
     return {
       complete,
       showAssistant: !complete && !config?.setupAcknowledgedAt,
-      name: human?.name ?? config?.humanName ?? "",
+      // The placeholder is not a name to prefill (U-077: the field read "me").
+      name: shownHumanName(human?.name ?? config?.humanName ?? ""),
       timezone: human?.timezone ?? config?.timezone ?? "UTC",
       credentials,
       restartNeeded:

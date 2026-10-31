@@ -4,6 +4,7 @@ import { describeError, NOT_REACHABLE } from "../api/client.ts";
 import { RunnerAutoUnlock } from "../components/RunnerAutoUnlock.tsx";
 import { Badge, Button } from "../components/ui.tsx";
 import { NewProjectDialog } from "../pages/NewProjectDialog.tsx";
+import { StartSessionDialog } from "../pages/project/StartSessionDialog.tsx";
 import { useSetupGate } from "../pages/SetupPage.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { activeProject, type ThemePreference } from "../store/store.ts";
@@ -14,7 +15,7 @@ import { DesktopControlBanner } from "./DesktopControlBanner.tsx";
 import { formatChord, useHotkeyBridge } from "./hotkey.ts";
 import { ShellContext } from "./ShellContext.ts";
 import { ShortcutsHelp } from "./ShortcutsHelp.tsx";
-import { createSequenceMatcher, isEditableTarget } from "./shortcuts.ts";
+import { createSequenceMatcher, isEditableTarget, paletteShortcut } from "./shortcuts.ts";
 
 const NAV = [
   { to: "/", label: "Home", end: true },
@@ -42,6 +43,7 @@ export function Shell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [killBusy, setKillBusy] = useState(false);
@@ -117,9 +119,11 @@ export function Shell() {
         openShortcuts: () => setHelpOpen(true),
         openConversation: talk,
         hotkeyLabel,
+        openStartSession: () => setStartOpen(true),
       }),
     [state, navigate, setActiveProject, setTheme, toggleKill, talk, hotkeyLabel],
   );
+  const palette = paletteShortcut(state.config.platform);
 
   // Keyboard shortcuts: one matcher for the life of the shell.
   const matcher = useMemo(() => createSequenceMatcher(), []);
@@ -361,10 +365,11 @@ export function Shell() {
               variant="ghost"
               onClick={() => setPaletteOpen(true)}
               aria-label="Command palette"
-              title="Command palette (Ctrl+K)"
+              title={`Command palette (${palette})`}
               className="hidden md:inline-flex"
+              data-testid="palette-open"
             >
-              ⌘K
+              {palette}
             </Button>
             <Button
               variant={state.killActive ? "primary" : "danger"}
@@ -444,6 +449,14 @@ export function Shell() {
           chordLabel={hotkeyLabel}
         />
         <NewProjectDialog open={newProjectOpen} onClose={() => setNewProjectOpen(false)} />
+        {active ? (
+          <StartSessionDialog
+            open={startOpen}
+            onClose={() => setStartOpen(false)}
+            projectId={active.id}
+            reference={active.budget}
+          />
+        ) : null}
       </div>
     </ShellContext.Provider>
   );

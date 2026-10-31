@@ -410,6 +410,13 @@ export const ChatReplyView = z.object({
 });
 export type ChatReplyView = z.infer<typeof ChatReplyView>;
 
+/**
+ * What `POST /sessions` answers (409, code `killed`) while Stop all is on: what happened and
+ * what to do, said as the start dialog shows it (U-077; it was a 500 with the runner's words).
+ */
+export const KILL_ACTIVE_START_MESSAGE =
+  "Stop all is on, so no session can start. Press Resume at the top of the window, then start the session again.";
+
 export const StartSessionBody = z.object({
   agentId: z.string(),
   projectId: z.string().optional(),

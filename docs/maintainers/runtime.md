@@ -3390,6 +3390,19 @@ criteria, budget, risk tier or specialist with `brief_incomplete` and the list o
 bypass, hidden text, markdown image exfil, ...). Flagged content raises an event and a note to
 the human; it is never acted on.
 
+### Small fixes in the daemon (U-077)
+
+- `POST /sessions` under Stop all answers 409 with code `killed` and
+  `KILL_ACTIVE_START_MESSAGE` (`api-types.ts`: Stop all is on, press Resume, start again); it
+  was a 500 with the runner's words. `onError` maps `killed` to 409 and keeps its code.
+- `GET /setup` sends an empty `name` for the placeholder the daemon gives a human it knows no
+  name for (`PLACEHOLDER_HUMAN_NAME`, "me", `daemon/human-name.ts`), so the assistant's field
+  is empty instead of "me".
+- `GET /costs/estimates`: `overall.mean_abs_error_pct` is the rows' error weighted by their
+  samples and `overall.samples` their sum (`estimates/view.ts`), so the overall lies between the
+  rows; it was a plain mean of the recent unclamped errors and could exceed every row. Bias and
+  the within-25% share stay over the recent samples.
+
 ### Plain words in the session log and money in CHF (U-074)
 
 `describeEvent(type, payload, chfPerUsd)` (`daemon/views.ts`; `eventView` passes the day's

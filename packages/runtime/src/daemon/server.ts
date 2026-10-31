@@ -84,6 +84,7 @@ import {
   type IntakeProposalView,
   IntakeRequestBody,
   type IntakeStatusView,
+  KILL_ACTIVE_START_MESSAGE,
   KillBody,
   type LessonOfferView,
   type MemoryScopeView,
@@ -373,7 +374,8 @@ export function createDaemonApp(
             ? 400
             : err.code === "validation" ||
                 err.code === "version_conflict" ||
-                err.code === "claim_conflict"
+                err.code === "claim_conflict" ||
+                err.code === "killed"
               ? 409
               : err.code === "approval_required" || err.code === "autonomy_insufficient"
                 ? 403
@@ -386,7 +388,8 @@ export function createDaemonApp(
       // code stays in the details for the log. A text the injection gate refused (a lesson
       // proposed for the shared store, spec G.6) is the client's input, not a daemon failure:
       // 422 with the code, so the page shows the reason instead of a server error.
-      const code = status === 409 ? "conflict" : err.code;
+      // The kill switch keeps its own code, so a screen can tell it from a version conflict.
+      const code = status === 409 && err.code !== "killed" ? "conflict" : err.code;
       return c.json(
         { code, message: err.message, details: { ...(err.details ?? {}), cause: err.code } },
         status,
@@ -1080,6 +1083,14 @@ export function createDaemonApp(
         ...(ahead === undefined ? {} : { ahead }),
       };
       return c.json(view, 202);
+    } catch (e) {
+      // Stop all refuses the run before its session begins: a 409 that says what to do (U-077).
+      if (e instanceof ForerunnerError && e.code === "killed") {
+        throw new ForerunnerError("killed", KILL_ACTIVE_START_MESSAGE, {
+          details: { ...(e.details ?? {}), reason: e.message },
+        });
+      }
+      throw e;
     } finally {
       waited.abort();
       rt.events.off("session", onSession);

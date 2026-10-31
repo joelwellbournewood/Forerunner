@@ -162,7 +162,11 @@ agents on this computer: on a shared project the other people's sessions keep ru
 tasks they hold stay theirs. Nothing starts until you
 click **Resume** (the same button, or the tray) or start a session from the phone; the stop
 lasts across restarts until then. **Stop** on one session, from its page or the phone, ends
-that session only and leaves the kill switch on.
+that session only and leaves the kill switch on. Starting a session while Stop all is on says
+so: press **Resume** first.
+
+The command palette opens with **Ctrl+K** (**⌘K** on a Mac) and has **Start session** for the
+active project.
 
 ## Closing and quitting
 

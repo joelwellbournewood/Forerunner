@@ -8,7 +8,7 @@ import {
 } from "../api/client.ts";
 import { ExternalLink } from "../components/ExternalLink.tsx";
 import { Button, ErrorBanner, INPUT_CLASS, Loading } from "../components/ui.tsx";
-import { useClient } from "../store/context.tsx";
+import { useClient, useUiState } from "../store/context.tsx";
 
 /**
  * The setup assistant (ADR 0092): the first thing a new install shows. The human pastes the
@@ -229,8 +229,21 @@ function Saved({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Where a pasted key is kept, as the daemon's vault reports it (`/health` `vaultBackend`): the
+ * OS credential store only when that is the backend (U-077: the page said "never in a file"
+ * while the vault had fallen back to its encrypted file).
+ */
+export function vaultWhere(backend: string | null | undefined): string {
+  if (backend === "keyring")
+    return "stored in your computer's secure credential store, never in a file";
+  if (backend === "memory") return "kept in memory only until Forerunner closes";
+  return "stored in an encrypted file on this computer";
+}
+
 export function SetupPage() {
   const client = useClient();
+  const vaultBackend = useUiState((s) => s.connection.health?.vaultBackend ?? null);
   const navigate = useNavigate();
   const [status, setStatus] = useState<SetupStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -355,8 +368,7 @@ export function SetupPage() {
           <p className="text-sm">
             Forerunner needs two things to work for you: access to Claude (the AI models) and access
             to GitHub (where your projects live). This takes about five minutes. Every key is
-            checked the moment you paste it and stored in your computer's secure credential store,
-            never in a file.
+            checked the moment you paste it and {vaultWhere(vaultBackend)}.
           </p>
           <label className="block text-sm">
             <span className="mb-1 block font-medium">Your name</span>

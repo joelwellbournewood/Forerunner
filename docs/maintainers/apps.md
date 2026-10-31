@@ -366,7 +366,20 @@ with "Resume desktop control" (`POST /desktop/resume`); a revoke by the Extensio
 no such line (the panel is where it is undone, and resume alone would not undo it). A failed
 stop keeps the banner with the error.
 `Ctrl/Cmd+K` opens the palette (`shell/commands.ts` builds navigation, "Switch project: …", New
-project, Stop all/Resume, theme and shortcuts commands; `filterCommands` matches every word).
+project, "Start session: <active project>" (opens `StartSessionDialog` from the shell, U-077),
+Stop all/Resume, theme and shortcuts commands; `filterCommands` matches every word). The header's
+palette button reads `paletteShortcut(config.platform)`: "⌘K" on macOS only, "Ctrl+K" on
+Windows and Linux (U-077).
+
+**Small fixes (U-077).** The setup assistant says where a pasted key is kept as `/health`'s
+`vaultBackend` reports it (`vaultWhere`: the OS credential store only for `keyring`, "an
+encrypted file on this computer" otherwise) and prefills the name the daemon sends (empty for its
+placeholder, `shownHumanName` in `daemon/human-name.ts`). A failed **Check for updates** says
+"the last check failed" and why, not "not checked yet". The Cancel-task dialog's buttons read
+**Keep task** and **Cancel task**. Extensions' empty Specialists group says the built-in
+specialists are not extensions and links to Settings; the note after adding an extension that
+waits for approval goes once it no longer waits (approved here or in the Inbox, denied,
+removed). The start dialog shows the daemon's 409 under Stop all (`KILL_ACTIVE_START_MESSAGE`).
 Shortcuts (`shell/shortcuts.ts`): `g h` Home, `g i` Inbox, `g s` Settings, `g p` active
 project, `g m` Memory, `g e` Extensions, `g c` Changes, `g t` Performance, `g u` Updates, `?`
 help, `Escape` closes; sequences are ignored inside text fields, chords with a modifier are

@@ -154,9 +154,11 @@ export function UpdatesPage() {
         </h1>
         {view ? (
           <span className="text-xs text-neutral-500" data-testid="updates-checked-at">
-            {view.app.checkedAt
-              ? `last checked ${formatDateTime(view.app.checkedAt)}`
-              : "not checked yet"}
+            {feedError
+              ? "the last check failed"
+              : view.app.checkedAt
+                ? `last checked ${formatDateTime(view.app.checkedAt)}`
+                : "not checked yet"}
           </span>
         ) : null}
         <Button
@@ -284,11 +286,14 @@ export function UpdatesPage() {
               className="mt-2 text-sm text-neutral-600 dark:text-neutral-400"
               data-testid="no-update"
             >
-              {app.state === "up_to_date"
-                ? `You are on the latest ${app.channel} release.`
-                : app.checkedAt
-                  ? `No newer release known (checked ${formatDateTime(app.checkedAt)}).`
-                  : "The feed has not been checked yet."}
+              {/* A failed check says so (U-077), not "not checked yet". */}
+              {feedError
+                ? `The check for updates failed: ${feedError}. Try again later; this is what the app knew before.`
+                : app.state === "up_to_date"
+                  ? `You are on the latest ${app.channel} release.`
+                  : app.checkedAt
+                    ? `No newer release known (checked ${formatDateTime(app.checkedAt)}).`
+                    : "The feed has not been checked yet."}
             </p>
           )}
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
@@ -527,9 +532,9 @@ export function UpdatesPage() {
             {report.evals_deferred ? (
               <p className="mt-2 text-xs text-neutral-500" data-testid="model-watch-deferred">
                 Evaluations not run: {report.evals_deferred.planned.length} eval set run(s) would
-                cost money{evalCost ? ` (up to ${evalCost})` : ""} and count against your caps.
-                Only Run evaluations (or the model watch's paid-evaluations setting) runs them.
-                Adopt applies the price rows only and runs no evaluation.
+                cost money{evalCost ? ` (up to ${evalCost})` : ""} and count against your caps. Only
+                Run evaluations (or the model watch's paid-evaluations setting) runs them. Adopt
+                applies the price rows only and runs no evaluation.
               </p>
             ) : null}
             {health?.decision === "pending" ? (

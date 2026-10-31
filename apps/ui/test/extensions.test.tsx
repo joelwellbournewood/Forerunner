@@ -384,6 +384,21 @@ describe("Extensions panel", () => {
     });
   });
 
+  it("explains an empty Specialists group instead of 'None installed' (U-077)", async () => {
+    const harness = createHarness();
+    harness.daemon.state.extensions = harness.daemon.state.extensions.filter(
+      (e) => e.kind !== "specialist",
+    );
+    renderApp("/extensions", harness);
+    const group = await screen.findByTestId("extensions-group-specialist");
+    const note = within(group).getByTestId("specialists-builtin");
+    expect(note).toHaveTextContent(
+      "None added here. The built-in specialists come with Forerunner and are not listed as extensions; their models are in Settings → Models per agent and specialist.",
+    );
+    expect(within(note).getByRole("link")).toHaveAttribute("href", "/settings");
+    expect(group).not.toHaveTextContent("None installed");
+  });
+
   it("adds an MCP server from a URL and denies it", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

@@ -193,7 +193,12 @@ describe("Updates screen", () => {
     renderApp("/updates", createHarness({ updatesCheckError: "feed unreachable: ETIMEDOUT" }));
     await user.click(await screen.findByTestId("updates-check"));
     expect(await screen.findByTestId("feed-error")).toHaveTextContent("ETIMEDOUT");
-    expect(screen.getByTestId("no-update")).toHaveTextContent("has not been checked yet");
+    // The failure is said, not "not checked yet" (U-077).
+    expect(screen.getByTestId("no-update")).toHaveTextContent(
+      "The check for updates failed: feed unreachable: ETIMEDOUT.",
+    );
+    expect(screen.getByTestId("updates-checked-at")).toHaveTextContent("the last check failed");
+    expect(screen.getByTestId("updates-checked-at")).not.toHaveTextContent("not checked yet");
   });
 
   it("after a rollback the screen shows the daemon's local state again, not the earlier check", async () => {
@@ -218,7 +223,9 @@ describe("Updates screen", () => {
     );
     await user.click(await screen.findByTestId("updates-check"));
     expect(await screen.findByTestId("feed-error")).toHaveTextContent("feed down");
-    expect(screen.getByTestId("no-update")).toHaveTextContent("has not been checked yet");
+    expect(screen.getByTestId("no-update")).toHaveTextContent("The check for updates failed");
+    expect(screen.getByTestId("no-update")).not.toHaveTextContent("has not been checked yet");
+    expect(screen.getByTestId("updates-checked-at")).toHaveTextContent("the last check failed");
     expect(screen.getByTestId("app-version")).toHaveTextContent("running 0.1.0-fake");
   });
 });

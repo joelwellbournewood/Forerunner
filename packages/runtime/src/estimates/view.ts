@@ -35,8 +35,12 @@ export type EstimateAccuracySample = z.infer<typeof EstimateAccuracySampleSchema
 export const EstimateAccuracyViewSchema = z.object({
   generated_at: z.string(),
   overall: z.object({
+    /** Every sample the rows count (their sum), so the screen's totals agree (U-077). */
     samples: z.number().int().nonnegative(),
-    /** Mean |error| over the recent samples, in percent. */
+    /**
+     * The rows' mean |error| weighted by their samples, in percent: it lies between the rows'
+     * figures (U-077: it was a plain mean of unclamped recent errors and could exceed them all).
+     */
     mean_abs_error_pct: z.number(),
     /** Mean signed error over the recent samples; positive means estimates run low. */
     bias_pct: z.number(),
@@ -65,18 +69,23 @@ export function estimateAccuracyView(
       : 0,
   );
   const n = errors.length;
-  const meanAbs = n ? errors.reduce((a, e) => a + Math.abs(e), 0) / n : 0;
   const bias = n ? errors.reduce((a, e) => a + e, 0) / n : 0;
   const within = n ? errors.filter((e) => Math.abs(e) <= 25).length / n : 0;
+  // The overall error is the rows' own, weighted by their samples (U-077).
+  const stats = model.stats();
+  const counted = stats.reduce((a, r) => a + r.samples, 0);
+  const meanAbs = counted
+    ? stats.reduce((a, r) => a + r.meanAbsErrorPct * r.samples, 0) / counted
+    : 0;
   return EstimateAccuracyViewSchema.parse({
     generated_at: nowIso,
     overall: {
-      samples: n,
+      samples: counted,
       mean_abs_error_pct: round2(meanAbs),
       bias_pct: round2(bias),
       within_25_pct_share: round2(within),
     },
-    rows: model.stats().map((r) => ({
+    rows: stats.map((r) => ({
       specialist: r.specialist,
       kind: r.kind,
       samples: r.samples,

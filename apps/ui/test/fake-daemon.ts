@@ -46,6 +46,7 @@ import {
   CreateTaskBody,
   EMAIL_MODES,
   isStorableSecretName,
+  KILL_ACTIVE_START_MESSAGE,
   KillBody,
   RenameAgentBody,
   RunnerUnlockWrapBody,
@@ -1151,7 +1152,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const parsed = StartSessionBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     if (state.killActive) {
-      return errorBody(c, 409, "kill.active", "kill switch is active; resume first");
+      // As the real daemon answers it (U-077).
+      return errorBody(c, 409, "killed", KILL_ACTIVE_START_MESSAGE);
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");

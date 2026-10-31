@@ -29,6 +29,30 @@ describe("setup assistant", () => {
     expect(screen.getByTestId("setup-name")).toHaveValue("Dada-");
   });
 
+  it("says where keys are kept as the vault reports it, and leaves a name the daemon does not know empty (U-077)", async () => {
+    const harness = createHarness({ setup: { ...FRESH.setup, name: "" } });
+    renderApp("/", harness);
+    const page = await screen.findByTestId("setup-page");
+    // The fixture daemon's vault is the encrypted file: the page does not say "never in a file".
+    await waitFor(() =>
+      expect(page).toHaveTextContent("stored in an encrypted file on this computer"),
+    );
+    expect(page).not.toHaveTextContent("never in a file");
+    expect(screen.getByTestId("setup-name")).toHaveValue("");
+    expect(screen.getByTestId("setup-next")).toBeDisabled();
+    const health = harness.store.getState().connection.health;
+    if (!health) throw new Error("no health");
+    harness.store.dispatch({
+      type: "connection",
+      patch: { health: { ...health, vaultBackend: "keyring" } },
+    });
+    await waitFor(() =>
+      expect(page).toHaveTextContent(
+        "stored in your computer's secure credential store, never in a file",
+      ),
+    );
+  });
+
   it("a set-up install and a daemon without the routes stay where the app opened", async () => {
     renderApp("/settings");
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
