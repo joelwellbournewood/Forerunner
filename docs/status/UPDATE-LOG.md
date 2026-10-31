@@ -100,7 +100,9 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ### U-020 The inbox has no "mark all read"
 
 - **Found:** 2026-10-31 in 1.0.4, by the owner.
-- **Action:** a "Mark all read" button over the messages marks every unread message read.
+- **Action:** a "Mark all read" button over the messages marks every unread message read,
+  through the same route as Mark read. Test: `apps/ui/test/inbox.test.tsx` ("marks every
+  unread message read with one click") fails without it. The Android inbox does not have it yet.
 - **Status:** open.
 
 ## Released

@@ -77,6 +77,8 @@ current task and starts nothing new), when its wall clock runs out, or when you 
 Human requests and agent messages across all projects, blocking ones first. A request shows the
 context, why it matters, the options (multiple choice when possible) and whether it blocks work.
 Answered decisions go to the decision log and are not asked again unless something changes.
+Each unread message has **Mark read**; **Mark all read** over the messages marks every unread
+one at once.
 
 ## Autonomy and budgets
 

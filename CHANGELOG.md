@@ -14,6 +14,10 @@ Problems and their status, released or not, are tracked in
 
 ## [Unreleased]
 
+### Added
+
+- **Mark all read** in the inbox marks every unread message read with one click (U-020).
+
 ### Fixed
 
 - The kill switch came back every time Forerunner started, even after Resume, and sessions

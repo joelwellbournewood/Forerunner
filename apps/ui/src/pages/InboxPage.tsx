@@ -275,6 +275,24 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
     );
   };
 
+  // U-020: one click marks every unread message read. The messages are marked one by one
+  // through the same route as "Mark read" (the service checks each is addressed to you), and
+  // the list updates as each answer arrives; a failure stops there and shows the error.
+  const [markingAll, setMarkingAll] = useState(false);
+  const [markAllError, setMarkAllError] = useState<string | null>(null);
+  const markAllRead = async (unread: MessageView[]) => {
+    if (markingAll) return;
+    setMarkingAll(true);
+    setMarkAllError(null);
+    try {
+      for (const m of unread) await markRead(m);
+    } catch (error) {
+      setMarkAllError(describeError(error));
+    } finally {
+      setMarkingAll(false);
+    }
+  };
+
   if (!humanId) return <Loading what="your identity" />;
   if (inbox.loading && !inbox.data) return <Loading what="inbox" />;
   if (inbox.error && !inbox.data)
@@ -285,6 +303,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
   const requests = sortRequests(data.requests.filter((r) => r.status === "open"));
   const answered = sortRequests(data.requests.filter((r) => r.status !== "open"));
   const messages = sortMessages(data.messages);
+  const unreadMessages = messages.filter((m) => m.readAt === null);
 
   return (
     <section aria-labelledby="inbox-title" className="space-y-4">
@@ -321,7 +340,21 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
         ))}
       </ol>
 
-      <h2 className="font-semibold">Messages</h2>
+      <div className="flex items-center gap-3">
+        <h2 className="font-semibold">Messages</h2>
+        {unreadMessages.length > 0 ? (
+          <Button
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => void markAllRead(unreadMessages)}
+            disabled={markingAll}
+            data-testid="mark-all-read"
+          >
+            {markingAll ? "Marking read…" : `Mark all read (${unreadMessages.length})`}
+          </Button>
+        ) : null}
+      </div>
+      {markAllError ? <ErrorBanner message={markAllError} /> : null}
       {messages.length === 0 ? <EmptyState>No messages.</EmptyState> : null}
       <ol className="space-y-2" data-testid="message-list">
         {messages.map((m) => (

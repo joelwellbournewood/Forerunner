@@ -213,4 +213,27 @@ describe("Inbox", () => {
       expect(screen.getAllByTestId("message")[0]).toHaveAttribute("data-read", "true"),
     );
   });
+
+  it("marks every unread message read with one click (U-020)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    // A second unread message beside msg_1; msg_2 is already read.
+    const second = { ...MESSAGES[0], id: "msg_3", readAt: null } as (typeof MESSAGES)[number];
+    harness.daemon.state.messages.push(second);
+    renderApp("/inbox", harness);
+    await screen.findAllByTestId("message");
+    await user.click(screen.getByTestId("mark-all-read"));
+    await waitFor(() => {
+      expect(postedCalls(harness, "/messages/msg_1/read")).toHaveLength(1);
+      expect(postedCalls(harness, "/messages/msg_3/read")).toHaveLength(1);
+    });
+    // A message that was already read is left alone.
+    expect(postedCalls(harness, "/messages/msg_2/read")).toHaveLength(0);
+    await waitFor(() => {
+      for (const m of screen.getAllByTestId("message"))
+        expect(m).toHaveAttribute("data-read", "true");
+    });
+    // Nothing unread is left, so the button goes away.
+    expect(screen.queryByTestId("mark-all-read")).toBeNull();
+  });
 });

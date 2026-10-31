@@ -687,7 +687,8 @@ a yes and the sentence, Turn off with the off effect, a never-set flag reading o
 boolean),
 `reviews` (tones, trend, newest first,
 findings, verdict filter, missing route), `tasks`, `session`, `inbox` (sorting, options,
-free text, reload on a streamed count, mark read; an intake proposal rendered as the plan card
+free text, reload on a streamed count, mark read, mark all read (U-020: one `POST
+/messages/:id/read` per unread message, read ones untouched, the button gone after); an intake proposal rendered as the plan card
 with phases, tasks with tier / priority / specialist / dependencies, docs and their target, the
 first session with estimates and the call's cost, the ordinary options kept, and `intakeCardOf`
 reading only intake cards that carry a proposal; spec A.2, ADR 0055), `unlock-card` (spec
