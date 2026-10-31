@@ -84,7 +84,7 @@ describe("headroom: SDK driver environment (ADR 0003 'Use' row)", () => {
       token: issue(h, { allowedTools: ["cc:Read"], budgetUsdMicro: 2_500_000 }),
       budget: budget("sess-1", 5_000_000, h.clock),
       billingSourceId: "bs",
-      credential: { kind: "api_key", value: ["sk-ant-", "test-value"].join("") }, // not-a-secret
+      credential: { kind: "oauth_token", value: ["sk-ant-oat01-", "test-value"].join("") }, // not-a-secret
       model: "claude-sonnet-5-5",
       systemPrompt: "s",
       prompt: "p",
@@ -98,13 +98,14 @@ describe("headroom: SDK driver environment (ADR 0003 'Use' row)", () => {
     const sub = seen[0]?.env as Record<string, string | undefined>;
     expect(sub.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8787");
     expect(sub.ANTHROPIC_CUSTOM_HEADERS).toBe("X-Headroom-Project: proj-1");
-    expect(sub.ANTHROPIC_API_KEY).toBe(["sk-ant-", "test-value"].join(""));
+    expect(sub.CLAUDE_CODE_OAUTH_TOKEN).toBe(["sk-ant-oat01-", "test-value"].join(""));
+    expect(sub.ANTHROPIC_API_KEY).toBeUndefined();
     // Without it nothing is routed: the plain env has no base URL.
     await driver.run({
       token: issue(h, { allowedTools: ["cc:Read"], budgetUsdMicro: 2_500_000 }),
       budget: budget("sess-2", 5_000_000, h.clock),
       billingSourceId: "bs",
-      credential: { kind: "api_key", value: ["sk-ant-", "test-value"].join("") }, // not-a-secret
+      credential: { kind: "oauth_token", value: ["sk-ant-oat01-", "test-value"].join("") }, // not-a-secret
       model: "claude-sonnet-5-5",
       systemPrompt: "s",
       prompt: "p",

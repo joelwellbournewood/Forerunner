@@ -269,6 +269,34 @@ error kinds map to `provider_auth` (a refused token, with the step to replace it
 reply through the SDK with the token in Claude Code's environment, no request of Forerunner's
 own to the Messages API or with the token), `claude-code-provider.test.ts`.
 
+**An API key never runs through Claude Code (U-078, ADR 0100).** Promotional API credits apply
+only when an API key is used off Claude Code, so a key always goes straight to the Messages API:
+`SdkAgentDriver.run` refuses an `api_key` credential, and an Anthropic API key handed over as a
+token, with `ForerunnerError("provider_auth")` before anything starts
+(`assertSubscriptionCredential`), and puts only `CLAUDE_CODE_OAUTH_TOKEN` in the subprocess
+environment; `ClaudeCodeProvider` refuses any token that is not `sk-ant-oat…` with
+`provider_auth` and starts nothing. `scrubEnv` also drops every variable that would make Claude
+Code authenticate or bill another way than with that token (`CLAUDE_CODE_AUTH_ENV`:
+`ANTHROPIC_API_KEY`, which Claude Code prefers over the subscription, `ANTHROPIC_AUTH_TOKEN`,
+the OAuth, refresh, gateway and session tokens, the `*_FILE_DESCRIPTOR` forms and the
+`CLAUDE_CODE_USE_*` switches to Bedrock, Vertex, Foundry and the cloud platforms), and the
+session's extra variables (the Headroom proxy's) pass through `withoutClaudeCodeAuth`. Tests:
+`sdk-driver.test.ts` ("only the subscription's token runs through Claude Code"),
+`claude-code-provider.test.ts`, `security-sdk.test.ts`.
+
+**Usage limits as one code (U-078, ADR 0100; `src/provider/usage-limit.ts`).** A credential
+whose plan or account limit is reached is `provider_usage_limit` on both paths, with `resetAt`
+when the provider named one; a short throttle stays `provider_rate_limit`. The Messages adapter
+maps a 402 `billing_error`, "credit balance is too low", "You have reached your specified
+(workspace) API usage limits" (400) and the tier spend cap (429 with
+`details.error_code: "enforced_spend_limit_reached"` and no `retry-after`), reading the reset
+from "regain access on <date> at <hh:mm> UTC" or a `retry-after` header; a plain 429 stays a
+rate limit the SDK retries. `ClaudeCodeProvider` and `SdkAgentDriver` map Claude Code's
+`billing_error`, and a `rate_limit` that Claude Code reported as the plan's limit (a
+`rate_limit_event` with `rate_limit_info.status: "rejected"`, whose `resetsAt` is epoch
+seconds, or its "You've hit your limit" text); any other `rate_limit` is a throttle.
+`restUntil` turns the reset into the rest time (one hour without one, at most 32 days).
+
 **The Anthropic adapter's abort path** (`src/provider/anthropic.ts`). The request's `signal` is
 handed to the SDK, and every way the SDK reacts to it ends the stream with `error: aborted`:
 the request promise rejecting before the response (the SDK's `APIUserAbortError`, no longer

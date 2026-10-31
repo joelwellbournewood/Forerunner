@@ -151,10 +151,10 @@ describe("SDK driver: the subprocess environment", () => {
     expect(
       Object.keys(env).filter((k) => /TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY/i.test(k)),
     ).toEqual(["CLAUDE_CODE_OAUTH_TOKEN"]);
-    const { options: o2 } = await runDriver(h, { credential: "api_key" });
-    const env2 = o2.env as Record<string, string | undefined>;
-    expect(env2.ANTHROPIC_API_KEY).toBe(API_KEY);
-    expect(env2.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    // An API key never runs through Claude Code (U-078, ADR 0100): the driver refuses it.
+    await expect(runDriver(h, { credential: "api_key" })).rejects.toMatchObject({
+      code: "provider_auth",
+    });
     expect(options.permissionMode).toBe("dontAsk");
     expect(options.allowDangerouslySkipPermissions).toBe(false);
     expect(options.settingSources).toEqual([]);

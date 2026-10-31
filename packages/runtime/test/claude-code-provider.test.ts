@@ -201,3 +201,134 @@ describe("a subscription token never reaches the Messages API from Forerunner (U
     expect(r).toMatchObject({ ok: true, details: { kind: "subscription", verified: "format" } });
   });
 });
+
+/**
+ * U-078 (ADR 0100): an API key never runs through Claude Code, and both ways Forerunner calls
+ * Claude report "this credential's limit is reached" as one code, `provider_usage_limit`, with
+ * the reset time when the provider gives one.
+ */
+describe("only the subscription in Claude Code, and usage limits as one code (U-078)", () => {
+  const KEY = ["sk-ant-", "api03-", "z".repeat(30)].join(""); // not-a-secret
+
+  it("ClaudeCodeProvider refuses anything but the subscription token, and starts nothing", async () => {
+    const { query, calls } = fake(async function* () {});
+    const p = new ClaudeCodeProvider({ token: async () => KEY, cwd: cwd(), query });
+    const events = [];
+    for await (const e of p.stream(req())) events.push(e);
+    expect(calls).toHaveLength(0);
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "error",
+        code: "provider_auth",
+        message:
+          "Only a Claude subscription token runs through Claude Code; an API key goes straight to the API.",
+      }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain(KEY);
+  });
+
+  it("Claude Code's usage limit is provider_usage_limit with the reset it reported", async () => {
+    const resetsAt = Date.parse("2026-11-01T15:00:00Z") / 1000;
+    const { query } = fake(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s" };
+      yield {
+        type: "rate_limit_event",
+        rate_limit_info: { status: "rejected", resetsAt, rateLimitType: "five_hour" },
+      };
+      yield {
+        type: "assistant",
+        error: "rate_limit",
+        message: { content: [{ type: "text", text: "You've hit your limit · resets 3pm" }] },
+      };
+      yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+    });
+    const p = new ClaudeCodeProvider({ token: async () => OAUTH, cwd: cwd(), query });
+    const events = [];
+    for await (const e of p.stream(req())) events.push(e);
+    expect(events).toEqual([
+      {
+        type: "error",
+        code: "provider_usage_limit",
+        message:
+          "The Claude subscription's usage limit is reached: You've hit your limit · resets 3pm",
+        retryable: false,
+        resetAt: "2026-11-01T15:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("a rate_limit without the plan's limit stays a throttle; a billing_error is a usage limit", async () => {
+    const run = async (error: string, text: string) => {
+      const { query } = fake(async function* () {
+        yield { type: "assistant", error, message: { content: [{ type: "text", text }] } };
+        yield { type: "result", subtype: "success", is_error: true, result: text };
+      });
+      const p = new ClaudeCodeProvider({ token: async () => OAUTH, cwd: cwd(), query });
+      const events = [];
+      for await (const e of p.stream(req())) events.push(e);
+      return events[0] as { code: string; resetAt?: string };
+    };
+    expect((await run("rate_limit", "Request rejected (429) · try again")).code).toBe(
+      "provider_rate_limit",
+    );
+    const billing = await run("billing_error", "Credit balance is too low");
+    expect(billing.code).toBe("provider_usage_limit");
+    expect(billing.resetAt).toBeUndefined();
+  });
+
+  it("the Messages API's credit balance, spend limit and spend cap are provider_usage_limit", async () => {
+    const answer = (status: number, error: Record<string, unknown>) =>
+      (async () =>
+        new Response(JSON.stringify({ type: "error", error }), {
+          status,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch;
+    const call = async (fetchImpl: typeof fetch) => {
+      const p = new AnthropicMessagesProvider({ apiKey: KEY, fetch: fetchImpl, maxRetries: 0 });
+      const events = [];
+      for await (const e of p.stream(req())) events.push(e);
+      return events[0] as { type: string; code: string; resetAt?: string; message: string };
+    };
+    const credit = await call(
+      answer(400, {
+        type: "invalid_request_error",
+        message:
+          "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      }),
+    );
+    expect(credit).toMatchObject({ type: "error", code: "provider_usage_limit" });
+    expect(credit.resetAt).toBeUndefined();
+    expect(credit.message).not.toContain(KEY);
+    const own = await call(
+      answer(400, {
+        type: "invalid_request_error",
+        message:
+          "You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.",
+      }),
+    );
+    expect(own).toMatchObject({
+      code: "provider_usage_limit",
+      resetAt: "2026-12-01T00:00:00.000Z",
+    });
+    const cap = await call(
+      answer(429, {
+        type: "rate_limit_error",
+        message:
+          "You have reached your API usage limits: your organization has crossed its monthly API usage threshold, set based on your organization's API tier. You will regain access on 2026-12-01 at 00:00 UTC.",
+        details: { error_code: "enforced_spend_limit_reached" },
+      }),
+    );
+    expect(cap).toMatchObject({
+      code: "provider_usage_limit",
+      resetAt: "2026-12-01T00:00:00.000Z",
+    });
+    // A per-minute rate limit stays a throttle, which the SDK retries.
+    const minute = await call(
+      answer(429, {
+        type: "rate_limit_error",
+        message: "Number of request tokens has exceeded your per-minute rate limit",
+      }),
+    );
+    expect(minute.code).toBe("provider_rate_limit");
+  });
+});

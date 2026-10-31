@@ -372,7 +372,7 @@ interface DriverOutcome {
   costUsdMicro: number;
   ttftMs: number | null;
   durationMs: number;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; resetAt?: string };
   /** The loop driver's context-layer numbers; the SDK path measures none. */
   context: RunContextStats | null;
   injectionReports: number;

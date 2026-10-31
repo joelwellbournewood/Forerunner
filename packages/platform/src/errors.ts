@@ -26,6 +26,12 @@ export type ErrorCode =
   | "provider_error"
   | "provider_auth"
   | "provider_rate_limit"
+  /**
+   * The credential's plan or account limit is reached (a Claude subscription's usage limit, an
+   * API key's credit balance or spend limit): another credential may serve, this one rests
+   * until its reset (ADR 0100). Distinct from `provider_rate_limit`, a short-lived throttle.
+   */
+  | "provider_usage_limit"
   | "not_supported"
   | "unavailable"
   | "injection_suspected"

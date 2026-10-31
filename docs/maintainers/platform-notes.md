@@ -15,7 +15,9 @@ redaction), `ids`, `errors`.
 
 **Errors (`src/errors.ts`).** Every package throws `ForerunnerError` with a stable `code`
 from the `ErrorCode` union, so the UI, logs and tests match on the code, never the message;
-a new code is added to the union here. Recent ones: `identity_ambiguous` (ADR 0082), an
+a new code is added to the union here. Recent ones: `provider_usage_limit` (ADR 0100), a
+credential whose plan or account limit is reached (another credential may serve; distinct from
+the short-lived `provider_rate_limit`); `identity_ambiguous` (ADR 0082), an
 install on a state store holding several humans that names none of them;
 `MEMORY_SCOPE_VIOLATION` (ADR 0083, spelled as ADR 0002 names it), a private-memory row about
 to enter a shared store; and `secret_reserved` (ADR 0065, amended 2026-10-25), a reserved secret

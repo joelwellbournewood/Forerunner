@@ -167,8 +167,37 @@ export type StreamEvent =
   | { type: "tool_use_start"; id: string; name: string }
   | { type: "tool_use_delta"; id: string; partial_json: string }
   | { type: "tool_use_end"; id: string; input: Record<string, unknown> }
-  | { type: "message_end"; stop_reason: StopReason; usage: Usage }
-  | { type: "error"; code: string; message: string; retryable: boolean };
+  | {
+      type: "message_end";
+      stop_reason: StopReason;
+      usage: Usage;
+      /** Which billing source paid for this call, when the provider chose it (`RoutedProvider`). */
+      billing?: CallBilling;
+    }
+  | {
+      type: "error";
+      code: string;
+      message: string;
+      retryable: boolean;
+      /**
+       * `provider_usage_limit` only: when the credential's limit resets, if the provider said
+       * (ISO). The source rests until then, else for an hour (ADR 0100).
+       */
+      resetAt?: string;
+      /** The billing source the failed call was made on, when the provider chose it. */
+      sourceId?: string;
+    };
+
+/**
+ * The billing source a routed call was made on (U-078, ADR 0100): the loop driver books the
+ * call's ledger row to it, with its ledger kind and, for a subscription, the plan share after
+ * the call.
+ */
+export interface CallBilling {
+  sourceId: string;
+  kind: "api" | "subscription" | "plan_credits";
+  planUsageShare?: number | null;
+}
 
 export interface ModelResponse {
   model: string;
@@ -178,6 +207,10 @@ export interface ModelResponse {
   /** Milliseconds from request start to first streamed token. */
   time_to_first_token_ms: number;
   duration_ms: number;
+  /** The source that paid, when the provider chose it (`message_end.billing`). */
+  billing?: CallBilling;
+  /** Set with `stop_reason: "error"`: the provider's error event, as it said it. */
+  error?: { code: string; message: string; resetAt?: string; sourceId?: string };
 }
 
 export interface ModelProvider {
@@ -231,6 +264,7 @@ export async function collectStream(
     cache_read_input_tokens: 0,
     cache_creation_input_tokens: 0,
   };
+  let billing: CallBilling | undefined;
   const flushText = () => {
     if (text) {
       content.push({ type: "text", text });
@@ -279,6 +313,7 @@ export async function collectStream(
       case "message_end":
         stop = ev.stop_reason;
         usage = ev.usage;
+        if (ev.billing) billing = ev.billing;
         break;
       case "error":
         flushText();
@@ -289,6 +324,12 @@ export async function collectStream(
           usage,
           time_to_first_token_ms: ttft < 0 ? now() - t0 : ttft,
           duration_ms: now() - t0,
+          error: {
+            code: ev.code,
+            message: ev.message,
+            ...(ev.resetAt ? { resetAt: ev.resetAt } : {}),
+            ...(ev.sourceId ? { sourceId: ev.sourceId } : {}),
+          },
         };
     }
   }
@@ -300,5 +341,6 @@ export async function collectStream(
     usage,
     time_to_first_token_ms: ttft < 0 ? now() - t0 : ttft,
     duration_ms: now() - t0,
+    ...(billing ? { billing } : {}),
   };
 }

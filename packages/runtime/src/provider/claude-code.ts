@@ -8,6 +8,7 @@ import {
 } from "@forerunner/platform";
 import { z } from "zod";
 import { loadSdkQuery, type QueryLike, scrubEnv } from "../agent/sdk.ts";
+import { SUBSCRIPTION_TOKEN_PREFIX } from "../setup/validators.ts";
 import { anthropicThinkingOff } from "./anthropic.ts";
 import {
   type ChatMessage,
@@ -23,6 +24,7 @@ import {
   type ToolDefinition,
   type Usage,
 } from "./types.ts";
+import { isClaudeCodeUsageLimit, rejectedRateLimitOf, USAGE_LIMIT_CODE } from "./usage-limit.ts";
 
 /**
  * The model provider of an install whose only Claude credential is a subscription token from
@@ -48,7 +50,11 @@ import {
  * next call without a restart (U-049). It is never logged and never part of an error.
  */
 export interface ClaudeCodeProviderOptions {
-  /** The subscription token, read per call; null when the vault holds none. */
+  /**
+   * The subscription token, read per call; null when the vault holds none. Anything that is not
+   * a subscription token (`sk-ant-oat…`) is refused before Claude Code starts: an API key never
+   * runs through Claude Code (U-078, ADR 0100).
+   */
   token: () => Promise<string | null>;
   /** The working directory Claude Code runs in: an empty folder of Forerunner's own. */
   cwd: string;
@@ -104,13 +110,25 @@ export class ClaudeCodeProvider implements ModelProvider {
       yield aborted();
       return;
     }
-    const token = await this.opts.token().catch(() => null);
+    const token = (await this.opts.token().catch(() => null))?.trim() ?? null;
     if (!token) {
       yield {
         type: "error",
         code: "provider_auth",
         message:
           "No Claude subscription token is saved. Add it in Settings → Accounts and keys (the setup assistant).",
+        retryable: false,
+      };
+      return;
+    }
+    // Only the subscription token runs here (U-078, ADR 0100): an API key always goes straight
+    // to the API, where promotional API credits apply; through Claude Code they do not.
+    if (!token.startsWith(SUBSCRIPTION_TOKEN_PREFIX)) {
+      yield {
+        type: "error",
+        code: "provider_auth",
+        message:
+          "Only a Claude subscription token runs through Claude Code; an API key goes straight to the API.",
         retryable: false,
       };
       return;
@@ -127,10 +145,15 @@ export class ClaudeCodeProvider implements ModelProvider {
       const query = this.opts.query ?? (await loadSdkQuery());
       iterator = query({ prompt: promptFor(req.messages), options })[Symbol.asyncIterator]();
       let failure: StreamEvent | null = null;
+      // Claude Code's report that the subscription's limit rejects calls (ADR 0100), and the
+      // failed turn's error kind; read together once the stream ends, whichever came first.
+      let rejected: { resetAt?: string } | null = null;
+      let sdkError: { kind: string; text: string } | null = null;
       for (;;) {
         const next = await iterator.next();
         if (next.done) break;
         const msg = next.value;
+        rejected = rejectedRateLimitOf(msg) ?? rejected;
         if (msg.type === "stream_event") {
           for (const ev of mapper.map(msg.event as RawEvent)) yield ev;
           // The first model response is the call: Claude Code is not let to go on (it would
@@ -139,7 +162,7 @@ export class ClaudeCodeProvider implements ModelProvider {
           continue;
         }
         if (msg.type === "assistant" && typeof msg.error === "string") {
-          failure = errorFromSdk(msg.error, textOf(msg));
+          sdkError = { kind: msg.error, text: textOf(msg) };
           continue;
         }
         if (msg.type === "result" && msg.is_error === true && !mapper.stopped) {
@@ -158,6 +181,8 @@ export class ClaudeCodeProvider implements ModelProvider {
         return;
       }
       if (!mapper.stopped) {
+        if (sdkError) failure = errorFromSdk(sdkError.kind, sdkError.text, rejected);
+        else if (rejected) failure = errorFromSdk("rate_limit", "", rejected);
         yield failure ?? {
           type: "error",
           code: "provider_error",
@@ -328,9 +353,27 @@ function textOf(msg: Record<string, unknown>): string {
     .join("");
 }
 
-/** Claude Code's error kinds (`SDKAssistantMessageError`) as the loop's provider error codes. */
-function errorFromSdk(kind: string, text: string): StreamEvent {
+/**
+ * Claude Code's error kinds (`SDKAssistantMessageError`) as the loop's provider error codes. A
+ * `billing_error`, or a `rate_limit` that Claude Code reported as the plan's limit (a rejected
+ * `rate_limit_event`, or its "You've hit your limit" text), is `provider_usage_limit` with the
+ * reset time when Claude Code gave one (ADR 0100); any other `rate_limit` is a throttle.
+ */
+function errorFromSdk(
+  kind: string,
+  text: string,
+  rejected: { resetAt?: string } | null,
+): StreamEvent {
   const detail = text ? `: ${text}` : "";
+  if (isClaudeCodeUsageLimit(kind, text, rejected !== null)) {
+    return {
+      type: "error",
+      code: USAGE_LIMIT_CODE,
+      message: `The Claude subscription's usage limit is reached${detail}`,
+      retryable: false,
+      ...(rejected?.resetAt ? { resetAt: rejected.resetAt } : {}),
+    };
+  }
   switch (kind) {
     case "authentication_failed":
     case "oauth_org_not_allowed":
@@ -346,7 +389,7 @@ function errorFromSdk(kind: string, text: string): StreamEvent {
       return {
         type: "error",
         code: "provider_rate_limit",
-        message: `Claude subscription usage limit reached${detail}`,
+        message: `Claude is rate limiting the subscription for a moment${detail}`,
         retryable: true,
       };
     case "overloaded":

@@ -4,6 +4,11 @@ import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/ho
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
 import type { EffortLevel, Usage } from "../provider/types.ts";
+import {
+  isClaudeCodeUsageLimit,
+  rejectedRateLimitOf,
+  USAGE_LIMIT_CODE,
+} from "../provider/usage-limit.ts";
 import type { RunEvent, RunOutcome, RunPricing } from "./loop.ts";
 import type { ToolRegistry, ToolSpec } from "./tools.ts";
 
@@ -20,7 +25,11 @@ export interface SdkRunRequest {
   billingSourceId: string;
   /** How the run is billed (ADR 0044): "subscription" rows with the plan share on this path. */
   billing?: RunBilling;
-  /** Exactly one credential, chosen by the billing router. */
+  /**
+   * Exactly one credential, chosen by the billing router: the subscription's token. An API key
+   * is refused (`assertSubscriptionCredential`, U-078, ADR 0100): it always goes straight to
+   * the API, where promotional API credits apply; through Claude Code they do not.
+   */
   credential: { kind: "api_key" | "oauth_token"; value: string };
   model: string;
   effort?: EffortLevel;
@@ -61,7 +70,8 @@ export interface SdkRunResult {
   durationMs: number;
   ttftMs: number | null;
   sessionId: string | null;
-  error?: { code: string; message: string };
+  /** `resetAt`: a `provider_usage_limit` with the reset time Claude Code reported (ADR 0100). */
+  error?: { code: string; message: string; resetAt?: string };
 }
 
 export interface SdkDriverDeps {
@@ -81,12 +91,30 @@ export type QueryLike = (params: {
 /** Claude Code tool names are prefixed in our allowlists so they never collide with Forerunner tools. */
 export const CC_TOOL_PREFIX = "cc:";
 
+/**
+ * The SDK driver runs Claude Code, so it takes the subscription's token and nothing else
+ * (U-078, ADR 0100): an `api_key` credential, or an Anthropic API key handed over as a token,
+ * is refused before anything starts. An API key always goes straight to the Messages API
+ * (the loop driver), where promotional API credits apply.
+ */
+export function assertSubscriptionCredential(credential: SdkRunRequest["credential"]): void {
+  const looksLikeKey = /^sk-ant-(?!oat)/.test(credential.value.trim());
+  if (credential.kind !== "oauth_token" || looksLikeKey) {
+    throw new ForerunnerError(
+      "provider_auth",
+      "An API key never runs through Claude Code: it goes straight to the API, where promotional API credits apply. Only the Claude subscription's token runs here.",
+      { details: { credentialKind: credential.kind } },
+    );
+  }
+}
+
 export class SdkAgentDriver {
   private readonly logger = log("agent-sdk");
 
   constructor(private readonly deps: SdkDriverDeps) {}
 
   async run(req: SdkRunRequest): Promise<SdkRunResult> {
+    assertSubscriptionCredential(req.credential);
     const { clock } = this.deps;
     const claims = req.token.claims;
     const controller = new AbortController();
@@ -141,6 +169,10 @@ export class SdkAgentDriver {
     let ttftMs: number | null = null;
     let sessionId: string | null = null;
     let error: SdkRunResult["error"];
+    // Claude Code's report that the subscription's limit rejects calls, and a failed turn's
+    // error kind (ADR 0100); read together once the stream ends.
+    let rejected: { resetAt?: string } | null = null;
+    let sdkError: { kind: string; text: string } | null = null;
 
     try {
       // Pre-flight: the first model call is accounted like any other; the SDK then reports usage
@@ -152,13 +184,13 @@ export class SdkAgentDriver {
       emit({ type: "run_start", runId: claims.runId, model: req.model });
 
       const query = this.deps.queryImpl ?? (await loadSdkQuery());
+      // The subscription's token only (refused above otherwise); the session's extra variables
+      // (the Headroom proxy) never carry another way to authenticate.
       const env: Record<string, string | undefined> = {
         ...scrubEnv(process.env),
-        ...(req.credential.kind === "api_key"
-          ? { ANTHROPIC_API_KEY: req.credential.value }
-          : { CLAUDE_CODE_OAUTH_TOKEN: req.credential.value }),
+        CLAUDE_CODE_OAUTH_TOKEN: req.credential.value,
         ...(req.baseURL ? { ANTHROPIC_BASE_URL: req.baseURL } : {}),
-        ...(req.env ?? {}),
+        ...withoutClaudeCodeAuth(req.env ?? {}),
       };
       const hooks = this.sdkHooks(ctx, req.tools, emit);
       const options: Record<string, unknown> = {
@@ -257,6 +289,17 @@ export class SdkAgentDriver {
               );
             }
           }
+          rejected = rejectedRateLimitOf(msg) ?? rejected;
+          if (type === "assistant" && typeof msg.error === "string") {
+            const m = msg.message as { content?: { type: string; text?: string }[] } | undefined;
+            sdkError = {
+              kind: msg.error,
+              text: (m?.content ?? [])
+                .filter((b) => b.type === "text")
+                .map((b) => b.text ?? "")
+                .join(""),
+            };
+          }
           if (type === "result") {
             sdkCostUsd = (msg.total_cost_usd as number) ?? 0;
             if (msg.is_error) {
@@ -285,6 +328,22 @@ export class SdkAgentDriver {
         }
       }
       void lastCum;
+      // The subscription's usage limit stopped the run (ADR 0100): a stable code with the
+      // reset time Claude Code reported, so the executor rests the source and gives the task
+      // back without counting an attempt.
+      const failedTurn = sdkError as { kind: string; text: string } | null;
+      if (
+        failedTurn &&
+        isClaudeCodeUsageLimit(failedTurn.kind, failedTurn.text, rejected !== null)
+      ) {
+        const limit = rejected as { resetAt?: string } | null;
+        outcome = "error";
+        error = {
+          code: USAGE_LIMIT_CODE,
+          message: `The Claude subscription's usage limit is reached${failedTurn.text ? `: ${failedTurn.text}` : ""}`,
+          ...(limit?.resetAt ? { resetAt: limit.resetAt } : {}),
+        };
+      }
     } catch (e) {
       const code = e instanceof ForerunnerError ? e.code : "internal";
       outcome =
@@ -504,7 +563,8 @@ const PROXY_NAME = /(^|_)PROXY$/i;
 export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(env)) {
-    if (DENIED_ENV_PREFIX.test(k) || DENIED_ENV_NAME.test(k)) continue;
+    if (DENIED_ENV_PREFIX.test(k) || DENIED_ENV_NAME.test(k) || CLAUDE_CODE_AUTH_ENV.test(k))
+      continue;
     if (typeof v === "string" && USERINFO_URL.test(v)) {
       if (PROXY_NAME.test(k)) out[k] = v.replace(USERINFO_URL, "$1");
       continue;
@@ -513,6 +573,23 @@ export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string | undefi
     out[k] = v;
   }
   return out;
+}
+
+/**
+ * The variables that make Claude Code authenticate or bill some other way than with the token
+ * Forerunner hands it (U-078, ADR 0100), read off the binary Agent SDK 0.3.304 ships: an API
+ * key (`ANTHROPIC_API_KEY`, which Claude Code prefers over the subscription, or one passed by
+ * file descriptor), a bearer token (`ANTHROPIC_AUTH_TOKEN`, a gateway token, a hosted session's
+ * token), another OAuth token or refresh token, and a switch to another provider's billing
+ * (`CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, `_ANTHROPIC_AWS`, ...). The name rules
+ * above catch most of them already; this list makes the rule explicit and tested.
+ */
+const CLAUDE_CODE_AUTH_ENV =
+  /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_FOUNDRY_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_OAUTH_REFRESH_TOKEN|CLAUDE_CODE_SESSION_ACCESS_TOKEN|CLAUDE_CODE_GATEWAY_TOKEN|CLAUDE_CODE_HOST_AUTH_ENV_VAR|CLAUDE_CODE_USE_[A-Z_]+|CLAUDE_CODE_[A-Z_]*FILE_DESCRIPTOR|CLAUDE_CODE_API_KEY_HELPER_TTL_MS)$/i;
+
+/** Extra subprocess variables (the session's proxy settings) with every way to authenticate taken out. */
+export function withoutClaudeCodeAuth(env: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !CLAUDE_CODE_AUTH_ENV.test(k)));
 }
 
 /** The SDK's `query`, imported on first use so a unit test never loads Claude Code. */

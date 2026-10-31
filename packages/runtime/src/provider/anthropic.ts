@@ -22,6 +22,7 @@ import {
   type StopReason,
   type StreamEvent,
 } from "./types.ts";
+import { USAGE_LIMIT_CODE, usageLimitOfApiError } from "./usage-limit.ts";
 
 /**
  * Anthropic Messages API adapter. Streams, maps effort to output_config.effort, marks stable
@@ -288,7 +289,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
         ...(fast ? { headers: { "anthropic-beta": FAST_MODE_BETA } } : {}),
       });
     } catch (e) {
-      yield req.signal?.aborted ? aborted() : mapError(e, this.secrets());
+      yield req.signal?.aborted ? aborted() : mapError(e, this.secrets(), this.clock.now());
       return;
     }
     const open = new Map<number, { id: string; name: string; json: string }>();
@@ -367,7 +368,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
       }
     } catch (e) {
       if (!stopped) {
-        yield req.signal?.aborted ? aborted() : mapError(e, this.secrets());
+        yield req.signal?.aborted ? aborted() : mapError(e, this.secrets(), this.clock.now());
         return;
       }
     }
@@ -423,7 +424,7 @@ function mapStop(s: string | null | undefined): StopReason {
   }
 }
 
-function mapError(e: unknown, secrets: string[]): StreamEvent {
+function mapError(e: unknown, secrets: string[], nowMs: number): StreamEvent {
   const status = (e as { status?: number }).status;
   // No answer at all (the SDK's "Connection error."): the cause says what failed (U-053), the
   // credential cut out of it (a key the runtime cannot put in a header is quoted there).
@@ -439,6 +440,16 @@ function mapError(e: unknown, secrets: string[]): StreamEvent {
   for (const s of secrets) if (s) message = message.split(s).join("[REDACTED]");
   if (status === 401 || status === 403)
     return { type: "error", code: "provider_auth", message, retryable: false };
+  // The key's credit balance, spend cap or spend limit (ADR 0100): another source may serve.
+  const limit = usageLimitOfApiError(e, nowMs);
+  if (limit)
+    return {
+      type: "error",
+      code: USAGE_LIMIT_CODE,
+      message: `The API key's usage limit is reached: ${message}`,
+      retryable: false,
+      ...(limit.resetAt ? { resetAt: limit.resetAt } : {}),
+    };
   if (status === 429)
     return { type: "error", code: "provider_rate_limit", message, retryable: true };
   if (status === 529 || (status && status >= 500))

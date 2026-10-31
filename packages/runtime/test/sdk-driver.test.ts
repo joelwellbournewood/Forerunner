@@ -1,3 +1,4 @@
+import { ForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { type QueryLike, SdkAgentDriver, scrubEnv } from "../src/agent/sdk.ts";
 import { budget, flatPricing, harness, issue, registry } from "./helpers.ts";
@@ -104,7 +105,7 @@ describe("SdkAgentDriver", () => {
       token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 1_000_000 }),
       budget: budget("sess-1", 5_000_000, h.clock),
       billingSourceId: "bs",
-      credential: { kind: "api_key", value: "k" },
+      credential: { kind: "oauth_token", value: "oat-value" },
       model: "claude-sonnet-5-5",
       systemPrompt: "sys",
       prompt: "p",
@@ -149,7 +150,7 @@ describe("SdkAgentDriver", () => {
       token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 1_000_000 }),
       budget: budget("sess-1", 50_000_000, h.clock),
       billingSourceId: "bs",
-      credential: { kind: "api_key", value: "k" },
+      credential: { kind: "oauth_token", value: "oat-value" },
       model: "claude-sonnet-5-5",
       systemPrompt: "sys",
       prompt: "p",
@@ -187,7 +188,7 @@ describe("SdkAgentDriver", () => {
       token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 1_000_000 }),
       budget: budget("sess-1", 50_000_000, h.clock),
       billingSourceId: "bs",
-      credential: { kind: "api_key", value: "k" },
+      credential: { kind: "oauth_token", value: "oat-value" },
       model: "claude-sonnet-5-5",
       systemPrompt: "sys",
       prompt: "p",
@@ -216,5 +217,135 @@ describe("SdkAgentDriver", () => {
       FOO_PASSWORD: "p",
     });
     expect(Object.keys(out).sort()).toEqual(["HOME", "PATH"]);
+  });
+});
+
+/**
+ * U-078 (ADR 0100): promotional API credits apply only when an API key is used off Claude
+ * Code, so an API key never runs through Claude Code. The driver refuses one, and nothing in
+ * the person's environment can make Claude Code use a key, a bearer token or another
+ * provider's billing in place of the subscription's token.
+ */
+describe("SdkAgentDriver: only the subscription's token runs through Claude Code (U-078)", () => {
+  const request = (
+    h: ReturnType<typeof harness>,
+    credential: { kind: "api_key" | "oauth_token"; value: string },
+  ) => ({
+    token: issue(h, { allowedTools: ["cc:Read"], budgetUsdMicro: 2_500_000 }),
+    budget: budget("sess-1", 5_000_000, h.clock),
+    billingSourceId: "bs",
+    credential,
+    model: "claude-sonnet-5-5",
+    systemPrompt: "s",
+    prompt: "p",
+    cwd: process.cwd(),
+    tools: registry(),
+    pricing: flatPricing,
+    timeoutMs: 60_000,
+  });
+
+  it("refuses an API key with a ForerunnerError before Claude Code starts", async () => {
+    const h = harness();
+    const { q, seen } = fakeQuery(() => [{ type: "result", subtype: "success", is_error: false }]);
+    const driver = new SdkAgentDriver({
+      hooks: h.hooks,
+      kill: h.kill,
+      clock: h.clock,
+      queryImpl: q,
+    });
+    const key = ["sk-ant-", "api03-", "k".repeat(20)].join(""); // not-a-secret
+    for (const credential of [
+      { kind: "api_key" as const, value: key },
+      // A key handed over as if it were the subscription's token is refused the same way.
+      { kind: "oauth_token" as const, value: key },
+    ]) {
+      const err = await driver.run(request(h, credential)).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(ForerunnerError);
+      expect((err as ForerunnerError).code).toBe("provider_auth");
+      expect((err as ForerunnerError).message).toContain("never runs through Claude Code");
+      expect((err as ForerunnerError).message).not.toContain(key);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  it("hands Claude Code the token as CLAUDE_CODE_OAUTH_TOKEN and no API key, even one in the session's env", async () => {
+    const h = harness();
+    const { q, seen } = fakeQuery(() => [{ type: "result", subtype: "success", is_error: false }]);
+    const driver = new SdkAgentDriver({
+      hooks: h.hooks,
+      kill: h.kill,
+      clock: h.clock,
+      queryImpl: q,
+    });
+    await driver.run({
+      ...request(h, { kind: "oauth_token", value: "oat-value" }),
+      env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8787", ANTHROPIC_API_KEY: "sneaked" },
+    });
+    const env = seen[0]?.env as Record<string, string | undefined>;
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oat-value");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8787");
+  });
+
+  it("scrubEnv strips every variable that would make Claude Code bill another way", () => {
+    const names = [
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_FOUNDRY_API_KEY",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+      "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+      "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+      "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+      "CLAUDE_CODE_GATEWAY_TOKEN",
+      "CLAUDE_CODE_USE_BEDROCK",
+      "CLAUDE_CODE_USE_VERTEX",
+      "CLAUDE_CODE_USE_FOUNDRY",
+      "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+      "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+    ];
+    const out = scrubEnv({
+      PATH: "/bin",
+      HOME: "/h",
+      LANG: "de_CH.UTF-8",
+      ...Object.fromEntries(names.map((n) => [n, "1"])),
+    });
+    for (const n of names) expect(out[n], n).toBeUndefined();
+    expect(out).toEqual({ PATH: "/bin", HOME: "/h", LANG: "de_CH.UTF-8" });
+  });
+
+  it("a usage limit from Claude Code ends the run with provider_usage_limit and the reset time", async () => {
+    const h = harness();
+    const resetsAt = Date.parse("2026-11-01T15:00:00Z") / 1000;
+    const { q } = fakeQuery(() => [
+      { type: "system", subtype: "init", session_id: "s" },
+      {
+        type: "rate_limit_event",
+        rate_limit_info: { status: "rejected", resetsAt, rateLimitType: "five_hour" },
+      },
+      {
+        type: "assistant",
+        error: "rate_limit",
+        message: { content: [{ type: "text", text: "You've hit your limit · resets 3pm" }] },
+      },
+      { type: "result", subtype: "success", is_error: true, result: "You've hit your limit" },
+    ]);
+    const driver = new SdkAgentDriver({
+      hooks: h.hooks,
+      kill: h.kill,
+      clock: h.clock,
+      queryImpl: q,
+    });
+    const res = await driver.run(request(h, { kind: "oauth_token", value: "oat-value" }));
+    expect(res.outcome).toBe("error");
+    expect(res.error).toEqual({
+      code: "provider_usage_limit",
+      message:
+        "The Claude subscription's usage limit is reached: You've hit your limit · resets 3pm",
+      resetAt: "2026-11-01T15:00:00.000Z",
+    });
   });
 });
