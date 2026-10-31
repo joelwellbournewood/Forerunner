@@ -61,8 +61,8 @@ import { defaultHandoverSeed, type HandoverSeed, handoverSeedOf } from "./handov
 
 /**
  * The prefix of the scheduler entries' sentinel agent ids, like the model watch's. Each
- * project gets its own (`handoverAgentId`): the scheduler keeps one pending slot per agent,
- * so a shared id would let a third project due the same day replace the second's request.
+ * project gets its own (`handoverAgentId`): the scheduler keeps one waiting line per agent
+ * and folds an equal start asked again into the waiting one, so each project keeps its own.
  */
 export const HANDOVER_AGENT_ID = "handover-test";
 

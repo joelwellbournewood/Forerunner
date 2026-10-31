@@ -1070,7 +1070,15 @@ export function createDaemonApp(
           session = sessionView(row, name, chf());
         }
       }
-      const view: StartSessionView = { result: entry.result, startId: entry.id, session };
+      // A waiting start says how many wait before it (U-043): they run in order.
+      const ahead =
+        entry.result === "started" ? undefined : rt.scheduler.waitingAhead(body.agentId, entry.id);
+      const view: StartSessionView = {
+        result: entry.result,
+        startId: entry.id,
+        session,
+        ...(ahead === undefined ? {} : { ahead }),
+      };
       return c.json(view, 202);
     } finally {
       waited.abort();

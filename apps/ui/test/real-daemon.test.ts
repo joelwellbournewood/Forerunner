@@ -556,11 +556,10 @@ async function composeWithWaitingRun(): Promise<{
 }> {
   const home = mkdtempSync(join(tmpdir(), "fr-ui-real-run-"));
   const clock = new SimulatedClock("2026-03-05T08:00:00Z");
-  // The first model call waits an hour of simulated time that never passes; the rest answer.
-  const provider = new ScriptedProvider(
-    [{ ttftMs: 3_600_000, text: "never sent" }, { text: "Done." }],
-    clock,
-  );
+  // Model calls 1 and 3 wait an hour of simulated time that never passes (each test's running
+  // task); call 2 answers (U-039's next task).
+  const waiting = { ttftMs: 3_600_000, text: "never sent" };
+  const provider = new ScriptedProvider([waiting, { text: "Done." }, waiting], clock);
   const rt = await composeRuntime({
     env: { FORERUNNER_HOME: home },
     dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
@@ -670,5 +669,44 @@ describe("the UI client against the real daemon: a task a session is running", (
     expect((await client.session(sessionId)).summary).toContain(
       'Moved by you while it ran: "Long first task" (cancelled)',
     );
+  });
+
+  it("Start while a session runs: each waiting start says how many wait before it; none is replaced (U-043)", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Busy", goal: "One at a time" });
+    const task = await client.createTask(project.id, {
+      title: "Keeps the agent busy",
+      outcome: "it is done",
+      acceptanceCriteria: [],
+      riskTier: 0,
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    const running = await client.startSession({ agentId, projectId: project.id });
+    expect(running.result).toBe("started");
+    expect(running.ahead).toBeUndefined();
+    await eventually(
+      async () => provider.calls.length === 3,
+      "the running task's model call",
+      async () => `${provider.calls.length} model call(s)`,
+    );
+    // The Start dialog's call twice while the session runs.
+    const first = await client.startSession({ agentId, projectId: project.id });
+    const second = await client.startSession({ agentId, projectId: project.id });
+    expect(first).toMatchObject({ result: "queued", ahead: 0, session: null });
+    expect(second).toMatchObject({ result: "queued", ahead: 1, session: null });
+    expect(rt.scheduler.pendingStarts(agentId).map((e) => e.id)).toEqual([
+      first.startId,
+      second.startId,
+    ]);
+    // End the running task so nothing is left running.
+    const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
+    await client.transitionTask(task.id, {
+      version: row?.version ?? 0,
+      to: "cancelled",
+      reason: "Cancelled in the app",
+    });
   });
 });

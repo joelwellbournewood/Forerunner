@@ -184,6 +184,21 @@ export interface SchedulerLogEntry {
   detail?: string;
 }
 
+/**
+ * Two waiting requests that would do the same work (U-043): the same agent, project, trigger,
+ * approved plan, answered approval and cap. The reason is a description and does not count.
+ */
+function sameStart(a: StartRequest, b: StartRequest): boolean {
+  return (
+    a.agentId === b.agentId &&
+    a.projectId === b.projectId &&
+    a.trigger === b.trigger &&
+    a.planApproved === b.planApproved &&
+    a.approvalRequestId === b.approvalRequestId &&
+    a.budgetUsdMicro === b.budgetUsdMicro
+  );
+}
+
 /** What `request` answers: the start ran, waits behind a running session, or waits for daytime. */
 export type StartOutcome = "started" | "queued" | "deferred";
 
@@ -209,8 +224,13 @@ export class Scheduler {
   private readonly active = new Set<string>();
   /** The log entry of the start each active agent is running, until it ends. */
   private readonly activeStarts = new Map<string, SchedulerLogEntry>();
-  /** The request waiting per agent (queued or deferred), as its log entry so the id follows it. */
-  private readonly pending = new Map<string, SchedulerLogEntry>();
+  /**
+   * The requests waiting per agent (queued behind its running session or deferred by quiet
+   * hours), first come first, each as its log entry so the id follows it (U-043: one slot per
+   * agent used to hold only the newest, so an approved plan's start or a CI trigger waiting
+   * there was replaced by the next request without a word).
+   */
+  private readonly pending = new Map<string, SchedulerLogEntry[]>();
   /** How the runs of the most recent starts ended, by start id (`runOutcome`). */
   private readonly runs = new Map<string, Promise<StartRunOutcome>>();
   private cancel: (() => void) | null = null;
@@ -329,13 +349,56 @@ export class Scheduler {
         });
       }
     }
-    // Drain queued requests for agents that are now free; a drained request keeps its id.
+    // Drain: an agent that is now free starts its first waiting request that may start now (a
+    // start deferred by quiet hours keeps its place while they last and holds up no one behind
+    // it); the rest wait their turn. A drained request keeps its id.
     for (const [agentId, waiting] of [...this.pending]) {
-      if (!this.active.has(agentId)) {
-        this.pending.delete(agentId);
-        await this.requestStart(waiting.req, undefined, waiting.id);
-      }
+      if (this.active.has(agentId)) continue;
+      const next = waiting.find((e) => !this.deferredNow(e.req, now));
+      if (!next) continue;
+      this.removePending(agentId, next.id);
+      await this.requestStart(next.req, now, next.id);
     }
+  }
+
+  /** True while quiet hours hold a non-manual start back. */
+  private deferredNow(req: StartRequest, now: number): boolean {
+    return req.trigger !== "manual" && (this.deps.isQuietHours?.(req.agentId, now) ?? false);
+  }
+
+  /**
+   * Put a request at the end of the agent's waiting line, unless the same automatic start
+   * already waits there (the same project, trigger, approved plan, answered approval and cap):
+   * then that one answers for both and the log records it, since running the same work twice
+   * in a row does nothing more. A person's own start is always kept.
+   */
+  private enqueue(entry: StartEntry): StartEntry {
+    const line = this.pending.get(entry.req.agentId) ?? [];
+    const same =
+      entry.req.trigger === "manual" ? undefined : line.find((e) => sameStart(e.req, entry.req));
+    if (same) {
+      this.log.push({
+        id: same.id,
+        at: entry.at,
+        req: entry.req,
+        result: same.result === "deferred" ? "deferred" : "queued",
+        detail: "asked again while it waits; it runs once",
+      });
+      return { ...same, result: same.result === "deferred" ? "deferred" : "queued" };
+    }
+    line.push(entry);
+    this.pending.set(entry.req.agentId, line);
+    this.log.push(entry);
+    return entry;
+  }
+
+  private removePending(agentId: string, startId: string): SchedulerLogEntry | undefined {
+    const line = this.pending.get(agentId);
+    const at = line?.findIndex((e) => e.id === startId) ?? -1;
+    if (!line || at < 0) return undefined;
+    const [removed] = line.splice(at, 1);
+    if (line.length === 0) this.pending.delete(agentId);
+    return removed;
   }
 
   /** External triggers call this: message, human answer, CI, PR comment, email, remote, manual. */
@@ -353,19 +416,13 @@ export class Scheduler {
     id: string = randomUUID(),
   ): Promise<StartEntry> {
     const at = new Date(now).toISOString();
-    if (req.trigger !== "manual" && this.deps.isQuietHours?.(req.agentId, now)) {
-      const deferred: StartEntry = { id, at, req, result: "deferred", detail: "quiet hours" };
-      this.pending.set(req.agentId, deferred);
-      this.log.push(deferred);
-      return deferred;
+    if (this.deferredNow(req, now)) {
+      return this.enqueue({ id, at, req, result: "deferred", detail: "quiet hours" });
     }
     if (this.active.has(req.agentId)) {
-      // One active session per agent; the newest request wins the queue slot (the next session
-      // reads the inbox anyway, so nothing is lost).
-      const queued: StartEntry = { id, at, req, result: "queued" };
-      this.pending.set(req.agentId, queued);
-      this.log.push(queued);
-      return queued;
+      // One active session per agent; the request waits its turn behind the ones already
+      // waiting (U-043), and runs when the session before it ends.
+      return this.enqueue({ id, at, req, result: "queued" });
     }
     this.active.add(req.agentId);
     const entry: StartEntry = { id, at, req, result: "started" };
@@ -429,24 +486,42 @@ export class Scheduler {
     return this.activeStarts.get(agentId);
   }
 
-  /** The request waiting for the agent (queued behind an active session or deferred by quiet hours). */
+  /**
+   * The first request waiting for the agent (queued behind an active session or deferred by
+   * quiet hours); `pendingStarts` lists them all.
+   */
   pendingFor(agentId: string): StartRequest | undefined {
-    return this.pending.get(agentId)?.req;
+    return this.pending.get(agentId)?.[0]?.req;
   }
 
-  /** The waiting request as its log entry (its `id` is the start's identity). */
+  /** The first waiting request as its log entry (its `id` is the start's identity). */
   pendingStart(agentId: string): SchedulerLogEntry | undefined {
-    return this.pending.get(agentId);
+    return this.pending.get(agentId)?.[0];
+  }
+
+  /** Every request waiting for the agent, in the order they will start (U-043). */
+  pendingStarts(agentId: string): SchedulerLogEntry[] {
+    return [...(this.pending.get(agentId) ?? [])];
   }
 
   /**
-   * Drop the agent's waiting request (the undo of a start that only queued): nothing running
-   * is touched. Returns the dropped request, or undefined when none was waiting.
+   * How many waiting starts come before this one (0: it starts when the running session ends),
+   * or undefined when it is not waiting.
    */
-  cancelPending(agentId: string, reason = "cancelled"): StartRequest | undefined {
-    const waiting = this.pending.get(agentId);
+  waitingAhead(agentId: string, startId: string): number | undefined {
+    const at = this.pending.get(agentId)?.findIndex((e) => e.id === startId) ?? -1;
+    return at < 0 ? undefined : at;
+  }
+
+  /**
+   * Drop a waiting request of the agent (the undo of a start that only queued): the one
+   * `startId` names, else the first. Nothing running is touched and the others keep their
+   * order. Returns the dropped request, or undefined when it was not waiting.
+   */
+  cancelPending(agentId: string, reason = "cancelled", startId?: string): StartRequest | undefined {
+    const id = startId ?? this.pending.get(agentId)?.[0]?.id;
+    const waiting = id === undefined ? undefined : this.removePending(agentId, id);
     if (!waiting) return undefined;
-    this.pending.delete(agentId);
     this.log.push({
       id: waiting.id,
       at: new Date(this.deps.clock.now()).toISOString(),

@@ -7,13 +7,25 @@ import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient, useIdentity } from "../../store/context.tsx";
 
-/** What the dialog says when the start did not hand back a session to open (U-003). */
-export function startNotice(result: StartSessionView["result"]): string {
+/**
+ * What the dialog says when the start did not hand back a session to open (U-003). A waiting
+ * start runs in order behind the ones already waiting, never replaced (U-043), so the notice
+ * says how many come first.
+ */
+export function startNotice(result: StartSessionView["result"], ahead = 0): string {
+  const before =
+    ahead === 1
+      ? "1 other start waits before this one; they run one after the other, in order."
+      : `${ahead} other starts wait before this one; they run one after the other, in order.`;
   switch (result) {
     case "queued":
-      return "Queued: your agent is in another session. This one starts when that one ends.";
+      return ahead > 0
+        ? `Queued: your agent is in another session, and ${before} This one starts after them.`
+        : "Queued: your agent is in another session. This one starts when that one ends.";
     case "deferred":
-      return "Deferred: it is quiet hours. The session starts when they end.";
+      return ahead > 0
+        ? `Deferred: it is quiet hours, and ${before} This one starts after them, once the quiet hours end.`
+        : "Deferred: it is quiet hours. The session starts when they end.";
     default:
       return "Starting: the session appears under Sessions in a moment.";
   }
@@ -133,7 +145,7 @@ export function StartSessionDialog({
         onClose();
         navigate(`/sessions/${encodeURIComponent(started.session.id)}`);
       } else {
-        setNotice(startNotice(started.result));
+        setNotice(startNotice(started.result, started.ahead));
       }
     } catch (err) {
       setError(describeError(err));

@@ -167,6 +167,27 @@ describe("Project page", () => {
     expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
   });
 
+  it("a second queued start says how many wait before it, since waiting starts run in order (U-043)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ startOutcome: "queued" });
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    await waitFor(() => expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled());
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
+      "Queued: your agent is in another session. This one starts when that one ends.",
+    );
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("start-session-notice")).toHaveTextContent(
+        "Queued: your agent is in another session, and 1 other start waits before this one; they run one after the other, in order. This one starts after them.",
+      ),
+    );
+    expect(postedCalls(harness, "/sessions")).toHaveLength(2);
+  });
+
   it("starts a session from the dialog and opens the live view", async () => {
     const user = userEvent.setup();
     const harness = createHarness({ eventDelayMs: 10 });

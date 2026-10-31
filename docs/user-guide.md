@@ -88,6 +88,10 @@ the step count and the running cost against the cap; escalations are highlighted
 behind a toggle. A session stops cleanly when it reaches 80% of its cap (it finishes the
 current task and starts nothing new), when its wall clock runs out, or when you stop it.
 
+A start while your agent is in another session waits its turn: waiting starts (yours, an
+approved plan's, a CI or pull request trigger) run one after the other in the order they came,
+and none replaces another. **Start session** says how many wait before yours.
+
 A session plans the ready tasks that fit its budget, highest priority first; a task too large
 for the budget is left out and the smaller ones after it still run. **Start session** says
 before you start when no ready task can run (each one that waits on another task, and each

@@ -551,13 +551,14 @@ export async function sessionOfStart(
  * start's identity (`startId`; the session id is never known synchronously); its undo
  * arrives as a kill of the agent's scope naming that start (`{ agentId, startId }`) with
  * `SESSION_START_UNDO_REASON` and is answered by `startUndoState`: a start still waiting
- * (queued or deferred) is dropped (`Scheduler.cancelPending`); a start whose session still
- * runs (`Scheduler.activeStart` carries its id) is stopped as that session only
+ * (queued or deferred, wherever it waits in the line) is dropped, and no other
+ * (`Scheduler.cancelPending` with its id); a start whose session still runs
+ * (`Scheduler.activeStart` carries its id) is stopped as that session only
  * (`{ agentId, sessionId }`, the row this runner began for it: the agent's active row of this
  * install's runner kind with the start's trigger, begun at or after the start), never as
  * the agent's scope, so the kill switch holds nothing else and the next scheduled session
- * runs; a start that is neither (its session ended, or the queue slot went to a newer
- * request) is a no-op that never reaches the kill switch (`CommandLoop.undo` marks such a
+ * runs; a start that is neither (its session ended) is a no-op that never reaches the kill
+ * switch (`CommandLoop.undo` marks such a
  * row irreversible with `SESSION_START_ENDED_REASON`). A later start of the same agent, by
  * hand, from the phone or by schedule, is never mistaken for the one undone, and an undo
  * whose row names no start matches nothing running. A start made from a phone is a remote
@@ -566,7 +567,7 @@ export async function sessionOfStart(
  * reaches the kill switch unchanged.
  */
 export function sessionCommandPorts(deps: {
-  scheduler: Pick<Scheduler, "requestStart" | "cancelPending" | "pendingStart" | "activeStart">;
+  scheduler: Pick<Scheduler, "requestStart" | "cancelPending" | "waitingAhead" | "activeStart">;
   kill: {
     stop(
       scope: KillScope | "all",
@@ -582,7 +583,8 @@ export function sessionCommandPorts(deps: {
   const runner = deps.runner ?? "pc";
   const startUndoState = async (agentId: string, startId?: string): Promise<StartUndoState> => {
     if (!startId) return "ended";
-    if (deps.scheduler.pendingStart(agentId)?.id === startId) return "pending";
+    // Any waiting start, not only the first (U-043: several wait in order now).
+    if (deps.scheduler.waitingAhead(agentId, startId) !== undefined) return "pending";
     if (deps.scheduler.activeStart(agentId)?.id === startId) return "running";
     return "ended";
   };
@@ -613,7 +615,7 @@ export function sessionCommandPorts(deps: {
         const { agentId, startId } = scope;
         const state = await startUndoState(agentId, startId);
         if (state === "pending") {
-          deps.scheduler.cancelPending(agentId, reason);
+          deps.scheduler.cancelPending(agentId, reason, startId);
           return nothingStopped();
         }
         if (state === "ended") return nothingStopped();

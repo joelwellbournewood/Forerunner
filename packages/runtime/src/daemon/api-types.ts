@@ -419,6 +419,12 @@ export const StartSessionView = z.object({
   result: z.enum(["started", "queued", "deferred"]),
   startId: z.string(),
   session: SessionView.nullable(),
+  /**
+   * A waiting start (queued or deferred): how many of the agent's waiting starts come before it
+   * (0: it starts when the running session ends). Waiting starts run in order, none replaced
+   * (U-043). Absent for a start that began.
+   */
+  ahead: z.number().int().nonnegative().optional(),
 });
 export type StartSessionView = z.infer<typeof StartSessionView>;
 
@@ -1945,7 +1951,7 @@ export const DAEMON_ROUTES = {
   runs: "GET /projects/:id/runs?limit=",
   sessions: "GET /sessions?agentId=&projectId=&status=",
   startSession:
-    "POST /sessions (StartSessionBody -> 202 StartSessionView: started, queued behind the agent's running session, or deferred by quiet hours; a started one waits up to 15 s for its session and carries it; a run that fails before its session begins answers that error)",
+    "POST /sessions (StartSessionBody -> 202 StartSessionView: started, queued behind the agent's running session, or deferred by quiet hours; a started one waits up to 15 s for its session and carries it; a waiting one carries `ahead`, the number of the agent's waiting starts before it, which run in order and are never replaced (U-043); a run that fails before its session begins answers that error)",
   session: "GET /sessions/:id",
   sessionEvents: "GET /sessions/:id/events?afterSeq= (JSON) | Accept: text/event-stream (SSE)",
   stopSession:

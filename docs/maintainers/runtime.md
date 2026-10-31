@@ -860,7 +860,21 @@ deliveries. Tests: `live-chat.test.ts`. Requirement: O.9.
 
 `triggers.ts` is the scheduler (daily, weekdays, every N
 minutes and monthly in the human's time zone; message, CI, PR comment, email, remote and manual
-requests; one active session per agent; quiet hours defer non-manual triggers). A `monthly`
+requests; one active session per agent; quiet hours defer non-manual triggers). Starts that
+wait (queued behind the agent's running session, or deferred by quiet hours) are kept per
+agent in the order they came, each as its log entry with its id, and the tick starts the
+first one that may start now when the agent is free (a deferred one keeps its place while the
+quiet hours last and holds up no person's start behind it) (U-043: up to 1.0.4 one slot per
+agent held only the newest request, so an approved plan's start or a CI trigger waiting there
+was replaced by the next request without a word, and the Start dialog's "This one starts when
+that one ends" was not true). The same automatic start asked again while it waits (same
+project, trigger, approved plan, answered approval and cap; never a `manual` one) is kept once:
+the waiting entry answers for both and the log gets a line `"asked again while it waits; it
+runs once"`. `pendingStarts(agent)` lists the waiting entries, `waitingAhead(agent, startId)`
+says how many come before one, `pendingFor` / `pendingStart` are the first, and
+`cancelPending(agent, reason, startId)` drops the one named, the others keeping their order.
+The line is in memory, as the single slot was: a restart forgets the waiting starts (Known
+issues). Tests: `scheduler-queue.test.ts`. A `monthly`
 schedule (ADR 0060) fires on `dayOfMonth` (1 to 31, clamped to the month's last day, so 31
 fires on 30 April and 28 February) at `time`, once per local month (`localParts().monthKey`),
 and catches up later in the month when the daemon was down on the day. A schedule seen for the
@@ -1589,15 +1603,16 @@ from the queue to the run, `Scheduler.requestStart`), which the registry keeps i
 log row (`after.start_id`) and names in the undo's kill scope (`KillScope.startId`,
 `@forerunner/commands`). The undo (a kill of the agent's scope naming the start, with
 `SESSION_START_UNDO_REASON`) is answered by `startUndoState(agentId, startId)` for that
-start and no other (phase 5 follow-up RT-P5-2, ADR 0049): `pending` (the scheduler's
-`pendingStart` carries the id) drops the waiting request (`Scheduler.cancelPending`) instead
+start and no other (phase 5 follow-up RT-P5-2, ADR 0049): `pending` (the start is one of the
+agent's waiting starts, `Scheduler.waitingAhead`) drops that request and no other
+(`Scheduler.cancelPending` with the start id; U-043) instead
 of stopping the session the agent is running; `running` (`Scheduler.activeStart` carries
 the id) stops the session that start began as that session only (`kill.stop({ agentId,
 sessionId })`, never the agent's scope, so the kill switch holds nothing else and the next
 scheduled session runs), the row being the agent's active session of this install's runner
 kind (`runner`, default `pc`; a cloud session of the agent in the shared store is never it)
 with the start's trigger, begun at or after the start; `ended` (neither: the session ended,
-the queue slot went to a newer request, or the row names no start) is a no-op that never
+or the row names no start) is a no-op that never
 reaches the kill switch. A later start of the same agent, by hand, from the phone or by
 schedule, is never mistaken for the one undone: the morning's start undone in the afternoon
 while the afternoon's session runs is the no-op, and the afternoon's undo stops the
@@ -2501,7 +2516,9 @@ reads `daemon.json` and reports health.
 **Starting a session from the app (`POST /sessions`; U-003 in `docs/status/UPDATE-LOG.md`).**
 The route calls `Scheduler.requestStart` and answers `202 StartSessionView`: `result`
 (`started`, `queued` behind the agent's running session, `deferred` by quiet hours), `startId`
-(the scheduler entry's id, the identity the undo of a start names) and `session`. A started
+(the scheduler entry's id, the identity the undo of a start names), `session` and, for a
+waiting start, `ahead` (`Scheduler.waitingAhead`: how many waiting starts come before it, 0
+when it starts as the running session ends; U-043), which the dialog's notice names. A started
 start is waited for until the first of: the run's `session.started` bus event (its row exists
 then, found with `sessionOfStart` from `loop/commands.ts`, the rule the undo uses), the run's
 end, or `SESSION_START_WAIT_MS` (15 s) on the runtime clock. The listener is attached before
@@ -4212,10 +4229,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   is shown instead (apps.md). `startPairing` accepts
   `kind: "web"` but builds the same `fr://` link; the approvals web needs
   `<page url>#code=` and no page URL is configured yet (apps.md, approvals web).
-- An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
-  single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
-  request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and
-  the replaced plan is proposed again by the next session rather than run (ADR 0053).
+- The scheduler's waiting starts (U-043: kept in order, an approved plan's start among them)
+  live in memory: a daemon restarted while starts wait forgets them. An approved plan's start
+  is recorded as handed over (`outcome: "queued"`), so after such a restart the plan is
+  proposed again by the next session rather than run (ADR 0053).
 - `fr setup --email` on a solo install whose human was created with an empty email (every
   install before ADR 0082) makes the next start create a second human, since the email
   matches nobody and the daemon never adopts a row the selector does not name; `fr doctor`
@@ -4454,7 +4471,7 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   budget (`fr jobs handover <project> --force`), not done here. Their reports are files under
   the install's data dir, so a second device of the same human does not see them except as the
   notification and the inbox message. Each sentinel agent (the calibration's, one per
-  handover project) has the scheduler's single pending slot: a run deferred by quiet hours
+  handover project) has its own waiting line in the scheduler: a run deferred by quiet hours
   waits there and is lost on a restart before the hours end (the fired key is already set;
   `fr jobs ... --force` runs it). The stuck-place rule counts `read_file` re-reads by path
   only; an agent lost in searches without re-reading a file is not caught by that line.

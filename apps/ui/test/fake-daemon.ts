@@ -627,9 +627,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   });
 
   const updatesChecked = { value: false };
+  /** Starts answered queued or deferred so far: none of them ever begins in the fake. */
+  const waitingStarts = { count: 0 };
   app.get("/__test/calls", (c) => c.json(state.calls));
   app.post("/__test/reset", (c) => {
     updatesChecked.value = false;
+    waitingStarts.count = 0;
     state.agents = clone(AGENTS);
     state.projects = clone(PROJECTS);
     state.tasks = clone(TASKS);
@@ -1149,7 +1152,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const outcome = options.startOutcome ?? "started";
     if (outcome !== "started") {
       // The real daemon's answer, checked against its schema so the two cannot drift (U-008).
-      return c.json(StartSessionView.parse({ result: outcome, startId, session: null }), 202);
+      // Like its scheduler, waiting starts keep their order: each says how many wait before
+      // it (U-043).
+      const ahead = waitingStarts.count++;
+      return c.json(
+        StartSessionView.parse({ result: outcome, startId, session: null, ahead }),
+        202,
+      );
     }
     const session: SessionView = {
       id: nextId("sess"),
