@@ -38,7 +38,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-077 are open; U-036 is won't fix.
+- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-078 are open; U-036 is won't fix.
 
 ## Open and fixed, not released
 
@@ -105,6 +105,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-075 | 2026-10-31, 1.0.4 (audit) | [confusing] Talk without voice installed says "no STT provider" instead of "install voice in Settings → Voice"; email is set in two places (Extensions and the Email page) that can disagree. | Talk says what to do; one place for email. | open |
 | U-076 | 2026-10-31, 1.0.4 (audit) | [wrong outcome] Update and restart, and Roll back, end running sessions without asking; Run evaluations does not show what it will cost. | Ask first while sessions run; show the cost. | open |
 | U-077 | 2026-10-31, 1.0.4 (audit); hands-on | [cosmetic and small] The setup name field prefilled with "me"; "never in a file" while the vault fell back to a file; a failed update check still says "not checked yet"; the palette shows ⌘K on Windows; the Cancel dialog's buttons read "Cancel" and "Confirm"; a hidden first-close notice is never shown again; a minimized window reopens at the default place; and other details listed in the entry. | Fix in a batch. | open |
+| U-078 | 2026-10-31, owner | You cannot choose which Claude credential is used first (subscription or API key); chat, planning and reviews always use the API key when there is one; and nothing guarantees an API key is never run through Claude Code, where promotional API credits do not apply. | You set the order in Settings; every call follows it and falls back to the next when one runs out; an API key always goes straight to the API (ADR 0100). | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -317,6 +318,35 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **Check in the app:** Extensions → Add an entry → its permissions are shown; Confirm enables
   it and nothing appears in the Inbox; Cancel adds nothing.
 - **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
+
+### U-078 Choose which Claude credential is used first
+
+- **Found:** 2026-10-31, by the owner, on U-048: "it should be possible to prioritize usage with
+  whatever tokens the user wants to use first. Also, when using the API, promo credits can only
+  be used when NOT in Claude Code."
+- **What happens today:**
+  - Task runs pick a credential per task by a fixed kind order per purpose (sessions:
+    subscription first; batch: API key first), which the person cannot change.
+  - Chat, project setup (intake), reviews (critic) and the model watch use one provider built at
+    start: the API key when there is one, else the subscription through Claude Code (ADR 0098).
+    They never use the subscription while a key exists, and never fall back.
+  - A subscription runs only through Claude Code (ADR 0098), and a task run on an API key uses the
+    direct API. But the Claude Code driver also accepts an API key (`ANTHROPIC_API_KEY`), so
+    nothing in code forbids routing a key through Claude Code. Claude Code would also prefer an
+    `ANTHROPIC_API_KEY` found in the person's environment over their subscription.
+- **Action (the owner asked for it; design in ADR 0100):**
+  1. Settings lists the person's Claude credentials in the order they are used, with Move up /
+     Move down, each showing how it is used ("through Claude Code" or "straight to the API,
+     promotional credits apply") and how much of its allowance or cap is spent.
+  2. Every model call follows that order: task runs, Chat, project setup, reviews, the model
+     watch and the monthly jobs. Without a chosen order, today's defaults stay.
+  3. When the first cannot serve (allowance or cap reached, or a usage-limit error), the next is
+     used. A source that hit a usage limit rests until its reset. The failed call is retried once
+     on the next source; a task stopped by it goes back to ready without using a retry.
+  4. An API key is never sent through Claude Code: the Claude Code paths refuse one and strip
+     `ANTHROPIC_API_KEY` from Claude Code's environment. A subscription is never sent to the
+     API directly (ADR 0098).
+- **Status:** open.
 
 ### U-037 to U-047: the work loop (projects, tasks, sessions)
 
