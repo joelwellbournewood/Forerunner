@@ -257,6 +257,8 @@ install the new MSI / AppImage / `.deb` over the old one; your data stays.
 ## Uninstall
 
 **Windows.** Settings → Apps → Forerunner → Uninstall (or `winget uninstall Forerunner`).
+The uninstaller (and an upgrade) stops Forerunner first if it is still running; you can also
+right-click the tray icon and choose **Quit Forerunner** before.
 Then, if you want everything gone: delete `%APPDATA%\forerunner` and
 `%LOCALAPPDATA%\forerunner`, and remove the `forerunner-*` entries in Credential Manager
 (Control Panel → Credential Manager → Windows Credentials).

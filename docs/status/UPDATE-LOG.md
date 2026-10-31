@@ -81,7 +81,14 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - The close button still hides to the tray, and the first time it says so in a notification
     ("Quit from the tray to stop it").
   - The Windows installer ends the processes that run from the install folder before it
-    checks for files in use, on upgrade and on uninstall.
+    checks for files in use, on upgrade and on uninstall
+    (`apps/desktop/src-tauri/wix/stop-running.wxs`). This also stops a running 1.0.4.
+  - Tests: `packages/runtime/test/shutdown-route.test.ts` (the route stops runs, answers, then
+    ends the process, and leaves no kill behind); the shell's `quit_targets`,
+    `quit_confirm_text` and `take_first_close_hint` unit tests; `scripts/msi-stop-running.test.ts`
+    (the installer step runs before the files-in-use check, only when a version is installed,
+    never fails the install, and targets only the install folder). The Windows installed-app
+    check in CI runs the installer step on every uninstall.
 - **Status:** open.
 
 ### U-019 The kill switch comes back after every restart

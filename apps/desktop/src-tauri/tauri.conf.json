@@ -24,7 +24,9 @@
     },
     "windows": {
       "wix": {
-        "version": "1.0.4"
+        "version": "1.0.4",
+        "fragmentPaths": ["wix/stop-running.wxs"],
+        "componentRefs": ["StopRunningForerunner"]
       }
     },
     "icon": [

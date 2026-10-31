@@ -95,8 +95,17 @@ model call that would cross a cap; it never relies on the agent noticing.
 ## Kill switch
 
 The tray icon and the red button in the header stop every session of one agent or of
-everyone, revoke the run tokens and freeze claims within two seconds. Starting a session again
-lifts the stop.
+everyone, revoke the run tokens and freeze claims within two seconds. Nothing starts until you
+click **Resume** (the same button, or the tray); the stop lasts across restarts until then.
+
+## Closing and quitting
+
+Closing the window keeps Forerunner running in the tray, so sessions, scheduled work, the phone
+app and email commands keep working. The first time, a notification says so.
+
+To stop it completely, right-click the tray icon and choose **Quit Forerunner**. It stops the
+background service and everything it started; while a session runs it asks first. After Quit
+nothing of Forerunner runs, so you can delete the install folder or install another version.
 
 ## Voice, phone and email
 

@@ -1,5 +1,5 @@
 //! What the shell does: attach to or start the daemon, react to its exit, and the tray
-//! actions (kill switch, resume, pause email, stop desktop control, update and restart). Every action talks to the
+//! actions (kill switch, resume, pause email, stop desktop control, update and restart, quit). Every action talks to the
 //! daemon through `DaemonClient`; nothing here enforces a limit on its own, the daemon does.
 
 use std::time::{Duration, Instant};
@@ -23,8 +23,8 @@ use crate::restart::{
 use crate::sse::parse_desktop_indicator;
 use crate::state::{Busy, EmailAction, SharedState, StreamMode, lock};
 use crate::supervisor::{
-    EXTERNAL_GRACE, daemon_log_path, spawn_daemon, stop_process, wait_for_daemon,
-    wait_for_external, watch_exit,
+    EXTERNAL_GRACE, QuitOutcome, daemon_log_path, spawn_daemon, stop_for_quit, stop_process,
+    wait_for_daemon, wait_for_external, watch_exit,
 };
 use crate::{events, tray, windows};
 
@@ -37,7 +37,7 @@ pub fn shared(app: &AppHandle) -> SharedState {
     app.state::<SharedState>().inner().clone()
 }
 
-fn notify(app: &AppHandle, title: &str, body: &str) {
+pub(crate) fn notify(app: &AppHandle, title: &str, body: &str) {
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         log::warn!("notification not shown: {e}");
     }
@@ -274,6 +274,11 @@ pub async fn attached(app: &AppHandle, file: DaemonFile, health: Health) {
 pub fn handle_daemon_exit(app: AppHandle, code: Option<i32>) {
     tauri::async_runtime::spawn(async move {
         let state = shared(&app);
+        if lock(&state).quitting {
+            // Quit stopped it (U-018): expected, and the shell is about to end too.
+            log::info!("fr daemon exited during Quit");
+            return;
+        }
         let (dirs, consecutive, previous) = {
             let mut s = lock(&state);
             s.client = None;
@@ -359,6 +364,78 @@ pub fn handle_daemon_exit(app: AppHandle, code: Option<i32>) {
             }
         }
     });
+}
+
+/// The question Quit asks while sessions run, or `None` to quit at once (U-018, ADR 0094).
+pub fn quit_confirm_text(active_sessions: u64) -> Option<String> {
+    match active_sessions {
+        0 => None,
+        1 => Some("A session is running. Quitting stops it and the Forerunner background service.\n\nTo keep it working, close the window instead: Forerunner stays in the tray.".into()),
+        n => Some(format!("{n} sessions are running. Quitting stops them and the Forerunner background service.\n\nTo keep them working, close the window instead: Forerunner stays in the tray.")),
+    }
+}
+
+/// Tray: "Quit Forerunner" (U-018, ADR 0094). Asks first while a session runs, then stops the
+/// daemon and everything it started, then ends the shell, so nothing keeps files in the
+/// install folder open.
+pub fn quit(app: AppHandle) {
+    let active = lock(&shared(&app)).status.active_sessions;
+    let Some(question) = quit_confirm_text(active) else {
+        tauri::async_runtime::spawn(finish_quit(app));
+        return;
+    };
+    let app2 = app.clone();
+    app.dialog()
+        .message(question)
+        .title("Quit Forerunner")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Quit and stop".into(),
+            "Cancel".into(),
+        ))
+        .show(move |confirmed| {
+            if confirmed {
+                tauri::async_runtime::spawn(finish_quit(app2));
+            }
+        });
+}
+
+async fn finish_quit(app: AppHandle) {
+    let state = shared(&app);
+    let (client, runtime_dir, child_pid, last_pid) = {
+        let mut s = lock(&state);
+        if s.quitting {
+            return;
+        }
+        s.quitting = true;
+        (
+            s.client.clone(),
+            s.dirs.runtime.clone(),
+            s.child_pid,
+            s.last_file.as_ref().and_then(|f| f.pid),
+        )
+    };
+    windows::save_main_state(&app);
+    windows::hide_all(&app);
+    // The file on disk names the daemon that runs now, even one started after the shell last
+    // attached (a restart by a user service); the attached client is the fallback.
+    let file = read_daemon_file(&daemon_file_path(&runtime_dir)).ok();
+    let client = file
+        .as_ref()
+        .and_then(|f| DaemonClient::from_file(f).ok())
+        .or(client);
+    let file_pid = file.as_ref().and_then(|f| f.pid).or(last_pid);
+    match client {
+        Some(client) => match stop_for_quit(&client, file_pid, child_pid).await {
+            QuitOutcome::StillRunning(why) => {
+                log::error!("Quit could not stop the daemon: {why}")
+            }
+            outcome => log::info!("Quit: daemon {outcome:?}"),
+        },
+        None => log::info!("Quit: no daemon recorded"),
+    }
+    log::info!("quit from the tray; the shell ends");
+    app.exit(0);
 }
 
 fn current_client(app: &AppHandle) -> Option<DaemonClient> {
@@ -708,6 +785,16 @@ mod tests {
     /// The route table the daemon mounts (`emailRouteTable()`), read at compile time: a
     /// rename there fails this test instead of the tray at runtime.
     const ROUTES_TS: &str = include_str!("../../../../packages/capabilities/src/email/routes.ts");
+
+    #[test]
+    fn quit_asks_only_while_sessions_run() {
+        assert_eq!(quit_confirm_text(0), None);
+        let one = quit_confirm_text(1).expect("asks");
+        assert!(one.starts_with("A session is running"), "{one}");
+        assert!(one.contains("close the window instead"), "{one}");
+        let three = quit_confirm_text(3).expect("asks");
+        assert!(three.starts_with("3 sessions are running"), "{three}");
+    }
 
     #[test]
     fn email_paths_match_the_route_table_source() {

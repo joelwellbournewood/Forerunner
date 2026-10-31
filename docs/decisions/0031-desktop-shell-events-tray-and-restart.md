@@ -3,6 +3,9 @@
 Date: 2026-10-20
 Status: accepted
 
+Amended 2026-10-31 by ADR 0094 (U-018): Quit stops the daemon and everything it started; the
+first close to the tray says that Forerunner keeps running.
+
 ## Context
 
 ADR 0026 makes the desktop shell (`apps/desktop`, Tauri 2) attach to one `fr daemon` per
@@ -41,7 +44,7 @@ state lives.
    the test); Update needs a reachable daemon and no update in flight. The
    kill switch and the update confirm with a native dialog. Left-click on the icon opens the
    window. Closing the window hides it to the tray; Quit ends the shell and leaves the daemon
-   running; the shell never kills the daemon.
+   running; the shell never kills the daemon. *(Superseded by ADR 0094: Quit stops the daemon.)*
 4. **Restart contract as the shell applies it.** The exit code that means "relaunch" is the
    `exitCode` in `<runtime>/restart.json`; when the file carries none, 86 and 75 are both
    accepted. A restart-code exit without the file, or any other non-zero code, is a crash

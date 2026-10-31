@@ -1843,6 +1843,8 @@ export const DAEMON_ROUTES = {
   stopSession: "POST /sessions/:id/stop",
   kill: "POST /kill",
   resume: "POST /kill/resume",
+  shutdown:
+    "POST /shutdown (202 { stopping, stoppedRuns, killedProcesses, revokedTokens, durationMs, scope }; stops every run, then the daemon exits 0; 409 when it cannot end its process; the desktop shell's Quit, ADR 0094)",
   inbox: "GET /inbox?humanId=",
   answerRequest: "POST /requests/:id/answer",
   decisions: "GET /projects/:id/decisions",

@@ -147,7 +147,17 @@ export interface DaemonServerOptions {
   token?: string;
   host?: string;
   port?: number;
+  /**
+   * `POST /shutdown` (U-018, ADR 0094): how the process ends once the route has stopped every
+   * run. `fr daemon` closes the server and the runtime and exits 0. Without it (tests, embedded
+   * uses) the route refuses with 409, so nothing is stopped by a call that cannot end the
+   * process.
+   */
+  onShutdown?: () => void;
 }
+
+/** How long `POST /shutdown` waits after answering before it ends the process. */
+export const SHUTDOWN_DELAY_MS = 100;
 
 /**
  * How long `RunningDaemon.stop()` waits for in-flight responses after the SSE streams were
@@ -1018,6 +1028,18 @@ export function createDaemonApp(
     );
     rt.events.emit("session", { type: "kill", payload: report });
     return c.json({ killActive, ...report });
+  });
+  // The desktop shell's Quit (U-018, ADR 0094): stop every run and the processes it started
+  // (as the kill switch does, but nothing is written to kill.json, so the next start is not
+  // stopped), answer, then end the process the way a SIGTERM does. Exit code 0 means "stopped
+  // on purpose" to every shell, so nothing restarts it.
+  app.post("/shutdown", async (c) => {
+    if (!opts.onShutdown)
+      return c.json({ code: "conflict", message: "this daemon cannot be stopped over HTTP" }, 409);
+    const report = await rt.kill.stop("all", "Forerunner quit");
+    logger.info("shutdown requested", { ...report });
+    setTimeout(opts.onShutdown, SHUTDOWN_DELAY_MS);
+    return c.json({ stopping: true, ...report }, 202);
   });
   app.post("/kill/resume", async (c) => {
     rt.kill.resume();

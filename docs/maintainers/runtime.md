@@ -577,6 +577,12 @@ hook closes it. `fr daemon` composes with the services on, keeps the runtime ope
 on SIGINT/SIGTERM or a restart request through a bounded shutdown (`EXIT_DEADLINE_MS`, 8 s):
 the server's `stop()` ends the SSE streams and closes the connections, the store is closed,
 and the process exits with the requested code even if a step hangs.
+`POST /shutdown` (U-018, ADR 0094; the desktop shell's Quit) takes the same path over HTTP,
+which works on Windows where a process started without a console gets no SIGTERM: the route
+stops every run and the processes those runs started (`kill.stop("all")`, no `kill.json`
+written), answers 202, and after `SHUTDOWN_DELAY_MS` calls `onShutdown` (`DaemonServerOptions`),
+which `fr daemon` wires to the bounded shutdown above (exit 0). Without `onShutdown` the route
+answers 409. Test: `shutdown-route.test.ts`.
 
 ### Sessions (`src/session/`, `src/wiring/state-ports.ts`)
 

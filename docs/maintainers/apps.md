@@ -918,7 +918,7 @@ The Tauri 2 shell for Windows and Linux that attaches the shared UI to the local
 injects the daemon address and token into the webview before the UI loads, keeps a tray with
 the kill switch, "pause email", the desktop-control state with "Stop desktop control",
 "Updates…" (opens the Updates screen; it never checks or installs by itself, ADR 0015
-amendment of 2026-10-25) and Quit, shows OS notifications for the daemon's `notification` events,
+amendment of 2026-10-25) and Quit (which stops the daemon, ADR 0094), shows OS notifications for the daemon's `notification` events,
 applies the restart contract, remembers the window, handles `fr://` deep links and registers
 the global hotkey that brings up the conversation (ADR 0064). No TypeScript:
 `apps/desktop/package.json` only runs the Tauri CLI; the UI comes from `apps/ui/dist`.
@@ -1048,8 +1048,14 @@ so `windows::ensure_main` rebuilds the window when the url or token changed.
 where `<id>` is `/me`'s `agent.id`; enabled only after `GET /agents/<id>/email/settings`
 answered 200, disabled with the reason in its text otherwise, since menu items have no
 tooltips; a test reads `emailRouteTable()`'s source so a route rename fails it); Update and
-restart (confirm dialog → `POST /updates/apply {}`; 202 expected); Quit (the daemon keeps
-running). Below Open, desktop control (spec S.32, ADR 0067): an item `Desktop control:
+restart (confirm dialog → `POST /updates/apply {}`; 202 expected); Quit Forerunner (U-018,
+ADR 0094: `actions::quit` asks first while `/health` reports active sessions
+(`quit_confirm_text`), sets `ShellState.quitting` so the daemon's exit triggers no restart or
+dialog, hides the windows, then `supervisor::stop_for_quit`: `POST /shutdown`, wait up to 15 s
+for `/health` to stop answering, else end `quit_targets` (the `daemon.json` pid and the spawned
+pid, each once; `taskkill /T /F` on Windows, `kill -TERM` elsewhere) while it still answers;
+then `app.exit(0)`). Closing the window hides it to the tray; the first close shows a
+notification (`windows::closed_to_tray`, marker `<config>/tray-hint-shown`). Below Open, desktop control (spec S.32, ADR 0067): an item `Desktop control:
 active (<app>)` while the daemon reports it on (enabled; it opens the window, where the banner
 names the session) and `Desktop control: off` (disabled) otherwise, and "Stop desktop control"
 (`POST /desktop/revoke {reason}`; enabled only while on and reachable). The icon tooltip reads

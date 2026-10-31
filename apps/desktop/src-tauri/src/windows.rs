@@ -1,6 +1,7 @@
 //! The main window (the shared UI with the injection script), the splash shown while the
 //! daemon starts (served by the shell's own `frshell://` protocol), window-state persistence
-//! and deep-link navigation. Closing the main window hides it; the tray brings it back.
+//! and deep-link navigation. Closing the main window hides it; the tray brings it back, and the
+//! first close says so in a notification (U-018, ADR 0094).
 
 use std::time::{Duration, Instant};
 
@@ -16,6 +17,8 @@ use crate::window_state::{
 };
 
 pub const MAIN: &str = "main";
+/// Marker under `<config>`: the "still running in the tray" notice was shown once.
+pub const TRAY_HINT_FILE: &str = "tray-hint-shown";
 pub const SPLASH: &str = "splash";
 const SAVE_THROTTLE: Duration = Duration::from_secs(2);
 /// `destroy()` is asynchronous: the label is free once the event loop has handled the
@@ -153,6 +156,43 @@ pub fn show_main(app: &AppHandle) {
     let busy = lock(&shared(app)).busy.is_some();
     if !busy {
         tauri::async_runtime::spawn(crate::actions::bootstrap(app.clone(), true));
+    }
+}
+
+/// Hide every window (Quit, while the daemon is being stopped).
+pub fn hide_all(app: &AppHandle) {
+    close_splash(app);
+    if let Some(w) = app.get_webview_window(MAIN) {
+        let _ = w.hide();
+    }
+}
+
+/// True the first time it is called for a config directory, false after: the marker file is
+/// written on the first call. A marker that cannot be written means the notice may show again,
+/// which is better than never.
+pub fn take_first_close_hint(config_dir: &std::path::Path) -> bool {
+    let marker = config_dir.join(TRAY_HINT_FILE);
+    if marker.exists() {
+        return false;
+    }
+    if let Err(e) =
+        std::fs::create_dir_all(config_dir).and_then(|()| std::fs::write(&marker, "1\n"))
+    {
+        log::warn!("tray notice marker not written: {e}");
+    }
+    true
+}
+
+/// The window was closed: it is hidden and Forerunner keeps running in the tray. The first
+/// time, a notification says so and how to stop it (U-018).
+pub fn closed_to_tray(app: &AppHandle) {
+    let config = lock(&shared(app)).dirs.config.clone();
+    if take_first_close_hint(&config) {
+        crate::actions::notify(
+            app,
+            "Forerunner is still running",
+            "It keeps working in the tray. To stop it completely, right-click the tray icon and choose Quit Forerunner.",
+        );
     }
 }
 

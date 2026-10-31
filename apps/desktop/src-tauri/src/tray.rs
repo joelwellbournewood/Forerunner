@@ -2,7 +2,8 @@
 //! Open, the desktop-control state and "Stop desktop control", the kill switch and Resume,
 //! Pause/Resume email, Update and restart, Quit. Items are enabled from `state::tray_view`,
 //! never optimistically; the icon's title and tooltip name desktop control while it is
-//! active; Quit leaves the daemon running.
+//! active; Quit stops the daemon and everything it started, then ends the shell (U-018,
+//! ADR 0094).
 
 use std::sync::Mutex;
 
@@ -57,13 +58,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let resume = MenuItem::with_id(app, RESUME, "Resume", false, None::<&str>)?;
     let email = MenuItem::with_id(app, EMAIL, "Pause email", false, None::<&str>)?;
     let update = MenuItem::with_id(app, UPDATE, "Updates…", false, None::<&str>)?;
-    let quit = MenuItem::with_id(
-        app,
-        QUIT,
-        "Quit (the daemon keeps running)",
-        true,
-        None::<&str>,
-    )?;
+    let quit = MenuItem::with_id(app, QUIT, "Quit Forerunner", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
@@ -166,11 +161,7 @@ fn on_menu(app: &AppHandle, id: &str) {
             }
         }
         UPDATE => windows::show_route(app, "/updates"),
-        QUIT => {
-            windows::save_main_state(app);
-            log::info!("quit from the tray; the daemon keeps running");
-            app.exit(0);
-        }
+        QUIT => actions::quit(app.clone()),
         other => log::warn!("unknown tray item {other}"),
     }
 }

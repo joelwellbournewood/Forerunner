@@ -123,6 +123,9 @@ pub struct ShellState {
     pub window_saved_at: Option<Instant>,
     /// The daemon stopped on purpose or gave up: do not attach again until the human asks.
     pub halted: bool,
+    /// Quit is stopping the daemon and ending the shell (U-018, ADR 0094): its exit is
+    /// expected, so no restart and no "stopped unexpectedly" dialog.
+    pub quitting: bool,
 }
 
 /// Every `desktop.indicator` frame (or fresh answer) and every `GET /desktop/status` read
@@ -180,6 +183,7 @@ impl ShellState {
             loops_started: false,
             window_saved_at: None,
             halted: false,
+            quitting: false,
         }
     }
 }

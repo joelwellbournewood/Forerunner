@@ -18,6 +18,14 @@ Problems and their status, released or not, are tracked in
 
 - **Mark all read** in the inbox marks every unread message read with one click (U-020).
 
+### Changed
+
+- **Quit Forerunner** in the tray now stops the background service and everything it started,
+  so nothing keeps the install folder in use (it asks first while a session runs). Closing the
+  window still keeps Forerunner in the tray, and the first time it says so. The Windows
+  installer stops a running Forerunner, older versions included, before it replaces files
+  (U-018, ADR 0094).
+
 ### Fixed
 
 - The kill switch came back every time Forerunner started, even after Resume, and sessions

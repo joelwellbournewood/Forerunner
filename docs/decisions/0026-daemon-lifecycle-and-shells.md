@@ -3,6 +3,9 @@
 Date: 2026-10-20
 Status: accepted
 
+Amended 2026-10-31 by ADR 0094 (U-018): closing the window keeps the daemon running; Quit
+stops it.
+
 ## Context
 
 The runtime (sessions, enforcement, daemon API) is TypeScript on Node 22. The desktop shell is

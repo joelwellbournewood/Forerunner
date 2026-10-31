@@ -190,10 +190,12 @@ pub fn run() {
             }
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
-                    // Close hides to the tray; the daemon and the shell keep running.
+                    // Close hides to the tray; the daemon and the shell keep running, and the
+                    // first close says so. Quit in the tray stops both (U-018, ADR 0094).
                     api.prevent_close();
                     windows::save_main_state(window.app_handle());
                     let _ = window.hide();
+                    windows::closed_to_tray(window.app_handle());
                 }
                 WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
                     windows::save_main_state_throttled(window.app_handle());

@@ -2,9 +2,10 @@
 //! shell's console and process group, stdout and stderr appended to
 //! `<logs>/daemon-shell.log`; wait for a fresh `daemon.json` that answers `/health`; and
 //! watch the exit code on a thread so the restart contract (`restart.rs`) can be applied.
-//! The daemon is never killed by the shell: closing the window or quitting leaves it running.
-//! The one exception is a daemon older than the runtime the app carries (ADR 0092), which
-//! `stop_process` ends so the bundled one can take its place.
+//! Closing the window leaves the daemon running (the shell stays in the tray). Quit stops it
+//! (U-018, ADR 0094): `stop_for_quit` asks it to shut down over HTTP and ends the process tree
+//! when it does not go. A daemon older than the runtime the app carries (ADR 0092) is ended by
+//! `stop_process` so the bundled one can take its place.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -170,6 +171,51 @@ pub fn stop_argv(pid: u32, windows: bool) -> (String, Vec<String>) {
 
 /// End an outdated daemon (ADR 0092) and wait until its `/health` stops answering.
 pub async fn stop_process(pid: u32, client: &DaemonClient) -> Result<(), String> {
+    end_process(pid)?;
+    if wait_until_gone(client, STOP_TIMEOUT).await {
+        Ok(())
+    } else {
+        Err(format!(
+            "the daemon (pid {pid}) still answers after {} s",
+            STOP_TIMEOUT.as_secs()
+        ))
+    }
+}
+
+/// How long Quit waits for the daemon to go after `POST /shutdown` before it ends the tree.
+pub const QUIT_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long Quit waits after ending the tree for `/health` to stop answering.
+pub const QUIT_FORCE_WAIT: Duration = Duration::from_secs(5);
+
+/// The processes Quit ends when the daemon did not go by itself: the pid `daemon.json` names
+/// (the daemon) and the one the shell spawned (`node …/tsx` or `fr.cmd`, the daemon's parent),
+/// each once. On Windows each is ended with its tree, which takes what the daemon started.
+pub fn quit_targets(file_pid: Option<u32>, child_pid: Option<u32>) -> Vec<u32> {
+    let mut pids = Vec::new();
+    for pid in [file_pid, child_pid].into_iter().flatten() {
+        if pid != 0 && pid != std::process::id() && !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+/// What Quit did to the daemon, for the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuitOutcome {
+    /// Nothing answered `/health`: there was no daemon to stop.
+    NotRunning,
+    /// It stopped after `POST /shutdown`.
+    Stopped,
+    /// It did not stop by itself (or is older than the route, as 1.0.4 is); these pids were
+    /// ended.
+    Forced(Vec<u32>),
+    /// It still answers after everything was tried.
+    StillRunning(String),
+}
+
+/// End one process (and on Windows its tree) without waiting for anything else.
+fn end_process(pid: u32) -> Result<(), String> {
     let (program, args) = stop_argv(pid, cfg!(windows));
     let mut command = Command::new(&program);
     command
@@ -185,20 +231,68 @@ pub async fn stop_process(pid: u32, client: &DaemonClient) -> Result<(), String>
     let status = command
         .status()
         .map_err(|e| format!("could not run {program}: {e}"))?;
-    if !status.success() {
-        return Err(format!("{program} {} ended with {status}", args.join(" ")));
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} {} ended with {status}", args.join(" ")))
     }
+}
+
+async fn wait_until_gone(client: &DaemonClient, budget: Duration) -> bool {
     let started = Instant::now();
     while client.health().await.is_ok() {
-        if started.elapsed() > STOP_TIMEOUT {
-            return Err(format!(
-                "the daemon (pid {pid}) still answers after {} s",
-                STOP_TIMEOUT.as_secs()
-            ));
+        if started.elapsed() > budget {
+            return false;
         }
         tokio::time::sleep(POLL).await;
     }
-    Ok(())
+    true
+}
+
+/// Quit (U-018, ADR 0094): ask the daemon to stop every run and exit (`POST /shutdown`), wait
+/// for `/health` to stop answering, and end the process tree when it does not. Pids are only
+/// ended while the daemon still answers, so a stale `daemon.json` never ends an unrelated
+/// process that reused its pid.
+pub async fn stop_for_quit(
+    client: &DaemonClient,
+    file_pid: Option<u32>,
+    child_pid: Option<u32>,
+) -> QuitOutcome {
+    if client.health().await.is_err() {
+        return QuitOutcome::NotRunning;
+    }
+    match client.post_json("/shutdown", &serde_json::json!({})).await {
+        Ok((status, _)) if (200..300).contains(&status) => {
+            if wait_until_gone(client, QUIT_TIMEOUT).await {
+                return QuitOutcome::Stopped;
+            }
+            log::warn!(
+                "the daemon still answers {} s after POST /shutdown; ending it",
+                QUIT_TIMEOUT.as_secs()
+            );
+        }
+        Ok((status, _)) => log::warn!("POST /shutdown answered {status}; ending the daemon"),
+        Err(e) => log::warn!("POST /shutdown failed ({e}); ending the daemon"),
+    }
+    if client.health().await.is_err() {
+        return QuitOutcome::Stopped;
+    }
+    let pids = quit_targets(file_pid, child_pid);
+    if pids.is_empty() {
+        return QuitOutcome::StillRunning("daemon.json names no pid".into());
+    }
+    for pid in &pids {
+        if let Err(e) = end_process(*pid) {
+            log::warn!("could not end pid {pid}: {e}");
+        }
+    }
+    if wait_until_gone(client, QUIT_FORCE_WAIT).await {
+        QuitOutcome::Forced(pids)
+    } else {
+        QuitOutcome::StillRunning(format!(
+            "pids {pids:?} were ended but the daemon still answers"
+        ))
+    }
 }
 
 /// Wait for the child on its own thread and report the exit code (`None` for a signal).
@@ -237,6 +331,20 @@ mod tests {
                 vec!["-TERM".to_string(), "4242".to_string()]
             )
         );
+    }
+
+    #[test]
+    fn quit_ends_the_daemon_and_the_process_the_shell_spawned_once_each() {
+        assert_eq!(quit_targets(Some(15436), Some(15422)), vec![15436, 15422]);
+        // The shell spawned the daemon itself (a direct `node` start): one pid.
+        assert_eq!(quit_targets(Some(15436), Some(15436)), vec![15436]);
+        // Attached to a daemon the shell did not start.
+        assert_eq!(quit_targets(Some(15436), None), vec![15436]);
+        assert_eq!(quit_targets(None, Some(15422)), vec![15422]);
+        assert!(quit_targets(None, None).is_empty());
+        // Never pid 0 (a process group on Unix) and never the shell itself.
+        assert!(quit_targets(Some(0), None).is_empty());
+        assert!(quit_targets(Some(std::process::id()), None).is_empty());
     }
 
     #[test]

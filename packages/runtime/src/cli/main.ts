@@ -332,7 +332,13 @@ export function buildProgram(deps: CliDeps = {}): Command {
           ? { provider: (await import("../daemon/fake-provider-shim.ts")).fakeProvider() }
           : {}),
       });
-      daemon = await startDaemon(rt, { port: opts.port ? Number(opts.port) : undefined });
+      // Quit in the desktop shell (U-018, ADR 0094) asks over HTTP, which works the same on
+      // Windows, where a process started without a console gets no SIGTERM.
+      let shutdown: () => Promise<void> = async () => exit(0);
+      daemon = await startDaemon(rt, {
+        port: opts.port ? Number(opts.port) : undefined,
+        onShutdown: () => void shutdown(),
+      });
       out(`Forerunner daemon listening on ${daemon.url} (daemon.json in ${rt.dirs.runtime})`);
       // First start after an update: the health check verifies this build and rolls back on
       // failure (spec M.4). It does nothing unless current.json says one is pending.
@@ -351,7 +357,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
       // The daemon keeps running; the runtime is closed by the shutdown handlers, not the hook.
       keep = runtime;
       runtime = null;
-      const shutdown = async () => {
+      shutdown = async () => {
         await bounded(async () => {
           await daemon?.stop();
           await keep?.close();

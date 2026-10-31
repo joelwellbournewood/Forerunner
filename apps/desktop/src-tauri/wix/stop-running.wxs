@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  U-018, ADR 0094: before Windows Installer checks for files in use (InstallValidate), end every
+  process that runs from the install folder: the app in the tray, the background service
+  (node.exe under runtime\), and what it started (voice, connectors). Without this an upgrade
+  or an uninstall meets open files it cannot replace, because closing the window only hides the
+  app and 1.0.4's Quit left the service running.
+
+  Runs only when a version is already installed (upgrade, uninstall), as the user who runs the
+  installer (an immediate custom action), and never fails the install (Return="ignore").
+  tauri.conf.json links this fragment through componentRefs (the component below), which pulls
+  in the custom action and its place in the sequence.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="StopRunningForerunner" Guid="DB79CAA9-2B57-46FF-8CB0-8364FE263F81">
+        <RegistryValue Root="HKLM" Key="Software\Forerunner\Installer" Name="StopsRunningProcesses" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+    <CustomAction
+        Id="StopRunningForerunner"
+        Directory="INSTALLDIR"
+        Return="ignore"
+        ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;Get-Process -ErrorAction SilentlyContinue | Where-Object Path -Like '[INSTALLDIR]*' | Stop-Process -Force -ErrorAction SilentlyContinue&quot;" />
+    <InstallExecuteSequence>
+      <Custom Action="StopRunningForerunner" Before="InstallValidate">Installed OR WIX_UPGRADE_DETECTED</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>
