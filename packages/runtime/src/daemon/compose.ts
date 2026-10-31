@@ -1429,12 +1429,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     tokens,
     async (scope) => {
       // Freeze claims: release every claim held by the stopped agent(s) so peers can continue.
+      // Only the signed-in human's agents (U-063): this switch ends this install's runs only,
+      // so on a shared store another person's claims are theirs, held by runs this daemon
+      // neither stopped nor can stop. That holds for Quit (`POST /shutdown`), Stop all and a
+      // kill scoped to an agent alike.
+      const own = (await store.agent.forOwner(human.id, { limit: 100 })).map((a) => a.id);
       const agents =
-        scope === "all"
-          ? (await store.agent.list(undefined, { limit: 100 })).map((a) => a.id)
-          : scope.agentId
-            ? [scope.agentId]
-            : [];
+        scope === "all" ? own : scope.agentId && own.includes(scope.agentId) ? [scope.agentId] : [];
       for (const id of agents)
         for (const t of await store.task.claimedBy(id))
           await store.task.releaseClaim(t.id, id, "kill switch").catch(() => undefined);

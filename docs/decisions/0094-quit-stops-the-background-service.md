@@ -79,3 +79,12 @@ daemon or start a new one.
 - A second launch during Quit (a deep link included) is remembered: once the daemon has stopped
   the app restarts (`request_restart`) instead of exiting. The link itself is not carried over;
   the restarted app opens at its start page.
+
+## Amendment (2026-10-31, U-063): Quit releases only your own agents' claims
+
+`POST /shutdown` stops runs through the kill switch, whose claim freeze released the claims of
+every agent in the store. On a shared store that sent other people's tasks back to ready while
+their own installs still worked on them. The freeze now releases only the claims of the
+signed-in human's agents, for Quit and for the kill switch alike (Stop all, `fr kill`, a kill
+scoped to an agent): a stop ends this install's runs only, so nothing else is this install's to
+release.

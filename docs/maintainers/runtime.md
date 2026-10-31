@@ -63,7 +63,13 @@ tool's raw input instead.
 ### Kill switch (`src/enforcement/killswitch.ts`)
 
 Registered runs (abort controllers) and child processes are stopped, tokens revoked and claims
-frozen through a callback; the test proves 40 runs and 3 processes stop in under 2 s. A stopped
+frozen through a callback; the test proves 40 runs and 3 processes stop in under 2 s. The
+daemon's callback (compose.ts) releases only the claims of the signed-in human's own agents
+(`store.agent.forOwner(human.id)`; U-063): a stop ends this install's runs only, so on a shared
+store another person's claims are held by runs this daemon neither stopped nor can stop. That
+holds for Quit (`POST /shutdown`), Stop all (`POST /kill {scope: "all"}`, `fr kill`) and a kill
+scoped to an agent, which releases nothing when the agent is someone else's
+(`shutdown-claims.test.ts`, two humans on one store). A stopped
 scope stays frozen (new registrations abort at once) until `resume()`. The switch keeps every
 scope stopped since the last `resume()`, so a narrower stop never lifts a wider one (a session
 stopped during Stop all leaves everything stopped). `stop(scope, reason, { freeze: false })`
