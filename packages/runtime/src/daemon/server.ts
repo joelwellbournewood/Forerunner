@@ -11,7 +11,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType } from "zod";
 import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
-import { writeKillRequest } from "../enforcement/killfile.ts";
+import { clearKillRequest, writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
 import { sessionOfStart } from "../loop/commands.ts";
@@ -1021,6 +1021,9 @@ export function createDaemonApp(
   });
   app.post("/kill/resume", async (c) => {
     rt.kill.resume();
+    // The request file makes a kill survive a crash; once resumed it must not come back on the
+    // next start (U-019).
+    clearKillRequest(rt.dirs.runtime);
     rt.events.emit("session", { type: "kill.resumed", payload: {} });
     return c.json({ killActive: rt.kill.isFrozen({ agentId: rt.agent.id }), ok: true });
   });

@@ -14,6 +14,12 @@ Problems and their status, released or not, are tracked in
 
 ## [Unreleased]
 
+### Fixed
+
+- The kill switch came back every time Forerunner started, even after Resume, and sessions
+  refused to start ("kill switch is active for this agent; resume it first"). Resume now
+  clears it for good (U-019).
+
 ## [1.0.4] - 2026-10-30
 
 Fixes for what the first sessions with 1.0.3 found. Install 1.0.4 over 1.0.3; your settings and

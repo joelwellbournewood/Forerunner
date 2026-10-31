@@ -93,7 +93,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   only lifted the kill in the running service and left the file, so the next start (opening the
   app, a restart, an update) read it and stopped everything again. Sessions then refuse to
   start.
-- **Action:** Resume removes the file; a kill written after the one being resumed is kept.
+- **Action:** Resume removes the file (`POST /kill/resume`, used by the header and the tray).
+  Test: `packages/runtime/test/kill-resume-restart.test.ts` fails without the fix.
 - **Status:** open.
 
 ### U-020 The inbox has no "mark all read"

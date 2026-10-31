@@ -3459,6 +3459,12 @@ run tokens, releases its task claims back to `ready`, freezes new registrations 
 and leaves the other agent's run, token and claim untouched; `scope: "all"` releases every
 agent's claims; `/kill/resume` lifts the freeze and a revoked token stays revoked (S.8).
 
+`kill-resume-restart.test.ts` (U-019): `POST /kill` writes `<runtime>/kill.json`, which every
+runtime's `KillFileWatcher` applies when it starts, so a kill survives a crash or a restart until
+someone resumes. `POST /kill/resume` removes the file (`clearKillRequest`); until U-019 it only
+lifted the freeze in the running daemon, so every later start stopped everything again and
+sessions refused with "kill switch is active for this agent; resume it first".
+
 `closeout-claims.test.ts` (requirements close-out 2026-10-20, spec U.18, the session runner as
 the claim holder on an in-memory store under the simulated clock): a session started without
 `claimTtlMs` claims its task with the expiry 30 minutes out; the claim is renewed every five
