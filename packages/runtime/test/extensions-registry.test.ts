@@ -1,5 +1,6 @@
 import { INSTALL_WRAP_KEY_NAME } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
+import { requestView } from "../src/daemon/views.ts";
 import { HumanRequestExtensionApprovals } from "../src/extensions/approvals.ts";
 import { ExtensionCatalog, loadBuiltinCatalog } from "../src/extensions/catalog.ts";
 import { extensionCostKey, grantedToolNames } from "../src/extensions/registry.ts";
@@ -836,17 +837,21 @@ describe("HumanRequestExtensionApprovals", () => {
       });
       expect(row.steps).toContain("tool fake.post_comment: external_send (high risk)");
       expect(row.steps).toContain("Step: grant");
-      expect((row.options[0] as { choice: string; stage: string }).choice).toBe("approve");
-      expect((row.options[0] as { choice: string; stage: string }).stage).toBe("grant");
+      // U-021: the options are what the inbox shows on its buttons and sends back when one is
+      // clicked. They were objects, which the inbox showed as "[object Object]" and sent back
+      // as that text, which reads as a no: both buttons denied.
+      const shown = requestView(row, null).options;
+      expect(shown).toEqual(["Approve", "Deny"]);
       expect((row.change_card as { extensionId: string }).extensionId).toBe(pending.id);
       expect(JSON.stringify(row)).not.toContain(FAKE_TOKEN_VALUE);
       expect(await port.status(row.id)).toBe("pending");
-      await h.store.humanRequest.answer(row.id, row.version, "yes", "h-1");
+      await h.store.humanRequest.answer(row.id, row.version, shown[0] ?? "", "h-1");
       expect(await port.status(row.id)).toBe("approved");
       const no = await port.ask({ ...grant, stage: "discovery" });
       const noRow = await h.store.humanRequest.mustGet(no.requestId ?? "");
       expect(noRow.steps).toContain("Step: start once for discovery (nothing granted yet)");
-      await h.store.humanRequest.answer(noRow.id, noRow.version, "no", "h-1");
+      const noShown = requestView(noRow, null).options;
+      await h.store.humanRequest.answer(noRow.id, noRow.version, noShown[1] ?? "", "h-1");
       expect(await port.status(noRow.id)).toBe("denied");
       expect(await port.status("missing")).toBe("denied");
       expect(requestId).toBeTruthy();
@@ -933,5 +938,48 @@ describe("ExtensionRegistry: the install wrapping key is never a grant", () => {
     const after = await h.registry.get(view.id);
     expect(after.permissions.secrets).toEqual(["fake_token"]);
     expect(after.status).toBe("enabled");
+  });
+});
+
+describe("extension approval requests in the inbox (U-021)", () => {
+  it("shows a request filed before the fix with readable buttons that do what they say", async () => {
+    const h = await registryHarness();
+    try {
+      await h.store.human.insert({ id: "h-1", name: "Joel", email: "joel@example.test" });
+      // The row 1.0.4 wrote: options as objects.
+      const old = await h.store.humanRequest.insert({
+        human_id: "h-1",
+        kind: "approval",
+        why: 'Install capability "voice-local": granting a new capability needs your approval.',
+        steps: [],
+        options: [{ choice: "approve", stage: "grant" }, { choice: "deny" }] as never,
+        blocking: true,
+        risk: "high",
+      });
+      const shown = requestView(old, null).options;
+      expect(shown).toEqual(["Approve", "Deny"]);
+      const port = new HumanRequestExtensionApprovals(h.store.humanRequest);
+      await h.store.humanRequest.answer(old.id, old.version, shown[0] ?? "", "h-1");
+      expect(await port.status(old.id)).toBe("approved");
+    } finally {
+      h.stopLogs();
+      await h.registry.close();
+      await h.store.close();
+    }
+  });
+
+  it("withdraws the open request when the extension waiting on it is removed", async () => {
+    const h = await registryHarness();
+    try {
+      const pending = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+      const asked = h.approvals.last();
+      if (!asked) throw new Error("no request");
+      await h.registry.remove(pending.id, human);
+      expect(h.approvals.withdrawn).toEqual([asked.requestId]);
+    } finally {
+      h.stopLogs();
+      await h.registry.close();
+      await h.store.close();
+    }
   });
 });

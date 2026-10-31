@@ -377,6 +377,24 @@ export function messageView(m: MessageRow, fromName: string): MessageView {
   };
 }
 
+/**
+ * What a request's option says on its button, and what a click sends back. Options are strings;
+ * rows written before U-021 hold objects (`{ choice: "approve", … }`), which `String` turned into
+ * "[object Object]". Such an option shows its `label` or `choice`, capitalised; `isYes` reads
+ * "Approve" as yes and "Deny" as no.
+ */
+export function optionLabel(option: unknown): string {
+  if (typeof option === "string") return option;
+  if (option && typeof option === "object") {
+    const o = option as { label?: unknown; choice?: unknown };
+    const text =
+      typeof o.label === "string" ? o.label : typeof o.choice === "string" ? o.choice : "";
+    if (text) return text.charAt(0).toUpperCase() + text.slice(1);
+    return JSON.stringify(option);
+  }
+  return String(option);
+}
+
 export function requestView(r: HumanRequestRow, projectName: string | null): HumanRequestView {
   return {
     id: r.id,
@@ -387,7 +405,7 @@ export function requestView(r: HumanRequestRow, projectName: string | null): Hum
     kind: r.kind,
     why: r.why,
     steps: r.steps,
-    options: r.options.map(String),
+    options: r.options.map(optionLabel),
     blocking: r.blocking,
     risk: r.risk,
     changeCard: r.change_card,

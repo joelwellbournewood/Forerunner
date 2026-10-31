@@ -7,9 +7,15 @@ import type {
   GrantOutcome,
 } from "./types.ts";
 
+/** The answers an extension approval offers, as the inbox shows them (U-021). */
+export const EXTENSION_APPROVAL_OPTIONS = ["Approve", "Deny"] as const;
+
 /**
  * Granting a new capability always needs a human (spec Security). In production the question
- * is a HumanRequest of kind `approval`, risk `high`, blocking, with the review as its options;
+ * is a HumanRequest of kind `approval`, risk `high`, blocking, with the review in its steps and
+ * change card and the options "Approve" and "Deny": the inbox shows the options as buttons and
+ * sends the clicked one back as the answer (U-021: they were objects, shown as "[object
+ * Object]" and sent back as that text, which `isYes` reads as a no);
  * the inbox answers it and the registry picks the answer up (`syncApprovals`, or the
  * orchestrator calls `approve`/`deny`). A connector that is not a built-in catalog entry asks
  * twice: `discovery` (start it once, with the secrets it names) and then `grant`. Tests use
@@ -29,15 +35,7 @@ export class HumanRequestExtensionApprovals implements ExtensionApprovalPort {
         ...(req.sourceUrl ? [`Source: ${req.sourceUrl}`] : []),
         ...req.review.summary,
       ],
-      options: [
-        {
-          choice: "approve",
-          stage: req.stage,
-          permissions: req.permissions as never,
-          review: req.review as never,
-        },
-        { choice: "deny" },
-      ],
+      options: [...EXTENSION_APPROVAL_OPTIONS],
       blocking: true,
       risk: "high",
       change_card: {
@@ -53,6 +51,12 @@ export class HumanRequestExtensionApprovals implements ExtensionApprovalPort {
     return { outcome: "pending", requestId: row.id };
   }
 
+  /** The extension waiting on it was removed: the question is withdrawn from the inbox. */
+  async withdraw(requestId: string): Promise<void> {
+    const row = await this.requests.get(requestId);
+    if (row?.status === "open") await this.requests.withdraw(row.id, row.version);
+  }
+
   async status(requestId: string): Promise<GrantOutcome> {
     const row = await this.requests.get(requestId);
     if (!row) return "denied";
@@ -65,6 +69,7 @@ export class HumanRequestExtensionApprovals implements ExtensionApprovalPort {
 /** Scripted port for tests: answers at once, or stays pending until `answer()` is called. */
 export class MemoryExtensionApprovals implements ExtensionApprovalPort {
   readonly requests: (CapabilityGrantRequest & { requestId: string })[] = [];
+  readonly withdrawn: string[] = [];
   private readonly answers = new Map<string, GrantOutcome>();
   private counter = 0;
 
@@ -83,6 +88,11 @@ export class MemoryExtensionApprovals implements ExtensionApprovalPort {
 
   async status(requestId: string): Promise<GrantOutcome> {
     return this.answers.get(requestId) ?? "denied";
+  }
+
+  async withdraw(requestId: string): Promise<void> {
+    this.withdrawn.push(requestId);
+    this.answers.delete(requestId);
   }
 
   /** The human answers a pending question. */

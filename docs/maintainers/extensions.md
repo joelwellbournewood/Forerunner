@@ -95,8 +95,11 @@ disabling one extension never refuses another's.
 4. `ExtensionApprovalPort.ask()` is called with the stage. In production
    (`HumanRequestExtensionApprovals`) this inserts a blocking, high-risk `human_request` of
    kind `approval` whose `steps` are the review's summary lines (first line: the step) and
-   whose `options` are `approve` (with the stage, permissions and review) and `deny`; the row
-   stays pending. The inbox answers it; `syncApprovals()` (call it from the daemon loop) reads
+   whose `options` are the strings `Approve` and `Deny` (`EXTENSION_APPROVAL_OPTIONS`: the
+   inbox shows them as buttons and sends the clicked one back; the stage and permissions are on
+   the change card). Before U-021 they were objects, which the inbox showed as "[object Object]"
+   and sent back as that text, a no; `requestView` (`optionLabel`) shows such old rows as
+   `Approve`/`Deny`. The row stays pending. The inbox answers it; `syncApprovals()` (call it from the daemon loop) reads
    the answer through `port.status()`, or the panel calls `POST /extensions/:id/approve|deny`.
 5. Yes at stage `discovery` → `approve()` audits `extensions.approve_discovery`, starts the
    server once with the secrets the transport names (now granted for that start), lists its
@@ -120,7 +123,9 @@ that is now waiting for the grant).
 
 ### Live revocation and the kill switch
 
-`toggle(false)` and `remove()` call `revokeLive()`: `TokenRevoker.revokeWhere()` (the
+`remove()` first withdraws the extension's open approval request (`port.withdraw`, U-021), so
+nothing is left in the inbox with no extension waiting on it. `toggle(false)` and `remove()`
+call `revokeLive()`: `TokenRevoker.revokeWhere()` (the
 `TokenIssuer` the kill switch holds) revokes every run token whose `allowedTools` includes one
 of the extension's tools, and the MCP connection is closed. A run holding a revoked token fails
 its next hook with `killed`; a new token is refused by the gate for that tool. The event
@@ -303,7 +308,9 @@ concatenation):
   (installed or not), no built-in tool name; cost in CHF, counter plus ledger rows; connect
   error → `error`; `start()` reconnects and is idempotent; add from URL (manifest: two yeses;
   bare endpoint: no connection before the yes, reviewed live after it);
-  `HumanRequestExtensionApprovals` round trip with the stage; audit rows and events for every
+  `HumanRequestExtensionApprovals` round trip with the stage, answered with the options the inbox
+  shows (U-021), an old row with object options shown and answered the same way, and the request
+  withdrawn on remove; audit rows and events for every
   change; no secret value in rows, requests, audit rows or logs on the install, approve,
   toggle, error and remove paths; an entry that declares or references the install wrapping
   key refused at add (catalog and URL manifest) and at `updatePermissions` with

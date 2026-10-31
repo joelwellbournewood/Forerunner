@@ -800,6 +800,16 @@ export class ExtensionRegistry {
 
   async remove(id: string, actor: Actor = {}): Promise<void> {
     const row = await this.deps.extensions.mustGet(id);
+    // Its open approval request would stay in the inbox with nothing waiting on it (U-021).
+    const pendingRequestId = configOf(row).pendingRequestId;
+    if (pendingRequestId) {
+      await this.deps.approvals.withdraw?.(pendingRequestId).catch((e: unknown) => {
+        this.logger.warn("approval request not withdrawn", {
+          extension: row.name,
+          error: errorMessage(e),
+        });
+      });
+    }
     const revoked = await this.revokeLive(row);
     await this.deps.extensions.delete(id);
     this.toolIndex = null;

@@ -31,6 +31,9 @@ Problems and their status, released or not, are tracked in
 - The kill switch came back every time Forerunner started, even after Resume, and sessions
   refused to start ("kill switch is active for this agent; resume it first"). Resume now
   clears it for good (U-019).
+- Approving an extension in the Inbox showed two "[object Object]" buttons, and either one
+  denied it. They now read Approve and Deny, and removing an extension takes its approval out
+  of the Inbox instead of leaving a second card (U-021).
 
 ## [1.0.4] - 2026-10-30
 

@@ -31,7 +31,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012 and U-018 to U-020 are open.
+- Next release: not scheduled. U-012 and U-018 to U-021 are open.
 
 ## Open and fixed, not released
 
@@ -41,6 +41,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-018 | 2026-10-31, 1.0.4 | After closing Forerunner, background processes keep running, so the install folder cannot be deleted and the next version cannot be installed over it. | Quit stops the background service and everything it started (asking first when a session is running); closing the window still hides to the tray, and says so the first time; the installer stops what runs from the install folder before it replaces files (ADR 0094). | open |
 | U-019 | 2026-10-31, 1.0.4 | "kill switch is active for this agent; resume it first" when starting a session, even after clicking Resume: the kill switch comes back every time the app starts. | Resume removes the kill request file, so a restart no longer applies an old kill again. | open |
 | U-020 | 2026-10-31, 1.0.4 | The inbox has no way to mark every message read; each needs its own click. | A "Mark all read" button above the messages. | open |
+| U-021 | 2026-10-31, 1.0.4 | Enabling an extension puts an approval in the Inbox whose two buttons both read "[object Object]", and clicking either one denies it; removing the extension leaves the approval behind, so it can appear twice. | The buttons read Approve and Deny and do that, old requests included; removing an extension takes its approval out of the Inbox. | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -102,6 +103,29 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   start.
 - **Action:** Resume removes the file (`POST /kill/resume`, used by the header and the tray).
   Test: `packages/runtime/test/kill-resume-restart.test.ts` fails without the fix.
+- **Status:** open.
+
+### U-021 Extension approvals show "[object Object]" and both buttons deny
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner, after enabling voice-local in Extensions
+  (screenshot: two identical "Install capability voice-local" cards).
+- **Why there is an approval at all:** giving an agent a new capability (a connector's tools,
+  the microphone, the browser) always needs a person's yes (spec Security, ADR 0029). The card
+  lists what is granted ("scope: microphone and speaker on this machine"); Approve grants it,
+  Deny removes the extension.
+- **What happens:** the request's options were objects (`{ choice: "approve", stage,
+  permissions, review }` and `{ choice: "deny" }`). The service turned each into text with
+  `String()`, "[object Object]", and the inbox sends a clicked option's text back as the
+  answer. "[object Object]" is not a yes, so both buttons denied, and a denied new extension is
+  removed. Only typing "approve" in the text field worked. The test answered with "yes" and
+  "no", never with what a button sends, and asserted the object shape.
+- **Second problem:** removing an extension deleted it but left its open request in the Inbox,
+  where answering it does nothing; enabling it again added a second, identical card.
+- **Action:** the options are "Approve" and "Deny"; the service shows old rows' object options
+  as "Approve"/"Deny", which answer correctly; `remove()` withdraws the open request. Tests:
+  `packages/runtime/test/extensions-registry.test.ts` (answered with the shown options, an old
+  row, the withdrawal); each fails without the fix. Old requests synced to the phone app and the
+  approvals page still show their options as JSON text; new ones show Approve and Deny.
 - **Status:** open.
 
 ### U-020 The inbox has no "mark all read"

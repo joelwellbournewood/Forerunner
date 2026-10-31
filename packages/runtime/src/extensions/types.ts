@@ -201,6 +201,8 @@ export interface GrantAnswer {
 export interface ExtensionApprovalPort {
   ask(request: CapabilityGrantRequest): Promise<GrantAnswer>;
   status(requestId: string): Promise<GrantOutcome>;
+  /** Take an open question back (the extension waiting on it was removed; U-021). */
+  withdraw?(requestId: string): Promise<void>;
 }
 
 export { Money } from "../daemon/api-types.ts";
