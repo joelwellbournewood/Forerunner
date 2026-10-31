@@ -35,6 +35,14 @@ export const SetupCheckView = z.object({
   problems: z.array(z.string()),
   /** The GitHub account the token belongs to. */
   login: z.string().optional(),
+  /**
+   * The repositories a GitHub token reaches, with the access GitHub reports for each (U-051):
+   * `write` is contents read and write, `read` read only, `admin` more than Forerunner needs.
+   * Absent when the list could not be read (the problems say why).
+   */
+  repos: z
+    .array(z.object({ fullName: z.string(), access: z.enum(["admin", "write", "read"]) }))
+    .optional(),
   status: SetupStatusView,
 });
 export type SetupCheckView = z.infer<typeof SetupCheckView>;
@@ -77,7 +85,7 @@ export const SETUP_ROUTES = {
   setupAnthropic:
     "POST /setup/anthropic { value } (SetupCheckView: an Anthropic API key checked with GET /v1/models, or a sk-ant-oat… subscription token checked for its format, as `fr setup` does; stored in the vault by name only when it passes; the value is never echoed; one setup.credential audit row with the name; 400 validation for a GitHub token)",
   setupGitHub:
-    "POST /setup/github { token, repos?: owner/name[] } (SetupCheckView with the login: GET /user and each repository's permissions, as `fr setup` does; stored only when it passes; 400 validation for an Anthropic credential or a malformed repository)",
+    "POST /setup/github { token, repos?: owner/name[] } (SetupCheckView with the login and the repositories the token reaches with their access (GET /user, GET /user/repos; U-051): a token that reaches none or only reads is stored with a warning in the problems; each named repository's permissions, as `fr setup` does; stored only when it passes; 400 validation for an Anthropic credential or a malformed repository)",
   setupFinish:
     "POST /setup/finish (SetupFinishView: marks the assistant done in config.json; when a credential was stored since the daemon started it restarts (restart.json reason setup, exit 86) and the shell relaunches it)",
 } as const;

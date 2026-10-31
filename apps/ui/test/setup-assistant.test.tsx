@@ -162,6 +162,36 @@ describe("setup assistant", () => {
     expect(postedCalls(harness, "/setup/finish")).toHaveLength(0);
   });
 
+  it("the GitHub check lists the repositories the token reaches with its access, and warns (U-051)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness(FRESH);
+    renderApp("/", harness);
+    await screen.findByTestId("setup-page");
+    await user.click(screen.getByTestId("setup-next"));
+    await screen.findByTestId("setup-anthropic-input");
+    await user.click(screen.getByTestId("setup-next"));
+    await user.click(await screen.findByTestId("setup-github-input"));
+    await user.paste(GH_TOKEN);
+    const list = await screen.findByTestId("setup-github-repos");
+    expect(list).toHaveTextContent("Repositories this token reaches:");
+    expect(list).toHaveTextContent("joel/site: read and write");
+    expect(list).toHaveTextContent("joel/notes: read only");
+    expect(screen.getByTestId("setup-check-result")).toHaveTextContent(
+      "joel/notes: read only. Your agent cannot push there",
+    );
+    expect(postedCalls(harness, "/setup/github").map((c) => c.body)).toEqual([{ token: GH_TOKEN }]);
+
+    // A token that reaches nothing says what to change on GitHub.
+    await user.click(screen.getByTestId("setup-github-input"));
+    await user.paste(`${GH_TOKEN}none`);
+    await waitFor(() =>
+      expect(screen.getByTestId("setup-check-result")).toHaveTextContent(
+        "The token reaches no repository. On GitHub, edit the token",
+      ),
+    );
+    expect(screen.queryByTestId("setup-github-repos")).not.toBeInTheDocument();
+  });
+
   it("set up later closes the assistant without a restart", async () => {
     const user = userEvent.setup();
     const harness = createHarness(FRESH);

@@ -270,12 +270,14 @@ export function createSetupRoutes(deps: SetupRoutesDeps): Hono {
     const stored = report.stored.includes(SECRET_NAMES.github);
     await audit(SECRET_NAMES.github, result, stored);
     const login = result?.details.login;
+    const reachable = result?.details.reachable as SetupCheckView["repos"] | undefined;
     const view: SetupCheckView = {
       ok: stored,
       kind: "github",
       summary: result?.summary ?? "Not checked.",
       problems: result?.problems ?? [],
       ...(typeof login === "string" ? { login } : {}),
+      ...(Array.isArray(reachable) ? { repos: reachable } : {}),
       status: await status(),
     };
     return c.json(view);

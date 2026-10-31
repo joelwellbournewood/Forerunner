@@ -6,7 +6,7 @@ import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import { MemoryVault } from "@forerunner/vault";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ScriptedProvider } from "../../../packages/runtime/test/helpers.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 
@@ -333,5 +333,39 @@ describe("the UI client against the real daemon", () => {
       answer: "Rework",
     });
     expect(answered.status).toBe("answered");
+  });
+
+  it("setup's GitHub check: the repositories the token reaches, with their access and warnings (U-051)", async () => {
+    // GitHub as the daemon's check meets it; the token is a fixture, never a real one.
+    const token = ["github_pat_", "realdaemon_", "1".repeat(40)].join(""); // not-a-secret
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input instanceof Request ? input.url : input));
+      const body =
+        url.pathname === "/user"
+          ? { login: "joel" }
+          : url.pathname === "/user/repos"
+            ? [
+                { full_name: "joel/site", permissions: { push: true, pull: true } },
+                { full_name: "joel/notes", permissions: { push: false, pull: true } },
+              ]
+            : null;
+      return new Response(JSON.stringify(body), {
+        status: body ? 200 : 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    try {
+      const checked = await client.setupGitHub({ token });
+      expect(checked).toMatchObject({ ok: true, kind: "github", login: "joel" });
+      expect(checked.repos).toEqual([
+        { fullName: "joel/site", access: "write" },
+        { fullName: "joel/notes", access: "read" },
+      ]);
+      expect(checked.summary).toBe("Token works for joel. It reaches 2 repositories.");
+      expect(checked.problems.join("\n")).toContain("joel/notes: read only");
+      expect(JSON.stringify(checked)).not.toContain(token);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

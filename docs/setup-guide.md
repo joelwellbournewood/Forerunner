@@ -119,15 +119,20 @@ the moment you paste it:
 
    | Permission | Access | Why |
    | --- | --- | --- |
-   | Contents | Read and write | Clone, create branches, push commits. Required: the check refuses a token without it. |
+   | Contents | Read and write | Clone, create branches, push commits. Without it your agent can only read; the check warns. |
    | Pull requests | Read and write | Open, update and comment on pull requests. |
    | Issues | Read and write | Comments and the project mirror. |
    | Commit statuses | Read | CI results reported as commit statuses (read before a merge at autonomy level 3). |
    | Metadata | Read | Set by GitHub automatically. |
 
-   Do not give admin rights; the check warns about them. CI-triggered sessions read check runs,
-   which GitHub's fine-grained tokens may not reach on private repositories; this was not
-   tested against GitHub.
+   When you paste the token, the check lists every repository it reaches with the access GitHub
+   reports for it (read and write, read only, or admin). It warns, and still saves the token,
+   when the token reaches no repository, when it can only read a repository, and when it has
+   admin rights: fix the token on GitHub (Settings → Developer settings → Fine-grained tokens →
+   the token → Edit) and paste it again. Do not give admin rights. The access shown is what
+   GitHub's API reports for each repository; it was checked against a stand-in for GitHub, not
+   against GitHub itself. CI-triggered sessions read check runs, which GitHub's fine-grained
+   tokens may not reach on private repositories; this was not tested against GitHub.
 4. **Done.** It shows what is connected. **Start using Forerunner** restarts the background
    service once so it uses the new keys (a few seconds). Leaving the assistant through the
    sidebar does the same.

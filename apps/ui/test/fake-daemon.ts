@@ -3490,12 +3490,41 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       setupRestartNeeded();
       setupComplete();
     }
+    // As the daemon (U-051): the repositories the token reaches with their access; a token
+    // with "none" in it reaches none, one with "readonly" only reads, and each is warned about.
+    const repos: { fullName: string; access: "admin" | "write" | "read" }[] = pasted.includes(
+      "none",
+    )
+      ? []
+      : pasted.includes("readonly")
+        ? [{ fullName: "joel/site", access: "read" }]
+        : [
+            { fullName: "joel/site", access: "write" },
+            { fullName: "joel/notes", access: "read" },
+          ];
+    const warnings =
+      repos.length === 0
+        ? [
+            "The token reaches no repository. On GitHub, edit the token: under Repository access choose Only select repositories, pick the ones your agent may work in, and give them Contents: Read and write.",
+          ]
+        : repos.every((r) => r.access === "read")
+          ? [
+              "The token can only read every repository it reaches: your agent cannot push branches or open pull requests. On GitHub, give the token Contents: Read and write and Pull requests: Read and write.",
+            ]
+          : repos
+              .filter((r) => r.access === "read")
+              .map(
+                (r) =>
+                  `${r.fullName}: read only. Your agent cannot push there; give the token Contents: Read and write on it, or leave it out.`,
+              );
     return c.json({
       ok,
       kind: "github",
-      summary: ok ? "Token works for joel on 0 repositories." : "GitHub rejected the token (401).",
-      problems: ok ? [] : ["The token is invalid, expired or revoked."],
-      ...(ok ? { login: "joel" } : {}),
+      summary: ok
+        ? `Token works for joel.${repos.length ? ` It reaches ${repos.length} repositor${repos.length === 1 ? "y" : "ies"}.` : " It reaches no repository."}`
+        : "GitHub rejected the token (401).",
+      problems: ok ? warnings : ["The token is invalid, expired or revoked."],
+      ...(ok ? { login: "joel", repos } : {}),
       status: setup,
     });
   });

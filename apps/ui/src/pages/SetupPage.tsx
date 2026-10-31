@@ -68,7 +68,7 @@ function CheckResult({ result }: { result: SetupCheckView | null }) {
       role="status"
       data-testid="setup-check-result"
       className={`rounded border px-3 py-2 text-sm ${
-        result.ok
+        result.ok && !result.problems.length
           ? "border-green-300 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200"
           : "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
       }`}
@@ -84,11 +84,38 @@ function CheckResult({ result }: { result: SetupCheckView | null }) {
           ))}
         </ul>
       ) : null}
+      {result.repos?.length ? <ReachableRepos repos={result.repos} /> : null}
       {inUse ? (
         <p className="mt-1" data-testid="setup-in-use">
           {inUse}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+const ACCESS_LABEL = {
+  write: "read and write",
+  read: "read only",
+  admin: "admin (more than needed)",
+} as const;
+/** Repositories listed at most; the rest are counted. */
+const REPOS_SHOWN = 20;
+
+/** The repositories a GitHub token reaches, with its access to each (U-051). */
+function ReachableRepos({ repos }: { repos: NonNullable<SetupCheckView["repos"]> }) {
+  const shown = repos.slice(0, REPOS_SHOWN);
+  return (
+    <div className="mt-2" data-testid="setup-github-repos">
+      <p className="font-medium">Repositories this token reaches:</p>
+      <ul className="mt-1 pl-1">
+        {shown.map((r) => (
+          <li key={r.fullName}>
+            <span className="font-mono">{r.fullName}</span>: {ACCESS_LABEL[r.access]}
+          </li>
+        ))}
+      </ul>
+      {repos.length > shown.length ? <p>and {repos.length - shown.length} more</p> : null}
     </div>
   );
 }

@@ -57,6 +57,87 @@ describe("GitHub token validation", () => {
     expect(r.details.kind).toBe("classic");
   });
 
+  it("lists the repositories the token reaches with their access, and warns about read-only and admin (U-051)", async () => {
+    // What the app sends: the token alone, no repository list.
+    const f = router({
+      "/user": () => json({ login: "j" }),
+      "/user/repos": () =>
+        json([
+          { full_name: "j/site", permissions: { admin: false, push: true, pull: true } },
+          { full_name: "j/notes", permissions: { admin: false, push: false, pull: true } },
+          { full_name: "org/infra", permissions: { admin: true, push: true, pull: true } },
+        ]),
+    });
+    const r = await validateGitHubToken({
+      token: "t",
+      apiBase: "http://x",
+      repos: [],
+      fetchImpl: f,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.details.reachable).toEqual([
+      { fullName: "j/site", access: "write" },
+      { fullName: "j/notes", access: "read" },
+      { fullName: "org/infra", access: "admin" },
+    ]);
+    expect(r.summary).toBe("Token works for j. It reaches 3 repositories.");
+    const text = r.problems.join("\n");
+    expect(text).toMatch(/j\/notes: read only/);
+    expect(text).toMatch(/Contents: Read and write/);
+    expect(text).toMatch(/org\/infra: the token has admin rights/);
+  });
+
+  it("warns when the token reaches no repository, or can only read every one (U-051)", async () => {
+    const none = await validateGitHubToken({
+      token: "t",
+      apiBase: "http://x",
+      repos: [],
+      fetchImpl: router({ "/user": () => json({ login: "j" }), "/user/repos": () => json([]) }),
+    });
+    expect(none.details.reachable).toEqual([]);
+    expect(none.summary).toBe("Token works for j. It reaches no repository.");
+    expect(none.problems.join("\n")).toMatch(/reaches no repository.*Only select repositories/s);
+
+    const readOnly = await validateGitHubToken({
+      token: "t",
+      apiBase: "http://x",
+      repos: [],
+      fetchImpl: router({
+        "/user": () => json({ login: "j" }),
+        "/user/repos": () =>
+          json([{ full_name: "j/site", permissions: { push: false, pull: true } }]),
+      }),
+    });
+    expect(readOnly.problems.join("\n")).toMatch(/can only read/);
+  });
+
+  it("follows the next page on the API host only (U-051)", async () => {
+    const urls: string[] = [];
+    const f = (async (input: string | URL) => {
+      const url = new URL(String(input));
+      urls.push(url.toString());
+      if (url.pathname === "/user") return json({ login: "j" });
+      if (url.searchParams.get("page") === "2")
+        return json([{ full_name: "j/b", permissions: { push: true, pull: true } }], 200, {
+          link: '<http://elsewhere.test/user/repos?page=3>; rel="next"',
+        });
+      return json([{ full_name: "j/a", permissions: { push: true, pull: true } }], 200, {
+        link: '<http://x/user/repos?per_page=100&page=2>; rel="next"',
+      });
+    }) as typeof fetch;
+    const r = await validateGitHubToken({
+      token: "t",
+      apiBase: "http://x",
+      repos: [],
+      fetchImpl: f,
+    });
+    expect((r.details.reachable as { fullName: string }[]).map((x) => x.fullName)).toEqual([
+      "j/a",
+      "j/b",
+    ]);
+    expect(urls.some((u) => u.includes("elsewhere"))).toBe(false);
+  });
+
   it("explains a 401 and never echoes the token", async () => {
     const f = router({ "/user": () => new Response("", { status: 401 }) });
     const r = await validateGitHubToken({
@@ -70,10 +151,10 @@ describe("GitHub token validation", () => {
   });
 
   it("sends the token as a bearer header to the configured base", async () => {
-    let seen: { url: string; auth: string | null } | null = null;
+    const seen: { url: string; auth: string | null }[] = [];
     const f = (async (input: string | URL, init?: RequestInit) => {
-      seen = { url: String(input), auth: new Headers(init?.headers).get("authorization") };
-      return json({ login: "j" });
+      seen.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+      return String(input).includes("/user/repos") ? json([]) : json({ login: "j" });
     }) as typeof fetch;
     await validateGitHubToken({
       token: "abc",
@@ -81,7 +162,12 @@ describe("GitHub token validation", () => {
       repos: [],
       fetchImpl: f,
     });
-    expect(seen).toEqual({ url: "http://fake-host:1234/user", auth: "Bearer abc" });
+    expect(seen[0]).toEqual({ url: "http://fake-host:1234/user", auth: "Bearer abc" });
+    // Every later call (the repositories it reaches, U-051) goes to the same base, the same way.
+    for (const s of seen) {
+      expect(s.url.startsWith("http://fake-host:1234/")).toBe(true);
+      expect(s.auth).toBe("Bearer abc");
+    }
   });
 });
 

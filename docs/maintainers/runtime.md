@@ -584,7 +584,12 @@ filled in, `GITHUB_TOKEN_URL`); `POST /setup/profile { name?, timezone? }` (conf
 the human row; an unknown IANA zone is a 400); `POST /setup/anthropic { value }` (a
 `sk-ant-oat…` value is a subscription token, format-checked and never sent anywhere (ADR 0098);
 anything else an API key checked with `GET /v1/models`; a GitHub token is a 400); `POST /setup/github { token, repos? }`
-(`GET /user` and each repository's permissions; an Anthropic credential is a 400); `POST
+(`GET /user`, then `GET /user/repos` page by page, a `Link` next page only on the API's own
+origin, up to 10 pages: the answer's `repos` lists every repository the token reaches with
+`access` `write`, `read` or `admin` from GitHub's `permissions`, and the problems warn, without
+refusing the token, when it reaches none, only reads every one, reads one, or has admin rights
+(U-051; the summary says how many it reaches); each repository named in `repos` is checked as
+before; an Anthropic credential is a 400); `POST
 /setup/finish` (writes `config.json` when there is none, marks `setupAcknowledgedAt`, and when
 `restartNeeded` restarts the daemon through `rt.restarter` with reason `setup` 300 ms after
 answering, so the model provider and billing sources are composed with the new credential;
