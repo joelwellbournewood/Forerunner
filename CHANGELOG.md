@@ -23,6 +23,10 @@ Problems and their status, released or not, are tracked in
   (U-022, ADR 0095).
 - **Create a repository** for a project that has none, with your confirmation; until then the
   agents work in the project's folder (U-037, ADR 0097).
+- **Choose which Claude credential is used first** (subscription or API key) in Settings; every
+  model call follows the order and falls back to the next when one hits its limit. An API key
+  always goes straight to the API, never through Claude Code, so promotional credits apply
+  (U-078, ADR 0100).
 - Settings shows every setting with its own control, the Claude subscription allowance, and
   fields for the mailbox password and cloud voice keys; Settings → Devices explains what
   pairing a phone needs (U-052, U-054, U-055, U-060).

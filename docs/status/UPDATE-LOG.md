@@ -378,7 +378,27 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   4. An API key is never sent through Claude Code: the Claude Code paths refuse one and strip
      `ANTHROPIC_API_KEY` from Claude Code's environment. A subscription is never sent to the
      API directly (ADR 0098).
-- **Status:** open.
+- **Fix (ADR 0100; commits c1b5169 … cc4d53f on this branch, merged as 7 commits):**
+  - The order is a human setting (`billing_order`, set by `settings.set`, listed in Changes with
+    Undo); the router sorts usable sources by it for every purpose. Without it, today's defaults.
+  - Every non-task call goes through a `RoutedProvider`: the Messages API for a key, Claude Code
+    for the subscription; each ledger row names the credential that paid.
+  - A usage limit (Claude Code's `rate_limit` with a reset time; the API's `billing_error`, low
+    credit, spend limits) is `provider_usage_limit`: the credential rests until the reset (else
+    one hour, kept across restarts); the call is retried once on the next; a task goes back to
+    ready with no attempt used; the session log says so.
+  - The Claude Code driver refuses an API key; the Claude Code provider takes only a subscription
+    token; `scrubEnv` strips `ANTHROPIC_API_KEY` and the other auth variables.
+  - Tests (each failed before): the router's, the SDK driver's, the Claude Code provider's,
+    `billing-order.test.ts` (composed daemon with both stand-ins, across a restart), the routed
+    provider's, the task usage limit, the UI test and `real-daemon.test.ts`.
+  - Not covered here: a real limit's exact text, that promotional credits are charged, and the
+    cloud runner's once-per-start pick (its calls do follow the order).
+- **Check in the app:** with both a subscription and an API key saved, Settings → "Claude: which
+  to use first" shows both, how each is used and whether it can be used now. Move the API key up:
+  "Saved: the API key, then the Claude subscription" and Changes has it with Undo. Send a chat
+  message: its cost is on the API key. Quit and reopen: the order is kept.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-037 to U-047: the work loop (projects, tasks, sessions)
 
