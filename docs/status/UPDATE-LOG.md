@@ -35,7 +35,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012 and U-018 to U-024 are open.
+- Next release: not scheduled. U-012 and U-018 to U-026 are open.
 
 ## Open and fixed, not released
 
@@ -49,6 +49,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-022 | 2026-10-31, 1.0.4 | A task that needs your answers (stack, hosting, repository) is given to a specialist that cannot ask you; it fails up to four times, spending money, and the Inbox then shows a critic sign-off ("approval needed") instead of the questions. | To decide with the owner (see the entry). | open |
 | U-023 | 2026-10-31, 1.0.4 | Extensions and Settings overlap: enabling voice-local in Extensions installs nothing (the install is Settings → Voice); the anthropic row switches nothing; the GitHub connector does not say the built-in GitHub works without it. | To decide with the owner (see the entry). | open |
 | U-024 | 2026-10-31, 1.0.4 | Installing GPU voice ends with "Unable to open file 'model.bin'" for speech recognition, on the GPU and the CPU, although the download reports "whisper ready"; Talk says voice is not available. | Find the cause with the owner (see the entry); then download the speech model into a plain folder instead of the shared model cache. | open |
+| U-025 | 2026-10-31, 1.0.4 | The principal agent is always called "Alice" and there is no way to rename it. | A name field in Settings renames your agent (owner's request). | open |
+| U-026 | 2026-10-31, 1.0.4 | Adding an extension yourself in the Extensions panel puts a second, blocking "approval needed" card in the Inbox for what you just did. | To decide with the owner (see the entry). | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -186,6 +188,34 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   output_dir=...)`, real files and no links) and load it from there; on "Unable to open file",
   delete that model's folder and fetch it once more before reporting failure. Test with a
   broken and a truncated `model.bin`.
+- **Status:** open.
+
+### U-025 The agent cannot be renamed
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner: "where did the name Alice come from, and how
+  can I change the name of the principal agent?"
+- **What happens:** the first start creates the principal agent with the name in
+  `FORERUNNER_AGENT_NAME`, else "Alice" (`packages/runtime/src/daemon/compose.ts`). Nothing
+  renames it later: setting the variable afterwards only picks an existing agent by name.
+- **Action (owner's request):** Settings gets a name field for your agent.
+- **Status:** open.
+
+### U-026 Adding an extension yourself asks for approval a second time, in the Inbox
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner: "why would I not want to approve it after
+  adding it?"
+- **What happens:** the panel's Add only files a request; the grant waits for an answer to a
+  blocking, high-risk Inbox card. The design routes every grant through one place because spec
+  §Security lists "granting a new capability" among the actions that always need a person,
+  with a change card and a confirmation in the app, and because some grants are not the
+  person's own click: an extension added from a URL is reviewed only after it has been started
+  once (its real tools are learned then), and widening an extension's permissions is a grant
+  as well. For a built-in catalog entry the person adds in the panel, the permissions are known
+  before the click, so the Inbox card repeats a decision just made, with no new information.
+- **Options for the action (owner to choose):** Add on a built-in entry opens a confirmation in
+  the panel showing the same change card (tools, secrets, domains, scopes) and grants on
+  Confirm, with no Inbox card; the Inbox keeps grants the person did not just see (from a URL
+  after discovery, widened permissions, anything proposed by an agent).
 - **Status:** open.
 
 ### U-021 Extension approvals show "[object Object]" and both buttons deny
