@@ -43,7 +43,12 @@ import {
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
+<<<<<<< HEAD
 import { fileBlockedByFindingsRequest, fileReviewFailedRequest } from "./findings.ts";
+=======
+import { countsOf, countsSentence } from "./counts.ts";
+import { fileBlockedByFindingsRequest } from "./findings.ts";
+>>>>>>> 4ec2a67 (runtime, critic: one set of session counts everywhere (U-072))
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
 import {
   describeHeard,
@@ -1700,8 +1705,12 @@ export class SessionRunner {
       completed: completed.length,
       inReview: inReview.length,
       failed: failed.length,
+<<<<<<< HEAD
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
+=======
+      needsHuman: needsHuman.length,
+>>>>>>> 4ec2a67 (runtime, critic: one set of session counts everywhere (U-072))
       skipped: skipped.length,
       retried: retried.length,
       blockedByFindings: blockedByFindings.length,
@@ -2267,7 +2276,12 @@ function summarize(x: {
           `Review failed: ${x.reviewFailed.length} (asked you in the Inbox: rework, accept or cancel).`,
         ]
       : []),
+<<<<<<< HEAD
     ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
+=======
+    // One set of counts (U-072): the log's session.ended line and the notification count the same.
+    countsSentence(countsOf(x), x.plan?.items.length ?? 0),
+>>>>>>> 4ec2a67 (runtime, critic: one set of session counts everywhere (U-072))
     ...(x.blockedByFindings.length
       ? [
           `Blocked by open findings: ${x.blockedByFindings.length} (asked you: rework, accept or cancel).`,

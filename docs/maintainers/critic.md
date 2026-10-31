@@ -280,8 +280,11 @@ store and persists a `Review` with `session_id` set and `task_id` null:
   is not a draft; no spend without a plan;
 - cost efficiency: actual spend (cost ledger, else the session counter) against the estimate
   (medium finding above 1.5x and one cent), spend above the cap (high), cost per done task,
-  spend with no planned task done (medium), and a plan whose tasks all failed with none done,
-  even at no cost (medium; U-017: such a session was graded 100). The service's own event is
+  spend with no planned task done (medium), and a plan with none done whose tasks failed or
+  were sent back by the critic (the session handoff's `sent_back`, `sentBackOf`), even at no
+  cost: one medium finding naming both counts ("No planned task was done: 1 of 2 failed, 1 sent
+  back by the critic"; U-017: an all-failed session was graded 100; U-072: so was one whose only
+  task was sent back). The service's own event is
   `critic.session_review_metrics` (the measurements); the runner reports the review as
   `critic.session_review`, so the session log shows it once;
 - honesty: `parseSummaryClaims` reads "Done: N" (also "N tasks done", "completed N tasks"),

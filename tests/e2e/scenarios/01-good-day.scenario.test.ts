@@ -337,7 +337,9 @@ describe("scenario 1: the good day", () => {
         m.created_at >= ALICE_SCHEDULED,
     );
     expect(summary?.body).toMatch(/^Session completed\./);
-    expect(summary?.body).toContain("Done: 1. In review: 0. Needs you: 1.");
+    expect(summary?.body).toContain(
+      "Done: 1. Failed: 0. Needs you: 1. Sent back by the critic: 0. In review: 0.",
+    );
     expect((summary?.created_at ?? "") < MORNING).toBe(true);
     expect(summary?.body).toBe(aliceSession.summary);
     const questions = await w.humanRequests(w.j, { status: "open" });

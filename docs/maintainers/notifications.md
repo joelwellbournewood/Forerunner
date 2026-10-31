@@ -43,7 +43,7 @@ names a session appends a `notification` event to that session's log.
 | --- | --- | --- | --- |
 | `request_opened` | normal | `producers.requestOpened` for a non-blocking human request | `/inbox` |
 | `request_blocking` | **urgent** | `producers.requestOpened` when `blocking` is true | `/inbox` |
-| `session_ended` | normal | `producers.sessionEnded` from the session runner; the title counts done, needs you and, when any, failed tasks (U-017) | `/sessions/<id>` |
+| `session_ended` | normal | `producers.sessionEnded` from the session runner; the title counts the summary's categories in its order (done, failed, needs you, sent back, in review, not started; `countsBrief` in `session/counts.ts`), done always and the others when any: "0 done, 1 sent back" (U-017, U-072); `SessionEndFacts` carries `retried`, `inReview` and `skipped` for it | `/sessions/<id>` |
 | `budget_stop` | **urgent** | `producers.sessionEnded` when `stopReason === "budget_exceeded"` (or `producers.budgetStop`) | `/sessions/<id>` |
 | `critic_verdict` | info (`escalate` and `human` verdicts: normal) | `producers.criticVerdict` | `/projects/<id>/reviews` or `/inbox` |
 | `injection_flagged` | **urgent** | `producers.injectionFlagged` with an `InjectionReport` | `/sessions/<id>` or `/inbox` |

@@ -7,6 +7,7 @@
 import type { HumanRequestRow, MessageRow, ReviewRow } from "@forerunner/state";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
 import type { InjectionReport } from "../injection/scan.ts";
+import { countsBrief, countsOf } from "../session/counts.ts";
 import type { Notification, NotificationRecord } from "./types.ts";
 
 function cut(s: string, max: number): string {
@@ -45,6 +46,10 @@ export interface SessionEndFacts {
   needsHuman: string[];
   /** Failed tasks; the title names them (U-017: "0 done, 0 need you" hid a failed task). */
   failed?: string[];
+  /** Sent back by the critic, in review, not started: the summary's categories (U-072). */
+  retried?: string[];
+  inReview?: string[];
+  skipped?: string[];
   projectId?: string | null;
   agentName?: string;
 }
@@ -56,7 +61,9 @@ export function sessionEnded(humanId: string, r: SessionEndFacts): Notification 
   return {
     kind: "session_ended",
     humanId,
-    title: `${who} ${r.status}: ${r.completed.length} done, ${r.needsHuman.length} need${r.needsHuman.length === 1 ? "s" : ""} you${r.failed?.length ? `, ${r.failed.length} failed` : ""}`,
+    // The summary's categories, those that happened (U-072): a session whose only task was
+    // sent back reads "0 done, 1 sent back", not "0 done, 0 need you".
+    title: `${who} ${r.status}: ${countsBrief(countsOf(r))}`,
     body: cut(r.summary, 1000),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,

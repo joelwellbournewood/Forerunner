@@ -35,6 +35,7 @@ import { type AgentModelConfig, modeOverride, specialistOverride } from "../mode
 import { priorityLevel } from "../priority.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import type { Registry } from "../registry/types.ts";
+import { countsList } from "../session/counts.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { optionLabel } from "../wiring/request-answers.ts";
@@ -329,7 +330,17 @@ export function describeEvent(type: string, p: Record<string, unknown>): string 
     case "session.error":
       return `Error: ${s("code")} ${s("message")}`;
     case "session.ended":
-      return `Session ended: ${s("status")} (${s("stopReason")}), spent ${(n("spentUsdMicro") / 1e6).toFixed(2)} USD, done ${n("completed")}, in review ${n("inReview")}, failed ${n("failed")}, not started ${n("skipped")}.`;
+      // The summary's six categories (U-072); `needsHuman` is absent on events before it.
+      return `Session ended: ${s("status")} (${s("stopReason")}), spent ${(n("spentUsdMicro") / 1e6).toFixed(2)} USD: ${countsList(
+        {
+          done: n("completed"),
+          failed: n("failed"),
+          needsYou: n("needsHuman"),
+          sentBack: n("retried"),
+          inReview: n("inReview"),
+          notStarted: n("skipped"),
+        },
+      )}.`;
     case "chat.human":
       return `You: ${s("text")}`;
     case "chat.reply":

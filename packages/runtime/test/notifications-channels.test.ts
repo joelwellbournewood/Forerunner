@@ -707,10 +707,21 @@ describe("producers", () => {
       projectId: "p-1",
       dedupeKey: "session:s-1:ended",
     });
-    // U-017: a failed task is named; with none the title stays as it was.
+    // U-017: a failed task is named; with none the title stays as it was. U-072: in the
+    // summary's order (done, failed, needs you, sent back, in review, not started).
     expect(producers.sessionEnded("h-1", { ...facts, failed: ["d"] }).title).toBe(
-      "Alice's session completed: 2 done, 1 needs you, 1 failed",
+      "Alice's session completed: 2 done, 1 failed, 1 needs you",
     );
+    expect(
+      producers.sessionEnded("h-1", {
+        ...facts,
+        completed: [],
+        needsHuman: [],
+        retried: ["e"],
+        inReview: ["f"],
+        skipped: ["g", "h"],
+      }).title,
+    ).toBe("Alice's session completed: 0 done, 1 sent back, 1 in review, 2 not started");
     const stop = producers.sessionEnded("h-1", { ...facts, stopReason: "budget_exceeded" });
     expect(stop.kind).toBe("budget_stop");
     expect(stop.title).toBe("Alice stopped: budget cap reached (USD 2.35 spent)");

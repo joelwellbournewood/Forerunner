@@ -108,6 +108,11 @@ for the budget is left out and the smaller ones after it still run. **Start sess
 before you start when no ready task can run (each one that waits on another task, and each
 one larger than the budget, by name) and what to do; the session's summary names the same.
 
+When a session ends, its summary, the last line of its log and the notification count the same
+things: tasks done, failed, needing you, sent back by the critic for another attempt, waiting
+in review, and not started. A session where nothing was done because its tasks failed or were
+sent back gets a lower grade from the critic's session review.
+
 ## Inbox
 
 Human requests and agent messages across all projects, blocking ones first. A request shows the

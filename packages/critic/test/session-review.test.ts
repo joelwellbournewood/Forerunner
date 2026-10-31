@@ -299,6 +299,7 @@ describe("session review (H.6)", () => {
     }
   });
 
+<<<<<<< HEAD
   it("a task finished after the session ended does not make its summary a lie", () => {
     // Release scenario 1 (a good day): the summary said "Done: 2" at the session's end; by the
     // time the review ran, a later session had finished a third planned task. Counting task
@@ -362,6 +363,74 @@ describe("session review (H.6)", () => {
       ledgerUsdMicro: 13_591,
     } as never;
     expect(sessionChecks(data).verdict).not.toBe("human");
+=======
+  it("a session whose only planned task was sent back by the critic is not graded 100 (U-072)", async () => {
+    const w = await world();
+    try {
+      // After a revise the task is back to ready; the session's handoff names it as sent back.
+      const a = await w.newTask({ status: "ready", title: "Add clamp" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [{ taskId: a.id, title: a.title, estimateUsdMicro: 200_000 }],
+          estimateUsdMicro: 200_000,
+          summary: "",
+        },
+        summary:
+          "Session completed. Done: 0. Failed: 0. Needs you: 0. Sent back by the critic: 1. In review: 0. Not started: 0 of 1 planned.",
+        handoff: { done: [], sent_back: [a.id], blocked: [] },
+        status: "completed",
+        spent_usd_micro: 0,
+      });
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.grade).toBe(85);
+      expect(out.findings.map((f) => f.description)).toEqual([
+        "No planned task was done: 1 of 1 sent back by the critic",
+      ]);
+      expect(out.findings[0]?.requiredAction).toBe(
+        "Address the critic's findings on each task sent back before planning it again",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a session with one task failed and one sent back names both in one finding (U-072)", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "failed", title: "Confirm the stack" });
+      const b = await w.newTask({ status: "ready", title: "Add clamp" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [a, b].map((t) => ({ taskId: t.id, title: t.title, estimateUsdMicro: 100_000 })),
+          estimateUsdMicro: 200_000,
+          summary: "",
+        },
+        summary: "Done: 0. Failed: 1.",
+        handoff: { sent_back: [b.id] },
+        status: "completed",
+        spent_usd_micro: 0,
+      });
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.grade).toBe(85);
+      expect(out.findings.map((f) => f.description)).toEqual([
+        "No planned task was done: 1 of 2 failed, 1 sent back by the critic",
+      ]);
+    } finally {
+      await w.close();
+    }
+>>>>>>> 4ec2a67 (runtime, critic: one set of session counts everywhere (U-072))
   });
 
   it("an honest, in-budget session is accepted with grade 100 and no finding", async () => {

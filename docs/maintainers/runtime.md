@@ -3390,6 +3390,19 @@ criteria, budget, risk tier or specialist with `brief_incomplete` and the list o
 bypass, hidden text, markdown image exfil, ...). Flagged content raises an event and a note to
 the human; it is never acted on.
 
+### Session counts (U-072)
+
+The session summary, the `session.ended` log line and the `session_ended` notification count
+the same six categories, in one order: done, failed, needs you, sent back (by the critic), in
+review, not started (`session/counts.ts`). The summary says `countsSentence` ("Done: 0. Failed:
+0. Needs you: 0. Sent back by the critic: 1. In review: 0. Not started: 0 of 1 planned.", which
+the critic's honesty check still reads), the log line `countsList` (every category; the
+`session.ended` payload carries `needsHuman` for it, absent on older events and read as 0), the
+notification title `countsBrief` (done and every non-zero category). Before, the title counted
+done and needs you only, so a session whose only task was sent back read "0 done, 0 need you";
+the critic's session review now grades it below 100 (`critic.md`). The monthly handover test's
+report (`jobs/handover.ts`) counts its session with `countsBrief` too.
+
 ### Project card state (U-071)
 
 `projectCard` (`daemon/views.ts`) takes its `health` and `needsYou` from `projectHealth`

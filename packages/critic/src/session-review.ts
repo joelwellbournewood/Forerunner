@@ -163,6 +163,13 @@ export function parseSummaryClaims(summary: string): SummaryClaims {
   return out;
 }
 
+/** The task ids a session's handoff lists as sent back by the critic (`handoff.sent_back`). */
+export function sentBackOf(handoff: JsonValue): string[] {
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return [];
+  const list = (handoff as Record<string, unknown>).sent_back;
+  return Array.isArray(list) ? list.filter((id): id is string => typeof id === "string") : [];
+}
+
 export function sessionChecks(data: SessionReviewData): SessionChecks {
   const { session, planItems } = data;
   const findings: ReviewFinding[] = [];
@@ -254,13 +261,28 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     );
   }
   // U-017: a session whose every task failed at once spends nothing, and graded 100.
+  // U-072: the same for the tasks the critic sent back (the handoff's `sent_back`): a session
+  // whose only task was sent back did nothing that holds, and graded as if it had.
   const plannedFailed = [...planned].filter((id) => data.tasks.get(id)?.status === "failed");
-  if (plannedDoneTasks === 0 && plannedFailed.length > 0) {
+  const plannedSentBack = sentBackOf(session.handoff).filter(
+    (id) => planned.has(id) && data.tasks.get(id)?.status !== "done" && !plannedFailed.includes(id),
+  );
+  if (plannedDoneTasks === 0 && plannedFailed.length + plannedSentBack.length > 0) {
+    const parts = [
+      ...(plannedFailed.length ? [`${plannedFailed.length} of ${planned.size} failed`] : []),
+      ...(plannedSentBack.length
+        ? [
+            `${plannedSentBack.length}${plannedFailed.length ? "" : ` of ${planned.size}`} sent back by the critic`,
+          ]
+        : []),
+    ];
     add(
       "medium",
-      `No planned task was done: ${plannedFailed.length} of ${planned.size} failed`,
-      "Read each failed task's reason and fix what stopped it before planning it again",
-      plannedFailed.join(", "),
+      `No planned task was done: ${parts.join(", ")}`,
+      plannedSentBack.length && !plannedFailed.length
+        ? "Address the critic's findings on each task sent back before planning it again"
+        : "Read each failed task's reason and fix what stopped it before planning it again",
+      [...plannedFailed, ...plannedSentBack].join(", "),
     );
   }
   const costPerDone = doneTasks > 0 ? Math.round(actual / doneTasks) : null;

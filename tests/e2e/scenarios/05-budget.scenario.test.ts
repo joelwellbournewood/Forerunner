@@ -157,7 +157,7 @@ describe("scenario 5: budget", () => {
     });
     expect(handoff?.body).toBe(session.summary);
     expect(session.summary).toMatch(
-      /^Session ended \(budget_exceeded\)\. Done: 1\. In review: 0\. Needs you: 1\./,
+      /^Session ended \(budget_exceeded\)\. Done: 1\. Failed: 0\. Needs you: 1\. Sent back by the critic: 0\. In review: 0\./,
     );
     expect(session.summary).toContain("Not started: 1 of 3 planned");
     const summary = (await w.inbox(w.j)).find((m) => m.type === "info");

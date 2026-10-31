@@ -50,6 +50,7 @@ import { scanForInjection } from "../injection/scan.ts";
 import { MERGE_PR_TOOL } from "../loop/merge.ts";
 import type { NotifierLike } from "../notifications/producers.ts";
 import { handoverReport as handoverReportNotification } from "../notifications/producers.ts";
+import { countsBrief, countsOf } from "../session/counts.ts";
 import type { Planner, PlannerContext, SessionPlan, SessionResult } from "../session/runner.ts";
 import {
   localParts,
@@ -362,6 +363,10 @@ export interface HandoverReport {
     completed: string[];
     needsHuman: string[];
     failed: string[];
+    /** The summary's other categories (U-072); absent on reports written before them. */
+    retried?: string[];
+    inReview?: string[];
+    skipped?: string[];
     spentUsdMicro: number;
     summary: string;
   };
@@ -429,7 +434,7 @@ export interface HandoverJobDeps {
 export function formatHandoverReport(r: HandoverReport): string {
   const lines = [
     `Handover test ${r.date} on ${r.projectName}: "${r.seed.title}" by a fresh agent (${r.agentName}, no memory).`,
-    `Session ${r.sessionId} ${r.session.status}: ${r.session.completed.length} done, ${r.session.needsHuman.length} need you, ${r.session.failed.length} failed; task ${r.task.status}${r.task.prUrl ? ` (${r.task.prUrl})` : ""}; USD ${(r.session.spentUsdMicro / 1_000_000).toFixed(4)}.`,
+    `Session ${r.sessionId} ${r.session.status}: ${countsBrief(countsOf(r.session))}; task ${r.task.status}${r.task.prUrl ? ` (${r.task.prUrl})` : ""}; USD ${(r.session.spentUsdMicro / 1_000_000).toFixed(4)}.`,
   ];
   if (r.stuck.length === 0)
     lines.push("The agent got stuck nowhere: no stuck place, no docs task.");
@@ -654,6 +659,9 @@ export class HandoverJob {
         completed: result.completed,
         needsHuman: result.needsHuman,
         failed: result.failed,
+        retried: result.retried,
+        inReview: result.inReview,
+        skipped: result.skipped,
         spentUsdMicro: result.spentUsdMicro,
         summary: result.summary,
       },
