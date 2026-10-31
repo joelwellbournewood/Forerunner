@@ -92,7 +92,7 @@ apps/ui/
 
 | Route | Page | Data |
 | --- | --- | --- |
-| `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog (a pasted brief sends `intake: true`, so the PM intake drafts the plan, the doc set and the first-session plan in the background and the proposal lands in the inbox; spec A.2, ADR 0055) | store (`GET /projects`), `POST /projects` |
+| `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade; `ProjectStateBadge`: "blocked" only while something waits in the Inbox, a task that needs you without a card reads "needs you: <task>" and links to the Tasks tab, U-071), New project dialog (a pasted brief sends `intake: true`, so the PM intake drafts the plan, the doc set and the first-session plan in the background and the proposal lands in the inbox; spec A.2, ADR 0055) | store (`GET /projects`), `POST /projects` |
 | `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active. **Start session** (`StartSessionDialog`): a budget and a reason; when it opens (and as the budget is typed) it reads the start check: with no ready task it says a session would end at once and how to give the agent work (Tasks tab, Mark ready on a draft, "add a task: …" in Chat, the plan in the Inbox; U-009); with ready tasks of which none can run it says so (`start-session-cannot-run`) and names each one waiting on another task, with that task's title and state and what to do when it is cancelled, failed or missing, and each one larger than the work budget, with its estimate and the budget; when some can run, the others are listed under "Not in this session" (`start-session-left-out`; U-040); a started session opens its live view, a queued or deferred start says so in the dialog (`startNotice`, U-003), with how many waiting starts come before it from the answer's `ahead` ("This one starts when that one ends." only when none does; waiting starts run in order, none replaced, U-043) | `GET /projects/:id` and the tab routes below; `GET /projects/:id/start-check?budgetUsdMicro=`, `POST /sessions` |
 | `summary` tab | the cached one-screen summary with Read aloud (the daemon's voice provider reads it, `POST /projects/:id/speak`; the text being read is shown and Stop cancels it; the browser's speech is the fallback on 503); **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (question, chosen option, the others, rationale, who, supersedes) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (served since U-004), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
 | `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests); in **small-project mode** (spec B.6, the card's `smallProjectMode`) the tab shows instead the one milestone (the open one from the route, or the card's next milestone without it; milestones on file from before the mode are named, not hidden), the tasks as a **flat list** in the daemon's order with no grouping and no timeline, and the graph; every milestone the route served (never a derived one) has **Edit**: a dialog with name, target date, status and success criteria (one per line) with an **optional reason** (U-010; left empty, `DEFAULT_MILESTONE_REASON`, "Milestone edited in the app", is sent, since the daemon keeps a reason on every change), posted with the row's `version` (spec B.5; the daemon's refusal, a stale version or a bad date, stays in the dialog), and the reason of the last change is shown under the milestone | `GET /projects/:id/tasks`, `GET /projects/:id/milestones`, `POST /milestones/:id` |
@@ -252,7 +252,20 @@ banner. When a frame turns control off, `refreshDesktopControl` re-reads the sta
 from any shell (the tray included) shows the "stopped" line; `restart.requested` sets `restart` (the shell shows a
 banner on every page) until a heartbeat arrives from a daemon on the target version. When
 `EventSource` is missing (jsdom) or closes, the helper polls every 5 s and retries SSE every
-30 s; `onMode` reports `connecting | sse | polling | closed`. Chat uses `streamChat()` over
+30 s; `onMode` reports `connecting | sse | polling | closed`. **The connection status follows
+the daemon (U-071):** a poll the daemon does not answer, or refuses with 401, calls `onDown`
+and the header reads "not connected" with **Retry** (`connection-retry`) and a banner saying
+why in plain words (`NOT_REACHABLE`, `TOKEN_REFUSED`); the next poll that goes through, or the
+live stream (re)opening, calls `onUp`: "connected" again, and `/health` (the kill switch) and
+the project list are read again. A start where nothing answered retries on the poll cadence;
+**Retry** dispatches `reconnect`, which bumps `connection.attempt` and makes `AppProvider`
+bootstrap and reopen `/events` at once. A heartbeat alone no longer sets "connected". The live
+session view (`SessionPage`) does not subscribe to a session that has ended (`ENDED`:
+completed, stopped, failed, killed; the daemon ends that stream, so an EventSource would
+reconnect and the fallback poll for good) and shows **finished**; a session that ends while
+the page is open (a `session.ended` event on the stream, or a `session.changed` with an ended
+status from the poll) closes the stream after one last read of the header and the log. The page
+reuses the provider's `streamOptions` (`useStreamOptions`), so tests poll fast. Chat uses `streamChat()` over
 `POST /chat/stream`: `token` frames build the reply as they arrive, the `reply` frame finishes
 it, `error` frames become `ApiError`; a plain JSON `ChatReplyView` is accepted as well.
 
@@ -283,12 +296,20 @@ both, closing on `speak.done` cut the last ~300 ms.
 daemon said anything, set from a frame by `desktopControlFromIndicator` and from a status by
 `desktopControlFromStatus`, where `revoked` is a stop the banner can resume and never a
 revoke by the Extensions panel (reason "… disabled|removed in the Extensions panel"); and
-`desktopOrder`, the frame/read order above);
+`desktopOrder`, the frame/read order above; `chats`: each project's Chat conversation,
+U-071, below);
 React reads it with `useUiState(selector)` over `useSyncExternalStore` (selectors must return
 stable values). `activeProject` and `theme` persist in `localStorage` under
 `forerunner.ui.<installId>.<name>` (`lib/storage.ts`, wrapped in try/catch; `memoryStorage()`
 in tests). Page data stays in the page through `useAsync(loader, deps)` (`data`, `error`,
 `routeMissing`, `errorStatus`, `loading`, `reload`, `setData`), which aborts stale loads.
+The Chat tab's conversation is the exception (U-071: a tab switch or a reload lost it, with an
+unanswered Yes/No card): it lives in `chats[projectId]` (`store/chat-history.ts`). The tab
+dispatches `chat.load` on mount (the store reads `forerunner.ui.<installId>.chat.<projectId>`,
+a reply cut off by a reload turned into one that says so) and every change as `chat` with an
+updater, so a reply still streaming after the tab closed lands in the store; the store saves
+the newest 100 messages when a message is added or a reply ends (not on every token). The
+daemon has no per-project transcript route, so the window keeps what it showed.
 
 ### Money
 

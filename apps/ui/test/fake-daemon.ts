@@ -1211,14 +1211,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         open = false;
         state.listeners.delete(listener);
       });
-      while (open) {
+      // The real daemon ends a session's stream once the session has ended (U-071).
+      const ended = () => ["completed", "stopped", "failed", "killed"].includes(session.status);
+      while (open && !ended()) {
         await stream.sleep(heartbeatMs);
-        if (!open) break;
+        if (!open || ended()) break;
         await stream.writeSSE({
           event: "heartbeat",
           data: JSON.stringify({ at: new Date().toISOString() }),
         });
       }
+      open = false;
+      state.listeners.delete(listener);
     });
   });
   app.post("/sessions/:id/stop", (c) => {

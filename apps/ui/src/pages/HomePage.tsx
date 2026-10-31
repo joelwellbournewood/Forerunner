@@ -1,11 +1,11 @@
 import { Link } from "react-router";
 import type { ProjectCard as ProjectCardView } from "../api/client.ts";
+import { ProjectStateBadge } from "../components/ProjectState.tsx";
 import {
   Badge,
   Button,
   buttonClassName,
   EmptyState,
-  healthTone,
   Loading,
   SpendBar,
 } from "../components/ui.tsx";
@@ -79,9 +79,7 @@ export function ProjectCard({
           </Link>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">{project.goal}</p>
         </div>
-        <Badge tone={healthTone(project.health)} testId="health-badge">
-          {project.health}
-        </Badge>
+        <ProjectStateBadge project={project} />
       </div>
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
         <dt className="text-neutral-500">Stage</dt>

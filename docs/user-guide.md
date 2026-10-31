@@ -48,6 +48,14 @@ the cloud runner are built and pass their tests, but you are the first to run th
 
 Every project is a card: stage, next milestone, health, spend against budget, how many things
 wait on you, and the latest critic grade. The active project is always shown in the header.
+A project reads **blocked** only while something waits for your answer in the Inbox. A task
+that needs you but has no Inbox card (for example one you marked "Needs me") shows as
+**needs you: <task>**; click it to open the project's tasks.
+
+The header says **connected** while Forerunner's background service answers. When it stops
+answering (or refuses this window after a restart) the header says **not connected** with a
+**Retry** button and a line saying why; the app keeps trying on its own and says **connected**
+again as soon as the service answers.
 "New project" asks for a name, a goal, a short brief and a repository link.
 
 ## A project
@@ -73,7 +81,9 @@ wait on you, and the latest critic grade. The active project is always shown in 
 - **Data**: files and datasets the project knows about; agents see metadata and samples, never
   whole files.
 - **Chat**: a quick, read-only chat with the fast model about this project. "Make this a task"
-  turns a message into a ready task, which the next session works on.
+  turns a message into a ready task, which the next session works on. Each project keeps its
+  own conversation in this window: switching tabs or reloading keeps it, a Yes/No question you
+  have not answered yet included.
 
 With the GitHub Projects mirror turned on in a project's settings, Forerunner asks once in the
 Inbox before it creates the board. **Do not mirror this project** turns the mirror off for that
@@ -85,7 +95,8 @@ to be asked again.
 A session starts on a schedule, on a trigger (a pull request comment, CI, an email command) or
 by hand. The live view shows the event stream in plain words, the current task and specialist,
 the step count and the running cost against the cap; escalations are highlighted. Raw output is
-behind a toggle. A session stops cleanly when it reaches 80% of its cap (it finishes the
+behind a toggle. A session that has ended shows **finished**: its log is complete and the
+page no longer waits for events. A session stops cleanly when it reaches 80% of its cap (it finishes the
 current task and starts nothing new), when its wall clock runs out, or when you stop it.
 
 A start while your agent is in another session waits its turn: waiting starts (yours, an

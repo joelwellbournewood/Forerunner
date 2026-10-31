@@ -62,6 +62,7 @@ import type {
   TaskView,
 } from "./api-types.ts";
 import { PERFORMANCE_DEFAULT_DAYS, PERFORMANCE_MAX_DAYS } from "./api-types.ts";
+import { projectHealth } from "./project-health.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
 export function agentView(a: AgentRow): AgentView {
@@ -112,15 +113,7 @@ export async function projectCard(
   const taskIds = new Set(tasks.map((t) => t.id));
   const latest = reviews.find((r) => r.task_id && taskIds.has(r.task_id));
   const failed = tasks.filter((t) => t.status === "failed").length;
-  const blocked = tasks.filter((t) => t.status === "needs_human").length;
-  const health: ProjectCard["health"] =
-    waiting > 0 || blocked > 0
-      ? "blocked"
-      : failed > 0
-        ? "attention"
-        : tasks.length === 0
-          ? "idle"
-          : "good";
+  const { health, needsYou } = await projectHealth(store, p.id, humanId, tasks, failed);
   const last = (p.summary_cache as { last_session?: { ended_at?: string } }).last_session;
   return {
     id: p.id,
@@ -137,6 +130,7 @@ export async function projectCard(
         }
       : null,
     health,
+    needsYou,
     spend: money(spend.usd_micro, chfPerUsd),
     budget: money(p.budget_usd_micro, chfPerUsd),
     waitingOnYou: waiting,

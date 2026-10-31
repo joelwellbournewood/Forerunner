@@ -1169,15 +1169,21 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
   };
 }
 
+/** The background service did not answer (U-071: said as the person reads it). */
+export const NOT_REACHABLE = "Forerunner's background service does not answer.";
+/** The background service refused this window's key (a 401, e.g. after a restart). */
+export const TOKEN_REFUSED =
+  "Forerunner's background service refused this window's key: close Forerunner and open it again.";
+
 /** Plain-language message for a banner; never leaks the token or the stack. */
 export function describeError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.code === "ui.network") return "Daemon not reachable.";
-    if (error.status === 401) return "Daemon rejected the token.";
+    if (error.code === "ui.network") return NOT_REACHABLE;
+    if (error.status === 401) return TOKEN_REFUSED;
     // A typed 403 (a scope the human may not read, a grant that needs approval) keeps its
     // message; an untyped one is the token.
     if (error.status === 403 && (error.code === "ui.http_error" || error.code === "unauthorized")) {
-      return "Daemon rejected the token.";
+      return TOKEN_REFUSED;
     }
     return error.message;
   }

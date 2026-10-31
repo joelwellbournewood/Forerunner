@@ -102,7 +102,17 @@ export const ProjectCard = z.object({
   nextMilestone: z
     .object({ id: z.string(), name: z.string(), targetDate: z.string().nullable() })
     .nullable(),
+  /**
+   * `blocked` only while something waits on the human in the Inbox (an open blocking request,
+   * or a needs-human task with its card); see `needsYou` for a task that needs them without
+   * one (U-071).
+   */
   health: z.enum(["good", "attention", "blocked", "idle"]),
+  /**
+   * The first task marked as needing the human that has no Inbox card: the card says
+   * "needs you: <title>" and links to it (U-071). Absent on a card the state service serves.
+   */
+  needsYou: z.object({ taskId: z.string(), title: z.string() }).nullable().optional(),
   spend: Money,
   budget: Money,
   waitingOnYou: z.number().int(),

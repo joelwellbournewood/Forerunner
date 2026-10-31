@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { seedFromMessage } from "../src/pages/project/NewTaskDialog.tsx";
+import { createStore } from "../src/store/store.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Quick chat", () => {
@@ -56,6 +57,64 @@ describe("Quick chat", () => {
       expect(agents[1]).toHaveTextContent("Confirmed. Starting the session now."),
     );
     expect(agents[1]).toHaveTextContent("session_start");
+  });
+
+  it("keeps the conversation and an unanswered Yes/No card across a tab switch and a reload (U-071)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const first = renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "please start a session");
+    await user.click(screen.getByTestId("chat-send"));
+    await screen.findByTestId("pending-confirmation");
+
+    // Another tab and back: the conversation and the card are still there.
+    await user.click(screen.getByTestId("tab-tasks"));
+    await screen.findAllByTestId("task-row");
+    expect(screen.queryByTestId("chat-human")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("tab-chat"));
+    expect(await screen.findByTestId("chat-human")).toHaveTextContent("please start a session");
+    expect(screen.getByTestId("pending-confirmation")).toHaveTextContent(
+      "You want to start a session with a budget of CHF 4.00.",
+    );
+
+    // A reload: a new store over the same browser storage.
+    first.unmount();
+    const reloaded = {
+      ...harness,
+      store: createStore(harness.store.getState().config, harness.storage),
+    };
+    renderApp("/projects/proj_atlas/chat", reloaded);
+    expect(await screen.findByTestId("chat-human")).toHaveTextContent("please start a session");
+    const card = await screen.findByTestId("pending-confirmation");
+    await waitFor(() => expect(screen.getByTestId("chat-input")).toBeEnabled());
+    await user.click(within(card).getByTestId("confirm-yes"));
+    await waitFor(() => expect(postedCalls(harness, "/chat/stream")).toHaveLength(2));
+    const answer = postedCalls(harness, "/chat/stream")[1]?.body as { text?: string } | undefined;
+    expect(answer?.text).toBe("yes");
+    await waitFor(() =>
+      expect(screen.queryByTestId("pending-confirmation")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps each project's conversation apart (U-071)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "what happened last session?");
+    await user.click(screen.getByTestId("chat-send"));
+    await screen.findByTestId("chat-human");
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-agent")).toHaveAttribute("data-streaming", "false"),
+    );
+    await user.click(screen.getByTestId("active-project"));
+    await user.click(within(screen.getByTestId("project-switcher")).getByText("Beacon"));
+    await user.click(await screen.findByTestId("tab-chat"));
+    await screen.findByTestId("chat-input");
+    expect(screen.queryByTestId("chat-human")).not.toBeInTheDocument();
   });
 
   it("sends no when declined", async () => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
-import { describeError } from "../api/client.ts";
+import { describeError, NOT_REACHABLE } from "../api/client.ts";
 import { RunnerAutoUnlock } from "../components/RunnerAutoUnlock.tsx";
 import { Badge, Button } from "../components/ui.tsx";
 import { NewProjectDialog } from "../pages/NewProjectDialog.tsx";
@@ -339,6 +339,15 @@ export function Shell() {
             <Badge tone={connectionTone} testId="connection-status" title={connection.error ?? ""}>
               {connectionLabel}
             </Badge>
+            {connection.status === "disconnected" ? (
+              <Button
+                variant="ghost"
+                onClick={() => store.dispatch({ type: "reconnect" })}
+                data-testid="connection-retry"
+              >
+                Retry
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               onClick={() => setConversation((c) => ({ ...c, open: true }))}
@@ -406,9 +415,16 @@ export function Shell() {
               data-testid="not-connected"
               className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
             >
-              Not connected to the Forerunner daemon at {state.config.baseUrl}
-              {connection.error ? ` (${connection.error})` : ""}. Start the desktop app or{" "}
-              <code>fr daemon</code>, then reload.
+              Not connected. {connection.error ?? NOT_REACHABLE} The app tries again every few
+              seconds.{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => store.dispatch({ type: "reconnect" })}
+                data-testid="not-connected-retry"
+              >
+                Retry now
+              </button>
             </div>
           ) : null}
           {/* Cloud runner auto-unlock inside the window this computer set (ADR 0068). */}

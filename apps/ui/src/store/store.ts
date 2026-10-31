@@ -2,6 +2,7 @@ import type { AgentView, HealthView, HumanView, ProjectCard } from "../api/clien
 import type { DaemonConfig } from "../api/config.ts";
 import type { DesktopIndicatorEventData, RestartRequested, StreamMode } from "../api/sse.ts";
 import { type KeyValueStore, storageKey } from "../lib/storage.ts";
+import { CHAT_HISTORY_LIMIT, type ChatMessage, loadChat, saveChat } from "./chat-history.ts";
 
 /**
  * The one piece of app-wide state: projects, the active project, inbox count, daemon health,
@@ -22,6 +23,11 @@ export interface ConnectionState {
   error: string | null;
   streamMode: StreamMode;
   lastHeartbeatAt: string | null;
+  /**
+   * Bumped by "Retry" in the header (U-071): the provider reads the install-wide state again
+   * and reopens the `/events` stream.
+   */
+  attempt: number;
 }
 
 export interface UiState {
@@ -54,6 +60,11 @@ export interface UiState {
    * answered before a newer frame never overwrites it.
    */
   desktopOrder: { next: number; applied: number };
+  /**
+   * Each project's Chat conversation (U-071), read from storage the first time the tab opens
+   * (`chat.load`) and saved on every change, so a tab switch or a reload keeps it.
+   */
+  chats: Record<string, ChatMessage[]>;
 }
 
 /** What the desktop-control banner shows. */
@@ -118,6 +129,8 @@ export function desktopControlFromIndicator(
 
 export type UiAction =
   | { type: "connection"; patch: Partial<ConnectionState> }
+  /** "Retry" in the header: connect again now (U-071). */
+  | { type: "reconnect" }
   | { type: "me"; me: HumanView | null }
   | { type: "agents"; agents: AgentView[] }
   | { type: "projects"; projects: ProjectCard[] }
@@ -135,7 +148,11 @@ export type UiAction =
    */
   | { type: "desktopControl"; desktopControl: DesktopControlState | null; readToken?: number }
   /** A status read starts: its token is `desktopOrder.next` after this action. */
-  | { type: "desktopRead" };
+  | { type: "desktopRead" }
+  /** The Chat tab opens: its saved conversation is read once (U-071). */
+  | { type: "chat.load"; projectId: string; messages?: ChatMessage[] }
+  /** The conversation changed (a message sent, a token streamed, a reply ended). */
+  | { type: "chat"; projectId: string; update: (messages: ChatMessage[]) => ChatMessage[] };
 
 export const STORAGE_NAMES = {
   activeProject: "activeProject",
@@ -158,6 +175,7 @@ export function initialState(config: DaemonConfig, storage: KeyValueStore): UiSt
       error: null,
       streamMode: "closed",
       lastHeartbeatAt: null,
+      attempt: 0,
     },
     me: null,
     agents: [],
@@ -172,6 +190,7 @@ export function initialState(config: DaemonConfig, storage: KeyValueStore): UiSt
     extensionsVersion: 0,
     desktopControl: null,
     desktopOrder: { next: 0, applied: 0 },
+    chats: {},
   };
 }
 
@@ -179,6 +198,11 @@ export function reduce(state: UiState, action: UiAction): UiState {
   switch (action.type) {
     case "connection":
       return { ...state, connection: { ...state.connection, ...action.patch } };
+    case "reconnect":
+      return {
+        ...state,
+        connection: { ...state.connection, attempt: state.connection.attempt + 1 },
+      };
     case "me":
       return { ...state, me: action.me };
     case "agents":
@@ -236,6 +260,15 @@ export function reduce(state: UiState, action: UiAction): UiState {
         ...state,
         desktopOrder: { ...state.desktopOrder, next: state.desktopOrder.next + 1 },
       };
+    case "chat.load":
+      return state.chats[action.projectId]
+        ? state
+        : { ...state, chats: { ...state.chats, [action.projectId]: action.messages ?? [] } };
+    case "chat": {
+      const prev = state.chats[action.projectId] ?? [];
+      const next = action.update(prev).slice(-CHAT_HISTORY_LIMIT);
+      return { ...state, chats: { ...state.chats, [action.projectId]: next } };
+    }
     default:
       return state;
   }
@@ -259,8 +292,21 @@ export function createStore(config: DaemonConfig, storage: KeyValueStore): UiSto
       };
     },
     dispatch(action) {
-      const next = reduce(state, action);
+      // The saved conversation is read here, where the storage is (U-071).
+      const resolved: UiAction =
+        action.type === "chat.load" && !state.chats[action.projectId]
+          ? { ...action, messages: loadChat(storage, config.installId, action.projectId) }
+          : action;
+      const next = reduce(state, resolved);
       if (next === state) return;
+      if (action.type === "chat") {
+        const before = state.chats[action.projectId] ?? [];
+        const after = next.chats[action.projectId] ?? [];
+        // Saved when a message is added or a reply ends, not on every streamed token.
+        if (after.length !== before.length || !after.some((m) => m.streaming)) {
+          saveChat(storage, config.installId, action.projectId, after);
+        }
+      }
       // Persist the per-install conveniences; everything else lives in the daemon.
       if (next.activeProjectId !== state.activeProjectId) {
         const key = storageKey(config.installId, STORAGE_NAMES.activeProject);

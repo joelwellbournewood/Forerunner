@@ -40,6 +40,8 @@ interface AppContextValue {
   client: DaemonClient;
   store: UiStore;
   realtime: RealtimeSeams | undefined;
+  /** The stream options the provider was given (tests set a short poll); pages reuse them. */
+  streamOptions: StreamOptions | undefined;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -69,10 +71,21 @@ export function AppProvider({
   realtime,
   children,
 }: AppProviderProps) {
+  // "Retry" in the header bumps this (U-071): the effect below connects again.
+  const attempt = useSyncExternalStore(
+    store.subscribe,
+    () => store.getState().connection.attempt,
+    () => store.getState().connection.attempt,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` only re-runs the effect
   useEffect(() => {
     if (!bootstrap) return;
     const controller = new AbortController();
     let stream: StreamSubscription | null = null;
+    const setTimer = streamOptions?.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+    const clearTimer =
+      streamOptions?.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    let retryHandle: unknown = null;
     // The window plays what the daemon reads aloud on its own (voice alerts, summary.speak by
     // chat; ADR 0063) and says so on /events, so the daemon knows someone can hear it.
     const announcer: SpeechAnnouncer | null =
@@ -83,7 +96,14 @@ export function AppProvider({
           })
         : null;
     void bootstrapStore(client, store, controller.signal).then((ok) => {
-      if (!ok || controller.signal.aborted) return;
+      if (controller.signal.aborted) return;
+      if (!ok) {
+        // Nothing answered (U-071): try again on the polling cadence; "Retry" does it now.
+        retryHandle = setTimer(() => {
+          if (!controller.signal.aborted) store.dispatch({ type: "reconnect" });
+        }, streamOptions?.pollIntervalMs ?? 5000);
+        return;
+      }
       const me = store.getState().me;
       if (!me) return;
       stream = subscribeDaemonEvents(
@@ -121,7 +141,7 @@ export function AppProvider({
             } else if (event.event === "heartbeat") {
               store.dispatch({
                 type: "connection",
-                patch: { lastHeartbeatAt: event.data.at, status: "connected", error: null },
+                patch: { lastHeartbeatAt: event.data.at },
               });
               // While a restart is announced, every heartbeat re-reads /health: a daemon on the
               // version the restart aimed at means it is back, and the banner goes.
@@ -139,6 +159,27 @@ export function AppProvider({
               }
             }
           },
+          // The status follows what the daemon does (U-071): a poll it does not answer, or
+          // refuses (401), is "not connected"; the next answer is "connected" again, and what
+          // may have changed meanwhile (projects, the kill switch) is read again.
+          onDown: (error) => {
+            store.dispatch({
+              type: "connection",
+              patch: { status: "disconnected", error: describeError(error) },
+            });
+          },
+          onUp: () => {
+            if (store.getState().connection.status === "connected") return;
+            store.dispatch({ type: "connection", patch: { status: "connected", error: null } });
+            void client
+              .health()
+              .then((health) => {
+                store.dispatch({ type: "connection", patch: { health } });
+                store.dispatch({ type: "killActive", active: health.killActive });
+              })
+              .catch(() => {});
+            void refreshProjects(client, store).catch(() => {});
+          },
           onMode: (mode) => {
             store.dispatch({ type: "connection", patch: { streamMode: mode } });
             // The stream (re)opened: frames sent while it was down are lost, so the desktop
@@ -155,10 +196,11 @@ export function AppProvider({
     });
     return () => {
       controller.abort();
+      if (retryHandle !== null) clearTimer(retryHandle);
       stream?.close();
       announcer?.close();
     };
-  }, [client, store, bootstrap, streamOptions, realtime]);
+  }, [client, store, bootstrap, streamOptions, realtime, attempt]);
 
   useEffect(() => {
     applyTheme(store.getState().theme);
@@ -170,7 +212,10 @@ export function AppProvider({
     };
   }, [store]);
 
-  const value = useMemo(() => ({ client, store, realtime }), [client, store, realtime]);
+  const value = useMemo(
+    () => ({ client, store, realtime, streamOptions }),
+    [client, store, realtime, streamOptions],
+  );
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
@@ -180,7 +225,10 @@ export async function bootstrapStore(
   store: UiStore,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  store.dispatch({ type: "connection", patch: { status: "connecting", error: null } });
+  // A retry while not connected keeps saying so until the daemon answers (U-071).
+  if (store.getState().connection.status !== "disconnected") {
+    store.dispatch({ type: "connection", patch: { status: "connecting", error: null } });
+  }
   try {
     const health = await client.health(signal);
     store.dispatch({
@@ -234,6 +282,11 @@ export function useApp(): AppContextValue {
 
 export function useClient(): DaemonClient {
   return useApp().client;
+}
+
+/** The provider's stream options, for a page's own stream (a session's live log). */
+export function useStreamOptions(): StreamOptions | undefined {
+  return useApp().streamOptions;
 }
 
 /** The seams the voice panel's player uses (the same as the speech player's). */

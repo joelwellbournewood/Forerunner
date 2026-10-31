@@ -3390,6 +3390,16 @@ criteria, budget, risk tier or specialist with `brief_incomplete` and the list o
 bypass, hidden text, markdown image exfil, ...). Flagged content raises an event and a note to
 the human; it is never acted on.
 
+### Project card state (U-071)
+
+`projectCard` (`daemon/views.ts`) takes its `health` and `needsYou` from `projectHealth`
+(`daemon/project-health.ts`). "blocked" means something waits on the human in the Inbox: an
+open blocking request of the project, or a `needs_human` task with an open request for it. A
+`needs_human` task with no request (a person's "Needs me", a budget stop) is `needsYou`
+(`{ taskId, title }`, the first one) and the card reads "needs you: <title>" with a link;
+failed tasks, `needsYou` or a non-blocking request open are "attention"; no task is "idle".
+Before, any open request or any `needs_human` task read "blocked" with nothing to answer.
+
 ## How to change it
 
 - New limit: add the check to the hook, a `ForerunnerError` code in platform, and a test in

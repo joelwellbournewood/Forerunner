@@ -1,22 +1,17 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { streamChat } from "../../api/chat-stream.ts";
-import { type ChatReplyView, describeError, type TaskView } from "../../api/client.ts";
+import { describeError, type TaskView } from "../../api/client.ts";
 import { Badge, Button, INPUT_CLASS, Money } from "../../components/ui.tsx";
 import type { MoneyLike } from "../../lib/money.ts";
 import { formatDuration } from "../../lib/time.ts";
-import { useClient, useIdentity, useUiStore } from "../../store/context.tsx";
+import type { ChatMessage } from "../../store/chat-history.ts";
+import { useClient, useIdentity, useUiState, useUiStore } from "../../store/context.tsx";
 import { NewTaskDialog, seedFromMessage, type TaskSeed } from "./NewTaskDialog.tsx";
 
-export interface ChatMessage {
-  id: string;
-  role: "human" | "agent";
-  text: string;
-  /** Agent messages: true until the final reply frame arrived. */
-  streaming?: boolean;
-  reply?: ChatReplyView;
-  error?: string;
-}
+export type { ChatMessage };
+
+const NO_MESSAGES: ChatMessage[] = [];
 
 /** Text chat first token target from spec D.9. */
 const TTFT_TARGET_MS = 1000;
@@ -41,9 +36,20 @@ export function ChatTab({
   const client = useClient();
   const store = useUiStore();
   const identity = useIdentity();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // The conversation lives in the store, per project, and is saved for this install (U-071):
+  // a tab switch, a reload or a reply still streaming after the tab closed keep it.
+  useEffect(() => {
+    store.dispatch({ type: "chat.load", projectId });
+  }, [store, projectId]);
+  const messages = useUiState((s) => s.chats[projectId]) ?? NO_MESSAGES;
+  const setMessages = useCallback(
+    (update: (prev: ChatMessage[]) => ChatMessage[]) =>
+      store.dispatch({ type: "chat", projectId, update }),
+    [store, projectId],
+  );
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const busy = sending || messages.some((m) => m.streaming);
   const [seed, setSeed] = useState<TaskSeed | null>(null);
   const [created, setCreated] = useState<TaskView | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -68,7 +74,7 @@ export function ChatTab({
       humanMessage,
       { id: agentId, role: "agent", text: "", streaming: true },
     ]);
-    setBusy(true);
+    setSending(true);
     try {
       const reply = await streamChat(
         client,
@@ -98,7 +104,7 @@ export function ChatTab({
         prev.map((m) => (m.id === agentId ? { ...m, streaming: false, error: message } : m)),
       );
     } finally {
-      setBusy(false);
+      setSending(false);
     }
   };
 

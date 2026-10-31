@@ -146,6 +146,14 @@ export interface StreamHandlers {
   onMode?: (mode: StreamMode) => void;
   /** Called with a short reason on every fallback or reconnect, for the status line. */
   onNotice?: (notice: string) => void;
+  /**
+   * The daemon did not answer a poll, or refused it (a 401 after a restart with a new token):
+   * the shell shows "not connected" (U-071). Polling goes on, and `onUp` follows the next
+   * answer.
+   */
+  onDown?: (error: unknown) => void;
+  /** The daemon answered again: a poll went through, or the live stream (re)opened (U-071). */
+  onUp?: () => void;
 }
 
 export interface StreamOptions {
@@ -223,9 +231,16 @@ function runStream(
       if (closed || mode !== "polling") return;
       poller
         .tick()
-        .catch(() => {
-          handlers.onNotice?.("poll failed; retrying");
-        })
+        .then(
+          () => {
+            if (!closed) handlers.onUp?.();
+          },
+          (error: unknown) => {
+            if (closed) return;
+            handlers.onNotice?.("poll failed; retrying");
+            handlers.onDown?.(error);
+          },
+        )
         .finally(() => {
           if (!closed && mode === "polling") pollHandle = setTimer(loop, pollIntervalMs);
         });
@@ -258,6 +273,7 @@ function runStream(
     es.onopen = () => {
       sseFailures = 0;
       setMode("sse");
+      handlers.onUp?.();
     };
     for (const name of DAEMON_EVENT_NAMES) {
       es.addEventListener(name, (ev) => {

@@ -145,7 +145,7 @@ describe("daemon client", () => {
     });
     const error = await network.health().catch((e: unknown) => e);
     expect(error).toMatchObject({ code: "ui.network" });
-    expect(describeError(error)).toBe("Daemon not reachable.");
+    expect(describeError(error)).toBe("Forerunner's background service does not answer.");
   });
 
   it("answers 401 from the fake when the token is wrong", async () => {
@@ -153,7 +153,9 @@ describe("daemon client", () => {
     const client = createClient(testConfig("wrong"), fetchFromApp(daemon.app));
     const error = await client.me().catch((e: unknown) => e);
     expect(error).toMatchObject({ status: 401, code: "auth.unauthorized" });
-    expect(describeError(error)).toBe("Daemon rejected the token.");
+    expect(describeError(error)).toBe(
+      "Forerunner's background service refused this window's key: close Forerunner and open it again.",
+    );
   });
 
   it("builds query strings, skips empty values and adds the token only for EventSource URLs", () => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, useParams } from "react-router";
-import { Badge, Button, ErrorBanner, healthTone, Loading, SpendBar } from "../components/ui.tsx";
+import { ProjectStateBadge } from "../components/ProjectState.tsx";
+import { Badge, Button, ErrorBanner, Loading, SpendBar } from "../components/ui.tsx";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { ChatTab } from "./project/ChatTab.tsx";
@@ -63,7 +64,7 @@ export function ProjectPage() {
             {view.name}
           </h1>
           <Badge>{view.stage}</Badge>
-          <Badge tone={healthTone(view.health)}>{view.health}</Badge>
+          <ProjectStateBadge project={view} testId="project-health" />
           <Badge>{view.status}</Badge>
           <Badge>autonomy {view.autonomyLevel}</Badge>
           <div className="ml-auto flex gap-2">

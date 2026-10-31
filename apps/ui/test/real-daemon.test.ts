@@ -416,6 +416,42 @@ describe("the UI client against the real daemon", () => {
     expect((await client.extensionCatalog()).entries.map((e) => e.id)).not.toContain("email");
   });
 
+  it("project card: a task marked Needs me without a card is named, not 'blocked'; its card makes it blocked (U-071)", async () => {
+    const own = await client.createProject({ name: "Health", goal: "State follows reality" });
+    const task = await client.createTask(own.id, {
+      title: "Confirm the stack",
+      outcome: "The stack is chosen",
+      acceptanceCriteria: ["chosen"],
+    });
+    // The Tasks tab's "Needs me" button.
+    await client.transitionTask(task.id, {
+      version: task.version,
+      to: "needs_human",
+      reason: "Marked as needing you",
+    });
+    const named = await client.project(own.id);
+    expect(named.health).toBe("attention");
+    expect(named.needsYou).toEqual({ taskId: task.id, title: "Confirm the stack" });
+    expect((await client.projects()).find((p) => p.id === own.id)?.needsYou?.title).toBe(
+      "Confirm the stack",
+    );
+    await rt.store.humanRequest.insert({
+      human_id: humanId,
+      project_id: own.id,
+      task_id: task.id,
+      kind: "decision",
+      why: "Which stack?",
+      steps: [],
+      options: ["Node", "Python"],
+      blocking: false,
+      risk: "low",
+      change_card: null,
+    });
+    const blocked = await client.project(own.id);
+    expect(blocked.health).toBe("blocked");
+    expect(blocked.needsYou).toBeNull();
+  });
+
   it("answering a request: an answer that is none of a card's options is refused with them, the card stays (U-034)", async () => {
     const card = await rt.store.humanRequest.insert({
       human_id: humanId,

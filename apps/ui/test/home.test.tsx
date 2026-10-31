@@ -24,6 +24,25 @@ describe("Home", () => {
     expect(beacon.getByTestId("health-badge")).toHaveTextContent("good");
   });
 
+  it("names the task that needs you instead of saying blocked, and links to it (U-071)", async () => {
+    const harness = createHarness();
+    const beacon = harness.daemon.state.projects[1];
+    if (!beacon) throw new Error("fixture changed");
+    beacon.health = "attention";
+    beacon.needsYou = { taskId: "task_9", title: "Confirm the stack" };
+    renderApp("/", harness);
+    const cards = await screen.findAllByTestId("project-card");
+    const card = within(cards[1] as HTMLElement);
+    const needsYou = card.getByTestId("needs-you");
+    expect(needsYou).toHaveTextContent("needs you: Confirm the stack");
+    expect(needsYou).toHaveAttribute("href", "/projects/proj_beacon/tasks");
+    expect(card.queryByText("blocked")).not.toBeInTheDocument();
+    expect(card.queryByTestId("health-badge")).not.toBeInTheDocument();
+    await userEvent.setup().click(needsYou);
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Beacon");
+    expect(screen.getByTestId("project-header")).toHaveTextContent("needs you: Confirm the stack");
+  });
+
   it("opens a project through a link, not a button nested in a link", async () => {
     renderApp("/");
     const cards = await screen.findAllByTestId("project-card");

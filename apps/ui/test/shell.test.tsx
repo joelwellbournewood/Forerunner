@@ -1,10 +1,14 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import { createClient } from "../src/api/client.ts";
 import { storageKey } from "../src/lib/storage.ts";
+import { AppRoutes } from "../src/routes.tsx";
 import { buildCommands, filterCommands } from "../src/shell/commands.ts";
 import { createSequenceMatcher } from "../src/shell/shortcuts.ts";
-import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+import { AppProvider } from "../src/store/context.tsx";
+import { createHarness, fetchFromApp, postedCalls, renderApp, testConfig } from "./helpers.tsx";
 
 describe("keyboard sequence matcher", () => {
   it("matches g h / g i / g s inside the window and ignores text fields", () => {
@@ -147,5 +151,93 @@ describe("Shell", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
     await user.selectOptions(screen.getByTestId("theme-select"), "light");
     expect(document.documentElement.dataset.theme).toBe("light");
+  });
+});
+
+/** A harness whose daemon can stop answering, or answer 401, while the app runs (U-071). */
+function switchableHarness() {
+  const harness = createHarness();
+  const daemon = { mode: "up" as "up" | "gone" | "refuses" };
+  const inner = fetchFromApp(harness.daemon.app);
+  const client = createClient(testConfig(), async (input, init) => {
+    if (daemon.mode === "gone") throw new TypeError("fetch failed");
+    if (daemon.mode === "refuses") {
+      return new Response(JSON.stringify({ code: "unauthorized", message: "bad token" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return inner(input, init);
+  });
+  return { ...harness, client, daemon };
+}
+
+function renderSwitchable(h: ReturnType<typeof switchableHarness>, pollIntervalMs: number) {
+  const streamOptions = { pollIntervalMs };
+  return render(
+    <AppProvider client={h.client} store={h.store} streamOptions={streamOptions}>
+      <MemoryRouter initialEntries={["/"]}>
+        <AppRoutes />
+      </MemoryRouter>
+    </AppProvider>,
+  );
+}
+
+describe("the header's connection status follows the daemon (U-071)", () => {
+  it("says not connected with a Retry when the daemon stops answering, and connected when it answers again", async () => {
+    const h = switchableHarness();
+    renderSwitchable(h, 40);
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveTextContent(/^connected/),
+    );
+    expect(screen.queryByTestId("connection-retry")).not.toBeInTheDocument();
+
+    h.daemon.mode = "gone";
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveTextContent("not connected"),
+    );
+    expect(screen.getByTestId("connection-retry")).toHaveTextContent("Retry");
+    expect(screen.getByTestId("not-connected")).toHaveTextContent(
+      "Not connected. Forerunner's background service does not answer. The app tries again every few seconds.",
+    );
+
+    h.daemon.mode = "up";
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveTextContent(/^connected/),
+    );
+    expect(screen.queryByTestId("not-connected")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("connection-retry")).not.toBeInTheDocument();
+  });
+
+  it("says not connected when the daemon refuses the window's key (401), with what to do", async () => {
+    const h = switchableHarness();
+    renderSwitchable(h, 40);
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveTextContent(/^connected/),
+    );
+    h.daemon.mode = "refuses";
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveTextContent("not connected"),
+    );
+    expect(screen.getByTestId("not-connected")).toHaveTextContent(
+      "refused this window's key: close Forerunner and open it again.",
+    );
+  });
+
+  it("Retry connects at once when the daemon was not there at the start", async () => {
+    const user = userEvent.setup();
+    const h = switchableHarness();
+    h.daemon.mode = "gone";
+    // A slow automatic retry, so the click is what reconnects.
+    renderSwitchable(h, 60_000);
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveTextContent("not connected"),
+    );
+    h.daemon.mode = "up";
+    await user.click(screen.getByTestId("connection-retry"));
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveTextContent(/^connected/),
+    );
+    expect(await screen.findAllByTestId("project-card")).not.toHaveLength(0);
   });
 });

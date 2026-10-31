@@ -1,7 +1,11 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it } from "vitest";
-import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+import { createClient } from "../src/api/client.ts";
+import { SessionPage } from "../src/pages/SessionPage.tsx";
+import { AppProvider } from "../src/store/context.tsx";
+import { createHarness, fetchFromApp, postedCalls, renderApp, testConfig } from "./helpers.tsx";
 
 describe("Live session view", () => {
   it("shows the header, the readable stream and highlights escalations", async () => {
@@ -82,5 +86,78 @@ describe("Live session view", () => {
     await waitFor(() =>
       expect(within(header).getByTestId("session-status")).toHaveTextContent("stopped"),
     );
+  });
+});
+
+/** A client over the fake that counts the GETs of one route prefix (U-071). */
+function countingHarness(options: Parameters<typeof createHarness>[0] = {}) {
+  const harness = createHarness(options);
+  const inner = fetchFromApp(harness.daemon.app);
+  const gets: string[] = [];
+  const client = createClient(testConfig(), (input, init) => {
+    if (!init?.method || init.method === "GET") gets.push(new URL(input).pathname);
+    return inner(input, init);
+  });
+  return { ...harness, client, gets };
+}
+
+describe("a finished session's page (U-071)", () => {
+  it("shows a finished session as finished and does not stream or poll it", async () => {
+    const h = countingHarness();
+    const streamOptions = { pollIntervalMs: 20 };
+    render(
+      <AppProvider
+        client={h.client}
+        store={h.store}
+        bootstrap={false}
+        streamOptions={streamOptions}
+      >
+        <MemoryRouter initialEntries={["/sessions/sess_1"]}>
+          <Routes>
+            <Route path="/sessions/:id" element={<SessionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+    const header = await screen.findByTestId("session-header");
+    expect(within(header).getByTestId("session-status")).toHaveTextContent("completed");
+    expect(screen.getByTestId("stream-mode")).toHaveTextContent("finished");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(h.gets.filter((p) => p === "/sessions/sess_1/events")).toHaveLength(1);
+    expect(screen.getByTestId("stream-mode")).toHaveTextContent("finished");
+    expect(screen.queryByTestId("stream-notice")).not.toBeInTheDocument();
+  });
+
+  it("stops following a session once it ends while the page is open", async () => {
+    const h = countingHarness({ eventDelayMs: 30 });
+    const { session } = await h.client.startSession({
+      agentId: "agent_alice",
+      projectId: "proj_atlas",
+    });
+    if (!session) throw new Error("the fake daemon started no session");
+    const streamOptions = { pollIntervalMs: 20 };
+    render(
+      <AppProvider
+        client={h.client}
+        store={h.store}
+        bootstrap={false}
+        streamOptions={streamOptions}
+      >
+        <MemoryRouter initialEntries={[`/sessions/${session.id}`]}>
+          <Routes>
+            <Route path="/sessions/:id" element={<SessionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("running"));
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent("completed"),
+    );
+    await waitFor(() => expect(screen.getByTestId("stream-mode")).toHaveTextContent("finished"));
+    expect(screen.getAllByTestId("event-row").length).toBeGreaterThanOrEqual(6);
+    const polled = h.gets.filter((p) => p === `/sessions/${session.id}/events`).length;
+    await new Promise((r) => setTimeout(r, 150));
+    expect(h.gets.filter((p) => p === `/sessions/${session.id}/events`)).toHaveLength(polled);
   });
 });

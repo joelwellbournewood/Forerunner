@@ -13,7 +13,7 @@ import {
   statusTone,
 } from "../components/ui.tsx";
 import { formatTime } from "../lib/time.ts";
-import { useClient } from "../store/context.tsx";
+import { useClient, useStreamOptions } from "../store/context.tsx";
 
 type Level = EventView["level"];
 const LEVELS: readonly Level[] = ["info", "warning", "escalation", "error"];
@@ -26,11 +26,14 @@ const LEVEL_STYLES: Record<Level, string> = {
 };
 
 const ACTIVE = new Set(["planned", "running", "paused"]);
+/** A session in one of these has ended: its log is complete and nothing more streams (U-071). */
+export const ENDED = new Set(["completed", "stopped", "failed", "killed"]);
 
 /** Live session view (spec K.3). */
 export function SessionPage() {
   const { id = "" } = useParams();
   const client = useClient();
+  const streamOptions = useStreamOptions();
   const [session, setSession] = useState<SessionView | null>(null);
   const [events, setEvents] = useState<EventView[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -69,19 +72,58 @@ export function SessionPage() {
         setSession(s);
         appendEvents(backlog);
         setLoading(false);
-        const lastSeq = backlog.reduce((m, e) => Math.max(m, e.seq), 0);
+        // A finished session's log is all there: the daemon ends its stream, so subscribing
+        // would only reconnect and poll for good while the page said "connecting" (U-071).
+        if (ENDED.has(s.status)) {
+          setMode("closed");
+          return;
+        }
+        let lastSeq = backlog.reduce((m, e) => Math.max(m, e.seq), 0);
+        let ending = false;
+        // The session ended while the page watched: read what is left of the log once, show
+        // the final header, and stop the stream.
+        const finish = async (ended?: SessionView) => {
+          if (ending) return;
+          ending = true;
+          sub?.close();
+          sub = null;
+          setNotice(null);
+          setMode("closed");
+          try {
+            const [last, rest] = await Promise.all([
+              ended ? Promise.resolve(ended) : client.session(id, controller.signal),
+              client.sessionEvents(id, lastSeq, controller.signal),
+            ]);
+            if (controller.signal.aborted) return;
+            setSession(last);
+            appendEvents(rest);
+          } catch {
+            // the header and log stay as they were; a reload reads them again
+          }
+        };
         sub = subscribeSessionEvents(
           client,
           id,
           {
             onEvent: (ev) => {
-              if (ev.event === "session.event" && ev.data.sessionId === id) appendEvents([ev.data]);
-              else if (ev.event === "session.changed" && ev.data.id === id) setSession(ev.data);
+              if (controller.signal.aborted || ending) return;
+              if (ev.event === "session.event" && ev.data.sessionId === id) {
+                lastSeq = Math.max(lastSeq, ev.data.seq);
+                appendEvents([ev.data]);
+                if (ev.data.type === "session.ended") void finish();
+              } else if (ev.event === "session.changed" && ev.data.id === id) {
+                setSession(ev.data);
+                if (ENDED.has(ev.data.status)) void finish(ev.data);
+              }
             },
-            onMode: setMode,
-            onNotice: setNotice,
+            onMode: (m) => {
+              if (!ending) setMode(m);
+            },
+            onNotice: (n) => {
+              if (!ending) setNotice(n);
+            },
           },
-          { afterSeq: lastSeq },
+          { ...streamOptions, afterSeq: lastSeq },
         );
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -93,7 +135,7 @@ export function SessionPage() {
       controller.abort();
       sub?.close();
     };
-  }, [client, id, appendEvents]);
+  }, [client, id, appendEvents, streamOptions]);
 
   const visible = useMemo(() => events.filter((e) => filters.has(e.level)), [events, filters]);
   const counts = useMemo(() => {
@@ -170,7 +212,13 @@ export function SessionPage() {
               tone={mode === "sse" ? "good" : mode === "polling" ? "warn" : "neutral"}
               testId="stream-mode"
             >
-              {mode === "sse" ? "live" : mode === "polling" ? "polling every 5 s" : mode}
+              {ENDED.has(session.status)
+                ? "finished"
+                : mode === "sse"
+                  ? "live"
+                  : mode === "polling"
+                    ? "polling every 5 s"
+                    : mode}
             </Badge>
             <Button
               variant="danger"
