@@ -134,7 +134,9 @@ stopped and then starts afresh.
 
 Push-to-talk voice chat with read-back confirmation, the Android app for approvals and remote
 control of your PC, and tasks by email that run on the cloud runner while your PCs are off.
-The setup guide says what to configure. See "What works and what doesn't yet" above for how
+The setup guide says what to configure. Pairing a phone needs Forerunner's shared state service
+first (a server of yours that the phone and the PC both reach); until it is set up, Settings →
+Devices shows the steps still missing and takes the service's admin token. See "What works and what doesn't yet" above for how
 far each was tested. On the phone's **Reviews** tab, **Approve** on a reviewed task does what
 the card's accept (or yes) button does in the Inbox, and **Reject** what its revise / rework
 (or no) button does: the work goes back for another attempt with the findings to address.

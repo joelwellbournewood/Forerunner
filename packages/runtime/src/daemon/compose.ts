@@ -3156,6 +3156,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     humanId: human.id,
     agentId: agent.id,
     currentDeviceId: () => remoteDevice?.id ?? null,
+    // What Settings -> Devices says pairing needs (U-055), with the setup guide of the
+    // repository this install's releases come from.
+    setup: {
+      adminSecretName: adminTokenName,
+      adminSecretStored: () => vault.has(adminTokenName),
+      guideUrl: pairingGuideUrl(updateConfig.feed),
+    },
     service: deviceServiceUrl
       ? {
           baseUrl: deviceServiceUrl,
@@ -3673,6 +3680,15 @@ function pricingForProvider(p: ModelProvider | null, modelId: string, table?: Pr
     estimate: (i: number, o: number) => i + o,
     cost: (u: { input_tokens: number; output_tokens: number }) => u.input_tokens + u.output_tokens,
   };
+}
+
+/**
+ * The setup guide's section on the shared state service (U-055), in the repository the
+ * install's release feed names on github.com; null for another feed or none.
+ */
+export function pairingGuideUrl(feed: UpdateConfig["feed"]): string | null {
+  if (!feed || feed.kind !== "github" || feed.apiBase) return null;
+  return `https://github.com/${encodeURIComponent(feed.owner)}/${encodeURIComponent(feed.repo)}/blob/HEAD/docs/setup-guide.md#what-to-set-up-first-the-shared-state-service`;
 }
 
 function unavailableProvider(): ModelProvider {

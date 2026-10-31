@@ -14,6 +14,7 @@ import { formatCountdown, systemClock, type UiClock, useNow } from "../lib/clock
 import { formatDateTime, relativeTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient } from "../store/context.tsx";
+import { PairingSetupSteps } from "./PairingSetupSteps.tsx";
 
 const KIND_LABELS: Record<string, string> = {
   phone: "Phone",
@@ -394,11 +395,7 @@ export function DevicesSection({
       </p>
 
       {list.data && !pairingAvailable ? (
-        <p className="mt-2 text-sm text-amber-800 dark:text-amber-200" data-testid="pairing-off">
-          Pairing needs the shared state service: set <code>FORERUNNER_STATE_API_URL</code> for the
-          daemon and keep the service's admin token in the vault (
-          <code>secret:state_api_admin</code>). The list below comes from the shared store.
-        </p>
+        <PairingSetupSteps setup={list.data.pairingSetup} onSaved={list.reload} />
       ) : null}
 
       {pairing.status === "shown" ? (

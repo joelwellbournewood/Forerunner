@@ -6,13 +6,16 @@ import { StartPairingBody } from "./types.ts";
 
 /**
  * The daemon's device routes (spec R.2), for Settings -> Devices in the app on this install:
- *   GET  /devices                       -> { devices, pairingAvailable }
+ *   GET  /devices                       -> { devices, pairingAvailable, pairingSetup? }
  *   POST /devices/pairing { kind?, name? } -> 201 PairingStartView (503 without the service)
  *   POST /devices/:id/revoke            -> RevokeDeviceView
  * The state service's admin token stays in the daemon. Mounted behind the bearer check.
  */
 export interface DeviceRoutesDeps {
-  devices: Pick<DeviceManager, "list" | "startPairing" | "revoke" | "pairingAvailable">;
+  devices: Pick<
+    DeviceManager,
+    "list" | "startPairing" | "revoke" | "pairingAvailable" | "pairingReady" | "pairingSetup"
+  >;
 }
 
 function statusFor(code: string): ContentfulStatusCode {
@@ -47,12 +50,15 @@ export function createDeviceRoutes(deps: DeviceRoutesDeps): Hono {
     return c.json({ code: "internal", message: "internal error", details: {} }, 500);
   });
 
-  app.get("/devices", async (c) =>
-    c.json({
+  app.get("/devices", async (c) => {
+    const ready = await deps.devices.pairingReady();
+    return c.json({
       devices: await deps.devices.list(),
-      pairingAvailable: deps.devices.pairingAvailable,
-    }),
-  );
+      pairingAvailable: ready,
+      // What is missing, for the plain steps in Settings -> Devices (U-055).
+      ...(ready ? {} : { pairingSetup: await deps.devices.pairingSetup() }),
+    });
+  });
 
   app.post("/devices/pairing", async (c) => {
     const parsed = StartPairingBody.safeParse(await c.req.json().catch(() => ({})));

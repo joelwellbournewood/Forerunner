@@ -23,10 +23,32 @@ export const DaemonDeviceView = z.object({
 });
 export type DaemonDeviceView = z.infer<typeof DaemonDeviceView>;
 
+/**
+ * What pairing still needs on this computer (U-055), sent with the list while pairing is not
+ * ready, so Settings -> Devices can say it in plain steps: the state service's address (the
+ * `FORERUNNER_STATE_API_URL` variable) and its admin secret in the vault.
+ */
+export const PairingSetupView = z.object({
+  /** The state service's address this daemon uses; null when none is set. */
+  serviceUrl: z.string().nullable(),
+  /** The vault name the service's admin secret is kept under (`state_api_admin` by default). */
+  adminSecretName: z.string(),
+  /** Whether the vault holds it. */
+  adminSecretStored: z.boolean(),
+  /** The setup guide's section on it; null when this install's release feed names no repository. */
+  guideUrl: z.string().nullable(),
+});
+export type PairingSetupView = z.infer<typeof PairingSetupView>;
+
 export const DeviceListView = z.object({
   devices: z.array(DaemonDeviceView),
-  /** False when no state service is configured: the list comes from the store, no pairing. */
+  /**
+   * False when pairing cannot start here: no state service configured, or its admin secret
+   * not saved. The list then comes from the store.
+   */
   pairingAvailable: z.boolean(),
+  /** While `pairingAvailable` is false: what is missing (U-055). */
+  pairingSetup: PairingSetupView.optional(),
 });
 export type DeviceListView = z.infer<typeof DeviceListView>;
 

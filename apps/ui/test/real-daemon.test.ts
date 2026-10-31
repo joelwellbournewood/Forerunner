@@ -335,6 +335,28 @@ describe("the UI client against the real daemon", () => {
     expect(answered.status).toBe("answered");
   });
 
+  it("Settings -> Devices without a state service: what pairing needs, for the plain steps (U-055)", async () => {
+    const list = await client.devices();
+    expect(list.pairingAvailable).toBe(false);
+    expect(list.pairingSetup).toMatchObject({
+      serviceUrl: null,
+      adminSecretName: "state_api_admin",
+      adminSecretStored: false,
+    });
+    expect(list.pairingSetup?.guideUrl).toContain(
+      "docs/setup-guide.md#what-to-set-up-first-the-shared-state-service",
+    );
+    const refused = await client.startPairing().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(503);
+    expect((refused as ApiError).message).toContain(
+      "environment variable FORERUNNER_STATE_API_URL",
+    );
+  });
+
   it("secrets typed in the app: a mailbox password and a voice key stored by name, never sent back (U-054)", async () => {
     const password = ["real", "daemon", "pass", "5".repeat(8)].join("-"); // not-a-secret
     const before = await client.storedSecrets("critic_imap_password");

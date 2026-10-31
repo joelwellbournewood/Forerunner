@@ -3629,14 +3629,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // packages/runtime/src/devices: the list with this install marked, a pairing (503 without
   // a state service), the revocation (400 for this install's own device, 404 unknown).
   const pairingAvailable = options.pairingAvailable ?? true;
-  app.get("/devices", (c) => c.json({ devices: state.devices, pairingAvailable }));
+  // While pairing is off (no service address here), what it needs (U-055); a token stored
+  // through `POST /secrets/store` shows as saved, as on the daemon.
+  app.get("/devices", (c) => {
+    const tokenSaved = state.storedSecrets.has("state_api_admin");
+    const ready = pairingAvailable;
+    return c.json({
+      devices: state.devices,
+      pairingAvailable: ready,
+      ...(ready
+        ? {}
+        : {
+            pairingSetup: {
+              serviceUrl: null,
+              adminSecretName: "state_api_admin",
+              adminSecretStored: tokenSaved,
+              guideUrl:
+                "https://github.com/joelwellbournewood/Forerunner/blob/HEAD/docs/setup-guide.md#what-to-set-up-first-the-shared-state-service",
+            },
+          }),
+    });
+  });
   app.post("/devices/pairing", async (c) => {
     if (!pairingAvailable) {
       return c.json(
         {
           code: "unavailable",
           message:
-            "pairing needs the state service: set FORERUNNER_STATE_API_URL and keep its admin token in the vault",
+            "Pairing needs Forerunner's shared state service, and this computer does not know where it is. Put the service's address in the environment variable FORERUNNER_STATE_API_URL (a setting of your user account that Forerunner reads when it starts), start Forerunner again and save the service's admin token; Settings → Devices lists the steps.",
         },
         503,
       );

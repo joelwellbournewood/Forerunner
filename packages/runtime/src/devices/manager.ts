@@ -1,7 +1,13 @@
 import { type Clock, errorMessage, ForerunnerError } from "@forerunner/platform";
 import type { DeviceRow, StateStore } from "@forerunner/state";
 import { dropSharedBlobsForDevice } from "../secrets/shared-grants.ts";
-import type { DaemonDeviceView, PairingKind, PairingStartView, RevokeDeviceView } from "./types.ts";
+import type {
+  DaemonDeviceView,
+  PairingKind,
+  PairingSetupView,
+  PairingStartView,
+  RevokeDeviceView,
+} from "./types.ts";
 
 /**
  * Settings -> Devices on the desktop (spec R.2; ADR 0009): the human's paired devices, a new
@@ -45,7 +51,19 @@ export interface DeviceManagerDeps {
   currentDeviceId: () => string | null;
   /** Null when no state service is configured. */
   service: DeviceServiceConfig | null;
+  /**
+   * What Settings -> Devices says pairing needs (U-055): the vault name of the service's admin
+   * secret, whether the vault holds it (read per call), and the setup guide's section.
+   */
+  setup?: {
+    adminSecretName: string;
+    adminSecretStored: () => Promise<boolean>;
+    guideUrl: string | null;
+  };
 }
+
+/** The vault name of the state service's admin secret unless `FORERUNNER_STATE_API_ADMIN_TOKEN_REF` names another. */
+export const DEFAULT_ADMIN_SECRET_NAME = "state_api_admin";
 
 /** Audit tools of the daemon's device actions. */
 export const DEVICE_AUDIT = {
@@ -78,14 +96,37 @@ interface ServiceDevice {
 export class DeviceManager {
   constructor(private readonly deps: DeviceManagerDeps) {}
 
-  /** Whether a pairing can be started here (the state service is configured). */
+  /** Whether the state service is configured (its address is known). */
   get pairingAvailable(): boolean {
     return this.deps.service !== null;
   }
 
+  /** Whether a pairing can start: the service is configured and its admin secret is saved. */
+  async pairingReady(): Promise<boolean> {
+    const service = this.deps.service;
+    if (!service) return false;
+    return (await service.adminToken().catch(() => null)) !== null;
+  }
+
+  /** What pairing still needs here, for Settings -> Devices (U-055). */
+  async pairingSetup(): Promise<PairingSetupView> {
+    const service = this.deps.service;
+    const setup = this.deps.setup;
+    const stored = service
+      ? (await service.adminToken().catch(() => null)) !== null
+      : ((await setup?.adminSecretStored().catch(() => false)) ?? false);
+    return {
+      serviceUrl: service ? service.baseUrl.replace(/\/+$/, "") : null,
+      adminSecretName: setup?.adminSecretName ?? DEFAULT_ADMIN_SECRET_NAME,
+      adminSecretStored: stored,
+      guideUrl: setup?.guideUrl ?? null,
+    };
+  }
+
   /** The signed-in human's devices, newest pairing first, revoked ones included. */
   async list(): Promise<DaemonDeviceView[]> {
-    if (this.deps.service) {
+    // Without the admin secret the service cannot be asked; the store has the rows (U-055).
+    if (this.deps.service && (await this.pairingReady())) {
       const q = new URLSearchParams({ humanId: this.deps.humanId });
       const body = await this.call<{ devices: ServiceDevice[] }>("GET", `/devices?${q.toString()}`);
       return body.devices
@@ -104,7 +145,7 @@ export class DeviceManager {
     if (!service) {
       throw new ForerunnerError(
         "unavailable",
-        "pairing needs the state service: set FORERUNNER_STATE_API_URL and keep its admin token in the vault (FORERUNNER_STATE_API_ADMIN_TOKEN_REF, default secret:state_api_admin)",
+        "Pairing needs Forerunner's shared state service, and this computer does not know where it is. Put the service's address in the environment variable FORERUNNER_STATE_API_URL (a setting of your user account that Forerunner reads when it starts), start Forerunner again and save the service's admin token; Settings → Devices lists the steps.",
       );
     }
     const kind = input.kind ?? "phone";
@@ -285,7 +326,7 @@ export class DeviceManager {
     if (!token) {
       throw new ForerunnerError(
         "unavailable",
-        "the state service admin token is not in the vault (FORERUNNER_STATE_API_ADMIN_TOKEN_REF, default secret:state_api_admin)",
+        `The state service's admin token is not saved on this computer. Paste it in Settings → Devices; it is kept in the credential store as ${this.deps.setup?.adminSecretName ?? DEFAULT_ADMIN_SECRET_NAME}.`,
       );
     }
     const doFetch = service.fetch ?? fetch;

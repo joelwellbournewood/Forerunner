@@ -11,6 +11,7 @@ export {
   DeviceListView,
   PAIRING_KINDS,
   type PairingKind,
+  PairingSetupView,
   PairingStartView,
   RevokeDeviceView,
   StartPairingBody,

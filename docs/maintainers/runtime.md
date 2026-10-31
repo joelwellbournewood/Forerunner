@@ -3005,8 +3005,20 @@ state service with its **admin token**, which never reaches the app. `DeviceMana
 - **List** (`list()`): `GET /devices?humanId=` at the service, filtered again to the human,
   each row as `DaemonDeviceView` (`devices/types.ts`: name, platform, kind, paired at, last
   seen, revoked, revoked at, version, and `current` for this install's own `desktop` row, the
-  one `registerDesktopDevice` made when remote control is on). Without a service URL the list
-  comes from the shared store (`store.device`, newest pairing first).
+  one `registerDesktopDevice` made when remote control is on). Without a service URL, or
+  without its admin token in the vault (U-055), the list comes from the shared store
+  (`store.device`, newest pairing first).
+- **What pairing needs** (U-055): `pairingReady()` is a configured service with its admin
+  token in the vault; `GET /devices` answers it as `pairingAvailable`, and while it is false
+  adds `pairingSetup` (`PairingSetupView`: the service URL or null, the admin secret's vault
+  name, whether it is stored, and `guideUrl`, the setup guide's "What to set up first" section
+  in the repository of the install's release feed, `pairingGuideUrl`, null for another feed).
+  The app turns it into plain steps (apps.md) and stores the token through `POST
+  /secrets/store` (`state_api_admin` is on that allowlist). The refusals say it in words: no
+  service is "Pairing needs Forerunner's shared state service, and this computer does not know
+  where it is. Put the service's address in the environment variable FORERUNNER_STATE_API_URL
+  (a setting of your user account …)"; no token is "The state service's admin token is not
+  saved on this computer. Paste it in Settings → Devices …".
 - **Start a pairing** (`startPairing({ kind?, name? })`): `POST /pairing/start { humanId,
   kind }` at the service (default `phone`), answered as `PairingStartView`: the one-time code,
   its expiry (the service's ten minutes), the human, the service URL without a trailing slash
@@ -3556,7 +3568,7 @@ human).
 `devices-routes.test.ts` (spec R.2): the device routes over a stand-in of the service's admin
 routes: a pairing answered 201 with the code, expiry and `pairingLink`, the admin bearer sent
 and absent from the body, the audit row without the code; 400 for a bad kind; 503
-`unavailable` without a service (naming `FORERUNNER_STATE_API_URL`), without the token (no
+`unavailable` without a service (naming `FORERUNNER_STATE_API_URL` in words), without the token (no
 call made), with a refused token (the 401 named, the token not echoed) and an unreachable
 host; the list filtered to the human with this install `current`; revoke through the
 service with the tokens count and the audit row, this install's own device 400, another

@@ -6,7 +6,8 @@ import { z } from "zod";
  * the cloud voice keys only with `fr vault set`, which the installed app does not have.
  *
  * The allowlist is closed: the agent mailbox's two passwords (the names the Email page's
- * references default to) and the three cloud voice keys (the names `VOICE_SECRET_REFS` reads).
+ * references default to), the three cloud voice keys (the names `VOICE_SECRET_REFS` reads) and
+ * the shared state service's admin token that pairing needs (U-055).
  * The install's own credentials (the Claude and GitHub keys, set through the setup assistant's
  * checks) and every reserved name (`forerunner.*`) are never storable here.
  */
@@ -16,6 +17,8 @@ export const STORABLE_SECRETS = {
   deepgram_api_key: { label: "Deepgram API key", kind: "api_key" },
   cartesia_api_key: { label: "Cartesia API key", kind: "api_key" },
   elevenlabs_api_key: { label: "ElevenLabs API key", kind: "api_key" },
+  /** The shared state service's admin token, for pairing phones (U-055; Settings -> Devices). */
+  state_api_admin: { label: "State service admin token", kind: "password" },
 } as const;
 export type StorableSecretName = keyof typeof STORABLE_SECRETS;
 export const STORABLE_SECRET_NAMES = Object.keys(STORABLE_SECRETS) as StorableSecretName[];

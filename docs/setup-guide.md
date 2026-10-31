@@ -238,12 +238,42 @@ Steps:
    or mail whose DKIM signature fails or does not match the sender, is ignored and listed in the
    command audit.
 
-## Pairing the phone (coming in this release)
+## Pairing the phone
 
 The Android app (`forerunner-<version>.apk` on the release page) is installed by sideloading:
 allow "Install unknown apps" for your browser or file manager, open the APK. Releases without a
 distribution keystore are signed with a development key; Android shows the usual warning for
 sideloaded apps.
+
+### What to set up first: the shared state service
+
+The phone does not talk to your PC directly. Both talk to Forerunner's **shared state service**,
+a small server of yours that both can reach over the internet. It is not part of the app, and
+"Pair a phone" stays greyed out until it is set up. Settings → Devices shows the steps that are
+still missing. Pairing that works without the service is not available yet.
+
+1. **Run the state service** on a server you control: a small cloud server or a computer at
+   home that is reachable over HTTPS, with a Postgres database. The maintainers' notes
+   (`docs/maintainers/state-service.md`, "Deploy") show it for Fly.io and for a server with
+   Docker. When you start it, you choose its **admin token**: a long random password (for
+   example 40 random letters and digits) that only Forerunner on your PCs knows. The service
+   reads it from its `FORERUNNER_STATE_API_ADMIN_TOKEN` setting.
+2. **Tell each PC where the service is.** Forerunner reads the address from an *environment
+   variable*: a named setting of your user account that programs read when they start. Add
+   one named `FORERUNNER_STATE_API_URL` whose value is the service's address, for example
+   `https://state.example.org` (not `localhost`: your phone must reach it too).
+   - Windows: open Start, type "environment variables", choose **Edit environment variables
+     for your account**, click **New** under "User variables", enter the name and the
+     address, and click OK.
+   - Linux: add the line `FORERUNNER_STATE_API_URL=https://state.example.org` to
+     `~/.config/environment.d/forerunner.conf` and sign out and in again.
+
+   Then quit Forerunner from the tray icon (**Quit Forerunner**) and open it again, so it
+   reads the new setting.
+3. **Save the admin token.** Open Settings → Devices and paste the admin token into the box
+   there. It goes to this computer's credential store and only to the service.
+
+Then **Pair a phone** works.
 
 Pairing: on the PC open Settings → Devices → "Pair a phone" and scan the QR code with the app.
 Each phone gets its own key and token, listed under Devices, and can be revoked from the PC at

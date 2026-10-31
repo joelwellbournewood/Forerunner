@@ -537,3 +537,88 @@ describe("device routes in the composed daemon", () => {
     });
   });
 });
+
+describe("what to set up before pairing a phone, in words (U-055)", () => {
+  /** A daemon as an installed app starts it: `env` and a vault, nothing injected. */
+  const start = async (env: Record<string, string>, vault = new MemoryVault()) => {
+    const home = mkdtempSync(join(tmpdir(), "fr-devices-setup-"));
+    const clock = new SimulatedClock("2026-10-31T09:00:00.000Z");
+    const svc = fakeService([]);
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home, ...env },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault,
+      provider: new ScriptedProvider([{ text: "Noted." }], clock),
+      registryDir: join(process.cwd(), "evals", "registry"),
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      devices: { fetch: svc.fetch },
+    });
+    const { app, token } = createDaemonApp(rt);
+    const req = (path: string, init: RequestInit = {}) =>
+      app.request(path, {
+        ...init,
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      });
+    return { rt, svc, req, vault };
+  };
+  const runtimes: RuntimeApp[] = [];
+  afterAll(async () => {
+    for (const rt of runtimes) await rt.close().catch(() => undefined);
+  });
+  const GUIDE =
+    "https://github.com/joelwellbournewood/Forerunner/blob/HEAD/docs/setup-guide.md#what-to-set-up-first-the-shared-state-service";
+
+  it("without a state service: the list says what is missing and links the guide; Pair a phone says it in words", async () => {
+    const d = await start({});
+    runtimes.push(d.rt);
+    const list = DeviceListView.parse(await (await d.req("/devices")).json());
+    // The list comes from the store (this PC's own row); pairing says what it needs.
+    expect(list.devices.map((x) => x.kind)).toEqual(["desktop"]);
+    expect({ ...list, devices: [] }).toEqual({
+      devices: [],
+      pairingAvailable: false,
+      pairingSetup: {
+        serviceUrl: null,
+        adminSecretName: "state_api_admin",
+        adminSecretStored: false,
+        guideUrl: GUIDE,
+      },
+    });
+    const refused = await d.req("/devices/pairing", { method: "POST", body: "{}" });
+    expect(refused.status).toBe(503);
+    const message = String((await read(refused)).message);
+    expect(message).toContain("shared state service");
+    expect(message).toContain("environment variable FORERUNNER_STATE_API_URL");
+    expect(message).toContain("Settings → Devices");
+    expect(message).not.toContain("FORERUNNER_STATE_API_ADMIN_TOKEN_REF");
+  }, 120_000);
+
+  it("with the service's address but no admin secret: the list still answers, and pasting the secret makes pairing ready", async () => {
+    const d = await start({ FORERUNNER_STATE_API_URL: SERVICE });
+    runtimes.push(d.rt);
+    const before = DeviceListView.parse(await (await d.req("/devices")).json());
+    expect(before).toMatchObject({
+      pairingAvailable: false,
+      pairingSetup: { serviceUrl: SERVICE, adminSecretStored: false },
+    });
+    expect(d.svc.calls).toHaveLength(0);
+    const refused = await d.req("/devices/pairing", { method: "POST", body: "{}" });
+    expect(String((await read(refused)).message)).toContain(
+      "The state service's admin token is not saved on this computer",
+    );
+    // Settings → Devices stores it through the app's secret box (U-054's route).
+    const stored = await d.req("/secrets/store", {
+      method: "POST",
+      body: JSON.stringify({ name: "state_api_admin", value: ADMIN }),
+    });
+    expect(stored.status).toBe(200);
+    const after = DeviceListView.parse(await (await d.req("/devices")).json());
+    expect(after).toEqual({ devices: [], pairingAvailable: true });
+    expect((await d.req("/devices/pairing", { method: "POST", body: "{}" })).status).toBe(201);
+  }, 120_000);
+});

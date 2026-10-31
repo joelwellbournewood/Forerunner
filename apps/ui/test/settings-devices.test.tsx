@@ -284,4 +284,40 @@ describe("Settings -> Devices (spec R.2)", () => {
       expect(activeRows().map((row) => row.dataset.device)).toEqual(["dev_desktop"]),
     );
   });
+
+  it("without a state service: plain steps for what to set up first, the variable in words, the guide, and the admin token pasted here (U-055)", async () => {
+    const user = userEvent.setup();
+    const harness = renderDevices({ pairingAvailable: false });
+    await screen.findAllByTestId("device-row");
+    const off = screen.getByTestId("pairing-off");
+    expect(off).toHaveTextContent("Forerunner needs its shared state service first");
+    expect(within(off).getByTestId("pairing-step-service")).toHaveTextContent(
+      "Run the state service on a server you control",
+    );
+    // The variable is explained: what it is, where to set it, and to restart.
+    const address = within(off).getByTestId("pairing-step-address");
+    expect(address).toHaveTextContent(
+      "a setting of your user account called an environment variable",
+    );
+    expect(address).toHaveTextContent("FORERUNNER_STATE_API_URL");
+    expect(address).toHaveTextContent("Edit environment variables for your account");
+    expect(address).toHaveTextContent("quit Forerunner from the tray icon and open it again");
+    // No vault jargon: the token is pasted here.
+    expect(off).not.toHaveTextContent("secret:state_api_admin");
+    expect(within(off).getByTestId("pairing-guide-link")).toHaveAttribute(
+      "href",
+      expect.stringContaining("docs/setup-guide.md#what-to-set-up-first-the-shared-state-service"),
+    );
+    const token = ["state", "admin", "token", "9".repeat(12)].join("-"); // not-a-secret
+    const box = within(off).getByTestId("pairing-admin-token");
+    await user.type(within(box).getByTestId("pairing-admin-token-input"), token);
+    await user.click(within(box).getByTestId("pairing-admin-token-save"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/secrets/store").map((c) => c.body)).toEqual([
+        { name: "state_api_admin", value: token },
+      ]),
+    );
+    expect(document.body.textContent).not.toContain(token);
+    expect(screen.getByTestId("pairing-start")).toBeDisabled();
+  });
 });
