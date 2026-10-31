@@ -235,7 +235,7 @@ export class RoutedProvider implements ModelProvider {
       runner: this.deps.runner ?? "pc",
       modelTier: tierFromId(model) ?? "sonnet",
       purpose: this.purpose,
-      exclude,
+      exclude: [...exclude],
       ...(this.deps.fallbackOrder ? { fallbackOrder: this.deps.fallbackOrder } : {}),
     });
   }
