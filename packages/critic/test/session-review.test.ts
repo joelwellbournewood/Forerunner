@@ -299,6 +299,71 @@ describe("session review (H.6)", () => {
     }
   });
 
+  it("a task finished after the session ended does not make its summary a lie", () => {
+    // Release scenario 1 (a good day): the summary said "Done: 2" at the session's end; by the
+    // time the review ran, a later session had finished a third planned task. Counting task
+    // states at review time called that summary dishonest and, once U-033 filed the request for
+    // the person, put a false "needs your eyes" card in the Inbox after a normal session.
+    const ended = "2026-11-03T05:00:00.000Z";
+    const task = (id: string, status: string, updated_at: string) =>
+      [id, { id, status, updated_at, title: id }] as const;
+    const data = {
+      session: {
+        status: "completed",
+        ended_at: ended,
+        budget_cap_usd_micro: 1_000_000,
+        summary:
+          "Session completed. Done: 2. In review: 0. Not started: 2 of 4 planned. Spent $0.01.",
+      },
+      planItems: ["a", "b", "c", "d"].map((taskId) => ({ taskId, estimateUsdMicro: 50_000 })),
+      planEstimateUsdMicro: 200_000,
+      tasks: new Map([
+        task("a", "done", "2026-11-03T03:00:00.000Z"),
+        task("b", "done", "2026-11-03T04:00:00.000Z"),
+        task("c", "done", "2026-11-03T08:00:00.000Z"),
+        task("d", "ready", "2026-11-02T20:00:00.000Z"),
+      ]),
+      runs: [],
+      ledgerUsdMicro: 13_591,
+    } as never;
+    const checks = sessionChecks(data);
+    expect(checks.verdict).not.toBe("human");
+    expect(checks.findings.map((f) => f.description).join(" | ")).not.toMatch(/Summary claims/);
+    // A count that matches neither the end of the session nor now is still a lie.
+    const lying = {
+      ...(data as object),
+      session: { ...(data as { session: object }).session, summary: "Done: 4. Spent $0.01." },
+    } as never;
+    expect(sessionChecks(lying).verdict).toBe("human");
+  });
+
+  it("a planned task a peer finished before the session is not the session's to count", () => {
+    // Release scenario 1: Bob finished "Shared config module"; Alice's session picked the change
+    // up and ran two other tasks. Its summary says "Done: 2", the tasks its own runs finished.
+    const at = "2026-11-03T05:00:00.000Z";
+    const task = (id: string, status: string) =>
+      [id, { id, status, updated_at: at, title: id }] as const;
+    const data = {
+      session: {
+        status: "completed",
+        ended_at: at,
+        budget_cap_usd_micro: 1_000_000,
+        summary: "Session completed. Done: 2. Needs you: 1. Spent $0.01.",
+      },
+      planItems: ["peer", "a", "b", "c"].map((taskId) => ({ taskId, estimateUsdMicro: 50_000 })),
+      planEstimateUsdMicro: 200_000,
+      tasks: new Map([
+        task("peer", "done"),
+        task("a", "done"),
+        task("b", "done"),
+        task("c", "needs_human"),
+      ]),
+      runs: ["a", "b", "c"].map((task_id) => ({ task_id, session_id: "s" })),
+      ledgerUsdMicro: 13_591,
+    } as never;
+    expect(sessionChecks(data).verdict).not.toBe("human");
+  });
+
   it("an honest, in-budget session is accepted with grade 100 and no finding", async () => {
     const w = await world();
     try {

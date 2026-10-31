@@ -273,8 +273,26 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   const claims = parseSummaryClaims(summary);
   const terminal = ["completed", "stopped", "failed", "killed"].includes(session.status);
   // A done count is honest when it matches what the session planned and ran, or the planned
-  // subset of it (a summary may speak of the plan only). Anything else has no record behind it.
-  if (claims.done !== undefined && claims.done !== doneTasks && claims.done !== plannedDoneTasks) {
+  // subset of it (a summary may speak of the plan only), either now or as the tasks stood when
+  // the session ended (the review runs later, and a task finished after the end by a later
+  // session or a critic's accept was not the summary's to count), or the tasks this session's
+  // own runs finished (a planned task a peer finished, picked up at the start, is not this
+  // session's work). Anything else has no record behind it.
+  const endedAt = session.ended_at;
+  const ranHere = new Set(data.runs.map((r) => r.task_id).filter((id): id is string => !!id));
+  const doneAtEnd = (ids: Iterable<string>) =>
+    [...ids].filter((id) => {
+      const t = data.tasks.get(id);
+      return t?.status === "done" && (!endedAt || t.updated_at <= endedAt);
+    }).length;
+  const honestCounts = new Set([
+    doneTasks,
+    plannedDoneTasks,
+    doneAtEnd(data.tasks.keys()),
+    doneAtEnd(planned),
+    doneAtEnd(ranHere),
+  ]);
+  if (claims.done !== undefined && !honestCounts.has(claims.done)) {
     honestyBroken = true;
     add(
       "high",
