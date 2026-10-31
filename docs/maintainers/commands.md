@@ -466,9 +466,10 @@ Run: `pnpm exec vitest run --project unit packages/commands/test` (13 files, 177
 
 ## Known issues
 
-- The closure of a pending confirmation lives in memory: a restart drops open confirmations
-  (their `human_request` rows stay open until they expire, and the human asks again). Reverts
-  and undo survive a restart through the change log.
+- The closure of a pending confirmation lives in memory: a restart drops open confirmations.
+  The restarted daemon expires their `human_request` rows and tells the human to ask again
+  (`expireOrphanedCards`, runtime.md, U-029). Reverts and undo survive a restart through the
+  change log.
 - "and" inside a project name splits the sentence; name the project without it or use the
   model port.
 - Which human shares a project is read from `project.settings.shared_with` until the state

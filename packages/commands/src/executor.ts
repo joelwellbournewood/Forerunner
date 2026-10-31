@@ -914,7 +914,10 @@ export class CommandExecutor {
     this.revertTimers.delete(changeLogId);
   }
 
-  /** Cancel every timer (shutdown). Pending confirmations and reverts resume from the store. */
+  /**
+   * Cancel every timer (shutdown). Reverts resume from the store; pending confirmations do not
+   * (their closures are gone), so the next daemon expires their cards (U-029).
+   */
   stop(): void {
     for (const cancel of this.revertTimers.values()) cancel();
     this.revertTimers.clear();

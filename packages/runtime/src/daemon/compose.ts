@@ -111,6 +111,7 @@ import {
   scheduleCalibration,
   syncHandoverSchedules,
 } from "../jobs/index.ts";
+import { expireOrphanedCards, syncAnsweredCards } from "../loop/answered-cards.ts";
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
 import { ProjectDocs, parseRepoRef } from "../loop/docs.ts";
@@ -2749,6 +2750,29 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const syncApprovalsOnce = async () => {
     await schemaSync.assertCanSync("approvals.sync");
     const out = {
+      // A change card from Chat, voice, the palette or the phone answered in the Inbox (U-029):
+      // yes runs the change, no cancels it, on every install (the remote watcher, only built
+      // on a shared state, drains the same path). A high-risk card is confirmed as this PC's
+      // desktop row; an approval the executor refuses is told to the human.
+      cards: await syncAnsweredCards({
+        store,
+        commands,
+        humanId: human.id,
+        deviceId: remoteDevice?.id ?? null,
+        onRefused: async (card, r) => {
+          const what = typeof card.cardJson.what === "string" ? card.cardJson.what : card.id;
+          await store.message.send({
+            from_agent_id: agent.id,
+            to_human_id: human.id,
+            project_id:
+              typeof card.cardJson.projectId === "string" ? card.cardJson.projectId : null,
+            type: "warning",
+            body: `Your answer to the change card "${what}" was not applied: ${r.reason ?? "refused"}. Nothing changed; ask again if you still want it.`,
+            requires_ack: false,
+            author_agent: agent.id,
+          });
+        },
+      }),
       extensions: await extensions.syncApprovals({ humanId: human.id }),
       modelWatch: await modelWatch.syncPendingAnswers(),
       memory: await memory.syncApprovals(),
@@ -3102,6 +3126,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     await intake.closeExpired().catch((e: unknown) => {
       logger.warn("expired intake sessions not closed", { error: errorMessage(e) });
     });
+    // Change cards a stopped daemon showed have no closure behind them any more (U-029): they
+    // leave the Inbox and the human hears once that the change was not made. Only the daemon
+    // does this; a one-shot composes beside a running daemon whose cards are live.
+    if (services) {
+      await expireOrphanedCards({
+        store,
+        clock,
+        commands,
+        humanId: human.id,
+        agentId: agent.id,
+      }).catch((e: unknown) => {
+        logger.warn("orphaned change cards not expired", { error: errorMessage(e) });
+      });
+    }
     await syncApprovals();
     // An install upgraded from before the baseline rule (ADR 0089) closes the requests its
     // seeded baseline covers now, not at the next weekly run: local reads and writes only.

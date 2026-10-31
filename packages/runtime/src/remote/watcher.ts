@@ -1,15 +1,13 @@
-import type { ChangeCard } from "@forerunner/commands";
 import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
-import type {
-  HumanRequestRow,
-  JsonObject,
-  JsonValue,
-  RemoteCommandRow,
-  StateStore,
-} from "@forerunner/state";
+import type { JsonObject, RemoteCommandRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
 import type { ChatReply, ChatRequest } from "../conversation/agent.ts";
 import type { KillReport, KillScope, KillSwitch } from "../enforcement/killswitch.ts";
+import {
+  type AnsweredCardsResult,
+  cardCommands,
+  syncAnsweredCards,
+} from "../loop/answered-cards.ts";
 import type { CommandLoop, PendingView } from "../loop/commands.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import type { StartEntry, StartRequest } from "../session/triggers.ts";
@@ -20,6 +18,9 @@ import {
   type VoiceRelayRequest,
   type VoiceRelayResult,
 } from "../voice/relay.ts";
+
+/** How an Inbox answer reads as a yes; the one rule lives with `syncAnsweredCards`. */
+export { approvalOf } from "../loop/answered-cards.ts";
 
 /**
  * Remote commands for the PC (spec R.4, R.8, Q.12; ADR 0032 item 4, ADR 0041). A paired phone
@@ -794,101 +795,30 @@ export class RemoteCommandWatcher {
    * item 3). The phone answers the row through the state service, which is the enforcement
    * point for the device signature and, on a high-risk card, the biometric (`confirm:high`);
    * the daemon's own route answers it for the human at the PC. Neither path reaches the
-   * closure, so every drain reads the rows behind the open cards: an approval runs the change
-   * (a medium card as a tap, a high-risk card as a device confirmation naming this daemon's
-   * desktop row without a biometric of its own, which the policy accepts for the same human
-   * because the service already checked the phone's), a rejection cancels it. Rows the
-   * executor answered itself (they carry its `verdict`) are left alone. An approval the
-   * executor refuses (this daemon's device row revoked, the risk rose since the card was
-   * shown) is not applied: it is warned once, audited and the dead card dropped, so the next
-   * drain does not repeat it and the human asks again; a refusal because another answer is in
-   * flight is retried on the next drain.
+   * closure, so every drain applies the answers through `syncAnsweredCards`
+   * (`loop/answered-cards.ts`), the same path the daemon's `syncApprovals` takes on every
+   * install (U-029): an approval runs the change, a rejection cancels it, and an approval the
+   * executor refuses is audited here (`remote.command`, `kind: "card"`), counted in
+   * `stats.refusedCards` and the dead card dropped.
    */
-  async syncAnswered(): Promise<{ applied: number; cancelled: number; refused: number }> {
-    let applied = 0;
-    let cancelled = 0;
-    let refused = 0;
-    for (const p of this.deps.commands.pending(this.deps.humanId)) {
-      let row: HumanRequestRow | undefined;
-      try {
-        row = await this.deps.store.humanRequest.get(p.id);
-      } catch (e) {
-        this.logger.warn("could not read the request behind a pending card", {
-          id: p.id,
-          error: errorMessage(e),
-        });
-        continue;
-      }
-      if (row?.status !== "answered") continue;
-      if (isExecutorAnswer(row.answer)) continue;
-      const by = { kind: "human" as const, id: row.answered_by ?? this.deps.humanId };
-      if (by.id !== this.deps.humanId) {
-        this.logger.warn("a pending card was answered by another human; ignored", { id: p.id });
-        continue;
-      }
-      const approved = approvalOf(
-        row.answer,
-        row.options.filter((o): o is string => typeof o === "string"),
-      );
-      let r: CommandResultView;
-      if (!approved) {
-        r = await this.deps.commands.cancel(p.id, by);
-        // A refused cancel means the card is already gone (expired, answered elsewhere).
-        if (r.status !== "refused") cancelled++;
-        this.logger.info("answered change card cancelled", { id: p.id, status: r.status });
-        continue;
-      }
-      r =
-        p.decision === "needs_device"
-          ? await this.deps.commands.confirm(p.id, {
-              kind: "device",
-              deviceId: this.deps.deviceId,
-              biometric: false,
-              by,
-            })
-          : await this.deps.commands.confirm(p.id, { kind: "tap", by, source: "chat" });
-      if (r.status === "refused") {
-        // Another answer (the UI's route) holds the card: it is theirs, or ours next drain.
-        if (r.code === "version_conflict") continue;
-        refused++;
-        this.refusedCards++;
-        await this.dropRefusedCard(p, r, by);
-        continue;
-      }
-      applied++;
-      this.logger.info("answered change card applied", { id: p.id, status: r.status });
-    }
-    return { applied, cancelled, refused };
+  async syncAnswered(): Promise<AnsweredCardsResult> {
+    return syncAnsweredCards({
+      store: this.deps.store,
+      commands: this.deps.commands,
+      humanId: this.deps.humanId,
+      deviceId: this.deps.deviceId,
+      onRefused: (p, r) => this.auditRefusedCard(p, r),
+    });
   }
 
-  /**
-   * The executor refused the inbox's approval (not a transient conflict): warn with the
-   * reason, audit it and cancel the card so the next drain does not try again. The change
-   * did not run; the human asks again from a working device.
-   */
-  private async dropRefusedCard(
-    p: PendingView,
-    r: CommandResultView,
-    by: { kind: "human"; id: string },
-  ): Promise<void> {
-    const reason = r.reason ?? "refused";
-    this.logger.warn("answered change card refused by the executor; card dropped", {
-      id: p.id,
-      code: r.code ?? null,
-      reason,
-    });
+  /** The executor refused the inbox's approval: one audit row; the card is then dropped. */
+  private async auditRefusedCard(p: PendingView, r: CommandResultView): Promise<void> {
+    this.refusedCards++;
     await this.appendAudit(
       false,
-      { pendingId: p.id, kind: "card", decision: p.decision, commands: cardCommands(p.card) },
-      { status: "refused", code: r.code ?? null, error: reason },
+      { pendingId: p.id, kind: "card", decision: p.decision, commands: cardCommands(p.cardJson) },
+      { status: "refused", code: r.code ?? null, error: r.reason ?? "refused" },
     );
-    try {
-      // A refusal that already took the card out of the executor (its risk rose) makes this a
-      // no-op refusal; either way nothing is pending afterwards.
-      await this.deps.commands.cancel(p.id, by);
-    } catch (e) {
-      this.logger.warn("could not drop the refused card", { id: p.id, error: errorMessage(e) });
-    }
   }
 
   // -------------------------------------------------------------------------------------
@@ -995,12 +925,6 @@ function parseAuditInput(summary: string): JsonObject | null {
   }
 }
 
-/** The command names a change card covers (its parts, else the one command). */
-function cardCommands(card: ChangeCard | null | undefined): string[] {
-  if (!card) return [];
-  return card.parts?.length ? card.parts.map((p) => p.command) : [card.command];
-}
-
 /** The command names of a plan envelope (never the parameters: the audit row names, not values). */
 function planNames(params: JsonObject | null | undefined): string[] {
   const plan = params?.plan;
@@ -1008,40 +932,4 @@ function planNames(params: JsonObject | null | undefined): string[] {
   return plan
     .map((s) => (s && typeof s === "object" && !Array.isArray(s) ? s.name : null))
     .filter((n): n is string => typeof n === "string");
-}
-
-/** The executor records its own confirmation as `{ verdict, kind, by, device_id, biometric }`. */
-function isExecutorAnswer(answer: JsonValue | null): boolean {
-  return (
-    answer !== null &&
-    typeof answer === "object" &&
-    !Array.isArray(answer) &&
-    typeof (answer as JsonObject).verdict === "string"
-  );
-}
-
-const YES_RE = /^\s*(yes|ja|oui|ok|okay|approve|approved|confirm|confirmed|approve on device)\b/i;
-
-/**
- * Whether an inbox answer approves the card: the first option (`yes` / `approve on device`),
- * a yes-like word, `true`, or an object whose `choice`, `option`, `answer` or `approved`
- * says so. Anything else is a rejection.
- */
-export function approvalOf(answer: JsonValue | null, options: readonly string[]): boolean {
-  if (answer === null || answer === undefined) return false;
-  if (typeof answer === "boolean") return answer;
-  if (typeof answer === "string") {
-    const first = options[0];
-    if (first && answer.trim().toLowerCase() === first.toLowerCase()) return true;
-    return YES_RE.test(answer);
-  }
-  if (typeof answer === "object" && !Array.isArray(answer)) {
-    const o = answer as JsonObject;
-    if (typeof o.approved === "boolean") return o.approved;
-    for (const key of ["choice", "option", "answer", "verdict"]) {
-      const v = o[key];
-      if (typeof v === "string" || typeof v === "boolean") return approvalOf(v, options);
-    }
-  }
-  return false;
 }
