@@ -5,7 +5,9 @@ import {
   parseSummaryClaims,
   planItemsOf,
   reviewSession,
+  SESSION_REVIEW_KEY,
   SESSION_REVIEW_MODEL,
+  SESSION_REVIEW_OPTIONS,
   sessionChecks,
 } from "../src/session-review.ts";
 import { world } from "./helpers.ts";
@@ -98,7 +100,18 @@ describe("session review (H.6)", () => {
         session_id: w.ids.session,
         kind: "approval",
         project_id: w.ids.project,
+        // U-033: filed for the human who owns the session's agent, so an inbox lists it.
+        human_id: w.ids.human,
+        options: [...SESSION_REVIEW_OPTIONS],
       });
+      expect(req.change_card).toMatchObject({
+        key: SESSION_REVIEW_KEY,
+        review_id: review.id,
+        finding_ids: [findings[0]?.id],
+      });
+      expect(await w.store.humanRequest.open({ humanId: w.ids.human })).toContainEqual(
+        expect.objectContaining({ id: req.id }),
+      );
       expect(req.steps[0]).toContain("Summary claims 3");
     } finally {
       await w.close();

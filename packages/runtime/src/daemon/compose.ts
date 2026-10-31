@@ -219,6 +219,7 @@ import {
   StaticPlanner,
   type TaskExecutor,
 } from "../session/runner.ts";
+import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
 import { fileFiredKeys, Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import {
@@ -2782,6 +2783,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
       // A rebase conflict and a reviewed PR left open (U-028): each option does what it says.
       pullRequests: await syncPrAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
+      // A session review that needed the human (U-033): acknowledge, or correct the summary.
+      sessionReviews: await syncSessionReviewAnswers({ store, clock, humanId: human.id }),
       // An approved session plan (spec J.6, J.7; ADR 0053) becomes a "message" start bound to
       // that plan; the scheduler keeps one session per agent. A CLI one-shot
       // (`startServices: false`) is no place to start a session from: the daemon does it.

@@ -945,6 +945,18 @@ describe("CriticService: persistence, resolution and patterns (H.3, H.5)", () =>
       expect(out.grade).toBeLessThanOrEqual(70);
       const review = (await w.store.review.forSession(w.ids.session))[0];
       expect(review).toMatchObject({ session_id: w.ids.session, task_id: null, verdict: "human" });
+      // U-033: the session's own request (no task to sign off), for the session's owner.
+      const req = await w.store.humanRequest.mustGet(out.humanRequestId as string);
+      expect(req).toMatchObject({
+        human_id: w.ids.human,
+        session_id: w.ids.session,
+        task_id: null,
+        options: ["Acknowledge", "Correct the summary"],
+      });
+      expect(req.change_card).toMatchObject({
+        key: "critic:session_review",
+        review_id: review?.id,
+      });
       const user = w.provider.calls[0]?.request.messages[0]?.content as string;
       expect(user).toContain("## Session");
       expect(user).toContain("Done: 2 tasks");

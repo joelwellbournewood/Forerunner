@@ -1759,7 +1759,8 @@ already:
 
 `syncApprovals()` (the change cards of the command executor, extension grants, model watch
 decisions, memory consolidations, the blocked-findings answers, the critic sign-off answers,
-the pull-request cards, the session plan answers and the intake answers) runs at compose, after every `POST /requests/:id/answer` and after every
+the pull-request cards, the session review answers, the session plan answers and the intake
+answers) runs at compose, after every `POST /requests/:id/answer` and after every
 `request.answer` command (chat, voice, the palette, the phone's relayed chat: the command
 calls `CommandPorts.requestAnswered`, which the daemon wires to `syncApprovals`), so an answer
 takes effect at once whichever way it is given, and on the approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
@@ -1821,6 +1822,23 @@ then the task's next run: the person's resolved branch opened as the PR after a 
 the specialist not run, a branch that still conflicts asked again, a drop redone from the
 current base with the old commit gone, a cancel; both merge options on a card filed the old
 way and one filed by `fileLeftOpenRequest`).
+
+**Session review answers (`syncSessionReviewAnswers`, `src/session/session-review-answers.ts`,
+U-033).** A session review with a `human` verdict files its request for the session's owner
+(`fileSessionReviewRequest`, critic.md; it was filed for nobody, so neither inbox listed it).
+This step of `syncApprovals()` (returned as `sessionReviews`) applies each answered one once,
+in one transaction with the card's `applied_at`/`outcome`: "Acknowledge" marks the review's
+open findings `wontfix`; "Correct the summary" appends one sentence to the session's
+`summary` from the records as they are at the answer (`loadSessionReviewData` and
+`sessionChecks`: done tasks over everything the session planned or ran, the planned subset,
+the spend, and what the summary said), so the Sessions screen, the digest and the next
+session's diff read the true numbers, resolves the summary findings and marks the others
+`wontfix`. A request with the old options ("acknowledge", "cancel") is read the same way,
+"cancel" as an acknowledgement; an answer outside the options is `unrecognized_answer`.
+Tests: `session-review-inbox.test.ts` (a finished session whose summary says "Done: 2" with
+one task done, reviewed through `RuntimeApp.critic.reviewSession` as the runner does: the
+request in `GET /inbox` with both options; each clicked through `POST /requests/:id/answer`
+with the Inbox's string; the summary read back through `GET /sessions/:id`).
 
 **Plan answers (`syncPlanApprovals`, `src/session/plan-approval.ts`, ADR 0053).** The step
 scans the human's answered blocking approvals whose card key starts with `plan:` and that

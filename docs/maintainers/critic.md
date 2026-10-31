@@ -300,6 +300,19 @@ Grade is 100 minus a penalty per finding (critical 50, high 30, medium 15, low 5
 estimate and spend to the model as the Session section, takes the lower of the two grades and
 keeps a `human` verdict from the checks.
 
+A `human` verdict files one request (`fileSessionReviewRequest`, at every tier; U-033) for the
+session's owner: `ReviewSessionOptions.humanId` / `ReviewContext.humanId`, else the session
+token's owner, else the owner of the session's agent (`sessionOwnerOf`). It was filed with
+`human_id: null`, which no inbox lists, and at tier 1+ with the task sign-off's options and no
+card. Its options are "Acknowledge" and "Correct the summary" (`SESSION_REVIEW_OPTIONS`), its
+card `{ key: SESSION_REVIEW_KEY, session_id, review_id, finding_ids, metrics }`; the runtime's
+`syncSessionReviewAnswers` applies the answer (`runtime.md`): acknowledge marks the review's
+open findings `wontfix`, correct appends a correction from the records to the session's
+summary and resolves the summary findings. The old options were "acknowledge" and "cancel";
+a review is filed after its session ended, so "cancel" had nothing to cancel and was replaced.
+`isSessionReviewRequest` also recognises a request with the old options (`cancel` reads as an
+acknowledgement); such requests were filed for nobody and are not re-addressed.
+
 ### Calibration (`calibration.ts`, H.7, phase 3 gate)
 
 `calibrate({ evalSet, tier, critic, ctx })` reviews every eval task twice through the normal

@@ -63,6 +63,7 @@ import {
   severityOf,
 } from "./schema.ts";
 import {
+  fileSessionReviewRequest,
   loadSessionReviewData,
   reviewSession,
   type SessionChecks,
@@ -245,6 +246,7 @@ export class CriticService {
           clock: this.deps.clock,
           tier: 0,
           persist,
+          humanId: ctx.humanId ?? ctx.sessionToken.claims.ownerHumanId,
         });
       }
       const out = await reviewTier0({
@@ -871,7 +873,25 @@ export class CriticService {
     // the runtime retires the proposal on a human verdict as on any other completed
     // non-accepting one and tells the human why (ADR 0059).
     let humanRequestId: string | undefined;
-    if (out.verdict === "human" && input.subject.kind !== "lesson") {
+    // A session subject has no task to sign off: its request is the session review's own,
+    // whose options each do something (U-033; it had the task sign-off's options and no card).
+    const reviewedSession =
+      out.verdict === "human" && input.subject.kind === "session"
+        ? await store.session.get(input.subject.sessionId)
+        : undefined;
+    if (reviewedSession) {
+      const req = await fileSessionReviewRequest(store, {
+        session: reviewedSession,
+        humanId: ctx.humanId ?? claims.ownerHumanId,
+        criticAgentId: this.deps.criticAgentId,
+        reviewId: review.id,
+        grade: out.grade,
+        summary: out.summary,
+        findings: out.findings,
+        findingIds,
+      });
+      humanRequestId = req.id;
+    } else if (out.verdict === "human" && input.subject.kind !== "lesson") {
       const worst = maxSeverity(out.findings);
       const req = await store.humanRequest.insert({
         human_id: ctx.humanId === undefined ? claims.ownerHumanId : ctx.humanId,
