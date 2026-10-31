@@ -768,7 +768,7 @@ export interface ModelWatchResolveResult {
 }
 
 export const EVALS_DEFERRED_REASON =
-  "paid evals need the human's consent: answer 'evaluate', run evaluations, or turn on the model_watch run_evals setting";
+  "paid evals need the human's consent: answer 'evaluate', run evaluations, or tick 'Run the paid evaluations every week without asking' in Settings (Model watch evaluations)";
 
 export class ModelWatch {
   readonly thresholds: WatchThresholds;

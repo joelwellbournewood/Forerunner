@@ -533,8 +533,9 @@ export function UpdatesPage() {
               <p className="mt-2 text-xs text-neutral-500" data-testid="model-watch-deferred">
                 Evaluations not run: {report.evals_deferred.planned.length} eval set run(s) would
                 cost money{evalCost ? ` (up to ${evalCost})` : ""} and count against your caps. Only
-                Run evaluations (or the model watch's paid-evaluations setting) runs them. Adopt
-                applies the price rows only and runs no evaluation.
+                Run evaluations runs them, or every week in Settings: Model watch evaluations, "Run
+                the paid evaluations every week without asking". Adopt applies the price rows only
+                and runs no evaluation.
               </p>
             ) : null}
             {health?.decision === "pending" ? (

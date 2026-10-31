@@ -1,6 +1,9 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { BUILTIN_PRICING } from "@forerunner/billing";
+import { desktop } from "@forerunner/capabilities";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { openStore } from "@forerunner/state";
 import { FakeProvider, textReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -8,12 +11,16 @@ import {
   ChangeLogView,
   ChatReplyView,
   CommandResultViewSchema,
+  DESKTOP_ALLOWLIST_CONTROL,
   ModelSettingsView,
   ProjectCard,
+  SettingView,
   TaskTransitionView,
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { settingsView } from "../src/daemon/settings-view.ts";
+import { EVALS_DEFERRED_REASON } from "../src/models/watch.ts";
 
 /**
  * Settings, undo and the change log over the daemon, as the screens send them (U-056 to U-061):
@@ -235,6 +242,29 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     expect((await rt.store.task.mustGet(taskId)).status).toBe("done");
   });
 
+  it("U-060: Settings lists every setting with a plain label", async () => {
+    const rows = SettingView.array().parse(await get("/settings"));
+    const human = rows.filter((r) => r.scope === "human").map((r) => [r.key, r.label]);
+    expect(human).toEqual(
+      expect.arrayContaining([
+        ["human.quiet_hours", "Quiet hours"],
+        ["human.notify_channel", "Where notifications go"],
+        ["human.voice_alerts", "Read urgent notifications aloud"],
+        ["human.language", "Language"],
+        ["human.model_watch", "Model watch evaluations"],
+      ]),
+    );
+    const project = rows.filter((r) => r.scope === "project").map((r) => r.key);
+    expect(project).toEqual(
+      expect.arrayContaining([
+        "project.session_cap",
+        "project.critic_ceiling",
+        "project.small_project_mode",
+      ]),
+    );
+    expect(rows.every((r) => typeof r.label === "string" && r.label.length > 0)).toBe(true);
+  });
+
   it("U-059: model rows say which speed applies and the highest model they run at", async () => {
     const view = ModelSettingsView.parse(await get("/settings/models"));
     const modes = view.agents[0]?.modes ?? [];
@@ -247,5 +277,64 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     const specialist = view.specialists[0]?.settings;
     expect(specialist?.speedModeApplies).toBe(true);
     expect(specialist?.ceiling?.note).toContain("Highest model");
+  });
+});
+
+describe("texts that point to Settings name a control that exists (U-060)", () => {
+  it("the desktop approval card names the Settings section that edits the allowlist", async () => {
+    const inserted: Array<Record<string, unknown>> = [];
+    const port = new desktop.HumanRequestDesktopApprovals({
+      list: async () => [],
+      insert: async (row) => {
+        inserted.push(row);
+        return row as never;
+      },
+    });
+    await port.ask({
+      sessionId: "s1",
+      runId: "r1",
+      agentId: "alice",
+      humanId: "h1",
+      tool: "desktop_type",
+      actionClass: "permission_change",
+      risk: "high",
+      why: "the agent wants to type in firefox",
+      input: { action: "type" },
+      reason: "app_not_allowed",
+      app: { exe: "firefox", windowClass: "Navigator.firefox", title: "Mozilla Firefox" },
+    });
+    const steps = inserted[0]?.steps as string[];
+    expect(steps).toContain(
+      `To allow it permanently, add it in Settings under ${DESKTOP_ALLOWLIST_CONTROL}.`,
+    );
+  });
+
+  it("the model watch's deferred evals name the Settings control that runs them", () => {
+    expect(EVALS_DEFERRED_REASON).toContain("Run the paid evaluations every week without asking");
+    expect(EVALS_DEFERRED_REASON).toContain("Model watch evaluations");
+  });
+});
+
+describe("settingsView (U-060)", () => {
+  it("shows an unset monthly and session cap as the defaults in force, not CHF 0", async () => {
+    const clock = new SimulatedClock("2026-10-20T18:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const human = await store.human.insert({ name: "J", email: "j@example.test" });
+    const project = await store.project.insert({ name: "Eta" });
+    const rows = settingsView({
+      human,
+      projects: [project],
+      chfPerUsd: 0.8,
+      providerName: "fake",
+      registryDir: "registry",
+      pricing: BUILTIN_PRICING,
+    });
+    const value = (key: string) => rows.find((r) => r.key === key)?.value;
+    expect(value("human.monthly_cap")).toEqual({ usdMicro: 187_500_000, chfMicro: 150_000_000 });
+    expect(value("project.session_cap")).toEqual({ usdMicro: 6_250_000, chfMicro: 5_000_000 });
+    expect(value("human.notify_channel")).toBe("desktop");
+    expect(value("human.voice_alerts")).toBe(false);
+    expect(value("project.critic_ceiling")).toBeNull();
+    await store.close();
   });
 });

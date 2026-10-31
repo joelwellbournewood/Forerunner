@@ -11,6 +11,10 @@ describe("Settings", () => {
     expect(groups.global.map((s) => s.key)).toEqual(["runtime.provider"]);
     expect(groups.project.map((s) => s.key)).toEqual([
       "project.autonomy",
+      "project.session_cap",
+      "project.critic_ceiling",
+      "project.small_project_mode",
+      "project.handover",
       "project.speed_quality_offset",
     ]);
   });
@@ -51,17 +55,25 @@ describe("Settings", () => {
       amountChf: 12.5,
       project: "proj_atlas",
     });
+    // The highest model is a list of the ladder's rungs (U-060), not free text.
     const spec = commandForSetting({
       key: "project.critic_ceiling",
       scope: "project",
       scopeId: "proj_atlas",
-      value: 2,
+      value: null,
       description: "",
       risk: "medium",
     });
     expect(spec?.name).toBe("settings.set");
-    expect(spec?.params("3")).toEqual({ key: "critic_ceiling", value: 3, project: "proj_atlas" });
-    // The monthly jobs' settings are objects (ADR 0060): shown and edited as JSON.
+    expect(spec?.options?.map((o) => o.value)).toEqual(["haiku", "sonnet", "opus", "fable"]);
+    expect(spec?.initial(null)).toBe("opus");
+    expect(spec?.params("fable")).toEqual({
+      key: "critic_ceiling",
+      value: "fable",
+      project: "proj_atlas",
+    });
+    expect(spec?.params("3")).toBeNull();
+    // The monthly jobs' settings are objects (ADR 0060): labelled fields, never JSON (U-060).
     const handover = commandForSetting({
       key: "project.handover",
       scope: "project",
@@ -71,12 +83,24 @@ describe("Settings", () => {
       risk: "medium",
     });
     expect(handover?.name).toBe("settings.set");
-    expect(handover?.initial({ enabled: false })).toBe('{"enabled":false}');
-    expect(handover?.params('{"enabled": true, "day": 2, "time": "08:00"}')).toEqual({
+    expect(handover?.inputType).toBe("fields");
+    expect(handover?.fields?.map((f) => f.label)).toContain("Day of the month");
+    const fields = (v: Record<string, string>) => JSON.stringify(v);
+    expect(
+      handover?.params(
+        fields({ enabled: "true", day: "2", time: "08:00", budget_usd: "5", title: "" }),
+      ),
+    ).toEqual({
       key: "handover",
-      value: { enabled: true, day: 2, time: "08:00" },
+      value: { enabled: true, day: 2, time: "08:00", budget_usd: 5 },
       project: "proj_atlas",
     });
+    // A half-filled seed is not sent (the daemon would refuse it).
+    expect(
+      handover?.params(
+        fields({ enabled: "true", day: "2", time: "08:00", budget_usd: "5", title: "Fix it" }),
+      ),
+    ).toBeNull();
     const calibration = commandForSetting({
       key: "human.calibration",
       scope: "human",
@@ -85,12 +109,38 @@ describe("Settings", () => {
       description: "",
       risk: "medium",
     });
-    expect(calibration?.params('{"enabled":false}')).toEqual({
-      key: "calibration",
-      value: { enabled: false },
+    expect(JSON.parse(calibration?.initial(null) ?? "{}")).toEqual({
+      enabled: "true",
+      day: "1",
+      time: "06:00",
+      budget_usd: "10",
+      tier: "1",
     });
-    // Text that only looks like JSON stays text.
-    expect(calibration?.params("{not json")).toEqual({ key: "calibration", value: "{not json" });
+    expect(
+      calibration?.params(
+        fields({ enabled: "false", day: "1", time: "06:00", budget_usd: "10", tier: "1" }),
+      ),
+    ).toEqual({
+      key: "calibration",
+      value: { enabled: false, day: 1, time: "06:00", budget_usd: 10, tier: 1 },
+    });
+    // A time that is not HH:MM is not sent.
+    expect(
+      calibration?.params(
+        fields({ enabled: "true", day: "1", time: "6 am", budget_usd: "10", tier: "1" }),
+      ),
+    ).toBeNull();
+    // Stored but read by nothing yet: shown as information, without a control (rule 7).
+    expect(
+      commandForSetting({
+        key: "human.language",
+        scope: "human",
+        scopeId: "human_alice",
+        value: "en",
+        description: "",
+        risk: "low",
+      }),
+    ).toBeNull();
     expect(
       commandForSetting({
         key: "runtime.provider",
@@ -106,7 +156,7 @@ describe("Settings", () => {
   it("shows the scope on every row, the daemon status and the same-command hint", async () => {
     renderApp("/settings");
     const rows = await screen.findAllByTestId("setting-row");
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(16);
     for (const row of rows) {
       const scope = within(row).getByTestId("setting-scope");
       // Names, never ids (U-074).
@@ -156,7 +206,7 @@ describe("Settings", () => {
     // The settings screen names its channel (RT-P5-4): the row is logged as `ui`, not `chat`.
     expect(postedCalls(harness, "/commands/execute")[0]?.body).toEqual({
       commands: [{ name: "autonomy.set", params: { level: 3, project: "proj_atlas" } }],
-      wordsUsed: "Settings: project.autonomy to 3",
+      wordsUsed: "Settings: Autonomy to 3",
       source: "ui",
       projectId: "proj_atlas",
     });
@@ -185,7 +235,7 @@ describe("Settings", () => {
     const entry = harness.daemon.state.changes[0];
     expect(entry?.source).toBe("ui");
     expect(entry?.sentence).toBe("Set autonomy for Atlas from 2 to 3. Undo.");
-    expect(entry?.wordsUsed).toBe("Settings: project.autonomy to 3");
+    expect(entry?.wordsUsed).toBe("Settings: Autonomy to 3");
     expect(entry?.commands).toEqual([
       { name: "autonomy.set", params: { level: 3, project: "proj_atlas" } },
     ]);

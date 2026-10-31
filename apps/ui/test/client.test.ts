@@ -213,6 +213,21 @@ describe("daemon client", () => {
     await expect(badPeers.peers("p")).rejects.toMatchObject({ code: "ui.invalid_response" });
   });
 
+  it("reads and replaces the desktop allowlist, and rejects a malformed body (U-060)", async () => {
+    const daemon = createFakeDaemon({ token: "tok" });
+    const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
+    expect((await client.desktopAllowlist(ME.id)).entries).toEqual([{ app: "code" }]);
+    const saved = await client.setDesktopAllowlist(ME.id, [{ app: "code" }, "Firefox"]);
+    expect(saved).toEqual({ humanId: ME.id, entries: [{ app: "code" }, { app: "firefox" }] });
+    await expect(client.desktopAllowlist("someone_else")).rejects.toMatchObject({ status: 403 });
+    const bad = createClient(testConfig(), async () =>
+      jsonResponse({ humanId: "h", entries: [42] }),
+    );
+    await expect(bad.desktopAllowlist("h")).rejects.toMatchObject({
+      code: "ui.invalid_response",
+    });
+  });
+
   it("round-trips the phase-1 mutations against the fake daemon", async () => {
     const daemon = createFakeDaemon({ token: "tok", eventDelayMs: 5 });
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));

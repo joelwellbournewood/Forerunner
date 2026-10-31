@@ -1339,6 +1339,41 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.desktop.revokedReason = null;
     return c.json(desktopStatus());
   });
+  // Settings → Desktop control (U-060), as the daemon's capability routes: a human's own list
+  // only (403 `tool_not_allowed` for another id), a bad entry 400.
+  app.get("/desktop/allowlist/:humanId", (c) => {
+    if (c.req.param("humanId") !== me.id) {
+      return errorBody(
+        c,
+        403,
+        "tool_not_allowed",
+        "a human can read only their own desktop allowlist",
+      );
+    }
+    return c.json({ humanId: me.id, entries: state.desktopAllowlist });
+  });
+  app.put("/desktop/allowlist/:humanId", async (c) => {
+    if (c.req.param("humanId") !== me.id) {
+      return errorBody(
+        c,
+        403,
+        "tool_not_allowed",
+        "a human can change only their own desktop allowlist",
+      );
+    }
+    const body = (await c.req.json()) as { entries?: unknown };
+    if (
+      !Array.isArray(body.entries) ||
+      body.entries.some((e) => typeof e === "string" && e.trim() === "")
+    ) {
+      return errorBody(c, 400, "validation", "entries: a list of application names");
+    }
+    // As the daemon stores it (`parseAllowEntry`): a name is `{ app }` in lower case.
+    state.desktopAllowlist = (body.entries as DesktopAllowEntryView[]).map((e) =>
+      typeof e === "string" ? { app: e.trim().toLowerCase() } : e,
+    );
+    return c.json({ humanId: me.id, entries: state.desktopAllowlist });
+  });
 
   app.get("/inbox", (c) =>
     c.json({ requests: state.requests, messages: state.messages, blockingCount: blockingCount() }),
@@ -1863,7 +1898,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (s.key === "project.speed_quality_offset" && s.scopeId) {
         return { ...s, value: state.speedQuality[s.scopeId] ?? 0 };
       }
-      return s;
+      if (s.key === "human.default_autonomy") return { ...s, value: me.defaultAutonomy };
+      const leaf = s.key.split(".").pop() ?? s.key;
+      const slot = settingSlot(leaf, s.scope === "project" ? s.scopeId : null);
+      return slot in state.settingValues ? { ...s, value: state.settingValues[slot] } : s;
     });
     // Like the daemon: one fast-mode row per project, the effect and surcharge both ways.
     for (const [projectId, on] of Object.entries(state.fastMode)) {
@@ -3306,7 +3344,24 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             project.smallProjectMode = params.value;
             project.defaultRiskTier = params.value ? 0 : 1;
           }
-          return { before: { [key]: null }, after: { [key]: params.value } };
+          if (key === "default_autonomy" && typeof params.value === "number") {
+            me.defaultAutonomy = params.value;
+          }
+          const slot = settingSlot(key, PROJECT_KEYS.has(key) ? (project?.id ?? null) : null);
+          const previous = state.settingValues[slot] ?? null;
+          state.settingValues[slot] = params.value;
+          return {
+            before: {
+              key,
+              project_id: PROJECT_KEYS.has(key) ? (project?.id ?? null) : null,
+              value: previous,
+            },
+            after: {
+              key,
+              project_id: PROJECT_KEYS.has(key) ? (project?.id ?? null) : null,
+              value: params.value,
+            },
+          };
         },
       };
     }

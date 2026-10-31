@@ -181,7 +181,7 @@ risk table names the mode, not them), and a `PUT` carrying another mode is the d
 The settings screen is a client of the command registry (spec Q.1, ADR 0037):
 `commandForSetting(row)` maps `project.autonomy` to `autonomy.set`, `project.budget` and
 `human.monthly_cap` to `budget.set`, and the keys of `SETTING_SPECS` to `settings.set`; the
-dialog posts `executeCommands({ commands: [one], wordsUsed: "Settings: <key> to <value>",
+dialog posts `executeCommands({ commands: [one], wordsUsed: "Settings: <label> to <value>",
 source: "ui" })` (the change log row reads `ui`, where chat and voice read theirs),
 shows the daemon's card through `CommandResult`, answers `needs_yes` with `{ answer: "tap" }`
 and `needs_device` with `{ answer: "device", deviceId: <me.desktopDeviceId> }` (this PC's own
@@ -197,6 +197,32 @@ that high-risk changes cannot be confirmed on this PC. `ChangeCard` renders the
 spec Q.4 card (what, old → new, scope, duration, impact, undo hint, the parts of a plan) from
 the daemon's `card` through `parseChangeCard` (lenient: unknown fields kept, missing ones
 defaulted).
+
+Every setting has a plain label and a control of its own (U-060): the table shows the daemon's
+`label` (`settingLabel`, with `SETTING_LABELS` for an older daemon) and the value in words
+(`describeSetting`: "from 22:00 to 07:00", "on", "asks before any paid evaluation"), never the
+key or JSON; the dialog's title is "Change <label> for <project>". `structuredCommand`
+(`pages/SettingsFields.tsx`) gives each structured setting its control: quiet hours (a check box
+and two time fields; off sends `null`), the notification channel, voice alerts, small-project
+mode and fast mode (lists), the highest model (the ladder's four rungs), the default autonomy
+(the five levels by name), the budget per session (`budget.set` scope `session`, CHF), the model
+watch (two check boxes) and the monthly calibration and handover test (labelled fields:
+enabled, day, time, budget, and the handover's seed as title, outcome, criteria and files one
+per line; a half-filled seed is not sent). `inputType: "fields"` renders `FieldsInput`, which
+keeps the values as JSON of name to text that `params` turns into the command's value. The
+language and the review reserve are shown without a control (`INFORMATION_ONLY`: stored, read
+by nothing yet; the daemon's description says so). Settings → **Desktop control: allowed
+applications** (`DesktopAllowlistSection.tsx`, the heading `DESKTOP_ALLOWLIST_CONTROL` the
+desktop approval card names) lists the allowlist (`GET /desktop/allowlist/:humanId`) and adds or
+removes an application (`PUT` with the whole list; the daemon stores names as `{ app }`).
+
+An undo from the setting dialog, the Changes screen or the Tasks tab can come back `pending`
+(U-057: it puts back a higher limit): the dialog shows the card again, and Changes shows it in
+`changes-undo-pending` with "Confirm on this device" (`{ answer: "device", deviceId }`), Yes
+(`tap`) or No ("Undo cancelled. Nothing changed."). Changes offers Undo only while the row's
+`undoable` is true and otherwise shows `undoBlockedReason` ("Cannot be undone now: ..."); a
+refused undo reads "Not undone: <reason>." (U-061). A move in the Tasks tab shows its change log
+sentence with Undo (`TaskTransitionView.change`) and a link to Changes.
 
 The Opus fast mode card (spec D.20, ADR 0057) sits above "All settings" when the daemon lists
 `project.fast_mode` rows (`fastModeRows`): the row's description is shown as written (what the
@@ -220,7 +246,7 @@ under it (each one a button that picks its stop, `aria-pressed` on the chosen on
 stop's effect, and "Current: balanced (0)" as the hint. The table cell reads the row by
 position (`speedQualityLabel`: "quality (+1)"; unset or junk reads balanced, as the runtime
 reads it). A move is still one `settings.set` through `executeCommands` with `source: "ui"`,
-and the words used name the position ("Settings: project.speed_quality_offset to speed (-1)");
+and the words used name the position ("Settings: Speed or quality to speed (-1)");
 the sentence with the effect comes from the daemon (`commands.md`). The Performance view does
 not move the slider: it shows response times per mode and, per mode, the effort in force that
 the slider's position yields (held at the registry's `max_effort`), as the daemon computes it,

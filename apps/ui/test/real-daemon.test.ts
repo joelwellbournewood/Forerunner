@@ -126,6 +126,7 @@ describe("the UI client against the real daemon", () => {
       ["sources", () => client.sources()],
       ["devices", () => client.devices()],
       ["setupStatus", () => client.setupStatus()],
+      ["desktopAllowlist", () => client.desktopAllowlist(humanId)],
     ];
     const failures: string[] = [];
     for (const [name, call] of reads) {
@@ -894,5 +895,45 @@ describe("the UI client against the real daemon: a task a session is running", (
     const row = (await client.changes({ projectId })).find((r) => r.id === changeId);
     expect(row).toMatchObject({ undoable: false, undoState: "undoable" });
     expect(row?.undoBlockedReason).toContain("a done task cannot be cancelled");
+  });
+
+  it("Settings lists every setting with a label; the model rows say what runs; the allowlist saves (U-059, U-060)", async () => {
+    const settings = await client.settings();
+    const byKey = new Map(settings.map((s) => [s.key, s]));
+    for (const key of [
+      "human.quiet_hours",
+      "human.notify_channel",
+      "human.voice_alerts",
+      "human.language",
+      "human.model_watch",
+      "project.session_cap",
+      "project.critic_ceiling",
+      "project.small_project_mode",
+    ])
+      expect(byKey.get(key)?.label, key).toEqual(expect.any(String));
+    const quiet = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "quiet_hours", value: { start: "22:00", end: "07:00" } },
+        },
+      ],
+      source: "ui",
+    });
+    expect(quiet.status).toBe("done");
+    expect((await client.settings()).find((s) => s.key === "human.quiet_hours")?.value).toEqual({
+      start: "22:00",
+      end: "07:00",
+    });
+    const models = await client.modelSettings();
+    const chat = models.agents[0]?.modes.find((m) => m.mode === "text_chat");
+    expect(chat?.speedModeApplies).toBe(false);
+    expect(chat?.ceiling?.raisable).toBe(false);
+    const saved = await client.setDesktopAllowlist(humanId, ["code", "firefox"]);
+    expect(saved.entries).toEqual([{ app: "code" }, { app: "firefox" }]);
+    expect((await client.desktopAllowlist(humanId)).entries).toEqual([
+      { app: "code" },
+      { app: "firefox" },
+    ]);
   });
 });

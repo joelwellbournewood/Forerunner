@@ -571,8 +571,9 @@ export function SetupPage() {
           ) : null}
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             Spending is capped by the program, not by the agent: CHF 150 a month and CHF 5 per
-            session to start with. Change both in Settings. For safer coding tasks, install Docker
-            Desktop; Forerunner works without it.
+            session to start with. Change both in Settings: Monthly spending cap, and Budget per
+            session for each project. For safer coding tasks, install Docker Desktop; Forerunner
+            works without it.
           </p>
           {restarting ? (
             <Loading what="the background service with your new keys" />

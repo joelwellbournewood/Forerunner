@@ -102,7 +102,7 @@ describe("the speed-versus-quality slider", () => {
           params: { key: "speed_quality_offset", value: 1, project: "proj_atlas" },
         },
       ],
-      wordsUsed: "Settings: project.speed_quality_offset to quality (+1)",
+      wordsUsed: "Settings: Speed or quality to quality (+1)",
       source: "ui",
       projectId: "proj_atlas",
     });
@@ -136,7 +136,7 @@ describe("the speed-versus-quality slider", () => {
     );
     expect(harness.daemon.state.speedQuality.proj_atlas).toBe(-1);
     expect(postedCalls(harness, "/commands/execute")[1]?.body).toMatchObject({
-      wordsUsed: "Settings: project.speed_quality_offset to speed (-1)",
+      wordsUsed: "Settings: Speed or quality to speed (-1)",
     });
 
     // Undo puts the slider back at quality.

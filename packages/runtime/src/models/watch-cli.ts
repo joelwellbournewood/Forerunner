@@ -23,7 +23,7 @@ export function registerModelWatchCli(
   models
     .command("watch")
     .description(
-      "Run the model watch now: list provider models, check prices and propose changes. The eval sets (paid model calls) run only with --evals or the model_watch run_evals setting",
+      "Run the model watch now: list provider models, check prices and propose changes. The eval sets (paid model calls) run only with --evals or when Settings, Model watch evaluations, runs them every week without asking",
     )
     .option("--json", "print the report as JSON", false)
     .option(

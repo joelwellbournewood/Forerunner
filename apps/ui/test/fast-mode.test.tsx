@@ -65,7 +65,7 @@ describe("Settings: Opus fast mode (D.20)", () => {
       commands: [
         { name: "settings.set", params: { key: "fast_mode", value: true, project: "proj_atlas" } },
       ],
-      wordsUsed: "Settings: project.fast_mode to true",
+      wordsUsed: "Settings: Opus fast mode to On",
       source: "ui",
       projectId: "proj_atlas",
     });

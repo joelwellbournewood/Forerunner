@@ -200,6 +200,30 @@ Research on the web needs a Claude subscription: runs billed to an API key have 
 On an install with an API key only, project setup plans no web research, and a task given to
 the researcher waits for you, saying so, instead of failing and being retried.
 
+Every setting is in **Settings → All settings** with a plain name and its own control: your
+default autonomy for new projects, the monthly spending cap, quiet hours (a time range, or off),
+where notifications go, reading urgent notifications aloud, the monthly critic calibration, the
+model watch's evaluations; and per project the autonomy, the project budget, the budget per
+session, the highest model its runs may use, small-project mode, the monthly handover test,
+Opus fast mode and speed or quality. Every change shows the same change card as in chat and is
+listed in Changes. The language is shown but cannot be changed yet: the app works in English.
+**Desktop control: allowed applications** lists the programs your agent may use when desktop
+control is on; any other program needs your yes in the Inbox each session.
+
+In **Settings → Models**, each row says the highest model it runs at. Chat and planning always
+run at standard speed, so they offer no speed choice; chat never runs above opus. A specialist
+set to fable runs fable only in a project whose highest model is fable.
+
+## Changes and undo
+
+**Changes** lists every change made in the app, in chat, by voice or by email: who asked, the
+words used, what changed, and **Undo** while it can still be taken back. An undo needs the same
+confirmation as the change it makes: undoing a lowered monthly cap raises it, so it waits for
+your confirmation on this PC (or the phone with biometric), and so does putting back a wider
+email mode; undoing a raise acts at once. When an undo cannot work any more (the task was
+finished since, a session already read the note), the change says why instead of offering
+Undo, and nothing ever says "Undone" when nothing changed.
+
 ## Kill switch
 
 The tray icon and the red button in the header stop every session of one agent or of

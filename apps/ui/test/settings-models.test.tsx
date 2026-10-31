@@ -107,7 +107,7 @@ describe("Settings: models per agent and specialist", () => {
           params: { agent: "agent_alice", specialist: "coder", field: "max_tokens", value: 8000 },
         },
       ],
-      wordsUsed: "Settings: specialist.coder.max_tokens to 8000",
+      wordsUsed: "Settings: Max tokens for the coder specialist to 8000",
       source: "ui",
     });
     const done = await within(dialog).findByTestId("command-done");

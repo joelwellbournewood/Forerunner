@@ -8,7 +8,9 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   request,
 }) => {
   await page.goto("/settings");
-  const row = page.getByTestId("setting-row").filter({ hasText: "project.autonomy" });
+  // The row shows its plain label (U-060); the key stays on the row for tests.
+  const row = page.locator('[data-testid="setting-row"][data-key="project.autonomy"]');
+  await expect(row.getByTestId("setting-label")).toHaveText("Autonomy");
   await row.getByTestId("setting-change").click();
   const dialog = page.getByTestId("setting-dialog");
   await dialog.getByTestId("setting-value").fill("3");
@@ -22,14 +24,16 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   );
   await expect(dialog.getByTestId("command-undo")).toBeVisible();
   await dialog.getByTestId("command-close").click();
-  await expect(row.getByTestId("setting-value-cell")).toHaveText("3");
+  await expect(row.getByTestId("setting-value-cell")).toHaveText(
+    "3 Trusted: asks only for risky actions",
+  );
 
   await page.getByTestId("main-nav").getByText("Changes").click();
   await expect(page.getByTestId("change").first().getByTestId("change-sentence")).toHaveText(
     "Set autonomy for Atlas from 2 to 3. Undo.",
   );
   await expect(page.getByTestId("change").first().getByTestId("change-words")).toContainText(
-    "Settings: project.autonomy to 3",
+    "Settings: Autonomy to 3",
   );
   await page.getByTestId("change").first().getByTestId("change-undo").click();
   await expect(page.getByTestId("changes-note")).toContainText(
@@ -42,7 +46,7 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   const calls = await recordedCalls(request);
   expect(calls.find((c) => c.path === "/commands/execute")?.body).toEqual({
     commands: [{ name: "autonomy.set", params: { level: 3, project: "proj_atlas" } }],
-    wordsUsed: "Settings: project.autonomy to 3",
+    wordsUsed: "Settings: Autonomy to 3",
     projectId: "proj_atlas",
     source: "ui",
   });

@@ -21,9 +21,18 @@ import { HotkeySettings } from "../shell/HotkeySettings.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference, UiState } from "../store/store.ts";
 import { AgentNameSection } from "./AgentNameSection.tsx";
+import { DesktopAllowlistSection } from "./DesktopAllowlistSection.tsx";
 import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
 import { PlanAllowanceSection } from "./PlanAllowanceSection.tsx";
+import {
+  describeSetting,
+  type FieldSpec,
+  FieldsInput,
+  leafOf,
+  settingLabel,
+  structuredCommand,
+} from "./SettingsFields.tsx";
 import { SourcesSection } from "./SourcesSection.tsx";
 import { VoiceSettingsCard } from "./VoiceSettingsCard.tsx";
 
@@ -83,8 +92,15 @@ export const SETTING_KEYS = [
   "default_autonomy",
   "language",
   "calibration",
+  "model_watch",
   "handover",
 ] as const;
+
+/**
+ * Stored settings no run reads yet (U-060, validation rule 7): shown as information, with no
+ * control, until something uses them. The daemon's description says so.
+ */
+export const INFORMATION_ONLY: readonly string[] = ["language", "session_reserve_share"];
 
 /**
  * The speed-versus-quality slider's three positions (spec D.16): the value `settings.set`
@@ -125,8 +141,13 @@ export interface SettingCommand {
   name: "autonomy.set" | "budget.set" | "settings.set" | "model.settings.set";
   /** Parameters for the typed value, or null when the value is not valid for this setting. */
   params: (value: string) => Record<string, unknown> | null;
-  /** `slider`: a range over `positions` (the speed-versus-quality slider), not a typed value. */
-  inputType: "number" | "text" | "slider";
+  /**
+   * `slider`: a range over `positions` (the speed-versus-quality slider), not a typed value;
+   * `fields`: labelled inputs (`fields`) for a structured value such as quiet hours (U-060).
+   */
+  inputType: "number" | "text" | "slider" | "fields";
+  /** The labelled inputs of a `fields` setting; the dialog keeps their values as JSON. */
+  fields?: readonly FieldSpec[];
   /** The named stops of a slider, lowest first. */
   positions?: readonly SpeedQualityPosition[];
   /** How the chosen value reads in words (the change log's words used); the raw value otherwise. */
@@ -181,7 +202,8 @@ const initialPlain = (current: unknown) =>
  */
 export function commandForSetting(s: SettingView): SettingCommand | null {
   const key = s.key;
-  const leaf = key.includes(".") ? (key.split(".").pop() ?? key) : key;
+  const leaf = leafOf(key);
+  if (INFORMATION_ONLY.includes(leaf)) return null;
   const projectParam = s.scope === "project" && s.scopeId ? { project: s.scopeId } : {};
   if (key === "project.autonomy" || key === "autonomy.level") {
     return {
@@ -244,6 +266,10 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
       },
     };
   }
+  // Quiet hours, the notification channel, the model watch, the monthly jobs, the highest
+  // model, the per-session cap... (U-060): each with its own control and plain labels.
+  const structured = structuredCommand(s);
+  if (structured) return structured;
   if ((SETTING_KEYS as readonly string[]).includes(leaf)) {
     return {
       name: "settings.set",
@@ -330,6 +356,11 @@ export function SettingChangeDialog({
   // This PC's own device row as the daemon names it on `/me` (ADR 0030): the paired device a
   // high-risk change is confirmed on. The shell's install id is not a device the daemon knows.
   const desktopDeviceId = useUiState((s) => s.me?.desktopDeviceId ?? null);
+  const scopeName = useUiState((s) =>
+    setting.scope === "project"
+      ? (s.projects.find((p) => p.id === setting.scopeId)?.name ?? setting.scopeId)
+      : null,
+  );
   const [value, setValue] = useState(() => command.initial(setting.value));
   const [result, setResult] = useState<CommandResultJson | null>(null);
   const [busy, setBusy] = useState(false);
@@ -356,7 +387,7 @@ export function SettingChangeDialog({
     void run(() =>
       client.executeCommands({
         commands: [{ name: command.name, params }],
-        wordsUsed: `Settings: ${setting.key} to ${command.display ? command.display(value) : value}`,
+        wordsUsed: `Settings: ${settingLabel(setting)} to ${command.display ? command.display(value) : value}`,
         // The change log names the channel: this screen is `ui`, chat and voice are theirs.
         source: "ui",
         ...(setting.scope === "project" && setting.scopeId ? { projectId: setting.scopeId } : {}),
@@ -392,12 +423,16 @@ export function SettingChangeDialog({
   };
 
   return (
-    <Dialog open onClose={finish} title={`Change ${setting.key}`} testId="setting-dialog">
+    <Dialog
+      open
+      onClose={finish}
+      title={`Change ${settingLabel(setting).toLowerCase()}${scopeName ? ` for ${scopeName}` : ""}`}
+      testId="setting-dialog"
+    >
       <div className="space-y-3 text-sm">
         <p className="text-xs text-neutral-600 dark:text-neutral-400">
-          {setting.description}. Scope: {setting.scope}
-          {setting.scopeId ? ` ${setting.scopeId}` : ""}. Runs the <code>{command.name}</code>{" "}
-          command, the same one chat and voice use, and writes the same change log entry.
+          {setting.description}. The same change chat and voice make, with the same change card and
+          the same entry in Changes.
         </p>
         {result === null ? (
           <form onSubmit={submit} className="space-y-2">
@@ -408,10 +443,12 @@ export function SettingChangeDialog({
                 value={value}
                 onChange={setValue}
               />
+            ) : command.inputType === "fields" ? (
+              <FieldsInput specs={command.fields ?? []} value={value} onChange={setValue} />
             ) : (
               <Field
                 label={`New value${command.unit ? ` (${command.unit})` : ""}`}
-                hint={`Current: ${renderValue(setting.value)}`}
+                hint={`Current: ${describeSetting(setting) ?? renderValue(setting.value)}`}
               >
                 {command.options ? (
                   <select
@@ -758,6 +795,8 @@ export function SettingsPage() {
 
       <VoiceSettingsCard />
 
+      <DesktopAllowlistSection />
+
       <div
         className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
         data-testid="capabilities-section"
@@ -815,7 +854,7 @@ export function SettingsPage() {
                 <thead className="text-left text-xs text-neutral-500">
                   <tr>
                     <th className="py-1 pr-2">Scope</th>
-                    <th className="py-1 pr-2">Key</th>
+                    <th className="py-1 pr-2">Setting</th>
                     <th className="py-1 pr-2">Value</th>
                     <th className="py-1 pr-2">Risk</th>
                     <th className="py-1 pr-2">Description</th>
@@ -838,17 +877,16 @@ export function SettingsPage() {
                             {scopeName(s, { me, agents, projects })}
                           </Badge>
                         </td>
-                        <td className="py-1 pr-2 font-mono text-xs">{s.key}</td>
-                        <td
-                          className="py-1 pr-2 font-mono text-xs"
-                          data-testid="setting-value-cell"
-                        >
+                        <td className="py-1 pr-2 font-medium" data-testid="setting-label">
+                          {settingLabel(s)}
+                        </td>
+                        <td className="py-1 pr-2 text-xs" data-testid="setting-value-cell">
                           {isMoney(s.value) ? (
                             <Money value={s.value} />
                           ) : isSlider(s.key) ? (
                             speedQualityLabel(s.value)
                           ) : (
-                            renderValue(s.value)
+                            (describeSetting(s) ?? renderValue(s.value))
                           )}
                         </td>
                         <td className="py-1 pr-2">
@@ -875,7 +913,7 @@ export function SettingsPage() {
                           ) : (
                             <span
                               className="text-xs text-neutral-400"
-                              title="No command changes this value"
+                              title="Shown for information: no command changes this value here"
                             >
                               read-only
                             </span>

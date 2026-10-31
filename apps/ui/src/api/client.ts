@@ -31,6 +31,9 @@ import {
   type DaemonDeviceView,
   type DecisionView,
   DecisionView as DecisionViewSchema,
+  type DesktopAllowEntryView,
+  type DesktopAllowlistView,
+  DesktopAllowlistView as DesktopAllowlistViewSchema,
   type DesktopControlView,
   type DesktopRevokeView,
   DesktopRevokeView as DesktopRevokeViewSchema,
@@ -231,6 +234,8 @@ export type {
   DaemonDeviceView,
   DataAssetView,
   DecisionView,
+  DesktopAllowEntryView,
+  DesktopAllowlistView,
   DesktopControlView,
   DesktopRevokeView,
   DesktopStatusView,
@@ -523,6 +528,13 @@ export interface DaemonClient {
   desktopRevoke(reason?: string): Promise<DesktopRevokeView>;
   /** `POST /desktop/resume`: allow desktop control again after a revoke. */
   desktopResume(): Promise<DesktopStatusView>;
+  /** `GET /desktop/allowlist/:humanId`: the applications the agent may control (U-060). */
+  desktopAllowlist(humanId: string, signal?: AbortSignal): Promise<DesktopAllowlistView>;
+  /** `PUT /desktop/allowlist/:humanId`: replace the list (the daemon audits the change). */
+  setDesktopAllowlist(
+    humanId: string,
+    entries: DesktopAllowEntryView[],
+  ): Promise<DesktopAllowlistView>;
   inbox(humanId: string, signal?: AbortSignal): Promise<InboxView>;
   answerRequest(requestId: string, body: AnswerRequestInput): Promise<HumanRequestView>;
   markRead(messageId: string): Promise<MessageView>;
@@ -912,6 +924,15 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     desktopRevoke: (reason) =>
       post(routePath("desktopRevoke"), DesktopRevokeViewSchema, reason ? { reason } : {}),
     desktopResume: () => post(routePath("desktopResume"), DesktopStatusViewSchema, {}),
+    desktopAllowlist: (humanId, signal) =>
+      get(
+        routePath("desktopAllowlist", { humanId }),
+        DesktopAllowlistViewSchema,
+        undefined,
+        signal,
+      ),
+    setDesktopAllowlist: (humanId, entries) =>
+      put(routePath("setDesktopAllowlist", { humanId }), DesktopAllowlistViewSchema, { entries }),
     inbox: (humanId, signal) => get(routePath("inbox"), InboxViewSchema, { humanId }, signal),
     answerRequest: (requestId, body) =>
       post(routePath("answerRequest", { id: requestId }), HumanRequestViewSchema, body),

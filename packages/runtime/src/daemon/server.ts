@@ -25,8 +25,6 @@ import { createExtensionsRoutes, type DeviceConfirmation } from "../extensions/r
 import type { ExtensionView } from "../extensions/types.ts";
 import { sessionOfStart } from "../loop/commands.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
-import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
-import { speedQualityOffsetOf } from "../models/ladder.ts";
 import { parseAgentModelConfig } from "../models/run-settings.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
@@ -136,6 +134,7 @@ import { ownsProject, ownsSession } from "./ownership.ts";
 import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
+import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
 import {
   agentView,
@@ -1793,106 +1792,21 @@ export function createDaemonApp(
     );
   });
 
+  // Every setting with a plain label (U-060): settings-view.ts lists them; each row is changed
+  // by the command chat and voice use, through POST /commands/execute.
   app.get("/settings", async (c) => {
-    const h = await rt.store.human.mustGet(rt.human.id);
+    const human = await rt.store.human.mustGet(rt.human.id);
     const projects = await rt.store.project.active({ limit: 100 });
-    const rows = [
-      {
-        key: "human.default_autonomy",
-        scope: "human",
-        scopeId: h.id,
-        value: h.default_autonomy,
-        description: "Autonomy level for new projects (0 advisor to 4 autopilot)",
-        risk: "medium",
-      },
-      {
-        key: "human.monthly_cap",
-        scope: "human",
-        scopeId: h.id,
-        value: money(h.monthly_cap_usd_micro, chf()),
-        description: "Hard monthly spend cap",
-        risk: "high",
-      },
-      {
-        key: "human.timezone",
-        scope: "human",
-        scopeId: h.id,
-        value: h.timezone,
-        description: "Time zone for schedules and quiet hours",
-        risk: "low",
-      },
-      {
-        key: "human.calibration",
-        scope: "human",
-        scopeId: h.id,
-        value: h.notify_prefs.calibration ?? null,
-        description:
-          "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd, tier (defaults: on, day 1, 06:00, USD 10, tier 1)",
-        risk: "medium",
-      },
-      {
-        key: "runtime.provider",
-        scope: "global",
-        scopeId: null,
-        value: rt.provider?.name ?? "none",
-        description: "Model provider in use",
-        risk: "low",
-      },
-      {
-        key: "runtime.registry",
-        scope: "global",
-        scopeId: null,
-        value: rt.registry.dir,
-        description: "Specialist registry directory",
-        risk: "low",
-      },
-      ...projects.flatMap((p) => [
-        {
-          key: "project.autonomy",
-          scope: "project",
-          scopeId: p.id,
-          value: p.autonomy_level,
-          description: `Autonomy for ${p.name}`,
-          risk: "medium",
-        },
-        {
-          key: "project.budget",
-          scope: "project",
-          scopeId: p.id,
-          value: money(p.budget_usd_micro, chf()),
-          description: `Budget for ${p.name}`,
-          risk: "medium",
-        },
-        {
-          key: "project.handover",
-          scope: "project",
-          scopeId: p.id,
-          value: p.settings.handover ?? null,
-          description: `Monthly handover test on ${p.name}: enabled, day, time, budget_usd, seed (off until enabled)`,
-          risk: "medium",
-        },
-        {
-          // Opus fast mode (spec D.20, ADR 0057): the effect and the surcharge both ways, from
-          // the price table in force; changed through `settings.set` like any SETTING_SPECS key.
-          key: `project.${FAST_MODE_SETTING}`,
-          scope: "project",
-          scopeId: p.id,
-          value: fastModeOf(p.settings),
-          description: fastModeDescription(rt.pricingTable()),
-          risk: "medium",
-        },
-        {
-          // The slider (spec D.16): -1 speed, 0 balanced, +1 quality, as every mode reads it.
-          key: "project.speed_quality_offset",
-          scope: "project",
-          scopeId: p.id,
-          value: speedQualityOffsetOf(p.settings),
-          description: `Speed versus quality for ${p.name}: every mode's effort one step down or up`,
-          risk: "low",
-        },
-      ]),
-    ];
-    return c.json(rows);
+    return c.json(
+      settingsView({
+        human,
+        projects,
+        chfPerUsd: chf(),
+        providerName: rt.provider?.name ?? null,
+        registryDir: rt.registry.dir,
+        pricing: rt.pricingTable(),
+      }),
+    );
   });
 
   // Model settings per agent and specialist (spec D.4, ADR 0072): what the settings screen

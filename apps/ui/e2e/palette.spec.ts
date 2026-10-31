@@ -29,7 +29,7 @@ test("keyboard shortcuts navigate and the theme override applies", async ({ page
   await page.keyboard.press("g");
   await page.keyboard.press("s");
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(page.getByTestId("setting-row")).toHaveCount(5);
+  await expect(page.getByTestId("setting-row")).toHaveCount(16);
   await page.getByTestId("theme-select").selectOption("dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.keyboard.press("Shift+?");

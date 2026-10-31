@@ -103,7 +103,10 @@ allows an app on its own; without a port it refuses. `HumanRequestDesktopApprova
 blocking `human_request` (kind `approval`, risk `high`, `change_card.key =
 desktop_allow_app:<exe>|<class>`) per app and session and answers `pending` until the human
 answers; `yes` is remembered by the gate for that session only, `revoke()` clears it. Permanent
-allowance is an allowlist edit in Settings, never something the model can do.
+allowance is an allowlist edit in Settings, never something the model can do: the card's last
+step says "add it in Settings under Desktop control: allowed applications", the heading of the
+app's allowlist section (`DESKTOP_ALLOWLIST_CONTROL` in the daemon's `api-types.ts`, U-060), which
+reads and writes the list through `GET`/`PUT /desktop/allowlist/:humanId`.
 
 ## Allowlist format
 

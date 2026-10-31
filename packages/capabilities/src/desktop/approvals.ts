@@ -73,7 +73,7 @@ export class HumanRequestDesktopApprovals implements DesktopApprovalPort {
         `Application: ${summarize(req.app.exe, 80)} (${summarize(req.app.windowClass, 80)})`,
         `Window: ${summarize(req.app.title, 120)}`,
         "Answer yes to allow this application for the rest of this session only.",
-        "To allow it permanently, add it to the desktop allowlist in Settings.",
+        "To allow it permanently, add it in Settings under Desktop control: allowed applications.",
       ],
       options: ["yes", "no"],
       blocking: true,

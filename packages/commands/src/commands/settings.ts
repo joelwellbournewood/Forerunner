@@ -209,7 +209,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     label: "quiet hours",
     scope: "global",
     risk: "low",
-    schema: z.object({ start: z.string().regex(HHMM), end: z.string().regex(HHMM) }),
+    // null turns quiet hours off (the notification settings read null as "none").
+    schema: z.object({ start: z.string().regex(HHMM), end: z.string().regex(HHMM) }).nullable(),
     description:
       "No notifications and no non-manual session starts between start and end (local time).",
   },

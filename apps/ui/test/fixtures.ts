@@ -527,11 +527,81 @@ export const COSTS: Record<string, CostView> = {
 export const SETTINGS: SettingView[] = [
   {
     key: "human.monthly_cap",
+    label: "Monthly spending cap",
     scope: "human",
     scopeId: "human_alice",
     value: money(187_500_000),
     description: "Hard monthly spend cap",
     risk: "high",
+  },
+  // Every setting is listed with a plain label (U-060), as the daemon's settings-view.ts does.
+  {
+    key: "human.default_autonomy",
+    label: "Default autonomy for new projects",
+    scope: "human",
+    scopeId: "human_alice",
+    value: 2,
+    description: "Autonomy level for new projects (0 advisor to 4 autopilot)",
+    risk: "medium",
+  },
+  {
+    key: "human.quiet_hours",
+    label: "Quiet hours",
+    scope: "human",
+    scopeId: "human_alice",
+    value: null,
+    description:
+      "No notifications and no sessions that start on their own between these times (your local time); off when unset",
+    risk: "low",
+  },
+  {
+    key: "human.notify_channel",
+    label: "Where notifications go",
+    scope: "human",
+    scopeId: "human_alice",
+    value: "desktop",
+    description: "The channel your notifications use first (desktop when unset)",
+    risk: "low",
+  },
+  {
+    key: "human.voice_alerts",
+    label: "Read urgent notifications aloud",
+    scope: "human",
+    scopeId: "human_alice",
+    value: false,
+    description:
+      "Speak urgent notifications through the voice provider while the app is open, outside quiet hours",
+    risk: "low",
+  },
+  {
+    key: "human.language",
+    label: "Language",
+    scope: "human",
+    scopeId: "human_alice",
+    value: "en",
+    description:
+      "The app and your agent work in English in this version; the stored choice changes nothing yet",
+    risk: "low",
+  },
+  {
+    key: "human.calibration",
+    label: "Monthly critic calibration",
+    scope: "human",
+    scopeId: "human_alice",
+    value: null,
+    description:
+      "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd, tier (defaults: on, day 1, 06:00, USD 10, tier 1)",
+    risk: "medium",
+  },
+  {
+    key: "human.model_watch",
+    label: "Model watch evaluations",
+    scope: "human",
+    scopeId: "human_alice",
+    value: { run_evals: false, allow_process_sandbox: false },
+    description:
+      "Whether the weekly model watch runs its paid eval sets without asking, and whether eval commands may run without a container",
+    risk: "medium",
   },
   {
     key: "runtime.provider",
@@ -543,6 +613,7 @@ export const SETTINGS: SettingView[] = [
   },
   {
     key: "chat.model",
+    label: "Model for quick chat",
     scope: "agent",
     scopeId: "agent_alice",
     value: "haiku-5.5",
@@ -551,6 +622,7 @@ export const SETTINGS: SettingView[] = [
   },
   {
     key: "project.autonomy",
+    label: "Autonomy",
     scope: "project",
     scopeId: "proj_atlas",
     value: 2,
@@ -558,8 +630,47 @@ export const SETTINGS: SettingView[] = [
     risk: "medium",
   },
   {
+    key: "project.session_cap",
+    label: "Budget per session",
+    scope: "project",
+    scopeId: "proj_atlas",
+    value: money(6_250_000),
+    description: "The most one session on Atlas may spend (CHF 5 unless set)",
+    risk: "medium",
+  },
+  {
+    key: "project.critic_ceiling",
+    label: "Highest model",
+    scope: "project",
+    scopeId: "proj_atlas",
+    value: null,
+    description:
+      "The highest model Atlas's runs may use: specialists, retries, planning and the critic (opus unless set; fable only when set here)",
+    risk: "medium",
+  },
+  {
+    key: "project.small_project_mode",
+    label: "Small-project mode",
+    scope: "project",
+    scopeId: "proj_atlas",
+    value: false,
+    description: "One milestone, a flat task list and critic tier 0 for new tasks on Atlas",
+    risk: "low",
+  },
+  {
+    key: "project.handover",
+    label: "Monthly handover test",
+    scope: "project",
+    scopeId: "proj_atlas",
+    value: null,
+    description:
+      "Monthly handover test on Atlas: enabled, day, time, budget_usd, seed (off until enabled)",
+    risk: "medium",
+  },
+  {
     // The daemon's row for the speed-versus-quality slider (spec D.16): -1, 0 or +1.
     key: "project.speed_quality_offset",
+    label: "Speed or quality",
     scope: "project",
     scopeId: "proj_atlas",
     value: 0,
@@ -2397,10 +2508,10 @@ export const MODEL_SETTINGS: ModelSettingsView = {
         temperature: setting(null),
         speedModeApplies: true,
         ceiling: {
-            tier: "opus",
-            raisable: true,
-            note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
-          },
+          tier: "opus",
+          raisable: true,
+          note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
+        },
       },
     },
     {
@@ -2419,10 +2530,10 @@ export const MODEL_SETTINGS: ModelSettingsView = {
         temperature: setting(0.2, "specialist"),
         speedModeApplies: true,
         ceiling: {
-            tier: "opus",
-            raisable: true,
-            note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
-          },
+          tier: "opus",
+          raisable: true,
+          note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
+        },
       },
     },
   ],
