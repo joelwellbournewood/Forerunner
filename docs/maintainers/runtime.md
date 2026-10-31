@@ -1735,7 +1735,9 @@ carries `{ humanId, source, selector }`. The agent is picked among the human's o
 (`pickPrincipal`: `identity.agentId`, the agent a caller resolved itself (the cloud runner's),
 when it is one of them, else `not_found` and nothing started; else `agentName` /
 `FORERUNNER_AGENT_NAME` by name when it matches, else the first; created with that name only
-when the human has none), never another human's; the critic agent is per owner as before.
+when the human has none), never another human's; the critic agent is per owner as before. A
+name the human changed in Settings (`POST /agents/:id/rename`, U-025, below) stays: an old
+`FORERUNNER_AGENT_NAME` matches no principal and the first is picked, the same agent.
 `fr doctor` runs the lookup on the configured store without creating or migrating anything
 (a `sqlite:` file that does not exist is not opened; the lookup then answers for an empty
 store) and prints who the next start binds to, or the humans and the remedies when it would
@@ -2147,6 +2149,38 @@ answer 403 `{ code: "forbidden" }` and change nothing (`security-daemon.test.ts`
 `POST /chat` and `POST /chat/stream` for a body whose `humanId` is another human's ("not your
 conversation", before anything is parsed, posted or answered: a line to this daemon speaks
 for its human's agent and may stop it or reach its live session, spec O.9; `daemon.test.ts`).
+
+**Renaming the agent (U-025).** `POST /agents/:id/rename { name }` (Settings -> Your agent)
+renames the signed-in human's principal agent and answers the `AgentView` `GET /agents` lists.
+Another human's agent is 403 `forbidden` ("not your agent") before the body is read, an unknown
+one 404; the critic and the other non-principal agents keep their names (409, cause
+`validation`). `RenameAgentBody` (in `api-types.ts`, shared with the UI) NFC-normalizes and
+trims the name and wants 1 to `AGENT_NAME_MAX` (60) characters with none of
+`AGENT_NAME_FORBIDDEN` (control characters, line and paragraph separators, bidi controls, the
+zero-width space and the BOM); the route then refuses a name another of the human's agents has,
+case-insensitively (the store's unique index on `(owner_human_id, name)` is exact), all as 409
+with cause `validation`. The same name answers the agent with nothing written. Otherwise the
+versioned `agent.update` (with `author_human`) and one `agent.rename` audit row
+(`AGENT_RENAME_AUDIT_TOOL`, input `"<old>" -> "<new>"`) are one transaction; then the route sets
+`rt.agent.name` and emits `agent` on `rt.events`, which `/events` streams as `agent.changed
+{ id, name }` (the shells re-read `/me` and `/agents`). `RuntimeApp.agent` is the one record of
+the principal in the process: `/me`, the commit author of the PR executor, the docs, the merge
+and the intake (`gitIdentity`, whose `name` is a getter, `<name> (Forerunner)`, read per git
+command) and the session-end notifications' `agentName` read it, so they follow without a
+restart. Everything else reads the name from the store when it is shown (session, message,
+peer, brief, memory scope and model-settings views, email signatures through
+`StoreIdentityLookup`, the registry's sentences); the state service caches names for 30 s
+(`state-service.md`). A restart keeps the agent: `pickPrincipal` matches
+`FORERUNNER_AGENT_NAME` / `identity.agentName` by name only when a principal has it and
+otherwise takes the human's first principal, so an environment that still names the old name
+binds the renamed agent and creates nothing. Known limits: with several principals, an
+`FORERUNNER_AGENT_NAME` naming the old name of a renamed second principal now picks the first,
+so update the variable; a cloud runner started with `FORERUNNER_RUNNER_AGENT=<old name>` does
+not start (`not_found`) until it names the new name or the agent's id, and a running one signs
+its commits with the name it started with until it restarts. Tests:
+`agent-rename-route.test.ts` (rename, `/me`, `/agents`, the stored version and author, the audit
+rows, `agent.changed`; 403 and 404; the refusals; a restart with the old
+`FORERUNNER_AGENT_NAME` keeps the agent and the name) and the UI's `real-daemon.test.ts`.
 
 Beyond the route table of ADR 0011 the daemon serves `GET /projects/:id/peers` (the peer feed,
 `PeerFeedView`), `GET /projects/:id/decisions` (the decision log, `DecisionView[]`), the core

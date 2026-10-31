@@ -696,6 +696,37 @@ export const AgentView = z.object({
   kind: z.string(),
   status: z.string(),
 });
+export type AgentView = z.infer<typeof AgentView>;
+
+/** The longest name a principal agent can be given from Settings (U-025), in UTF-16 units. */
+export const AGENT_NAME_MAX = 60;
+
+/**
+ * What an agent's name may not contain (U-025): control characters (line breaks, tabs, escape
+ * sequences), line and paragraph separators, and the invisible marks that reorder text or make
+ * two names look alike (bidi controls, the zero-width space, the byte order mark). The name
+ * shows in headers, notifications, commit authors and email signatures.
+ */
+export const AGENT_NAME_FORBIDDEN =
+  /[\p{Cc}\p{Zl}\p{Zp}\u200B\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/u;
+
+/**
+ * `POST /agents/:id/rename` (U-025): the new name of the signed-in human's principal agent,
+ * NFC-normalized and trimmed before it is checked, 1 to AGENT_NAME_MAX characters, none of
+ * AGENT_NAME_FORBIDDEN. That it differs from the human's other agents is the daemon's check.
+ */
+export const RenameAgentBody = z.object({
+  name: z
+    .string()
+    .normalize("NFC")
+    .trim()
+    .min(1, "the agent needs a name")
+    .max(AGENT_NAME_MAX, `a name has at most ${AGENT_NAME_MAX} characters`)
+    .refine((s) => !AGENT_NAME_FORBIDDEN.test(s), {
+      message: "a name cannot contain line breaks, tabs or other control characters",
+    }),
+});
+export type RenameAgentBody = z.infer<typeof RenameAgentBody>;
 export const HumanView = z.object({
   id: z.string(),
   name: z.string(),
@@ -1813,6 +1844,8 @@ export const DAEMON_ROUTES = {
   health: "GET /health",
   me: "GET /me",
   agents: "GET /agents",
+  renameAgent:
+    "POST /agents/:id/rename { name } (RenameAgentBody -> AgentView: renames the signed-in human's principal agent, U-025; the name is NFC-normalized and trimmed, 1 to 60 characters, no control characters, and differs (case-insensitively) from the human's other agents, else 409 conflict with cause validation; the critic and other non-principal agents keep their names (409, cause validation); 403 forbidden for another human's agent, 404 for an unknown one; one agent.rename audit row and an agent.changed frame on /events; the same name answers the agent unchanged, nothing written)",
   projects: "GET /projects",
   createProject: "POST /projects",
   project: "GET /projects/:id",
@@ -2011,5 +2044,5 @@ export const DAEMON_ROUTES = {
   speakEvents:
     "GET /speak/:id/events?afterSeq= (JSON SpeakEventView[]; 409 when afterSeq is not a number; a numeric Last-Event-ID resumes after the later of the two) | Accept: text/event-stream (SSE speak.event frames: sentence, audio with the voice loop's PCM frame, speaking_start, speaking_end, error, speak.done; heartbeat; ?token= accepted)",
   events:
-    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts; ?speech=play marks a stream whose client plays the speak.started utterances)",
+    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, agent.changed ({ id, name }: an agent was renamed; re-read /me and /agents), extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts; ?speech=play marks a stream whose client plays the speak.started utterances)",
 } as const;

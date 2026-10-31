@@ -20,6 +20,7 @@ import { useAsync } from "../lib/use-async.ts";
 import { HotkeySettings } from "../shell/HotkeySettings.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference } from "../store/store.ts";
+import { AgentNameSection } from "./AgentNameSection.tsx";
 import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
 import { SourcesSection } from "./SourcesSection.tsx";
@@ -569,8 +570,8 @@ function FastModeCard({
 }
 
 /**
- * Settings (spec K.7, Q.1, R.2): every setting with its scope (changes run through the command
- * registry), the paired devices, the sources and the capabilities.
+ * Settings (spec K.7, Q.1, R.2): your agent's name (U-025), every setting with its scope (changes
+ * run through the command registry), the paired devices, the sources and the capabilities.
  */
 export function SettingsPage() {
   const client = useClient();
@@ -587,6 +588,8 @@ export function SettingsPage() {
       <h1 id="settings-title" className="text-xl font-semibold">
         Settings
       </h1>
+
+      <AgentNameSection />
 
       <div
         className="rounded border border-neutral-200 p-3 dark:border-neutral-800"

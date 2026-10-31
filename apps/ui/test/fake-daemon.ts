@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type {
+  AgentView,
   ChangeLogView,
   ChatReplyView,
   CommandResultJson,
@@ -45,6 +46,7 @@ import {
   CreateTaskBody,
   EMAIL_MODES,
   KillBody,
+  RenameAgentBody,
   RunnerUnlockWrapBody,
   StartSessionBody,
   StartSessionView,
@@ -249,6 +251,8 @@ export interface FakeDaemonOptions {
 type Listener = (event: string, data: unknown) => void;
 
 export interface FakeDaemonState {
+  /** `/agents`; `POST /agents/:id/rename` renames one of them (U-025). */
+  agents: AgentView[];
   projects: ProjectCard[];
   tasks: TaskView[];
   sessions: SessionView[];
@@ -385,6 +389,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const nextId = (prefix: string) => `${prefix}_${++counter}`;
 
   const state: FakeDaemonState = {
+    agents: clone(AGENTS),
     projects: clone(PROJECTS),
     tasks: clone(TASKS),
     sessions: clone(SESSIONS),
@@ -502,6 +507,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/__test/calls", (c) => c.json(state.calls));
   app.post("/__test/reset", (c) => {
     updatesChecked.value = false;
+    state.agents = clone(AGENTS);
     state.projects = clone(PROJECTS);
     state.tasks = clone(TASKS);
     state.sessions = clone(SESSIONS);
@@ -571,7 +577,38 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }),
   );
   app.get("/me", (c) => c.json(me));
-  app.get("/agents", (c) => c.json(AGENTS));
+  app.get("/agents", (c) => c.json(state.agents));
+  // Settings -> Your agent (U-025), as the daemon answers it: 404 unknown, 403 `forbidden` for
+  // another human's agent before the body is read, 409 `conflict` (cause validation) for a
+  // non-principal, a bad name (`RenameAgentBody`) or one of the human's other agents' names
+  // in any case; the same name changes nothing; a rename emits `agent.changed`.
+  app.post("/agents/:id/rename", async (c) => {
+    const agent = state.agents.find((a) => a.id === c.req.param("id"));
+    if (!agent) return errorBody(c, 404, "not_found", `agent ${c.req.param("id")} not found`);
+    if (agent.ownerHumanId !== me.id)
+      return c.json({ code: "forbidden", message: "not your agent" }, 403);
+    const refuse = (message: string) =>
+      c.json({ code: "conflict", message, details: { cause: "validation" } }, 409);
+    if (agent.kind !== "principal")
+      return refuse(
+        `${agent.name} is your ${agent.kind} agent; only your principal agent is renamed here`,
+      );
+    const parsed = RenameAgentBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success)
+      return refuse(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    const { name } = parsed.data;
+    if (name === agent.name) return c.json(agent);
+    const taken = state.agents.find(
+      (a) =>
+        a.id !== agent.id &&
+        a.ownerHumanId === me.id &&
+        a.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (taken) return refuse(`you already have an agent named ${taken.name}; choose another name`);
+    agent.name = name;
+    emit("agent.changed", { id: agent.id, name });
+    return c.json(agent);
+  });
 
   // ---------------------------------------------------------------------------------------
   // Agent email (spec S.15, S.28, S.29, T.14; ADR 0066): the capability's seven routes as

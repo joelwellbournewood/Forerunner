@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "@forerunner/platform";
 import { DecisionLog } from "@forerunner/runtime/wiring/state-ports";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AGENT_NAME_TTL_MS } from "../src/http.ts";
 import { ADMIN_TOKEN, type DeviceClient, type Harness, harness, json } from "./helpers.ts";
 
 describe("state service routes", () => {
@@ -737,6 +738,25 @@ describe("state service routes", () => {
     const bobPhone = await h.pairDevice(h.seed.bob.id);
     expect((await bobPhone.get(`/sessions/${h.seed.session.id}/events`)).status).toBe(403);
     expect((await phone.get("/sessions/missing")).status).toBe(404);
+  });
+
+  it("an agent renamed in the desktop app shows on the phone once the cached name expires (U-025)", async () => {
+    const agentNameOnPhone = async () =>
+      (
+        await json<{ sessions: { agentName: string }[] }>(
+          await phone.get(`/sessions?projectId=${h.seed.project.id}`),
+        )
+      ).sessions[0]?.agentName;
+    expect(await agentNameOnPhone()).toBe("Alice");
+    // The daemon's route writes the shared store; the service reads names through its cache,
+    // whose entries last AGENT_NAME_TTL_MS (30 s) on the store's clock.
+    const alice = await h.store.agent.mustGet(h.seed.alice.id);
+    await h.store.agent.update(alice.id, alice.version, { name: "Robin" });
+    await h.clock.advance(29_999);
+    expect(await agentNameOnPhone()).toBe("Alice");
+    await h.clock.advance(1);
+    expect(await agentNameOnPhone()).toBe("Robin");
+    expect(AGENT_NAME_TTL_MS).toBe(30_000);
   });
 
   it("uploads a file to a project: data_asset row, file on disk, metadata only in the response", async () => {

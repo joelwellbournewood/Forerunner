@@ -92,6 +92,7 @@ import {
   ProjectSummary as ProjectSummarySchema,
   type RemoveSourceView,
   RemoveSourceView as RemoveSourceViewSchema,
+  type RenameAgentBody,
   type ReviewsView,
   ReviewsView as ReviewsViewSchema,
   type ReviewView,
@@ -451,6 +452,11 @@ export interface DaemonClient {
   health(signal?: AbortSignal): Promise<HealthView>;
   me(signal?: AbortSignal): Promise<HumanView>;
   agents(signal?: AbortSignal): Promise<AgentView[]>;
+  /**
+   * Settings -> Your agent (U-025): `POST /agents/:id/rename`, the human's principal agent
+   * under a new name; the daemon trims and checks it and answers the agent as `/agents` lists it.
+   */
+  renameAgent(id: string, name: string): Promise<AgentView>;
   projects(signal?: AbortSignal): Promise<ProjectCard[]>;
   createProject(body: CreateProjectBody): Promise<ProjectCard>;
   project(id: string, signal?: AbortSignal): Promise<ProjectCard>;
@@ -810,6 +816,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     health: (signal) => get(routePath("health"), HealthViewSchema, undefined, signal),
     me: (signal) => get(routePath("me"), HumanViewSchema, undefined, signal),
     agents: (signal) => get(routePath("agents"), AgentList, undefined, signal),
+    renameAgent: (id, name) =>
+      post(routePath("renameAgent", { id }), AgentViewSchema, { name } satisfies RenameAgentBody),
     projects: (signal) => get(routePath("projects"), ProjectList, undefined, signal),
     createProject: (body) => post(routePath("createProject"), ProjectCardSchema, body),
     project: (id, signal) =>

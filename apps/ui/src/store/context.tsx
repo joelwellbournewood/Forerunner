@@ -100,6 +100,9 @@ export function AppProvider({
                 .project(event.data.id)
                 .then((project) => store.dispatch({ type: "project.upsert", project }))
                 .catch(() => {});
+            } else if (event.event === "agent.changed") {
+              // Renamed in Settings, here or in another window (U-025).
+              void refreshIdentity(client, store).catch(() => {});
             } else if (event.event === "extension.changed") {
               store.dispatch({ type: "extension.changed" });
               // A panel toggle of desktop-control revokes or resumes it: re-read the state.
@@ -283,6 +286,19 @@ export async function refreshDesktopControl(
   } catch {
     // no desktop routes on this daemon, or unreachable for the moment
   }
+}
+
+/**
+ * Read `/me` and `/agents` again (after a rename in Settings, or an `agent.changed` event,
+ * U-025): every place that names the agent reads it from the store. Throws when a read fails;
+ * what was read is kept.
+ */
+export async function refreshIdentity(client: DaemonClient, store: UiStore): Promise<void> {
+  const [me, agents] = await Promise.allSettled([client.me(), client.agents()]);
+  if (me.status === "fulfilled") store.dispatch({ type: "me", me: me.value });
+  if (agents.status === "fulfilled") store.dispatch({ type: "agents", agents: agents.value });
+  if (me.status === "rejected") throw me.reason;
+  if (agents.status === "rejected") throw agents.reason;
 }
 
 /** Reload the project list (after a create, a transition, or a project.changed event). */

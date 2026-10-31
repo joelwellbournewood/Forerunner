@@ -651,7 +651,13 @@ export interface RuntimeApp {
   human: { id: string; name: string; timezone: string };
   /** How `human` was chosen (ADR 0082): the selector and where it came from. */
   identity: InstallIdentity;
-  agent: { id: string; name: string };
+  /**
+   * The install's principal agent. One record for the whole process: `/me`, the commit author
+   * of the PR executor, the docs and the intake (`<name> (Forerunner)`) and the session-end
+   * notifications all read `name` from it, so `POST /agents/:id/rename` (U-025) sets `name`
+   * here after the store's update and every one of them shows the new name without a restart.
+   */
+  agent: { readonly id: string; name: string };
   /**
    * The source the loop paths are billed to (the critic, chat, the model watch's evals): the
    * API key when the vault has one, else the subscription, else the fake source. Task runs
@@ -1263,6 +1269,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       status: "active",
       kind: "principal",
     }));
+  // The principal as this process shows it (`RuntimeApp.agent`): a rename from Settings
+  // (U-025) updates `name` in place, so nothing below keeps a copy of the name it started with.
+  const principal: RuntimeApp["agent"] = { id: agent.id, name: agent.name };
   // The critic is its own agent (spec H.1): a clean context, its own token, its own rows.
   const criticAgent =
     (
@@ -1905,8 +1914,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     const info = await gitHost.getRepo(ref);
     return { clone: info.cloneUrl, repo: ref, base: info.defaultBranch };
   };
+  // Read per command (`GitOps` passes `-c user.name=` on every call): a rename from Settings
+  // (U-025) is the author of the next commit.
   const gitIdentity = {
-    name: `${agent.name} (Forerunner)`,
+    get name() {
+      return `${principal.name} (Forerunner)`;
+    },
     email: human.email || "forerunner@localhost",
   };
   const prExecutor = (withMemory: boolean) =>
@@ -2020,10 +2033,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     maxEffort: registry.principals.get("project-manager")?.max_effort,
     promptVersion: registry.principals.get("project-manager")?.promptVersion,
     human: { id: human.id },
-    agent: { id: agent.id, name: agent.name },
+    agent: principal,
     gitHost,
     ...(ghToken ? { gitToken: ghToken } : {}),
-    identity: { name: `${agent.name} (Forerunner)`, email: human.email || "forerunner@localhost" },
+    identity: gitIdentity,
     projectsRoot: dataAssets.projectsRoot,
     worktreeRoot: dirs.worktrees,
     // A rejected proposal ends the deferral of a creation with `intake: true` (spec G.5): the
@@ -2417,7 +2430,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     notifyLater(flagInjection(e.taskId, e.ev), `injection flagged in ${e.ev.tool}`);
   });
   const agentNameOf = async (agentId: string): Promise<string | undefined> =>
-    agentId === agent.id ? agent.name : (await store.agent.get(agentId))?.name;
+    agentId === principal.id ? principal.name : (await store.agent.get(agentId))?.name;
 
   // The session grant (ADR 0044): the loop tools, the bridged tools and, when a subscription
   // source exists, the Claude Code names, so a run token derived for the SDK path can carry
@@ -3232,7 +3245,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     gitHost,
     human: { id: human.id, name: human.name, timezone: human.timezone },
     identity,
-    agent: { id: agent.id, name: agent.name },
+    agent: principal,
     billingSourceId,
     billing: {
       sources: () => stateSources(store)(human.id),

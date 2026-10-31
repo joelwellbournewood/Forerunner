@@ -92,6 +92,7 @@ import {
   type PendingChangeView,
   PinLessonBody,
   type PlanProjectView,
+  RenameAgentBody,
   SpeakBody,
   type SpeakStartedView,
   StartSessionBody,
@@ -120,6 +121,7 @@ import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
 import {
+  agentView,
   changeLogView,
   commandDefView,
   costView,
@@ -158,6 +160,9 @@ export interface DaemonServerOptions {
 
 /** How long `POST /shutdown` waits after answering before it ends the process. */
 export const SHUTDOWN_DELAY_MS = 100;
+
+/** `tool` of the audit row `POST /agents/:id/rename` writes (U-025): the old and new name. */
+export const AGENT_RENAME_AUDIT_TOOL = "agent.rename";
 
 /**
  * How long `RunningDaemon.stop()` waits for in-flight responses after the SSE streams were
@@ -667,15 +672,57 @@ export function createDaemonApp(
 
   app.get("/agents", async (c) => {
     const rows = await rt.store.agent.list(undefined, { limit: 100 });
-    return c.json(
-      rows.map((a) => ({
-        id: a.id,
-        name: a.name,
-        ownerHumanId: a.owner_human_id,
-        kind: a.kind,
-        status: a.status,
-      })),
+    return c.json(rows.map(agentView));
+  });
+
+  // Settings -> Your agent (U-025): the signed-in human renames their principal agent. Another
+  // human's agent is 403 before the body is read; the name is checked by `RenameAgentBody`
+  // (trimmed, 1 to 60 characters, no control characters) and against the human's other agents
+  // here, case-insensitively (the store's unique index is per owner and exact). The versioned
+  // update and its audit row are one write; then the process's own record of the principal
+  // (`rt.agent`: `/me`, commit authors, notifications) takes the name and the shells re-read
+  // `/me` and `/agents` on `agent.changed`. Rows that name the agent by id (sessions, messages,
+  // peers, email) read the name when they are shown, so they follow without a write.
+  app.post("/agents/:id/rename", async (c) => {
+    const existing = await rt.store.agent.mustGet(c.req.param("id"));
+    if (existing.owner_human_id !== rt.human.id)
+      return c.json({ ...NOT_YOURS, message: "not your agent" }, 403);
+    if (existing.kind !== "principal")
+      throw new ForerunnerError(
+        "validation",
+        `${existing.name} is your ${existing.kind} agent; only your principal agent is renamed here`,
+        { details: { agentId: existing.id, kind: existing.kind } },
+      );
+    const { name } = await parse(c, RenameAgentBody);
+    if (name === existing.name) return c.json(agentView(existing));
+    const wanted = name.toLowerCase();
+    const taken = (await rt.store.agent.forOwner(rt.human.id)).find(
+      (a) => a.id !== existing.id && a.name.toLowerCase() === wanted,
     );
+    if (taken)
+      throw new ForerunnerError(
+        "validation",
+        `you already have an agent named ${taken.name}; choose another name`,
+        { details: { agentId: existing.id, takenBy: taken.id } },
+      );
+    const renamed = await rt.store.transaction(async (tx) => {
+      const after = await tx.agent.update(existing.id, existing.version, {
+        name,
+        author_human: rt.human.id,
+      });
+      await tx.auditLog.append({
+        tool: AGENT_RENAME_AUDIT_TOOL,
+        allowed: true,
+        human_id: rt.human.id,
+        agent_id: after.id,
+        input_summary: redact(`${JSON.stringify(existing.name)} -> ${JSON.stringify(after.name)}`),
+        result_summary: `version ${after.version}`,
+      });
+      return after;
+    });
+    if (renamed.id === rt.agent.id) rt.agent.name = renamed.name;
+    rt.events.emit("agent", { id: renamed.id, name: renamed.name });
+    return c.json(agentView(renamed));
   });
 
   app.get("/projects", async (c) => {
@@ -1883,6 +1930,12 @@ export function createDaemonApp(
       };
       const onProject = (p: { id: string }) =>
         void stream.writeSSE({ event: "project.changed", data: JSON.stringify(p) });
+      // A renamed agent (U-025): the shells re-read `/me` and `/agents`.
+      const onAgent = (a: { id: string; name: string }) =>
+        void stream.writeSSE({
+          event: "agent.changed",
+          data: JSON.stringify({ id: a.id, name: a.name }),
+        });
       const onExtension = (e: { type: string; extensionId: string; name: string }) =>
         void stream.writeSSE({
           event: "extension.changed",
@@ -1924,6 +1977,7 @@ export function createDaemonApp(
       rt.events.on("session", onSession);
       rt.events.on("inbox", onInbox);
       rt.events.on("project", onProject);
+      rt.events.on("agent", onAgent);
       rt.events.on("extension", onExtension);
       rt.events.on("restart", onRestart);
       rt.events.on("notification", onNotification);
@@ -1942,6 +1996,7 @@ export function createDaemonApp(
         rt.events.off("session", onSession);
         rt.events.off("inbox", onInbox);
         rt.events.off("project", onProject);
+        rt.events.off("agent", onAgent);
         rt.events.off("extension", onExtension);
         rt.events.off("restart", onRestart);
         rt.events.off("notification", onNotification);

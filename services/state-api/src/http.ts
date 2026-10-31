@@ -120,20 +120,30 @@ export function announce(
   });
 }
 
-const agentNameCache = new WeakMap<StateStore, Map<string, string>>();
+const agentNameCache = new WeakMap<StateStore, Map<string, { name: string; at: number }>>();
 
-/** Agent display name with a per-store cache (names change rarely; the cache holds 1000 entries). */
+/**
+ * How long a cached agent name is used before it is read again: a principal agent renamed in
+ * the desktop app's Settings (U-025) shows on the phone within this time, without a restart.
+ */
+export const AGENT_NAME_TTL_MS = 30_000;
+
+/**
+ * Agent display name with a per-store cache (names change rarely; the cache holds 1000 entries,
+ * each for AGENT_NAME_TTL_MS on the store's clock).
+ */
 export async function agentName(store: StateStore, agentId: string): Promise<string> {
   let cache = agentNameCache.get(store);
   if (!cache) {
     cache = new Map();
     agentNameCache.set(store, cache);
   }
+  const now = store.clock.now();
   const hit = cache.get(agentId);
-  if (hit) return hit;
+  if (hit && now - hit.at < AGENT_NAME_TTL_MS) return hit.name;
   const agent = await store.agent.get(agentId);
   const name = agent?.name ?? agentId;
   if (cache.size > 1000) cache.clear();
-  cache.set(agentId, name);
+  cache.set(agentId, { name, at: now });
   return name;
 }

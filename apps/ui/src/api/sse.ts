@@ -42,6 +42,8 @@ export type DaemonEvent =
   | { event: "inbox.changed"; data: { blockingCount: number } }
   | { event: "session.changed"; data: SessionView }
   | { event: "project.changed"; data: { id: string } }
+  /** An agent was renamed (U-025): `/me` and `/agents` are read again. */
+  | { event: "agent.changed"; data: { id: string; name: string } }
   | { event: "extension.changed"; data: ExtensionChanged }
   | { event: "restart.requested"; data: RestartRequested }
   /** Desktop control's on-screen indicator (spec S.32): the banner shows while `on`. */
@@ -52,6 +54,7 @@ export type DaemonEvent =
 
 const InboxChanged = z.object({ blockingCount: z.number().int() });
 const ProjectChanged = z.object({ id: z.string() });
+const AgentChanged = z.object({ id: z.string(), name: z.string() });
 const ExtensionChangedSchema = z.object({ type: z.string(), id: z.string(), name: z.string() });
 const RestartRequestedSchema = z.object({
   reason: z.string(),
@@ -86,6 +89,10 @@ export function parseDaemonEvent(event: string, rawData: string): DaemonEvent | 
       const p = ProjectChanged.safeParse(data);
       return p.success ? { event, data: p.data } : null;
     }
+    case "agent.changed": {
+      const p = AgentChanged.safeParse(data);
+      return p.success ? { event, data: p.data } : null;
+    }
     case "extension.changed": {
       const p = ExtensionChangedSchema.safeParse(data);
       return p.success ? { event, data: p.data } : null;
@@ -116,6 +123,7 @@ export const DAEMON_EVENT_NAMES = [
   "inbox.changed",
   "session.changed",
   "project.changed",
+  "agent.changed",
   "extension.changed",
   "restart.requested",
   "desktop.indicator",

@@ -284,6 +284,16 @@ export function activeProject(state: UiState): ProjectCard | null {
   return state.projects.find((p) => p.id === state.activeProjectId) ?? null;
 }
 
+/**
+ * The signed-in human's own principal agent (the one Settings -> Your agent renames, U-025);
+ * null until `/me` and `/agents` answered, or when the human has none listed.
+ */
+export function ownPrincipal(state: UiState): AgentView | null {
+  const humanId = state.me?.id;
+  if (!humanId) return null;
+  return state.agents.find((a) => a.ownerHumanId === humanId && a.kind === "principal") ?? null;
+}
+
 /** The agent chat and sessions use: the human's principal, else the first listed. */
 export function defaultAgent(state: UiState): AgentView | null {
   const mine = state.me

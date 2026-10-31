@@ -7,7 +7,8 @@ a later milestone of the 1.0 build.
 
 ## The idea in one paragraph
 
-You have an agent (Alice by default) that works on your projects in sessions: it reads the
+You have an agent (Alice by default; rename it under Settings → **Your agent**) that works on
+your projects in sessions: it reads the
 state of the project, plans what fits the budget you gave it, claims tasks so it never collides
 with your collaborator's agent, does the work in a sandbox, opens pull requests, asks you only
 when it must, and leaves a handoff note. Every limit (money, steps, time, tools, files, domains,
@@ -126,6 +127,12 @@ or tab to the switch and use the arrow keys. With **Text** the agent answers in 
 without speech: you still talk, the reply appears as it is written, and Talk stops it. The
 choice applies from your next turn and is remembered on this computer. With a screen reader, the panel reads
 out your words, each finished sentence of the reply and the end of the reply.
+
+## Your agent's name
+
+Settings → **Your agent**: type a new name (one line, up to 60 characters) and click **Save**. The
+app, notifications, the agent's commits and its email signature use it at once, the phone within
+30 seconds; its projects, sessions and memory stay with it.
 
 ## Where things live
 

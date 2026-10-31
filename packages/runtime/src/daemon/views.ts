@@ -3,6 +3,7 @@ import type { CommandDef } from "@forerunner/commands";
 import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
 import { ForerunnerError } from "@forerunner/platform";
 import type {
+  AgentRow,
   ChangeLogRow,
   EventRow,
   FindingRow,
@@ -36,6 +37,7 @@ import type { Registry } from "../registry/types.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import type {
+  AgentView,
   ChangeLogView,
   CommandDefView,
   CostView,
@@ -58,6 +60,17 @@ import type {
   TaskView,
 } from "./api-types.ts";
 import { PERFORMANCE_DEFAULT_DAYS, PERFORMANCE_MAX_DAYS } from "./api-types.ts";
+
+/** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
+export function agentView(a: AgentRow): AgentView {
+  return {
+    id: a.id,
+    name: a.name,
+    ownerHumanId: a.owner_human_id,
+    kind: a.kind,
+    status: a.status,
+  };
+}
 
 export function money(usdMicro: number, chfPerUsd: number): Money {
   return { usdMicro, chfMicro: Math.round(usdMicro * chfPerUsd) };

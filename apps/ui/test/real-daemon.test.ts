@@ -185,6 +185,18 @@ describe("the UI client against the real daemon", () => {
     expect(content.content).toContain("Contract");
   });
 
+  it("rename the agent: Settings' call renames the principal and /me and /agents follow (U-025)", async () => {
+    const renamed = await client.renameAgent(agentId, "  Robin  ");
+    expect(renamed).toMatchObject({ id: agentId, name: "Robin", ownerHumanId: humanId });
+    expect((await client.agents()).find((a) => a.id === agentId)?.name).toBe("Robin");
+    expect(rt.agent.name).toBe("Robin");
+    // The daemon's refusal reaches the field as an ApiError with its own words.
+    const refused = await client.renameAgent(agentId, "critic").catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(409);
+    expect((refused as ApiError).message).toContain("already have an agent named Critic");
+  });
+
   it("data import: imports a folder through the daemon's import (U-006)", async () => {
     mkdirSync(dataDir, { recursive: true });
     writeFileSync(join(dataDir, "notes.csv"), "a,b\n1,2\n");
