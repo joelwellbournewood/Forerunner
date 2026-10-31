@@ -65,6 +65,15 @@ export const ANSWER_CARD_KEYS = {
   intakePrefix: "intake:",
   specialistPrefix: "specialist:",
   modelWatchPrefix: "model_watch:",
+  /**
+   * Cards whose readers act only on their options and live outside this module: the rebase
+   * conflict (`REBASE_CONFLICT_KEY`, `@forerunner/capabilities`) and the merge left open
+   * (`MERGE_LEFT_OPEN_KEY`, `loop/merge.ts`), both `decision` cards read in
+   * `session/pr-answers.ts` (U-028), and the session review (`SESSION_REVIEW_KEY`,
+   * `@forerunner/critic`, U-033). They take one of their options and nothing else, not even
+   * the yes / no words of two-option approvals, which their readers do not read.
+   */
+  optionOnly: ["githost:rebase_conflict", "merge:left_open", "critic:session_review"],
 } as const;
 
 /** The word of an inbox answer: the string itself, or the `choice` / `answer` of an object. */
@@ -265,6 +274,8 @@ function answerText(answer: unknown): string | null {
  *
  * - A card with its own reader (sign-off, blocked findings, session plan, intake, specialist
  *   proposal, model watch: `READERS`) takes what that reader takes.
+ * - A card of `ANSWER_CARD_KEYS.optionOnly` (the U-028 pull-request cards, the U-033 session
+ *   review) takes one of its options.
  * - Any other approval with options takes one of its options (case, surrounding spaces and
  *   `_`/`-` do not matter), and a two-option approval also the words of `TWO_OPTION_WORDS`.
  * - Everything else takes free text: a request without options, a decision (a question whose
@@ -298,14 +309,18 @@ export function acceptsAnswer(
     const read = answer === undefined ? null : reader.read(answer as JsonValue);
     return read === null || read === undefined ? refuse() : { ok: true };
   }
-  // An approval asks for one of its options; a decision, info or credential takes the answer
-  // as given.
-  if (request.kind !== "approval") return { ok: true };
+  // An approval asks for one of its options, and so does a decision whose reader reads only
+  // its options; any other decision, info or credential takes the answer as given.
+  const optionOnly =
+    typeof key === "string" && (ANSWER_CARD_KEYS.optionOnly as readonly string[]).includes(key);
+  if (request.kind !== "approval" && !optionOnly) return { ok: true };
   const text = answerText(answer);
   if (text === null) return refuse();
   const word = normalAnswer(text);
   if (labels.some((l) => normalAnswer(l) === word)) return { ok: true };
-  if (labels.length === 2 && TWO_OPTION_WORDS.test(word)) return { ok: true };
+  // The shared yes / no words are for approvals; an option-only decision's reader does not
+  // read them.
+  if (!optionOnly && labels.length === 2 && TWO_OPTION_WORDS.test(word)) return { ok: true };
   return refuse();
 }
 

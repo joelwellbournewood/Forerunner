@@ -1,6 +1,17 @@
-import { SIGNOFF_KEY, SIGNOFF_OPTIONS } from "@forerunner/critic";
+import {
+  REBASE_CONFLICT_KEY,
+  REBASE_CONFLICT_OPTIONS,
+  rebaseConflictAnswer,
+} from "@forerunner/capabilities";
+import {
+  SESSION_REVIEW_KEY,
+  SIGNOFF_KEY,
+  SIGNOFF_OPTIONS,
+  sessionReviewAnswer,
+} from "@forerunner/critic";
 import { describe, expect, it } from "vitest";
 import { EXTENSION_APPROVAL_OPTIONS } from "../src/extensions/approvals.ts";
+import { MERGE_LEFT_OPEN_KEY, MERGE_LEFT_OPEN_OPTIONS } from "../src/loop/merge.ts";
 import { MODEL_WATCH_REQUEST_PREFIX } from "../src/models/watch.ts";
 import { SPECIALIST_KEY_PREFIX } from "../src/registry/approval.ts";
 import {
@@ -14,6 +25,7 @@ import {
   PLAN_KEY_PREFIX,
   planAnswer,
 } from "../src/session/plan-approval.ts";
+import { leftOpenAnswer } from "../src/session/pr-answers.ts";
 import {
   ANSWER_CARD_KEYS,
   acceptsAnswer,
@@ -37,6 +49,60 @@ describe("acceptsAnswer: what a card can act on (U-034)", () => {
     expect(ANSWER_CARD_KEYS.intakePrefix).toBe(INTAKE_KEY_PREFIX);
     expect(ANSWER_CARD_KEYS.specialistPrefix).toBe(SPECIALIST_KEY_PREFIX);
     expect(ANSWER_CARD_KEYS.modelWatchPrefix).toBe(MODEL_WATCH_REQUEST_PREFIX);
+    expect(ANSWER_CARD_KEYS.optionOnly).toEqual([
+      REBASE_CONFLICT_KEY,
+      MERGE_LEFT_OPEN_KEY,
+      SESSION_REVIEW_KEY,
+    ]);
+  });
+
+  it("the pull-request cards (U-028) and the session review (U-033) need one of their options", () => {
+    // They are filed as `decision`, which otherwise takes free text; their readers read only
+    // their options, so free text would close the card and change nothing.
+    const cards = [
+      {
+        key: REBASE_CONFLICT_KEY,
+        kind: "decision",
+        options: REBASE_CONFLICT_OPTIONS,
+        read: rebaseConflictAnswer,
+      },
+      {
+        key: MERGE_LEFT_OPEN_KEY,
+        kind: "decision",
+        options: MERGE_LEFT_OPEN_OPTIONS,
+        read: leftOpenAnswer,
+      },
+      // The session review (U-033): the current options and the ones filed before.
+      {
+        key: SESSION_REVIEW_KEY,
+        kind: "approval",
+        options: ["Acknowledge", "Correct the summary"],
+        read: sessionReviewAnswer,
+      },
+      {
+        key: SESSION_REVIEW_KEY,
+        kind: "approval",
+        options: ["acknowledge", "cancel"],
+        read: sessionReviewAnswer,
+      },
+    ];
+    for (const c of cards) {
+      const t = target(c.options, c.key, c.kind);
+      for (const option of c.options) {
+        expect(acceptsAnswer(t, option)).toEqual({ ok: true });
+        expect(acceptsAnswer(t, ` ${option.toUpperCase()} `)).toEqual({ ok: true });
+        // Every answer the route lets through is one the card's reader acts on.
+        expect(c.read(option)).not.toBeNull();
+      }
+      // Not the yes / no words of two-option approvals: these readers do not read them.
+      for (const word of ["yes", "no", "approve"]) {
+        expect(c.read(word)).toBeNull();
+        expect(acceptsAnswer(t, word).ok).toBe(false);
+      }
+      const refused = acceptsAnswer(t, "I will look at it tomorrow");
+      expect(refused.ok).toBe(false);
+      expect(refused.ok ? [] : refused.options).toEqual([...c.options]);
+    }
   });
 
   it("a card with its own reader takes that reader's words, in any case, and nothing else", () => {
