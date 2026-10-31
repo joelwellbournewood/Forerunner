@@ -1,4 +1,4 @@
-# 0105 — An undo is confirmed like the change it makes
+# 0099 — An undo is confirmed like the change it makes
 
 Date: 2026-10-31
 Status: accepted

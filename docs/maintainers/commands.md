@@ -269,7 +269,7 @@ back to PharmaWatch.") and posted. Only the human the change was made for (`row.
 may undo it; an agent's undo and another human's undo or manual `revert` are refused with
 `approval_required`. `undoable(humanId, projectId?)` lists the candidates.
 
-An undo is confirmed like the change it makes (U-057, ADR 0105). `undoRiskOf(row)` takes the
+An undo is confirmed like the change it makes (U-057, ADR 0099). `undoRiskOf(row)` takes the
 highest `undoRisk(params, before, after, ctx)` of the row's commands, the risk of putting
 `before` back on today's state; the undo then goes through the same gate as a forward change
 (`act`, a pending card answered with a yes or tap, or the paired device), with an undo card

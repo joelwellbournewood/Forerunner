@@ -3149,7 +3149,7 @@ answers `undoable: false` with `undoBlockedReason` in plain words, and `undoable
 out, U-061) and `POST /changes/:id/undo` (the Changes screen's, the settings dialog's and the
 email page's Undo, logged with source `ui`; an undo that raises a limit answers `pending` with
 its undo card like a forward change and is confirmed on `/commands/:id/confirm`, U-057, ADR
-0105). `POST /tasks/:id/transition` (the Tasks tab, U-061) runs the registry's
+0099). `POST /tasks/:id/transition` (the Tasks tab, U-061) runs the registry's
 `task.transition` with the dialog's Confirm as the tap, after the version check (409
 `version_conflict` for a stale dialog), so the move is a change log row (source `ui`, the reason
 as the words used) and answers `TaskTransitionView`: the task and `change { changeLogId,

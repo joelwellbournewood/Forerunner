@@ -373,7 +373,7 @@ export interface CommandDef<P = unknown> {
   /** State-based undo from the change log (works after a restart). */
   undo?(params: P, before: JsonValue, after: JsonValue, ctx: CommandContext): Promise<void>;
   /**
-   * The risk of the undo (U-057, ADR 0105): the risk of putting `before` back on the current
+   * The risk of the undo (U-057, ADR 0099): the risk of putting `before` back on the current
    * state. An undo that raises or widens a limit is confirmed like the forward change that
    * would set that value (raising the monthly cap needs a paired device); one that lowers or
    * narrows acts at once. Absent: low, the undo acts at once.
