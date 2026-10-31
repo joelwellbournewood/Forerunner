@@ -45,7 +45,10 @@ pick lands on the Opus rung (tiers 2 and 3 by default) of a project with `settin
 on goes through the runtime's `decideFastMode`, the same rules a specialist run follows, on the
 loop driver. `CriticDeps.fastMode()` supplies the kind of the source the critic is billed to
 (`billingSourceId`) and the price table in force; the daemon reads the source row from the
-store at every review. Without the dep, the decision assumes an API-style source and the
+store at every review, or, when its calls are routed (ADR 0100), the source a review would use
+now (`RoutedProvider.peek`). The Run row's `billing_source_id` is the source that paid the
+review (`RunResult.billingSourceId`, which a routed provider sets per call), else
+`billingSourceId`. Without the dep, the decision assumes an API-style source and the
 built-in table. Applied: every call carries `speed: "fast"` on the unchanged model id, and the
 variant (`<id>-fast`) is used everywhere the review is recorded:
 - the run's pricing (`deps.pricing(variant)`, so the estimate before each call and the actual

@@ -165,6 +165,7 @@ import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ClaudeCodeProvider } from "../provider/claude-code.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
+import { RoutedProvider } from "../provider/routed.ts";
 import {
   DEFAULT_PROVIDER_CAPABILITIES,
   type ModelProvider,
@@ -271,6 +272,7 @@ import {
   VoiceProviderRegistry,
 } from "../voice/pkg.ts";
 import {
+  CALL_FALLBACK_ORDER,
   planUsageOf,
   RouterTaskBilling,
   sdkHostCommandsEnabled,
@@ -503,6 +505,8 @@ export interface ComposeOptions {
    */
   billing?: {
     personalRunner?: boolean;
+    /** Where this runtime runs, for the routing policy of its calls (the cloud runner: "cloud"). */
+    runner?: "pc" | "cloud";
     probe?: BillingSourceProbe;
     hostCommands?: boolean;
     /** The subscription's plan allowance in USD per month, ahead of the environment and `config.json`. */
@@ -1348,44 +1352,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   });
   await schemaSync.refresh("startup");
 
-  // Model provider: injected, else Anthropic from the vault, else none (chat and sessions refuse).
-  // An API key goes to the Messages API. A subscription token alone never does (U-048, ADR
-  // 0098): Anthropic documents it for Claude Code only, so chat, intake, the critic and the
-  // model watch call Claude Code through the Agent SDK with it, read from the vault per call.
-  const providers = new ProviderRegistry();
-  let provider: ModelProvider | null = opts.provider ?? null;
-  if (!provider) {
-    const key = await vault.get(SECRET_NAMES.anthropic);
-    if (key) {
-      provider = new AnthropicMessagesProvider({
-        apiKey: key,
-        // Read before every request (U-049): a key replaced in the app is used at once.
-        apiKeySource: () => vault.get(SECRET_NAMES.anthropic),
-        ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
-        baseURL: config?.anthropicApiBase,
-        defaultHeaders: config?.anthropicWorkspaceId
-          ? { "anthropic-workspace-id": config.anthropicWorkspaceId }
-          : undefined,
-        clock,
-      });
-    } else if (await vault.has(SECRET_NAMES.anthropicOauth)) {
-      provider = new ClaudeCodeProvider({
-        token: () => vault.get(SECRET_NAMES.anthropicOauth),
-        cwd: join(dirs.cache, "claude-code"),
-        baseURL: config?.anthropicApiBase,
-        ...(opts.sdkQuery ? { query: opts.sdkQuery } : {}),
-        clientApp: `forerunner/${opts.appVersion ?? env.FORERUNNER_VERSION ?? APP_VERSION}`,
-        clock,
-      });
-    }
-  }
-  if (provider) providers.register(provider);
-
   // Billing (ADR 0044): the human's sources from the vault, both when both credentials exist
   // (a `subscription` row for the OAuth token, an `api_key` row for the key; a `fake` row only
   // when nothing else exists), the pick per task through the router (below), and the source
-  // the loop paths (critic, chat, evals) are billed to: the one the Messages provider above
-  // authenticates with, which is the key when there is one.
+  // the loop paths (critic, chat, evals) name by default: the key when there is one. Their
+  // calls are booked to the source that paid, which the routed provider (below) chooses.
   // The plan allowance (`limits.planUsdMicro`): the option, the environment, config.json,
   // else the default, so the plan share cap is never silently absent.
   const planAllowance = resolvePlanAllowance([
@@ -1419,6 +1390,75 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     personalRunner,
     ...(opts.billing?.probe ? { probe: opts.billing.probe } : {}),
   });
+
+  // Model provider: injected (tests), else the routed provider over the person's credentials,
+  // else none (chat and sessions refuse). Every call outside a task run asks the router which
+  // credential pays, in the person's order (U-078, ADR 0100; without one, ADR 0098's choice:
+  // the key when there is one), and runs on the provider that credential is for: an API key or
+  // plan credits on the Messages API, the subscription's token in Claude Code only (U-048,
+  // ADR 0098), each read from the vault per call (U-049).
+  const sourceProviders = new Map<string, ModelProvider>();
+  const providerForSource = async (source: BillingSource): Promise<ModelProvider | null> => {
+    const known = sourceProviders.get(source.id);
+    if (known) return known;
+    let built: ModelProvider | null = null;
+    if (source.kind === "subscription") {
+      built = new ClaudeCodeProvider({
+        token: () => vault.get(source.credentialRef),
+        cwd: join(dirs.cache, "claude-code"),
+        baseURL: config?.anthropicApiBase,
+        ...(opts.sdkQuery ? { query: opts.sdkQuery } : {}),
+        clientApp: `forerunner/${opts.appVersion ?? env.FORERUNNER_VERSION ?? APP_VERSION}`,
+        clock,
+      });
+    } else if (source.kind === "api_key" || source.kind === "plan_credits") {
+      const key = await vault.get(source.credentialRef);
+      if (!key) return null;
+      built = new AnthropicMessagesProvider({
+        apiKey: key,
+        // Read before every request (U-049): a key replaced in the app is used at once.
+        apiKeySource: () => vault.get(source.credentialRef),
+        ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
+        baseURL: config?.anthropicApiBase,
+        defaultHeaders: config?.anthropicWorkspaceId
+          ? { "anthropic-workspace-id": config.anthropicWorkspaceId }
+          : undefined,
+        clock,
+      });
+    }
+    if (built) sourceProviders.set(source.id, built);
+    return built;
+  };
+  const routed =
+    !opts.provider && (hasKey || hasOauth)
+      ? new RoutedProvider(
+          {
+            billing: taskBilling,
+            providerFor: providerForSource,
+            sources: () => stateSources(store)(human.id),
+            humanId: human.id,
+            agentId: agent.id,
+            runner: opts.billing?.runner ?? "pc",
+            clock,
+            store,
+            // The table in force at the call (declared below; read only when a call is made).
+            pricing: (modelId) => pricingFor(modelId, pricingTable),
+            fallbackOrder: CALL_FALLBACK_ORDER,
+            fastMode: hasKey,
+          },
+          "chat",
+        )
+      : null;
+  const provider: ModelProvider | null = opts.provider ?? routed;
+  // The critic's, the intake's and the model watch's own purposes (the policy's per-purpose
+  // kinds); an injected provider serves them all as before.
+  const criticProvider: ModelProvider | null = routed?.withPurpose("critic") ?? provider;
+  const intakeProvider: ModelProvider | null = routed?.withPurpose("interactive") ?? provider;
+  const batchProvider: ModelProvider | null = routed?.withPurpose("batch") ?? provider;
+  const providers = new ProviderRegistry();
+  if (batchProvider) providers.register(batchProvider);
+  const criticProviders = new ProviderRegistry();
+  if (criticProvider) criticProviders.register(criticProvider);
   const sdkHostCommands = sdkHostCommandsEnabled(env, opts.billing?.hostCommands);
   const rates =
     opts.rates ?? new FixedRateSource(opts.chfPerUsd ?? Number(env.FORERUNNER_CHF_PER_USD ?? 0.8));
@@ -1905,8 +1945,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     clock,
     tokens,
     driver,
-    providers,
-    providerName: provider?.name ?? "none",
+    // The critic's calls follow the person's order for purpose `critic` (ADR 0100).
+    providers: criticProviders,
+    providerName: criticProvider?.name ?? "none",
     prompt: {
       prompt: registry.critic.prompt,
       promptVersion: registry.critic.promptVersion,
@@ -1926,8 +1967,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     modelConfig: () => modelConfig.get(),
     // Opus fast mode (spec D.20, ADR 0057): the project's flag reaches the Opus reviews when
     // the source the critic is billed to is API-style, priced from the table in force.
+    // With routing, the source a review would use now (fast mode is API only, ADR 0100).
     fastMode: async () => ({
-      sourceKind: (await store.billingSource.get(billingSourceId))?.kind ?? null,
+      sourceKind:
+        (routed
+          ? (await routed.withPurpose("critic").peek())?.kind
+          : (await store.billingSource.get(billingSourceId))?.kind) ?? null,
       pricing: pricingTable,
     }),
   });
@@ -1959,6 +2004,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // the SDK driver with the OAuth token read from the vault by the source's reference,
       // priced from the table in force for the Anthropic model id the ladder names.
       billing: taskBilling,
+      // A loop pick runs on the provider of the picked source (its own key), never re-routed.
+      ...(routed ? { providerFor: providerForSource } : {}),
       sdk: {
         driver: sdkDriver,
         credential: (source) => credentialFor(source, vault),
@@ -2138,7 +2185,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     clock,
     tokens,
     driver,
-    provider,
+    // The planning call follows the person's order for purpose `interactive` (ADR 0100).
+    provider: intakeProvider,
     pricing: provider
       ? livePricing(provider, () =>
           rungModelFor(provider, modelConfig.get().modeDefaults.planning.tier),

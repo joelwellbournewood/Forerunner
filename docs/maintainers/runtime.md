@@ -247,9 +247,41 @@ critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
 
-**Which provider compose builds (U-048, ADR 0098).** An injected provider, else the Messages
-adapter on the vault's `anthropic_api_key`, else, with only `anthropic_subscription_token`,
-`ClaudeCodeProvider` (`src/provider/claude-code.ts`), else none. A subscription token is for
+**Which provider compose builds (U-048, ADR 0098; U-078, ADR 0100).** An injected provider
+(tests: it serves every call, as before), else, when the vault holds an API key or the
+subscription token, `RoutedProvider` (`src/provider/routed.ts`), else none. The routed provider
+asks `RouterTaskBilling.pick` per call which of the person's sources pays, with the caller's
+purpose (`withPurpose`: `chat` for chat and voice, `interactive` for the PM intake, `critic` for
+the critic and the monthly calibration, `batch` for the model watch and its evals), the
+person's order when they chose one (`human.notify_prefs.billing_order`), else
+`CALL_FALLBACK_ORDER` (API key, plan credits, subscription: ADR 0098's choice kept), and runs the
+call on that source's provider (`providerForSource` in compose, cached per source): the
+Messages adapter on the source's own key (`apiKeySource` reads it per call, U-049) for
+`api_key` and `plan_credits`, `ClaudeCodeProvider` with the source's token for `subscription`.
+`message_end` carries `billing` (`CallBilling`: the source, its ledger kind and a
+subscription's plan share after the call, `planShareAfter` over the price of the call), and the
+loop driver sets `RunContext.billingSourceId` and `billing` from it before `afterModelCall`, so
+each call's ledger row names the source that paid with kind `api`, `subscription` or
+`plan_credits`; `RunResult.billingSourceId` reports it and the critic's and the intake's Run
+rows use it. A call that meets `provider_usage_limit` before anything streamed rests the source
+(`RouterTaskBilling.rest`), writes a `billing.fallback` event to the call's session log
+(`req.origin.sessionId`; the line is the event's `sentence`, e.g. "The Claude subscription
+reached its usage limit and rests until 2026-10-31 11:00 UTC; the API key answered instead.")
+and a `billing.fallback` audit row, and is made once more on the next source (`exclude`); a
+second limit, or one after the reply began, is the call's error, and the loop driver throws it
+with its code (`provider_usage_limit`, or `unavailable` when no source can serve, with the
+reasons in words). `listModels` and `maxOutputTokens` ask the first API-style source;
+`fastMode` is true when the vault held a key (a subscription call drops `speed`), and the
+critic's fast-mode decision reads the kind of the source a review would use now
+(`RoutedProvider.peek`). On the cloud runner compose routes as runner `cloud`
+(`ComposeOptions.billing.runner`). Tests: `test/billing-order.test.ts` (both credentials, the
+order through the Settings route: chat on the Messages API with an `api` row, on Claude Code
+with a `subscription` row and the token only, a usage limit in Claude Code answered by the key
+within the call with the session-log sentence, the next call skipping the resting subscription,
+the order and the rest after a restart on the same home and store, and the subscription
+serving again after its reset).
+
+What the subscription's own calls look like (ADR 0098). A subscription token is for
 Claude Code only (Anthropic's terms; Claude Code itself sends it as `Authorization: Bearer` with
 `anthropic-beta: oauth-2025-04-20`, which Forerunner never copies), so the Messages adapter
 refuses one (`SUBSCRIPTION_TOKEN_PREFIX`) and `validateAnthropicKey` only checks its format.
@@ -264,7 +296,7 @@ the raw stream (`includePartialMessages`) up to `message_stop`, maps it as the M
 does (the `mcp__forerunner__` prefix removed from tool names) and stops the subprocess; the
 loop runs the tools. Earlier turns are quoted in one user turn (`promptFor`). Claude Code's
 error kinds map to `provider_auth` (a refused token, with the step to replace it),
-`provider_rate_limit` or `provider_error`. `listModels()` is empty; `fastMode` is false. Tests:
+`provider_usage_limit` (the plan's limit, below), `provider_rate_limit` or `provider_error`. `listModels()` is empty; `fastMode` is false. Tests:
 `subscription-only-provider.test.ts` (a chat message on a subscription-only install: the
 reply through the SDK with the token in Claude Code's environment, no request of Forerunner's
 own to the Messages API or with the token), `claude-code-provider.test.ts`.
@@ -420,11 +452,36 @@ skipped `unavailable`, so a subscription at its cap and an API key at its limit 
 (USD 50), so the caps' plan level always exists; a human-set value updates the row at the next
 compose, the default only fills a row that has none; `RuntimeApp.billing.planAllowance` and the
 compose log say which applies (`describePlanAllowance`). `RuntimeApp.billingSourceId` is the
-loop paths' source (the key when there is one, the one the Messages provider authenticates
-with), `RuntimeApp.billing` exposes `sources()`, `pick`, the SDK driver and `hostCommands`;
-`ComposeOptions.sdkQuery` injects the SDK's `query` so no test spawns Claude Code. Tests:
-`test/subscription-path.test.ts` (the path, the seeding, the fake row withheld, the setup
-questions and the allowance), `test/executor.test.ts` (the redacted error artifact).
+loop paths' default source (the key when there is one); their calls are booked to the source
+the routed provider chose (above), `RuntimeApp.billing` exposes `sources()`, `pick`, the SDK
+driver and `hostCommands`. `ComposeOptions.sdkQuery` injects the SDK's `query` so no test
+spawns Claude Code. Tests: `test/subscription-path.test.ts` (the path, the seeding, the fake row
+withheld, the setup questions and the allowance), `test/executor.test.ts` (the redacted error
+artifact).
+
+**The person's order and the rest after a usage limit (U-078, ADR 0100).**
+`RouterTaskBilling.pick` reads the person's order at every pick (`personOrderOf`:
+`human.notify_prefs.billing_order`, which `settings.set billing_order` writes and
+`seedBillingSources` never touches) and hands it to the router, which ranks the survivors by it
+for every purpose; without one it uses the request's `fallbackOrder` (the routed provider's
+`CALL_FALLBACK_ORDER`), else the policy's per-purpose order (task runs: subscription first, as
+before). `TaskBillingRequest.exclude` withholds sources the same call just failed on (skipped
+`cooldown`). `RouterTaskBilling.rest(sourceId, resetAt, why)` writes `limits.restingUntil` on
+the row (`restUntil`: the reset when ahead, else an hour, at most 32 days) and a `billing.rest`
+audit row; `VaultLedgerProbe` reports `restingUntil` while it is ahead, so every pick, after a
+restart too, skips the source with `cooldown` until then. A task run on the SDK or the loop
+driver that ends with `provider_usage_limit` (`SdkRunResult.error` / `RunResult.error` carry
+`resetAt`) is no failure of the work: the executor rests the picked source and returns outcome
+`usage_limit` with the session log's sentence ('The Claude subscription reached its usage
+limit and rests until ...; "<task>" goes back to ready and runs on the next credential,
+without counting a retry.'); the runner writes it as a `billing.fallback` event, counts the
+task as not started and releases its claim, which puts it back to `ready` without passing
+`failed` (the only edge that counts an attempt, `TaskRepo.transition`), so the retry ladder,
+the critic follow-up and `task.attempt` are untouched. A loop pick runs on the picked source's
+own provider (`LoopTaskExecutorDeps.providerFor`), never re-routed. Tests:
+`test/task-usage-limit.test.ts` (a task on the subscription meets the limit: back to ready with
+attempt 0, no critic, the sentence, the rest on the row and in the audit; the next session runs
+it on the API key to done), `test/billing-order.test.ts`.
 
 **Opus fast mode per project (`src/models/fast-mode.ts`; spec D.20, [ADR 0057](../decisions/0057-opus-fast-mode.md)).**
 A project's `settings.fast_mode` (off by default; `settings.set` key `fast_mode`, medium risk)

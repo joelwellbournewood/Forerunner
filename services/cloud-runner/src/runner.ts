@@ -390,6 +390,9 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
       stateUrl: config.stateUrl,
       vault,
       provider: deps.provider,
+      // The runtime's own calls (the critic, planning) are routed as cloud work (ADR 0100): a
+      // subscription only on the owner's personal runner, an API key always off Claude Code.
+      billing: { runner: "cloud", personalRunner: config.personal },
       gitHost: deps.gitHost,
       registryDir: deps.registryDir,
       appVersion: config.version,

@@ -547,7 +547,8 @@ export class CriticService {
         provider: provider.name,
         effort: pick.effort,
         prompt_version: this.deps.prompt.promptVersion,
-        billing_source_id: this.deps.billingSourceId,
+        // The source that paid the review (a routed provider chooses it per call, ADR 0100).
+        billing_source_id: result.billingSourceId ?? this.deps.billingSourceId,
         tokens_in: result.usage.input_tokens,
         tokens_out: result.usage.output_tokens,
         cache_read_tokens: result.usage.cache_read_input_tokens,

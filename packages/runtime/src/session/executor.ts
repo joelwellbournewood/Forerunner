@@ -63,6 +63,7 @@ import {
   speedPreferenceNote,
 } from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
+import { labelOf, plainTime } from "../provider/routed.ts";
 import {
   type EffortLevel,
   type ModelProvider,
@@ -71,6 +72,7 @@ import {
   type SpeedMode,
   type Usage,
 } from "../provider/types.ts";
+import { USAGE_LIMIT_CODE } from "../provider/usage-limit.ts";
 import {
   alternateSpecialist,
   hasWeb,
@@ -233,6 +235,12 @@ export interface LoopTaskExecutorDeps {
   tokens: TokenIssuer;
   driver: LoopAgentDriver;
   provider: ModelProvider;
+  /**
+   * The provider of the picked source for a loop run (ADR 0100): the Messages adapter on that
+   * source's own key, so the run is never re-routed and its calls are made with the credential
+   * the pick named. Absent, or null for a source: `provider`.
+   */
+  providerFor?: (source: BillingSource) => Promise<ModelProvider | null>;
   /** Pricing of a loop run when `pricingFor` is absent (one table row for every rung). */
   pricing: RunPricing;
   /**
@@ -363,6 +371,7 @@ export function runCapOf(
 }
 
 const usdText = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
+const capitalFirst = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** What either driver came back with, in the shape the Run row and the result need. */
 interface DriverOutcome {
@@ -703,12 +712,17 @@ export class LoopTaskExecutor implements TaskExecutor {
     // On the SDK path the proxy reaches the subprocess as its environment (`sdkEnv`, ADR 0003).
     const sessionContext = await this.deps.context?.forSession(session.id, task.project_id);
     const proxyUrl = sessionContext?.selection.headroom?.url;
-    const provider =
-      sessionContext?.selection.headroomUsed && proxyUrl && isProxyable(this.deps.provider)
-        ? this.deps.provider.viaProxy(proxyUrl, headroomHeaders(task.project_id))
+    // A loop pick runs on its own source's provider (ADR 0100), else the composition's.
+    const base =
+      choice.driver === "loop" && choice.pick && this.deps.providerFor
+        ? ((await this.deps.providerFor(choice.pick.source).catch(() => null)) ??
+          this.deps.provider)
         : this.deps.provider;
-    const headroomUsed =
-      choice.driver === "sdk" ? !!sessionContext?.sdkEnv : provider !== this.deps.provider;
+    const provider =
+      sessionContext?.selection.headroomUsed && proxyUrl && isProxyable(base)
+        ? base.viaProxy(proxyUrl, headroomHeaders(task.project_id))
+        : base;
+    const headroomUsed = choice.driver === "sdk" ? !!sessionContext?.sdkEnv : provider !== base;
     const startedMono = clock.monotonic();
     const run = await store.run.insert({
       id: runId,
@@ -955,6 +969,28 @@ export class LoopTaskExecutor implements TaskExecutor {
     // redaction layer, so both are redacted here before they become the task's summary, the
     // report the critic reads and the lesson candidates (ADR 0044 item 9).
     const finalText = redact(result.finalText);
+    // The credential's usage limit stopped the run (U-078, ADR 0100): the source rests until its
+    // reset (else an hour) and the task goes back to ready for the next credential. It is no
+    // failure of the work, so the retry ladder's attempt is not counted and no critic reviews it.
+    if (result.error?.code === USAGE_LIMIT_CODE) {
+      const source = choice.pick?.source;
+      const failedOn = result.error;
+      const until =
+        source && this.deps.billing?.rest
+          ? await this.deps.billing
+              .rest(source.id, failedOn.resetAt, failedOn.message)
+              .catch(() => failedOn.resetAt)
+          : failedOn.resetAt;
+      const summary = `${source ? capitalFirst(labelOf(source)) : "The credential"} reached its usage limit and rests until ${plainTime(until)}; "${task.title}" goes back to ready and runs on the next credential, without counting a retry.`;
+      onEvent({ type: "warning", message: summary });
+      return {
+        outcome: "usage_limit",
+        summary,
+        costUsdMicro: result.costUsdMicro,
+        runId: run.id,
+        ...(worktree ? { worktree } : {}),
+      };
+    }
     // A run that stopped at the task's own cap (its budget, or the specialist's limit) while the
     // session still had room is this task's matter (U-042): it waits for the person with what
     // was spent and what to do, and the session goes on with the rest. Only a stop at the

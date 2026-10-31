@@ -42,6 +42,7 @@ import {
   type TaskReviewOutcome,
 } from "../loop/ports.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
+import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import { countsOf, countsSentence } from "./counts.ts";
@@ -167,7 +168,13 @@ export interface TaskExecutionResult {
     | "needs_human"
     | "budget_exceeded"
     | "timeout"
-    | "killed";
+    | "killed"
+    /**
+     * The credential's usage limit stopped the run (U-078, ADR 0100): the runner puts the task
+     * back to ready (its claim released, no attempt counted) for the next credential; `summary`
+     * is the session log's sentence.
+     */
+    | "usage_limit";
   summary: string;
   costUsdMicro: number;
   prUrl?: string;
@@ -1127,6 +1134,20 @@ export class SessionRunner {
             throw new ForerunnerError("killed", "session stopped during task");
           if (task.status !== "in_progress") {
             await recordMove(task, result.outcome, "run");
+            continue;
+          }
+          if (result.outcome === "usage_limit") {
+            // U-078, ADR 0100: the credential's usage limit stopped the run. The source rests
+            // (the executor did that); the task goes back to ready by its claim's release, not
+            // through `failed`, so the retry ladder's attempt stays as it was and no critic
+            // reviews it. The session log says what happened in a plain sentence.
+            await emit(BILLING_FALLBACK_EVENT, {
+              taskId: task.id,
+              title: task.title,
+              sentence: result.summary,
+            });
+            skipped.push(task.id);
+            await releaseIfHeld(task.id, "usage limit: back to ready for the next credential");
             continue;
           }
           lessonCandidates.push(...(result.lessons ?? []));

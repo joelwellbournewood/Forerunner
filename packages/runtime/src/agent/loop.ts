@@ -17,6 +17,7 @@ import type {
   Usage,
 } from "../provider/types.ts";
 import { collectStream, providerCapabilities } from "../provider/types.ts";
+import { USAGE_LIMIT_CODE } from "../provider/usage-limit.ts";
 import type { ToolRegistry, ToolSpec } from "./tools.ts";
 
 /**
@@ -186,9 +187,16 @@ export interface RunResult {
   durationMs: number;
   /**
    * `source`: the error's `details.source` when it names one, e.g. `LOCAL_BUDGET_SOURCE` for a
-   * refusal by the run's own `SessionBudget` rather than an outer cap.
+   * refusal by the run's own `SessionBudget` rather than an outer cap. `resetAt` and `sourceId`:
+   * a `provider_usage_limit` with when the credential's limit resets and the source it was
+   * met on (ADR 0100).
    */
-  error?: { code: string; message: string; source?: string };
+  error?: { code: string; message: string; source?: string; resetAt?: string; sourceId?: string };
+  /**
+   * The billing source the run's last call was booked to: the request's, or the one a routed
+   * provider chose for the call (`ModelResponse.billing`, ADR 0100).
+   */
+  billingSourceId?: string;
   pending?: string;
   injectionReports: InjectionReport[];
   /** True when the loop stopped because the session says finish current, no new work. */
@@ -390,7 +398,32 @@ export class LoopAgentDriver {
             cost += req.pricing.cost(response.usage);
             throw controller.signal.reason;
           }
+          // A credential at its limit, or none that can serve (ADR 0100): the code and the
+          // provider's words reach the caller, which rests the source or tells the person.
+          const failed = response.error;
+          if (failed && (failed.code === USAGE_LIMIT_CODE || failed.code === "unavailable")) {
+            throw new ForerunnerError(failed.code, failed.message, {
+              details: {
+                ...(failed.resetAt ? { resetAt: failed.resetAt } : {}),
+                ...(failed.sourceId ? { sourceId: failed.sourceId } : {}),
+              },
+            });
+          }
           throw new ForerunnerError("provider_error", "model call failed", { retryable: true });
+        }
+        // The source a routed provider chose for this call pays for it (ADR 0100): the ledger
+        // row, its kind and a subscription's plan share follow the call, not the run's default.
+        if (response.billing) {
+          const b = response.billing;
+          ctx.billingSourceId = b.sourceId;
+          const share = b.planUsageShare;
+          ctx.billing =
+            b.kind === "api"
+              ? undefined
+              : {
+                  kind: b.kind,
+                  ...(typeof share === "number" ? { planUsageShare: () => share } : {}),
+                };
         }
         const callCost = req.pricing.cost(response.usage);
         addUsage(usage, response.usage);
@@ -545,11 +578,13 @@ export class LoopAgentDriver {
     } catch (e) {
       const code = e instanceof ForerunnerError ? e.code : "internal";
       outcome = outcomeFor(code, controller.signal);
-      const source = e instanceof ForerunnerError ? e.details.source : undefined;
+      const details = e instanceof ForerunnerError ? e.details : {};
       error = {
         code,
         message: errorMessage(e),
-        ...(typeof source === "string" ? { source } : {}),
+        ...(typeof details.source === "string" ? { source: details.source } : {}),
+        ...(typeof details.resetAt === "string" ? { resetAt: details.resetAt } : {}),
+        ...(typeof details.sourceId === "string" ? { sourceId: details.sourceId } : {}),
       };
       if (outcome === "error")
         this.logger.error("run failed", { runId: claims.runId, error: error.message });
@@ -583,6 +618,7 @@ export class LoopAgentDriver {
       pending,
       injectionReports: reports,
       finishCurrent,
+      billingSourceId: ctx.billingSourceId,
     };
   }
 

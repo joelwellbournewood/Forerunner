@@ -311,7 +311,7 @@ export function eventView(e: EventRow, chfPerUsd: number): EventView {
     ? "error"
     : /escalat/.test(e.type) || payload.escalation
       ? "escalation"
-      : /warning|skipped|paused|killed|budget|plan_filed/.test(e.type) ||
+      : /warning|skipped|paused|killed|budget|plan_filed|fallback/.test(e.type) ||
           typeof payload.warning === "string"
         ? "warning"
         : "info";

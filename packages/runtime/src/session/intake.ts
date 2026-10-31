@@ -942,7 +942,8 @@ export class IntakeService {
             this.deps.prompt !== undefined && this.deps.promptVersion
               ? this.deps.promptVersion
               : INTAKE_BUILTIN_PROMPT_VERSION,
-          billing_source_id: this.deps.billingSourceId,
+          // The source that paid the call (a routed provider chooses it per call, ADR 0100).
+          billing_source_id: called?.billingSourceId ?? this.deps.billingSourceId,
           tokens_in: called?.usage.input_tokens ?? 0,
           tokens_out: called?.usage.output_tokens ?? 0,
           cache_read_tokens: called?.usage.cache_read_input_tokens ?? 0,

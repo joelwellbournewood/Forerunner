@@ -147,6 +147,9 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
   const s = (k: string) => str(p, k);
   const n = (k: string) => num(p, k);
   switch (type) {
+    // U-078 (ADR 0100): a credential met its usage limit; the sentence says what took over.
+    case "billing.fallback":
+      return s("sentence") || "A Claude credential reached its usage limit; the next one is used.";
     case "peers.feed": {
       const peers = list(p, "peers").filter((x): x is Payload => !!x && typeof x === "object");
       if (peers.length === 0) return "No other agent works on this project right now.";

@@ -1,4 +1,4 @@
-import type { BillingSource, RouteSkip } from "@forerunner/billing";
+import type { BillingSource, BillingSourceKind, Purpose, RouteSkip } from "@forerunner/billing";
 import type { SpecialistDriver } from "../registry/tools.ts";
 
 /**
@@ -10,6 +10,12 @@ import type { SpecialistDriver } from "../registry/tools.ts";
  */
 export const BILLING_PICK_AUDIT_TOOL = "billing.pick";
 
+/**
+ * The session log's event when a credential met its usage limit and the next one took over, or
+ * a task went back to ready for it (U-078, ADR 0100). Its `sentence` is what the log shows.
+ */
+export const BILLING_FALLBACK_EVENT = "billing.fallback";
+
 export interface TaskBillingRequest {
   agentId: string;
   /** The agent's owner: a subscription is only ever used for its owner's agent (spec, Security). */
@@ -18,7 +24,15 @@ export interface TaskBillingRequest {
   runner: "pc" | "cloud";
   /** The ladder tier the run starts on (a `kindsForTier` policy may exclude kinds). */
   modelTier: string;
-  purpose?: "session" | "batch" | "critic";
+  /** What the call is for (the policy's per-purpose kinds); default `session`. */
+  purpose?: Purpose;
+  /** Sources not to use for this pick: one the same call just failed on (ADR 0100). */
+  exclude?: readonly string[];
+  /**
+   * The order to use when the person chose none (ADR 0100): the non-task calls keep ADR 0098's
+   * choice, the API key when there is one. Absent: the purpose's own order, as task runs use.
+   */
+  fallbackOrder?: readonly BillingSourceKind[];
 }
 
 /** Plan usage of a subscription source as the pick saw it, and what moves it. */
@@ -45,6 +59,13 @@ export interface TaskBillingPick {
 
 export interface TaskBillingPort {
   pick(req: TaskBillingRequest): Promise<TaskBillingPick>;
+  /**
+   * The source met its provider's usage limit (`provider_usage_limit`, ADR 0100): it rests
+   * until `resetAt` when that is ahead, else for an hour, and the next picks skip it
+   * (`cooldown`). Returns the ISO time it rests until. Optional: a port without it never rests
+   * a source.
+   */
+  rest?(sourceId: string, resetAt: string | undefined, why: string): Promise<string>;
 }
 
 /**

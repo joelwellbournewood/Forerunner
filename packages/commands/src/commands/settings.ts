@@ -45,6 +45,8 @@ export interface SettingSpec {
    * sentence ("Set X from a to b: <effect>. Undo."), when the key's name alone does not say.
    */
   effect?: (value: JsonValue, ctx: SettingEffectContext) => string;
+  /** A value in words for the card and the change log, when JSON would show (U-074). */
+  display?: (value: unknown) => string;
 }
 
 /** What an effect sentence may read besides the value: the prices in force (ADR 0057). */
@@ -108,6 +110,30 @@ export const HandoverSetting = z.object({
     })
     .optional(),
 });
+
+/**
+ * The person's order of their Claude credentials (U-078, ADR 0100), global in
+ * `human.notify_prefs.billing_order`: distinct kinds, first used first; null clears it (the
+ * defaults apply). The billing router reads it at every pick.
+ */
+export const BillingOrderSetting = z
+  .array(z.enum(["subscription", "api_key", "plan_credits"]))
+  .min(1)
+  .max(3)
+  .refine((v) => new Set(v).size === v.length, "each credential once")
+  .nullable();
+
+const CREDENTIAL_WORDS: Record<string, string> = {
+  subscription: "the Claude subscription",
+  api_key: "the API key",
+  plan_credits: "the plan credits",
+};
+
+/** An order in words for the card and the change log: "the API key, then the Claude subscription". */
+export function billingOrderWords(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) return "not chosen (the defaults)";
+  return value.map((k) => CREDENTIAL_WORDS[String(k)] ?? String(k)).join(", then ");
+}
 
 /** What flipping small-project mode (spec B.6) changes; existing tasks keep their tier. */
 export const SMALL_PROJECT_MODE_EFFECT = {
@@ -203,6 +229,21 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     narrows: (to, from) =>
       (Array.isArray(to) ? to : []).every((id) => Array.isArray(from) && from.includes(id)),
     description: "Human ids that see the project's data and change sentences.",
+  },
+  billing_order: {
+    key: "billing_order",
+    label: "which Claude credential is used first",
+    scope: "global",
+    // Low risk (ADR 0100): it changes which of the person's own credentials pays first, never
+    // a cap; Settings -> Claude: which to use first sets it without a card, and Undo puts the
+    // previous order back.
+    risk: "low",
+    schema: BillingOrderSetting as unknown as z.ZodType<JsonValue>,
+    description:
+      "The person's Claude credentials in the order every model call uses them (subscription, api_key, plan_credits); when one cannot be used, the next one is. null: the defaults.",
+    display: billingOrderWords,
+    effect: () =>
+      "every model call uses them in this order, and when one cannot be used the next one is",
   },
   quiet_hours: {
     key: "quiet_hours",
@@ -398,15 +439,19 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
   };
 }
 
+/** A value as the card and the change log say it: the key's own words when it has them. */
+const showFor = (spec: SettingSpec, v: unknown): string =>
+  spec.display ? spec.display(v) : show(v);
+
 function sentenceOf(t: Target): string {
   const { effect } = t;
-  return `Set ${t.what} from ${show(t.current)} to ${show(t.value)}${effect ? `: ${effect}` : ""}. Undo.`;
+  return `Set ${t.what} from ${showFor(t.spec, t.current)} to ${showFor(t.spec, t.value)}${effect ? `: ${effect}` : ""}. Undo.`;
 }
 
 /** The card's new value, with what it changes when the key defines an effect. */
 function newValueOf(t: Target): string {
   const { effect } = t;
-  return effect ? `${show(t.value)} (${effect})` : show(t.value);
+  return effect ? `${showFor(t.spec, t.value)} (${effect})` : showFor(t.spec, t.value);
 }
 
 async function write(
@@ -453,7 +498,7 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
     return buildCard({
       command: "settings.set",
       what: t.what,
-      oldValue: show(t.current),
+      oldValue: showFor(t.spec, t.current),
       newValue: newValueOf(t),
       scope: t.spec.scope === "global" ? "global" : "project",
       risk: settingRisk(t.spec, t.value),

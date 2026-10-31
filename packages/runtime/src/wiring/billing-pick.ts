@@ -1,8 +1,10 @@
 import {
   BillingRouter,
   type BillingSource,
+  type BillingSourceKind,
   type BillingSourceProbe,
   type BillingSourceStatus,
+  billingOrderOf,
   DEFAULT_ROUTING_POLICY,
   monthWindow,
   type RouteSkip,
@@ -12,6 +14,7 @@ import type { Clock } from "@forerunner/platform";
 import { log } from "@forerunner/platform";
 import type { BillingSourceRow, StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
+import { restUntil } from "../provider/usage-limit.ts";
 import type {
   PlanUsage,
   TaskBillingPick,
@@ -166,14 +169,58 @@ export class VaultLedgerProbe implements BillingSourceProbe {
       };
     }
     const usage = await planUsageOf(this.deps.store, this.deps.clock, source);
+    const resting = restingUntilOf(source, this.deps.clock.now());
     return {
       available: true,
       checkedAt,
       monthSpentUsdMicro: usage.monthUsdMicro,
       ...(usage.share !== null ? { planUsageShare: usage.share } : {}),
+      ...(resting ? { restingUntil: resting } : {}),
     };
   }
 }
+
+/**
+ * The time a source rests until after a usage limit (`limits.restingUntil`, ADR 0100), when it
+ * is still ahead of `nowMs`; null when the source does not rest (or no longer).
+ */
+export function restingUntilOf(
+  source: Pick<BillingSource, "limits">,
+  nowMs: number,
+): string | null {
+  const until = source.limits.restingUntil;
+  if (typeof until !== "string") return null;
+  const t = Date.parse(until);
+  return Number.isFinite(t) && t > nowMs ? until : null;
+}
+
+/**
+ * The person's order of their credentials (U-078, ADR 0100): `human.notify_prefs.billing_order`
+ * as `settings.set billing_order` stores it, null when none is chosen (or it is malformed).
+ */
+export const BILLING_ORDER_SETTING = "billing_order";
+
+export async function personOrderOf(
+  store: Pick<StateStore, "human">,
+  humanId: string,
+): Promise<BillingSourceKind[] | null> {
+  const human = await store.human.get(humanId).catch(() => null);
+  return billingOrderOf(human?.notify_prefs?.[BILLING_ORDER_SETTING]);
+}
+
+/**
+ * The order the non-task calls (chat, intake, the critic, the model watch, the monthly jobs) use
+ * when the person chose none: ADR 0098's choice kept, the API key when there is one, else the
+ * subscription (ADR 0100). Task runs keep the policy's per-purpose order.
+ */
+export const CALL_FALLBACK_ORDER: readonly BillingSourceKind[] = Object.freeze([
+  "api_key",
+  "plan_credits",
+  "subscription",
+]);
+
+/** The audit row a rest after a usage limit writes (ADR 0100). */
+export const BILLING_REST_AUDIT_TOOL = "billing.rest";
 
 /** This month's ledger facts for a source (see `VaultLedgerProbe`). */
 export async function planUsageOf(
@@ -216,7 +263,8 @@ export function pcRoutingPolicy(
 }
 
 export interface RouterTaskBillingOptions {
-  store: Pick<StateStore, "billingSource" | "costLedger">;
+  /** `human` for the person's order, `auditLog` for the rest's audit row (ADR 0100). */
+  store: Pick<StateStore, "billingSource" | "costLedger" | "human" | "auditLog">;
   vault: Pick<Vault, "has">;
   clock: Clock;
   /** The human whose sources this install pays with (the daemon's human). */
@@ -255,11 +303,21 @@ export class RouterTaskBilling implements TaskBillingPort {
     const all = await this.sources(this.opts.humanId);
     const withheld: RouteSkip[] = [];
     const ownAgent = req.agentOwnerHumanId === this.opts.humanId;
+    const excluded = new Set(req.exclude ?? []);
     // A `fake` row is the stand-in of an install without credentials: beside a real source it
     // is never a candidate, so a subscription at its cap and an API key at its limit end in
     // "no source" rather than real work billed to a row that is no credential.
     const realSource = all.some((s) => s.kind !== "fake");
     const candidates = all.filter((s) => {
+      if (excluded.has(s.id)) {
+        withheld.push({
+          sourceId: s.id,
+          kind: s.kind,
+          code: "cooldown",
+          reason: "it just met its usage limit on this call",
+        });
+        return false;
+      }
       if (s.kind === "subscription" && !ownAgent) {
         withheld.push({
           sourceId: s.id,
@@ -287,12 +345,16 @@ export class RouterTaskBilling implements TaskBillingPort {
       sources: candidates,
       policy: this.policy,
     });
+    // The person's order (U-078, ADR 0100), read at every pick so a change in Settings applies
+    // to the next call; without one, the caller's fallback order, else the purpose's own.
+    const order = (await personOrderOf(this.opts.store, this.opts.humanId)) ?? req.fallbackOrder;
     const decision = await router.pick({
       humanId: this.opts.humanId,
       agentId: req.agentId,
       runner: req.runner,
       purpose: req.purpose ?? "session",
       modelTier: req.modelTier,
+      ...(order?.length ? { order } : {}),
     });
     const skipped = [...withheld, ...decision.skipped];
     let reason = decision.reason;
@@ -313,6 +375,37 @@ export class RouterTaskBilling implements TaskBillingPort {
       ...(plan?.share !== null && plan !== null ? { planUsageShare: plan.share } : {}),
     });
     return { source: decision.source, driver, reason, skipped, plan };
+  }
+
+  /**
+   * The source met its provider's usage limit (ADR 0100): `limits.restingUntil` on its row
+   * (the reported reset when it is ahead, else an hour), so every later pick, after a restart
+   * too, skips it with `cooldown` until then; one `billing.rest` audit row. Returns the time.
+   */
+  async rest(sourceId: string, resetAt: string | undefined, why: string): Promise<string> {
+    const until = restUntil(resetAt, this.opts.clock.now());
+    const row = await this.opts.store.billingSource.get(sourceId);
+    if (row) {
+      await this.opts.store.billingSource.patch(row.id, {
+        limits: { ...row.limits, restingUntil: until },
+      });
+    }
+    this.logger.warn("billing source rests after a usage limit", { sourceId, until });
+    await this.opts.store.auditLog
+      .append({
+        tool: BILLING_REST_AUDIT_TOOL,
+        allowed: true,
+        human_id: this.opts.humanId,
+        input_summary: JSON.stringify({
+          sourceId,
+          kind: row?.kind ?? null,
+          resetAt: resetAt ?? null,
+        }),
+        result_summary: `rests until ${until}: ${why}`.slice(0, 500),
+        occurred_at: this.opts.clock.nowIso(),
+      })
+      .catch(() => undefined);
+    return until;
   }
 }
 

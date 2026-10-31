@@ -274,6 +274,14 @@ usable source and the fake provider the runner seeds a fake source, as the daemo
 real provider it refuses to start. Every run and ledger row of a cloud session carries that
 source.
 
+The composed runtime's own calls (the critic, planning; ADR 0100) go through its routed provider
+(runtime.md, "Which provider compose builds"), which the runner composes with
+`billing: { runner: "cloud", personalRunner: config.personal }`: a subscription serves them
+only on the owner's personal runner, an API key always runs straight to the API (never through
+Claude Code), and each call's ledger row names the source that paid. The runner's sessions run
+on the loop driver with the provider of the source chosen above; no API key reaches Claude Code
+on the runner (the runner has no Agent SDK path).
+
 A session's cap is `project.settings.session_cap_usd_micro`, else
 `FORERUNNER_RUNNER_SESSION_CAP_USD_MICRO`; an email session's cap is the per-email cap and its
 autonomy the email autonomy level, both from the email command settings (T.12). Grants are the
