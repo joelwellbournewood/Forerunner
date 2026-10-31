@@ -131,9 +131,12 @@ function summary(h: HumanRow): HumanSummary {
  * data directory was wiped, the row is gone) and the configuration carries an email, the email
  * decides as if the id were absent, and the result names the stale id so the daemon re-records
  * the human it bound and `fr doctor` can say so. That path still never adopts a row the
- * selectors do not name: the email binds its own row or creates one. Without an email the
- * stale id stays `not_found`; the environment's and the caller's selectors are given per start
- * and stay strict.
+ * selectors do not name: the email binds its own row or creates one. Without an email, a store
+ * that holds nobody at all (the data folder was lost and the settings kept, U-050: the setup
+ * assistant records no email) is `none` with the stale id, so the daemon creates the human
+ * again and records the new id; on a store that holds other people the stale id stays
+ * `not_found`, since nothing names this install's human there. The environment's and the
+ * caller's selectors are given per start and stay strict.
  */
 export async function lookupInstallHuman(
   store: { human: HumanLookupSource },
@@ -154,7 +157,14 @@ export async function lookupInstallHuman(
     if (byId) return { kind: "bound", human: byId, source, selector };
     const byEmail = await store.human.byEmail(selector);
     if (byEmail) return { kind: "bound", human: byEmail, source, selector };
-    if (source !== "config" || !configuredEmail) return { kind: "not_found", selector, source };
+    if (source !== "config") return { kind: "not_found", selector, source };
+    if (!configuredEmail) {
+      // U-050: the recorded human is gone with the data folder; an empty store is this
+      // install's own, so it starts again rather than refusing until a file is edited.
+      if ((await store.human.count()) === 0)
+        return { kind: "none", email: null, humans: 0, staleConfigHumanId: selector };
+      return { kind: "not_found", selector, source };
+    }
     stale = { staleConfigHumanId: selector };
   }
   if (configuredEmail) {
@@ -187,8 +197,14 @@ function describeHuman(h: HumanSummary): string {
   return `${h.name} <${h.email || "no email"}> (${h.id})`;
 }
 
-/** The ways out of an ambiguous or missing binding, as `fr doctor` and the refusal name them. */
-export const IDENTITY_REMEDY = `set ${HUMAN_ENV}=<id or email>, or run fr setup --human-id <id> or fr setup --email <address>`;
+/**
+ * The ways out of an ambiguous or missing binding, in steps the installed app has (U-050: it
+ * has no `fr` command): the environment variable, or `config.json` in the settings folder.
+ */
+export const IDENTITY_REMEDY = `set the environment variable ${HUMAN_ENV} to your id or email, or in config.json in Forerunner's settings folder (Windows: %APPDATA%\\forerunner\\config; Linux: ~/.config/forerunner) set "humanEmail" to your email address; then start Forerunner again`;
+
+/** What `fr doctor` adds to the remedy: the same through the command line of a source checkout. */
+export const IDENTITY_REMEDY_CLI = "or run fr setup --human-id <id> or fr setup --email <address>";
 
 /**
  * Bind this install to its human, creating one through `create` only when the store has none
@@ -269,13 +285,13 @@ export function describeIdentityCheck(lookup: InstallHumanLookup): { ok: boolean
       const more = lookup.humans > lookup.rows.length ? ", ..." : "";
       return {
         ok: false,
-        detail: `${lookup.humans} humans in the store and this install names none: ${IDENTITY_REMEDY}; the humans: ${listed}${more}`,
+        detail: `${lookup.humans} humans in the store and this install names none: ${IDENTITY_REMEDY} (${IDENTITY_REMEDY_CLI}); the humans: ${listed}${more}`,
       };
     }
     case "not_found":
       return {
         ok: false,
-        detail: `no human with id or email ${lookup.selector} (from ${SOURCE_LABEL[lookup.source]}): ${IDENTITY_REMEDY}`,
+        detail: `no human with id or email ${lookup.selector} (from ${SOURCE_LABEL[lookup.source]}): ${IDENTITY_REMEDY} (${IDENTITY_REMEDY_CLI})`,
       };
   }
 }

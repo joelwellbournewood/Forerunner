@@ -255,6 +255,14 @@ Your code and project documents live in git on the host you connected (GitHub), 
 Forerunner's folders; the shared state used by two people's agents lives in the state service
 you point both installs at.
 
+**If the data folder is lost** (deleted, or a new PC with only the settings folder copied),
+Forerunner starts with your settings and keys and creates your agent again; projects, memory
+and history that lived in the data folder are gone, while your code stays in git. With a
+shared state service, where other people's agents are listed too, Forerunner cannot tell which
+one is yours: it does not start and says so. Then set the environment variable
+`FORERUNNER_HUMAN` to your email address, or add `"humanEmail": "<your address>"` to
+`config.json` in the settings folder, and start Forerunner again.
+
 ## Updating
 
 Releases are published on GitHub. Forerunner never checks for updates on its own. Open

@@ -1230,13 +1230,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   }
   logger.info("install identity", { humanId: human.id, source: identity.source });
   if (identity.staleConfigHumanId) {
-    // The recorded id named nobody in this store (the install moved, or the row is gone): the
-    // configured email decided; the id is re-recorded below.
-    logger.warn("config.json humanId names nobody in this store; bound by the configured email", {
-      staleHumanId: identity.staleConfigHumanId,
-      humanId: human.id,
-      source: identity.source,
-    });
+    // The recorded id named nobody in this store (the install moved, or the row is gone with a
+    // lost data folder): the configured email decided, or, on a store that held nobody, the
+    // human was created again (U-050); the id is re-recorded below.
+    logger.warn(
+      identity.source === "created" && !identitySelectors.email
+        ? "config.json humanId names nobody in this store (the data folder is new); the human and agent are created again"
+        : "config.json humanId names nobody in this store; bound by the configured email",
+      {
+        staleHumanId: identity.staleConfigHumanId,
+        humanId: human.id,
+        source: identity.source,
+      },
+    );
   }
   // An install started from its config.json records the human it found or created there, so
   // a later email change in the store never rebinds it; an override from the environment or

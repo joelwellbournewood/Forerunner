@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, type Clock, isForerunnerError, join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
@@ -376,13 +376,22 @@ describe("install identity on a shared store", () => {
     expect(check.detail).toContain("stale-from-sqlite");
     expect(check.detail).toContain("names nobody");
     expect(check.detail).toContain("J <j@example.test>");
-    // Without a store yet (fr doctor before the daemon's first start): a named selector is
-    // not found, an email or nothing is "created at the daemon's first start".
+    // Without a store yet (fr doctor before the daemon's first start, or the data folder lost):
+    // config.json's recorded id names nobody and the start creates the human again, the id
+    // reported (U-050); the environment's selector stays strict; an email or nothing is
+    // "created at the daemon's first start".
     const noStore = await lookupInstallHuman(
       EMPTY_HUMAN_STORE,
       installIdentitySelectors({ env, config: minimalConfig(shared, { humanId: "h-123" }) }),
     );
-    expect(noStore).toEqual({ kind: "not_found", selector: "h-123", source: "config" });
+    expect(noStore).toEqual({ kind: "none", email: null, humans: 0, staleConfigHumanId: "h-123" });
+    expect(describeIdentityCheck(noStore)).toMatchObject({ ok: true });
+    expect(
+      await lookupInstallHuman(
+        EMPTY_HUMAN_STORE,
+        installIdentitySelectors({ env: { [HUMAN_ENV]: "h-123" }, config: null }),
+      ),
+    ).toEqual({ kind: "not_found", selector: "h-123", source: "env" });
     expect(
       await lookupInstallHuman(
         EMPTY_HUMAN_STORE,
@@ -395,6 +404,27 @@ describe("install identity on a shared store", () => {
     expect(
       await lookupInstallHuman(EMPTY_HUMAN_STORE, installIdentitySelectors({ env, config: null })),
     ).toEqual({ kind: "none", email: null, humans: 0 });
+  });
+  it("a refusal names only steps the installed app has, never an fr command (U-050)", async () => {
+    // A recorded id that names nobody on a store that holds other people (a shared store):
+    // still refused, since nothing names this install's human, but in words a person can follow.
+    const refused = await compose(home("fr-identity-refusal-words-"), shared, clock, {
+      config: minimalConfig(shared, { humanId: "stale-from-elsewhere" }),
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(code(refused)).toBe("not_found");
+    const message = (refused as Error).message;
+    expect(message).not.toMatch(/\bfr (setup|doctor)\b/);
+    expect(message).toContain(HUMAN_ENV);
+    expect(message).toContain("config.json");
+    const ambiguous = await compose(home("fr-identity-refusal-ambiguous-"), shared, clock).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(code(ambiguous)).toBe("identity_ambiguous");
+    expect((ambiguous as Error).message).not.toMatch(/\bfr (setup|doctor)\b/);
   });
 });
 
@@ -485,6 +515,41 @@ describe("install identity on a single-human store", () => {
       source: "config",
       selector: rt.human.id,
     });
+  });
+
+  it("a lost data folder with the settings kept: the service recreates the human and agent and starts (U-050)", async () => {
+    // The installed app: the setup assistant writes config.json without an email, the daemon
+    // records the human it created there, then the data folder (state.sqlite) is lost. The next
+    // start refused with "run fr setup --human-id", a command the installed app does not have.
+    const installHome = home("fr-identity-lostdata-");
+    const env = { FORERUNNER_HOME: installHome };
+    const dirs = appDirs({ env });
+    const stateUrl = `sqlite:${join(dirs.data, "state.sqlite")}`;
+    mkdirSync(dirs.config, { recursive: true });
+    mkdirSync(dirs.data, { recursive: true });
+    const file = configPath(dirs);
+    writeFileSync(file, `${JSON.stringify(minimalConfig(stateUrl, { humanName: "Joel" }))}\n`);
+    const before = await compose(installHome, stateUrl, clock, { config: undefined });
+    const lostHumanId = before.human.id;
+    expect((JSON.parse(readFileSync(file, "utf8")) as SetupConfig).humanId).toBe(lostHumanId);
+    await before.close();
+    rmSync(dirs.data, { recursive: true, force: true });
+
+    const after = await compose(installHome, stateUrl, clock, { config: undefined });
+    open.push(after);
+    expect(after.identity).toMatchObject({
+      source: "created",
+      staleConfigHumanId: lostHumanId,
+    });
+    expect(after.human.id).not.toBe(lostHumanId);
+    expect(after.human.name).toBe("Joel");
+    expect(after.agent.id).toEqual(expect.any(String));
+    expect(await after.store.agent.principals(after.human.id)).toHaveLength(1);
+    // The new id is recorded, so the start after this one binds by it.
+    expect((JSON.parse(readFileSync(file, "utf8")) as SetupConfig).humanId).toBe(after.human.id);
+    const third = await compose(installHome, stateUrl, clock, { config: undefined });
+    open.push(third);
+    expect(third.identity).toMatchObject({ source: "config", humanId: after.human.id });
   });
 
   it("fr setup persists the selector and keeps it across later runs", async () => {

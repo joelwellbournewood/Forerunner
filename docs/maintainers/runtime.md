@@ -1808,8 +1808,16 @@ the install moved with `fr setup --state-url`, the data directory was wiped, the
 is stale, and when the configuration carries an email the email decides as if the id were
 absent; the lookup names the stale id (`staleConfigHumanId` on the result and on
 `RuntimeApp.identity`), the daemon logs it and re-records the human it bound, and
-`fr doctor` says so. That path never adopts a row the selectors do not name; without an email
-the stale id stays `not_found` (review 2026-10-25, finding 1). Without these, an email
+`fr doctor` says so. That path never adopts a row the selectors do not name. Without an email
+(the app's setup assistant records none) a store that holds nobody at all is the install's own
+store started again (the data folder was lost and the settings folder kept, U-050): the lookup
+answers `none` with the stale id, the daemon creates the human and agent again, logs it and
+records the new id; on a store that holds other people the stale id stays `not_found` (review
+2026-10-25, finding 1). A refusal's remedy (`IDENTITY_REMEDY`) names only what the installed
+app has: the `FORERUNNER_HUMAN` variable or `humanEmail` in `config.json` with the settings
+folder's path; `fr doctor` adds the `fr setup` flags (`IDENTITY_REMEDY_CLI`). Tests:
+`compose-identity.test.ts` ("a lost data folder with the settings kept", "a refusal names only
+steps the installed app has"). Without these, an email
 (`identity.email`, else `config.json`'s `humanEmail` from `fr setup --email`) finds the human
 or names the one created at this start (the joining PC). Without any selector the store must
 hold at most one human: none is the first run (created from `humanName` and `timezone`), one
