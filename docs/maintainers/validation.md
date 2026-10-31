@@ -133,6 +133,11 @@ A release is cut only when all of these hold, with evidence in `docs/status/gate
 
 ## Gaps today
 
+Closed on 2026-10-31: the Desktop app workflow (Playwright UI tests, the Rust shell's checks,
+the installers and the installed-app check) ran only for pull requests and `main`, so 1.0.4 was
+released with a Playwright test that still expected U-016's old behaviour. It now runs on every
+push to a development branch.
+
 These checks do not exist yet. Until they do, the owner's run-through covers them, and each
 is a candidate for the next work:
 

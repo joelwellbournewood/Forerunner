@@ -3,8 +3,11 @@ name: Desktop app
 on:
   pull_request:
     paths: ["apps/**", "packages/**", "scripts/*runtime-payload*", "scripts/installed-check.*", "evals/registry/**", ".github/workflows/desktop.yml"]
+  # Development branches too: the Playwright UI tests and the installed-app check run before a
+  # release, and every push leaves installers the owner can try (docs/setup-guide.md, "Trying a
+  # build before it is released"). The concurrency group cancels an older run of the same branch.
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
     paths: ["apps/**", "packages/**", "scripts/*runtime-payload*", "scripts/installed-check.*", "evals/registry/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 

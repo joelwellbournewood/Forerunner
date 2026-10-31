@@ -261,9 +261,9 @@ try the fixes first, so a release is only published once you have seen them work
 be signed in to GitHub with access to the repository.
 
 1. On GitHub, open the repository's **Actions** tab and choose **Desktop app** on the left.
-2. Find a run for the branch (a run is started for every pull request; to start one, click
-   **Run workflow**, pick the branch, and click the green **Run workflow** button). A run takes
-   about 30 to 45 minutes.
+2. Find the newest run for the branch (a run starts on every push to a development branch and
+   for every pull request; to start one by hand, click **Run workflow**, pick the branch, and
+   click the green **Run workflow** button). A run takes about 30 to 45 minutes.
 3. Wait for a green check mark. A red run has no installers: something failed its tests, and
    nothing from it should be installed.
 4. Open the run and scroll to **Artifacts**. Download `desktop-windows-latest` (the `.msi`) or
