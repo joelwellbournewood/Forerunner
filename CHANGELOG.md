@@ -57,7 +57,8 @@ Problems and their status, released or not, are tracked in
   slow, instead of starting it (U-065). Commits in a project's folder work on a computer
   where git knows neither your name nor your address; they are made as "Forerunner" unless
   you set your own (U-037). Leaving the setup assistant through the sidebar no longer sends
-  you back to its first step (U-049).
+  you back to its first step (U-049). A GitHub token you replace in the app is used by every
+  push and clone at once, not only after a restart (U-082).
 - Inbox cards and buttons that did nothing or the wrong thing: Approve on a review from the
   phone (U-027), the rebase conflict and merge cards (U-028), a yes to a change from Chat on a
   normal install (U-029), cards left open after deciding in Extensions or on Updates (U-030,

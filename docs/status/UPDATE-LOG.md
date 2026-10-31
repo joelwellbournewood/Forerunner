@@ -38,7 +38,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-081 are open; U-036 is won't fix.
+- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-082 are open; U-036 is won't fix.
 
 ## Open and fixed, not released
 
@@ -109,6 +109,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-079 | 2026-10-31, CI and owner | Tasks that need a full review cannot run on an installed app even with Docker: the app looks for a sandbox image only a source checkout can build, and treats Docker in Windows-container mode as usable; the task then fails with jargon and is retried. | Docker is required for full-review tasks (owner); the app fetches the published sandbox image and checks Docker is ready, Settings shows it, and tasks wait with plain steps instead of failing (ADR 0101). | open |
 | U-080 | 2026-10-31, owner | A cancelled task cannot be brought back. The owner's 1.0.4 project held "Confirm stack, hosting and repository with the human", cancelled, with a critic review that "needs you": nowhere to answer its questions, and the tasks after it never start. | A **Reopen** button on every cancelled task in the Tasks tab; a reopened question task turns into an Inbox card with its questions. Until then: a new task with the same kind of title, and **Depends on…** on the tasks that waited. | open |
 | U-081 | 2026-10-31, owner | GitHub access is one fixed set: the assistant pre-fills one token, the guide says never to give admin rights and the check warns about them, yet creating a repository for you (U-037) needs exactly that; nothing says that CI files need the Workflows permission or that the Projects mirror cannot work with a fine-grained token on a personal account. | You choose how much access to give, from read-only to full, each level with what it allows and what it risks; every feature works with what the token allows and says which permission it lacks. | open |
+| U-082 | 2026-10-31, owner (test build) | After replacing the GitHub token in the setup assistant, **Create a repository** made the repository under the new token's account, then failed: "pushing the project's folder to it failed … Permission … denied to Afanc", the previous token's owner. Every push, clone and fetch kept using the old token until the app was restarted. | Every git step reads the token when it runs, as the GitHub API calls already did (U-049). Until the next build: delete the empty repository on GitHub, Quit from the tray, open the app, Create a repository again. | open (fix committed; fixed once CI is green and the owner has tried it) |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -320,6 +321,32 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   registry, routes, UI, `real-daemon.test.ts`, Playwright.
 - **Check in the app:** Extensions → Add an entry → its permissions are shown; Confirm enables
   it and nothing appears in the Inbox; Cancel adds nothing.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
+
+### U-082 A replaced GitHub token was not used by git until a restart
+
+- **Found:** 2026-10-31, by the owner testing the build: with a token for their own account
+  pasted in the setup assistant (replacing one of another account, Afanc), **Create a
+  repository** created `joelwellbournewood/joels-test` and then said "pushing the project's
+  folder to it failed: … Permission to joelwellbournewood/joels-test.git denied to Afanc …".
+- **Cause:** U-049 made the GitHub API client read the token before every request, and the
+  assistant says "In use from the next request. No restart needed." But compose read the token
+  once (`ghToken`) and gave that copy to every git step: the PR executor (each task's clone and
+  push), the project docs, the reviewed-PR merge, the intake's docs push and repository creation.
+  So the API worked as the new account and git as the old one, until the service restarted.
+- **Fix:** every git consumer takes a `GitTokenSource` and resolves it when the step runs
+  (`resolveGitToken`, `capabilities/src/githost/git.ts`); compose passes `githubTokenNow`, a
+  vault read. Siblings searched: every `vault.get` in compose; the others already read per use.
+- **Test:** `runtime/test/github-token-replaced.test.ts` composes the daemon as an install does
+  (its own GitHub client) with one account's token on the fake git host, replaces it through
+  `POST /setup/github`, creates a repository from the project page's command and runs the next
+  task. It failed before the fix as the owner saw it (created, then the push refused) and
+  passes after: the first push and the task's clone use the new token.
+- **Check in the app:** replace the GitHub token in Settings → Accounts and keys → Open the
+  setup assistant (without quitting), then **Create a repository** on a project without one: it
+  is created and linked, with the project's folder as its first commit.
+- **Until the next build:** delete the empty repository on GitHub (its Settings → Danger Zone),
+  Quit from the tray, open the app, and Create a repository again.
 - **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-081 Choose how much GitHub access to give
