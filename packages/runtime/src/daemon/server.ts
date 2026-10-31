@@ -23,6 +23,7 @@ import { parseAgentModelConfig } from "../models/run-settings.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
+import { PRIORITY_VALUES } from "../priority.ts";
 import { providerCapabilities } from "../provider/types.ts";
 import { createSharedSecretRoutes } from "../secrets/routes.ts";
 import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
@@ -856,7 +857,7 @@ export function createDaemonApp(
       // A task that names no tier gets the project's default: 0 in small-project mode (B.6).
       risk_tier: body.riskTier ?? defaultRiskTier(project),
       status: body.status,
-      priority: body.priority,
+      priority: PRIORITY_VALUES[body.priority],
       depends_on: dependsOn,
       budget_usd_micro: body.budgetUsdMicro,
       est_cost_usd_micro: 0,

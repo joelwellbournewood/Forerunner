@@ -1,3 +1,10 @@
+import {
+  DEFAULT_TASK_PRIORITY,
+  PRIORITY_LABELS,
+  readPriority,
+  TASK_PRIORITIES,
+  type TaskPriority,
+} from "@forerunner/runtime/priority";
 import { type FormEvent, useEffect, useState } from "react";
 import { type CreateTaskInput, describeError, type TaskView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
@@ -59,7 +66,7 @@ export function NewTaskDialog({
   const [outcome, setOutcome] = useState("");
   const [criteria, setCriteria] = useState("");
   const [riskTier, setRiskTier] = useState(PROJECT_DEFAULT_TIER);
-  const [priority, setPriority] = useState(5);
+  const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [budget, setBudget] = useState("");
   const [status, setStatus] = useState<"draft" | "ready">("ready");
   const [dependsOn, setDependsOn] = useState<string[]>([]);
@@ -80,7 +87,7 @@ export function NewTaskDialog({
     setBudget("");
     setDependsOn([]);
     setRiskTier(PROJECT_DEFAULT_TIER);
-    setPriority(5);
+    setPriority(DEFAULT_TASK_PRIORITY);
     setError(null);
   }, [open, seed]);
 
@@ -171,16 +178,20 @@ export function NewTaskDialog({
               ))}
             </select>
           </Field>
-          <Field label="Priority (1 high)">
-            <input
+          <Field label="Priority" hint="High runs first.">
+            <select
               className={INPUT_CLASS}
-              type="number"
-              min={1}
-              max={9}
               value={priority}
-              onChange={(e) => setPriority(Number(e.target.value))}
+              onChange={(e) => setPriority(readPriority(e.target.value) ?? DEFAULT_TASK_PRIORITY)}
               name="priority"
-            />
+              data-testid="task-priority"
+            >
+              {TASK_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {PRIORITY_LABELS[p]}
+                </option>
+              ))}
+            </select>
           </Field>
           <Field label="Budget (CHF)">
             <input

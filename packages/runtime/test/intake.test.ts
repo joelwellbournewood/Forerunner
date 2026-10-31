@@ -7,6 +7,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { requestView } from "../src/daemon/views.ts";
 import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
 import {
   INTAKE_AUDIT_TOOL,
@@ -352,6 +353,47 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         "Set up continuous integration",
       ]);
     });
+  });
+
+  it("asks the model for low, medium or high; its words and an old number land as their level (U-041)", async () => {
+    const projectId = await createProject({
+      name: "Levels",
+      goal: "Order the work",
+      brief: "A tiny app: scaffold, CI, sign-in.",
+    });
+    const p = proposal();
+    const [scaffold, ci] = p.plan.milestones[0]?.tasks ?? [];
+    const signin = p.plan.milestones[1]?.tasks[0];
+    if (!scaffold || !ci || !signin) throw new Error("proposal changed");
+    (scaffold as { priority: unknown }).priority = "high";
+    (ci as { priority: unknown }).priority = 6; // a model that still answers with a number
+    (signin as { priority: unknown }).priority = "low";
+    replies.push({ text: JSON.stringify(p) });
+    const res = await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" });
+    expect(res.status).toBe(202);
+    const system = provider.calls.at(-1)?.system ?? "";
+    expect(system).toContain('"priority": "low" | "medium" | "high"');
+    expect(system).toContain("priority is low, medium or high (high runs first");
+    expect(system).not.toContain("1-9");
+    // Approved with the option the Inbox shows.
+    const requestId = String((await json(res)).requestId);
+    const row = await rt.store.humanRequest.mustGet(requestId);
+    await answer(requestId, String(requestView(row, null).options[0]));
+    const tasks = await rt.store.task.list({ project_id: projectId } as never);
+    expect(Object.fromEntries(tasks.map((t) => [t.title, t.priority]))).toEqual({
+      "Scaffold the repository": 10,
+      "Set up continuous integration": 5,
+      "Sign-in flow": 1,
+    });
+    const listed = (await (await req(`/projects/${projectId}/tasks`)).json()) as {
+      title: string;
+      priority: string;
+    }[];
+    expect(listed.map((t) => [t.title, t.priority])).toEqual([
+      ["Scaffold the repository", "high"],
+      ["Set up continuous integration", "medium"],
+      ["Sign-in flow", "low"],
+    ]);
   });
 
   it("a rejecting answer writes nothing and leaves a note for the next session", async () => {

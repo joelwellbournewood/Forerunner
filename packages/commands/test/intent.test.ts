@@ -244,6 +244,29 @@ describe("IntentParser: English and German phrases", () => {
     expect((await parser.parse("set up CI and deploy", ctx())).commands).toEqual([]);
   });
 
+  it("'add a task: …, priority high' sets the level, never as part of the title (U-041)", async () => {
+    for (const [line, title, priority] of [
+      ["add a task: fix the login, priority high", "fix the login", "high"],
+      ["add a task: tidy the README (low priority)", "tidy the README", "low"],
+      ["new task: write the docs with medium priority", "write the docs", "medium"],
+      ["add a task: fix the login - priority: High", "fix the login", "high"],
+      ["neue Aufgabe: Login reparieren, Priorität hoch", "Login reparieren", "high"],
+      ["neue Aufgabe: Doku aufräumen mit niedriger Priorität", "Doku aufräumen", "low"],
+    ] as const) {
+      const r = await parser.parse(line, ctx());
+      expect(r.commands, line).toEqual([
+        { name: "task.create", params: { title, outcome: title, status: "ready", priority } },
+      ]);
+    }
+    // Without a level the command takes its default (medium); "priority" inside a title stays.
+    const plain = await parser.parse("add a task: decide the priority of the backlog", ctx());
+    expect(plain.commands[0]?.params).toEqual({
+      title: "decide the priority of the backlog",
+      outcome: "decide the priority of the backlog",
+      status: "ready",
+    });
+  });
+
   it("'make this a task' turns the last message into a ready task, or asks for a title (U-016)", async () => {
     const r = await parser.parse(
       "make this a task",

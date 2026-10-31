@@ -710,6 +710,29 @@ delivered and read (`read_at`) before the status doc, the summary cache, the pee
 the note to the human and the session record are written; those writes stay where and as they
 were (the task states were written as each task ended).
 
+**Priority is Low, Medium or High (U-041, `src/priority.ts`).** The owner's decision: people and
+models set and see three levels, never a number. Up to 1.0.4 the New task dialog said "Priority
+(1 high)" while the planner ran the higher number first. The column stays numeric (higher runs
+first; `readyTasks`, `StaticPlanner`, the task list and the status doc sort it), so rows written
+before keep their numbers and their order and read as their level: `priorityLevel` maps 0 to 3
+to low, 4 to 6 to medium, 7 and up to high (high numbers ran first, so they are High). A level
+is written as `PRIORITY_VALUES` (low 1, medium 5, high 10, the ends of the bands, so a new High
+never waits behind an older High); `DEFAULT_TASK_PRIORITY` is medium (the dialog's and Chat's;
+`task.create` used to default to 0). `TaskPrioritySchema` takes a word in any case or an old
+number read as its level, and its JSON Schema lists the three words only: `CreateTaskBody`,
+`ProjectPlanBody` (the intake's and `POST /projects/:id/plan`'s) and the `task.create` command
+use it, so a model reply or an old client that still sends 7 is taken as high, never refused.
+`TaskView.priority` is the word (`views.ts`, and the state service's view); the intake prompt
+asks for `"priority": "low" | "medium" | "high"` (high runs first, medium when unsure); the
+brief's ready lines read "- ready: high priority: Title [tier 1] (id)"; the GitHub mirror's
+issue body says "Priority: High". The module imports only zod; the UI imports it from
+`@forerunner/runtime/priority` and commands does too (the package index would be a cycle).
+The next-session queue's own `priority` is another field and is unchanged. Tests:
+`task-priority.test.ts` (the mapping, the schema a model sees, the brief, the route's word and
+stored number, old rows' order through the start check), `intake.test.ts` (the prompt; words
+and an old number in a reply), `packages/commands/test` (`task.create`, the intent parser) and
+`apps/ui/test/real-daemon.test.ts` ("priority").
+
 **What cannot run is named (U-040).** Up to 1.0.4 a session said "Nothing to plan: no task is
 ready" while ready tasks existed: a dependency that was cancelled, failed or a typo kept a task
 out of every plan for good, and `cutPlanToBudget` stopped at the first item that did not fit,

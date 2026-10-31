@@ -1,6 +1,7 @@
 import { ForerunnerError, redact } from "@forerunner/platform";
 import type { MilestoneRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
+import { DEFAULT_TASK_PRIORITY, PRIORITY_VALUES, TaskPrioritySchema } from "../priority.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 
 /**
@@ -48,7 +49,8 @@ export const PlanTask = z.object({
   acceptanceCriteria: z.array(z.string().min(1)).max(50).default([]),
   /** Left out, the project's default applies (`defaultRiskTier`). */
   riskTier: z.number().int().min(0).max(3).optional(),
-  priority: z.number().int().min(1).max(9).default(5),
+  /** Low, medium or high (U-041); a model's old number is read as its level. */
+  priority: TaskPrioritySchema.default(DEFAULT_TASK_PRIORITY),
   /** Keys of plan tasks, or ids of the project's existing tasks. */
   dependsOn: z.array(z.string().min(1)).max(50).default([]),
   budgetUsdMicro: z.number().int().nonnegative().default(0),
@@ -190,7 +192,7 @@ function shapeRows(
     outcome: t.outcome,
     acceptanceCriteria: t.acceptanceCriteria,
     riskTier: t.riskTier ?? tier,
-    priority: t.priority,
+    priority: PRIORITY_VALUES[t.priority],
     dependsOn: t.dependsOn,
     budgetUsdMicro: t.budgetUsdMicro,
     // Stored as the registry names it: the PM's "ops" is `ops-deploy` (U-014).

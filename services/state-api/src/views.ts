@@ -8,6 +8,7 @@ import type {
   SessionView as SessionViewType,
   TaskView as TaskViewType,
 } from "@forerunner/runtime/daemon/api-types";
+import { priorityLevel } from "@forerunner/runtime/priority";
 import { optionLabel } from "@forerunner/runtime/wiring/request-answers";
 import type {
   CostBucket,
@@ -64,7 +65,8 @@ export function taskView(t: TaskRow, rate: number): TaskViewType {
     acceptanceCriteria: t.acceptance_criteria,
     riskTier: t.risk_tier,
     status: t.status,
-    priority: t.priority,
+    // The level, never the stored number (U-041), as the daemon answers it.
+    priority: priorityLevel(t.priority),
     claimedBy: t.claimed_by,
     claimExpires: t.claim_expires,
     dependsOn: t.depends_on,

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { GitHost, IssueInfo, RepoRef } from "@forerunner/capabilities/githost/types";
 import { type Clock, log } from "@forerunner/platform";
+import { PRIORITY_LABELS, priorityLevel } from "@forerunner/runtime/priority";
 import {
   canTransition,
   type MilestoneRow,
@@ -137,7 +138,7 @@ export function renderTaskIssue(
     "**Acceptance criteria**",
     criteria,
     "",
-    `**Status:** \`${task.status}\` · **Risk tier:** ${task.risk_tier} · **Priority:** ${task.priority}`,
+    `**Status:** \`${task.status}\` · **Risk tier:** ${task.risk_tier} · **Priority:** ${PRIORITY_LABELS[priorityLevel(task.priority)]}`,
     milestone ? `**Milestone:** ${milestone.name}` : "",
     task.pr_url ? `**PR:** ${task.pr_url}` : "",
     "",

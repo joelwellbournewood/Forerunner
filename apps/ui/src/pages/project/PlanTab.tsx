@@ -1,3 +1,4 @@
+import { PRIORITY_LABELS } from "@forerunner/runtime/priority";
 import { type FormEvent, useMemo, useState } from "react";
 import {
   type ChangeMilestoneInput,
@@ -802,7 +803,7 @@ function SmallProjectPlan({
               <Badge tone={statusTone(t.status)}>{t.status}</Badge>
               <span className="font-medium">{t.title}</span>
               <span className="text-xs text-neutral-500">
-                tier {t.riskTier} · priority {t.priority}
+                tier {t.riskTier} · {PRIORITY_LABELS[t.priority]} priority
                 {t.dependsOn.length > 0 ? ` · after ${describeDependencies(t, byId)}` : ""}
               </span>
             </li>

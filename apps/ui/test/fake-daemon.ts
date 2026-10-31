@@ -440,9 +440,11 @@ function fakeStartCheck(
   budgetUsdMicro: number | null,
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
+  // High first, as the daemon's stored numbers order them (U-041).
+  const rank = { high: 3, medium: 2, low: 1 } as const;
   const ready = tasks
     .filter((t) => t.projectId === projectId && t.status === "ready")
-    .sort((a, b) => b.priority - a.priority);
+    .sort((a, b) => rank[b.priority] - rank[a.priority]);
   const cap = budgetUsdMicro ?? FAKE_SESSION_CAP_USD_MICRO;
   const work = Math.floor(cap * 0.8);
   const runnable: StartCheckView["runnable"] = [];

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DEVICES_ROUTES } from "../devices/types.ts";
+import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, TaskPrioritySchema } from "../priority.ts";
 import { SECRET_STORE_ROUTES } from "../secrets/store-types.ts";
 import { PLAN_ALLOWANCE_ROUTES, SETUP_ROUTES } from "../setup/types.ts";
 import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
@@ -146,7 +147,8 @@ export const TaskView = z.object({
   acceptanceCriteria: z.array(z.string()),
   riskTier: z.number().int().min(0).max(3),
   status: z.string(),
-  priority: z.number().int(),
+  /** Low, medium or high (U-041): the stored number's level, higher runs first. */
+  priority: z.enum(TASK_PRIORITIES),
   claimedBy: z.string().nullable(),
   claimExpires: z.string().nullable(),
   dependsOn: z.array(z.string()),
@@ -547,7 +549,8 @@ export const CreateTaskBody = z.object({
   acceptanceCriteria: z.array(z.string()).default([]),
   /** Left out, the project's default applies: tier 0 in small-project mode, else 1 (B.6). */
   riskTier: z.number().int().min(0).max(3).optional(),
-  priority: z.number().int().min(1).max(9).default(5),
+  /** Low, medium or high (U-041); an old client's number is read as its level. */
+  priority: TaskPrioritySchema.default(DEFAULT_TASK_PRIORITY),
   milestoneId: z.string().optional(),
   dependsOn: z.array(z.string()).default([]),
   budgetUsdMicro: z.number().int().nonnegative().default(0),

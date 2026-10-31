@@ -1,3 +1,5 @@
+import { priorityLevel } from "../priority.ts";
+
 /**
  * The state brief: a compact, structured summary handed to the principal agent at session start
  * instead of raw history (spec E, N). Rendered under a token cap (default 2,000).
@@ -192,8 +194,11 @@ function render(
     lines.push(
       `- mine: ${t.title} [${t.status}, tier ${t.riskTier}, attempt ${t.attempt}] (${t.id})`,
     );
+  // The level, never the stored number (U-041): low, medium or high priority.
   for (const t of b.tasks.ready.slice(0, l.tasks))
-    lines.push(`- ready: p${t.priority} ${t.title} [tier ${t.riskTier}] (${t.id})`);
+    lines.push(
+      `- ready: ${priorityLevel(t.priority)} priority: ${t.title} [tier ${t.riskTier}] (${t.id})`,
+    );
   for (const t of b.tasks.claimedByOthers.slice(0, l.tasks))
     lines.push(`- peer ${t.claimedBy}: ${t.title} (${t.id})`);
   lines.push(`\n## Changes since last session (${b.changesSinceLastSession.count})`);

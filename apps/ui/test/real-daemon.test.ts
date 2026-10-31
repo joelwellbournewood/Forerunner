@@ -233,7 +233,7 @@ describe("the UI client against the real daemon", () => {
         title,
         outcome: `${title} is done`,
         acceptanceCriteria: [],
-        priority: 5,
+        priority: "medium",
         status,
         dependsOn,
         budgetUsdMicro: 0,
@@ -296,6 +296,41 @@ describe("the UI client against the real daemon", () => {
     expect((cycle as ApiError).message).toContain(
       '"Write the tests" already waits on "Write the parser"',
     );
+  });
+
+  it("priority: New task's level comes back as the word; an old row's number reads as its level, highest first (U-041)", async () => {
+    const levels = await client.createProject({ name: "Levels", goal: "High first" });
+    // A row from before the change holds a number; the higher ran first.
+    await rt.store.task.insert({
+      project_id: levels.id,
+      title: "Old urgent",
+      outcome: "x",
+      status: "draft",
+      priority: 9,
+    });
+    await rt.store.task.insert({
+      project_id: levels.id,
+      title: "Old later",
+      outcome: "x",
+      status: "draft",
+      priority: 2,
+    });
+    // What the New task dialog sends.
+    const created = await client.createTask(levels.id, {
+      title: "New normal",
+      outcome: "it is done",
+      acceptanceCriteria: [],
+      priority: "medium",
+      status: "draft",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    expect(created.priority).toBe("medium");
+    expect((await client.tasks(levels.id)).map((t) => [t.title, t.priority])).toEqual([
+      ["Old urgent", "high"],
+      ["New normal", "medium"],
+      ["Old later", "low"],
+    ]);
   });
 
   it("extensions: Approve or Deny in the panel takes the card out of the Inbox (U-030)", async () => {
@@ -585,7 +620,7 @@ describe("the UI client against the real daemon: a task a session is running", (
       goal: "Keep going",
       autonomyLevel: 2,
     });
-    const task = (title: string, priority: number) =>
+    const task = (title: string, priority: "low" | "medium" | "high") =>
       client.createTask(project.id, {
         title,
         outcome: `${title} is done`,
@@ -596,8 +631,8 @@ describe("the UI client against the real daemon: a task a session is running", (
         dependsOn: [],
         budgetUsdMicro: 0,
       });
-    const first = await task("Long first task", 9);
-    const second = await task("Second task", 1);
+    const first = await task("Long first task", "high");
+    const second = await task("Second task", "low");
     const started = await client.startSession({ agentId, projectId: project.id });
     const sessionId = started.session?.id ?? "";
     expect(sessionId).not.toBe("");

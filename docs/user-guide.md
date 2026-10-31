@@ -63,7 +63,9 @@ wait on you, and the latest critic grade. The active project is always shown in 
   changes them, from a list of the project's tasks. A task that waits on a cancelled or failed
   task says so, since no session runs it until you change what it depends on (or mark the
   failed one ready again). A task cannot wait on itself, on a cancelled task, or on a task
-  that already waits on it.
+  that already waits on it. A task's priority is **Low**, **Medium** or **High**; High runs
+  first. New tasks are Medium unless you pick another; in Chat say it at the end: "add a task:
+  fix the login, priority high".
 - **Docs**: the standard document set the agent maintains.
 - **Reviews**: critic findings and grades over time.
 - **Costs**: spend by model, specialist and task, in CHF, with the savings from caching and

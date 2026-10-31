@@ -1,5 +1,12 @@
 import { ForerunnerError } from "@forerunner/platform";
 import { defaultRiskTier } from "@forerunner/runtime";
+// The module itself, not the package index: the index loads this package (a cycle), and the
+// schema is needed when this module is evaluated.
+import {
+  DEFAULT_TASK_PRIORITY,
+  PRIORITY_VALUES,
+  TaskPrioritySchema,
+} from "@forerunner/runtime/priority";
 import {
   canTransition,
   TASK_STATUSES,
@@ -16,7 +23,11 @@ const createParams = z.object({
   title: z.string().min(3).max(200),
   outcome: z.string().default(""),
   acceptance_criteria: z.array(z.string()).default([]),
-  priority: z.number().int().min(0).max(9).default(0),
+  /**
+   * Low, medium or high (U-041), medium when not said, as the New task dialog; an old number
+   * is read as its level. Stored as the level's number (higher runs first).
+   */
+  priority: TaskPrioritySchema.default(DEFAULT_TASK_PRIORITY),
   /** Left out, the project's default applies: tier 0 in small-project mode, else 1 (B.6). */
   risk_tier: z.number().int().min(0).max(3).optional(),
   status: z.enum(["draft", "ready"]).default("draft"),
@@ -25,13 +36,14 @@ const createParams = z.object({
 export type TaskCreateParams = z.infer<typeof createParams>;
 
 function createSentence(p: TaskCreateParams, projectName: string): string {
-  return `Created the ${p.status} task ${quote(p.title)} in ${projectName}. Undo.`;
+  const priority = p.priority === DEFAULT_TASK_PRIORITY ? "" : `, ${p.priority} priority`;
+  return `Created the ${p.status} task ${quote(p.title)} in ${projectName}${priority}. Undo.`;
 }
 
 export const taskCreate: CommandDef<TaskCreateParams> = {
   name: "task.create",
   description:
-    "Create a task (draft by default) in a project: title, outcome, acceptance criteria, priority.",
+    "Create a task (draft by default) in a project: title, outcome, acceptance criteria, priority (low, medium or high; medium when not said).",
   params: createParams,
   risk: "low",
   scope: "project",
@@ -63,7 +75,7 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       acceptance_criteria: params.acceptance_criteria,
       risk_tier: params.risk_tier ?? defaultRiskTier(project),
       status: params.status,
-      priority: params.priority,
+      priority: PRIORITY_VALUES[params.priority],
       reason: `created by ${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`,
       ...authorOf(ctx),
     });

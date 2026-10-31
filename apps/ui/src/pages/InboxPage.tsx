@@ -1,3 +1,8 @@
+import {
+  DEFAULT_TASK_PRIORITY,
+  readPriority,
+  type TaskPriority,
+} from "@forerunner/runtime/priority";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
@@ -50,7 +55,8 @@ export interface IntakeCardTask {
   key: string | null;
   title: string;
   riskTier: number | null;
-  priority: number;
+  /** Low, medium or high (U-041); a card filed before holds the model's number, read as its level. */
+  priority: TaskPriority;
   dependsOn: string[];
   specialist: string | null;
 }
@@ -89,7 +95,7 @@ function taskOf(v: unknown): IntakeCardTask | null {
     key: str(v.key),
     title,
     riskTier: num(v.riskTier),
-    priority: num(v.priority) ?? 5,
+    priority: readPriority(v.priority) ?? DEFAULT_TASK_PRIORITY,
     dependsOn: strings(v.dependsOn),
     specialist: str(v.specialist),
   };

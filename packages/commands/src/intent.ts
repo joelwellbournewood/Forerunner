@@ -235,6 +235,47 @@ export function parseWhen(text: string, ctx: Pick<IntentContext, "now" | "timezo
   return null;
 }
 
+/** German words for the three priority levels. */
+const PRIORITY_DE: Readonly<Record<string, "low" | "medium" | "high">> = {
+  hoch: "high",
+  hohe: "high",
+  hoher: "high",
+  mittel: "medium",
+  mittlere: "medium",
+  mittlerer: "medium",
+  niedrig: "low",
+  niedrige: "low",
+  niedriger: "low",
+};
+
+/**
+ * A priority said at the end of an "add a task" line (U-041): "…, priority high", "… with high
+ * priority", "… (low priority)", "…, Priorität hoch", "… mit hoher Priorität". Returns the text
+ * without it and the level; the text unchanged and no level when none is said.
+ */
+export function priorityPhrase(text: string): {
+  text: string;
+  priority?: "low" | "medium" | "high";
+} {
+  const en =
+    /[\s,;(-]*(?:with\s+)?(?:priority\s*[:=]?\s*(high|medium|low)|(high|medium|low)\s+priority)\s*\)?\s*[.!]?\s*$/i.exec(
+      text,
+    );
+  const de = en
+    ? null
+    : /[\s,;(-]*(?:mit\s+)?(?:priorit[äa]t\s*[:=]?\s*(hoch|mittel|niedrig)|(hohe[rn]?|mittlere[rn]?|niedrige[rn]?)\s+priorit[äa]t)\s*\)?\s*[.!]?\s*$/i.exec(
+        text,
+      );
+  const hit = en ?? de;
+  if (!hit) return { text };
+  const word = (hit[1] ?? hit[2] ?? "").toLowerCase();
+  const priority = en
+    ? (word as "low" | "medium" | "high")
+    : (PRIORITY_DE[word.replace(/[rn]$/, "")] ?? PRIORITY_DE[word]);
+  if (!priority) return { text };
+  return { text: text.slice(0, hit.index).trim(), priority };
+}
+
 function clean(clause: string): string {
   return clause
     .trim()
@@ -537,10 +578,19 @@ export class IntentParser {
       /^(?:(?:add|create|make)\s+(?:a\s+)?(?:new\s+)?task|new\s+task|(?:neue|erstelle\s+(?:eine\s+)?)\s*aufgabe)\s*[:,-]?\s+(.+)$/is.exec(
         c,
       );
-    const text = m?.[1]?.trim();
-    if (!text || text.length < 3) return null;
+    const said = m?.[1]?.trim();
+    if (!said) return null;
+    // "…, priority high", "… (high priority)", "…, Priorität hoch" (U-041): the level is a
+    // parameter, not part of the title.
+    const { text, priority } = priorityPhrase(said);
+    if (text.length < 3) return null;
     const title = text.split(/\n/)[0]?.slice(0, 120) ?? text.slice(0, 120);
-    return { command: { name: "task.create", params: { title, outcome: text, status: "ready" } } };
+    return {
+      command: {
+        name: "task.create",
+        params: { title, outcome: text, status: "ready", ...(priority ? { priority } : {}) },
+      },
+    };
   }
 
   private matchTask(c: string, ctx: IntentContext): Match | null {

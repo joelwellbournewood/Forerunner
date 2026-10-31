@@ -32,6 +32,7 @@ import {
   tierOfModel,
 } from "../models/ladder.ts";
 import { type AgentModelConfig, modeOverride, specialistOverride } from "../models/run-settings.ts";
+import { priorityLevel } from "../priority.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import type { Registry } from "../registry/types.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
@@ -208,7 +209,8 @@ export function taskView(t: TaskRow, chfPerUsd: number): TaskView {
     acceptanceCriteria: t.acceptance_criteria,
     riskTier: t.risk_tier as 0 | 1 | 2 | 3,
     status: t.status,
-    priority: t.priority,
+    // The level, never the stored number (U-041); old rows read as theirs.
+    priority: priorityLevel(t.priority),
     claimedBy: t.claimed_by,
     claimExpires: t.claim_expires,
     dependsOn: t.depends_on,

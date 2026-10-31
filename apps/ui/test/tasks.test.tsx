@@ -244,6 +244,37 @@ describe("Tasks tab", () => {
     });
   });
 
+  it("New task sets Low, Medium or High and the Tasks tab shows the level, never a number (U-041)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const rows = await screen.findAllByTestId("task-row");
+    // The fixtures' levels as the daemon answers them.
+    expect(rows[0]).toHaveTextContent("Low priority");
+    expect(rows[2]).toHaveTextContent("Medium priority");
+    expect(rows[2]).not.toHaveTextContent(/priority \d/);
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const select = within(dialog).getByLabelText(/^Priority/) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Low", "Medium", "High"]);
+    expect(select.value).toBe("medium");
+    expect(within(dialog).getByText("High runs first.")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/1 high/)).toBeNull();
+    await user.type(within(dialog).getByTestId("task-title"), "Patch the security hole");
+    await user.type(within(dialog).getByTestId("task-outcome"), "The hole is closed");
+    await user.selectOptions(select, "High");
+    await user.click(within(dialog).getByTestId("create-task"));
+    await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(1));
+    expect(postedCalls(harness, "/projects/proj_atlas/tasks")[0]?.body).toMatchObject({
+      title: "Patch the security hole",
+      priority: "high",
+    });
+    const created = (await screen.findAllByTestId("task-row")).find((r) =>
+      r.textContent?.includes("Patch the security hole"),
+    );
+    expect(created).toHaveTextContent("High priority");
+  });
+
   it("creates a task from the dialog with the budget converted at the project's rate", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
@@ -267,7 +298,7 @@ describe("Tasks tab", () => {
       title: "Write the deploy runbook",
       outcome: "docs/runbook.md explains the deploy",
       acceptanceCriteria: ["Covers rollback", "Covers secrets"],
-      priority: 5,
+      priority: "medium",
       status: "ready",
       dependsOn: [],
       budgetUsdMicro: 5_000_000,

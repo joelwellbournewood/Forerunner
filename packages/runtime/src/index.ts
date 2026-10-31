@@ -43,6 +43,8 @@ export * from "./models/watch.ts";
 export * from "./models/watch-cli.ts";
 export * from "./models/watch-routes.ts";
 export * from "./notifications/index.ts";
+/** Task priority as people and models see it (U-041): low, medium, high over the stored number. */
+export * from "./priority.ts";
 export * from "./provider/anthropic.ts";
 export * from "./provider/registry.ts";
 export * from "./provider/types.ts";

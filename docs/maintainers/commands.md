@@ -65,7 +65,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | --- | --- | --- | --- | --- |
 | `project.switch` | global | low | yes | `human.notify_prefs.active_project`, `project_history` (last 10; "go back") |
 | `project.create` | global | low | yes (archive) | `project` row, active project; `ports.projectCreated` (the daemon's G.5 scaffold of the standard doc set, in the background; runtime.md "Project docs") |
-| `task.create` | project | low | yes (cancel) | `task` row, draft or ready; `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051) |
+| `task.create` | project | low | yes (cancel) | `task` row, draft or ready; `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051); `priority` is `low`, `medium` (default) or `high` (`TaskPrioritySchema` from `@forerunner/runtime/priority`; an old number is read as its level), stored as the level's number, and the sentence names a level other than medium ("…, high priority. Undo."; U-041) |
 | `task.transition` | project | low; `done`/`cancelled` medium | when the graph allows the way back | `task.status` through `TaskRepo.transition` |
 | `budget.set` | session / project / global (month) | medium within the ceiling, high above it or raising the ceiling | yes | see below |
 | `autonomy.set` | project | one step medium, more high, same level low | yes | `project.autonomy_level` |
@@ -321,7 +321,7 @@ and each clause goes through the patterns, in English and German:
 | remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
 | note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |
 | read me the summary [of X] [aloud], speak the project summary for X, summary, lies mir die Zusammenfassung [von X] vor | `summary.speak` (the active project unless one is named; "Which project?" when neither) |
-| add a task: ..., create a [new] task: ..., new task: ..., neue Aufgabe: ... | `task.create` with status `ready` (U-015: the app told people to say it, and nothing matched it) |
+| add a task: ..., create a [new] task: ..., new task: ..., neue Aufgabe: ... | `task.create` with status `ready` (U-015: the app told people to say it, and nothing matched it); a level said at the end ("…, priority high", "… (low priority)", "… with medium priority", "…, Priorität hoch", "… mit niedriger Priorität"; `priorityPhrase`) is the `priority` parameter and is cut from the title (U-041) |
 | make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage`, status `ready` (U-016, ADR 0093) |
 
 A lesson ("remember that", "lesson:") is matched before a note, so "remember that X" records X

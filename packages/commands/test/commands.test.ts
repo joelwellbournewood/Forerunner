@@ -704,6 +704,46 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("task.create takes low, medium or high (medium when not said) and stores it to run in that order (U-041)", async () => {
+    const w = await world();
+    const create = async (title: string, priority?: unknown) =>
+      done(
+        await w.executor.execute({
+          name: "task.create",
+          params: { title, ...(priority === undefined ? {} : { priority }) },
+          ctx: w.ctx(),
+        }),
+      );
+    expect((await create("Urgent fix", "high")).sentence).toBe(
+      'Created the draft task "Urgent fix" in PharmaWatch, high priority. Undo.',
+    );
+    expect((await create("Plain task")).sentence).toBe(
+      'Created the draft task "Plain task" in PharmaWatch. Undo.',
+    );
+    // A model or an old caller that still says a number is taken as its level.
+    await create("Old number", 2);
+    const stored = new Map(
+      (await w.store.task.forProject(w.pharma.id)).map((t) => [t.title, t.priority]),
+    );
+    expect(Object.fromEntries(stored)).toEqual({
+      "Urgent fix": 10,
+      "Plain task": 5,
+      "Old number": 1,
+    });
+    const refusedWord = await w.executor.execute({
+      name: "task.create",
+      params: { title: "Bad level", priority: "urgent" },
+      ctx: w.ctx(),
+    });
+    expect(refusedWord.status).toBe("refused");
+    // What a model is shown for the parameter: the three words.
+    const schema = w.registry.schemaJson("task.create") as {
+      properties: { priority: unknown };
+    };
+    expect(schema.properties.priority).toMatchObject({ enum: ["low", "medium", "high"] });
+    await w.store.close();
+  });
+
   it("request.answer takes the request's own risk", async () => {
     const w = await world();
     const low = await w.store.humanRequest.insert({

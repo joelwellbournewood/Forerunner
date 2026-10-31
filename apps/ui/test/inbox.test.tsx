@@ -187,9 +187,11 @@ describe("Inbox", () => {
     expect(milestones).toHaveTextContent("Foundations");
     expect(milestones).toHaveTextContent("by 2026-11-01");
     expect(milestones).toHaveTextContent("Scaffold the repository");
-    expect(milestones).toHaveTextContent("tier default, priority 8, coder");
+    expect(milestones).toHaveTextContent("tier default, priority high, coder");
     expect(milestones).toHaveTextContent("Set up CI");
-    expect(milestones).toHaveTextContent('tier 2, priority 6, after "Scaffold the repository"');
+    expect(milestones).toHaveTextContent(
+      'tier 2, priority medium, after "Scaffold the repository"',
+    );
     const docs = within(card).getByTestId("intake-docs");
     expect(docs).toHaveTextContent("Docs (2): README.md, docs/overview.md");
     expect(docs).toHaveTextContent("as a pull request");

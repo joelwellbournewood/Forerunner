@@ -1,3 +1,4 @@
+import { PRIORITY_LABELS } from "@forerunner/runtime/priority";
 import { type FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type RunView, type TaskView } from "../../api/client.ts";
@@ -203,7 +204,7 @@ export function TasksTab({
                     <td className="py-1.5 pr-2">
                       <div className="font-medium">{t.title}</div>
                       <div className="text-xs text-neutral-500">
-                        {t.id} · tier {t.riskTier} · priority {t.priority}
+                        {t.id} · tier {t.riskTier} · {PRIORITY_LABELS[t.priority]} priority
                         {t.attempt > 1 ? ` · attempt ${t.attempt}` : ""}
                         {t.dependsOn.length > 0 ? ` · after ${describeDependencies(t, byId)}` : ""}
                       </div>
