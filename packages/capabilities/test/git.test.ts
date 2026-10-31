@@ -345,7 +345,7 @@ describe("GitOps", { timeout: 120_000 }, () => {
     // Windows CI (U-037): a commit failed with "unable to auto-detect email address" on a runner
     // whose git had no user.email. Run git as on such a machine: no global or system config.
     const home = mkdtempSync(join(tmpdir(), "fr-git-noid-home-"));
-    const bare = (argv: string[], opts: RunOptions = {}): Promise<RunResult> =>
+    const bare = (argv: readonly string[], opts: RunOptions = {}): Promise<RunResult> =>
       run(argv, {
         ...opts,
         env: {
