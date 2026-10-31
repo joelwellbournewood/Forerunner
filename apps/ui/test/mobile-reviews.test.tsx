@@ -112,13 +112,17 @@ describe("Reviews screen", () => {
         body: { body: "Fine, add the fixture next.", requestVersion: 1 },
       }),
     ]);
+    // U-027: answered with the card's own Approve button, as a click in the Inbox would (the
+    // former `{ decision, comment, reviewId }` object was read as no answer); the comment goes
+    // to the agent with the verdict.
     expect(h.service.state.requests.find((r) => r.id === "req_merge")).toMatchObject({
       status: "answered",
-      answer: {
-        decision: "approve",
-        comment: "Fine, add the fixture next.",
-        reviewId: "rev_parser",
-      },
+      answer: "Approve",
+    });
+    expect(h.service.state.reviewMessages).toContainEqual({
+      reviewId: "rev_parser",
+      kind: "approve",
+      body: "Fine, add the fixture next.",
     });
     expect(screen.queryByTestId("m-biometric-dialog")).toBeNull();
   });
@@ -162,7 +166,7 @@ describe("Reviews screen", () => {
     ]);
     expect(h.service.state.requests.find((r) => r.id === "req_deploy")).toMatchObject({
       status: "answered",
-      answer: { decision: "reject", reviewId: "rev_deploy" },
+      answer: "Reject",
     });
   });
 
@@ -219,7 +223,7 @@ describe("Reviews screen", () => {
     ]);
     expect(h.service.state.requests.find((r) => r.id === "req_deploy")).toMatchObject({
       status: "answered",
-      answer: { decision: "reject" },
+      answer: "Reject",
     });
     // The refused first post told the agent nothing; the resend did, once.
     expect(h.service.state.reviewMessages.filter((m) => m.reviewId === "rev_deploy")).toEqual([

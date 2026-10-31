@@ -1093,6 +1093,21 @@ The daemon's answer route calls `recordAnswer()` for every answered decision req
 different answer to the same question supersedes the older row, the same answer is a no-op.
 `GET /projects/:id/decisions` lists the current decisions for the UI.
 
+### Answers as the person gives them (`src/wiring/request-answers.ts`)
+
+The Inbox shows a request's options as buttons (`optionLabel`: a string as it is, an old
+object option as its `label` or `choice`, capitalised) and a click sends that text back as the
+answer. Every reader of an answer (`isYes`, `signoffAnswer`, `blockedFindingsAnswer`,
+`planAnswer`, `intakeAnswer`, `specialistAnswer`, the model watch's reader) is written against
+those strings, so a path that answers for the person another way answers with the option it
+means. `reviewVerdictOption(request, "approve" | "reject")` is that mapping for the phone's
+Reviews tab (U-027, the state service's `POST /reviews/:id/approve|reject`): approve is the
+option that accepts the work (`accept`, `yes`, `approve`, `apply`), reject the one that sends
+it back (`revise` or `rework` first, else `reject`, `deny`, `no`; never `cancel`, which ends
+the task); a request without options takes the verdict's word; null when no option means the
+verdict (the request stays open for the Inbox). `optionLabel` moved here from
+`daemon/views.ts`, which re-exports it.
+
 ### Message receipts (spec F)
 
 Every message carries delivered, read and acted-on timestamps. The runner marks what the brief

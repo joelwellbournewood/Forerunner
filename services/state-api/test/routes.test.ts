@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "@forerunner/platform";
-import { DecisionLog } from "@forerunner/runtime/wiring/state-ports";
+import { DecisionLog, isYes } from "@forerunner/runtime/wiring/state-ports";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AGENT_NAME_TTL_MS } from "../src/http.ts";
 import { ADMIN_TOKEN, type DeviceClient, type Harness, harness, json } from "./helpers.ts";
@@ -654,7 +654,11 @@ describe("state service routes", () => {
     expect(approved.answeredRequestId).toBe(approval.id);
     const request = await h.store.humanRequest.mustGet(approval.id);
     expect(request.status).toBe("answered");
-    expect((request.answer as { decision: string }).decision).toBe("approve");
+    // A card without options is answered with the verdict's word, which the readers take as a
+    // yes (U-027: the former `{ decision }` object read as a no; review-verdict.test.ts covers
+    // the cards with options).
+    expect(request.answer).toBe("approve");
+    expect(isYes(request.answer)).toBe(true);
     const decision = await h.store.message.mustGet(approved.messageId);
     expect(decision.type).toBe("decision");
     expect(decision.requires_ack).toBe(true);

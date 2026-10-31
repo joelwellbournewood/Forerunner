@@ -1,3 +1,4 @@
+import { reviewVerdictOption } from "@forerunner/runtime/wiring/request-answers";
 import type { ReviewRow, TaskRow } from "@forerunner/state";
 import { z } from "zod";
 import { type Principal, requireScope, requireSigned } from "../auth/principal.ts";
@@ -57,9 +58,10 @@ async function loadReview(ctx: RouteContext, id: string) {
 /**
  * Critic reviews and findings for PR review on the phone (spec R.5). A comment becomes a
  * message to the responsible agent; approve / reject first answers the caller's open approval
- * request on the task (kind "approval") so the waiting session continues, and only then
- * tells the agent: a refused answer (high risk without the biometric flag, a stale version)
- * sends nothing.
+ * request on the task (kind "approval") with the request's own option for the verdict
+ * (`reviewVerdictOption`: accept / yes, revise / rework / no), so the waiting session
+ * continues as after that click in the Inbox, and only then tells the agent: a refused answer
+ * (high risk without the biometric flag, a stale version) sends nothing.
  */
 export function registerReviewRoutes(app: App, ctx: RouteContext): void {
   app.get("/reviews", async (c) => {
@@ -125,6 +127,10 @@ export function registerReviewRoutes(app: App, ctx: RouteContext): void {
       // nothing behind, so the agent is never told "Approved" for an answer that did not
       // land (review of w3-r5-phone, finding 1). Another human's request on a shared
       // project is theirs to answer; this verdict is then only the message (finding 3).
+      // The answer is the card's own option for the verdict (U-027): what a click on that
+      // button in the Inbox stores, so every reader (the sign-off and findings syncs, the
+      // hooks' approvals) acts on it as on the click. A card with no option for the verdict
+      // stays open for the Inbox; the comment travels in the message below.
       let answeredRequestId: string | null = null;
       if (task) {
         const open = await ctx.store.humanRequest.open({ projectId: task.project_id });
@@ -134,17 +140,14 @@ export function registerReviewRoutes(app: App, ctx: RouteContext): void {
             r.kind === "approval" &&
             (p.kind !== "device" || r.human_id === p.humanId),
         );
-        if (request) {
+        const option = request ? reviewVerdictOption(request, verdict) : null;
+        if (request && option !== null) {
           const answered = await answerRequestAs(
             ctx,
             p,
             request.id,
             body.requestVersion ?? request.version,
-            {
-              decision: verdict,
-              comment: body.body ?? "",
-              reviewId: review.id,
-            },
+            option,
           );
           answeredRequestId = answered.id;
         }

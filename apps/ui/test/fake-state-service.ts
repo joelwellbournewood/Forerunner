@@ -6,6 +6,7 @@ import type {
   ProjectCard,
   SessionView,
 } from "@forerunner/runtime/daemon/api-types";
+import { reviewVerdictOption } from "@forerunner/runtime/wiring/request-answers";
 import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
@@ -1523,11 +1524,15 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
         body?: string;
         requestVersion?: number;
       };
-      // The open approval request on the task is answered with the verdict; a high-risk
-      // one needs the biometric flag inside the signature, as `/requests/:id/answer`.
-      const request = state.requests.find(
+      // The open approval request on the task is answered with its own option for the
+      // verdict (U-027: what a click on that button stores, `reviewVerdictOption` as in the
+      // service); a high-risk one needs the biometric flag inside the signature, as
+      // `/requests/:id/answer`. A card with no option for the verdict stays open.
+      const found = state.requests.find(
         (r) => r.status === "open" && r.kind === "approval" && r.taskId === row.taskId,
       );
+      const option = found ? reviewVerdictOption(found, verdict) : null;
+      const request = option !== null ? found : undefined;
       if (request) {
         const card = request.changeCard;
         const cardRisk =
@@ -1551,7 +1556,7 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
         if (version !== request.version)
           return errorBody(c, 409, "version_conflict", "stale version");
         request.status = "answered";
-        request.answer = { decision: verdict, comment: body.body ?? "", reviewId: row.id };
+        request.answer = option;
         request.version += 1;
         announce(
           "human_request.changed",

@@ -1708,7 +1708,11 @@ grade, tier, summary and every finding with severity, status and the required ac
 open approval request on the review's task (from the inbox) is shown as "waiting on you".
 Comment is `POST /reviews/:id/comment` (a message to the agent responsible); Approve and
 Reject are `POST /reviews/:id/approve|reject { body?, requestVersion? }`, which answer that
-request at the version the phone saw. `MobileController.reviewVerdict` reads the inbox afresh
+request at the version the phone saw, with the request's own option for the verdict (U-027:
+Approve is the card's accept / yes / approve button, Reject its revise / rework / reject / no
+button), so the outcome is the one that click has in the Inbox; the fake state service picks
+the option with the same `reviewVerdictOption` (`mobile-reviews.test.tsx` asserts the stored
+answer is the card's "Approve" / "Reject"). `MobileController.reviewVerdict` reads the inbox afresh
 before it decides, so an approval filed after the last load is seen. When that request is high
 risk the biometric prompt runs first and the flag is signed into the request (ADR 0045, the
 rule of high-risk answers); a cancelled prompt sends nothing. Should the service still answer
