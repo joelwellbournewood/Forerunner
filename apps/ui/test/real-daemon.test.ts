@@ -220,4 +220,22 @@ describe("the UI client against the real daemon", () => {
     expect((await client.resume()).killActive).toBe(false);
     expect((await client.health()).killActive).toBe(false);
   });
+
+  it("extensions: Approve or Deny in the panel takes the card out of the Inbox (U-030)", async () => {
+    const cardsFor = async (extensionId: string) =>
+      (await client.inbox(humanId)).requests.filter(
+        (r) => (r.changeCard as { extensionId?: string } | null)?.extensionId === extensionId,
+      );
+    const approveMe = await client.addExtension({ catalogId: "browser" });
+    expect(approveMe.status).toBe("pending_approval");
+    expect((await cardsFor(approveMe.id)).map((r) => r.options)).toEqual([["Approve", "Deny"]]);
+    expect((await client.approveExtension(approveMe.id)).status).toBe("enabled");
+    expect(await cardsFor(approveMe.id)).toEqual([]);
+
+    const denyMe = await client.addExtension({ catalogId: "cloudflare" });
+    expect(await cardsFor(denyMe.id)).toHaveLength(1);
+    await client.denyExtension(denyMe.id);
+    expect(await cardsFor(denyMe.id)).toEqual([]);
+    expect((await client.extensions()).map((e) => e.id)).not.toContain(denyMe.id);
+  });
 });

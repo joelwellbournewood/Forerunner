@@ -9,7 +9,10 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
-import { MemoryExtensionApprovals } from "../src/extensions/approvals.ts";
+import {
+  HumanRequestExtensionApprovals,
+  MemoryExtensionApprovals,
+} from "../src/extensions/approvals.ts";
 import {
   type CatalogEntry,
   type ConnectorTransport,
@@ -159,6 +162,11 @@ export async function registryHarness(
     ledgerCost?: boolean;
     /** The fake server refuses to start without FAKE_TOKEN in its env. */
     requireSecret?: boolean;
+    /**
+     * Ask through the Inbox the daemon uses (`HumanRequestExtensionApprovals` on this store,
+     * for the human "h-1", who is created) instead of the scripted port.
+     */
+    inbox?: boolean;
   } = {},
 ): Promise<RegistryHarness> {
   const clock = new SimulatedClock("2026-10-20T08:00:00Z");
@@ -166,6 +174,7 @@ export async function registryHarness(
   const tokens = new TokenIssuer({ now: () => clock.now() });
   const kill = new KillSwitch(tokens);
   const approvals = new MemoryExtensionApprovals(opts.approval ?? "pending");
+  if (opts.inbox) await store.human.insert({ id: "h-1", name: "Joel", email: "joel@example.test" });
   const vault = new MemoryVault({ fake_token: FAKE_TOKEN_VALUE });
   const secrets = new SecretResolver(vault);
   const calls: { name: string; args: unknown }[] = [];
@@ -181,7 +190,7 @@ export async function registryHarness(
     audit: store.auditLog,
     clock,
     catalog: opts.catalog ?? testCatalog(),
-    approvals,
+    approvals: opts.inbox ? new HumanRequestExtensionApprovals(store.humanRequest) : approvals,
     connectors: factory,
     secrets,
     tokens,

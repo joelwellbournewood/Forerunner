@@ -658,7 +658,11 @@ an answer of another shape failing the test; the flows of U-003 to U-006: a star
 with the session it began, the queue added, listed and dismissed, the docs listed and one
 read, a folder imported; U-025: Settings' `renameAgent` renames the principal, trimmed, and
 `/agents` and the runtime's own record follow, and a taken name is the daemon's 409 in its
-words), `client` (config resolution, route paths, token header,
+words; the live view's Stop answered with the session it shows while Stop all stays in force
+until Resume (U-032); Approve and Deny in the Extensions panel leaving no card for the
+extension in the Inbox (U-030), which the fake mirrors: a panel decision or a removal
+withdraws the extension's open card, one answered in the Inbox stays answered),
+`client` (config resolution, route paths, token header,
 contract validation rejects malformed bodies, `/health` with its sandbox and extensions
 sections, decisions and peers, phase-1 mutations, a missing route vs a typed not_found incl.
 the real daemon's plain-text and empty-body 404 (on `docs`, which the fake is told to lack),

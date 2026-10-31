@@ -101,6 +101,11 @@ disabling one extension never refuses another's.
    and sent back as that text, a no; `requestView` (`optionLabel`) shows such old rows as
    `Approve`/`Deny`. The row stays pending. The inbox answers it; `syncApprovals()` (call it from the daemon loop) reads
    the answer through `port.status()`, or the panel calls `POST /extensions/:id/approve|deny`.
+   Either way `approve()` and `deny()` withdraw the question once the row no longer names it
+   (`port.withdraw`, U-030): a decision made in the panel takes the card out of the Inbox,
+   where a click would do nothing. `withdraw` only takes back an open question, so one the
+   Inbox answered stays answered. The order matters: `syncApprovals` reads a withdrawn
+   question as a no, so the request id is cleared from the row first.
 5. Yes at stage `discovery` → `approve()` audits `extensions.approve_discovery`, starts the
    server once with the secrets the transport names (now granted for that start), lists its
    tools, checks ownership, stores the full review (`extensions.discovered`,
@@ -123,8 +128,8 @@ that is now waiting for the grant).
 
 ### Live revocation and the kill switch
 
-`remove()` first withdraws the extension's open approval request (`port.withdraw`, U-021), so
-nothing is left in the inbox with no extension waiting on it. `toggle(false)` and `remove()`
+`remove()` withdraws the extension's open approval request once the row is deleted
+(`port.withdraw`, U-021), so nothing is left in the inbox with no extension waiting on it. `toggle(false)` and `remove()`
 call `revokeLive()`: `TokenRevoker.revokeWhere()` (the
 `TokenIssuer` the kill switch holds) revokes every run token whose `allowedTools` includes one
 of the extension's tools, and the MCP connection is closed. A run holding a revoked token fails
@@ -310,7 +315,9 @@ concatenation):
   bare endpoint: no connection before the yes, reviewed live after it);
   `HumanRequestExtensionApprovals` round trip with the stage, answered with the options the inbox
   shows (U-021), an old row with object options shown and answered the same way, and the request
-  withdrawn on remove; audit rows and events for every
+  withdrawn on remove; Approve and Deny through the panel's routes leave no open card in the
+  Inbox (the request `withdrawn`, the grant card the one left after a discovery yes), while a
+  card answered in the Inbox stays `answered` (U-030); audit rows and events for every
   change; no secret value in rows, requests, audit rows or logs on the install, approve,
   toggle, error and remove paths; an entry that declares or references the install wrapping
   key refused at add (catalog and URL manifest) and at `updatePermissions` with

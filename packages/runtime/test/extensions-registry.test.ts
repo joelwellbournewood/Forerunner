@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { requestView } from "../src/daemon/views.ts";
 import { HumanRequestExtensionApprovals } from "../src/extensions/approvals.ts";
 import { ExtensionCatalog, loadBuiltinCatalog } from "../src/extensions/catalog.ts";
+import { createExtensionsRoutes } from "../src/extensions/index.ts";
 import { extensionCostKey, grantedToolNames } from "../src/extensions/registry.ts";
 import { widens } from "../src/extensions/types.ts";
 import {
@@ -981,5 +982,100 @@ describe("extension approval requests in the inbox (U-021)", () => {
       await h.registry.close();
       await h.store.close();
     }
+  });
+});
+
+/**
+ * U-030: Approve and Deny in the Extensions panel decided the extension but left its card open
+ * in the Inbox, where a click did nothing (the registry no longer waited on it). The panel
+ * sends `POST /extensions/:id/approve|deny`; the Inbox lists the human's open requests.
+ */
+describe("the Extensions panel's Approve and Deny close the Inbox card (U-030)", () => {
+  let h: RegistryHarness;
+  afterEach(async () => {
+    h.stopLogs();
+    await h.registry.close();
+    await h.store.close();
+  });
+  const panel = () =>
+    createExtensionsRoutes({ registry: h.registry, actor: () => ({ humanId: "h-1" }) });
+  const click = (path: string) =>
+    panel().fetch(
+      new Request(`http://local${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+  const inbox = () => h.store.humanRequest.open({ humanId: "h-1" });
+  const cardFor = async (extensionId: string) => {
+    const cards = (await inbox()).filter(
+      (r) => (r.change_card as { extensionId?: string } | null)?.extensionId === extensionId,
+    );
+    expect(cards).toHaveLength(1);
+    return cards[0] as NonNullable<(typeof cards)[number]>;
+  };
+
+  it("Approve in the panel enables the extension and takes its card out of the Inbox", async () => {
+    h = await registryHarness({ inbox: true });
+    const pending = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+    const card = await cardFor(pending.id);
+    expect(requestView(card, null).options).toEqual(["Approve", "Deny"]);
+
+    const approved = await click(`/extensions/${pending.id}/approve`);
+    expect(approved.status).toBe(200);
+    expect(((await approved.json()) as { status: string }).status).toBe("enabled");
+    expect(await inbox()).toEqual([]);
+    expect((await h.store.humanRequest.mustGet(card.id)).status).toBe("withdrawn");
+    // The Inbox has nothing left to answer, so the sync changes nothing.
+    expect(await h.registry.syncApprovals(human)).toEqual({
+      approved: [],
+      denied: [],
+      discovered: [],
+    });
+    expect((await h.registry.get(pending.id)).status).toBe("enabled");
+  });
+
+  it("Deny in the panel removes the extension and takes its card out of the Inbox", async () => {
+    h = await registryHarness({ inbox: true });
+    const pending = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+    const card = await cardFor(pending.id);
+
+    const denied = await click(`/extensions/${pending.id}/deny`);
+    expect(denied.status).toBe(200);
+    expect(await inbox()).toEqual([]);
+    expect((await h.store.humanRequest.mustGet(card.id)).status).toBe("withdrawn");
+    expect(await h.registry.list()).toEqual([]);
+  });
+
+  it("Approve in the panel at the discovery step closes that card; the grant is the one card left", async () => {
+    const manifest = fakeCatalogEntry({ id: "from-url", name: "from-url" });
+    const http = await startHttpFixture({ "/ext.json": manifest });
+    try {
+      h = await registryHarness({ inbox: true });
+      const pending = await h.registry.addFromUrl(http.url("/ext.json"), human);
+      const discovery = await cardFor(pending.id);
+      expect(discovery.steps).toContain("Step: start once for discovery (nothing granted yet)");
+      expect((await click(`/extensions/${pending.id}/approve`)).status).toBe(202);
+      expect((await h.store.humanRequest.mustGet(discovery.id)).status).toBe("withdrawn");
+      const grant = await cardFor(pending.id);
+      expect(grant.steps).toContain("Step: grant");
+      expect((await click(`/extensions/${pending.id}/approve`)).status).toBe(200);
+      expect(await inbox()).toEqual([]);
+    } finally {
+      await http.close();
+    }
+  });
+
+  it("a card answered in the Inbox stays answered: the decision is applied, nothing is withdrawn", async () => {
+    h = await registryHarness({ inbox: true });
+    const pending = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+    const card = await cardFor(pending.id);
+    const approve = requestView(card, null).options[0] ?? "";
+    await h.store.humanRequest.answer(card.id, card.version, approve, "h-1");
+    expect((await h.registry.syncApprovals(human)).approved).toEqual([pending.id]);
+    expect((await h.registry.get(pending.id)).status).toBe("enabled");
+    expect((await h.store.humanRequest.mustGet(card.id)).status).toBe("answered");
+    expect(await inbox()).toEqual([]);
   });
 });

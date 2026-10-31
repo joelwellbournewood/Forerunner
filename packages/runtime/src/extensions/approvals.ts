@@ -51,7 +51,10 @@ export class HumanRequestExtensionApprovals implements ExtensionApprovalPort {
     return { outcome: "pending", requestId: row.id };
   }
 
-  /** The extension waiting on it was removed: the question is withdrawn from the inbox. */
+  /**
+   * Nothing waits on the question any more (the extension was removed, or decided in the
+   * panel): it leaves the inbox. Only an open row is withdrawn; an answered one stays answered.
+   */
   async withdraw(requestId: string): Promise<void> {
     const row = await this.requests.get(requestId);
     if (row?.status === "open") await this.requests.withdraw(row.id, row.version);
@@ -90,7 +93,9 @@ export class MemoryExtensionApprovals implements ExtensionApprovalPort {
     return this.answers.get(requestId) ?? "denied";
   }
 
+  /** Like the inbox: only a question still pending is withdrawn. */
   async withdraw(requestId: string): Promise<void> {
+    if (this.answers.get(requestId) !== "pending") return;
     this.withdrawn.push(requestId);
     this.answers.delete(requestId);
   }

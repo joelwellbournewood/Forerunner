@@ -201,7 +201,11 @@ export interface GrantAnswer {
 export interface ExtensionApprovalPort {
   ask(request: CapabilityGrantRequest): Promise<GrantAnswer>;
   status(requestId: string): Promise<GrantOutcome>;
-  /** Take an open question back (the extension waiting on it was removed; U-021). */
+  /**
+   * Take a question out of the Inbox while it is still open: the extension waiting on it was
+   * removed (U-021), or approved or denied in the Extensions panel (U-030). A question already
+   * answered (the decision came from the Inbox) is left as it is.
+   */
   withdraw?(requestId: string): Promise<void>;
 }
 

@@ -574,7 +574,9 @@ export class ExtensionRegistry {
   /**
    * The human said yes. At stage `discovery` this starts the server once with the secrets
    * it names, lists its tools and asks for the grant (the row stays pending). At stage
-   * `grant` it applies the grant, enables and connects.
+   * `grant` it applies the grant, enables and connects. The yes may come from the Inbox
+   * (`syncApprovals`) or from the Extensions panel; either way the question it answered leaves
+   * the Inbox (`withdrawRequest`; U-030), and one answered in the Inbox stays answered.
    */
   async approve(id: string, actor: Actor = {}): Promise<ExtensionView> {
     const row = await this.deps.extensions.mustGet(id);
@@ -609,6 +611,7 @@ export class ExtensionRegistry {
       author_human: actor.humanId ?? row.author_human,
     });
     this.toolIndex = null;
+    await this.withdrawRequest(row, cfg.pendingRequestId);
     await this.audit("extensions.approve", updated, actor, {
       tools: permissions.tools,
       scopes: permissions.scopes,
@@ -662,6 +665,7 @@ export class ExtensionRegistry {
       const failed = await this.deps.extensions.update(row.id, fresh.version, {
         config: toJson({ ...cfg, error, pendingRequestId: null }),
       });
+      await this.withdrawRequest(row, cfg.pendingRequestId);
       this.logger.warn("extension discovery failed", { extension: row.name, error });
       await this.audit("extensions.error", failed, actor, { error, stage: "discovery" });
       this.emit("extension.error", failed, actor, { error, stage: "discovery" });
@@ -684,6 +688,7 @@ export class ExtensionRegistry {
       }),
     });
     this.toolIndex = null;
+    await this.withdrawRequest(row, cfg.pendingRequestId);
     await this.audit("extensions.discovered", updated, actor, {
       tools: review.permissions.tools,
       secrets: review.permissions.secrets,
@@ -708,7 +713,10 @@ export class ExtensionRegistry {
     return this.settle(updated.id, answer, actor);
   }
 
-  /** The human said no: a fresh install is removed; a re-permissioning keeps the old grant. */
+  /**
+   * The human said no: a fresh install is removed; a re-permissioning keeps the old grant. As
+   * with `approve`, the question leaves the Inbox when the no came from the panel (U-030).
+   */
   async deny(id: string, actor: Actor = {}): Promise<void> {
     const row = await this.deps.extensions.mustGet(id);
     if (row.status !== ROW_STATUS_PENDING) {
@@ -737,6 +745,23 @@ export class ExtensionRegistry {
       this.emit("extension.denied", row, actor, { removed: true, stage: cfg.pendingStage });
     }
     this.toolIndex = null;
+    await this.withdrawRequest(row, cfg.pendingRequestId);
+  }
+
+  /**
+   * Nothing waits on the question any more: it leaves the Inbox. Called once the row no longer
+   * names it, since `syncApprovals` reads a withdrawn question as a no. The port withdraws only
+   * an open question, so one answered in the Inbox stays answered. A failure is logged and the
+   * decision stands.
+   */
+  private async withdrawRequest(row: ExtensionRow, requestId: string | null): Promise<void> {
+    if (!requestId) return;
+    await this.deps.approvals.withdraw?.(requestId).catch((e: unknown) => {
+      this.logger.warn("approval request not withdrawn", {
+        extension: row.name,
+        error: errorMessage(e),
+      });
+    });
   }
 
   /**
@@ -800,19 +825,11 @@ export class ExtensionRegistry {
 
   async remove(id: string, actor: Actor = {}): Promise<void> {
     const row = await this.deps.extensions.mustGet(id);
-    // Its open approval request would stay in the inbox with nothing waiting on it (U-021).
-    const pendingRequestId = configOf(row).pendingRequestId;
-    if (pendingRequestId) {
-      await this.deps.approvals.withdraw?.(pendingRequestId).catch((e: unknown) => {
-        this.logger.warn("approval request not withdrawn", {
-          extension: row.name,
-          error: errorMessage(e),
-        });
-      });
-    }
     const revoked = await this.revokeLive(row);
     await this.deps.extensions.delete(id);
     this.toolIndex = null;
+    // Its open approval request would stay in the inbox with nothing waiting on it (U-021).
+    await this.withdrawRequest(row, configOf(row).pendingRequestId);
     await this.audit("extensions.remove", row, actor, { revokedTokens: revoked.length });
     this.emit("extension.removed", row, actor, { revokedTokens: revoked });
   }

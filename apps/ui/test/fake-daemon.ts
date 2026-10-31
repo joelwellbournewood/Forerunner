@@ -1882,8 +1882,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     e.rowVersion += 1;
     e.updatedAt = new Date().toISOString();
     emitExtension("extension.approved", e);
+    withdrawExtensionRequest(e);
+  };
+  // As the daemon's registry: a decision in the panel (or a removal) takes the extension's
+  // open card out of the inbox (U-021, U-030); a card answered in the inbox stays answered.
+  const withdrawExtensionRequest = (e: ExtensionView) => {
     const req = state.requests.find((r) => r.id === `req_${e.id}` && r.status === "open");
-    if (req) req.status = "answered";
+    if (!req) return;
+    req.status = "withdrawn";
+    req.version += 1;
+    emit("inbox.changed", { blockingCount: blockingCount() });
   };
   app.post("/extensions/:id/approve", (c) => {
     const e = findExtension(c);
@@ -1896,6 +1904,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!e) return errorBody(c, 404, "not_found", "no such extension");
     state.extensions = state.extensions.filter((x) => x.id !== e.id);
     emitExtension("extension.denied", e);
+    withdrawExtensionRequest(e);
     return c.json({ ok: true });
   });
   app.put("/extensions/:id/permissions", async (c) => {
@@ -1922,6 +1931,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!e) return errorBody(c, 404, "not_found", "no such extension");
     state.extensions = state.extensions.filter((x) => x.id !== e.id);
     emitExtension("extension.removed", e);
+    withdrawExtensionRequest(e);
     return c.json({ ok: true });
   });
 
