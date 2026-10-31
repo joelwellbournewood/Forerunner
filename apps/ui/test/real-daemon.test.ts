@@ -435,3 +435,128 @@ describe("the UI client against the real daemon", () => {
     }
   });
 });
+
+/** The UI client against a real daemon whose first specialist run waits until it is stopped. */
+async function composeWithWaitingRun(): Promise<{
+  rt: RuntimeApp;
+  client: DaemonClient;
+  provider: ScriptedProvider;
+}> {
+  const home = mkdtempSync(join(tmpdir(), "fr-ui-real-run-"));
+  const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+  // The first model call waits an hour of simulated time that never passes; the rest answer.
+  const provider = new ScriptedProvider(
+    [{ ttftMs: 3_600_000, text: "never sent" }, { text: "Done." }],
+    clock,
+  );
+  const rt = await composeRuntime({
+    env: { FORERUNNER_HOME: home },
+    dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+    config: null,
+    clock,
+    stateUrl: "sqlite::memory:",
+    vault: new MemoryVault(),
+    provider,
+    registryDir: REGISTRY,
+    identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+    appVersion: "0.0.0-ui-contract",
+  });
+  const { app, token } = createDaemonApp(rt);
+  const client = createClient(
+    {
+      baseUrl: "http://daemon.test",
+      token,
+      source: "env",
+      installId: null,
+      platform: null,
+      shellVersion: null,
+    },
+    (input, init) => Promise.resolve(app.request(input, init)),
+  );
+  return { rt, client, provider };
+}
+
+/** Real-time poll for what the daemon does at once; `seen` says what it saw last. */
+async function eventually(
+  cond: () => Promise<boolean>,
+  what: string,
+  seen: () => Promise<string> = async () => "",
+): Promise<void> {
+  for (let i = 0; i < 600; i++) {
+    if (await cond()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`timed out waiting for ${what} (${await seen()})`);
+}
+
+describe("the UI client against the real daemon: a task a session is running", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let provider: ScriptedProvider;
+
+  beforeAll(async () => {
+    ({ rt, client, provider } = await composeWithWaitingRun());
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("Cancel on the running task: that task's run stops and the session goes on with the next (U-039)", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({
+      name: "Running",
+      goal: "Keep going",
+      autonomyLevel: 2,
+    });
+    const task = (title: string, priority: number) =>
+      client.createTask(project.id, {
+        title,
+        outcome: `${title} is done`,
+        acceptanceCriteria: [],
+        riskTier: 0,
+        priority,
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+      });
+    const first = await task("Long first task", 9);
+    const second = await task("Second task", 1);
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    const tasks = () => client.tasks(project.id);
+    const statusOf = async (id: string) => (await tasks()).find((t) => t.id === id)?.status;
+    const seen = async () =>
+      `session ${(await client.session(sessionId)).status}, ${provider.calls.length} model call(s), tasks ${(
+        await tasks()
+      )
+        .map((t) => `${t.title}=${t.status}`)
+        .join(", ")}`;
+    // The first task's specialist is in its model call.
+    await eventually(
+      async () => (await statusOf(first.id)) === "in_progress" && provider.calls.length === 1,
+      "the first task's run",
+      seen,
+    );
+
+    // The Tasks tab's Cancel: the version the row shows, the target, the reason.
+    const row = (await tasks()).find((t) => t.id === first.id);
+    const moved = await client.transitionTask(first.id, {
+      version: row?.version ?? 0,
+      to: "cancelled",
+      reason: "Cancelled in the app",
+    });
+    expect(moved.status).toBe("cancelled");
+
+    await eventually(
+      async () => (await client.session(sessionId)).status === "completed",
+      "the session to complete",
+      seen,
+    );
+    expect(await statusOf(first.id)).toBe("cancelled");
+    expect(await statusOf(second.id)).toBe("done");
+    expect((await client.session(sessionId)).summary).toContain(
+      'Moved by you while it ran: "Long first task" (cancelled)',
+    );
+  });
+});

@@ -926,6 +926,9 @@ export function createDaemonApp(
       body.reason,
       { humanId: rt.human.id },
     );
+    // A person's move (Cancel, Mark failed, Needs me, Send to review) stops the task's run if
+    // one is going; the session goes on with its other tasks and leaves the task as set (U-039).
+    rt.kill.stopTask(t.id, `${t.status} by you: ${body.reason}`);
     rt.events.emit("project", { id: t.project_id });
     return c.json(taskView(t, chf()));
   });

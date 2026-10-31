@@ -252,6 +252,14 @@ export interface SessionResult {
   failed: string[];
   skipped: string[];
   needsHuman: string[];
+  /** Tasks a person cancelled while they ran (U-039). */
+  cancelled: string[];
+  /**
+   * Tasks moved while their run was going (U-039): Cancel, Mark failed, Needs me or Send to
+   * review on the Tasks tab, the phone or Chat. Each is also counted in the list of the state
+   * it was moved to (`cancelled`, `failed`, `needsHuman`, `inReview`).
+   */
+  movedWhileRunning: MovedWhileRunning[];
   /** Tasks the critic sent back to ready (revise or a retry rung). */
   retried: string[];
   /** Tasks whose close was refused because a finding is still open (B.4). */
@@ -340,6 +348,25 @@ export interface SessionRunnerDeps {
    * paused, and the peer feed (start and before every task) re-evaluates and is refused too.
    */
   schemaSync?: SchemaSyncPort;
+  /**
+   * How often the runner re-reads a running task's row (U-039), default
+   * `DEFAULT_TASK_WATCH_MS`: a person's move made where no route of this process sees it (the
+   * phone through the state service, Chat) stops the task's run within this time. The daemon's
+   * own transition route stops it at once (`KillSwitch.stopTask`).
+   */
+  taskWatchMs?: number;
+}
+
+/** The runner's re-read of a running task's row (U-039): a person's move stops the run within it. */
+export const DEFAULT_TASK_WATCH_MS = 5_000;
+
+/** A task moved while its run was going (U-039): the state set then, which stands. */
+export interface MovedWhileRunning {
+  taskId: string;
+  title: string;
+  status: TaskRow["status"];
+  /** True when a person made the move (`author_human` on the row); false for another agent's. */
+  byPerson: boolean;
 }
 
 /**
@@ -523,6 +550,8 @@ export class SessionRunner {
     const overlapNotified = new Set<string>();
     let peerIds: string[] = [];
     const needsHuman: string[] = [];
+    const cancelled: string[] = [];
+    const movedWhileRunning: MovedWhileRunning[] = [];
     let plan: SessionPlan | null = null;
     let brief: StateBrief | null = null;
     let stopReason = "completed";
@@ -866,6 +895,23 @@ export class SessionRunner {
           }
           if (said.length)
             await emit("task.heard", { taskId: task.id, ids: said.map((h) => h.id) });
+          // A person's move of this task while it runs (Cancel, Mark failed, Needs me) stops this
+          // task's run and nothing else (U-039): the task's own controller, registered with the
+          // kill switch under the task, which the daemon's transition route stops at once
+          // (`KillSwitch.stopTask`; the specialist's run is registered under the task too), and
+          // a watch of the task's row for a move made where no route of this process sees it.
+          const taskController = new AbortController();
+          const onSessionAbort = () => taskController.abort(controller.signal.reason);
+          if (controller.signal.aborted) onSessionAbort();
+          else controller.signal.addEventListener("abort", onSessionAbort, { once: true });
+          const unregisterTask = this.deps.kill.register({
+            agentId: agent.id,
+            sessionId: session.id,
+            taskId: task.id,
+            controller: taskController,
+            label: `task ${task.id} of session ${session.id}`,
+          });
+          const stopWatch = this.watchTask(task.id, taskController.signal);
           let result: TaskExecutionResult;
           const execStarted = clock.monotonic();
           try {
@@ -875,7 +921,7 @@ export class SessionRunner {
               token,
               budget,
               item,
-              signal: controller.signal,
+              signal: taskController.signal,
               heard: said.map(({ deliveredTo: _to, ...line }) => line),
             });
           } catch (e) {
@@ -894,6 +940,9 @@ export class SessionRunner {
             };
           } finally {
             renew();
+            stopWatch();
+            unregisterTask();
+            controller.signal.removeEventListener("abort", onSessionAbort);
           }
           task = await store.task.mustGet(task.id);
           await store.task.patch(task.id, {
@@ -931,6 +980,36 @@ export class SessionRunner {
               taskId: task.id,
               error: errorMessage(e),
             });
+          }
+          // The task is read again now that the run returned: a state a person set while it ran
+          // stands, and the runner never moves the task from it (U-039). A session stopped by
+          // the kill switch still ends as killed.
+          if (controller.signal.aborted && result.outcome === "killed")
+            throw new ForerunnerError("killed", "session stopped during task");
+          if (task.status !== "in_progress") {
+            const moved: MovedWhileRunning = {
+              taskId: task.id,
+              title: task.title,
+              status: task.status,
+              byPerson: task.author_human !== null,
+            };
+            movedWhileRunning.push(moved);
+            const into: Partial<Record<TaskRow["status"], string[]>> = {
+              cancelled,
+              failed,
+              needs_human: needsHuman,
+              in_review: inReview,
+              done: completed,
+            };
+            (into[task.status] ?? skipped).push(task.id);
+            await emit("task.moved_while_running", {
+              ...moved,
+              reason: task.reason,
+              outcome: result.outcome,
+              warning: `"${task.title}" was moved to ${task.status} while it ran; its run was stopped and the session goes on`,
+            });
+            await releaseIfHeld(task.id, `moved to ${task.status} while it ran`);
+            continue;
           }
           lessonCandidates.push(...(result.lessons ?? []));
           const closeTier0 =
@@ -1196,6 +1275,8 @@ export class SessionRunner {
       failed,
       skipped,
       needsHuman,
+      cancelled,
+      movedWhileRunning,
       retried,
       blockedByFindings,
       merges,
@@ -1271,6 +1352,12 @@ export class SessionRunner {
         inReview.filter((id) => filesByTask.has(id)).map((id) => [id, filesByTask.get(id)]),
       ),
       blocked: [...needsHuman, ...failed],
+      cancelled,
+      moved_while_running: movedWhileRunning.map((m) => ({
+        task_id: m.taskId,
+        status: m.status,
+        by_person: m.byPerson,
+      })),
       blocked_by_findings: blockedByFindings,
       sent_back: retried,
       reviews: reviews.map((r) => ({
@@ -1511,6 +1598,7 @@ export class SessionRunner {
       completed: completed.length,
       inReview: inReview.length,
       failed: failed.length,
+      cancelled: cancelled.length,
       skipped: skipped.length,
       retried: retried.length,
       blockedByFindings: blockedByFindings.length,
@@ -1530,6 +1618,8 @@ export class SessionRunner {
       failed,
       skipped,
       needsHuman,
+      cancelled,
+      movedWhileRunning,
       retried,
       blockedByFindings,
       reviews,
@@ -1550,6 +1640,43 @@ export class SessionRunner {
       handoff,
       stopReason,
       heard,
+    };
+  }
+
+  /**
+   * The watch of a running task's row (U-039): every `taskWatchMs` the row is read, and a task
+   * no longer `in_progress` (a person moved it through the phone, Chat or another device's
+   * daemon) has its runs stopped through the kill switch, which aborts `signal`'s controller
+   * too. Returns the function that ends the watch; nothing is scheduled after it is called.
+   */
+  private watchTask(taskId: string, signal: AbortSignal): () => void {
+    const { store, clock, kill } = this.deps;
+    const every = Math.max(1, this.deps.taskWatchMs ?? DEFAULT_TASK_WATCH_MS);
+    let watching = true;
+    let cancel: () => void = () => undefined;
+    const schedule = () => {
+      if (!watching || signal.aborted) return;
+      cancel = clock.setTimeout(() => {
+        void store.task.get(taskId).then(
+          (row) => {
+            if (!watching || signal.aborted) return;
+            if (row && row.status !== "in_progress") {
+              kill.stopTask(taskId, `task moved to ${row.status} while it ran`);
+              return;
+            }
+            schedule();
+          },
+          (e: unknown) => {
+            this.logger.warn("task watch read failed", { taskId, error: errorMessage(e) });
+            schedule();
+          },
+        );
+      }, every);
+    };
+    schedule();
+    return () => {
+      watching = false;
+      cancel();
     };
   }
 
@@ -1980,6 +2107,10 @@ function summarize(x: {
   failed: string[];
   skipped: string[];
   needsHuman: string[];
+  /** Tasks a person cancelled while they ran (U-039). */
+  cancelled?: string[];
+  /** Tasks moved while their run was going (U-039), named in their own line. */
+  movedWhileRunning?: readonly MovedWhileRunning[];
   retried: string[];
   blockedByFindings: string[];
   merges?: readonly MergeOutcome[];
@@ -2004,7 +2135,10 @@ function summarize(x: {
           'Nothing to plan: no task is ready. Give the agent work first: add a task (the Tasks tab, or "add a task: ..." in Chat), mark a draft task ready on the Tasks tab, or approve the plan waiting in the Inbox.',
         ]
       : []),
-    `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}. Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
+    `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}.${
+      x.cancelled?.length ? ` Cancelled: ${x.cancelled.length}.` : ""
+    } Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
+    ...summarizeMoved(x.movedWhileRunning ?? []),
     ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
     ...(x.blockedByFindings.length
       ? [
@@ -2019,6 +2153,41 @@ function summarize(x: {
     `Spent $${(x.spent / 1e6).toFixed(2)}.`,
   ];
   return parts.join(" ");
+}
+
+/** What a status reads as in the summary (the Tasks tab's words). */
+const STATUS_WORDS: Partial<Record<TaskRow["status"], string>> = {
+  needs_human: "needs you",
+  in_review: "sent to review",
+};
+
+/**
+ * The tasks moved while they ran (U-039), by title and the state they were moved to: a
+ * person's moves first, then another agent's (a lapsed claim a peer's session took back).
+ */
+function summarizeMoved(moved: readonly MovedWhileRunning[]): string[] {
+  const line = (list: readonly MovedWhileRunning[], who: string): string[] => {
+    if (list.length === 0) return [];
+    const named = list
+      .map((m) => `"${m.title}" (${STATUS_WORDS[m.status] ?? m.status})`)
+      .join(", ");
+    const one = list.length === 1;
+    return [
+      `Moved by ${who} while ${one ? "it" : "they"} ran: ${named}; ${
+        one ? "its run was" : "their runs were"
+      } stopped and the session went on.`,
+    ];
+  };
+  return [
+    ...line(
+      moved.filter((m) => m.byPerson),
+      "you",
+    ),
+    ...line(
+      moved.filter((m) => !m.byPerson),
+      "another agent",
+    ),
+  ];
 }
 
 /** The merge step's outcomes (spec J.9): how many reviewed PRs merged, how many wait on the human. */

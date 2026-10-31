@@ -108,6 +108,51 @@ describe("Tasks tab", () => {
     });
   });
 
+  it("Cancel on a running task says its run stops and the session goes on, and sends the move (U-039)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.tasks.push({
+      ...(TASKS[2] as (typeof TASKS)[number]),
+      id: "task_running",
+      title: "Migrate the search index",
+      status: "in_progress",
+      claimedBy: "agent_alice",
+      version: 3,
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = (await screen.findAllByTestId("task-row")).find(
+      (r) => r.getAttribute("data-task-id") === "task_running",
+    ) as HTMLElement;
+    expect(
+      within(row)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Send to review", "Needs me", "Mark failed", "Cancel"]);
+    await user.click(within(row).getByTestId("transition-cancelled"));
+    const dialog = await screen.findByTestId("transition-dialog");
+    expect(within(dialog).getByTestId("transition-stops-run")).toHaveTextContent(
+      "A session is working on this task. Its run stops now; the session goes on with its other tasks and leaves this one cancelled.",
+    );
+    await user.click(within(dialog).getByTestId("confirm-transition"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/tasks/task_running/transition")).toHaveLength(1),
+    );
+    expect(postedCalls(harness, "/tasks/task_running/transition")[0]?.body).toEqual({
+      version: 3,
+      to: "cancelled",
+      reason: "Cancelled in the app",
+    });
+    // A task no session is working on gets no such note.
+    await user.click(
+      within((await screen.findAllByTestId("task-row"))[2] as HTMLElement).getByTestId(
+        "transition-failed",
+      ),
+    );
+    expect(
+      within(await screen.findByTestId("transition-dialog")).queryByTestId("transition-stops-run"),
+    ).toBeNull();
+  });
+
   it("creates a task from the dialog with the budget converted at the project's rate", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

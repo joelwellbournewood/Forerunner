@@ -42,6 +42,11 @@ export interface SdkRunRequest {
    */
   env?: Record<string, string>;
   label?: string;
+  /**
+   * The caller's stop (the session runner's hold on the task, U-039): an abort ends the run
+   * like the kill switch does (`killed`), and a signal already aborted ends it at once.
+   */
+  signal?: AbortSignal;
 }
 
 export interface SdkRunResult {
@@ -88,6 +93,8 @@ export class SdkAgentDriver {
     const unregister = this.deps.kill.register({
       agentId: claims.agentId,
       sessionId: claims.sessionId,
+      // A person's move of the task stops this run (`KillSwitch.stopTask`, U-039).
+      ...(claims.taskId ? { taskId: claims.taskId } : {}),
       controller,
       label: req.label ?? `sdk run ${claims.runId}`,
     });
@@ -96,6 +103,11 @@ export class SdkAgentDriver {
       () => controller.abort(new ForerunnerError("timeout", "run timeout")),
       req.timeoutMs,
     );
+    const outer = req.signal;
+    const onOuterAbort = () =>
+      controller.abort(new ForerunnerError("killed", "run stopped by its caller"));
+    if (outer?.aborted) onOuterAbort();
+    else outer?.addEventListener("abort", onOuterAbort, { once: true });
     const ctx: RunContext = {
       token: req.token,
       budget: req.budget,
@@ -290,6 +302,7 @@ export class SdkAgentDriver {
         this.logger.error("sdk run failed", { runId: claims.runId, error: error.message });
     } finally {
       cancelTimeout();
+      outer?.removeEventListener("abort", onOuterAbort);
       unregister();
     }
     emit({ type: "run_end", outcome, costUsdMicro: cost, steps: numTurns });

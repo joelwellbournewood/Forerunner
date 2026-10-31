@@ -243,6 +243,8 @@ export class LoopAgentDriver {
     const unregister = this.deps.kill.register({
       agentId: claims.agentId,
       sessionId: claims.sessionId,
+      // A person's move of the task stops this run (`KillSwitch.stopTask`, U-039).
+      ...(claims.taskId ? { taskId: claims.taskId } : {}),
       controller,
       label: req.label ?? `run ${claims.runId}`,
       protected: req.protected,

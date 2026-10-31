@@ -131,4 +131,77 @@ describe("kill switch", () => {
     expect(cleared).toBe(1);
     expect(ks.isFrozen({ agentId: "alice" })).toBe(false);
   });
+
+  it("stopTask ends one task's runs and revokes its tokens; the session and the rest go on (U-039)", () => {
+    const tokens = new TokenIssuer();
+    const stops: string[] = [];
+    const ks = new KillSwitch(tokens, () => {
+      stops.push("claims frozen");
+    });
+    ks.onStop(() => stops.push("kill switch notified"));
+    const issue = (taskId: string) =>
+      tokens.issue({
+        runId: `r-${taskId}`,
+        sessionId: "s1",
+        agentId: "alice",
+        ownerHumanId: "j",
+        taskId,
+        allowedTools: ["echo"],
+        allowedPaths: [],
+        allowedDomains: [],
+        grantedSecrets: [],
+        budgetUsdMicro: 10,
+        depth: 1,
+        maxDepth: 2,
+        autonomy: 2,
+        planApproved: false,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+    const moved = issue("t-moved");
+    const other = issue("t-other");
+    const session = new AbortController();
+    const movedRun = new AbortController();
+    const movedHold = new AbortController();
+    const otherRun = new AbortController();
+    ks.register({ agentId: "alice", sessionId: "s1", controller: session, label: "session" });
+    ks.register({
+      agentId: "alice",
+      sessionId: "s1",
+      taskId: "t-moved",
+      controller: movedRun,
+      label: "run",
+    });
+    ks.register({
+      agentId: "alice",
+      sessionId: "s1",
+      taskId: "t-moved",
+      controller: movedHold,
+      label: "hold",
+    });
+    ks.register({
+      agentId: "alice",
+      sessionId: "s1",
+      taskId: "t-other",
+      controller: otherRun,
+      label: "run",
+    });
+
+    const report = ks.stopTask("t-moved", "cancelled by you");
+    expect(report).toEqual({ stoppedRuns: 2, killedProcesses: 0, revokedTokens: 1 });
+    expect(movedRun.signal.aborted && movedHold.signal.aborted).toBe(true);
+    expect(movedRun.signal.reason).toMatchObject({ code: "killed", message: "cancelled by you" });
+    expect(session.signal.aborted || otherRun.signal.aborted).toBe(false);
+    expect(tokens.isRevoked(moved.claims.id)).toBe(true);
+    expect(tokens.isRevoked(other.claims.id)).toBe(false);
+    // Not the kill switch: nothing frozen, no claims touched, no kill notification.
+    expect(ks.isFrozen({ agentId: "alice", sessionId: "s1" })).toBe(false);
+    expect(stops).toEqual([]);
+    expect(ks.activeCount({ sessionId: "s1" })).toBe(2);
+    // Nothing of the task left: a second stop is a no-op.
+    expect(ks.stopTask("t-moved")).toEqual({
+      stoppedRuns: 0,
+      killedProcesses: 0,
+      revokedTokens: 0,
+    });
+  });
 });

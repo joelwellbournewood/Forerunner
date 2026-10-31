@@ -55,7 +55,11 @@ wait on you, and the latest critic grade. The active project is always shown in 
 - **Summary**: one screen the agent keeps current. "Read aloud" speaks it.
 - **Plan**: milestones and their dependencies.
 - **Tasks**: every task with status, specialist, cost, verdict and links to the pull request
-  and the review. Transitions you may make by hand are buttons.
+  and the review. Transitions you may make by hand are buttons. **Cancel**, **Mark failed**,
+  **Needs me** or **Send to review** on a task a session is working on stops that task's run
+  at once; the session goes on with its other tasks and leaves the task as you set it, and its
+  summary names the task you moved. The same move from the phone or Chat stops the run within
+  a few seconds.
 - **Docs**: the standard document set the agent maintains.
 - **Reviews**: critic findings and grades over time.
 - **Costs**: spend by model, specialist and task, in CHF, with the savings from caching and

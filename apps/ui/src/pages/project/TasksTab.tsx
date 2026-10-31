@@ -302,6 +302,25 @@ export function TasksTab({
   );
 }
 
+/** States in which a session's run may be working on the task (U-039). */
+const RUNNING_STATUSES: readonly string[] = ["claimed", "in_progress"];
+
+/** How the note names the state a move leaves a running task in. */
+function movedLabel(to: string): string {
+  switch (to) {
+    case "cancelled":
+      return "cancelled";
+    case "failed":
+      return "failed";
+    case "needs_human":
+      return "waiting for you";
+    case "in_review":
+      return "in review";
+    default:
+      return to;
+  }
+}
+
 function TransitionDialog({
   pending,
   onClose,
@@ -340,6 +359,16 @@ function TransitionDialog({
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {pending ? `${pending.task.status} → ${pending.to}` : ""}
         </p>
+        {pending && RUNNING_STATUSES.includes(pending.task.status) ? (
+          <p
+            role="note"
+            className="rounded border border-blue-200 bg-blue-50 p-2 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
+            data-testid="transition-stops-run"
+          >
+            A session is working on this task. Its run stops now; the session goes on with its other
+            tasks and leaves this one {movedLabel(pending.to)}.
+          </p>
+        ) : null}
         <Field
           label="Reason (optional)"
           hint={`Recorded on the task and in the change log; your agent reads it.${

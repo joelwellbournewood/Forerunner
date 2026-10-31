@@ -86,6 +86,15 @@ unparseable JSON), and a scope that is neither `"all"` nor an object naming an a
 session is read as `"all"`, because the switch would stop every registration for such a scope
 yet freeze nothing, so new work would start at once (fail closed).
 
+`stopTask(taskId, reason)` (U-039) ends one task's runs and nothing else: every registration
+that names the task (`taskId`: the session runner's hold on a running task, and the loop and SDK
+drivers' runs, which register with their token's `taskId`) is aborted with a `killed` error, its
+child process killed, and the tokens issued for the task revoked. It freezes nothing, touches no
+claim and does not call the `onStop` listeners (it is not the kill switch, so the human gets no
+kill notification). The daemon's `POST /tasks/:id/transition` calls it after a person's move;
+the runner's watch of the task row calls it for a move made elsewhere (below, "A person's move
+on a running task"). Tests: `killswitch.test.ts` ("stopTask ends one task's runs").
+
 ### Shared secrets (`src/secrets/`; spec S.13, ADR 0065)
 
 A secret in one human's vault, readable by named agents of the other human, with both
@@ -699,7 +708,31 @@ update into the project's `docs/status.md` (below, "Project docs").
 more `recheckInbox(..., { atEnd: true })`, so a message that landed during the last task is
 delivered and read (`read_at`) before the status doc, the summary cache, the peers' handoffs,
 the note to the human and the session record are written; those writes stay where and as they
-were (the task states were written as each task ended). What the re-check read is recorded as
+were (the task states were written as each task ended).
+
+**A person's move on a running task (U-039).** Up to 1.0.4, Cancel, Mark failed or Needs me
+on a task a session was running only wrote the row: the run went on, and when it returned the
+runner moved the task from the state the person set (`cancelled -> in_review` is no edge), so
+the session ended `failed` and its other planned tasks never started. Now each running task has
+its own `AbortController`, linked to the session's, registered with the kill switch under the
+task (`taskId`) and given to the executor as `signal`, which the executor hands to the loop or
+SDK driver (a stop that lands before the driver registers still ends the run). The daemon's
+transition route calls `KillSwitch.stopTask` after the move; a move made where no route of this
+process sees it (the phone through the state service, Chat, another device) is seen by the
+runner's watch of the task row, every `taskWatchMs` (default `DEFAULT_TASK_WATCH_MS`, 5 s),
+which calls `stopTask` itself. When the run returns the runner reads the task again: a task no
+longer `in_progress` is never moved by the runner (its cost and `task.finished` are still
+recorded), the `task.moved_while_running` event names it with the state, the reason and
+`byPerson` (`author_human` set), and the session goes on with the next task. A session stopped
+by the kill switch still ends `killed`. The move is counted: `SessionResult.cancelled` (new) or
+the list of the state it was moved to (`failed`, `needsHuman`, `inReview`, `completed`; a task a
+peer's session took back after a lapsed claim counts as not started), `movedWhileRunning` names
+each, the summary reads "Cancelled: N." and "Moved by you while it ran: "Title" (cancelled);
+its run was stopped and the session went on.", and the handoff carries `cancelled` and
+`moved_while_running`. Tests: `task-moved-while-running.test.ts` (the Tasks tab's Cancel through
+the daemon route while the specialist is in its model call; a run that ignores the stop and
+returns `done` after Needs me; a move through the store reaching the run by the watch) and
+`apps/ui/test/real-daemon.test.ts` ("Cancel on the running task"). What the re-check read is recorded as
 a `session.end_inbox` event (ids, the first stop or pause, whether the session ended on it),
 `handoff.end_inbox` (`read`: id, type, sender and kind `stop` / `pause` / `message` of each,
 never the words; `stopped_by`) and a summary line, "Read before the session-end writes: N

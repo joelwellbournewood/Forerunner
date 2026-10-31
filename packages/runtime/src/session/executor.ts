@@ -653,6 +653,9 @@ export class LoopTaskExecutor implements TaskExecutor {
           ...(sessionContext?.sdkEnv ? { env: sessionContext.sdkEnv } : {}),
           label,
           onEvent,
+          // The runner's hold on the task: a person's move stops the run even when it lands
+          // before the run registers with the kill switch (U-039).
+          signal: ctx.signal,
         });
         result = {
           outcome: r.outcome,
@@ -708,6 +711,9 @@ export class LoopTaskExecutor implements TaskExecutor {
           cwd: worktree,
           label,
           onEvent,
+          // The runner's hold on the task: a person's move stops the run even when it lands
+          // before the run registers with the kill switch (U-039).
+          signal: ctx.signal,
         });
         result = {
           outcome: r.outcome,
