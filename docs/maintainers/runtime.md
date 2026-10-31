@@ -606,6 +606,19 @@ proxy's refusal, timed out) with the code, never only "fetch failed". The Messag
 connection errors and `ClaudeCodeProvider`'s failures cut the credential out of their text the
 same way. `test/setup-routes.test.ts` covers all of it with a memory vault and a routed fetch.
 
+**Secrets typed in the app** (`src/secrets/store-routes.ts`, shapes and the allowlist in
+`src/secrets/store-types.ts`, U-054), mounted next to the shared-secret routes: `GET
+/secrets/store?name=` (`StoredSecretsView`: each allowlisted name, plus a storable `name` asked
+for, with its label and whether the vault holds it; never a value); `POST /secrets/store { name,
+value }` (`StoreSecretView { name, stored: true, ref: "secret:<name>" }`; the value trimmed and
+stored with `vault.set`; 400 for a name off the allowlist (`isStorableSecretName`: the voice
+keys and `MAILBOX_PASSWORD_PATTERN`), a reserved name, the install's own credentials, an empty
+value, a control character, or a space inside an API key, never quoting the value; a
+`secrets.store` audit row with the name). The cloud voice providers resolve their key per call
+and the mailbox its password at connect time, so a stored value is used without a restart.
+`mailboxPasswordName(agent, side)` is the Email page's default (`agent_imap_password` for the
+principal, `<agent>_imap_password` for another agent). Test: `secret-store-route.test.ts`.
+
 **The subscription allowance's routes** (`src/setup/plan-allowance-routes.ts`, shapes in
 `src/setup/types.ts`, U-052), mounted next to the setup routes: `GET /settings/plan-allowance`
 (`PlanAllowanceView`: `subscription` (a token is saved), the allowance in force in USD and in

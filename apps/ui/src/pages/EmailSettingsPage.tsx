@@ -1,4 +1,8 @@
-import { EMAIL_MODES } from "@forerunner/runtime/daemon/api-types";
+import {
+  EMAIL_MODES,
+  MAILBOX_PASSWORD_PATTERN,
+  mailboxPasswordName,
+} from "@forerunner/runtime/daemon/api-types";
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
 import {
@@ -14,6 +18,7 @@ import {
 import { CommandResult } from "../components/ChangeCardDialog.tsx";
 import { Dialog } from "../components/Dialog.tsx";
 import { RouteMissing } from "../components/RouteMissing.tsx";
+import { SecretValueField } from "../components/SecretValueField.tsx";
 import {
   Badge,
   Button,
@@ -531,6 +536,16 @@ function LimitsForm({
   );
 }
 
+/**
+ * The vault name the password box stores under (U-054): the one the reference field names when
+ * it is a mailbox password name, else this agent's default (`agent_imap_password` for the
+ * principal), so two agents' mailboxes never share one.
+ */
+function passwordNameFor(ref: string, agent: AgentView, side: "imap" | "smtp"): string {
+  const named = /^secret:(.+)$/.exec(ref.trim())?.[1];
+  return named && MAILBOX_PASSWORD_PATTERN.test(named) ? named : mailboxPasswordName(agent, side);
+}
+
 function MailboxForm({
   agent,
   config,
@@ -594,9 +609,11 @@ function MailboxForm({
     <form onSubmit={submit} className="space-y-2" data-testid="email-mailbox">
       <h4 className="font-medium">Mailbox</h4>
       <p className="text-xs text-neutral-600 dark:text-neutral-400">
-        The agent's own address, never your personal inbox. Passwords are named by reference to the
-        vault (<code>secret:&lt;name&gt;</code>), never typed here: the daemon refuses a value, and
-        the names of the install's own credentials (API keys, tokens) are refused too.
+        The agent's own address, never your personal inbox. Type the mailbox's app password in the
+        password box: it goes to this computer's credential store, and the settings keep only its
+        reference (<code>secret:&lt;name&gt;</code>), filled in for you; then Save mailbox. A
+        password typed into the reference field is refused, and so are the names of the install's
+        own credentials (API keys, tokens).
         {m === null ? " No mailbox is configured yet; the mode does nothing until one is." : ""}
       </p>
       <Field label="Address">
@@ -643,6 +660,12 @@ function MailboxForm({
             aria-label="IMAP password reference"
             data-testid="imap-ref"
           />
+          <SecretValueField
+            name={passwordNameFor(imapRef, agent, "imap")}
+            label="IMAP password"
+            testId="imap-password"
+            onStored={setImapRef}
+          />
         </div>
         <div className="space-y-1 rounded border border-neutral-200 p-2 dark:border-neutral-800">
           <p className="text-xs font-medium">SMTP (sending)</p>
@@ -676,6 +699,12 @@ function MailboxForm({
             placeholder="secret:agent_smtp_password"
             aria-label="SMTP password reference"
             data-testid="smtp-ref"
+          />
+          <SecretValueField
+            name={passwordNameFor(smtpRef, agent, "smtp")}
+            label="SMTP password"
+            testId="smtp-password"
+            onStored={setSmtpRef}
           />
         </div>
       </div>

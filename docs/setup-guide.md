@@ -164,7 +164,7 @@ from Home.
 
    | Choice | Disk | Download | Trade-off |
    | --- | --- | --- | --- |
-   | None | 0 GB | nothing | No local speech; voice works only with a cloud voice provider set up in Extensions. |
+   | None | 0 GB | nothing | No local speech; voice works only with a cloud voice provider set up in Extensions (add the provider there and paste its API key on its row). |
    | CPU | about 2.3 GB | about 1 GB | Works on any PC. Slow: on the one PC measured, about 4 s from releasing Talk to the first spoken word. |
    | GPU (NVIDIA) | about 8 GB | about 4.5 GB | Fastest replies: about 1.4 to 2.1 s on an RTX 3060. Needs an NVIDIA card and driver; if the card cannot be used, the CPU takes over and says why. |
 
@@ -223,12 +223,15 @@ You need:
 
 Steps:
 
-1. Store the app password in the vault: `fr vault set agent_imap_password` and paste it at the
-   hidden prompt. Do the same for SMTP if it differs (`agent_smtp_password`). The name must not
-   say token, API key or PAT; those names are kept for other credentials.
-2. Open Settings → Capabilities → Email. Enter the address, the IMAP and SMTP hosts, ports and
-   user, and the password references (`secret:agent_imap_password`). Never type the password
-   itself there; the page refuses it.
+1. Open Settings → Capabilities → Email. In the IMAP box, type the app password into the
+   password field and click **Save**: it goes to this computer's credential store (as
+   `agent_imap_password`) and the reference field fills in `secret:agent_imap_password`. Do the
+   same in the SMTP box if sending uses another password (`agent_smtp_password`). The password
+   is never shown again; type a new one to replace it.
+2. Enter the address and the IMAP and SMTP hosts, ports and users, then **Save mailbox**. The
+   settings keep only the references; a password typed into a reference field is refused.
+   (From a source checkout, `fr vault set agent_imap_password` does the same as the password
+   field.)
 3. Pick the sending mode. Anything beyond "off" asks you to confirm on your device.
 4. For tasks by email, enter your own address under "My address". Tasks by email need a
    sending mode other than "off". Mail from any other sender,

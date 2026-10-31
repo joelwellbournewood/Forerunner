@@ -132,6 +132,10 @@ import {
   type StartSessionBody as StartSessionBodySchema,
   type StartSessionView,
   StartSessionView as StartSessionViewSchema,
+  type StoredSecretsView,
+  StoredSecretsView as StoredSecretsViewSchema,
+  type StoreSecretView,
+  StoreSecretView as StoreSecretViewSchema,
   type TaskView,
   TaskView as TaskViewSchema,
   type TransitionTaskBody as TransitionTaskBodySchema,
@@ -282,6 +286,8 @@ export type {
   SourceView,
   SpeakView,
   StartSessionView,
+  StoredSecretsView,
+  StoreSecretView,
   TaskView,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
@@ -706,6 +712,11 @@ export interface DaemonClient {
   // Settings -> Claude subscription allowance (U-052): CHF a month in, USD stored by the daemon.
   planAllowance(signal?: AbortSignal): Promise<PlanAllowanceView>;
   setPlanAllowance(chfMonthly: number): Promise<PlanAllowanceView>;
+
+  // The mailbox passwords and cloud voice keys typed in the app (U-054): sent once to the
+  // daemon's vault, never read back (the list says only whether each is stored).
+  storedSecrets(name?: string, signal?: AbortSignal): Promise<StoredSecretsView>;
+  storeSecret(name: string, value: string): Promise<StoreSecretView>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -1101,6 +1112,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("planAllowance"), PlanAllowanceViewSchema, undefined, signal),
     setPlanAllowance: (chfMonthly) =>
       post(routePath("setPlanAllowance"), PlanAllowanceViewSchema, { chfMonthly }),
+    storedSecrets: (name, signal) =>
+      get(routePath("storedSecrets"), StoredSecretsViewSchema, name ? { name } : undefined, signal),
+    storeSecret: (name, value) =>
+      post(routePath("storeSecret"), StoreSecretViewSchema, { name, value }),
     auditExport: async (filter, signal) => {
       const format: AuditExportFormat = filter?.format ?? "jsonl";
       const res = await raw({

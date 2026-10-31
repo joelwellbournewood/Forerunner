@@ -1,3 +1,4 @@
+import type { StorableSecretName } from "@forerunner/runtime/daemon/api-types";
 import { type FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type ExtensionView, type VoiceStatusView } from "../api/client.ts";
@@ -10,6 +11,7 @@ import {
   type ManagedPlace,
 } from "../api/contracts.ts";
 import { Dialog } from "../components/Dialog.tsx";
+import { SecretValueField, voiceKeyNameOf } from "../components/SecretValueField.tsx";
 import {
   Badge,
   Button,
@@ -437,6 +439,15 @@ function ExtensionRow({
         </div>
       </div>
       <p className="mt-1 text-neutral-600 dark:text-neutral-400">{e.description}</p>
+      {voiceKeyNameOf(e.permissions.secrets) ? (
+        <div className="mt-2 max-w-md">
+          <SecretValueField
+            name={voiceKeyNameOf(e.permissions.secrets) as StorableSecretName}
+            label={`${e.name.replace(/^voice-/, "")} API key`}
+            testId="extension-voice-key"
+          />
+        </div>
+      ) : null}
       {e.error ? <p className="mt-1 text-xs text-red-700 dark:text-red-300">{e.error}</p> : null}
       {pending && e.review ? (
         <div

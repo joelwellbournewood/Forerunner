@@ -66,8 +66,14 @@ runner-key import` (a cloud runner's key from a file), `fr vault set <name>` (an
 secret, for a connector's `secret:<name>` reference: the value from a piped stdin or a hidden
 prompt, never an argument; `assertSecretName` first, so a reserved name is refused; one
 `vault.set` audit row with the name and `stored` / `replaced`, never the value; runtime.md,
-"CLI", and adding-a-connector.md, "Secrets"), and `ensureInstallWrapKey` for the reserved
-install key.
+"CLI", and adding-a-connector.md, "Secrets"), `POST /secrets/store` (U-054: the app's password
+and key boxes; a closed allowlist, `STORABLE_SECRETS` in `runtime/src/secrets/store-types.ts`:
+the mailbox passwords `<agent>_imap_password` / `<agent>_smtp_password` and the cloud voice keys
+`deepgram_api_key`, `cartesia_api_key`, `elevenlabs_api_key`; a reserved name, the install's
+own credentials and anything else is a 400; a value with a control character, or an API key
+with a space, is refused without quoting it; one `secrets.store` audit row with the name; the
+value is never logged or answered, `GET /secrets/store` says only which names are stored), and
+`ensureInstallWrapKey` for the reserved install key.
 
 Per OS:
 

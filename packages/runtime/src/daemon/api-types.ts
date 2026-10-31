@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DEVICES_ROUTES } from "../devices/types.ts";
+import { SECRET_STORE_ROUTES } from "../secrets/store-types.ts";
 import { PLAN_ALLOWANCE_ROUTES, SETUP_ROUTES } from "../setup/types.ts";
 import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
 
@@ -14,6 +15,20 @@ export {
   RevokeDeviceView,
   StartPairingBody,
 } from "../devices/types.ts";
+/** Secrets the app stores (U-054): the mailbox passwords and the cloud voice keys. */
+export {
+  isStorableSecretName,
+  MAILBOX_PASSWORD_PATTERN,
+  mailboxPasswordName,
+  SECRET_STORE_ROUTES,
+  STORABLE_SECRET_NAMES,
+  STORABLE_SECRETS,
+  type StorableSecretName,
+  StoredSecretsView,
+  StoreSecretBody,
+  StoreSecretView,
+  storableSecretInfo,
+} from "../secrets/store-types.ts";
 /** The setup assistant's shapes (ADR 0092): the `/setup` routes' bodies and answers. */
 export {
   PLAN_ALLOWANCE_ROUTES,
@@ -1997,6 +2012,8 @@ export const DAEMON_ROUTES = {
   ...SETUP_ROUTES,
   // Settings -> Claude subscription allowance (U-052).
   ...PLAN_ALLOWANCE_ROUTES,
+  // The mailbox passwords and cloud voice keys typed in the app (U-054).
+  ...SECRET_STORE_ROUTES,
   // Settings -> Voice (ADR 0090): the voice profile, its install and progress.
   ...VOICE_INSTALL_ROUTES,
   dataAssets: "GET /projects/:id/data (DataAssetView[])",

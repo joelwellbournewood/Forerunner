@@ -27,6 +27,7 @@ import { providerCapabilities } from "../provider/types.ts";
 import { createSharedSecretRoutes } from "../secrets/routes.ts";
 import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
+import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import {
   applyProjectPlan,
@@ -629,6 +630,17 @@ export function createDaemonApp(
   // Shared secrets (spec S.13, ADR 0065): the owner proposes, lists and revokes grants of a
   // secret in this install's vault; the value is wrapped here and never in a body.
   app.route("/", createSharedSecretRoutes({ sharedSecrets: rt.sharedSecrets }));
+  // The mailbox passwords and cloud voice keys typed in the app (U-054): an allowlist, the
+  // value to the vault only.
+  app.route(
+    "/",
+    createSecretStoreRoutes({
+      vault: rt.vault,
+      clock: rt.clock,
+      store: rt.store,
+      humanId: rt.human.id,
+    }),
+  );
   // Cloud runner vault unlock (spec S.12, ADR 0068): the inbox's unlock card has the runner's
   // vault key wrapped to the challenge here, where the OS keyring is; the key never leaves.
   app.route(

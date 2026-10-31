@@ -45,12 +45,15 @@ import {
   CreateProjectBody,
   CreateTaskBody,
   EMAIL_MODES,
+  isStorableSecretName,
   KillBody,
   RenameAgentBody,
   RunnerUnlockWrapBody,
+  STORABLE_SECRET_NAMES,
   StartSessionBody,
   StartSessionView,
   StartVoiceSessionBody,
+  storableSecretInfo,
   TransitionTaskBody,
   VoiceAudioBody,
   VoiceHeardBody,
@@ -254,6 +257,8 @@ export interface FakeDaemonOptions {
 type Listener = (event: string, data: unknown) => void;
 
 export interface FakeDaemonState {
+  /** What `POST /secrets/store` kept, by name (U-054); the routes never send a value back. */
+  storedSecrets: Map<string, string>;
   /** `/agents`; `POST /agents/:id/rename` renames one of them (U-025). */
   agents: AgentView[];
   projects: ProjectCard[];
@@ -392,6 +397,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const nextId = (prefix: string) => `${prefix}_${++counter}`;
 
   const state: FakeDaemonState = {
+    storedSecrets: new Map(),
     agents: clone(AGENTS),
     projects: clone(PROJECTS),
     tasks: clone(TASKS),
@@ -3569,6 +3575,46 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     allowance.usdMonthly = Math.round((chfMonthly / allowanceRate) * 100) / 100;
     allowance.origin = "config";
     return c.json(allowanceView());
+  });
+  // The mailbox passwords and cloud voice keys typed in the app (U-054), mirroring
+  // packages/runtime/src/secrets/store-routes.ts: an allowlist, the value kept here for the
+  // tests to read (`state.storedSecrets`), never sent back.
+  app.get("/secrets/store", (c) => {
+    const asked = c.req.queries("name") ?? [];
+    const names = [
+      ...new Set([
+        ...STORABLE_SECRET_NAMES,
+        ...asked.filter((n) => isStorableSecretName(n) && !n.startsWith("forerunner.")),
+      ]),
+    ];
+    return c.json({
+      secrets: names.map((name) => ({
+        name,
+        label: storableSecretInfo(name).label,
+        stored: state.storedSecrets.has(name),
+      })),
+    });
+  });
+  app.post("/secrets/store", async (c) => {
+    const { name = "", value = "" } = (await c.req.json().catch(() => ({}))) as {
+      name?: string;
+      value?: string;
+    };
+    if (name.startsWith("forerunner.") || !isStorableSecretName(name)) {
+      return errorBody(c, 400, "validation", `"${name}" is not a secret the app stores.`);
+    }
+    const v = value.trim();
+    if (!v) return errorBody(c, 400, "validation", "The value is empty.");
+    if (/[\r\n]/.test(v)) {
+      return errorBody(
+        c,
+        400,
+        "validation",
+        "It has a line break inside, so it was not saved. Copy it again in one piece and paste it.",
+      );
+    }
+    state.storedSecrets.set(name, v);
+    return c.json({ name, stored: true, ref: `secret:${name}` });
   });
   app.post("/setup/finish", (c) => {
     const restarting = setup.restartNeeded;

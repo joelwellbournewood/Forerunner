@@ -335,6 +335,31 @@ describe("the UI client against the real daemon", () => {
     expect(answered.status).toBe("answered");
   });
 
+  it("secrets typed in the app: a mailbox password and a voice key stored by name, never sent back (U-054)", async () => {
+    const password = ["real", "daemon", "pass", "5".repeat(8)].join("-"); // not-a-secret
+    const before = await client.storedSecrets("critic_imap_password");
+    expect(before.secrets.map((s) => s.name)).toContain("agent_imap_password");
+    expect(before.secrets.find((s) => s.name === "critic_imap_password")?.stored).toBe(false);
+    const stored = await client.storeSecret("agent_imap_password", password);
+    expect(stored).toEqual({
+      name: "agent_imap_password",
+      stored: true,
+      ref: "secret:agent_imap_password",
+    });
+    expect(await rt.vault.get("agent_imap_password")).toBe(password);
+    const after = await client.storedSecrets();
+    expect(after.secrets.find((s) => s.name === "agent_imap_password")?.stored).toBe(true);
+    expect(JSON.stringify(after)).not.toContain(password);
+    const refused = await client.storeSecret("github_token", password).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(400);
+    expect((refused as ApiError).message).toContain("is not a secret the app stores");
+    expect(await rt.vault.has("github_token")).toBe(false);
+  });
+
   it("Settings' subscription allowance: CHF in, USD stored, read back in CHF (U-052)", async () => {
     const before = await client.planAllowance();
     expect(before).toMatchObject({ usdMonthly: 50, origin: "default", overridden: false });

@@ -140,10 +140,13 @@ the card's accept (or yes) button does in the Inbox, and **Reject** what its rev
 (or no) button does: the work goes back for another attempt with the findings to address.
 Speech on this PC is
 chosen in Settings → Voice (or `fr setup` from a source checkout): none, CPU (any PC, slower replies)
-or GPU (NVIDIA, fastest), each with its disk size shown. Without it, Talk says "install voice in
+or GPU (NVIDIA, fastest), each with its disk size shown. A cloud voice provider (Deepgram, Without it, Talk says "install voice in
 Settings → Voice" and why (while an install runs: wait for it to finish); type instead meanwhile.
 Email is set on the Email page (Settings → Capabilities → Email) and nowhere else; it is your
 agent's mailbox, so the page has a card for your agent only.
+Cartesia, ElevenLabs) is added in Extensions; paste its API key on its row there. The agent's
+mailbox password goes into the password box on Settings → Capabilities → Email. Both are kept
+in this computer's credential store and never shown again.
 
 In the conversation panel (the Talk button or the global hotkey) your words show as they are
 recognised and the agent's reply shows as it is written, the sentence being spoken
