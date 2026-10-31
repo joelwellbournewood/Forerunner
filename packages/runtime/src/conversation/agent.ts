@@ -448,7 +448,8 @@ export class ConversationAgent {
     // "undo" undoes the latest change the human can still undo (spec Q.11).
     if (this.deps.commands && UNDO_RE.test(req.text)) {
       const r = await this.deps.commands.undo(null, turn);
-      return finish(this.sentenceOf(r, "Undone"), this.actionsOf(r, ["undo"]));
+      // An undo that raises a limit waits for its confirmation like any change (U-057).
+      return this.replyForResult(r, ["undo"], turn, finish);
     }
 
     // Understanding (spec Q.2): deterministic patterns first; a combined request is one card.

@@ -67,6 +67,15 @@ export const autonomySet: CommandDef<AutonomySetParams> = {
       projectId: project.id,
     };
   },
+  // U-057: putting a higher level back asks as raising it would (one step a yes, more the
+  // paired device); an undo that lowers the level acts at once.
+  async undoRisk(_p, before, _after, ctx) {
+    const b = asObject(before);
+    if (typeof b.project_id !== "string" || typeof b.autonomy_level !== "number") return "low";
+    const project = await ctx.store.project.get(b.project_id);
+    if (!project || b.autonomy_level <= project.autonomy_level) return "low";
+    return riskOf(project.autonomy_level, b.autonomy_level);
+  },
   async undo(_p, before, _after, ctx) {
     const b = asObject(before);
     if (typeof b.project_id !== "string" || typeof b.autonomy_level !== "number") return;

@@ -233,6 +233,12 @@ export const modelSettingsSet: CommandDef<ModelSettingsSetParams> = {
       projectId: null,
     };
   },
+  // U-057: the value the undo puts back asks as setting it would (a tier or an effort, or
+  // fast speed, a yes); clearing an override acts at once.
+  async undoRisk(p, before) {
+    const value = asObject(before).value;
+    return riskOf({ ...p, value: (value ?? null) as ModelSettingsSetParams["value"] });
+  },
   async undo(_p, before, _after, ctx) {
     const b = asObject(before);
     if (

@@ -524,9 +524,18 @@ describe("the email settings routes on the daemon", () => {
         .filter((r) => r.notification.kind === "email_commands_off");
       expect(told).toHaveLength(toldBefore + 1);
     });
-    // The undo restores the mode and the commands the change turned off.
-    const undone = await json(
+    // The undo restores the mode and the commands the change turned off. Putting the wider
+    // mode back is high risk like setting it (U-057): it waits for the paired device.
+    const asked = await json(
       await req(`/changes/${String(done.changeLogId)}/undo`, { method: "POST" }),
+    );
+    expect(asked).toMatchObject({ status: "pending", decision: "needs_device" });
+    expect(await json(await req(settingsPath()))).toMatchObject({ settings: { mode: "off" } });
+    const undone = await json(
+      await req(`/commands/${String(asked.pendingId)}/confirm`, {
+        method: "POST",
+        body: JSON.stringify({ answer: "device", deviceId: phone.id, biometric: true }),
+      }),
     );
     expect(undone.status).toBe("done");
     expect(await json(await req(settingsPath()))).toMatchObject({

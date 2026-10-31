@@ -456,7 +456,7 @@ needs a device with biometric on a phone, agent self-limit, undo and undo after 
 06:00 revert with the clock, undo cancels the revert, resume after a restart, compose as one
 entry and its rollback, shared projects, the settings-screen path, another human's yes/tap/
 token/device and undo/revert refused, a double tap runs once, no email answer on the
-settings-screen path, a risen risk refused when the yes arrives), `security-commands.test.ts`
+settings-screen path, a risen risk refused when the yes arrives), `undo.test.ts` (U-057, U-061: the undo of a lowered monthly cap waits for the device and a chat yes is refused, also after a restart; an undo that narrows acts at once; the email mode and the model watch; an undo that cannot work refused in words with nothing changed; a cancelled task reopened, a moved-on task not moved back; a read note not taken back), `security-commands.test.ts`
 (the security review: the always-human commands carry the spec's risk, a pending card is not
 confirmed by the wrong kind of answer, a guessed email token or another actor, a web or runner
 device does not confirm a high-risk change without a second factor), `commands.test.ts` (the

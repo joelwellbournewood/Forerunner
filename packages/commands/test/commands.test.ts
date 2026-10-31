@@ -119,7 +119,9 @@ describe("budget.set", () => {
     const project = await w.store.project.mustGet(w.pharma.id);
     expect(project.settings[SESSION_CAP_KEY]).toBe(3_125_000);
     expect(project.settings[SESSION_CAP_CHF_KEY]).toBe(2_500_000);
-    done(await w.executor.undo(s.changeLogId, w.ctx()));
+    // Undoing the lowered cap raises it back to CHF 5: a raise asks for a yes, a tap gives it (U-057).
+    expect((await w.executor.undo(s.changeLogId, w.ctx())).status).toBe("pending");
+    done(await w.executor.undo(s.changeLogId, w.ctx(), { confirmation: tap(w.human.id) }));
     expect((await w.store.project.mustGet(w.pharma.id)).settings[SESSION_CAP_KEY]).toBeUndefined();
     await w.store.close();
   });
@@ -866,7 +868,10 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         w.human.id,
       ],
     ]);
-    done(await w.executor.undo(r.changeLogId, w.ctx()));
+    // The undo widens the mode again (and turns commands back on): high risk, the device (U-057).
+    const undo = await w.executor.undo(r.changeLogId, w.ctx());
+    expect(undo.status === "pending" && undo.decision).toBe("needs_device");
+    done(await w.executor.undo(r.changeLogId, w.ctx(), { confirmation: deviceOk(w.phone.id) }));
     expect(
       await w.store.extension.byName(EMAIL_EXTENSION_KIND, emailExtensionName(w.agent.id)),
     ).toMatchObject({

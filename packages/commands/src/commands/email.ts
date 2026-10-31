@@ -27,6 +27,14 @@ export const EMAIL_MODE_LABELS: Record<EmailMode, string> = {
   allowlist: "Allowlist",
   full_discretion: "Full discretion",
 };
+/** How wide a mode is, narrowest first: an undo to a wider mode is high risk (U-057). */
+export const EMAIL_MODE_RANK: Record<EmailMode, number> = {
+  off: 0,
+  read_only: 1,
+  draft_only: 2,
+  allowlist: 3,
+  full_discretion: 4,
+};
 export const EMAIL_EXTENSION_KIND = "capability" as const;
 export function emailExtensionName(agentId: string): string {
   return `email:${agentId}`;
@@ -212,6 +220,21 @@ export const emailModeSet: CommandDef<EmailModeSetParams> = {
       },
       sentence: sentenceOf(agent, current, p.mode, commandsSwitchedOff),
     };
+  },
+  // U-057: putting a wider mode back (or email commands back on) is the same high-risk change
+  // as setting it forward, confirmed on a paired device; an undo that narrows acts at once.
+  async undoRisk(_p, before, after, ctx) {
+    const b = asObject(before);
+    if (typeof b.agent_id !== "string" || typeof b.mode !== "string") return "low";
+    if (!(EMAIL_MODES as readonly string[]).includes(b.mode)) return "low";
+    const row = await ctx.store.extension.byName(
+      EMAIL_EXTENSION_KIND,
+      emailExtensionName(b.agent_id),
+    );
+    const restoresCommands = asObject(after).commands_switched_off === true && b.mode !== "off";
+    return EMAIL_MODE_RANK[b.mode as EmailMode] > EMAIL_MODE_RANK[modeOf(row)] || restoresCommands
+      ? "high"
+      : "low";
   },
   async undo(_p, before, after, ctx) {
     const b = asObject(before);

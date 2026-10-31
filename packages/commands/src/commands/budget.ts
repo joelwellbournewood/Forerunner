@@ -363,6 +363,49 @@ export const budgetSet: CommandDef<BudgetSetParams> = {
       projectId: project.id,
     };
   },
+  // U-057: putting the old cap back is a raise when the change lowered it. A raise asks as
+  // the forward change would (the monthly ceiling, or a cap above it: the paired device; a
+  // cap within it: a yes); an undo that lowers acts at once.
+  async undoRisk(_p, before, _after, ctx): Promise<Risk> {
+    const b = asObject(before);
+    const human = await ctx.store.human.mustGet(ctx.humanId);
+    const ceiling = await monthlyCeilingOf(human, ctx);
+    if (b.scope === "month") {
+      const restored = await monthlyCeilingOf(
+        {
+          ...human,
+          monthly_cap_usd_micro:
+            typeof b.monthly_cap_usd_micro === "number" ? b.monthly_cap_usd_micro : 0,
+          notify_prefs: {
+            ...human.notify_prefs,
+            [MONTHLY_CAP_CHF_KEY]:
+              typeof b.monthly_cap_chf_micro === "number" ? b.monthly_cap_chf_micro : null,
+          },
+        },
+        ctx,
+      );
+      return restored.usdMicro > ceiling.usdMicro ? "high" : "low";
+    }
+    const projectId = typeof b.project_id === "string" ? b.project_id : null;
+    const project = projectId ? await ctx.store.project.get(projectId) : undefined;
+    if (!project) return "low";
+    const raise = (restored: number, current: number): Risk =>
+      restored <= current ? "low" : restored > ceiling.usdMicro ? "high" : "medium";
+    if (b.scope === "project") {
+      const restored = typeof b.budget_usd_micro === "number" ? b.budget_usd_micro : 0;
+      return raise(restored, project.budget_usd_micro);
+    }
+    const current = await sessionBudgetOf(project, ctx);
+    const settings: JsonObject = { ...project.settings };
+    for (const key of [SESSION_OVERRIDE_KEY, SESSION_CAP_KEY, SESSION_CAP_CHF_KEY]) {
+      if (!(key in b)) continue;
+      const v = b[key];
+      if (v === null || v === undefined) delete settings[key];
+      else settings[key] = v;
+    }
+    const restored = await sessionBudgetOf({ ...project, settings }, ctx);
+    return raise(restored.usdMicro, current.usdMicro);
+  },
   async undo(_p, before, _after, ctx) {
     const b = asObject(before);
     const author = authorOf(ctx);

@@ -2,6 +2,7 @@ import type { PricingTable } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 // The module path, not the package index: the index imports this package back (a cycle).
 import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
+import { DEFAULT_CEILING, TIERS } from "@forerunner/runtime/models/ladder";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
@@ -29,6 +30,12 @@ export interface SettingSpec {
    * `allow_process_sandbox: true` is high (device confirmation), ADR 0089.
    */
   riskFor?: (value: unknown) => Risk;
+  /**
+   * The value `to` is the safe side of `from` (U-057): a lower default autonomy, fast mode off,
+   * fewer people, a lower model ceiling, less the model watch may do. An undo that puts such a
+   * value back acts at once; any other undo asks for the value's risk.
+   */
+  narrows?: (to: unknown, from: unknown) => boolean;
   schema: z.ZodType<JsonValue>;
   /** A column instead of the JSON bag, when the row has one. */
   column?: keyof ProjectRow | keyof HumanRow;
@@ -47,6 +54,17 @@ export interface SettingEffectContext {
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** The rung a ceiling names, `DEFAULT_CEILING` for unset: for comparing two ceilings. */
+const rungOf = (v: unknown): number =>
+  TIERS.indexOf((typeof v === "string" ? v : DEFAULT_CEILING) as (typeof TIERS)[number]);
+
+/** Every flag `to` turns on was on in `from` as well. */
+function flagsWithin(to: unknown, from: unknown): boolean {
+  const t = (to && typeof to === "object" ? to : {}) as Record<string, unknown>;
+  const f = (from && typeof from === "object" ? from : {}) as Record<string, unknown>;
+  return Object.keys(t).every((k) => t[k] !== true || f[k] === true);
+}
 const DAY_OF_MONTH = z.number().int().min(1).max(31);
 
 /**
@@ -134,11 +152,14 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
   },
   critic_ceiling: {
     key: "critic_ceiling",
-    label: "the critic model ceiling",
+    label: "the highest model",
     scope: "project",
     risk: "medium",
-    schema: z.string().min(1),
-    description: "Highest model rung the critic may use for the project.",
+    // A rung of the ladder (spec D.3); anything else would be ignored by every run.
+    schema: z.enum(TIERS as unknown as [string, ...string[]]),
+    narrows: (to, from) => rungOf(to) < rungOf(from),
+    description:
+      "Highest model rung the project's runs may use: the specialists, their retries, planning and the critic (default opus; fable only where set).",
   },
   session_reserve_share: {
     key: "session_reserve_share",
@@ -166,6 +187,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     // It raises what every Opus call of the project costs: a yes before it changes.
     risk: "medium",
     schema: z.boolean(),
+    narrows: (to) => to !== true,
     description:
       "Opus fast mode for urgent work (API only, priced separately): Opus runs of the project on an API key ask for the fast variant.",
     // Spec D.20, ADR 0057: the effect and the surcharge both ways, from the price table.
@@ -178,6 +200,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     scope: "project",
     risk: "high",
     schema: z.array(z.string()),
+    narrows: (to, from) =>
+      (Array.isArray(to) ? to : []).every((id) => Array.isArray(from) && from.includes(id)),
     description: "Human ids that see the project's data and change sentences.",
   },
   quiet_hours: {
@@ -212,6 +236,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     scope: "global",
     risk: "medium",
     schema: z.number().int().min(0).max(4),
+    narrows: (to, from) => typeof to === "number" && typeof from === "number" && to < from,
     column: "default_autonomy",
     description: "Autonomy level new projects start with.",
   },
@@ -230,6 +255,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     scope: "global",
     risk: "medium",
     schema: CalibrationSetting as unknown as z.ZodType<JsonValue>,
+    // Off spends nothing: an undo that turns the monthly run off acts at once.
+    narrows: (to) => (to as { enabled?: unknown } | null)?.enabled === false,
     description:
       "Monthly critic calibration over the golden eval sets: enabled (default on), day of month, local time, budget_usd cap, tier, specialists.",
     effect: (value) => {
@@ -252,6 +279,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
         ? "high"
         : "medium",
     schema: ModelWatchSetting as unknown as z.ZodType<JsonValue>,
+    narrows: flagsWithin,
     description:
       "Model watch (ADR 0089): run_evals runs the paid eval sets on every weekly run without asking (default off); allow_process_sandbox lets eval tasks run commands in the process stand-in when no container engine exists (default off).",
     effect: (value) => {
@@ -270,6 +298,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     scope: "project",
     risk: "medium",
     schema: HandoverSetting as unknown as z.ZodType<JsonValue>,
+    // Unset or off runs nothing (the test is off until enabled).
+    narrows: (to) => (to as { enabled?: unknown } | null)?.enabled !== true,
     description:
       "Monthly handover test on the project: a fresh agent with only the repo and docs makes a seeded change; where it got stuck becomes a docs task. enabled, day, time, budget_usd, seed.",
     effect: (value) => {
@@ -442,6 +472,16 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
       sentence: sentenceOf(t),
       projectId: t.project?.id ?? null,
     };
+  },
+  // U-057: the value the undo puts back asks for what setting it would (process sandbox for
+  // the evals: the paired device; a medium key: a yes); the safe side (`narrows`) acts at once.
+  async undoRisk(_p, before, after) {
+    const b = asObject(before);
+    if (typeof b.key !== "string" || !Object.hasOwn(SETTING_SPECS, b.key)) return "low";
+    const spec = settingSpec(b.key);
+    const restored = b.value ?? null;
+    if (spec.narrows?.(restored, asObject(after).value ?? null)) return "low";
+    return settingRisk(spec, restored);
   },
   async undo(_p, before, _after, ctx) {
     const b = asObject(before);

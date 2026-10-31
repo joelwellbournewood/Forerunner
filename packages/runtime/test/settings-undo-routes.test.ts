@@ -87,6 +87,42 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     await rt?.close();
   });
 
+  it("U-057: undoing a lowered monthly cap waits for this PC's confirmation; a tap is refused", async () => {
+    const capNow = async () => (await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro;
+    const originalCap = await capNow();
+    const lowered = await execute(
+      [{ name: "budget.set", params: { scope: "month", amountChf: 100 } }],
+      { confirm: "tap" },
+    );
+    expect(lowered.status).toBe("done");
+    const undo = CommandResultViewSchema.parse(await post(`/changes/${lowered.changeLogId}/undo`));
+    expect(undo.status).toBe("pending");
+    expect(undo.decision).toBe("needs_device");
+    // The Inbox shows it with the device's options.
+    const inbox = (await get(`/inbox?humanId=${rt.human.id}`)) as {
+      requests: { id: string; options: unknown[]; risk: string }[];
+    };
+    expect(inbox.requests.find((r) => r.id === undo.pendingId)).toMatchObject({
+      options: ["approve on device", "reject"],
+      risk: "high",
+    });
+    const lowCap = await capNow();
+    expect(lowCap).toBeLessThan(originalCap);
+    const tap = CommandResultViewSchema.parse(
+      await post(`/commands/${undo.pendingId}/confirm`, { answer: "tap" }),
+    );
+    expect(tap.status).toBe("refused");
+    expect(await capNow()).toBe(lowCap);
+    const device = CommandResultViewSchema.parse(
+      await post(`/commands/${undo.pendingId}/confirm`, { answer: "device" }),
+    );
+    expect(device.status).toBe("done");
+    expect(device.sentence).toMatch(/^Undone: the monthly cap is back to CHF 150(\.\d\d)?\.$/);
+    expect(await capNow()).toBe(originalCap);
+    // Logged with its real source: the Changes screen is `ui`.
+    expect((await rt.store.changeLog.mustGet(device.changeLogId ?? "")).source).toBe("ui");
+  });
+
   it("U-061: a move in the Tasks tab is in the change log with Undo; a cancel is reopened", async () => {
     const project = await createProject("Epsilon");
     const task = await rt.store.task.insert({

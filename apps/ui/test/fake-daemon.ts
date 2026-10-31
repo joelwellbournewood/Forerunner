@@ -3028,11 +3028,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         return refuse("budget.set: amountChf must be a positive number");
       }
       if (scope === "month") {
-        const fromChf = ME.monthlyCap.chfMicro / 1_000_000;
+        const fromChf = me.monthlyCap.chfMicro / 1_000_000;
+        const raise = amountChf > fromChf;
+        const monthRisk: Risk = raise ? "high" : "medium";
         return {
           name,
           params,
-          risk: "high",
+          risk: monthRisk,
           card: card(
             {
               command: name,
@@ -3040,14 +3042,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               oldValue: `CHF ${fromChf}`,
               newValue: `CHF ${amountChf}`,
               scope: "global",
-              sentence: `Raised the monthly hard ceiling from CHF ${fromChf} to CHF ${amountChf}. Undo.`,
+              sentence: `${raise ? "Raised" : "Lowered"} the monthly hard ceiling from CHF ${fromChf} to CHF ${amountChf}. Undo.`,
             },
-            "high",
+            monthRisk,
           ),
-          apply: () => ({
-            before: { monthlyCapChf: fromChf },
-            after: { monthlyCapChf: amountChf },
-          }),
+          apply: () => {
+            me.monthlyCap = money(Math.round((amountChf * 1_000_000) / 0.8));
+            return {
+              before: { monthlyCapChf: fromChf },
+              after: { monthlyCapChf: amountChf },
+            };
+          },
         };
       }
       const project = projectByRef(projectRef);

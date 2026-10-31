@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { ExecuteResult } from "../src/index.ts";
+import {
+  CommandExecutor,
+  EMAIL_EXTENSION_KIND,
+  type ExecuteResult,
+  emailExtensionName,
+} from "../src/index.ts";
 import { world } from "./helpers.ts";
 
 /**
@@ -12,7 +17,7 @@ function done(r: ExecuteResult): Extract<ExecuteResult, { status: "done" }> {
   if (r.status !== "done") throw new Error(`expected done, got ${r.status}: ${JSON.stringify(r)}`);
   return r;
 }
-function _pending(r: ExecuteResult): Extract<ExecuteResult, { status: "pending" }> {
+function pending(r: ExecuteResult): Extract<ExecuteResult, { status: "pending" }> {
   if (r.status !== "pending")
     throw new Error(`expected pending, got ${r.status}: ${JSON.stringify(r)}`);
   return r;
@@ -24,6 +29,177 @@ function refused(r: ExecuteResult): Extract<ExecuteResult, { status: "refused" }
 const tap = (humanId: string) => ({
   kind: "tap" as const,
   by: { kind: "human" as const, id: humanId },
+});
+
+describe("undo asks for the confirmation of the value it restores (U-057)", () => {
+  it("undoing a lowered monthly cap is a raise: it waits for this PC, and a chat yes is not enough", async () => {
+    const w = await world();
+    // CHF 150 (the default ceiling) lowered to CHF 100: medium, a tap confirms it.
+    const lowered = done(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 100 },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    const capAfterLowering = (await w.store.human.mustGet(w.human.id)).monthly_cap_usd_micro;
+    expect(capAfterLowering).toBe(125_000_000);
+
+    const p = pending(await w.executor.undo(lowered.changeLogId, w.ctx({ source: "ui" })));
+    expect(p.decision).toBe("needs_device");
+    expect(p.card.command).toBe("undo");
+    expect(p.card.impact.risk).toBe("high");
+    expect(p.card.oldValue).toBe("CHF 100");
+    expect(p.card.newValue).toBe("CHF 150");
+    expect(p.readback).toContain("Confirm in the app on a paired device");
+    // The Inbox shows the undo as a high-risk approval with the device's options.
+    const request = await w.store.humanRequest.mustGet(p.pendingId);
+    expect(request).toMatchObject({ kind: "approval", risk: "high", status: "open" });
+    expect(request.options).toEqual(["approve on device", "reject"]);
+    // Nothing changed yet, and the row is still undoable.
+    expect((await w.store.human.mustGet(w.human.id)).monthly_cap_usd_micro).toBe(125_000_000);
+    expect((await w.store.changeLog.mustGet(lowered.changeLogId)).undo_state).toBe("undoable");
+
+    // A typed yes is refused for a high-risk change; the card stays open.
+    const chatYes = refused(
+      await w.executor.confirmByText(p.pendingId, "yes", { kind: "human", id: w.human.id }),
+    );
+    expect(chatYes.reason).toMatch(/paired device/);
+    expect((await w.store.human.mustGet(w.human.id)).monthly_cap_usd_micro).toBe(125_000_000);
+
+    // This PC (the desktop device row) confirms; the cap is back and the row is undone.
+    const r = done(
+      await w.executor.confirmFromDevice(p.pendingId, { deviceId: w.desktop.id, biometric: false }),
+    );
+    expect(r.sentence).toBe("Undone: the monthly cap is back to CHF 150.");
+    const human = await w.store.human.mustGet(w.human.id);
+    expect(human.monthly_cap_usd_micro).toBe(0);
+    expect((await w.store.changeLog.mustGet(lowered.changeLogId)).undo_state).toBe("undone");
+    const undoRow = await w.store.changeLog.mustGet(r.changeLogId);
+    expect(undoRow.source).toBe("ui");
+    await w.store.close();
+  });
+
+  it("an undo that lowers a cap acts at once, as before", async () => {
+    const w = await world();
+    const raised = done(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "session", amountChf: 20 },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    const u = done(await w.executor.undo(raised.changeLogId, w.ctx()));
+    expect(u.sentence).toBe("Undone: the session budget for PharmaWatch is back to CHF 5.");
+    await w.store.close();
+  });
+
+  it("after a restart (no card in memory) the undo of a lowered cap still waits for the device", async () => {
+    const w = await world();
+    const lowered = done(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 100 },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    const fresh = new CommandExecutor({ registry: w.registry, store: w.store, clock: w.clock });
+    const p = pending(await fresh.undo(lowered.changeLogId, w.ctx()));
+    expect(p.decision).toBe("needs_device");
+    expect(p.card.what).toBe("undo: Lowered the monthly cap from CHF 150 to CHF 100.");
+    done(await fresh.confirmFromDevice(p.pendingId, { deviceId: w.phone.id, biometric: true }));
+    expect((await w.store.human.mustGet(w.human.id)).monthly_cap_usd_micro).toBe(0);
+    fresh.stop();
+    await w.store.close();
+  });
+
+  it("undoing a switch of the email mode to a narrower one puts the wider mode back only on the device", async () => {
+    const w = await world();
+    await w.store.extension.insert({
+      kind: EMAIL_EXTENSION_KIND,
+      name: emailExtensionName(w.agent.id),
+      enabled: true,
+      permissions: ["email:full_discretion"],
+      config: { settings: { mode: "full_discretion" }, commands: {} },
+      author_agent: w.agent.id,
+    });
+    const narrowed = done(
+      await w.executor.execute({
+        name: "email.mode.set",
+        params: { mode: "draft_only" },
+        ctx: w.ctx(),
+        confirmation: { kind: "device", deviceId: w.desktop.id, biometric: false },
+      }),
+    );
+    const p = pending(await w.executor.undo(narrowed.changeLogId, w.ctx()));
+    expect(p.decision).toBe("needs_device");
+    const modeNow = async () => {
+      const row = await w.store.extension.byName(
+        EMAIL_EXTENSION_KIND,
+        emailExtensionName(w.agent.id),
+      );
+      return (row?.config as { settings?: { mode?: string } } | undefined)?.settings?.mode;
+    };
+    expect(await modeNow()).toBe("draft_only");
+    // "reject" in the Inbox is a no: nothing changes and the row can still be undone later.
+    expect((await w.executor.cancel(p.pendingId, { kind: "human", id: w.human.id })).status).toBe(
+      "cancelled",
+    );
+    expect(await modeNow()).toBe("draft_only");
+    expect((await w.store.changeLog.mustGet(narrowed.changeLogId)).undo_state).toBe("undoable");
+    await w.store.close();
+  });
+
+  it("undoing a widening of the email mode narrows it at once", async () => {
+    const w = await world();
+    const widened = done(
+      await w.executor.execute({
+        name: "email.mode.set",
+        params: { mode: "allowlist" },
+        ctx: w.ctx(),
+        confirmation: { kind: "device", deviceId: w.desktop.id, biometric: false },
+      }),
+    );
+    done(await w.executor.undo(widened.changeLogId, w.ctx()));
+    await w.store.close();
+  });
+
+  it("undoing a lowered autonomy asks as raising it would", async () => {
+    const w = await world();
+    const lowered = done(
+      await w.executor.execute({
+        name: "autonomy.set",
+        params: { level: 1 },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    const p = pending(await w.executor.undo(lowered.changeLogId, w.ctx()));
+    expect(p.decision).toBe("needs_yes");
+    done(await w.executor.confirm(p.pendingId, tap(w.human.id)));
+    expect((await w.store.project.mustGet(w.pharma.id)).autonomy_level).toBe(2);
+    await w.store.close();
+  });
+
+  it("undoing a change to the model watch puts the process sandbox back only on the device", async () => {
+    const w = await world();
+    await w.store.human.update(w.human.id, (await w.store.human.mustGet(w.human.id)).version, {
+      notify_prefs: { model_watch: { run_evals: true, allow_process_sandbox: true } },
+    });
+    const off = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "model_watch", value: { run_evals: false, allow_process_sandbox: false } },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    expect(pending(await w.executor.undo(off.changeLogId, w.ctx())).decision).toBe("needs_device");
+    await w.store.close();
+  });
 });
 
 describe("undo says when it cannot work (U-061)", () => {

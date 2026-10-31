@@ -466,11 +466,15 @@ export function SettingChangeDialog({
                   setBusy(true);
                   try {
                     const r = await client.undoChange(changeLogId);
-                    setUndoNote(
-                      r.status === "done"
-                        ? (r.sentence ?? "Undone.")
-                        : `Undo ${r.status}: ${r.reason ?? ""}`,
-                    );
+                    // An undo that raises a limit comes back with its card (U-057): the
+                    // dialog shows it like any change waiting for a confirmation.
+                    if (r.status === "pending") setResult(r);
+                    else
+                      setUndoNote(
+                        r.status === "done"
+                          ? (r.sentence ?? "Undone.")
+                          : `Not undone: ${r.reason ?? r.status}`,
+                      );
                   } catch (err) {
                     setError(describeError(err));
                   } finally {

@@ -818,6 +818,22 @@ describe("the UI client against the real daemon: a task a session is running", (
     });
   });
 
+  it("undo of a lowered monthly cap waits for this PC; Changes logs it as ui (U-057, U-061)", async () => {
+    const lowered = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 90 } }],
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(lowered.status).toBe("done");
+    const undo = await client.undoChange(lowered.changeLogId ?? "");
+    expect(undo).toMatchObject({ status: "pending", decision: "needs_device" });
+    const confirmed = await client.confirmCommand(undo.pendingId ?? "", { answer: "device" });
+    expect(confirmed.status).toBe("done");
+    const rows = await client.changes({});
+    expect(rows.find((r) => r.id === confirmed.changeLogId)?.source).toBe("ui");
+    expect(rows.find((r) => r.id === lowered.changeLogId)?.undoState).toBe("undone");
+  });
+
   it("a task move is logged with Undo; an undo that cannot work says why (U-061)", async () => {
     const task = await client.createTask(projectId, {
       title: "Move me",
