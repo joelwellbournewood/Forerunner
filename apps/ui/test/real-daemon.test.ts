@@ -238,4 +238,35 @@ describe("the UI client against the real daemon", () => {
     expect(await cardsFor(denyMe.id)).toEqual([]);
     expect((await client.extensions()).map((e) => e.id)).not.toContain(denyMe.id);
   });
+
+  it("answering a request: an answer that is none of a card's options is refused with them, the card stays (U-034)", async () => {
+    const card = await rt.store.humanRequest.insert({
+      human_id: humanId,
+      project_id: projectId,
+      kind: "approval",
+      why: "The task cannot close: one critic finding is still open",
+      steps: [],
+      options: ["rework", "accept", "cancel"],
+      blocking: true,
+      risk: "medium",
+      change_card: { key: "findings:blocked", applied_at: null },
+    });
+    const refused = await client
+      .answerRequest(card.id, { version: card.version, answer: "maybe next week" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect(refused).toMatchObject({ status: 400, code: "validation" });
+    expect((refused as ApiError).message).toContain("Choose one of: rework, accept, cancel");
+    const inbox = await client.inbox(humanId);
+    const still = inbox.requests.find((r) => r.id === card.id);
+    expect(still?.status).toBe("open");
+    const answered = await client.answerRequest(card.id, {
+      version: still?.version ?? card.version,
+      answer: "Rework",
+    });
+    expect(answered.status).toBe("answered");
+  });
 });

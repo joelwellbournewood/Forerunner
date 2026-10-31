@@ -293,6 +293,7 @@ import {
   notificationEmailPort,
   SecretCheckedChannel,
 } from "../wiring/notification-ports.ts";
+import { assertAnswerAccepted } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { specialistCommandPort } from "../wiring/specialist-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
@@ -2676,6 +2677,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           logger.warn("answer not applied yet", { requestId, error: errorMessage(e) });
         }
       },
+      // U-034: the answer routes' check, so a word a structured card cannot act on is refused
+      // in chat and voice too, with the card's options, and the card stays open.
+      checkAnswer: (request, answer) => assertAnswerAccepted(request, answer),
       // project.create by chat, voice or the palette (spec G.5, ADR 0058): the standard doc
       // set the dashboard's create scaffolds, in the background so the reply does not wait
       // for a clone; the outcome lands on the row (`summary_cache.docs`) as it does there.

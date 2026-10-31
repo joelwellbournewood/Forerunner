@@ -1,4 +1,5 @@
 import { applySharedGrantAnswer } from "@forerunner/runtime/secrets/shared-grants";
+import { assertAnswerAccepted } from "@forerunner/runtime/wiring/request-answers";
 import { DecisionLog } from "@forerunner/runtime/wiring/state-ports";
 import type { HumanRequestRow, MessageRow } from "@forerunner/state";
 import { MESSAGE_TYPES } from "@forerunner/state";
@@ -148,6 +149,10 @@ export async function answerRequestAs(
   const current = await ctx.store.humanRequest.get(id);
   if (!current) throw notFound("request", id);
   assertRequestOwner(p, current);
+  // U-034: the same check as the daemon's answer route. An answer a structured card cannot act
+  // on is a 400 `validation` listing the options, and the request stays open; this covers the
+  // phone's Inbox, its offline queue (`/sync/outbox`) and the approvals page.
+  if (current.status === "open") assertAnswerAccepted(current, answer);
   // Spec R.7 / Q.8: high-risk confirmations need the device signature plus biometric.
   const cardRisk =
     current.change_card && typeof current.change_card.risk === "string"

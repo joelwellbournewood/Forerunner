@@ -45,6 +45,7 @@ import {
 } from "../provider/types.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
+import { intakeAnswer } from "../wiring/request-answers.ts";
 import { markAnswer } from "./answer-mark.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import {
@@ -364,29 +365,11 @@ function cut(text: string, max = MAX_AUDIT_SUMMARY_CHARS): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-/** The word of an inbox answer: the string itself, or the `choice` / `answer` of an object. */
-function answerWord(answer: JsonValue | null): string | null {
-  const raw =
-    typeof answer === "string"
-      ? answer
-      : answer && typeof answer === "object" && !Array.isArray(answer)
-        ? ((answer as JsonObject).choice ?? (answer as JsonObject).answer)
-        : null;
-  if (typeof raw !== "string") return null;
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_-]+/g, " ");
-}
-
-/** The answer of an intake request as one of its options, or null. */
-export function intakeAnswer(answer: JsonValue | null): "approve" | "reject" | null {
-  const v = answerWord(answer);
-  if (v === null) return null;
-  if (/^(approve|approved|accept|accepted|yes|ok|apply|go)$/.test(v)) return "approve";
-  if (/^(reject|rejected|no|decline|declined|deny|denied|drop|cancel)$/.test(v)) return "reject";
-  return null;
-}
+/**
+ * The answer of an intake request as one of its options, or null. The reader lives in
+ * `wiring/request-answers.ts`, where the answer routes refuse an answer it cannot read (U-034).
+ */
+export { intakeAnswer };
 
 function keyOf(r: HumanRequestRow): string | undefined {
   const key = (r.change_card as JsonObject | null)?.key;

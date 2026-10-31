@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
-import type { HumanRequestRow, JsonObject, JsonValue, StateStore } from "@forerunner/state";
+import type { HumanRequestRow, JsonObject, StateStore } from "@forerunner/state";
+import { planAnswer } from "../wiring/request-answers.ts";
 import { answerApplied, markAnswer } from "./answer-mark.ts";
 import { unappliedAnswers } from "./findings.ts";
 import { reportLateStartFailure } from "./late-approval.ts";
@@ -78,22 +79,11 @@ export function approvedPlanIdOf(row: Pick<HumanRequestRow, "change_card">): str
   return typeof id === "string" && PLAN_ID_RE.test(id) ? id : null;
 }
 
-/** The answer of a plan request as one of its options, or null. */
-export function planAnswer(answer: JsonValue | null): PlanAnswer | null {
-  const raw =
-    typeof answer === "string"
-      ? answer
-      : answer && typeof answer === "object" && !Array.isArray(answer)
-        ? ((answer as JsonObject).option ??
-          (answer as JsonObject).choice ??
-          (answer as JsonObject).answer)
-        : null;
-  if (typeof raw !== "string") return null;
-  const v = raw.trim().toLowerCase();
-  if (/^(approve|approved|yes|run|go|ok)$/.test(v)) return "approve";
-  if (/^(reject|rejected|no|deny|denied|cancel|drop)$/.test(v)) return "reject";
-  return null;
-}
+/**
+ * The answer of a plan request as one of its options, or null. The reader lives in
+ * `wiring/request-answers.ts`, where the answer routes refuse an answer it cannot read (U-034).
+ */
+export { planAnswer };
 
 /**
  * What a start's `planApproved` says about the plan computed now: `approved` (a bare `true`,

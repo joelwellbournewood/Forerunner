@@ -35,6 +35,7 @@ import type { ProviderRegistry } from "../provider/registry.ts";
 import type { EffortLevel, ModelRef, ModelTier } from "../provider/types.ts";
 import type { SpecialistDef } from "../registry/types.ts";
 import type { Schedule, Scheduler, StartRequest } from "../session/triggers.ts";
+import { modelWatchAnswerOf } from "../wiring/request-answers.ts";
 import type { LadderRung, Mode } from "./ladder.ts";
 import type { PriceList, PriceListSource } from "./price-list.ts";
 import {
@@ -2207,34 +2208,16 @@ export function formatModelWatchReport(
 
 export const MODEL_WATCH_REQUEST_PREFIX = "model_watch:";
 
-/** Parse a human's answer on a model watch HumanRequest; null when it is not readable. */
+/**
+ * Parse a human's answer on a model watch HumanRequest; null when it is not readable. The
+ * words are read by `modelWatchAnswerOf` (`wiring/request-answers.ts`), which the answer
+ * routes use to refuse an answer it cannot read (U-034).
+ */
 export function answerFromHumanRequest(row: HumanRequestRow): ModelWatchAnswer | null {
-  const by = row.answered_by ?? undefined;
-  const raw = row.answer;
-  const decisionOf = (s: string): ModelWatchDecision | null => {
-    const t = s.trim().toLowerCase();
-    if (/^(adopt|yes|approve|approved|ok)\b/.test(t)) return "adopt";
-    if (/^(evaluate|run (the )?eval(uation)?s?)\b/.test(t)) return "evaluate";
-    if (/^(ignore|no|reject|dismiss)\b/.test(t)) return "ignore";
-    if (/^(remind|later|next week|snooze)\b/.test(t)) return "remind";
-    return null;
-  };
-  if (typeof raw === "string") {
-    const decision = decisionOf(raw);
-    return decision ? { decision, by } : null;
-  }
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    const o = raw as { decision?: unknown; choice?: unknown; answer?: unknown; adopt?: unknown };
-    const chosen = o.decision ?? o.choice ?? o.answer;
-    if (typeof chosen !== "string") return null;
-    const decision = decisionOf(chosen);
-    if (!decision) return null;
-    const adopt = Array.isArray(o.adopt)
-      ? o.adopt.filter((x): x is string => typeof x === "string")
-      : undefined;
-    return { decision, by, ...(adopt ? { adopt } : {}) };
-  }
-  return null;
+  const parsed = modelWatchAnswerOf(row.answer);
+  if (!parsed) return null;
+  const { decision, adopt } = parsed;
+  return { decision, by: row.answered_by ?? undefined, ...(adopt ? { adopt } : {}) };
 }
 
 /** Opens a non-blocking decision request; the answer arrives later through syncPendingAnswers(). */

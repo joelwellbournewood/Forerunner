@@ -247,6 +247,12 @@ prefixed with the asking human's name. A failed post never undoes the change.
 `request.answer` also calls `ports.requestAnswered(requestId)` once the answer is recorded: the
 daemon applies it at once (its `syncApprovals`), as its answer route does, so an approved plan
 said in chat or voice starts its follow-up without waiting for a poll (ADR 0053 amendment).
+Before that, in `plan` (so before any confirmation is asked for) and again in `run`, it calls
+`ports.checkAnswer(request, answer)` (U-034): the daemon wires the runtime's
+`assertAnswerAccepted` (`runtime.md`, "Answers as the person gives them"), so a word a
+structured card cannot act on ("maybe later" on a sign-off) is refused with a `validation`
+error whose reason lists the card's options, and the request stays open, as on the daemon's
+and the state service's answer routes. Without the port any answer is taken.
 
 `compose(calls, ctx)` is the bespoke request: every call is validated and planned (a
 `project.switch` earlier in the plan makes later steps apply to the new project), the cards

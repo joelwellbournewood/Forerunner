@@ -51,6 +51,9 @@ export const requestAnswer: CommandDef<RequestAnswerParams> = {
         details: { id: r.id },
       });
     }
+    // U-034: a word the card cannot act on is refused here, before a confirmation is asked
+    // for, with the card's options in the reason; the request stays open.
+    ctx.ports.checkAnswer?.(r, p.answer);
     const project = r.project_id ? await ctx.store.project.get(r.project_id) : undefined;
     return buildCard({
       command: "request.answer",
@@ -67,6 +70,7 @@ export const requestAnswer: CommandDef<RequestAnswerParams> = {
   },
   async run(p, ctx) {
     const r = await findRequest(p, ctx);
+    if (r.status === "open") ctx.ports.checkAnswer?.(r, p.answer);
     await ctx.store.humanRequest.answer(r.id, r.version, p.answer, ctx.humanId);
     await ctx.ports.requestAnswered?.(r.id);
     return {

@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { PricingTable } from "@forerunner/billing";
 import { type Clock, errorMessage, ForerunnerError, join, log } from "@forerunner/platform";
-import type { HumanRequestRow, JsonObject, JsonValue, StateStore } from "@forerunner/state";
+import type { HumanRequestRow, JsonObject, StateStore } from "@forerunner/state";
 import { loadEvalTasksLite, PROCESS_SANDBOX_REFUSED } from "../models/eval-runner.ts";
 import type { EvalRunnerPort, EvalRunOutcome } from "../models/watch.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import { isPidAlive } from "../update/lock.ts";
+import { specialistAnswer } from "../wiring/request-answers.ts";
 import {
   countEvalTasks,
   EVALS_DIR,
@@ -252,22 +253,11 @@ export function specialistOfRequest(row: Pick<HumanRequestRow, "change_card">): 
     : null;
 }
 
-/** The answer as one of the options, or null. */
-export function specialistAnswer(answer: JsonValue | null): SpecialistAnswer | null {
-  const raw =
-    typeof answer === "string"
-      ? answer
-      : answer && typeof answer === "object" && !Array.isArray(answer)
-        ? ((answer as JsonObject).option ??
-          (answer as JsonObject).choice ??
-          (answer as JsonObject).answer)
-        : null;
-  if (typeof raw !== "string") return null;
-  const v = raw.trim().toLowerCase();
-  if (/^(approve|approved|yes|activate|ok)$/.test(v)) return "approve";
-  if (/^(reject|rejected|no|deny|denied|withdraw|drop)$/.test(v)) return "reject";
-  return null;
-}
+/**
+ * The answer as one of the options, or null. The reader lives in `wiring/request-answers.ts`,
+ * where the answer routes refuse an answer it cannot read (U-034).
+ */
+export { specialistAnswer };
 
 /** Whether a run outcome passes the gate, and why not. Pure; the threshold is ADR 0071's. */
 export function gateVerdict(

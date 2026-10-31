@@ -1108,6 +1108,38 @@ the task); a request without options takes the verdict's word; null when no opti
 verdict (the request stays open for the Inbox). `optionLabel` moved here from
 `daemon/views.ts`, which re-exports it.
 
+**Which answers a card can act on (U-034).** `acceptsAnswer(request, answer)` says whether a
+request can act on an answer, and if not the options to choose from;
+`assertAnswerAccepted` throws it as a `validation` `ForerunnerError` (`details.reason:
+"not_an_option"`, `details.options`, the message "… Choose one of: Approve, Deny."). Before,
+a typed answer that matched no option closed the card (the request became `answered`) and the
+sync recorded `unrecognized_answer`, so the task sat in `in_review` / `needs_human` with no
+card left. The rules:
+
+- A card with its own reader takes exactly what that reader takes: the sign-off
+  (`signoffAnswer`), blocked findings (`blockedFindingsAnswer`), session plan (`planAnswer`),
+  intake (`intakeAnswer`), specialist proposal (`specialistAnswer`) and model watch
+  (`modelWatchAnswerOf`), found by `change_card.key` (`ANSWER_CARD_KEYS`; a test asserts each
+  equals its producer's constant). These readers live in this module (it imports only types
+  beyond `@forerunner/platform`, so the UI's stand-in daemon loads it in a browser
+  environment) and are re-exported from `session/findings.ts`, `session/intake.ts`,
+  `session/plan-approval.ts`, `registry/approval.ts`; `models/watch.ts`'s
+  `answerFromHumanRequest` calls `modelWatchAnswerOf`.
+- Any other `approval` with options takes one of its option labels (case, surrounding spaces,
+  `_` and `-` do not matter) and, with exactly two options, the words every two-option reader
+  reads the same way (`yes`, `approve`, `approved`, `no`, `deny`, `denied`, `reject`,
+  `rejected`); words only some readers take (`ok`, `y`) are refused rather than read as a yes
+  by one card and a no by the next (the mirror reads "ok" as a no).
+- Free text stays: a request without options, a `decision` (a question; the decision log
+  records the words), `info`, a `credential` (the runner unlock's answer is the wrapped key).
+
+Used by the daemon's `POST /requests/:id/answer` (a 400 `validation`, the request untouched),
+the state service's `answerRequestAs` (its answer route, the phone's offline queue and the
+review verdicts; `state-service.md`), and the `request.answer` command through the
+`checkAnswer` port (chat, voice, the palette; `commands.md`). A card added with its own
+reader registers it in `READERS`; one without a reader that is an `approval` gets the option
+rule.
+
 ### Message receipts (spec F)
 
 Every message carries delivered, read and acted-on timestamps. The runner marks what the brief
@@ -2232,7 +2264,10 @@ permission 403); the body is `{ error, code, details }` with secrets redacted. N
 queries (`?limit=`, `?afterSeq=`) go through one validator, `intQuery`, as the state service's
 `intParam` does: anything but a non-negative integer is a 400 (`validation`, `reason:
 "bad_query"`) before any store call, never a NaN that fails in SQL and comes back as a 500
-carrying the driver's text. On a shared state the daemon acts as its own human only (ADR 0041
+carrying the driver's text. An answer an open structured card cannot act on (U-034,
+`assertAnswerAccepted`, `reason: "not_an_option"`) is a 400 as well, its message listing the
+options, the request untouched (`answer-options-daemon.test.ts`; the UI's
+`real-daemon.test.ts` and `inbox.test.tsx` see it under the card). On a shared state the daemon acts as its own human only (ADR 0041
 item 4, the way the state service forces a device's own human): `GET /inbox?humanId=` naming
 another human, `POST /requests/:id/answer` on a request whose `human_id` is another human's,
 and `POST /messages/:id/read` on a message whose addressee (its human, or the owner of the

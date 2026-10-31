@@ -60,6 +60,38 @@ describe("Inbox", () => {
     });
   });
 
+  it("a typed answer that is none of a card's options shows the options under the card, which stays open (U-034)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/inbox", harness);
+    const requests = await screen.findAllByTestId("request");
+    const card = requests[0] as HTMLElement;
+    expect(card).toHaveAttribute("data-request-id", "req_1");
+    const shown = within(card)
+      .getAllByTestId("option")
+      .map((b) => b.textContent);
+    await user.type(within(card).getByTestId("free-text"), "maybe next week");
+    await user.click(within(card).getByTestId("send-free-text"));
+    // The person reads what happened and what to do, under the card they answered.
+    expect(await within(card).findByRole("alert")).toHaveTextContent(
+      `Choose one of: ${shown.join(", ")}`,
+    );
+    expect(postedCalls(harness, "/requests/req_1/answer")[0]?.body).toEqual({
+      version: 1,
+      answer: "maybe next week",
+    });
+    expect(harness.daemon.state.requests.find((r) => r.id === "req_1")?.status).toBe("open");
+    expect(screen.getAllByTestId("request")).toHaveLength(2);
+    expect(screen.getByTestId("blocking-count")).toHaveTextContent("1 blocking");
+
+    // The same card takes a typed option, whatever its case.
+    await user.clear(within(card).getByTestId("free-text"));
+    await user.type(within(card).getByTestId("free-text"), "approve");
+    await user.click(within(card).getByTestId("send-free-text"));
+    await waitFor(() => expect(screen.getAllByTestId("request")).toHaveLength(1));
+    expect(harness.daemon.state.requests.find((r) => r.id === "req_1")?.status).toBe("answered");
+  });
+
   it("reloads when the install stream reports a new blocking count", async () => {
     const harness = createHarness();
     renderApp("/inbox", harness);

@@ -8,6 +8,7 @@ import type {
   SessionView as SessionViewType,
   TaskView as TaskViewType,
 } from "@forerunner/runtime/daemon/api-types";
+import { optionLabel } from "@forerunner/runtime/wiring/request-answers";
 import type {
   CostBucket,
   CostFilter,
@@ -112,7 +113,9 @@ export function humanRequestView(
     kind: r.kind,
     why: r.why,
     steps: r.steps,
-    options: r.options.map((o) => (typeof o === "string" ? o : JSON.stringify(o))),
+    // The buttons the desktop's Inbox shows (`optionLabel`): an old row's object option is its
+    // label, not JSON, so the click sends what the readers take (U-021, U-034).
+    options: r.options.map(optionLabel),
     blocking: r.blocking,
     risk: r.risk,
     changeCard: r.change_card,

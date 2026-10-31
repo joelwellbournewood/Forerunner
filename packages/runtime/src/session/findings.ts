@@ -4,12 +4,12 @@ import type {
   FindingRow,
   HumanRequestRow,
   JsonObject,
-  JsonValue,
   SessionRow,
   StateStore,
   TaskRow,
   TaskStatus,
 } from "@forerunner/state";
+import { blockedFindingsAnswer, signoffAnswer } from "../wiring/request-answers.ts";
 
 /**
  * A close blocked by open findings (spec B.4). The store refuses `in_review -> done` while a
@@ -91,30 +91,12 @@ export interface BlockedSyncResult {
   skipped: number;
 }
 
-/** The word of an inbox answer: the string itself, or the `choice` / `answer` of an object. */
-function answerWord(answer: JsonValue | null): string | null {
-  const raw =
-    typeof answer === "string"
-      ? answer
-      : answer && typeof answer === "object" && !Array.isArray(answer)
-        ? ((answer as JsonObject).choice ?? (answer as JsonObject).answer)
-        : null;
-  if (typeof raw !== "string") return null;
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_-]+/g, " ");
-}
-
-/** The answer of a blocked-findings request as one of its options, or null. */
-export function blockedFindingsAnswer(answer: JsonValue | null): BlockedFindingsAnswer | null {
-  const v = answerWord(answer);
-  if (v === null) return null;
-  if (/^(rework|revise|retry|redo)$/.test(v)) return "rework";
-  if (/^(accept|accepted|resolve|resolved|close)$/.test(v)) return "accept";
-  if (/^(cancel|cancelled|canceled|drop)$/.test(v)) return "cancel";
-  return null;
-}
+/**
+ * The answers of the blocked-findings and sign-off requests as one of their options, or null.
+ * The readers live in `wiring/request-answers.ts`, where the answer routes refuse an answer
+ * they cannot read (U-034) with the same function.
+ */
+export { blockedFindingsAnswer, signoffAnswer };
 
 /**
  * Apply every answered blocked-findings request of the human that was not applied yet. The
@@ -292,16 +274,6 @@ export interface SignoffSyncResult {
   cancelled: number;
   /** Answered requests skipped and recorded with a `SignoffSkip` outcome. */
   skipped: number;
-}
-
-/** The answer of a sign-off request as one of its options, or null. */
-export function signoffAnswer(answer: JsonValue | null): SignoffAnswer | null {
-  const v = answerWord(answer);
-  if (v === null) return null;
-  if (/^(accept|accepted|approve|approved|sign off|signed off|signoff)$/.test(v)) return "accept";
-  if (/^(revise|revised|rework|retry|redo|changes)$/.test(v)) return "revise";
-  if (/^(cancel|cancelled|canceled|drop)$/.test(v)) return "cancel";
-  return null;
 }
 
 /**

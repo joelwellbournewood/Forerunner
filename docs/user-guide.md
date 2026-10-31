@@ -78,6 +78,10 @@ current task and starts nothing new), when its wall clock runs out, or when you 
 Human requests and agent messages across all projects, blocking ones first. A request shows the
 context, why it matters, the options (multiple choice when possible) and whether it blocks work.
 Answered decisions go to the decision log and are not asked again unless something changes.
+On a card whose answer must be one of its options (a sign-off, a plan, an approval), a typed
+answer that is none of them is not taken: the card stays and says "Choose one of: …" with its
+options; type one of them or click its button. A question that asks for your own words takes
+any text.
 Each unread message has **Mark read**; **Mark all read** over the messages marks every unread
 one at once.
 

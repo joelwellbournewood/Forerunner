@@ -10,6 +10,7 @@ import type {
 import type {
   ChangeScope,
   ChangeSource,
+  HumanRequestRow,
   JsonValue,
   RiskLevel,
   StateStore,
@@ -198,6 +199,13 @@ export interface CommandPorts {
    * route does, so an answer said in chat or voice acts like one given in the inbox.
    */
   requestAnswered?(requestId: string): Promise<void>;
+  /**
+   * Refuses an answer the request cannot act on (U-034): the runtime's `assertAnswerAccepted`,
+   * the same check as the daemon's and the state service's answer routes, so a sign-off or plan
+   * card answered in chat or voice with a word that is none of its options stays open and the
+   * reply lists the options. Throws a `validation` ForerunnerError; absent, any answer is taken.
+   */
+  checkAnswer?(request: HumanRequestRow, answer: string): void;
   /**
    * Called after `project.create` inserted the row (spec G.5, ADR 0058): the daemon scaffolds
    * the project's standard doc set, as its create route does. The command awaits the hook and

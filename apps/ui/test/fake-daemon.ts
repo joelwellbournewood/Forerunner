@@ -65,6 +65,7 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
+import { acceptsAnswer } from "@forerunner/runtime/wiring/request-answers";
 import {
   decodeStoredKey,
   parseUnlockChallenge,
@@ -1171,6 +1172,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (parsed.data.version !== r.version) {
       return errorBody(c, 409, "conflict", "request changed since you loaded it");
     }
+    // U-034, as the real daemon (`assertAnswerAccepted`): an answer the card cannot act on is
+    // a 400 listing its options, and the request stays open.
+    const check = acceptsAnswer(
+      { kind: r.kind, options: r.options, change_card: r.changeCard },
+      parsed.data.answer,
+    );
+    if (!check.ok) return errorBody(c, 400, "validation", check.message);
     r.status = "answered";
     r.answer = parsed.data.answer;
     r.version += 1;

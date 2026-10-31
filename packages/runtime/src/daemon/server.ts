@@ -55,6 +55,7 @@ import {
   voiceTurnView,
 } from "../voice/views.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
+import { assertAnswerAccepted, NOT_AN_OPTION } from "../wiring/request-answers.ts";
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
@@ -361,7 +362,8 @@ export function createDaemonApp(
       const status =
         err.code === "not_found"
           ? 404
-          : err.code === "validation" && err.details?.reason === "bad_query"
+          : err.code === "validation" &&
+              (err.details?.reason === "bad_query" || err.details?.reason === NOT_AN_OPTION)
             ? 400
             : err.code === "validation" ||
                 err.code === "version_conflict" ||
@@ -1147,6 +1149,10 @@ export function createDaemonApp(
     const asked = await rt.store.humanRequest.mustGet(c.req.param("id"));
     if (asked.human_id !== null && asked.human_id !== rt.human.id)
       return c.json({ ...NOT_YOURS, message: "not your request" }, 403);
+    // U-034: an answer the card cannot act on (none of its options, for a card whose answer
+    // must be one) is refused with the options, 400, and the request stays open; before, it
+    // closed the card and the sync recorded `unrecognized_answer`, stranding the task.
+    if (asked.status === "open") assertAnswerAccepted(asked, body.answer);
     // The answer, its decision-log entry and, for a shared-secret card (spec S.13, ADR 0065),
     // the grant it moves are one write, as in the state service's answer route.
     const r = await rt.store.transaction(async (tx) => {
