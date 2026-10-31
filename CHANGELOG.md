@@ -18,6 +18,16 @@ Problems and their status, released or not, are tracked in
 
 - **Rename your agent** in Settings → Your agent; it was always "Alice" (U-025).
 - **Mark all read** in the inbox marks every unread message read with one click (U-020).
+- **Questions only you can answer** (the stack, hosting, a repository) come to the Inbox as
+  questions with an answer field each, and nothing is spent on them; agents can ask you too
+  (U-022, ADR 0095).
+- **Create a repository** for a project that has none, with your confirmation; until then the
+  agents work in the project's folder (U-037, ADR 0097).
+- Settings shows every setting with its own control, the Claude subscription allowance, and
+  fields for the mailbox password and cloud voice keys; Settings → Devices explains what
+  pairing a phone needs (U-052, U-054, U-055, U-060).
+- Task dependencies can be edited and are shown by name; the Start dialog says which ready task
+  waits on what (U-040).
 
 ### Changed
 
@@ -26,6 +36,13 @@ Problems and their status, released or not, are tracked in
   window still keeps Forerunner in the tray, and the first time it says so. The Windows
   installer stops a running Forerunner, older versions included, before it replaces files
   (U-018, ADR 0094).
+- Task priority is **Low / Medium / High** (U-041). Costs are in CHF everywhere, logs and cards
+  use names and plain words, and each Inbox card names its task (U-073, U-074).
+- Adding a built-in extension is confirmed in the Extensions panel instead of a second Inbox
+  card (U-026, ADR 0096); voice is set up only in Settings → Voice, and email only on the Email
+  page (U-023, U-075).
+- With only a Claude subscription, Forerunner calls Claude through Claude Code (U-048, ADR 0098).
+- An undo that raises a limit asks for the same confirmation as raising it (U-057, ADR 0099).
 
 ### Fixed
 
@@ -35,6 +52,28 @@ Problems and their status, released or not, are tracked in
   U-035), a session review that never reached you (U-033), and a typed answer that matched no
   option and left the task stuck; it is now refused with the options (U-034).
 - "Do not mirror this project" was asked again every 15 minutes (U-031).
+- The work loop: a project without a repository could do no file work (U-037); the
+  next-session queue and the approved first session were ignored (U-038); cancelling a running
+  task failed the whole session (U-039); "Nothing to plan" while tasks were ready (U-040); a
+  task's budget was not enforced (U-042); waiting starts were replaced (U-043); retries reran
+  the same specialist (U-044); a failed review left the task stuck (U-045); a failed project
+  setup was invisible (U-046); Chat refused everything without a key (U-047).
+- Setup and keys: a replaced key was ignored until restart (U-049); a lost data folder stopped
+  the service from starting (U-050); the GitHub check ignored repository access (U-051); a key
+  with a line break was shown in full in the error (U-053).
+- Settings: two active projects that disagreed (U-056); new projects ignored the default
+  autonomy (U-058); model choices that did nothing (U-059); Undo said "Undone" when nothing
+  changed, and task moves were not in Changes (U-061).
+- Windows and the desktop app: Quit during the first start left the service running (U-062);
+  Quit released other people's claims on a shared store (U-063); slow actions were reported as
+  failed (U-064); two services could run on one data folder (U-065); the installer step was
+  not exercised in CI and broke on some paths (U-066); uninstall left the voice dependencies
+  (U-067); arguments with `&` or `%` broke through `cmd` (U-068); voice failed in a deep install
+  folder (U-069); an installer was accepted as an update (U-070).
+- The voice install could not open the speech model it downloaded (U-024).
+- Status and counts: "connected" while the service was gone, Chat lost on a tab switch (U-071);
+  counts that disagreed between the summary, the log and the notification (U-072); Update and
+  Run evaluations without asking first (U-076); and smaller details (U-077).
 - The kill switch came back after a restart when it was lifted by a start from the phone, and a
   session's Stop lifted Stop all (U-032).
 

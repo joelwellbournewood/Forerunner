@@ -203,7 +203,17 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   answers" files the questions, not a sign-off, and the ladder stops at the first such verdict.
 - **Until then:** cancel that task on the Tasks tab and write the answers in Chat ("our stack
   is …, hosting …, repository …") or in `docs/decisions/0001-*.md` in the project workspace.
-- **Status:** open.
+- **Fix (option 3, ADR 0095; 0a49351, a07c8ce):** a task planned for `person` (and a 1.0.3
+  task titled like "Confirm … with the human") becomes an Inbox question at once, one answer
+  field per question, nothing run or spent; the answers go into the project's decision doc and
+  the task closes. Specialists have an `ask_person` tool that files questions and pauses the
+  task; the next run's brief carries the answers. A run whose report says it needs your answers
+  files the questions, not a sign-off, and is not retried. Tests: `person-questions*.test.ts`,
+  `inbox.test.tsx`, `real-daemon.test.ts`.
+- **Check in the app:** the stuck "Confirm stack, hosting and repository with the human" task
+  shows its questions in the Inbox; answer them: the task is done and the answers are in
+  `docs/decisions/0001-*.md` in the project folder.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-023 Extensions and Settings overlap and some switches do nothing
 
@@ -225,7 +235,13 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   state); remove the `anthropic` row or show it read-only as "set in Settings"; describe
   `mcp-github` as "extra agent tools; not needed for the built-in GitHub"; add an Extensions
   section to the user guide.
-- **Status:** open.
+- **Fix (bb6ae36 and follow-ups):** `voice-local` and the `anthropic` row are retired (old rows
+  removed at start, with their cards); the voice providers in force are shown in Settings →
+  Voice; `mcp-github` says what it adds; the user guide has "Extensions and Settings". Tests:
+  `extensions-retired.test.ts` (across restarts), UI tests.
+- **Check in the app:** Extensions has no voice-local or Anthropic row and points to Settings →
+  Voice, which shows the speech recognition and speech providers in force.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-024 Voice install: speech recognition cannot open its downloaded model
 
@@ -250,7 +266,13 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   output_dir=...)`, real files and no links) and load it from there; on "Unable to open file",
   delete that model's folder and fetch it once more before reporting failure. Test with a
   broken and a truncated `model.bin`.
-- **Status:** open.
+- **Fix (fe6bdcc):** the speech model is downloaded into a plain folder (real files, no links)
+  and loaded from there; a copy that cannot be opened is deleted and fetched once more before
+  failing. Tests: `python-models.test.ts` runs the real scripts against stand-ins (a dangling
+  link, an empty file, a truncated file). The real download on Windows is the owner's check.
+- **Check in the app:** Settings → Voice → install the GPU (or CPU) profile again: it finishes,
+  and Talk works.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-025 The agent cannot be renamed
 
@@ -288,37 +310,119 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   the panel showing the same change card (tools, secrets, domains, scopes) and grants on
   Confirm, with no Inbox card; the Inbox keeps grants the person did not just see (from a URL
   after discovery, widened permissions, anything proposed by an agent).
-- **Status:** open.
+- **Fix (909d07a, ADR 0096):** Add on a built-in entry opens a confirmation in the panel with
+  the change card; Confirm is checked by the daemon like any high-risk change on this PC; no
+  Inbox card. Cards stay for URL adds, widened permissions and agents' proposals. Tests:
+  registry, routes, UI, `real-daemon.test.ts`, Playwright.
+- **Check in the app:** Extensions → Add an entry → its permissions are shown; Confirm enables
+  it and nothing appears in the Inbox; Cancel adds nothing.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-037 to U-047: the work loop (projects, tasks, sessions)
 
 - **Found:** 2026-10-31 in 1.0.4, by five review agents after the owner asked for more bugs and confusing features: one used the app against the real service with a stand-in model; four read the code (setup, the work loop, settings, the desktop app and Windows). Not yet seen by the owner unless the table says hands-on. Marked [suspected] where it depends on behaviour that could not be run.
 - **Where:** U-037 `capabilities/src/githost/pr-executor.ts` (`makeLoop(undefined)`), `runtime/src/registry/executor.ts` (`allowedPaths: []`), `runtime/src/hooks.ts`; U-038 `session/runner.ts` (`consumeQueue`, `StaticPlanner` ignores `briefText`), `session/intake.ts` (`first_session` never read), `QueueSection.tsx`; U-039 `humanTransitions` on `in_progress`, `runner.ts` transitions without re-reading; U-040 `state/src/repos/task.ts` `readyTasks`, `server.ts` (dependencies unchecked), `runner.ts` `cutPlanToBudget`, `StartSessionDialog.tsx`; U-041 `NewTaskDialog.tsx`; U-042 `models/model.ts`, `executor.ts`; U-043 `session/triggers.ts`, `plan-approval.ts`; U-044 `critic` `ladder.ts`, `registry/tools.ts`; U-045 `runner.ts` after a failed review, `expireClaims`; U-046 `intake.ts`, the UI never calls `GET /projects/:id/intake`; U-047 `daemon/server.ts` chat routes refuse before the command parser.
-- **Status:** open. The owner approved the table's actions on 2026-10-31 ("go with your proposals"), with the two changes noted in U-037 and U-041; fixes are in progress.
+- **Fixes (each with a test that failed before):**
+  - U-037 (e5d4f94, ADR 0097): runs work in the project's folder; the critic reviews their diff;
+    **Create a repository** (button, Chat, or a card when a plan has code work) creates a private
+    repository with your token after your yes, pushes the folder and links it.
+  - U-038 (6ba4f4a): queue notes reach the brief of the task they name (or every brief); the
+    approved first session runs its tasks in order once.
+  - U-039 (07a7744, 5ebbeb4): your move stops that task's run; the session goes on.
+  - U-040 (c62e67e): dependencies are checked, editable (**Depends on…**) and shown by title; the
+    plan skips what does not fit; the Start dialog and summary name what waits on what.
+  - U-041 (d61f3cc): priority is Low / Medium / High; old numbers map in the same order.
+  - U-042 (470a508): a task's budget caps its runs; the Tasks tab shows the cap.
+  - U-043 (fed28d0): waiting starts run in order, none replaced; the dialog says how many wait.
+  - U-044 (953fd99, 053c098): after two failed attempts the task goes to another specialist that
+    can do the work, else to you; no web research is planned without web tools.
+  - U-045 (5ebbeb4): a review that fails files a card (rework, accept, cancel).
+  - U-046 (b5a77d3): the project page shows a failed plan from the brief with **Retry**.
+  - U-047 (9d8572f): Chat runs the commands that need no model without a key; other messages point
+    to Settings → Accounts and keys → Open the setup assistant.
+- **Check in the app:** a project without a repository: **Create a repository** → Yes → it is on
+  GitHub. Cancel a running task: the session's next task still runs. New task offers Low /
+  Medium / High. Cancel a task another depends on: Start session names both. With no Claude
+  key, "add a task: x" adds it.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-048 to U-055: setup, keys and secrets
 
 - **Found:** 2026-10-31 in 1.0.4, by five review agents after the owner asked for more bugs and confusing features: one used the app against the real service with a stand-in model; four read the code (setup, the work loop, settings, the desktop app and Windows). Not yet seen by the owner unless the table says hands-on. Marked [suspected] where it depends on behaviour that could not be run.
 - **Where:** U-048 `daemon/compose.ts` (`authToken: oauth`), `provider/anthropic.ts` (no subscription header); U-049 `setup/routes.ts` (`restartNeeded` only for a missing key), keys read once in compose; U-050 `daemon/identity.ts`, compose start (the assistant records no email); U-051 `SetupPage.tsx` sends no repos, `setup/validators.ts` checks `GET /user` only, `setup-guide.md`; U-052 `setup/wizard.ts`, `billing` plan allowance default; U-053 `SetupPage.tsx`, `validators.ts`; U-054 `EmailSettingsPage.tsx`, `setup/routes.ts` stores only the Claude and GitHub keys, `ExtensionsPage.tsx`; U-055 `devices/manager.ts`, `DevicesSection.tsx`, `setup-guide.md`.
-- **Status:** open. The owner approved the table's actions on 2026-10-31 ("go with your proposals"), with the two changes noted in U-037 and U-041; fixes are in progress.
+- **Fixes:**
+  - U-048 (dcc61b8, ADR 0098): with only a subscription token, Chat, planning and the critic run
+    through Claude Code (Anthropic allows the token only there); the token is never sent to the
+    API directly. Not yet run with a real token.
+  - U-049 (c884954): a replaced key is used from the next request ("In use from the next request").
+  - U-050 (51cf619): a lost data folder no longer stops the service from starting.
+  - U-051 (2ad3a24): the GitHub check lists the repositories the token reaches and warns.
+  - U-052 (367e4e2): Settings → Claude subscription allowance, in CHF.
+  - U-053 (765ded7): a key with a line break is refused without showing it; network errors keep
+    their cause.
+  - U-054 (e9b3b58): the mailbox password and cloud voice keys are typed in the app.
+  - U-055 (e995e83): Settings → Devices says in plain steps what pairing needs first.
+- **Check in the app:** paste a GitHub token: its repositories are listed. Settings → Claude
+  subscription allowance → 160 → Save. Email page: type the IMAP password → Save; the reference
+  fills in. A subscription-only setup: a chat message gets a reply.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-056 to U-061: settings, undo and the change log
 
 - **Found:** 2026-10-31 in 1.0.4, by five review agents after the owner asked for more bugs and confusing features: one used the app against the real service with a stand-in model; four read the code (setup, the work loop, settings, the desktop app and Windows). Not yet seen by the owner unless the table says hands-on. Marked [suspected] where it depends on behaviour that could not be run.
 - **Where:** U-056 `Shell.tsx`, `commands.ts` (palette), `conversation/agent.ts` (prefers the stored active project), `ChatTab.tsx`; U-057 `commands/src/executor.ts` `undo` (no risk check), `commands/budget.ts`; U-058 `create-project.ts` (`autonomyLevel ?? 2`); U-059 `intake.ts`, `conversation/agent.ts` (always standard), `executor.ts` (cap), `ModelSettingsSection.tsx`; U-060 `server.ts` `/settings` (11 keys), `SetupPage.tsx`, `UpdatesPage.tsx`, `desktop/approvals.ts` (points to a missing allowlist control); U-061 `commands/src/commands/task.ts` (undo returns silently), `executor.ts` (message from the old count), `server.ts` task transitions write no change, `TasksTab.tsx` dialog text, `server.ts` undo source "chat".
-- **Status:** open. The owner approved the table's actions on 2026-10-31 ("go with your proposals"), with the two changes noted in U-037 and U-041; fixes are in progress.
+- **Fixes (ADR 0099 for undo):**
+  - U-056 (f376fc6): one active project for every channel; a project's Chat tab talks about it.
+  - U-057 (58369bd): an undo that raises a limit asks for this PC's confirmation.
+  - U-058 (7386f95): new projects start at your default autonomy.
+  - U-059 (129f64d): model rows show only choices that run, and the highest model.
+  - U-060 (5fa9365): every setting is in Settings → All settings with its own control.
+  - U-061 (77dfe74): undo says when it cannot; task moves are in Changes with Undo.
+- **Check in the app:** lower the monthly cap, then Undo in Changes: it asks to confirm on this
+  device. Cancel a task, then Undo: it is reopened. Settings → default autonomy 3, New project:
+  autonomy 3.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-062 to U-070: the desktop app and Windows
 
 - **Found:** 2026-10-31 in 1.0.4, by five review agents after the owner asked for more bugs and confusing features: one used the app against the real service with a stand-in model; four read the code (setup, the work loop, settings, the desktop app and Windows). Not yet seen by the owner unless the table says hands-on. Marked [suspected] where it depends on behaviour that could not be run.
 - **Where:** U-062 `apps/desktop/src-tauri/src/actions.rs` `finish_quit` (no `daemon.json` yet: `child_pid` unused), `supervisor.rs`, `lib.rs` single instance, `windows.rs` `show_main`, `bootstrap` ignores `quitting`; U-063 `compose.ts` claim release on freeze (`store.agent.list(undefined)`), reached from `POST /shutdown`; U-064 `daemon.rs` one 1.5 s client for health and actions; U-065 `daemon.rs` (`pid_alive` is unknown on Windows), `actions.rs`, `server.ts` unlinks `daemon.json` unconditionally; U-066 `scripts/installed-check.ps1` (self-test stops its own daemon; `/x` exit code discarded), `wix/stop-running.wxs` (`-Like '…'`); U-067 the MSI template, `lib.rs` `register_all()`; U-068 `platform/src/shell.ts` (`cmd /c`); U-069 `voice/install.ts` (only espeak's length is checked); U-070 `update/install.ts` (installer accepted on the daemon side).
-- **Status:** open. The owner approved the table's actions on 2026-10-31 ("go with your proposals"), with the two changes noted in U-037 and U-041; fixes are in progress.
+- **Fixes:**
+  - U-062 (17ee69d): Quit ends the service the app started in any state; reopening during Quit
+    restarts cleanly. U-063 (a430904): Quit releases only your own agents' claims. U-064
+    (e536c41): actions wait 30 s. U-065 (37bf2aa): one service per data folder (a lock).
+  - U-066 (2295b82): the installer step compares paths without wildcards, ends the service's
+    process tree, runs hidden; the CI check installs, upgrades and uninstalls with Forerunner
+    running and checks exit codes and leftovers. U-067 (9c1abb4): uninstall removes
+    `<install>\dependencies` and the `fr://` registration. U-068 (5ad32d9): arguments through
+    `cmd /c` are escaped. U-069 (c46723c): a too-deep install folder sends voice to the data
+    folder. U-070 (71907a9): an installer is refused as an update.
+- **Check in the app:** Quit on the splash screen: nothing left in Task Manager. Install the
+  test MSI while Forerunner runs: no "files in use", no console window. Uninstall: the install
+  folder is gone.
+- **Only Windows can prove:** the WiX build with ICE checks, the installer step at run time, the
+  PowerShell check script; the next Desktop app run is that proof.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-071 to U-077: what the app shows and says
 
 - **Found:** 2026-10-31 in 1.0.4, by five review agents after the owner asked for more bugs and confusing features: one used the app against the real service with a stand-in model; four read the code (setup, the work loop, settings, the desktop app and Windows). Not yet seen by the owner unless the table says hands-on. Marked [suspected] where it depends on behaviour that could not be run.
 - **Where:** U-071 `store/context.tsx`, `Shell.tsx` (status never reset), `SessionPage.tsx` (resubscribes to an ended stream), `daemon/views.ts` (blocked), `ChatTab.tsx` (state in the component); U-072 `daemon/views.ts`, `notifications/producers.ts`, `critic` session review; U-073 `critic` follow-up texts, `InboxPage.tsx` (intake card lists names only); U-074 `views.ts` `describeEvent` fallback, `runner.ts`, `producers.ts`, `InboxPage.tsx`, `SettingsPage.tsx`, `MemoryPage.tsx`, change card texts, `server.ts` and `voice/sessions.ts` ("run fr setup"); U-075 `voice/src/registry.ts` (drops the reason), `email-ports.ts`, `catalog.json`, `EmailSettingsPage.tsx` (a card for the critic); U-076 `restart.ts`, `UpdatesPage.tsx`; U-077 `SetupPage.tsx`, `vault/src/open.ts`, `UpdatesPage.tsx`, the palette, the task dialog, `windows.rs` (hint marker written when the toast is suppressed; minimized position saved), `actions.rs` (Quit's session count up to 10 s old), `voice/install.ts` (unguarded temp removal), `daemon-shell.log` never rotated, Extensions "Specialists: None installed", Performance's overall error, starting a session under Stop all returns HTTP 500, `user-guide.md` still says "Make this a task" makes a draft.
-- **Status:** open. The owner approved the table's actions on 2026-10-31 ("go with your proposals"), with the two changes noted in U-037 and U-041; fixes are in progress.
+- **Fixes:**
+  - U-071 (2a1e528): "not connected" with Retry when the service is gone; a finished session says
+    finished; "blocked" only when a card waits; Chat keeps its conversation.
+  - U-072 (3ae5bb8): one set of counts (done, failed, needs you, sent back, in review, not started)
+    in the summary, the log and the notification.
+  - U-073 (59925d7): every card names its task and project; the plan card shows the decision doc.
+  - U-074 (c88b660): CHF, names instead of ids, no raw JSON in the log, plain words; Undo in
+    Chat replies is a button.
+  - U-075 (bb6ae36): Talk says to install voice in Settings → Voice; email is set on the Email
+    page only.
+  - U-076 (74d2aab): Update, Roll back and Run evaluations ask first.
+  - U-077 (be2e199, f55c342, c46723c): the remaining details.
+- **Check in the app:** stop the service: the header says "not connected" with Retry. Open a
+  session log: no JSON, no USD. A sign-off card says which task.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-027 to U-036: found by a sweep for siblings of U-019 and U-021
 
