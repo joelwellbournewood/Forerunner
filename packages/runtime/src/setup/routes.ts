@@ -35,9 +35,11 @@ import {
  * subscription token and the GitHub token into the app instead of a terminal. Every credential
  * goes through `runSetup`, the same checks `fr setup` runs, and is stored in the vault by name
  * only when the check passes; no value is ever echoed, logged or written to config.json. The
- * runtime registers its model provider and billing sources when it composes, so `finish`
- * restarts the daemon (the shell relaunches it, ADR 0026) when a credential was stored since
- * this process started.
+ * runtime registers its model provider, git host and billing sources when it composes, so
+ * `finish` restarts the daemon (the shell relaunches it, ADR 0026) when a credential this
+ * process started without was stored; a replaced key or token is read from the vault per call
+ * by the provider and the git host and needs no restart (U-049). The app finishes the assistant
+ * when it is left another way too.
  *   GET  /setup                             -> SetupStatusView
  *   POST /setup/profile   { name?, timezone? } -> SetupStatusView
  *   POST /setup/anthropic { value }          -> SetupCheckView (API key, or sk-ant-oat… token)
@@ -104,7 +106,8 @@ async function credentialsIn(vault: Vault): Promise<SetupStatusView["credentials
 export function createSetupRoutes(deps: SetupRoutesDeps): Hono {
   const logger = log("setup:routes");
   const app = new Hono();
-  // What this process composed with: a credential stored later needs a restart to be used.
+  // What this process composed with: a credential of a kind it started without needs a restart
+  // to be used; one it had is replaced in place (read per call, U-049).
   // Read once at mount (the server is built right after compose); a vault that cannot answer
   // counts as holding nothing.
   const startedWith = credentialsIn(deps.vault).catch(() => ({

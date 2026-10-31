@@ -3422,9 +3422,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     githubPermissions: ["Contents: read and write", "Commit statuses: read (to see CI results)"],
     ...options.setup,
   };
+  // Each harness gets its own copy: the routes below change it, and a test's fixture is shared.
+  setup.credentials = { ...setup.credentials };
   const setupComplete = () => {
     const c = setup.credentials;
     setup.complete = c.github && (c.anthropicApiKey || c.subscription);
+  };
+  // As the daemon (U-049): a replaced key is read per call, so only a credential this process
+  // started without needs the restart.
+  const setupStartedWith = { ...setup.credentials };
+  const setupRestartNeeded = () => {
+    const c = setup.credentials;
+    setup.restartNeeded =
+      (c.github && !setupStartedWith.github) ||
+      (c.anthropicApiKey && !setupStartedWith.anthropicApiKey) ||
+      (c.subscription && !setupStartedWith.subscription);
   };
   app.get("/setup", (c) => c.json(setup));
   app.post("/setup/profile", async (c) => {
@@ -3451,7 +3463,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (ok) {
       if (subscription) setup.credentials.subscription = true;
       else setup.credentials.anthropicApiKey = true;
-      setup.restartNeeded = true;
+      setupRestartNeeded();
       setupComplete();
     }
     return c.json({
@@ -3475,7 +3487,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const ok = !pasted.includes("bad");
     if (ok) {
       setup.credentials.github = true;
-      setup.restartNeeded = true;
+      setupRestartNeeded();
       setupComplete();
     }
     return c.json({
@@ -3491,6 +3503,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const restarting = setup.restartNeeded;
     setup.showAssistant = false;
     setup.restartNeeded = false;
+    // The restarted daemon starts with what the vault holds now.
+    Object.assign(setupStartedWith, setup.credentials);
     return c.json({ status: setup, restarting });
   });
 

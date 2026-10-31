@@ -129,11 +129,13 @@ the moment you paste it:
    which GitHub's fine-grained tokens may not reach on private repositories; this was not
    tested against GitHub.
 4. **Done.** It shows what is connected. **Start using Forerunner** restarts the background
-   service once so it uses the new keys (a few seconds).
+   service once so it uses the new keys (a few seconds). Leaving the assistant through the
+   sidebar does the same.
 
 You can skip a step and finish later from **Settings → Accounts and keys**, which opens the
-assistant again; pasting a new key there replaces the old one. Until Claude is connected your
-agent cannot start work.
+assistant again; pasting a new key there replaces the old one, and the replaced key is used
+from the next request without a restart (the check result says "In use from the next
+request"). Until Claude is connected your agent cannot start work.
 
 **Budget.** The monthly cap and the per-session cap start at CHF 150 and CHF 5. They are
 enforced by the program, not by the agent: a session that would exceed them stops. Change

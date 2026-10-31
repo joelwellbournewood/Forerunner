@@ -56,6 +56,13 @@ function StepDots({ step }: { step: Step }) {
 
 function CheckResult({ result }: { result: SetupCheckView | null }) {
   if (!result) return null;
+  // When a saved key is used (U-049): a replaced key at once; the first key of its kind once
+  // the background service restarts, which finishing or leaving the assistant does.
+  const inUse = result.ok
+    ? result.status.restartNeeded
+      ? "Forerunner restarts its background service once when you finish or leave this assistant, and uses it from then on."
+      : "In use from the next request. No restart needed."
+    : null;
   return (
     <div
       role="status"
@@ -76,6 +83,11 @@ function CheckResult({ result }: { result: SetupCheckView | null }) {
             <li key={p}>{p}</li>
           ))}
         </ul>
+      ) : null}
+      {inUse ? (
+        <p className="mt-1" data-testid="setup-in-use">
+          {inUse}
+        </p>
       ) : null}
     </div>
   );
@@ -193,6 +205,22 @@ export function SetupPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SetupCheckView | null>(null);
   const [restarting, setRestarting] = useState(false);
+  // U-049: a key added here for the first time is used once the background service restarts.
+  // Leaving the assistant another way than its buttons (the sidebar, a link) finishes it, so
+  // the restart is not lost; Finish and "Set up later" mark it done themselves.
+  const leaving = useRef({ restartNeeded: false, finished: false });
+  useEffect(() => {
+    leaving.current.restartNeeded = status?.restartNeeded === true;
+  }, [status]);
+  useEffect(
+    () => () => {
+      if (leaving.current.restartNeeded && !leaving.current.finished) {
+        leaving.current.finished = true;
+        void client.setupFinish().catch(() => undefined);
+      }
+    },
+    [client],
+  );
 
   const load = () => {
     setLoadError(null);
@@ -241,6 +269,7 @@ export function SetupPage() {
   };
 
   const finish = async () => {
+    leaving.current.finished = true;
     const r = await run(() => client.setupFinish());
     if (!r) return;
     if (!r.restarting) {

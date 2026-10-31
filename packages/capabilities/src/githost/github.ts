@@ -48,6 +48,12 @@ import {
  */
 export interface GitHubOptions {
   token: string;
+  /**
+   * Where the token lives (the vault), read before every request (U-049): a token replaced in
+   * the app is used by the next call, without a restart. `token` is the one read at compose; a
+   * source that answers nothing (or throws) leaves the last token in use.
+   */
+  tokenSource?: () => Promise<string | null>;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
   clock?: Clock;
@@ -112,6 +118,7 @@ export class GitHubHost implements GitHost {
   private readonly pageSize: number;
   /** `baseUrl`'s origin: the one place the token goes (null when `baseUrl` is not a URL). */
   private readonly origin: string | null;
+  private readonly tokenSource: (() => Promise<string | null>) | undefined;
   /** projectId -> field name (lower case) -> field. */
   private readonly fieldCache = new Map<string, Map<string, ProjectFieldInfo>>();
   /** projectId -> Forerunner task id -> item. Filled by one listing, kept up to date by writes. */
@@ -134,6 +141,7 @@ export class GitHubHost implements GitHost {
     }
     this.pageSize = pageSize;
     this.origin = originOf(this.baseUrl);
+    this.tokenSource = opts.tokenSource;
     this.headers = {
       Authorization: `Bearer ${opts.token}`,
       Accept: "application/vnd.github+json",
@@ -168,7 +176,7 @@ export class GitHubHost implements GitHost {
       const res = await this.f(url, {
         method,
         headers: {
-          ...this.headers,
+          ...(await this.currentHeaders()),
           ...(opts.raw
             ? { "Content-Type": opts.contentType ?? "application/octet-stream" }
             : body !== undefined
@@ -227,6 +235,15 @@ export class GitHubHost implements GitHost {
       `GitHub request failed after retries: ${method} ${path}`,
       { retryable: true },
     );
+  }
+
+  /** The request headers with the token as it stands in the vault now (`tokenSource`). */
+  private async currentHeaders(): Promise<Record<string, string>> {
+    if (!this.tokenSource) return this.headers;
+    const token = (await this.tokenSource().catch(() => null))?.trim();
+    if (!token) return this.headers;
+    this.headers.Authorization = `Bearer ${token}`;
+    return this.headers;
   }
 
   /** A URL the host answered must be on `baseUrl`'s origin before the token is sent to it. */
@@ -593,7 +610,7 @@ export class GitHubHost implements GitHost {
     for (let attempt = 0; attempt < 3; attempt++) {
       const res = await this.f(this.graphqlUrl, {
         method: "POST",
-        headers: { ...this.headers, "Content-Type": "application/json" },
+        headers: { ...(await this.currentHeaders()), "Content-Type": "application/json" },
         body: JSON.stringify({ query, variables, operationName: opName }),
       });
       if (res.status === 429 || res.status === 403) {

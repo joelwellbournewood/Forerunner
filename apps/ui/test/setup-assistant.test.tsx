@@ -126,6 +126,42 @@ describe("setup assistant", () => {
     expect(banner).not.toHaveTextContent("1.0.1 → 1.0.1");
   });
 
+  it("a first key saved and the assistant left through the sidebar still restarts the service once (U-049)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness(FRESH);
+    renderApp("/", harness);
+    await screen.findByTestId("setup-page");
+    await user.click(screen.getByTestId("setup-next"));
+    await screen.findByTestId("setup-anthropic-input");
+    await user.click(screen.getByTestId("setup-anthropic-input"));
+    await user.paste(API_KEY);
+    expect(await screen.findByTestId("setup-in-use")).toHaveTextContent(
+      "Forerunner restarts its background service once when you finish or leave this assistant",
+    );
+    // The person goes Home through the sidebar instead of finishing.
+    await user.click(screen.getByRole("link", { name: "Home" }));
+    await waitFor(() => expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument());
+    await waitFor(() => expect(postedCalls(harness, "/setup/finish")).toHaveLength(1));
+  });
+
+  it("a replaced key is in use at once: the assistant says so and nothing restarts (U-049)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/setup", harness);
+    await screen.findByTestId("setup-page");
+    await user.click(screen.getByTestId("setup-next"));
+    expect(await screen.findByTestId("setup-saved")).toHaveTextContent("An API key is saved.");
+    await user.click(screen.getByTestId("setup-anthropic-input"));
+    await user.paste(API_KEY);
+    expect(await screen.findByTestId("setup-in-use")).toHaveTextContent(
+      "In use from the next request. No restart needed.",
+    );
+    await user.click(screen.getByRole("link", { name: "Home" }));
+    await waitFor(() => expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(postedCalls(harness, "/setup/finish")).toHaveLength(0);
+  });
+
   it("set up later closes the assistant without a restart", async () => {
     const user = userEvent.setup();
     const harness = createHarness(FRESH);

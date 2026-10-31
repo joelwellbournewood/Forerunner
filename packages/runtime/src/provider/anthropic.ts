@@ -71,11 +71,19 @@ export interface AnthropicProviderOptions {
   /** Injected for tests; defaults to global fetch. */
   fetch?: typeof fetch;
   maxRetries?: number;
+  /**
+   * Where the API key lives (the vault), read before every request (U-049): a key replaced in
+   * the app is used by the next call, without a restart. `apiKey` is the key read at compose;
+   * a source that answers nothing (or throws) leaves the last key in use.
+   */
+  apiKeySource?: () => Promise<string | null>;
 }
 
 export class AnthropicMessagesProvider implements ModelProvider {
   readonly name = "anthropic";
-  private readonly client: Anthropic;
+  private client: Anthropic;
+  /** The API key `client` was built with (`apiKeySource` swaps the client when it changes). */
+  private clientKey: string | undefined;
   private readonly clock: Clock;
   private readonly opts: AnthropicProviderOptions;
 
@@ -93,14 +101,33 @@ export class AnthropicMessagesProvider implements ModelProvider {
     }
     this.opts = opts;
     this.clock = opts.clock ?? systemClock;
-    this.client = new Anthropic({
-      apiKey: opts.apiKey ?? null,
-      authToken: opts.authToken ?? null,
-      baseURL: opts.baseURL,
-      defaultHeaders: opts.defaultHeaders,
-      fetch: opts.fetch,
-      maxRetries: opts.maxRetries ?? 2,
+    this.clientKey = opts.apiKey;
+    this.client = this.makeClient(opts.apiKey);
+  }
+
+  private makeClient(apiKey: string | undefined): Anthropic {
+    return new Anthropic({
+      apiKey: apiKey ?? null,
+      authToken: this.opts.authToken ?? null,
+      baseURL: this.opts.baseURL,
+      defaultHeaders: this.opts.defaultHeaders,
+      fetch: this.opts.fetch,
+      maxRetries: this.opts.maxRetries ?? 2,
     });
+  }
+
+  /**
+   * The client for the next request: rebuilt when `apiKeySource` answers another key than the
+   * one in use (U-049). Never a subscription token (refused as in the constructor).
+   */
+  private async current(): Promise<Anthropic> {
+    if (!this.opts.apiKeySource) return this.client;
+    const key = (await this.opts.apiKeySource().catch(() => null))?.trim();
+    if (!key || key === this.clientKey || key.startsWith(SUBSCRIPTION_TOKEN_PREFIX))
+      return this.client;
+    this.clientKey = key;
+    this.client = this.makeClient(key);
+    return this.client;
   }
 
   /**
@@ -160,12 +187,14 @@ export class AnthropicMessagesProvider implements ModelProvider {
     const entry: { limit: Promise<number | undefined>; retryAt?: number } = {
       limit: Promise.resolve(undefined),
     };
-    entry.limit = this.client.models
-      .retrieve(model, null, {
-        maxRetries: 0,
-        timeout: MODEL_LIMIT_READ_TIMEOUT_MS,
-        ...(opts.signal ? { signal: opts.signal } : {}),
-      })
+    entry.limit = this.current()
+      .then((client) =>
+        client.models.retrieve(model, null, {
+          maxRetries: 0,
+          timeout: MODEL_LIMIT_READ_TIMEOUT_MS,
+          ...(opts.signal ? { signal: opts.signal } : {}),
+        }),
+      )
       .then(
         (m) => positiveLimit(m.max_tokens),
         () => {
@@ -184,7 +213,8 @@ export class AnthropicMessagesProvider implements ModelProvider {
 
   async listModels(): Promise<ModelRef[]> {
     const out: ModelRef[] = [];
-    for await (const m of this.client.models.list({ limit: 100 })) {
+    const client = await this.current();
+    for await (const m of client.models.list({ limit: 100 })) {
       const known = positiveLimit(m.max_tokens);
       if (known !== undefined) this.outputLimits.set(m.id, { limit: Promise.resolve(known) });
       const tier = tierFromId(m.id);
@@ -242,7 +272,8 @@ export class AnthropicMessagesProvider implements ModelProvider {
     });
     let stream: AsyncIterable<Anthropic.RawMessageStreamEvent>;
     try {
-      stream = await this.client.messages.create(params, {
+      const client = await this.current();
+      stream = await client.messages.create(params, {
         signal: req.signal,
         ...(fast ? { headers: { "anthropic-beta": FAST_MODE_BETA } } : {}),
       });

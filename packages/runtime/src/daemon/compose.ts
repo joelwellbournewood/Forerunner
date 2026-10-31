@@ -1316,6 +1316,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     if (key) {
       provider = new AnthropicMessagesProvider({
         apiKey: key,
+        // Read before every request (U-049): a key replaced in the app is used at once.
+        apiKeySource: () => vault.get(SECRET_NAMES.anthropic),
+        ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
         baseURL: config?.anthropicApiBase,
         defaultHeaders: config?.anthropicWorkspaceId
           ? { "anthropic-workspace-id": config.anthropicWorkspaceId }
@@ -1828,7 +1831,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const gitHost: GitHost =
     opts.gitHost ??
     (ghToken
-      ? new GitHubHost({ token: ghToken, baseUrl: config?.githubApiBase, clock })
+      ? new GitHubHost({
+          token: ghToken,
+          // Read before every request (U-049): a token replaced in the app is used at once.
+          tokenSource: () => vault.get(SECRET_NAMES.github),
+          baseUrl: config?.githubApiBase,
+          clock,
+          ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+        })
       : new MemoryGitHost(human.name));
   const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? APP_VERSION;
 
