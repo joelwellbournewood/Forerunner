@@ -480,4 +480,33 @@ describe("AnthropicMessagesProvider", () => {
     expect(tierFromId("claude-fable-5-1")).toBe("fable");
     expect(tierFromId("something-else")).toBeNull();
   });
+
+  it("a call that never reached the API says why, without the key (U-053)", async () => {
+    const key = ["sk-ant-api03-", "unreachable", "7".repeat(40)].join(""); // not-a-secret
+    const p = new AnthropicMessagesProvider({
+      apiKey: key,
+      maxRetries: 0,
+      fetch: (async () => {
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("self-signed certificate in certificate chain"), {
+            code: "SELF_SIGNED_CERT_IN_CHAIN",
+          }),
+        });
+      }) as typeof fetch,
+    });
+    const events = [];
+    for await (const e of p.stream({
+      model: "claude-haiku-5-5",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 10,
+    }))
+      events.push(e);
+    expect(events).toEqual([
+      expect.objectContaining({ type: "error", code: "provider_error", retryable: true }),
+    ]);
+    const message = (events[0] as { message: string }).message;
+    expect(message).toContain("certificate was not trusted");
+    expect(message).toContain("SELF_SIGNED_CERT_IN_CHAIN");
+    expect(message).not.toContain(key);
+  });
 });

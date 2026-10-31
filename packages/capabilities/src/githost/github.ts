@@ -1,4 +1,9 @@
-import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
+import {
+  type Clock,
+  describeNetworkError,
+  ForerunnerError,
+  systemClock,
+} from "@forerunner/platform";
 import {
   buildSetFieldsMutation,
   DEFAULT_OPTION_COLOR,
@@ -173,7 +178,7 @@ export class GitHubHost implements GitHost {
     if (absolute && !opts.otherOrigin) this.assertOwnOrigin(path);
     const url = absolute ? path : `${this.baseUrl}${path}`;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await this.f(url, {
+      const res = await this.send(url, {
         method,
         headers: {
           ...(await this.currentHeaders()),
@@ -244,6 +249,25 @@ export class GitHubHost implements GitHost {
     if (!token) return this.headers;
     this.headers.Authorization = `Bearer ${token}`;
     return this.headers;
+  }
+
+  /**
+   * One request. A request that never got an answer (DNS, a refused connection, a certificate a
+   * proxy put in front, a token the runtime cannot put in a header) is a `provider_error` that
+   * names the cause, never the token (U-053): fetch's own error says only "fetch failed", and
+   * one about a header quotes the header, the token included.
+   */
+  private async send(url: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.f(url, init);
+    } catch (e) {
+      const token = (this.headers.Authorization ?? "").replace(/^Bearer /, "");
+      throw new ForerunnerError(
+        "provider_error",
+        `GitHub API unreachable at ${this.origin ?? this.baseUrl}: ${describeNetworkError(e, [token])}`,
+        { retryable: true },
+      );
+    }
   }
 
   /** A URL the host answered must be on `baseUrl`'s origin before the token is sent to it. */
@@ -608,7 +632,7 @@ export class GitHubHost implements GitHost {
   async graphql<T extends Json>(query: string, variables: Record<string, unknown>): Promise<T> {
     const opName = /^\s*(?:query|mutation)\s+([A-Za-z0-9_]+)/.exec(query)?.[1] ?? "anonymous";
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await this.f(this.graphqlUrl, {
+      const res = await this.send(this.graphqlUrl, {
         method: "POST",
         headers: { ...(await this.currentHeaders()), "Content-Type": "application/json" },
         body: JSON.stringify({ query, variables, operationName: opName }),

@@ -1,5 +1,11 @@
 import { mkdirSync } from "node:fs";
-import { type Clock, errorMessage, ForerunnerError, systemClock } from "@forerunner/platform";
+import {
+  type Clock,
+  errorMessage,
+  ForerunnerError,
+  redact,
+  systemClock,
+} from "@forerunner/platform";
 import { z } from "zod";
 import { loadSdkQuery, type QueryLike, scrubEnv } from "../agent/sdk.ts";
 import { anthropicThinkingOff } from "./anthropic.ts";
@@ -167,7 +173,10 @@ export class ClaudeCodeProvider implements ModelProvider {
         : {
             type: "error",
             code: e instanceof ForerunnerError ? e.code : "provider_error",
-            message: `Claude Code could not answer: ${errorMessage(e)}`,
+            // What Claude Code said may quote its environment: the token is cut out (U-053).
+            message: redact(
+              `Claude Code could not answer: ${errorMessage(e).split(token).join("[REDACTED]")}`,
+            ),
             retryable: false,
           };
     } finally {

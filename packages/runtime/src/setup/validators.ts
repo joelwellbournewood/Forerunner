@@ -1,4 +1,4 @@
-import { ForerunnerError } from "@forerunner/platform";
+import { describeNetworkError, ForerunnerError } from "@forerunner/platform";
 
 /**
  * Credential validators for the setup wizard (spec A: "Each credential request says what, why,
@@ -115,9 +115,30 @@ export interface GitHubValidationOptions {
 
 const REQUIRED_PERMISSIONS = ["pull", "push"] as const;
 
+/**
+ * A pasted credential split by a line break or a space (U-053: a key copied from a wrapped
+ * e-mail or a PDF). Refused before anything is sent, in words that never show the value; sent
+ * as a header it would fail with an error that quotes the whole header, the key included.
+ */
+export function splitValueProblem(value: string, what: string): ValidationResult | null {
+  const v = value.trim();
+  const kind = /[\r\n]/.test(v) ? "a line break" : /\s/.test(v) ? "a space" : null;
+  if (!kind) return null;
+  return {
+    ok: false,
+    summary: `The ${what} has ${kind} inside, so it was not checked or saved.`,
+    problems: [
+      `It has ${kind} inside. Copy the ${what} again in one piece, from the page that shows it (not from a wrapped e-mail or document), and paste it.`,
+    ],
+    details: { kind: "split_value" },
+  };
+}
+
 export async function validateGitHubToken(
   opts: GitHubValidationOptions,
 ): Promise<ValidationResult> {
+  const split = splitValueProblem(opts.token, "token");
+  if (split) return split;
   const f = opts.fetchImpl ?? fetch;
   const base = (opts.apiBase ?? "https://api.github.com").replace(/\/$/, "");
   const headers = {
@@ -134,7 +155,7 @@ export async function validateGitHubToken(
     return {
       ok: false,
       summary: "Could not reach the GitHub API.",
-      problems: [String(e instanceof Error ? e.message : e)],
+      problems: [`Could not reach ${base}: ${describeNetworkError(e, [opts.token])}.`],
       details,
     };
   }
@@ -196,7 +217,7 @@ export async function validateGitHubToken(
         );
     } catch (e) {
       repoReport[full] = { ok: false, status: 0 };
-      problems.push(`${full}: ${e instanceof Error ? e.message : String(e)}`);
+      problems.push(`${full}: ${describeNetworkError(e, [opts.token])}`);
     }
   }
   details.repos = repoReport;
@@ -206,7 +227,7 @@ export async function validateGitHubToken(
   // Every repository the token reaches, with the access GitHub reports for it (U-051): the app
   // sends no repository list, so this is what the person sees about the token's reach. A token
   // that reaches nothing, or can only read, is saved with a warning; it is not refused.
-  const reach = await reachableRepos(f, base, headers);
+  const reach = await reachableRepos(f, base, headers, opts.token);
   if ("error" in reach) {
     problems.push(
       `Could not list the repositories the token reaches (${reach.error}); check its repository access on GitHub.`,
@@ -271,6 +292,7 @@ async function reachableRepos(
   f: typeof fetch,
   base: string,
   headers: Record<string, string>,
+  token: string,
 ): Promise<{ repos: ReachableRepo[]; truncated: boolean } | { error: string }> {
   const origin = originOf(base);
   const repos: ReachableRepo[] = [];
@@ -280,7 +302,7 @@ async function reachableRepos(
     try {
       res = await f(url, { headers });
     } catch (e) {
-      return { error: e instanceof Error ? e.message : String(e) };
+      return { error: describeNetworkError(e, [token]) };
     }
     if (!res.ok) return { error: `GET /user/repos returned ${res.status}` };
     const items = (await res.json().catch(() => [])) as {
@@ -332,6 +354,8 @@ export async function validateAnthropicKey(
   // to the API itself, so it is checked for its shape, like `--subscription-token`.
   if (opts.key.trim().startsWith(SUBSCRIPTION_TOKEN_PREFIX))
     return validateSubscriptionTokenFormat(opts.key);
+  const split = splitValueProblem(opts.key, "key");
+  if (split) return split;
   const f = opts.fetchImpl ?? fetch;
   const base = (opts.apiBase ?? "https://api.anthropic.com").replace(/\/$/, "");
   const headers: Record<string, string> = {
@@ -346,7 +370,7 @@ export async function validateAnthropicKey(
     return {
       ok: false,
       summary: "Could not reach the Anthropic API.",
-      problems: [String(e instanceof Error ? e.message : e)],
+      problems: [`Could not reach ${base}: ${describeNetworkError(e, [opts.key])}.`],
       details: {},
     };
   }

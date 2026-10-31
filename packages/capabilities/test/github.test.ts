@@ -303,3 +303,46 @@ describe("MemoryGitHost merge", () => {
     expect(ok.merged).toBe(true);
   });
 });
+
+describe("GitHubHost when GitHub cannot be reached (U-053)", () => {
+  const token = ["github_pat_", "unreachable_", "9".repeat(40)].join(""); // not-a-secret
+
+  it("says what failed (DNS, refused, a proxy's certificate), not only 'fetch failed'", async () => {
+    const host = new GitHubHost({
+      token,
+      baseUrl: "https://api.github.test",
+      fetchImpl: (async () => {
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("getaddrinfo ENOTFOUND api.github.test"), {
+            code: "ENOTFOUND",
+          }),
+        });
+      }) as typeof fetch,
+    });
+    const err = await host.getRepo({ owner: "o", name: "r" }).then(
+      () => null,
+      (e: unknown) => e as Error & { code?: string },
+    );
+    expect(err?.code).toBe("provider_error");
+    expect(err?.message).toContain("could not find the server (DNS)");
+    expect(err?.message).toContain("ENOTFOUND");
+    expect(err?.message).not.toContain(token);
+  });
+
+  it("a token the runtime cannot send is described without the token", async () => {
+    // What fetch says about a header with a line break: it quotes the whole header.
+    const host = new GitHubHost({
+      token,
+      baseUrl: "https://api.github.test",
+      fetchImpl: (async () => {
+        throw new TypeError(`Headers.append: "Bearer ${token}" is an invalid header value.`);
+      }) as typeof fetch,
+    });
+    const err = await host.getRepo({ owner: "o", name: "r" }).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(err?.message).toContain("a credential has a character that cannot be sent");
+    expect(err?.message).not.toContain(token);
+  });
+});

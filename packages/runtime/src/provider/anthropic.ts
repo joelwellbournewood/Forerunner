@@ -1,6 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { canonicalModelId } from "@forerunner/billing";
-import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
+import {
+  type Clock,
+  describeNetworkError,
+  ForerunnerError,
+  systemClock,
+} from "@forerunner/platform";
 import { FAST_MODE_BETA } from "../models/fast-mode.ts";
 import { SUBSCRIPTION_TOKEN_PREFIX } from "../setup/validators.ts";
 import {
@@ -114,6 +119,11 @@ export class AnthropicMessagesProvider implements ModelProvider {
       fetch: this.opts.fetch,
       maxRetries: this.opts.maxRetries ?? 2,
     });
+  }
+
+  /** The credentials in use, cut out of any error text. */
+  private secrets(): string[] {
+    return [this.clientKey ?? "", this.opts.authToken ?? ""].filter(Boolean);
   }
 
   /**
@@ -278,7 +288,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
         ...(fast ? { headers: { "anthropic-beta": FAST_MODE_BETA } } : {}),
       });
     } catch (e) {
-      yield req.signal?.aborted ? aborted() : mapError(e);
+      yield req.signal?.aborted ? aborted() : mapError(e, this.secrets());
       return;
     }
     const open = new Map<number, { id: string; name: string; json: string }>();
@@ -357,7 +367,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
       }
     } catch (e) {
       if (!stopped) {
-        yield req.signal?.aborted ? aborted() : mapError(e);
+        yield req.signal?.aborted ? aborted() : mapError(e, this.secrets());
         return;
       }
     }
@@ -413,9 +423,20 @@ function mapStop(s: string | null | undefined): StopReason {
   }
 }
 
-function mapError(e: unknown): StreamEvent {
+function mapError(e: unknown, secrets: string[]): StreamEvent {
   const status = (e as { status?: number }).status;
-  const message = e instanceof Error ? e.message : String(e);
+  // No answer at all (the SDK's "Connection error."): the cause says what failed (U-053), the
+  // credential cut out of it (a key the runtime cannot put in a header is quoted there).
+  const cause = (e as { cause?: unknown }).cause;
+  if (status === undefined && cause !== undefined)
+    return {
+      type: "error",
+      code: "provider_error",
+      message: `Could not reach the Anthropic API: ${describeNetworkError(cause, secrets)}`,
+      retryable: true,
+    };
+  let message = e instanceof Error ? e.message : String(e);
+  for (const s of secrets) if (s) message = message.split(s).join("[REDACTED]");
   if (status === 401 || status === 403)
     return { type: "error", code: "provider_auth", message, retryable: false };
   if (status === 429)

@@ -22,6 +22,15 @@ to enter a shared store; and `secret_reserved` (ADR 0065, amended 2026-10-25), a
 name (`forerunner.*`, the install wrapping key) in a grant, a run token or a `secret:` reference,
 which the daemon and the state service answer with 403.
 
+**Network errors (`src/net-errors.ts`, U-053).** `describeNetworkError(e, secrets)` turns a
+request that got no answer into words a person can act on. Node's fetch throws `TypeError("fetch
+failed")` and keeps what happened in `cause`; the helper walks the cause chain, names the kind
+(DNS `ENOTFOUND`/`EAI_*`, refused, timed out, offline, a certificate a proxy or antivirus put in
+front, a proxy's refusal, a cut connection) and keeps the code and the innermost message,
+`redact()`ed and with each of `secrets` cut out. An error about a header value (a credential with
+a line break, which fetch quotes in full) is described without the value. Used by the setup
+validators, the Messages adapter's connection errors and `GitHubHost`.
+
 | Concern | Windows | Linux | Where |
 | --- | --- | --- | --- |
 | App directories | `%APPDATA%\forerunner\config`, `%LOCALAPPDATA%\forerunner\{data,cache,logs}` | XDG: `~/.config/forerunner`, `~/.local/share/forerunner`, `~/.cache/forerunner`, `~/.local/state/forerunner/logs` | `paths.appDirs` (override: `FORERUNNER_HOME`) |

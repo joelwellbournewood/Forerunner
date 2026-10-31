@@ -144,6 +144,16 @@ function SecretBox({
   const submit = (v: string) => {
     const trimmed = v.trim();
     if (!trimmed || busy) return;
+    // A value split by a line break or a space (copied from a wrapped e-mail or document) is
+    // never sent; the hint says so without showing it (U-053). The daemon refuses it as well.
+    if (/\s/.test(trimmed)) {
+      setValue("");
+      setHint(
+        `It has ${/[\r\n]/.test(trimmed) ? "a line break" : "a space"} inside, so it was not checked or saved. Copy it again in one piece, from the page that shows it, and paste it.`,
+      );
+      return;
+    }
+    setHint(null);
     onCheck(trimmed);
     setValue("");
   };

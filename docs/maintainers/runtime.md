@@ -598,7 +598,13 @@ compose's update notice skips that reason). Every credential goes through `runSe
 `FORERUNNER_ANTHROPIC_KEY` and `FORERUNNER_SUBSCRIPTION_TOKEN`, so only the pasted value counts;
 it is stored only when its check passes; each attempt appends a `setup.credential` audit row
 with the secret's name (allowed true when stored); no answer, log line or file carries the
-value. `test/setup-routes.test.ts` covers all of it with a memory vault and a routed fetch.
+value. A value with a line break or a space inside is refused before anything is sent
+(`splitValueProblem`: "The key has a line break inside, so it was not checked or saved." and how
+to copy it again; U-053), since fetch's error about such a header quotes it whole; a request
+that gets no answer says why (`describeNetworkError`: DNS, refused, a proxy's certificate, a
+proxy's refusal, timed out) with the code, never only "fetch failed". The Messages adapter's
+connection errors and `ClaudeCodeProvider`'s failures cut the credential out of their text the
+same way. `test/setup-routes.test.ts` covers all of it with a memory vault and a routed fetch.
 
 `buildProgram(deps)` builds the commander program (tests inspect it; the module parses
 `process.argv` only when it is the entry point). The module commands registered on it:

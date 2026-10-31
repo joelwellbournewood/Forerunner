@@ -192,6 +192,29 @@ describe("setup assistant", () => {
     expect(screen.queryByTestId("setup-github-repos")).not.toBeInTheDocument();
   });
 
+  it("a key pasted with a line break inside is not sent and never shown (U-053)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness(FRESH);
+    renderApp("/", harness);
+    await screen.findByTestId("setup-page");
+    await user.click(screen.getByTestId("setup-next"));
+    await user.click(await screen.findByTestId("setup-anthropic-input"));
+    await user.paste(`${API_KEY.slice(0, 25)}\n${API_KEY.slice(25)}`);
+    expect(
+      await screen.findByText(/It has a line break inside, so it was not checked or saved/),
+    ).toBeInTheDocument();
+    expect(postedCalls(harness, "/setup/anthropic")).toHaveLength(0);
+    expect(screen.getByTestId("setup-anthropic-input")).toHaveValue("");
+    expect(document.body.textContent).not.toContain(API_KEY.slice(0, 25));
+    expect(document.body.textContent).not.toContain(API_KEY.slice(25));
+    // Pasted again in one piece, it is checked as usual.
+    await user.paste(API_KEY);
+    await waitFor(() =>
+      expect(screen.getByTestId("setup-check-result")).toHaveTextContent("✓ Key works"),
+    );
+    expect(screen.queryByText(/line break inside/)).not.toBeInTheDocument();
+  });
+
   it("set up later closes the assistant without a restart", async () => {
     const user = userEvent.setup();
     const harness = createHarness(FRESH);

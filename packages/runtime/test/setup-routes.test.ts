@@ -227,3 +227,30 @@ describe("setup assistant routes (ADR 0092)", () => {
     expect(h.restarts).toEqual([]);
   });
 });
+
+describe("a pasted value with a line break (U-053)", () => {
+  it("a key or token with a line break inside is refused in words that never show it", async () => {
+    const h = harness();
+    // What a paste from a wrapped e-mail or a PDF sends: the key broken in two.
+    const brokenKey = `${API_KEY.slice(0, 30)}\n${API_KEY.slice(30)}`;
+    const claude = await h.call("POST", "/setup/anthropic", { value: brokenKey });
+    expect(claude.status).toBe(200);
+    expect(claude.body).toMatchObject({ ok: false });
+    const said = JSON.stringify(claude.body);
+    expect(said).toContain("line break");
+    expect(said).not.toContain(API_KEY.slice(0, 30));
+    expect(said).not.toContain(API_KEY.slice(30));
+    expect(await h.vault.has(SECRET_NAMES.anthropic)).toBe(false);
+
+    const brokenToken = `${GH_TOKEN.slice(0, 25)}\r\n${GH_TOKEN.slice(25)}`;
+    const github = await h.call("POST", "/setup/github", { token: brokenToken });
+    expect(github.body).toMatchObject({ ok: false });
+    const saidGh = JSON.stringify(github.body);
+    expect(saidGh).toContain("line break");
+    expect(saidGh).not.toContain(GH_TOKEN.slice(0, 25));
+    expect(saidGh).not.toContain(GH_TOKEN.slice(25));
+    expect(await h.vault.has(SECRET_NAMES.github)).toBe(false);
+    // The audit row names the credential, never the value.
+    expect(JSON.stringify(h.audit)).not.toContain(GH_TOKEN.slice(25));
+  });
+});

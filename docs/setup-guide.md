@@ -97,7 +97,10 @@ times this on clean machines; it must stay under 15 minutes.
 ## First run
 
 The app opens the **setup assistant**. It takes about five minutes, and every key is checked
-the moment you paste it:
+the moment you paste it. A key copied with a line break inside (from a wrapped e-mail or a
+document) is not sent and not shown: copy it again in one piece. When the check cannot reach
+Anthropic or GitHub it says why: the address was not found (no internet), the connection was
+refused, or a proxy or antivirus that inspects HTTPS stands in between.
 
 1. **Welcome.** Your name and time zone (used for the daily schedule and summaries).
 2. **Claude.** Choose how you pay for Claude:

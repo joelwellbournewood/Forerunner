@@ -19,7 +19,10 @@ with their milestone.
   git host in `testenv` (same REST shapes). The token is a bearer header taken from the vault by
   reference; it is never logged. With `tokenSource` (the daemon passes the vault read of
   `github_token`) the token is read again before every REST and GraphQL request, so a token
-  replaced in the app is used by the next call without a restart (U-049). 403 with an exhausted rate limit waits for the reset once
+  replaced in the app is used by the next call without a restart (U-049). A request that gets
+  no answer is a retryable `provider_error` "GitHub API unreachable at <origin>: <cause>"
+  (`describeNetworkError`: DNS, refused, a proxy's certificate; never the token, U-053), not
+  fetch's bare "fetch failed". 403 with an exhausted rate limit waits for the reset once
   (bounded by `maxRateLimitWaitSec`); 5xx retries with backoff; 401/403/404/405/409/422 map to
   `provider_auth`, `tool_not_allowed`, `not_found` and `validation` codes. A merge that GitHub
   refuses returns `{ merged: false, message }` instead of throwing so the caller can open a

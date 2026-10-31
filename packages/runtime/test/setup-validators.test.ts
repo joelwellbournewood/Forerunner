@@ -226,3 +226,77 @@ describe("credential classification", () => {
     expect(() => assertCredentialKind("hello", "github")).not.toThrow();
   });
 });
+
+describe("a network error keeps its cause (U-053)", () => {
+  const failing = (code: string, message: string): typeof fetch =>
+    (async () => {
+      throw new TypeError("fetch failed", { cause: Object.assign(new Error(message), { code }) });
+    }) as typeof fetch;
+  const key = ["sk-ant-api03-", "net", "4".repeat(40)].join(""); // not-a-secret
+
+  it.each([
+    ["ENOTFOUND", "getaddrinfo ENOTFOUND api.anthropic.com", /could not find the server/i],
+    ["ECONNREFUSED", "connect ECONNREFUSED 127.0.0.1:443", /refused the connection/i],
+    [
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "unable to verify the first certificate",
+      /certificate.*proxy/i,
+    ],
+    ["ETIMEDOUT", "connect ETIMEDOUT 10.0.0.1:443", /did not answer in time/i],
+  ])("%s says what failed, not only 'fetch failed'", async (code, message, expected) => {
+    const r = await validateAnthropicKey({
+      key,
+      apiBase: "http://x",
+      fetchImpl: failing(code, message),
+    });
+    expect(r.ok).toBe(false);
+    const text = r.problems.join("\n");
+    expect(text).toMatch(expected);
+    expect(text).toContain(code);
+    expect(text).not.toContain(key);
+    const gh = await validateGitHubToken({
+      token: "t0ken-value",
+      apiBase: "http://x",
+      repos: [],
+      fetchImpl: failing(code, message),
+    });
+    expect(gh.problems.join("\n")).toMatch(expected);
+  });
+
+  it("a proxy that refuses says so", async () => {
+    const r = await validateAnthropicKey({
+      key,
+      apiBase: "http://x",
+      fetchImpl: (async () => {
+        throw new TypeError("fetch failed", {
+          cause: new Error("Proxy response (407) !== 200 when HTTP Tunneling"),
+        });
+      }) as typeof fetch,
+    });
+    expect(r.problems.join("\n")).toMatch(/proxy/i);
+    expect(r.problems.join("\n")).toContain("407");
+  });
+
+  it("a value with a line break inside is refused before anything is sent", async () => {
+    let requests = 0;
+    const counting = (async () => {
+      requests++;
+      return json({});
+    }) as typeof fetch;
+    const broken = `${key.slice(0, 20)}\n${key.slice(20)}`;
+    const r = await validateAnthropicKey({ key: broken, apiBase: "http://x", fetchImpl: counting });
+    const g = await validateGitHubToken({
+      token: "abc\ndef",
+      apiBase: "http://x",
+      repos: [],
+      fetchImpl: counting,
+    });
+    expect(requests).toBe(0);
+    for (const res of [r, g]) {
+      expect(res.ok).toBe(false);
+      expect(res.problems.join("\n")).toContain("line break");
+    }
+    expect(JSON.stringify(r)).not.toContain(key.slice(20));
+    expect(JSON.stringify(g)).not.toContain("def");
+  });
+});
