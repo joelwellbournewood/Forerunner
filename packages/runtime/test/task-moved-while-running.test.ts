@@ -129,7 +129,10 @@ describe("a person's move on a running task stops that task's run; the session g
       async () =>
         `the first task to run (task ${(await rt.store.task.mustGet(first.id)).status}, ${
           provider.calls.length
-        } model calls, events: ${events.map((e) => e.type).join(" ")})`,
+        } model calls, events: ${events.map((e) => e.type).join(" ")}; finished: ${events
+          .filter((e) => e.type === "task.finished")
+          .map((e) => String(e.payload.summary ?? e.payload.text ?? JSON.stringify(e.payload)))
+          .join(" | ")})`,
     );
     // What the Tasks tab's Cancel sends: the version it loaded, the target and a reason.
     const loaded = await rt.store.task.mustGet(first.id);

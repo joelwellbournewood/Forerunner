@@ -9,7 +9,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import { installVoice, readVoiceSettings, voiceDirs } from "../src/voice/install.ts";
 import { createVoiceInstallRoutes, VoiceInstallJobs } from "../src/voice/install-routes.ts";
 import { VoiceInstallEntryView, VoiceInstallView } from "../src/voice/install-types.ts";
-import { fakeRunner, NVIDIA } from "./voice-install-helpers.ts";
+import { fakeRunner, NVIDIA, torchOnlyDeepDir } from "./voice-install-helpers.ts";
 
 /**
  * Settings → Voice through the daemon (ADR 0090): the view with the catalog and the GPU, an
@@ -48,7 +48,7 @@ describe("GET /voice/install: where the next install goes (U-069)", () => {
     const h = mkdtempSync(join(tmpdir(), "fr-voice-routes-deep-"));
     const env = { FORERUNNER_HOME: h };
     const dirs: AppDirs = appDirs({ env });
-    const deep = join(h, `Forerunner ${"x".repeat(100)}`, "dependencies");
+    const deep = torchOnlyDeepDir(h, dirs);
     const view = async (longPaths: boolean) => {
       const fake = fakeRunner({ nvidiaSmi: NVIDIA, longPaths });
       const jobs = new VoiceInstallJobs({

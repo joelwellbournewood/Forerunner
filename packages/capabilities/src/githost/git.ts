@@ -195,6 +195,11 @@ export class GitOps {
     }
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      // Git's own fallback, used only when no user.email is configured anywhere: without it a
+      // commit fails with "unable to auto-detect email address" on a machine whose person never
+      // set up git (Windows CI found it in the U-037 workspace commits). It never overrides a
+      // configured address.
+      EMAIL: process.env.EMAIL || "forerunner@localhost",
       GIT_TERMINAL_PROMPT: "0",
       GIT_ASKPASS: "",
       SSH_ASKPASS: "",

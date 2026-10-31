@@ -24,7 +24,7 @@ import {
   writeVoiceSettings,
 } from "../src/voice/install.ts";
 import type { VoiceInstallEvent } from "../src/voice/install-types.ts";
-import { fakeRunner, NVIDIA } from "./voice-install-helpers.ts";
+import { fakeRunner, NVIDIA, torchOnlyDeepDir } from "./voice-install-helpers.ts";
 
 /**
  * `fr voice install` / `fr voice remove` and the Settings → Voice switch (ADR 0090): a managed
@@ -536,7 +536,7 @@ describe("fr voice install", () => {
     /** An install folder whose `voice\venv-gpu\Lib\site-packages` plus PyTorch's ~120 deeper characters passes 260. */
     const deepInstall = () => {
       const root = mkdtempSync(join(tmpdir(), "fr-voice-deep-"));
-      const dir = join(root, `Forerunner ${"x".repeat(100)}`, "dependencies");
+      const dir = torchOnlyDeepDir(root, appDirs({ env: { FORERUNNER_HOME: root } }));
       return { dir, source: "install" as const, note: null };
     };
     const install = async (

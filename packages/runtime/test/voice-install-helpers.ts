@@ -1,15 +1,47 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "@forerunner/platform";
+import { type AppDirs, dirname, join } from "@forerunner/platform";
 import {
+  ESPEAK_PATH_MAX,
+  espeakDataPath,
+  sitePackagesPath,
+  TORCH_DEEPEST_BELOW_SITE,
+  VOICE_PYTHON,
   type VoiceProcRequest,
   type VoiceProcResult,
   venvPythonPath,
+  voiceDirs,
+  WINDOWS_MAX_PATH,
 } from "../src/voice/install.ts";
 
 /**
  * A process runner that answers like Python, pip, nvidia-smi and the voice helpers do, for
  * the voice install tests (voice-install.test.ts, voice-install-routes.test.ts).
  */
+/**
+ * A dependencies folder under `root` too deep for PyTorch's files on Windows without long paths
+ * (U-069) but not for espeak-ng's data folder, so only the long-paths check decides. The
+ * padding is computed from the installer's own limits: a fixed one passed both limits on
+ * Windows, whose temp folder is about 35 characters longer than Linux's (found by Windows CI).
+ */
+export function torchOnlyDeepDir(root: string, dirs: AppDirs): string {
+  const version = VOICE_PYTHON.min.join(".");
+  const at = (n: number) => join(root, `Forerunner ${"x".repeat(n)}`, "dependencies");
+  const venv = (dir: string) => voiceDirs(dirs, dir).venv("gpu");
+  const espeakMax = ESPEAK_PATH_MAX.windows ?? 229;
+  const fits = (n: number) => {
+    const torch = sitePackagesPath(venv(at(n)), "windows", version).length + 1;
+    return (
+      torch + TORCH_DEEPEST_BELOW_SITE >= WINDOWS_MAX_PATH &&
+      espeakDataPath(venv(at(n)), "windows", version).length <= espeakMax
+    );
+  };
+  const ok: number[] = [];
+  for (let n = 1; n <= 250; n++) if (fits(n)) ok.push(n);
+  const n = ok[Math.floor(ok.length / 2)];
+  if (n === undefined) throw new Error(`no folder depth under ${root} trips only PyTorch's limit`);
+  return at(n);
+}
+
 export const NVIDIA = "NVIDIA GeForce RTX 4070, 572.83, 12282\n";
 
 const outFrame = (kind: number, id: number, payload: Buffer = Buffer.alloc(0)) => {

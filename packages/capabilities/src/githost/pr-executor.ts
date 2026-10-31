@@ -116,6 +116,9 @@ interface ConflictAnswer {
   outcome: "resolved" | "dropped";
 }
 
+/** The identity of a workspace's baseline commits when the executor is given none (U-037). */
+export const WORKSPACE_IDENTITY = { name: "Forerunner", email: "forerunner@localhost" } as const;
+
 export class PrTaskExecutor implements TaskExecutor {
   private readonly logger = log("pr-executor");
 
@@ -227,7 +230,10 @@ export class PrTaskExecutor implements TaskExecutor {
   private async inWorkspace(ctx: ExecuteCtx, dir: string): Promise<TaskExecutionResult> {
     const { task } = ctx;
     mkdirSync(dir, { recursive: true });
-    const git = new GitOps({ cwd: dir, identity: this.deps.identity });
+    // The workspace's own commits (a baseline per run) never depend on the person's git
+    // setup: many machines have no user.name / user.email, and git refuses to commit without
+    // them (found by Windows CI).
+    const git = new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
     if (!existsSync(join(dir, ".git"))) await git.init("main");
     const before = `Workspace before "${task.title}" (task ${task.id})`;
     await git.commitAll(before, { allowEmpty: !(await git.hasCommits()) });

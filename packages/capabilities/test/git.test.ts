@@ -340,4 +340,36 @@ describe("GitOps", { timeout: 120_000 }, () => {
     );
     expect(GitOps.worktreePath(join("r"), "task/1:ä")).toBe(join("r", "task-1--"));
   });
+
+  it("commits on a machine where git has no identity, and never overrides one that is set", async () => {
+    // Windows CI (U-037): a commit failed with "unable to auto-detect email address" on a runner
+    // whose git had no user.email. Run git as on such a machine: no global or system config.
+    const home = mkdtempSync(join(tmpdir(), "fr-git-noid-home-"));
+    const bare = (argv: string[], opts: RunOptions = {}): Promise<RunResult> =>
+      run(argv, {
+        ...opts,
+        env: {
+          ...opts.env,
+          HOME: home,
+          USERPROFILE: home,
+          GIT_CONFIG_GLOBAL: join(home, "none"),
+          GIT_CONFIG_NOSYSTEM: "1",
+        },
+      });
+    const cwd = mkdtempSync(join(tmpdir(), "fr-git-noid-"));
+    const g = new GitOps({ cwd, runner: bare });
+    await g.init("main");
+    writeFileSync(join(cwd, "a.txt"), "a\n");
+    await g.commitAll("first", { allowEmpty: false });
+    expect(await g.hasCommits()).toBe(true);
+    const email = await bare(["git", "log", "-1", "--format=%ae"], { cwd });
+    expect(email.stdout.trim()).toBe("forerunner@localhost");
+
+    // A repository whose person set an address keeps it.
+    await bare(["git", "config", "user.email", "person@example.test"], { cwd });
+    writeFileSync(join(cwd, "b.txt"), "b\n");
+    await g.commitAll("second", { allowEmpty: false });
+    const mine = await bare(["git", "log", "-1", "--format=%ae"], { cwd });
+    expect(mine.stdout.trim()).toBe("person@example.test");
+  });
 });

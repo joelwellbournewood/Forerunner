@@ -340,6 +340,11 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - U-046 (b5a77d3): the project page shows a failed plan from the brief with **Retry**.
   - U-047 (9d8572f): Chat runs the commands that need no model without a key; other messages point
     to Settings → Accounts and keys → Open the setup assistant.
+  - Found by Windows CI after the merge: U-037's workspace commits failed on a machine whose git
+    has no user.email ("Author identity unknown"), so on many people's computers every task of
+    a project without a repository would have failed. Every git call now gets git's own
+    `EMAIL` fallback (never overriding a configured address) and the workspace has a default
+    identity. Test: `git.test.ts` runs real git with no configuration.
 - **Check in the app:** a project without a repository: **Create a repository** → Yes → it is on
   GitHub. Cancel a running task: the session's next task still runs. New task offers Low /
   Medium / High. Cancel a task another depends on: Start session names both. With no Claude

@@ -104,7 +104,11 @@ describe("monthly jobs in the composed daemon", () => {
     expect(recalled.block).toContain("zebra checklist");
     // The fresh agent's specialist did run on the seed, and no call carried the lesson.
     const calls = provider.calls.slice(before).map((c) => JSON.stringify(c));
-    expect(calls.some((c) => c.includes(SEED.title))).toBe(true);
+    // On failure, say what the handover run reported (it failed on Windows CI only).
+    expect(
+      calls.some((c) => c.includes(SEED.title)),
+      `no model call on the seed; the handover report: ${JSON.stringify(report).slice(0, 2000)}`,
+    ).toBe(true);
     expect(calls.filter((c) => c.includes("zebra checklist from the team wiki"))).toEqual([]);
     // The settings made one handover schedule for the project, under its own agent id.
     await rt.jobs.refreshSchedules();

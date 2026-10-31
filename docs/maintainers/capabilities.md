@@ -105,7 +105,11 @@ with their milestone.
   in its Basic form). git missing
   from PATH is `unavailable`, a spawn failure `provider_error`, a command the runner killed at
   `timeoutMs` (default 5 minutes) `timeout` naming the limit. `GitOpsOptions.runner` swaps the
-  process runner (tests record argv and env). The data module's GitHub repository import
+  process runner (tests record argv and env). Every command gets `EMAIL=forerunner@localhost`
+  unless `EMAIL` is set: git's own fallback, used only when no `user.email` is configured, so a
+  commit never fails with "unable to auto-detect email address" on a machine whose person never
+  set up git (Windows CI found it in the U-037 workspace commits), and a configured address is
+  never overridden (`git.test.ts`). The data module's GitHub repository import
   (`data.md`) uses it to clone a project's repository onto its migration branch.
 - `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone
   or fetch into a per-task worktree, branch from the base (or the existing PR branch), run the
@@ -130,7 +134,8 @@ with their milestone.
   with that folder as its worktree, stages the run's change (`GitOps.stageAll`) and returns the
   folder as `worktree` with the staged files as `changedFiles`, so the critic's `git diff HEAD`
   there is that run's change; without `workspaceFor` the inner executor runs directly, as before.
-  `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
+  The workspace's commits use the executor's `identity`, else `WORKSPACE_IDENTITY`
+  (Forerunner, forerunner@localhost). `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
   and `setRemote` for it and for the repository creation; `createRepo` takes `autoInit` (default
   true, the host's README commit; false: an empty repository for a first push).
 - `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests
