@@ -72,7 +72,8 @@ export interface IntakeCardTask {
 export interface IntakeCardView {
   milestones: { name: string; targetDate: string | null; tasks: IntakeCardTask[] }[];
   looseTasks: IntakeCardTask[];
-  docs: string[];
+  /** The drafted docs, the first decision (`docs/decisions/0001-…`) first (U-073). */
+  docs: { path: string; text: string }[];
   firstSession: {
     summary: string;
     /** `key` is the plan task's key (unique in a proposal the runtime accepted). */
@@ -102,6 +103,9 @@ function taskOf(v: unknown): IntakeCardTask | null {
     specialist: str(v.specialist),
   };
 }
+
+/** A decision doc the intake drafts (`docs/decisions/0001-<slug>.md`). */
+const isDecisionDoc = (path: string): boolean => /^docs\/decisions\/\d{4}-.+\.md$/.test(path);
 
 export function intakeCardOf(card: unknown): IntakeCardView | null {
   if (!isRecord(card) || !str(card.key)?.startsWith("intake:")) return null;
@@ -133,7 +137,11 @@ export function intakeCardOf(card: unknown): IntakeCardView | null {
   return {
     milestones,
     looseTasks,
-    docs: isRecord(proposal.docs) ? Object.keys(proposal.docs) : [],
+    docs: isRecord(proposal.docs)
+      ? Object.entries(proposal.docs)
+          .map(([path, text]) => ({ path, text: str(text) ?? "" }))
+          .sort((a, b) => Number(isDecisionDoc(b.path)) - Number(isDecisionDoc(a.path)))
+      : [],
     firstSession: { summary: str(first.summary) ?? "", items },
     docsTarget: target === "repository" || target === "workspace" ? target : null,
     costUsdMicro: num(card.cost_usd_micro),
@@ -284,13 +292,30 @@ function IntakeCard({ card }: { card: IntakeCardView }) {
         ) : null}
       </ul>
       <p data-testid="intake-docs">
-        <span className="font-medium">Docs ({card.docs.length}):</span> {card.docs.join(", ")}
+        <span className="font-medium">Docs ({card.docs.length}):</span>{" "}
+        {card.docs.map((d) => d.path).join(", ")}
         {card.docsTarget === "repository"
           ? " — as a pull request on the project's repository"
           : card.docsTarget === "workspace"
             ? " — into the project's workspace"
             : ""}
       </p>
+      {/* U-073: what you approve, readable before you approve it; the decision doc open. */}
+      <div className="space-y-1" data-testid="intake-doc-texts">
+        {card.docs.map((d) => (
+          <details
+            key={d.path}
+            open={isDecisionDoc(d.path)}
+            className="rounded border border-neutral-200 p-1 dark:border-neutral-800"
+            data-testid="intake-doc"
+          >
+            <summary className="cursor-pointer font-medium">
+              {isDecisionDoc(d.path) ? `Decision: ${d.path}` : d.path}
+            </summary>
+            <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap text-xs">{d.text}</pre>
+          </details>
+        ))}
+      </div>
       <div data-testid="intake-first-session">
         <span className="font-medium">First session ({usd(total)}):</span>{" "}
         {card.firstSession.summary}
@@ -616,6 +641,22 @@ function RequestCard({
           >
             {request.projectName ?? request.projectId}
           </Link>
+        ) : null}
+        {/* U-073: every card names its task beside its project. */}
+        {request.taskTitle ? (
+          <span data-testid="request-task" className="text-neutral-700 dark:text-neutral-300">
+            Task:{" "}
+            {request.projectId ? (
+              <Link
+                to={`/projects/${encodeURIComponent(request.projectId)}/tasks`}
+                className="text-blue-700 hover:underline dark:text-blue-300"
+              >
+                {request.taskTitle}
+              </Link>
+            ) : (
+              request.taskTitle
+            )}
+          </span>
         ) : null}
         <span className="ml-auto text-xs text-neutral-500">{relativeTime(request.createdAt)}</span>
       </div>

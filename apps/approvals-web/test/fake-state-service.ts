@@ -172,6 +172,7 @@ export function fixtures(human: { id: string; name: string }, now: number, pcOnl
   ];
   const base = {
     taskId: null,
+    taskTitle: null,
     sessionId: null,
     changeCard: null,
     status: "open",
@@ -197,6 +198,8 @@ export function fixtures(human: { id: string; name: string }, now: number, pcOnl
       id: "req-blocking",
       projectId: "proj-1",
       projectName: "PharmaWatch",
+      taskId: "task-schema",
+      taskTitle: "Choose the database",
       kind: "decision",
       why: "The schema depends on it and nothing can be built before.",
       steps: ["Read the plan summary", "Pick a store"],

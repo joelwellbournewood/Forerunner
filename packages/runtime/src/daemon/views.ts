@@ -447,12 +447,17 @@ export function messageView(m: MessageRow, fromName: string): MessageView {
 /** What a request's option says on its button (`optionLabel`, `wiring/request-answers.ts`). */
 export { optionLabel };
 
-export function requestView(r: HumanRequestRow, projectName: string | null): HumanRequestView {
+export function requestView(
+  r: HumanRequestRow,
+  projectName: string | null,
+  taskTitle: string | null = null,
+): HumanRequestView {
   return {
     id: r.id,
     projectId: r.project_id,
     projectName,
     taskId: r.task_id,
+    taskTitle,
     sessionId: r.session_id,
     kind: r.kind,
     why: r.why,

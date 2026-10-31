@@ -45,6 +45,9 @@ describe("inbox", () => {
     expect($$("option", first).map((b) => b.textContent)).toEqual(["Postgres", "SQLite"]);
     expect($("non-blocking", cards[1] as HTMLElement)).not.toBeNull();
     expect(bodyText()).toMatch(/PharmaWatch/);
+    // U-073: a card about a task names it beside its project; one about none names none.
+    expect(must("request-task", first).textContent).toBe("Task: Choose the database");
+    expect($("request-task", cards[1] as HTMLElement)).toBeNull();
     await waitFor(() => $("blocking-badge") !== null, "badge");
     expect(must("blocking-badge").textContent).toBe("1 blocking");
     expect($$("message")).toHaveLength(2);

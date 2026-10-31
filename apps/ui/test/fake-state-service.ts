@@ -291,6 +291,7 @@ export const FAKE_REQUESTS: HumanRequestView[] = [
     projectId: "proj_pharma",
     projectName: "PharmaWatch",
     taskId: "task_1",
+    taskTitle: "Write the feed parser",
     sessionId: null,
     kind: "approval",
     why: "Merge the feed parser PR?",

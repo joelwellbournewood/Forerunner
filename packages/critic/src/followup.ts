@@ -195,7 +195,8 @@ async function signoffRequest(
     task_id: task.id,
     session_id: ctx.sessionId ?? null,
     kind: "approval",
-    why: `${why}: ${review.summary}`.slice(0, 4000),
+    // U-073: the card names its task; the Inbox shows the project beside it.
+    why: `${why} for "${task.title}": ${review.summary}`.slice(0, 4000),
     steps: requiredActionsOf(review),
     options: [...SIGNOFF_OPTIONS],
     blocking: true,

@@ -118,6 +118,15 @@ function RequestCard({ request }: { request: HumanRequestView }) {
         {request.projectName ? <Badge tone="info">{request.projectName}</Badge> : null}
         <span className="ml-auto text-xs text-neutral-500">{relativeTime(request.createdAt)}</span>
       </div>
+      {/* U-073: every card names its task beside its project. */}
+      {request.taskTitle ? (
+        <p
+          className="mt-1 text-sm text-neutral-700 dark:text-neutral-300"
+          data-testid="m-request-task"
+        >
+          Task: {request.taskTitle}
+        </p>
+      ) : null}
       <p className="mt-2 font-medium">{request.why}</p>
       {request.steps.length > 0 ? (
         <ol className="mt-1 list-decimal pl-5 text-sm text-neutral-700 dark:text-neutral-300">

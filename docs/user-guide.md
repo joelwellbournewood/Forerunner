@@ -148,6 +148,10 @@ sent back gets a lower grade from the critic's session review.
 
 Human requests and agent messages across all projects, blocking ones first. A request shows the
 context, why it matters, the options (multiple choice when possible) and whether it blocks work.
+Every card names its project and, when it is about a task, the task (**Task:** with a link to
+the project's Tasks tab). The plan Forerunner drafts from a new project's brief shows the
+documents it would write, each behind its own heading: the decision document (why this stack,
+this hosting, this repository) is open, so you read it before you approve.
 Answered decisions go to the decision log and are not asked again unless something changes.
 On a card whose answer must be one of its options (a sign-off, a plan, an approval), a typed
 answer that is none of them is not taken: the card stays and says "Choose one of: …" with its

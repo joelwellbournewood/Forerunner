@@ -35,6 +35,30 @@ describe("Inbox", () => {
     expect(screen.getByTestId("blocking-count")).toHaveTextContent("1 blocking");
   });
 
+  it("every card names its task and its project (U-073)", async () => {
+    renderApp("/inbox");
+    const requests = await screen.findAllByTestId("request");
+    const byId = (id: string) =>
+      requests.find((r) => r.getAttribute("data-request-id") === id) as HTMLElement;
+    expect(within(byId("req_1")).getByTestId("request-task")).toHaveTextContent(
+      "Task: Add the search box to the header",
+    );
+    expect(within(byId("req_2")).getByTestId("request-task")).toHaveTextContent(
+      "Task: Decide the versioning scheme",
+    );
+    for (const r of requests) {
+      expect(within(r).getByRole("link", { name: "Atlas" })).toHaveAttribute(
+        "href",
+        "/projects/proj_atlas",
+      );
+      // The task opens the project's Tasks tab.
+      expect(within(within(r).getByTestId("request-task")).getByRole("link")).toHaveAttribute(
+        "href",
+        "/projects/proj_atlas/tasks",
+      );
+    }
+  });
+
   it("posts the chosen option with the request version and drops the request from the list", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
@@ -221,6 +245,57 @@ describe("Inbox", () => {
     expect(within(request).getByText("Change card")).toBeInTheDocument();
     // Other requests render no intake card.
     expect(screen.getAllByTestId("intake-card")).toHaveLength(1);
+  });
+
+  it("the plan card shows the drafted decision doc's text before you approve (U-073)", async () => {
+    const harness = createHarness();
+    const decision =
+      "# 0001: Stack and hosting\n\nWe use TypeScript with Hono, hosted on Cloudflare Workers,\nbecause the brief asks for a small API close to its users.";
+    harness.daemon.state.requests.unshift({
+      id: "req_intake_doc",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      taskTitle: null,
+      sessionId: null,
+      kind: "approval",
+      why: 'Intake for "Atlas": 1 milestone(s), 1 task(s), 2 doc(s) and a first-session plan.',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        docs_target: "workspace",
+        applied_at: null,
+        proposal: {
+          plan: {
+            milestones: [{ name: "Start", tasks: [{ key: "a", title: "Scaffold", priority: 5 }] }],
+            tasks: [],
+          },
+          docs: {
+            "README.md": "# Atlas\n\nA search for the docs.",
+            "docs/decisions/0001-stack.md": decision,
+          },
+          firstSession: { summary: "Scaffold.", items: [{ key: "a", estimateUsdMicro: 100_000 }] },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T23:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const card = await screen.findByTestId("intake-card");
+    const texts = within(card).getAllByTestId("intake-doc");
+    // The decision doc comes first and is open: its text is readable without a click.
+    expect(texts[0]).toHaveTextContent("Decision: docs/decisions/0001-stack.md");
+    expect(texts[0]).toHaveAttribute("open");
+    expect(within(texts[0] as HTMLElement).getByText(/hosted on Cloudflare Workers/)).toBeVisible();
+    // The other drafted docs are there too, collapsed.
+    expect(texts[1]).toHaveTextContent("README.md");
+    expect(texts[1]).not.toHaveAttribute("open");
+    expect(texts[1]).toHaveTextContent("A search for the docs.");
   });
 
   describe("questions only you can answer (U-022)", () => {

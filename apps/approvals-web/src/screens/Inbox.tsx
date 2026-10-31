@@ -247,6 +247,12 @@ export function RequestCard({
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <span className="font-medium">{KIND_LABEL[request.kind] ?? request.kind}</span>
         {request.projectName && <Badge tone="info">{request.projectName}</Badge>}
+        {/* U-073: every card names its task beside its project. */}
+        {request.taskTitle && (
+          <span className="text-sm" data-testid="request-task">
+            Task: {request.taskTitle}
+          </span>
+        )}
         {request.blocking ? (
           <Badge tone="error" testId="blocking">
             Blocks work

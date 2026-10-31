@@ -310,6 +310,29 @@ describe("state service routes", () => {
     expect(open.requests[0]?.projectName).toBe("Demo");
     expect(open.requests[0]?.options).toEqual(["sqlite", "postgres"]);
     expect(open.blockingCount).toBe(1);
+    // U-073: a card about a task names it beside the project; one about none names none.
+    const task = await h.store.task.insert({
+      project_id: h.seed.project.id,
+      title: "Pick the database",
+      outcome: "chosen",
+      status: "needs_human",
+      reason: "seed",
+    });
+    const about = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      project_id: h.seed.project.id,
+      task_id: task.id,
+      kind: "approval",
+      why: "Critic sign-off needed",
+      options: ["accept", "revise", "cancel"],
+      blocking: true,
+    });
+    const named = await json<{ requests: { id: string; taskTitle: string | null }[] }>(
+      await phone.get("/requests"),
+    );
+    expect(named.requests.find((x) => x.id === about.id)?.taskTitle).toBe("Pick the database");
+    expect(named.requests.find((x) => x.id === r.id)?.taskTitle).toBeNull();
+    await h.store.humanRequest.withdraw(about.id, about.version);
     const stale = await phone.post(`/requests/${r.id}/answer`, {
       version: r.version + 1,
       answer: "postgres",

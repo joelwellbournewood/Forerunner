@@ -114,12 +114,15 @@ export function messageView(m: MessageRow, fromAgentName: string): MessageViewTy
 export function humanRequestView(
   r: HumanRequestRow,
   projectName: string | null,
+  taskTitle: string | null = null,
 ): HumanRequestViewType {
   return {
     id: r.id,
     projectId: r.project_id,
     projectName,
     taskId: r.task_id,
+    // U-073: every card names its task beside its project, on the phone too.
+    taskTitle,
     sessionId: r.session_id,
     kind: r.kind,
     why: r.why,

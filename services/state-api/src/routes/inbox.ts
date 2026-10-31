@@ -17,6 +17,14 @@ import {
 } from "../http.ts";
 import { humanRequestView, messageView } from "../views.ts";
 
+/** The title of the task a request is about, for its card (U-073); null without one. */
+async function taskTitle(
+  store: RouteContext["store"],
+  taskId: string | null,
+): Promise<string | null> {
+  return taskId ? ((await store.task.get(taskId))?.title ?? null) : null;
+}
+
 const SendMessageBody = z.object({
   fromAgentId: z.string().min(1),
   toAgentId: z.string().optional(),
@@ -236,7 +244,9 @@ export function registerInboxRoutes(app: App, ctx: RouteContext): void {
     const reqViews = [];
     for (const r of requests) {
       const project = r.project_id ? await ctx.store.project.get(r.project_id) : undefined;
-      reqViews.push(humanRequestView(r, project?.name ?? null));
+      reqViews.push(
+        humanRequestView(r, project?.name ?? null, await taskTitle(ctx.store, r.task_id)),
+      );
     }
     return c.json({
       messages: views,
@@ -284,7 +294,7 @@ export function registerInboxRoutes(app: App, ctx: RouteContext): void {
     const views = [];
     for (const r of rows) {
       const project = r.project_id ? await ctx.store.project.get(r.project_id) : undefined;
-      views.push(humanRequestView(r, project?.name ?? null));
+      views.push(humanRequestView(r, project?.name ?? null, await taskTitle(ctx.store, r.task_id)));
     }
     return c.json({ requests: views, blockingCount: rows.filter((r) => r.blocking).length });
   });
@@ -296,7 +306,9 @@ export function registerInboxRoutes(app: App, ctx: RouteContext): void {
     if (!r) throw notFound("request", c.req.param("id"));
     assertRequestOwner(p, r);
     const project = r.project_id ? await ctx.store.project.get(r.project_id) : undefined;
-    return c.json(humanRequestView(r, project?.name ?? null));
+    return c.json(
+      humanRequestView(r, project?.name ?? null, await taskTitle(ctx.store, r.task_id)),
+    );
   });
 
   app.post("/requests/:id/answer", async (c) => {
@@ -306,6 +318,8 @@ export function registerInboxRoutes(app: App, ctx: RouteContext): void {
     const body = await parseBody(c, AnswerBody);
     const row = await answerRequestAs(ctx, p, c.req.param("id"), body.version, body.answer);
     const project = row.project_id ? await ctx.store.project.get(row.project_id) : undefined;
-    return c.json(humanRequestView(row, project?.name ?? null));
+    return c.json(
+      humanRequestView(row, project?.name ?? null, await taskTitle(ctx.store, row.task_id)),
+    );
   });
 }

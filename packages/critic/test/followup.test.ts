@@ -210,6 +210,8 @@ describe("applyVerdict (B.4, D.2)", () => {
         change_card: { key: SIGNOFF_KEY, reason: "retry_ladder_exhausted", applied_at: null },
       });
       expect(req.why).toContain("Retry ladder exhausted");
+      // U-073: the card names the task it asks about.
+      expect(req.why).toContain('"Add clamp"');
     } finally {
       await w.close();
     }
@@ -303,6 +305,8 @@ describe("applyVerdict (B.4, D.2)", () => {
         if (d2.action !== "human") throw new Error("expected human");
         const req = await w2.store.humanRequest.mustGet(d2.humanRequestId);
         expect(req.why).toContain("Needs eyes.");
+        // U-073: the card names the task it asks about.
+        expect(req.why).toContain('"Add clamp"');
         expect(req.session_id).toBe(w2.ids.session);
         expect(req.options).toEqual([...SIGNOFF_OPTIONS]);
         // The card the runtime's sign-off sync applies the answer through (RT-P5-1).

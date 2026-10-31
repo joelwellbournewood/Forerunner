@@ -2258,6 +2258,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         projectId: null,
         projectName: null,
         taskId: null,
+        // As `GET /inbox` names it (U-073): about no task.
+        taskTitle: null,
         sessionId: null,
         kind: "capability_grant",
         why: `Allow ${view.name}: ${view.review?.summary.join("; ") ?? ""}`,

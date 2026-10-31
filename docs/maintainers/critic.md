@@ -249,7 +249,10 @@ ADR 0059 amendment of 2026-10-25), and leaves it pending when the run did not co
 
 Every sign-off request (the one `CriticService.review` files for a `human` verdict on a task or
 session subject, the one `applyVerdict` files when the ladder ends, and the runtime loop's own
-after a last-rung revise) has the options `SIGNOFF_OPTIONS` (`accept`, `revise`, `cancel`) and a `change_card`
+after a last-rung revise) names its task in the `why` (`Critic sign-off needed for "<title>"
+(tier …)`, `Retry ladder exhausted after … for "<title>"`; U-073: the phone shows the text
+alone, and the desktop's Inbox shows the task's title and project beside it) and has the
+options `SIGNOFF_OPTIONS` (`accept`, `revise`, `cancel`) and a `change_card`
 built by `signoffCard` and keyed `SIGNOFF_KEY` (`critic:signoff`): the task, the review, the
 run that produced the work, the review's finding ids, the reason (`verdict` or
 `retry_ladder_exhausted`) and `applied_at: null`. The answer is applied by the runtime

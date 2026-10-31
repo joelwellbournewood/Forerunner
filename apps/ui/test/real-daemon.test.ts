@@ -567,6 +567,30 @@ describe("the UI client against the real daemon", () => {
     ).toBe(false);
   });
 
+  it("every Inbox card names its task beside its project (U-073)", async () => {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Set up the contact form",
+      outcome: "mail arrives",
+      status: "needs_human",
+      reason: "seed",
+    });
+    const card = await rt.store.humanRequest.insert({
+      human_id: humanId,
+      project_id: projectId,
+      task_id: task.id,
+      kind: "approval",
+      why: "Critic sign-off needed",
+      steps: [],
+      options: ["accept", "revise", "cancel"],
+      blocking: true,
+      risk: "medium",
+    });
+    const shown = (await client.inbox(humanId)).requests.find((r) => r.id === card.id);
+    expect(shown).toMatchObject({ projectName: "Contract", taskTitle: "Set up the contact form" });
+    await rt.store.humanRequest.withdraw(card.id, card.version);
+  });
+
   it("answering a request: an answer that is none of a card's options is refused with them, the card stays (U-034)", async () => {
     const card = await rt.store.humanRequest.insert({
       human_id: humanId,

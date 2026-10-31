@@ -1271,6 +1271,8 @@ export function createDaemonApp(
     );
     const names = new Map<string, string>();
     const projects = new Map<string, string>();
+    // U-073: every card names its task beside its project.
+    const tasks = new Map<string, string | null>();
     const reqViews = [];
     for (const r of requests) {
       if (r.project_id && !projects.has(r.project_id))
@@ -1278,7 +1280,15 @@ export function createDaemonApp(
           r.project_id,
           (await rt.store.project.get(r.project_id))?.name ?? r.project_id,
         );
-      reqViews.push(requestView(r, r.project_id ? (projects.get(r.project_id) ?? null) : null));
+      if (r.task_id && !tasks.has(r.task_id))
+        tasks.set(r.task_id, (await rt.store.task.get(r.task_id))?.title ?? null);
+      reqViews.push(
+        requestView(
+          r,
+          r.project_id ? (projects.get(r.project_id) ?? null) : null,
+          r.task_id ? (tasks.get(r.task_id) ?? null) : null,
+        ),
+      );
     }
     const msgViews = [];
     for (const m of messages) {

@@ -893,13 +893,15 @@ export class CriticService {
       humanRequestId = req.id;
     } else if (out.verdict === "human" && input.subject.kind !== "lesson") {
       const worst = maxSeverity(out.findings);
+      // U-073: the card names the task it asks about (the Inbox shows the project beside it).
+      const title = taskId ? (await store.task.get(taskId))?.title : undefined;
       const req = await store.humanRequest.insert({
         human_id: ctx.humanId === undefined ? claims.ownerHumanId : ctx.humanId,
         project_id: claims.projectId ?? null,
         task_id: taskId,
         session_id: sessionId,
         kind: "approval",
-        why: `Critic sign-off needed (tier ${out.tier}, grade ${out.grade}, confidence ${out.confidence.toFixed(2)}): ${out.summary}`.slice(
+        why: `Critic sign-off needed${title ? ` for "${title}"` : ""} (tier ${out.tier}, grade ${out.grade}, confidence ${out.confidence.toFixed(2)}): ${out.summary}`.slice(
           0,
           4000,
         ),

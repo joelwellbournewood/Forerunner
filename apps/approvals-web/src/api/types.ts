@@ -57,6 +57,8 @@ export const HumanRequestView = z.object({
   projectId: z.string().nullable(),
   projectName: z.string().nullable(),
   taskId: z.string().nullable(),
+  /** The task the request is about (U-073); a service from before it sends none. */
+  taskTitle: z.string().nullable().optional(),
   sessionId: z.string().nullable(),
   kind: z.string(),
   why: z.string(),

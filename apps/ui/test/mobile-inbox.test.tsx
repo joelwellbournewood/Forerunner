@@ -22,6 +22,17 @@ import {
 } from "./mobile-helpers.tsx";
 
 describe("Inbox screen", () => {
+  it("names the task and the project of a card (U-073)", async () => {
+    const h = await createMobileHarness();
+    renderMobile("/inbox", h);
+    const requests = await screen.findAllByTestId("m-request");
+    const merge = requests.find((r) => r.getAttribute("data-request-id") === "req_merge");
+    expect(within(merge as HTMLElement).getByText("PharmaWatch")).toBeInTheDocument();
+    expect(within(merge as HTMLElement).getByTestId("m-request-task")).toHaveTextContent(
+      "Task: Write the feed parser",
+    );
+  });
+
   it("lists approvals first (blocking, then newest) and posts a signed option answer", async () => {
     const h = await createMobileHarness();
     const user = userEvent.setup();

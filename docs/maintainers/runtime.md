@@ -1445,6 +1445,13 @@ card left. The rules:
 - Free text stays: a request without options, a `decision` (a question; the decision log
   records the words), `info`, a `credential` (the runner unlock's answer is the wrapped key).
 
+**Every card names its task and project (U-073).** `GET /inbox` (`requestView(row,
+projectName, taskTitle)`) carries `taskTitle`, the title of the task the request names (null
+without one), beside `projectName`, and the Inbox shows both on every card (sign-off, blocked
+findings, a hooks approval, the pull-request cards and the rest); the state service's request
+views carry it too, for the phone and the approvals page. The texts of the critic's sign-offs
+name the task themselves (critic.md). Test: `inbox-names-task.test.ts`.
+
 Used by the daemon's `POST /requests/:id/answer` (a 400 `validation`, the request untouched),
 the state service's `answerRequestAs` (its answer route, the phone's offline queue and the
 review verdicts; `state-service.md`), and the `request.answer` command through the

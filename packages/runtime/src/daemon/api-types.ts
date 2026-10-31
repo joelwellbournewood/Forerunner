@@ -346,6 +346,12 @@ export const HumanRequestView = z.object({
   projectId: z.string().nullable(),
   projectName: z.string().nullable(),
   taskId: z.string().nullable(),
+  /**
+   * The title of the task the request is about (U-073: every card names its task and its
+   * project); null when it names no task or in an answer's echo. `GET /inbox` fills it; absent
+   * from a service older than the field.
+   */
+  taskTitle: z.string().nullable().optional(),
   sessionId: z.string().nullable(),
   kind: z.string(),
   why: z.string(),

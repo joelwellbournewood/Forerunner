@@ -421,6 +421,8 @@ describe("CriticService: rules in code", () => {
       });
       expect(req.why).toContain("Flawless migration.");
       expect(req.why).toContain("tier 3");
+      // U-073: the card names the task it asks about (the phone shows the text alone).
+      expect(req.why).toContain('"Add clamp"');
       expect(req.options).toEqual(["accept", "revise", "cancel"]);
       // The card the runtime's sign-off sync applies the answer through (RT-P5-1).
       expect(req.change_card).toEqual({
