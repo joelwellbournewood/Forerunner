@@ -55,6 +55,12 @@ import {
   summarizeHeard,
 } from "./live-chat.ts";
 import {
+  firstSessionPlan,
+  markFirstSessionRun,
+  notesForTask,
+  type QueueNote,
+} from "./next-session.ts";
+import {
   buildPeerFeed,
   detectOverlap,
   extractPathHints,
@@ -195,6 +201,11 @@ export interface TaskExecutor {
      * reaches one task.
      */
     heard?: readonly HeardLine[];
+    /**
+     * What the person queued for this session that concerns this task (spec J.2, U-038): the
+     * brief's queue items that name it, or that name no task. Quoted data in the task's brief.
+     */
+    notes?: readonly QueueNote[];
   }): Promise<TaskExecutionResult>;
 }
 
@@ -880,6 +891,8 @@ export class SessionRunner {
             items: plan.items.length,
           });
         }
+        // The approved first session is this one (U-038): later sessions plan as usual.
+        if (project) await markFirstSessionRun(store, project.id, session.id, plan.items);
         // 3. Execute, claim-before-work, inbox re-check between tasks.
         for (const item of plan.items) {
           if (controller.signal.aborted) throw new ForerunnerError("killed", "session stopped");
@@ -1009,6 +1022,15 @@ export class SessionRunner {
             label: `task ${task.id} of session ${session.id}`,
           });
           const stopWatch = this.watchTask(task.id, taskController.signal);
+          // The queue's notes for this task (U-038): those naming it, or naming no task.
+          const notes = notesForTask(brief.queue.items, task, readyTasks);
+          if (notes.length)
+            await emit("task.notes", {
+              taskId: task.id,
+              title: task.title,
+              ids: notes.map((q) => q.id),
+              count: notes.length,
+            });
           let result: TaskExecutionResult;
           const execStarted = clock.monotonic();
           try {
@@ -1020,6 +1042,7 @@ export class SessionRunner {
               item,
               signal: taskController.signal,
               heard: said.map(({ deliveredTo: _to, ...line }) => line),
+              ...(notes.length ? { notes } : {}),
             });
           } catch (e) {
             const code = e instanceof ForerunnerError ? e.code : "internal";
@@ -1605,9 +1628,12 @@ export class SessionRunner {
         handoffs: peerIds.length > 0,
       });
     if (project) {
+      // Read fresh: what changed on the row during the session (an intake approved meanwhile,
+      // the first session marked as run, U-038) is kept, not overwritten by the start's copy.
+      const current = (await store.project.get(project.id)) ?? project;
       await store.project.patch(project.id, {
         summary_cache: {
-          ...(project.summary_cache as Record<string, never>),
+          ...(current.summary_cache as Record<string, never>),
           goal: project.goal,
           stage: project.stage,
           last_session: {
@@ -2494,21 +2520,29 @@ export class StaticPlanner implements Planner {
     private readonly estimates?: EstimatePort,
   ) {}
   async plan(ctx: PlannerContext): Promise<SessionPlan> {
-    const items = ctx.readyTasks
-      .filter((t) => !t.claimed_by || (t.claim_expires && t.claim_expires < ctx.brief.generatedAt))
-      .sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at))
-      .map((t) => ({
-        taskId: t.id,
-        title: t.title,
-        specialist: t.specialist ?? "coder",
-        estimateUsdMicro: this.estimates
-          ? planEstimateUsdMicro(this.estimates, t)
-          : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
-      }));
+    const free = ctx.readyTasks.filter(
+      (t) => !t.claimed_by || (t.claim_expires && t.claim_expires < ctx.brief.generatedAt),
+    );
+    // The first-session plan approved with the project's intake decides the first session: its
+    // ready tasks, in the approved order (U-038); after it ran, priority order.
+    const first = firstSessionPlan(ctx.brief.project?.summary, free);
+    const ordered = first
+      ? first.tasks
+      : free.sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at));
+    const items = ordered.map((t) => ({
+      taskId: t.id,
+      title: t.title,
+      specialist: t.specialist ?? "coder",
+      estimateUsdMicro: this.estimates
+        ? planEstimateUsdMicro(this.estimates, t)
+        : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
+    }));
     return {
       items,
       estimateUsdMicro: items.reduce((s, i) => s + i.estimateUsdMicro, 0),
-      summary: `${items.length} ready task(s) in priority order`,
+      summary: first
+        ? `the first session you approved with the project plan: ${items.length} task(s) in its order`
+        : `${items.length} ready task(s) in priority order`,
     };
   }
 }

@@ -1163,6 +1163,31 @@ items, consumed and dismissed out, ids not rendered), and the state suite's queu
 both dialects (version conflict, dismissed never consumed, rollback inside a transaction).
 Requirements: J.2, E.2.
 
+**What the queue reaches (U-038, `src/session/next-session.ts`).** Before U-038 the queue
+reached only the planner's state brief, whose text `StaticPlanner` never reads, and the
+approved first-session plan was written to the summary cache and read by nothing. Now the
+items the brief carried reach the specialists: for each task it runs, the runner passes
+`notesForTask(brief.queue.items, task, readyTasks)` as the executor context's `notes` (an item
+that names the task by its id or by its title as written, at least four characters, case
+aside; and every item that names none of the ready tasks) with a `task.notes` event ("Gave N
+item(s) from the next-session queue to ..."), and `LoopTaskExecutor` appends them after the
+delegation brief as quoted data (`renderQueueNotes`: "## Left for this session by the human",
+each item's kind, priority and text, an instruction-shaped item flagged in a run warning by its
+id and rules, never its words). The intake's own announcement of the first session (kind
+`task`, `FIRST_SESSION_ITEM_PREFIX`) goes to no brief. The approved first session
+(`summary_cache.first_session`, written by `IntakeService.applyApproved`) decides the first
+session: `StaticPlanner` plans its ready tasks in the approved order (`firstSessionPlan`; a
+plan summary of "the first session you approved with the project plan: N task(s) in its
+order") until a session that starts work on such a plan records itself as
+`first_session.ran_in_session` (`markFirstSessionRun`, read and written fresh); from then on,
+priority order. A plan filed for approval at autonomy 0 or 1 marks nothing, so the approved
+follow-up plans the same tasks. With none of its tasks ready the planner plans as usual. The
+session end now re-reads the project before it writes the summary cache, so a mark or an intake
+approved during the session is not overwritten by the copy read at its start. Tests:
+`runner-next-session.test.ts` (routing by name and to every task, the brief the specialist
+reads, the first session's order and its mark across a reopened store), the U-038 case in
+`intake.test.ts` (the planner on a real approval).
+
 **What a run is capped at (U-042).** `runCapOf` (`session/executor.ts`) decides the brief's
 budget, which becomes the run token's `budgetUsdMicro` and the hooks' run cap: a task with a
 budget of its own is capped at what is left of it (`budget_usd_micro` less

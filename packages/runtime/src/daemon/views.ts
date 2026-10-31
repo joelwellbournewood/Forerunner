@@ -361,6 +361,8 @@ export function describeEvent(
       return `Put ${n("count")} task(s) back to ready: their claim had lapsed or no agent held it.`;
     case "task.skipped":
       return `Skipped a task: ${skipReason(s("reason"))}.`;
+    case "task.notes":
+      return `Gave ${n("count")} item(s) from the next-session queue to "${s("title")}".`;
     case "inbox.message":
       // A name, never an id (U-074): the runner adds `fromName`; older rows say "another agent".
       return `Read a ${s("type") || "new"} message from ${s("fromName") || "another agent"}.`;

@@ -183,10 +183,15 @@ class FocusedPlanner implements Planner {
     private readonly focus: Map<string, string>,
   ) {}
   async plan(ctx: PlannerContext) {
-    const plan = await this.inner.plan(ctx);
     const taskId = this.focus.get(ctx.session.agent_id);
-    if (ctx.session.trigger !== "email" || !taskId) return plan;
+    if (ctx.session.trigger !== "email" || !taskId) return this.inner.plan(ctx);
     this.focus.delete(ctx.session.agent_id);
+    // The inner planner sees the email task alone: a selection it makes over the ready tasks
+    // (the approved first session, U-038) never leaves the email task out.
+    const plan = await this.inner.plan({
+      ...ctx,
+      readyTasks: ctx.readyTasks.filter((t) => t.id === taskId),
+    });
     const items = plan.items.filter((i) => i.taskId === taskId);
     return {
       items,

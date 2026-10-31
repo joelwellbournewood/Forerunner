@@ -9,6 +9,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { requestView } from "../src/daemon/views.ts";
 import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
+import type { StateBrief } from "../src/session/brief.ts";
 import {
   INTAKE_AUDIT_TOOL,
   INTAKE_BUILTIN_PROMPT_VERSION,
@@ -18,6 +19,7 @@ import {
   NO_WEB_RULE,
   parseIntakeReply,
 } from "../src/session/intake.ts";
+import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
 import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
 /**
@@ -353,6 +355,37 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         "Scaffold the repository",
         "Set up continuous integration",
       ]);
+    });
+
+    it("the next session plans the first session that was approved, not the priority order (U-038)", async () => {
+      const project = await rt.store.project.mustGet(projectId);
+      // A task the person added since, ready and above every planned one in priority.
+      const hotfix = await rt.store.task.insert({
+        project_id: projectId,
+        title: "Hotfix the landing page",
+        outcome: "The landing page loads",
+        status: "ready",
+        priority: 9,
+        risk_tier: 1,
+      });
+      const ready = await rt.store.task.readyTasks(projectId, { limit: 100 });
+      expect(ready.map((t) => t.title)).toContain(hotfix.title);
+      const plan = await new StaticPlanner().plan({
+        brief: {
+          generatedAt: clock.nowIso(),
+          project: { summary: project.summary_cache },
+        } as unknown as StateBrief,
+        briefText: "",
+        readyTasks: ready,
+        budgetUsdMicro: 5_000_000,
+        reserveShare: 0.2,
+      } as unknown as PlannerContext);
+      const approved = ["Scaffold the repository", "Set up continuous integration"];
+      expect(plan.items.length).toBeGreaterThan(0);
+      expect(plan.items.map((i) => i.title)).toEqual(
+        approved.filter((t) => ready.some((r) => r.title === t)),
+      );
+      expect(plan.summary).toContain("the first session you approved with the project plan");
     });
   });
 

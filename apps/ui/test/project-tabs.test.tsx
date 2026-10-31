@@ -350,6 +350,10 @@ describe("Summary tab: queue, peers, decisions", () => {
     const items = await within(queue).findAllByTestId("queue-item");
     expect(items.map((i) => i.dataset.kind)).toEqual(["correction", "idea"]);
     expect(within(queue).getByTestId("queue-past")).toHaveTextContent("consumed");
+    // What happens to an item, as the runtime does it (U-038).
+    expect(within(queue).getByTestId("queue-explainer")).toHaveTextContent(
+      "Each one reaches the brief of the task it names (by its title or id), or of every task when it names none.",
+    );
     await user.selectOptions(within(queue).getByTestId("queue-kind"), "task");
     await user.type(within(queue).getByTestId("queue-text"), "Add a sitemap");
     await user.clear(within(queue).getByTestId("queue-priority"));

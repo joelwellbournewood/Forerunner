@@ -91,6 +91,7 @@ import {
 } from "./billing.ts";
 import { screenLessons } from "./lessons.ts";
 import { renderHeardLines } from "./live-chat.ts";
+import { renderQueueNotes } from "./next-session.ts";
 import {
   lessonsFromReport,
   type PlanItem,
@@ -731,7 +732,17 @@ export class LoopTaskExecutor implements TaskExecutor {
         type: "warning",
         message: `a line the human said during the session (message ${f.id}) contained instruction-like passages (${f.rules.join(", ")}); passed to the specialist as data`,
       });
-    const userText = [renderBrief(brief), lessonsBlock, heard.block].filter((t) => t).join("\n\n");
+    // What the person queued for the next session that concerns this task (spec J.2, U-038):
+    // quoted data after the brief, as the heard lines are.
+    const queued = renderQueueNotes(ctx.notes ?? []);
+    for (const f of queued.flagged)
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `a next-session queue item (${f.id}) contained instruction-like passages (${f.rules.join(", ")}); passed to the specialist as data`,
+      });
+    const userText = [renderBrief(brief), lessonsBlock, heard.block, queued.block]
+      .filter((t) => t)
+      .join("\n\n");
     const label = `${spec.name} on ${task.title}`;
     const onEvent = (ev: RunEvent) => this.deps.onEvent?.(task.id, ev);
     // Tools for this run; with a worktree and a sandbox port, commands run inside the sandbox

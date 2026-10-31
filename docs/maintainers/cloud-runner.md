@@ -321,7 +321,7 @@ each over once; the handler marks a handled message seen, and one it could not m
 remembered while it stays unseen.
 
 A task command: the handler creates the task and calls the port; the runner starts the
-session (runner `cloud`, cap = per-email cap, autonomy = email level, the planner limited to
+session (runner `cloud`, cap = per-email cap, autonomy = email level, the planner limited to (and, since U-038, given only that task as ready, so an approved first session it would otherwise select never leaves the email task out)
 that task), resolves as soon as the session row exists so the acknowledgement goes out at once,
 and sends the completion summary (threaded under the original mail, with the PR link and cost)
 when the session ends. A busy agent fails the start at once; the handler tells the human the

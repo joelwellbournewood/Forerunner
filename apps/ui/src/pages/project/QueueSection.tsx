@@ -23,7 +23,8 @@ function kindTone(kind: QueueItemView["kind"]) {
 
 /**
  * Next-session queue (spec J.2): notes, tasks, corrections and ideas with a priority and a
- * type; the agent consumes them at the start of its next session.
+ * type. The next session takes them in: each reaches the brief of the task it names, or every
+ * task's brief when it names none (U-038, `session/next-session.ts`), and the panel says so.
  */
 export function QueueSection({ projectId }: { projectId: string }) {
   const client = useClient();
@@ -85,8 +86,11 @@ export function QueueSection({ projectId }: { projectId: string }) {
         <RouteMissing route="queue" what="the next-session queue" />
       ) : (
         <>
-          <p className="text-xs text-neutral-500">
-            Notes, tasks, corrections and ideas the agent reads at the start of its next session.
+          <p className="text-xs text-neutral-500" data-testid="queue-explainer">
+            Notes, tasks, corrections and ideas for the next session. Each one reaches the brief of
+            the task it names (by its title or id), or of every task when it names none. A
+            first-session plan you approved with the project's setup decides which tasks the first
+            session runs, in its order.
           </p>
           {queue.loading && !queue.data ? <Loading what="queue" /> : null}
           {queue.error && !queue.data ? (

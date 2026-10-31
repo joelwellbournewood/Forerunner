@@ -87,6 +87,14 @@ again as soon as the service answers.
   own conversation in this window: switching tabs or reloading keeps it, a Yes/No question you
   have not answered yet included.
 
+**Next session** on the Summary tab holds notes, tasks, corrections and ideas for the next
+session; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. Each reaches the
+brief of the task it names, by the task's title or id ("Add the login page: reuse the session
+cookie"), or of every task when it names none ("Write in British English"). The session log
+says which task got which. The first-session plan you approve with a new project's setup
+decides the first session: it runs those tasks, in that order, and later sessions go by
+priority.
+
 With the GitHub Projects mirror turned on in a project's settings, Forerunner asks once in the
 Inbox before it creates the board. **Do not mirror this project** turns the mirror off for that
 project, and nothing is asked again; turn it on again in the settings (or `fr mirror enable`)
