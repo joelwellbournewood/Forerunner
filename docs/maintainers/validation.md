@@ -85,6 +85,7 @@ These are rules, not advice. A change that breaks one is not done, whatever else
 | A switch that does nothing, or two screens for one thing | U-023, U-026 | Rule 7: each control has a test of its effect; the user guide names the one place |
 | Windows-only behaviour never run on Windows as a person | U-002, U-011, U-012, U-024 | Rule 5: CI as a standard user; paths and links tested; owner checklist |
 | An error that hides its cause or the next step | U-007, U-009, U-017 | Rule 9: assert the text and the next step |
+| A test world wired differently from the app | U-008, U-044 (the e2e world gave no specialist list, so the ladder's stand-in never ran) | Rule 3: stand-ins and test worlds are built from the same wiring as compose, or a test compares them |
 
 Add a row when a new class reaches a release.
 
@@ -95,8 +96,14 @@ Add a row when a new class reaches a release.
 - [ ] The person's report (or the requirement) is a test that failed before the change.
 - [ ] Rules 1 to 9: each one that applies is covered, or the PR says why not.
 - [ ] Siblings searched (rule 8), with the search named in the PR.
-- [ ] `pnpm check` is green locally. For desktop changes, also `cargo fmt --check`,
+- [ ] `pnpm check` is green locally, and so are `pnpm test:e2e` (the release scenarios and
+      phase gates, fake provider) and, for UI changes, the UI's own suite
+      (`cd apps/ui && pnpm vitest run --config vitest.config.ts`) and Playwright. `pnpm check`
+      runs neither: on 2026-10-31 eight parallel fixes passed it and still broke three release
+      scenarios. For desktop changes, also `cargo fmt --check`,
       `cargo clippy --all-targets -- -D warnings` and `cargo test` in `apps/desktop/src-tauri`.
+- [ ] Work merged from parallel branches is validated together after the merge (the same
+      commands), and the tree is searched for conflict markers (`git grep -n "^<<<<<<< "`).
 - [ ] The U-entry has a **Check in the app** line: the steps a person takes to see the fix
       (see `docs/status/UPDATE-LOG.md`).
 - [ ] Maintainer docs, the user guide (if a person sees the change), `CHANGELOG.md`

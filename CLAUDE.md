@@ -8,7 +8,8 @@ Then read `docs/status/UPDATE-LOG.md`, `docs/status/PROGRESS.md`, `docs/requirem
 
 Quick reference:
 - `pnpm check` runs lint, typecheck, unit tests, the docs check and the secret scan. Green is
-  necessary, not enough: a person-facing change is tested at the boundary the person uses.
+  necessary, not enough: a person-facing change is tested at the boundary the person uses, and
+  `pnpm test:e2e` (release scenarios) and the UI suite (`apps/ui`) run before every push.
 - Desktop shell: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
   in `apps/desktop/src-tauri` (Linux needs the packages listed in `.github/workflows/desktop.yml`).
 - Before any release the owner installs the build from the Desktop app workflow run and walks

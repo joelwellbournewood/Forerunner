@@ -244,7 +244,14 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
       expect(requests[0]?.why).toContain("ceiling sonnet");
       // Every run of the task (specialist and critic) stayed at or under the ceiling.
       const runs = await runsOf(w, task.id);
-      expect(runs.filter((r) => r.specialist === "coder")).toHaveLength(3);
+      // Rung 2 (U-044): after two coder attempts the third goes to another specialist, never
+      // the coder again. Which one depends on the specialists' tools; this world gives every
+      // specialist the same file tools, so the shipped registry's choice (the
+      // migration-specialist) is checked in specialist-handover.test.ts instead.
+      const workerRuns = runs.filter((r) => r.specialist !== "critic");
+      expect(workerRuns.map((r) => r.specialist).slice(0, 2)).toEqual(["coder", "coder"]);
+      expect(workerRuns).toHaveLength(3);
+      expect(workerRuns[2]?.specialist).not.toBe("coder");
       expect(runs.filter((r) => r.specialist === "critic")).toHaveLength(3);
       for (const r of runs)
         expect(tierRank(r.tier), r.model).toBeLessThanOrEqual(tierRank("sonnet"));
@@ -309,8 +316,13 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
       const verdicts = w.events.filter((e) => e.type === "critic.verdict").map((e) => e.payload);
       expect(verdicts[2]).toMatchObject({ retry: "escalate", nextTier: "opus" });
       const runs = await runsOf(w, task.id);
-      const coderRuns = runs.filter((r) => r.specialist === "coder");
-      expect(coderRuns.map((r) => r.model)).toEqual([
+      // Rung 2 hands the task to a stand-in specialist (U-044); rung 3 escalates its model.
+      const workerRuns = runs.filter((r) => r.specialist !== "critic");
+      expect(workerRuns.map((r) => r.specialist).slice(0, 2)).toEqual(["coder", "coder"]);
+      const standIn = workerRuns[2]?.specialist;
+      expect(standIn).not.toBe("coder");
+      expect(workerRuns[3]?.specialist).toBe(standIn);
+      expect(workerRuns.map((r) => r.model)).toEqual([
         "fake-sonnet",
         "fake-sonnet",
         "fake-sonnet",

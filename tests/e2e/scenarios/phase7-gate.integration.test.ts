@@ -239,7 +239,7 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
       title: TASK_TITLE,
       status: "ready",
       risk_tier: 2,
-      priority: 8,
+      priority: 10, // 8 reads as High since U-041 (stored as 10)
       project_id: w.project.id,
       // The command was issued by the conversation agent on J's turn: since the security review
       // (security-command-actor.test.ts, ADR 0030 item 2) a model-issued registry command acts as

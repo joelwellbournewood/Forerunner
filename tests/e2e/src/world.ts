@@ -385,6 +385,9 @@ export async function gateWorld(opts: GateWorldOptions = {}): Promise<GateWorld>
     tools: fileTools(),
     billingSourceId: "bs-gate",
     specialists: (name) => specialistFromRegistry(registry, name),
+    // As compose wires it (U-044): the retry ladder's "change specialist" rung picks a stand-in
+    // from the registry's runnable specialists; without this list it found none.
+    specialistNames: () => registry.runnableSpecialists().map((d) => d.name),
     worktreeFor: async (task) => {
       const dir = join(worktreeRoot, safeSegment(task.id));
       mkdirSync(dir, { recursive: true });

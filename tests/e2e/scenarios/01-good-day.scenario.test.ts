@@ -351,7 +351,8 @@ describe("scenario 1: the good day", () => {
       blocking: true,
       author_agent: w.alice.criticAgent.id,
     });
-    expect(questions[0]?.why).toMatch(/^Critic sign-off needed \(tier 3/);
+    // The card names its task (U-073).
+    expect(questions[0]?.why).toMatch(/^Critic sign-off needed for "[^"]+" \(tier 3/);
     expect(questions[0]?.options).toEqual(["accept", "revise", "cancel"]);
     expect((questions[0]?.created_at ?? "") < MORNING).toBe(true);
     const mInbox = await w.inbox(w.m);
