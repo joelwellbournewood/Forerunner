@@ -96,11 +96,14 @@ Add a row when a new class reaches a release.
 - [ ] The person's report (or the requirement) is a test that failed before the change.
 - [ ] Rules 1 to 9: each one that applies is covered, or the PR says why not.
 - [ ] Siblings searched (rule 8), with the search named in the PR.
-- [ ] `pnpm check` is green locally, and so are `pnpm test:e2e` (the release scenarios and
-      phase gates, fake provider) and, for UI changes, the UI's own suite
-      (`cd apps/ui && pnpm vitest run --config vitest.config.ts`) and Playwright. `pnpm check`
-      runs neither: on 2026-10-31 eight parallel fixes passed it and still broke three release
-      scenarios. For desktop changes, also `cargo fmt --check`,
+- [ ] `pnpm check` is green locally, and so are `pnpm test:integration` (the stand-ins and
+      the phase 1 gate; tests that need Postgres skip without `FORERUNNER_TEST_PG`),
+      `pnpm test:e2e` (the release scenarios and phase gates, fake provider) and, for UI
+      changes, the UI's own suite (`cd apps/ui && pnpm vitest run --config vitest.config.ts`)
+      and Playwright. `pnpm check` runs none of them: on 2026-10-31 eight parallel fixes passed
+      it and still broke three release scenarios, and U-042 changed what a task overspend does
+      while the phase 1 gate (an integration test) still expected the old behaviour; CI found
+      it only once the unit tests in front of it were green. For desktop changes, also `cargo fmt --check`,
       `cargo clippy --all-targets -- -D warnings` and `cargo test` in `apps/desktop/src-tauri`.
 - [ ] Work merged from parallel branches is validated together after the merge (the same
       commands), and the tree is searched for conflict markers (`git grep -n "^<<<<<<< "`).

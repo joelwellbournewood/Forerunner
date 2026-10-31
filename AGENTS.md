@@ -51,7 +51,7 @@ pnpm check                         # lint + typecheck + unit tests + docs check 
 pnpm lint          / pnpm lint:fix # Biome
 pnpm typecheck                     # tsc for node packages, per-app tsc for the apps
 pnpm test                          # unit tests: fake provider, no network
-pnpm test:integration              # stand-ins: local Postgres, mail server, fake git host
+pnpm test:integration              # stand-ins: local Postgres, mail server, fake git host (run before every push)
 pnpm test:e2e                      # the release scenarios and phase gates (fake provider; run before every push)
 pnpm docs:check --base origin/main # module changed => its doc changed, or "docs: none needed: <why>"
 pnpm secrets:scan                  # repo and logs scan for credential shapes
