@@ -164,8 +164,29 @@ describe("setup assistant", () => {
     );
     // The person goes Home through the sidebar instead of finishing.
     await user.click(screen.getByRole("link", { name: "Home" }));
-    await waitFor(() => expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument());
     await waitFor(() => expect(postedCalls(harness, "/setup/finish")).toHaveLength(1));
+    // The person stays where they went: the assistant does not come back once finish is sent.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
+  });
+
+  it("the assistant opens when the app starts, not again on every page the person opens (ADR 0092)", async () => {
+    // CI: the gate ran again on every navigation (react-router gives a new navigate function
+    // per path), so a person who left the assistant through the sidebar was sent back to its
+    // first step, and one who left it after a first key raced the restart's finish.
+    const user = userEvent.setup();
+    renderApp("/", createHarness(FRESH));
+    await screen.findByTestId("setup-page");
+    await user.click(screen.getByRole("link", { name: /^Inbox/ }));
+    expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Memory" }));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
+    // Settings → Accounts and keys still opens it.
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    await screen.findByRole("heading", { name: "Settings" });
   });
 
   it("a replaced key is in use at once: the assistant says so and nothing restarts (U-049)", async () => {

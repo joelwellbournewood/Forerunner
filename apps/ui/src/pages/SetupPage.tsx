@@ -600,14 +600,20 @@ export function SetupPage() {
 export function useSetupGate(): void {
   const client = useClient();
   const navigate = useNavigate();
+  // `navigate` is a new function on every path (react-router), so the effect runs again on
+  // each navigation; the ref holds the latest one and the check runs once per client, when the
+  // app starts (ADR 0092). Re-checking on every page sent a person who left the assistant
+  // through the sidebar back to its first step, and raced the finish a first key sends.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
   useEffect(() => {
     const ctrl = new AbortController();
     client.setupStatus(ctrl.signal).then(
       (s) => {
-        if (s.showAssistant) navigate("/setup", { replace: true });
+        if (s.showAssistant) navigateRef.current("/setup", { replace: true });
       },
       () => {},
     );
     return () => ctrl.abort();
-  }, [client, navigate]);
+  }, [client]);
 }
