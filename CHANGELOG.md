@@ -29,6 +29,15 @@ Problems and their status, released or not, are tracked in
 
 ### Fixed
 
+- Inbox cards and buttons that did nothing or the wrong thing: Approve on a review from the
+  phone (U-027), the rebase conflict and merge cards (U-028), a yes to a change from Chat on a
+  normal install (U-029), cards left open after deciding in Extensions or on Updates (U-030,
+  U-035), a session review that never reached you (U-033), and a typed answer that matched no
+  option and left the task stuck; it is now refused with the options (U-034).
+- "Do not mirror this project" was asked again every 15 minutes (U-031).
+- The kill switch came back after a restart when it was lifted by a start from the phone, and a
+  session's Stop lifted Stop all (U-032).
+
 - The kill switch came back every time Forerunner started, even after Resume, and sessions
   refused to start ("kill switch is active for this agent; resume it first"). Resume now
   clears it for good (U-019).

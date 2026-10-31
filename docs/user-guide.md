@@ -63,7 +63,7 @@ wait on you, and the latest critic grade. The active project is always shown in 
 - **Data**: files and datasets the project knows about; agents see metadata and samples, never
   whole files.
 - **Chat**: a quick, read-only chat with the fast model about this project. "Make this a task"
-  turns a message into a draft task.
+  turns a message into a ready task, which the next session works on.
 
 With the GitHub Projects mirror turned on in a project's settings, Forerunner asks once in the
 Inbox before it creates the board. **Do not mirror this project** turns the mirror off for that
