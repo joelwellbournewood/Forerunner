@@ -1139,7 +1139,7 @@ both tables change.
 
 **Lifecycle (`actions::bootstrap`).** Read `daemon.json` (`url`, `token`, `pid`, `version`,
 `startedAt`; the url must be loopback `http://`). A pid known to be dead (Linux `/proc`) is a
-stale file; otherwise `GET /health` (5 s to connect, then 1.5 s for the answer). A time-out is not a refused
+stale file; otherwise `GET /health` with a 1.5 s timeout. A time-out is not a refused
 connection (U-065, `daemon::HealthError`): `Slow` (connected, no answer in time) means the
 daemon runs, so the shell waits for it (`AttachDecision::Wait`, `settle_slow_daemon`: the splash
 says "Waiting for the Forerunner background service to answer…", up to `SLOW_DAEMON_WAIT`,
@@ -1380,11 +1380,13 @@ server in a dev build), denies it anywhere else or before the first load, denies
 (the UI never asks for it) and leaves every other kind to the webview. Every answer is logged.
 
 **Time limits (`daemon::DaemonClient`, U-064).** `GET /health` is a probe with a 1.5 s limit
-for the answer (`HEALTH_TIMEOUT`): slower counts as a miss. The connection has its own 5 s
-limit (`HEALTH_CONNECT_TIMEOUT`): Windows refuses a connection to a port where nothing listens
-only after about 2 s, and under one 1.5 s limit for both that refusal arrived as a time-out, so
-a daemon that had gone was taken for a slow one and the shell waited for it instead of starting
-one (Windows CI, `daemon::tests::a_refused_connection_and_a_time_out_are_told_apart`). Every other request has its own client with a 30 s
+(`HEALTH_TIMEOUT`): slower counts as a miss. A time-out is checked against the port itself:
+Windows refuses a connection to a port where nothing listens only after about 2 s, so a daemon
+that had gone reached the probe as a time-out and was taken for a slow one, and the shell waited
+for it instead of starting one (Windows CI). After a time-out the shell opens a plain TCP
+connection to the port (up to `HEALTH_CONNECT_TIMEOUT`, 5 s): refused is `Unreachable`;
+accepted, or still pending at the limit (a full listen queue), is `Slow`. A separate connect
+limit on the HTTP client did not work: its limits count the connection too. Every other request has its own client with a 30 s
 limit (`REQUEST_TIMEOUT`): the actions (`POST /shutdown`, `/kill`, `/kill/resume`, the email
 toggle, `/desktop/revoke`) do their work before they answer, and an answer after the probe's
 limit is not a failure (1.0.4 used one 1.5 s client for both, so a kill switch that worked

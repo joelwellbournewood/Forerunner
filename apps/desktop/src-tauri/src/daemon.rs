@@ -15,11 +15,11 @@ pub const DAEMON_FILE: &str = "daemon.json";
 /// Once connected, `GET /health` must answer within this; a daemon slower than that is slow
 /// or busy (U-065), not gone.
 pub const HEALTH_TIMEOUT: Duration = Duration::from_millis(1500);
-/// How long the `/health` probe waits for the connection itself. It is longer than
-/// `HEALTH_TIMEOUT` because of Windows: a connection to a port where nothing listens is
-/// refused only after about two seconds (Windows tries again before it gives up). Under one
-/// limit for both, that refusal arrived as a time-out, so a daemon that had gone was taken
-/// for a slow one: the shell waited for it instead of starting the daemon.
+/// After a `/health` time-out, how long a plain connection to the port may take to tell a
+/// refusal from a slow daemon. Windows refuses a connection to a port where nothing listens
+/// only after about two seconds (it tries again before it gives up), beyond `HEALTH_TIMEOUT`,
+/// so a daemon that had gone reached the probe as a time-out and was taken for a slow one: the
+/// shell waited for it instead of starting the daemon.
 pub const HEALTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Every other request (the tray's actions: `/shutdown`, `/kill`, `/kill/resume`, the email
 /// toggle, desktop revoke; and the reads `/me`, `/desktop/status`, the email settings) waits
@@ -347,19 +347,10 @@ impl DaemonClient {
             .no_proxy()
             .build()
             .map_err(|e| e.to_string())?;
-        // The probe: a long limit for the connection (a refusal on Windows takes about 2 s), the
-        // short one for the answer, and both together as the bound on the whole probe.
-        let health_http = reqwest::Client::builder()
-            .connect_timeout(HEALTH_CONNECT_TIMEOUT)
-            .read_timeout(HEALTH_TIMEOUT)
-            .timeout(HEALTH_CONNECT_TIMEOUT + HEALTH_TIMEOUT)
-            .no_proxy()
-            .build()
-            .map_err(|e| e.to_string())?;
         Ok(Self {
             base: url.trim_end_matches('/').to_string(),
             token,
-            health_http,
+            health_http: timed(HEALTH_TIMEOUT)?,
             request_http: timed(REQUEST_TIMEOUT)?,
             stream_http,
             timeouts: (HEALTH_TIMEOUT, REQUEST_TIMEOUT),
@@ -393,30 +384,57 @@ impl DaemonClient {
     }
 
     pub async fn health(&self) -> Result<Health, HealthError> {
-        let res = self
+        let sent = self
             .health_http
             .get(self.url("/health"))
             .bearer_auth(self.token.expose())
             .send()
-            .await
-            .map_err(|e| self.classify(e))?;
+            .await;
+        let res = match sent {
+            Ok(res) => res,
+            Err(e) => return Err(self.classify(e).await),
+        };
         let status = res.status();
-        let text = res.text().await.map_err(|e| self.classify(e))?;
+        let text = match res.text().await {
+            Ok(text) => text,
+            Err(e) => return Err(self.classify(e).await),
+        };
         if !status.is_success() {
             return Err(HealthError::Bad(format!("/health answered {status}")));
         }
         parse_health(&text).map_err(HealthError::Bad)
     }
 
-    /// A time-out (the connection was accepted and no answer came, or the listen queue stayed
-    /// full for `HEALTH_CONNECT_TIMEOUT`) is a slow daemon; any other failure, a refused
-    /// connection included, means nothing usable answers there.
-    fn classify(&self, e: reqwest::Error) -> HealthError {
-        if e.is_timeout() {
-            HealthError::Slow(self.scrub(e))
-        } else {
-            HealthError::Unreachable(self.scrub(e))
+    /// A refused or failed connection means nothing usable answers there. A time-out is a
+    /// slow daemon only if something still takes connections on that port: the time-out may be
+    /// a refusal that had not arrived yet (Windows), so the port is asked directly.
+    async fn classify(&self, e: reqwest::Error) -> HealthError {
+        if !e.is_timeout() {
+            return HealthError::Unreachable(self.scrub(e));
         }
+        if self.port_refuses().await {
+            HealthError::Unreachable(format!("{}; nothing listens on the port", self.scrub(e)))
+        } else {
+            HealthError::Slow(self.scrub(e))
+        }
+    }
+
+    /// Whether a plain TCP connection to the daemon's port is refused within
+    /// `HEALTH_CONNECT_TIMEOUT`. Accepted, or still pending at the limit (a full listen queue),
+    /// counts as taken: a daemon runs there.
+    async fn port_refuses(&self) -> bool {
+        let Some(addr) = url::Url::parse(&self.base)
+            .ok()
+            .and_then(|u| u.socket_addrs(|| None).ok())
+            .and_then(|addrs| addrs.into_iter().next())
+        else {
+            return false;
+        };
+        matches!(
+            tokio::time::timeout(HEALTH_CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr))
+                .await,
+            Ok(Err(_))
+        )
     }
 
     /// POST a JSON body (or `{}`); returns the status and the parsed body (`null` when empty).
@@ -751,12 +769,35 @@ mod tests {
     }
 
     /// Windows CI: a refused connection reached the probe as a time-out, because Windows
-    /// refuses only after about two seconds and the probe gave up after 1.5. The connection
-    /// gets its own, longer limit; the answer keeps the short one.
+    /// refuses only after about two seconds and the probe gave up after 1.5 (a separate
+    /// connect limit did not help: the client's limits count the connection too). After a
+    /// time-out the port is asked directly, for longer than a Windows refusal takes.
     #[test]
-    fn the_probe_waits_out_a_refusal_on_windows_and_keeps_the_short_answer_limit() {
+    fn the_port_check_waits_out_a_refusal_on_windows() {
         assert!(HEALTH_CONNECT_TIMEOUT >= Duration::from_secs(4));
         assert!(HEALTH_CONNECT_TIMEOUT < REQUEST_TIMEOUT);
+    }
+
+    /// The Windows case as Linux can stage it: `/health` times out, and by then nothing
+    /// listens on the port. That is a daemon that has gone, never a slow one.
+    #[tokio::test]
+    async fn a_time_out_from_a_port_nobody_listens_on_any_more_is_unreachable() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let held = std::thread::spawn(move || {
+            // Take the probe's connection, stop listening, and never answer.
+            let (stream, _) = listener.accept().expect("accept");
+            drop(listener);
+            std::thread::sleep(HEALTH_TIMEOUT + Duration::from_secs(2));
+            drop(stream);
+        });
+        let client = DaemonClient::new(&format!("http://127.0.0.1:{port}"), Secret::new(token()))
+            .expect("client");
+        match client.health().await {
+            Err(HealthError::Unreachable(m)) => assert!(m.contains("nothing listens"), "{m}"),
+            other => panic!("expected Unreachable, got {other:?}"),
+        }
+        held.join().expect("server thread");
     }
 
     /// The refusal is told apart however long it takes to arrive: the probe answers
@@ -773,7 +814,7 @@ mod tests {
                 started.elapsed()
             ),
         }
-        assert!(started.elapsed() < HEALTH_CONNECT_TIMEOUT);
+        assert!(started.elapsed() < HEALTH_TIMEOUT + HEALTH_CONNECT_TIMEOUT);
     }
 
     #[test]
