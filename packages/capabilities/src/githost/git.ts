@@ -142,6 +142,19 @@ export function gitConfigEnv(
   };
 }
 
+/** The git commands that write a commit, so need an author and a committer. */
+const COMMIT_MAKERS = new Set([
+  "commit",
+  "merge",
+  "rebase",
+  "cherry-pick",
+  "revert",
+  "am",
+  "stash",
+]);
+/** The name git commits under when the person never set one (the address is `EMAIL`'s). */
+const FALLBACK_NAME = "Forerunner";
+
 export interface RebaseResult {
   ok: boolean;
   conflicts: string[];
@@ -215,8 +228,9 @@ export class GitOps {
       Object.assign(env, gitConfigEnv(env, scope.key, tokenAuthHeader(this.opts.auth.token)));
     }
     const runner = this.opts.runner ?? run;
+    const name = await this.fallbackName(args);
     try {
-      return await runner([...this.base(), ...args], {
+      return await runner([...this.base(), ...name, ...args], {
         cwd: creates ? undefined : this.opts.cwd,
         timeoutMs: this.timeoutMs(),
         env,
@@ -235,6 +249,20 @@ export class GitOps {
         { cause: e },
       );
     }
+  }
+
+  /**
+   * `-c user.name=Forerunner` for a command that makes a commit, when no user.name is set at
+   * any level and no identity was given. Git takes the name from the account otherwise, and an
+   * account without one (a container user, Linux CI) makes every commit fail with "empty ident
+   * name not allowed". Unlike the address (`EMAIL` above), git has no low-priority setting for
+   * the name, so the setting is passed only when nothing is configured: a person's own
+   * user.name is never overridden.
+   */
+  private async fallbackName(args: readonly string[]): Promise<string[]> {
+    if (this.opts.identity || !COMMIT_MAKERS.has(args[0] ?? "")) return [];
+    const set = await this.git(["config", "--get", "user.name"]);
+    return set.code === 0 && set.stdout.trim() ? [] : ["-c", `user.name=${FALLBACK_NAME}`];
   }
 
   private timeoutMs(): number {

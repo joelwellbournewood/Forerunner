@@ -362,14 +362,31 @@ describe("GitOps", { timeout: 120_000 }, () => {
     writeFileSync(join(cwd, "a.txt"), "a\n");
     await g.commitAll("first", { allowEmpty: false });
     expect(await g.hasCommits()).toBe(true);
-    const email = await bare(["git", "log", "-1", "--format=%ae"], { cwd });
-    expect(email.stdout.trim()).toBe("forerunner@localhost");
+    // Author and committer, name and address: Linux CI (a container whose user has no name)
+    // failed with "empty ident name not allowed" once the address had a fallback.
+    const who = async () =>
+      (await bare(["git", "log", "-1", "--format=%an <%ae> / %cn <%ce>"], { cwd })).stdout.trim();
+    expect(await who()).toBe(
+      "Forerunner <forerunner@localhost> / Forerunner <forerunner@localhost>",
+    );
 
-    // A repository whose person set an address keeps it.
+    // A merge makes a commit too, under the same fallback.
+    await bare(["git", "checkout", "-q", "-b", "side"], { cwd });
+    writeFileSync(join(cwd, "side.txt"), "s\n");
+    await g.commitAll("side", { allowEmpty: false });
+    await bare(["git", "checkout", "-q", "main"], { cwd });
+    writeFileSync(join(cwd, "main.txt"), "m\n");
+    await g.commitAll("main", { allowEmpty: false });
+    expect((await g.mergeFrom("side")).ok).toBe(true);
+    expect(await who()).toBe(
+      "Forerunner <forerunner@localhost> / Forerunner <forerunner@localhost>",
+    );
+
+    // A repository whose person set a name and an address keeps them.
     await bare(["git", "config", "user.email", "person@example.test"], { cwd });
+    await bare(["git", "config", "user.name", "Pat Person"], { cwd });
     writeFileSync(join(cwd, "b.txt"), "b\n");
     await g.commitAll("second", { allowEmpty: false });
-    const mine = await bare(["git", "log", "-1", "--format=%ae"], { cwd });
-    expect(mine.stdout.trim()).toBe("person@example.test");
+    expect(await who()).toBe("Pat Person <person@example.test> / Pat Person <person@example.test>");
   });
 });

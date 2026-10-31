@@ -109,7 +109,12 @@ with their milestone.
   unless `EMAIL` is set: git's own fallback, used only when no `user.email` is configured, so a
   commit never fails with "unable to auto-detect email address" on a machine whose person never
   set up git (Windows CI found it in the U-037 workspace commits), and a configured address is
-  never overridden (`git.test.ts`). The data module's GitHub repository import
+  never overridden (`git.test.ts`). Git has no such fallback for the name: an account without
+  one (a container user; Linux CI) fails every commit with "empty ident name not allowed". So a
+  command that writes a commit (`commit`, `merge`, `rebase`, `cherry-pick`, `revert`, `am`,
+  `stash`) first reads `git config --get user.name`, and only when no level sets it (and no
+  `identity` was given) runs with `-c user.name=Forerunner`; a person's own name is never
+  overridden. The data module's GitHub repository import
   (`data.md`) uses it to clone a project's repository onto its migration branch.
 - `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone
   or fetch into a per-task worktree, branch from the base (or the existing PR branch), run the
