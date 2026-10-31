@@ -20,13 +20,17 @@ interface Entry {
 
 function entries(text: string): Entry[] {
   const parts = text.split(/^### /m).slice(1);
-  return parts
-    .map((part) => {
-      const id = /^U-(\d{3})\b/.exec(part);
-      const status = /^- \*\*Status:\*\*\s*(.+)$/m.exec(part);
-      return id ? { id: Number(id[1]), body: part, status: status?.[1]?.trim() ?? "" } : null;
-    })
-    .filter((e): e is Entry => e !== null);
+  // A heading names one entry ("U-021 ...") or a range that shares one section ("U-027 to U-036").
+  return parts.flatMap((part) => {
+    const head = /^U-(\d{3})(?: to U-(\d{3}))?\b/.exec(part);
+    if (!head) return [];
+    const status = /^- \*\*Status:\*\*\s*(.+)$/m.exec(part)?.[1]?.trim() ?? "";
+    const first = Number(head[1]);
+    const last = head[2] ? Number(head[2]) : first;
+    const out: Entry[] = [];
+    for (let id = first; id <= last; id++) out.push({ id, body: part, status });
+    return out;
+  });
 }
 
 function tableIds(text: string): number[] {
@@ -61,5 +65,8 @@ describe("update log rules", () => {
       id: 99,
       status: "fixed.",
     });
+    expect(entries("### U-040 to U-042: x\n- **Status:** open.\n").map((e) => e.id)).toEqual([
+      40, 41, 42,
+    ]);
   });
 });

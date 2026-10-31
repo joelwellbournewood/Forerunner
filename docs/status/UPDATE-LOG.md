@@ -38,7 +38,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012 and U-018 to U-026 are open.
+- Next release: not scheduled. U-012 and U-018 to U-036 are open.
 
 ## Open and fixed, not released
 
@@ -54,6 +54,16 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-024 | 2026-10-31, 1.0.4 | Installing GPU voice ends with "Unable to open file 'model.bin'" for speech recognition, on the GPU and the CPU, although the download reports "whisper ready"; Talk says voice is not available. | Find the cause with the owner (see the entry); then download the speech model into a plain folder instead of the shared model cache. | open |
 | U-025 | 2026-10-31, 1.0.4 | The principal agent is always called "Alice" and there is no way to rename it. | A name field in Settings renames your agent (owner's request). | open |
 | U-026 | 2026-10-31, 1.0.4 | Adding an extension yourself in the Extensions panel puts a second, blocking "approval needed" card in the Inbox for what you just did. | To decide with the owner (see the entry). | open |
+| U-027 | 2026-10-31, 1.0.4 (sweep) | Approve or Reject on a reviewed task in the phone's Reviews tab does nothing (sign-off cards) or denies (tool approvals); the phone says the session continues. | The answer's `decision` is read like an option click. | open |
+| U-028 | 2026-10-31, 1.0.4 (sweep) | Inbox cards whose buttons do nothing: a rebase conflict ("I resolved it", "Drop the branch and retry", "Cancel the task") and a merge ("I merged it"). | Each option does what it says; a test clicks each one. | open |
+| U-029 | 2026-10-31, 1.0.4 (sweep) | A medium-risk change from Chat or voice that waits in the Inbox never runs after you answer yes (default local install). | The Inbox answer runs or cancels the change on every install. | open |
+| U-030 | 2026-10-31, 1.0.4 (sweep) | Approving or denying an extension in the Extensions panel leaves its Inbox card open; clicking Deny there later does nothing. | Approve and Deny in the panel withdraw the Inbox card. | open |
+| U-031 | 2026-10-31, 1.0.4 (sweep) | Answering "do not mirror this project" to GitHub Projects is asked again every 15 minutes. | A no turns the mirror off for that project. | open |
+| U-032 | 2026-10-31, 1.0.4 (sweep) | The kill switch comes back after a restart when it was lifted by starting a session from the phone or by a session's Stop button (sibling of U-019). | Every path that lifts the kill switch clears the request file. | open |
+| U-033 | 2026-10-31, 1.0.4 (sweep) | A session review that needs your eyes (the summary misstates what was done or spent) never reaches the Inbox. | The request is filed for you, and its options do what they say. | open |
+| U-034 | 2026-10-31, 1.0.4 (sweep) | Typing an answer that matches no option on a sign-off, findings, plan, intake, specialist or model watch card closes the card and leaves the task stuck. | An answer the card cannot act on is refused with the options listed; the card stays open. | open |
+| U-035 | 2026-10-31, 1.0.4 (sweep) | A model watch recommendation answered on the Updates page leaves its Inbox card open (a click there does nothing), and "remind me" never reminds. | Answering in either place closes both; the reminder is filed when due. | open |
+| U-036 | 2026-10-31, 1.0.4 (sweep) | (Suspected.) After the app gives up restarting the service, a stale `restart.json` can make a later restart misjudge a slow service as gone. | Verify; remove the file on every outcome if confirmed. | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -226,6 +236,36 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   the panel showing the same change card (tools, secrets, domains, scopes) and grants on
   Confirm, with no Inbox card; the Inbox keeps grants the person did not just see (from a URL
   after discovery, widened permissions, anything proposed by an agent).
+- **Status:** open.
+
+### U-027 to U-036: found by a sweep for siblings of U-019 and U-021
+
+- **Found:** 2026-10-31, by a code audit for the bug classes in
+  `docs/maintainers/validation.md` (what is clicked is not what is parsed, a click that leads
+  nowhere, state re-applied after a restart). Not yet seen by a person; each was confirmed by
+  reading the code path end to end, except U-036.
+- **Where:**
+  - U-027: `services/state-api/src/routes/reviews.ts` answers with `{ decision, comment,
+    reviewId }`; `answerWord` (`session/findings.ts`) and `isYes` read only `choice`/`answer`.
+  - U-028: `capabilities/src/githost/pr-executor.ts` (rebase conflict) and
+    `runtime/src/loop/merge.ts` ("I merged it"): no code reads the answers.
+  - U-029: `commands/src/executor.ts` files the card; only `RemoteCommandWatcher.syncAnswered`
+    applies answers, and it exists only when remote commands are on (not for `sqlite:`).
+  - U-030: `extensions/registry.ts` `approve`/`deny` clear `pendingRequestId` without
+    withdrawing the request (U-021 fixed only `remove`).
+  - U-031: `githost/projects-mirror.ts`: a denial saves nothing, and the 15-minute schedule asks
+    again.
+  - U-032: `kill.resume()` without `clearKillRequest` in `remote/watcher.ts` (phone start, plan
+    with a session start) and `daemon/server.ts` (`/sessions/:id/stop`).
+  - U-033: `critic/src/session-review.ts` inserts with `human_id: null`; both inboxes list by
+    human. "acknowledge" and "cancel" have no reader.
+  - U-034: `signoffAnswer`, `blockedFindingsAnswer`, `planAnswer`, `intakeAnswer`,
+    `specialistAnswer`, the model watch reader: an unrecognised answer is recorded and the card
+    closes; `AnswerRequestBody` does not check the answer against the options.
+  - U-035: `models/watch.ts` `resolve()` neither answers nor withdraws the request;
+    `remind_at` is written and never read.
+  - U-036: `apps/desktop/src-tauri/src/actions.rs` removes `restart.json` only on the Restart
+    branch.
 - **Status:** open.
 
 ### U-021 Extension approvals show "[object Object]" and both buttons deny
