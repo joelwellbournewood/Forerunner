@@ -274,6 +274,11 @@ export interface FakeDaemonState {
   pendingConfirmation: { id: string; readback: string } | null;
   /** When set, the next `/chat/stream` reply has this text (tests script the agent). */
   nextChatReply: string | null;
+  /**
+   * The actions of that scripted reply, e.g. a change with its `undoToken` (the change log id),
+   * as the daemon answers a chat command that ran (U-074).
+   */
+  nextChatActions: ChatReplyView["actions"] | null;
   listeners: Set<Listener>;
   timers: Set<ReturnType<typeof setTimeout>>;
   extensions: ExtensionView[];
@@ -523,6 +528,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     calls: [],
     pendingConfirmation: null,
     nextChatReply: null,
+    nextChatActions: null,
     listeners: new Set(),
     timers: new Set(),
     extensions: clone(EXTENSIONS),
@@ -644,6 +650,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.calls = [];
     state.pendingConfirmation = null;
     state.nextChatReply = null;
+    state.nextChatActions = null;
     state.extensions = clone(EXTENSIONS);
     state.voiceStatus = initialVoiceStatus(options);
     state.version = HEALTH.version;
@@ -1391,8 +1398,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     if (state.nextChatReply !== null) {
       const reply = state.nextChatReply;
+      const actions = state.nextChatActions ?? [];
       state.nextChatReply = null;
-      return { ...base, reply };
+      state.nextChatActions = null;
+      return { ...base, reply, actions };
     }
     if (lower.includes("start a session")) {
       const id = nextId("confirm");

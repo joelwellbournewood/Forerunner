@@ -1,3 +1,4 @@
+import { DEFAULT_CHF_PER_USD } from "@forerunner/billing";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type {
   FindingStatus,
@@ -44,6 +45,11 @@ export interface SessionReviewData {
   runs: RunRow[];
   /** Sum of the cost ledger for the session; null when the ledger has no rows for it. */
   ledgerUsdMicro: number | null;
+  /**
+   * The same sum in CHF, as the ledger converted each row (the summary a person reads says
+   * CHF, U-074); null when the ledger has no rows. Absent from data built before it: no check.
+   */
+  ledgerChfMicro?: number | null;
 }
 
 export interface SessionMetrics {
@@ -57,6 +63,9 @@ export interface SessionMetrics {
   costPerDoneTaskUsdMicro: number | null;
   claimedDone: number | null;
   claimedCostUsdMicro: number | null;
+  /** The ledger's CHF (or 0 when nothing was spent); null when only a USD figure is known. */
+  actualChfMicro: number | null;
+  claimedCostChfMicro: number | null;
 }
 
 export interface SessionChecks {
@@ -72,6 +81,8 @@ export interface SummaryClaims {
   done?: number;
   failed?: number;
   costUsdMicro?: number;
+  /** An amount in CHF ("Spent CHF 1.20"), checked against the ledger's CHF (U-074). */
+  costChfMicro?: number;
 }
 
 /** Actual spend more than this share over the estimate is a cost-efficiency finding. */
@@ -137,10 +148,12 @@ export async function loadSessionReviewData(
     tasks,
     runs,
     ledgerUsdMicro: ledger.entries > 0 ? ledger.usd_micro : null,
+    ledgerChfMicro: ledger.entries > 0 ? ledger.chf_micro : null,
   };
 }
 
 const usd = (micro: number): string => `USD ${(micro / 1_000_000).toFixed(4)}`;
+const chfText = (micro: number): string => `CHF ${(micro / 1_000_000).toFixed(2)}`;
 
 /**
  * Claims a summary makes that the store can check. Deliberately narrow: counts introduced by
@@ -160,6 +173,11 @@ export function parseSummaryClaims(summary: string): SummaryClaims {
   const cost =
     /\b(?:cost|spent|spend|total)\b[^\d$\n]{0,24}(?:USD|US\$|\$)\s*(\d+(?:\.\d+)?)/i.exec(text);
   if (cost?.[1] !== undefined) out.costUsdMicro = Math.round(Number(cost[1]) * 1_000_000);
+  const chf = /\b(?:cost|spent|spend|total)\b[^\d\n]{0,24}?CHF\s*(\d+(?:'\d{3})*(?:\.\d+)?)/i.exec(
+    text,
+  );
+  if (chf?.[1] !== undefined)
+    out.costChfMicro = Math.round(Number(chf[1].replace(/'/g, "")) * 1_000_000);
   return out;
 }
 
@@ -335,6 +353,20 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       `summary ${claims.costUsdMicro} vs ledger ${actual}`,
     );
   }
+  const ledgerChf = data.ledgerChfMicro ?? null;
+  if (
+    claims.costChfMicro !== undefined &&
+    ledgerChf !== null &&
+    Math.abs(claims.costChfMicro - ledgerChf) >
+      Math.max(COST_NOISE_USD_MICRO, ledgerChf * COST_CLAIM_TOLERANCE)
+  ) {
+    add(
+      "medium",
+      `Summary claims a cost of ${chfText(claims.costChfMicro)} but the ledger shows ${chfText(ledgerChf)}`,
+      "Report the cost from the ledger",
+      `summary ${claims.costChfMicro} vs ledger ${ledgerChf} (CHF micro)`,
+    );
+  }
   if (terminal && planItems.length > 0 && summary.trim() === "") {
     add(
       "low",
@@ -342,7 +374,10 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       "Write a summary: done, in flight, blocked, next, cost",
     );
   }
-  const verifiable = claims.done !== undefined || claims.costUsdMicro !== undefined;
+  const verifiable =
+    claims.done !== undefined ||
+    claims.costUsdMicro !== undefined ||
+    claims.costChfMicro !== undefined;
   evidence.push(
     `honesty: summary ${summary.trim() === "" ? "empty" : `${summary.trim().length} chars`}, ` +
       `claims ${verifiable ? JSON.stringify(claims) : "none parseable"}; checked against ${data.tasks.size} task(s) and the ledger`,
@@ -367,6 +402,8 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       costPerDoneTaskUsdMicro: costPerDone,
       claimedDone: claims.done ?? null,
       claimedCostUsdMicro: claims.costUsdMicro ?? null,
+      actualChfMicro: ledgerChf ?? (actual === 0 ? 0 : null),
+      claimedCostChfMicro: claims.costChfMicro ?? null,
     },
   };
 }
@@ -517,9 +554,17 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
   const data = await loadSessionReviewData(store, opts.sessionId);
   const checks = sessionChecks(data);
   const ruled = applyVerdictRules(checks, tier);
+  // What the person reads is CHF (U-074): the ledger's own conversion for the spend, its rate
+  // (or the default) for the estimate.
+  const rate =
+    data.ledgerUsdMicro && data.ledgerChfMicro
+      ? data.ledgerChfMicro / data.ledgerUsdMicro
+      : DEFAULT_CHF_PER_USD;
+  const spentChf =
+    checks.metrics.actualChfMicro ?? Math.round(checks.metrics.actualUsdMicro * rate);
   const summary =
     `Session review: ${checks.metrics.doneTasks} done task(s) (${checks.metrics.plannedDoneTasks}/${checks.metrics.plannedTasks} planned), ` +
-    `cost ${usd(checks.metrics.actualUsdMicro)} against an estimate of ${usd(checks.metrics.estimateUsdMicro)}; ` +
+    `cost ${chfText(spentChf)} against an estimate of ${chfText(Math.round(checks.metrics.estimateUsdMicro * rate))}; ` +
     `${checks.findings.length} finding(s).`;
   const out: ReviewOutput = {
     grade: ruled.grade,

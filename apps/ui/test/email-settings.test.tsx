@@ -147,7 +147,12 @@ describe("Settings -> Capabilities -> Email", () => {
     const done = await within(again).findByTestId("command-done");
     const sentence =
       "Changed the email mode of Alice's agent from Draft only to Full discretion. Undo.";
-    expect(within(done).getByTestId("command-sentence")).toHaveTextContent(sentence);
+    expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
+      sentence.replace(/ Undo\.$/, ""),
+    );
+    // The spoken "Undo." is the Undo button in the app (U-074).
+    expect(within(done).getByTestId("command-sentence")).not.toHaveTextContent("Undo.");
+    expect(within(done).getByTestId("command-undo")).toHaveTextContent("Undo");
     expect(confirmBodies(harness)).toEqual([
       { answer: "no" },
       { answer: "device", deviceId: "device_this_pc" },
@@ -202,7 +207,7 @@ describe("Settings -> Capabilities -> Email", () => {
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      "Changed the email mode of Alice's agent from Draft only to Allowlist. Undo.",
+      "Changed the email mode of Alice's agent from Draft only to Allowlist.",
     );
     await user.click(within(done).getByTestId("command-close"));
     await waitFor(() => expect(screen.queryByTestId("email-mode-dialog")).toBeNull());
@@ -485,7 +490,9 @@ describe("Settings -> Capabilities -> Email", () => {
     const done = await within(dialog).findByTestId("command-done");
     const sentence =
       "Changed the email mode of Alice's agent from Draft only to Off; email commands are turned off with it, because at Off the agent could not answer them. Undo.";
-    expect(within(done).getByTestId("command-sentence")).toHaveTextContent(sentence);
+    expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
+      sentence.replace(/ Undo\.$/, ""),
+    );
     await user.click(within(done).getByTestId("command-close"));
     await waitFor(() => expect(within(alice).getByTestId("email-mode")).toHaveTextContent("Off"));
     expect(within(alice).getByTestId("email-mode-note")).toHaveTextContent(sentence);

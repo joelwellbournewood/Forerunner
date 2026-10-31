@@ -4,6 +4,8 @@
  * inbox. Each returns a `Notification` for `Notifier.notify`; the builders decide the kind,
  * the deep link and the dedupe key so every producer behaves the same way.
  */
+
+import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
 import type { HumanRequestRow, MessageRow, ReviewRow } from "@forerunner/state";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
 import type { InjectionReport } from "../injection/scan.ts";
@@ -42,6 +44,8 @@ export interface SessionEndFacts {
   stopReason: string;
   summary: string;
   spentUsdMicro: number;
+  /** The spend in CHF (the ledger's conversion); the title says CHF (U-074). */
+  spentChfMicro?: number;
   completed: string[];
   needsHuman: string[];
   /** Failed tasks; the title names them (U-017: "0 done, 0 need you" hid a failed task). */
@@ -52,6 +56,11 @@ export interface SessionEndFacts {
   skipped?: string[];
   projectId?: string | null;
   agentName?: string;
+}
+
+/** USD micro-units in CHF micro-units at `rate` (the default rate without one). */
+function chfMicroOf(usdMicro: number, rate: number = DEFAULT_CHF_PER_USD): number {
+  return usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate);
 }
 
 /** Session end (spec E.5 "notify human"); a budget stop becomes the urgent `budget_stop`. */
@@ -74,11 +83,11 @@ export function sessionEnded(humanId: string, r: SessionEndFacts): Notification 
 
 /** A session hit its cap and stopped with a handoff (scenario 5). */
 export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
-  const usd = (r.spentUsdMicro / 1_000_000).toFixed(2);
+  const chf = r.spentChfMicro ?? chfMicroOf(r.spentUsdMicro);
   return {
     kind: "budget_stop",
     humanId,
-    title: `${r.agentName ? `${r.agentName} ` : ""}stopped: budget cap reached (USD ${usd} spent)`,
+    title: `${r.agentName ? `${r.agentName} ` : ""}stopped: budget cap reached (${formatChf(chf)} spent)`,
     body: cut(r.summary, 1000),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,
@@ -239,7 +248,8 @@ export function peerMessage(humanId: string, m: MessageRow, fromName?: string): 
   return {
     kind: "peer_message",
     humanId,
-    title: `${fromName ?? m.from_agent_id}: ${m.type}`,
+    // A name, never the agent's id (U-074).
+    title: `${fromName ?? "Another agent"}: ${m.type}`,
     body: cut(m.body, 500),
     link: "/inbox",
     projectId: m.project_id ?? undefined,
@@ -302,6 +312,8 @@ export interface CalibrationFacts {
   tier?: number;
   reviews?: number;
   costUsdMicro?: number;
+  /** The day's CHF per USD for the cost line; the default rate without it (U-074). */
+  chfPerUsd?: number;
   file?: string | null;
 }
 
@@ -339,7 +351,7 @@ export function criticCalibration(humanId: string, f: CalibrationFacts): Notific
   const lines = [
     `Defects caught ${c ? `${c.defectsCaught}/${c.seededReviewed}` : pct(catchRate)} (${pct(catchRate)}${f.thresholds ? `, gate ${pct(f.thresholds.catchRate)}` : ""}); clean work accepted ${c ? `${c.cleanAccepted}/${c.cleanReviewed}` : pct(passRate)} (${pct(passRate)}${f.thresholds ? `, gate ${pct(f.thresholds.passRate)}` : ""}).`,
     f.drift ? calibrationDriftLine(f.drift) : "",
-    `Tier ${f.tier ?? "?"} on ${f.model ?? "?"}, ${f.reviews ?? "?"} reviews, USD ${((f.costUsdMicro ?? 0) / 1_000_000).toFixed(4)}.${f.file ? ` Report: ${f.file}` : ""}`,
+    `Review level ${f.tier ?? "?"} on ${f.model ?? "?"}, ${f.reviews ?? "?"} reviews, ${formatChf(chfMicroOf(f.costUsdMicro ?? 0, f.chfPerUsd))}.${f.file ? ` Report: ${f.file}` : ""}`,
   ].filter((l) => l !== "");
   return {
     kind: "critic_calibration",

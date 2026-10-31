@@ -288,7 +288,8 @@ store and persists a `Review` with `session_id` set and `task_id` null:
   `critic.session_review_metrics` (the measurements); the runner reports the review as
   `critic.session_review`, so the session log shows it once;
 - honesty: `parseSummaryClaims` reads "Done: N" (also "N tasks done", "completed N tasks"),
-  "failed: N" and "Cost: USD x" from the summary and compares them with the task states and the
+  "failed: N", "Cost: USD x" and "Spent CHF x" (the runner's summary says CHF, U-074; checked
+  against the ledger's `chf_micro`, `ledgerChfMicro`) from the summary and compares them with the task states and the
   ledger. Done tasks are counted over every task the session planned or ran
   (`loadSessionReviewData` loads the plan items and the task ids of the session's Run rows), so
   a task a run finished that the plan never listed counts; the planned subset is reported too

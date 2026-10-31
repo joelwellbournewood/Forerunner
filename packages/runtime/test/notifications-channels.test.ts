@@ -724,7 +724,15 @@ describe("producers", () => {
     ).toBe("Alice's session completed: 0 done, 1 sent back, 1 in review, 2 not started");
     const stop = producers.sessionEnded("h-1", { ...facts, stopReason: "budget_exceeded" });
     expect(stop.kind).toBe("budget_stop");
-    expect(stop.title).toBe("Alice stopped: budget cap reached (USD 2.35 spent)");
+    // CHF (U-074): the ledger's figure when the facts carry it, else the default rate.
+    expect(stop.title).toBe("Alice stopped: budget cap reached (CHF 1.88 spent)");
+    expect(
+      producers.sessionEnded("h-1", {
+        ...facts,
+        stopReason: "budget_exceeded",
+        spentChfMicro: 2_111_000,
+      }).title,
+    ).toBe("Alice stopped: budget cap reached (CHF 2.11 spent)");
     expect(stop.dedupeKey).toBe("session:s-1:budget");
   });
 
@@ -799,6 +807,8 @@ describe("producers", () => {
     expect(
       producers.peerMessage("h-1", { ...message, type: "info", requires_ack: false }).urgency,
     ).toBe("info");
+    // Without the sender's name the title says "Another agent", never its id (U-074).
+    expect(producers.peerMessage("h-1", message).title).toBe("Another agent: question");
     expect(producers.updateAvailable("h-1", { version: "1.2.0", channel: "stable" })).toMatchObject(
       {
         kind: "update_available",

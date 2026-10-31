@@ -109,9 +109,9 @@ describe("Settings", () => {
     expect(rows).toHaveLength(5);
     for (const row of rows) {
       const scope = within(row).getByTestId("setting-scope");
-      expect(scope.textContent).toMatch(
-        /^(global|human: human_alice|agent: agent_alice|project: proj_atlas)$/,
-      );
+      // Names, never ids (U-074).
+      expect(scope.textContent).toMatch(/^(everyone|you|Alice's agent|Atlas)$/);
+      expect(scope.textContent).not.toMatch(/human_|agent_|proj_/);
     }
     expect(screen.getByTestId("scope-group-global")).toBeInTheDocument();
     expect(screen.getByTestId("scope-group-project")).toBeInTheDocument();
@@ -166,7 +166,11 @@ describe("Settings", () => {
     expect(within(pending).getByTestId("change-card")).toHaveAttribute("data-risk", "medium");
     expect(within(pending).getByTestId("card-old")).toHaveTextContent("2");
     expect(within(pending).getByTestId("card-new")).toHaveTextContent("3");
-    expect(within(pending).getByTestId("command-readback")).toHaveTextContent("Say yes to confirm");
+    // The app has the Yes button: no "say yes" or "reply to the email" (U-074).
+    expect(within(pending).getByTestId("command-readback")).not.toHaveTextContent(
+      /Say yes|reply yes|email/,
+    );
+    expect(within(pending).getByTestId("command-readback")).not.toHaveTextContent(/^$/);
     await user.click(within(pending).getByTestId("command-yes"));
     const confirmCalls = () =>
       postedCalls(harness, `/commands/${postedCallPendingId(harness)}/confirm`);
@@ -174,7 +178,7 @@ describe("Settings", () => {
     expect(confirmCalls()[0]?.body).toEqual({ answer: "tap" });
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      "Set autonomy for Atlas from 2 to 3. Undo.",
+      "Set autonomy for Atlas from 2 to 3.",
     );
     expect(harness.daemon.state.projects[0]?.autonomyLevel).toBe(3);
     // The change log row is the one voice and chat would write, with its own source.
@@ -222,7 +226,7 @@ describe("Settings", () => {
       deviceId: ME.desktopDeviceId,
     });
     expect(await within(dialog).findByTestId("command-sentence")).toHaveTextContent(
-      "Raised the monthly hard ceiling from CHF 150 to CHF 200. Undo.",
+      "Raised the monthly hard ceiling from CHF 150 to CHF 200.",
     );
   });
 
@@ -284,7 +288,7 @@ describe("Settings", () => {
       answer: "device",
     });
     expect(await within(dialog).findByTestId("command-sentence")).toHaveTextContent(
-      "Raised the monthly hard ceiling from CHF 150 to CHF 200. Undo.",
+      "Raised the monthly hard ceiling from CHF 150 to CHF 200.",
     );
   });
 

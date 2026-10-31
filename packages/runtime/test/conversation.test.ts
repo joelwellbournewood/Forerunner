@@ -1118,7 +1118,9 @@ describe("a reply cut off at max_tokens", () => {
     const context = "The renderer flickers when the menu opens over the map. ".repeat(10_500);
     const res = await w.chat(`${context}\nWhat should I look at first?`);
     expect(w.provider.calls).toHaveLength(0);
-    expect(res.reply).toMatch(/USD 0\.25/);
+    // The person reads CHF (U-074): the USD 0.25 ceiling at the default rate.
+    expect(res.reply).toMatch(/CHF 0\.20 a chat turn may spend/);
+    expect(res.reply).not.toMatch(/USD/);
     expect(res.reply).toMatch(/shorter|cheaper model/);
     const reply = (await w.log()).find((e) => e.type === "chat.reply");
     expect(reply?.payload).toMatchObject({

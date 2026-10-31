@@ -13,7 +13,8 @@ test("reviews tab lists the critic's verdicts with findings and draws the grade 
   await expect(page.getByTestId("review")).toHaveCount(3);
   const revise = page.getByTestId("review").filter({ hasText: "Add the search box" });
   await expect(revise.getByTestId("review-grade")).toHaveText("64 / 100");
-  await expect(revise.getByTestId("review-verdict")).toHaveText("revise");
+  // The critic's call in plain words (U-074).
+  await expect(revise.getByTestId("review-verdict")).toHaveText("sent back");
   await expect(revise.getByTestId("finding")).toHaveAttribute("data-severity", "high");
   await page.getByTestId("filter-verdict").selectOption("accept");
   await expect(page.getByTestId("review")).toHaveCount(2);

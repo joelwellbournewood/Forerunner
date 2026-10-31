@@ -2030,6 +2030,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     tokens,
     kill,
     executor,
+    // The plan's estimates on its approval card are shown in CHF (U-074).
+    chfPerUsd,
     context,
     critic,
     memory,
@@ -2649,6 +2651,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           stopReason: result.stopReason,
           summary: result.summary,
           spentUsdMicro: result.spentUsdMicro,
+          ...(result.spentChfMicro !== undefined ? { spentChfMicro: result.spentChfMicro } : {}),
           completed: result.completed,
           needsHuman: result.needsHuman,
           failed: result.failed,

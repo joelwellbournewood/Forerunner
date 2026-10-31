@@ -373,7 +373,10 @@ describe("notifications wired into the daemon", () => {
     expect(record).toMatchObject({ urgency: "normal", outcome: "delivered" });
     const sessionId = record.notification.sessionId;
     expect(sessionId).toBeTruthy();
-    expect(record.notification.title).toMatch(/^Alice's session \w+: \d+ done, \d+ needs? you$/);
+    // The summary's categories, done always and the others when any (U-072).
+    expect(record.notification.title).toMatch(
+      /^Alice's session \w+: \d+ done(, \d+ (failed|needs? you|sent back|in review|not started))*$/,
+    );
     expect(record.notification.link).toBe(`/sessions/${sessionId}`);
     expect(record.notification.projectId).toBe(projectId);
     const events = (await (await req(`/sessions/${sessionId}/events`)).json()) as Json[];
@@ -455,9 +458,13 @@ describe("notifications wired into the daemon", () => {
     expect(logged).toMatchObject({ urgency: "normal", outcome: "delivered" });
     expect(logged.notification.sessionId).toBe(session.id);
     const events = (await (await req(`/sessions/${session.id}/events`)).json()) as Json[];
-    const entry = events.find((e) => e.type === "notification" && str(e.text).includes(logged.id));
+    const entry = events.find(
+      (e) => e.type === "notification" && (e.payload as Json | null)?.id === logged.id,
+    );
     expect(entry).toBeDefined();
-    expect(str((entry as Json).text)).toContain("critic_verdict");
+    // The session log says it in words, never as JSON (U-074).
+    expect(str((entry as Json).text)).toContain(`Notified you: "${logged.notification.title}"`);
+    expect(str((entry as Json).text)).not.toContain("{");
   });
 
   it("the kill switch is urgent, names what stopped and why, and links home", async () => {

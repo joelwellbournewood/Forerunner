@@ -27,6 +27,7 @@ import {
 } from "../models/ladder.ts";
 import { modeOverride, parseAgentModelConfig, resolveRunSettings } from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
+import { chfText } from "../money-words.ts";
 import {
   type ChatMessage,
   type EffortLevel,
@@ -61,7 +62,7 @@ export const CHAT_TURN_BUDGET_CEILING_USD_MICRO = 250_000;
 
 /** The reply when the turn's budget refused the first model call (nothing was spent). */
 export function budgetRefusedReply(turnBudgetUsdMicro: number): string {
-  return `That question with its context would cost more than the USD ${(turnBudgetUsdMicro / 1e6).toFixed(2)} a chat turn may spend on this model. Ask it with less pasted text, or switch chat to a cheaper model.`;
+  return `That question with its context would cost more than the ${chfText(turnBudgetUsdMicro)} a chat turn may spend on this model. Ask it with less pasted text, or switch chat to a cheaper model.`;
 }
 
 /** The reply when the model was cut off at max_tokens before it finished a single sentence. */

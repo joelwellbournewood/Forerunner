@@ -16,9 +16,11 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   await expect(dialog.getByTestId("command-pending")).toHaveAttribute("data-decision", "needs_yes");
   await expect(dialog.getByTestId("card-new")).toHaveText("3");
   await dialog.getByTestId("command-yes").click();
+  // The spoken "Undo." is the dialog's Undo button in the app (U-074).
   await expect(dialog.getByTestId("command-sentence")).toHaveText(
-    "Set autonomy for Atlas from 2 to 3. Undo.",
+    "Set autonomy for Atlas from 2 to 3.",
   );
+  await expect(dialog.getByTestId("command-undo")).toBeVisible();
   await dialog.getByTestId("command-close").click();
   await expect(row.getByTestId("setting-value-cell")).toHaveText("3");
 

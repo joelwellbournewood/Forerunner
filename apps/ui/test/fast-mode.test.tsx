@@ -78,9 +78,10 @@ describe("Settings: Opus fast mode (D.20)", () => {
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      `Set Opus fast mode for Atlas from false to true: ${ON}. Undo.`,
+      `Set Opus fast mode for Atlas from false to true: ${ON}.`,
     );
     expect(harness.daemon.state.fastMode.proj_atlas).toBe(true);
+    // The change log keeps the sentence as said; the app shows it without "Undo." (U-074).
     expect(harness.daemon.state.changes[0]?.sentence).toBe(
       `Set Opus fast mode for Atlas from false to true: ${ON}. Undo.`,
     );
@@ -101,7 +102,7 @@ describe("Settings: Opus fast mode (D.20)", () => {
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      `Set Opus fast mode for Beacon from true to false: ${OFF}. Undo.`,
+      `Set Opus fast mode for Beacon from true to false: ${OFF}.`,
     );
     expect(harness.daemon.state.fastMode.proj_beacon).toBe(false);
   });
@@ -123,7 +124,7 @@ describe("Settings: Opus fast mode (D.20)", () => {
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      `Set Opus fast mode for Atlas from unset to true: ${ON}. Undo.`,
+      `Set Opus fast mode for Atlas from unset to true: ${ON}.`,
     );
   });
 

@@ -10,6 +10,7 @@ import { type CreateTaskInput, describeError, type TaskView } from "../../api/cl
 import { Dialog } from "../../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS } from "../../components/ui.tsx";
 import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
+import { reviewLevel } from "../../lib/plain-words.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 import { DependencyPicker } from "./DependencyPicker.tsx";
@@ -160,7 +161,10 @@ export function NewTaskDialog({
           />
         </Field>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Field label="Risk tier" hint="The project default applies unless you pick one.">
+          <Field
+            label="Review level (risk tier)"
+            hint="How carefully the critic checks the work. The project default applies unless you pick one."
+          >
             <select
               className={INPUT_CLASS}
               value={riskTier}
@@ -173,7 +177,7 @@ export function NewTaskDialog({
               </option>
               {[0, 1, 2, 3].map((t) => (
                 <option key={t} value={String(t)}>
-                  {t}
+                  {reviewLevel(t)}
                 </option>
               ))}
             </select>

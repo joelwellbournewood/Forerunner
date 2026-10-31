@@ -3390,6 +3390,25 @@ criteria, budget, risk tier or specialist with `brief_incomplete` and the list o
 bypass, hidden text, markdown image exfil, ...). Flagged content raises an event and a note to
 the human; it is never acted on.
 
+### Plain words in the session log and money in CHF (U-074)
+
+`describeEvent(type, payload, chfPerUsd)` (`daemon/views.ts`; `eventView` passes the day's
+rate) gives every event type a session writes a sentence; the types it has no case for are
+worded by `moreEventLines` (`daemon/event-lines.ts`: `peers.feed`, `queue.consumed`,
+`docs.status_*`, `critic.review`, `memory.*`, `notification`, `inbox.*`, `peer.overlap`,
+`task.files`, `pr.*`, voice, email and mirror events), and an unknown type by `fallbackLine`:
+its type in words and its warning, never JSON. Money is CHF (`chfOf`), the critic's terms are
+words (`reviewLevel`, `verdictWords`, `decisionWords`, `retryWords`: no "tier", "verdict",
+"improve_brief"), the autonomy level is named (`autonomyWords`), and `inbox.message` names the
+sender (the runner adds `fromName`; an older row says "another agent"). Person-facing money
+elsewhere is CHF too: the session summary and the status doc's note use the cost ledger's own
+`chf_micro`; the plan-approval card's estimates use the runner's `chfPerUsd` dep (compose's
+rate); the budget-stop notification the run's `spentChfMicro`; the chat-turn refusal, the
+specialist approval refusal, the model watch's eval lines, the intake card and the
+calibration and handover reports `chfText` (`src/money-words.ts`, the default rate where no
+day's rate is at hand). The critic reads a "Spent CHF x" claim and checks it against the
+ledger's CHF (`critic.md`).
+
 ### Session counts (U-072)
 
 The session summary, the `session.ended` log line and the `session_ended` notification count

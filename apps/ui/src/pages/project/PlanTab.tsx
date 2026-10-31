@@ -19,6 +19,7 @@ import {
   statusTone,
   type Tone,
 } from "../../components/ui.tsx";
+import { reviewLevel } from "../../lib/plain-words.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 import { describeDependencies } from "./DependencyPicker.tsx";
@@ -803,7 +804,7 @@ function SmallProjectPlan({
               <Badge tone={statusTone(t.status)}>{t.status}</Badge>
               <span className="font-medium">{t.title}</span>
               <span className="text-xs text-neutral-500">
-                tier {t.riskTier} · {PRIORITY_LABELS[t.priority]} priority
+                {reviewLevel(t.riskTier)} · {PRIORITY_LABELS[t.priority]} priority
                 {t.dependsOn.length > 0 ? ` · after ${describeDependencies(t, byId)}` : ""}
               </span>
             </li>

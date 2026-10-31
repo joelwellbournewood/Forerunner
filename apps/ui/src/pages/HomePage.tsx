@@ -9,6 +9,7 @@ import {
   Loading,
   SpendBar,
 } from "../components/ui.tsx";
+import { autonomyLabel } from "../lib/plain-words.ts";
 import { relativeTime } from "../lib/time.ts";
 import { useShell } from "../shell/ShellContext.ts";
 import { useUiState, useUiStore } from "../store/context.tsx";
@@ -114,7 +115,9 @@ export function ProjectCard({
         <dt className="text-neutral-500">Last session</dt>
         <dd>{relativeTime(project.lastSessionAt)}</dd>
         <dt className="text-neutral-500">Autonomy</dt>
-        <dd>level {project.autonomyLevel}</dd>
+        <dd title={autonomyLabel(project.autonomyLevel).means} data-testid="autonomy">
+          {autonomyLabel(project.autonomyLevel).label}
+        </dd>
       </dl>
       <div className="mt-3">
         <SpendBar

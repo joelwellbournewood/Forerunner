@@ -31,6 +31,7 @@ import {
 import { type Clock, errorMessage, ForerunnerError, log, newId } from "@forerunner/platform";
 import type { HumanRequestRow, JsonValue, ReleaseRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
+import { chfText } from "../money-words.ts";
 import type { ProviderRegistry } from "../provider/registry.ts";
 import type { EffortLevel, ModelRef, ModelTier } from "../provider/types.ts";
 import type { SpecialistDef } from "../registry/types.ts";
@@ -2132,7 +2133,7 @@ export function proposalSteps(report: ModelWatchReport): string[] {
   if (deferred) {
     const n = deferred.planned.length;
     steps.push(
-      `Evaluations not run (they cost money): ${n} eval set run(s) planned, at most USD ${(report.eval_budget_usd_micro / 1e6).toFixed(2)}. Only "evaluate" runs them; "adopt" applies the price rows and runs nothing.`,
+      `Evaluations not run (they cost money): ${n} eval set run(s) planned, at most ${chfText(report.eval_budget_usd_micro)}. Only "evaluate" runs them; "adopt" applies the price rows and runs nothing.`,
     );
   }
   return steps;
@@ -2150,7 +2151,7 @@ export function summarizeReport(report: ModelWatchReport): string {
     : "";
   const parts = [
     `Model watch ${report.generated_at.slice(0, 10)}:${baseline} ${d.new_models.length} new, ${d.retired_models.length} retired, ${d.repriced.length} repriced, ${d.unpriced.length} unpriced model(s).`,
-    `${report.evals.filter((e) => e.skipped_reason === null).length} eval run(s) for USD ${(report.eval_cost_usd_micro / 1e6).toFixed(4)}.`,
+    `${report.evals.filter((e) => e.skipped_reason === null).length} eval run(s) for ${chfText(report.eval_cost_usd_micro)}.`,
     report.recommendations.length
       ? `${report.recommendations.length} recommendation(s): ${report.recommendations.map((r) => r.text).join(" | ")}`
       : "No recommendation.",

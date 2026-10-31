@@ -15,6 +15,8 @@ export interface ChatMessage {
   streaming?: boolean;
   reply?: ChatReplyView;
   error?: string;
+  /** What an Undo on the reply's change did (U-074). */
+  undoNote?: string;
 }
 
 /** The newest messages kept per project; older ones drop off the top. */

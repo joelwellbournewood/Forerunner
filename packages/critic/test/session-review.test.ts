@@ -299,7 +299,6 @@ describe("session review (H.6)", () => {
     }
   });
 
-<<<<<<< HEAD
   it("a task finished after the session ended does not make its summary a lie", () => {
     // Release scenario 1 (a good day): the summary said "Done: 2" at the session's end; by the
     // time the review ran, a later session had finished a third planned task. Counting task
@@ -363,7 +362,52 @@ describe("session review (H.6)", () => {
       ledgerUsdMicro: 13_591,
     } as never;
     expect(sessionChecks(data).verdict).not.toBe("human");
-=======
+  });
+
+  it("reads a CHF amount in the summary and checks it against the ledger's CHF (U-074)", async () => {
+    expect(parseSummaryClaims("Done: 1. Failed: 0. Spent CHF 1'204.50.")).toMatchObject({
+      done: 1,
+      costChfMicro: 1_204_500_000,
+    });
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [{ taskId: a.id, title: a.title, estimateUsdMicro: 300_000 }],
+          estimateUsdMicro: 300_000,
+          summary: "",
+        },
+        summary: "Session completed. Done: 1. Spent CHF 5.00.",
+        status: "completed",
+      });
+      await w.store.costLedger.record({
+        human_id: w.ids.human,
+        session_id: w.ids.session,
+        kind: "api",
+        usd_micro: 300_000,
+        chf_micro: 240_000,
+        rate_chf_per_usd: 0.8,
+        model: "fake-sonnet",
+      });
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.findings.map((f) => f.description)).toContain(
+        "Summary claims a cost of CHF 5.00 but the ledger shows CHF 0.24",
+      );
+      // The review's own summary, read in the log and the Inbox, says CHF too.
+      expect(out.summary).toContain("cost CHF 0.24 against an estimate of CHF 0.24");
+      expect(out.summary).not.toContain("USD");
+    } finally {
+      await w.close();
+    }
+  });
+
   it("a session whose only planned task was sent back by the critic is not graded 100 (U-072)", async () => {
     const w = await world();
     try {
@@ -430,7 +474,6 @@ describe("session review (H.6)", () => {
     } finally {
       await w.close();
     }
->>>>>>> 4ec2a67 (runtime, critic: one set of session counts everywhere (U-072))
   });
 
   it("an honest, in-budget session is accepted with grade 100 and no finding", async () => {

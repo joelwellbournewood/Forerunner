@@ -71,6 +71,19 @@ export function chfToMicro(input: string): number | null {
  * documented default rate (ADR 0008: 0.80 CHF per USD) when the pair carries no CHF.
  */
 export const DEFAULT_CHF_PER_USD = 0.8;
+
+/**
+ * USD micro-units to CHF micro-units at the rate a Money pair implies, or the default rate:
+ * for the few amounts the daemon sends in USD only (an intake card's estimates, an eval
+ * budget), so the person still reads CHF (U-074).
+ */
+export function usdMicroToChfMicro(usdMicro: number, reference?: MoneyLike): number {
+  const rate =
+    reference && reference.chfMicro > 0 && reference.usdMicro > 0
+      ? reference.chfMicro / reference.usdMicro
+      : DEFAULT_CHF_PER_USD;
+  return roundHalfUp(Math.max(0, usdMicro) * rate);
+}
 export function chfMicroToUsdMicro(chfMicro: number, reference?: MoneyLike): number {
   const rate =
     reference && reference.chfMicro > 0 && reference.usdMicro > 0

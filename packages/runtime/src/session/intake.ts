@@ -37,6 +37,7 @@ import {
 } from "../models/ladder.ts";
 import { modeOverride, parseAgentModelConfig, resolveRunSettings } from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
+import { chfText } from "../money-words.ts";
 import {
   type EffortLevel,
   type ModelProvider,
@@ -392,7 +393,8 @@ function keyedTasks(plan: ProjectPlan): Map<string, PlanTaskNamed> {
   return out;
 }
 
-const usd = (micro: number): string => `$${(micro / 1e6).toFixed(2)}`;
+/** Estimates on the intake card, as the person reads them: CHF at the default rate (U-074). */
+const approxChf = (micro: number): string => chfText(micro);
 
 export class IntakeService {
   private readonly logger = log("intake");
@@ -627,7 +629,7 @@ export class IntakeService {
     const named = keyedTasks(plan);
     const first = proposal.firstSession.items.map((item, i) => {
       const t = named.get(item.key) as PlanTaskNamed;
-      return `${i + 1}. ${t.title} (~${usd(item.estimateUsdMicro)})`;
+      return `${i + 1}. ${t.title} (~${approxChf(item.estimateUsdMicro)})`;
     });
     const docPaths = Object.keys(proposal.docs);
     const n = sizes(proposal, shaped);
@@ -638,7 +640,7 @@ export class IntakeService {
       session_id: called.sessionId,
       kind: "approval",
       why: cut(
-        `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${n.firstSessionTasks} task(s) (~${usd(estimate)}). Approve to write the plan and the docs${
+        `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${n.firstSessionTasks} task(s) (~${approxChf(estimate)}). Approve to write the plan and the docs${
           repo ? ` (the docs as a pull request on ${repo.owner}/${repo.name})` : ""
         }; nothing is written until then.`,
         4000,
@@ -692,7 +694,7 @@ export class IntakeService {
       ),
       result_summary: redact(
         cut(
-          `${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s), first session ${n.firstSessionTasks} task(s) ~${usd(estimate)}; model ${called.model}, cost ${usd(called.costUsdMicro)}`,
+          `${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s), first session ${n.firstSessionTasks} task(s) ~${approxChf(estimate)}; model ${called.model}, cost ${approxChf(called.costUsdMicro)}`,
         ),
       ),
     });
@@ -1142,8 +1144,8 @@ export class IntakeService {
         project_id: project.id,
         human_id: this.deps.human.id,
         kind: "task",
-        text: `First-session plan (approved intake ${row.id}, ~${usd(estimate)}): ${proposal.firstSession.summary}\n${items
-          .map((i, n) => `${n + 1}. ${i.title} (~${usd(i.estimate_usd_micro)})`)
+        text: `First-session plan (approved intake ${row.id}, ~${approxChf(estimate)}): ${proposal.firstSession.summary}\n${items
+          .map((i, n) => `${n + 1}. ${i.title} (~${approxChf(i.estimate_usd_micro)})`)
           .join("\n")}`,
         priority: 9,
         status: "queued",
@@ -1173,7 +1175,7 @@ export class IntakeService {
         agent_id: this.deps.agent.id,
         input_summary: cut(`intake request ${row.id} approved for project ${project.id}`),
         result_summary: cut(
-          `${plan.milestones.length} milestone(s)${plan.reusedMilestone ? " (joined the open one)" : ""}, ${plan.tasks.length} task(s) written; first session ${items.length} task(s) ~${usd(estimate)}`,
+          `${plan.milestones.length} milestone(s)${plan.reusedMilestone ? " (joined the open one)" : ""}, ${plan.tasks.length} task(s) written; first session ${items.length} task(s) ~${approxChf(estimate)}`,
         ),
       });
       return { milestones: plan.milestones.length, tasks: plan.tasks.length };

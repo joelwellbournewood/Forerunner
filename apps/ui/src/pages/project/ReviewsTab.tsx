@@ -4,6 +4,7 @@ import type { ReviewsView } from "../../api/client.ts";
 import { TrendLine, type TrendPoint } from "../../components/charts.tsx";
 import { RouteMissing } from "../../components/RouteMissing.tsx";
 import { Badge, ErrorBanner, INPUT_CLASS, Loading, type Tone } from "../../components/ui.tsx";
+import { reviewLevel, verdictLabel } from "../../lib/plain-words.ts";
 import { formatDate, formatDateTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
@@ -134,9 +135,9 @@ export function ReviewsTab({ projectId }: { projectId: string }) {
                 {r.grade} / 100
               </Badge>
               <Badge tone={verdictTone(r.verdict)} testId="review-verdict">
-                {r.verdict}
+                {verdictLabel(r.verdict)}
               </Badge>
-              <Badge>tier {r.tier}</Badge>
+              <Badge>{reviewLevel(r.tier)}</Badge>
               <Badge title="The critic's confidence; low confidence never becomes accept">
                 confidence {Math.round(r.confidence * 100)}%
               </Badge>

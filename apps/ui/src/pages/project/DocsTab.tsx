@@ -33,7 +33,8 @@ export function DocsTab({ projectId }: { projectId: string }) {
           {drifted} drifted
         </Badge>
         <span className="text-xs text-neutral-500">
-          Kept by the agent, checked for drift by the critic at tier 2 and above.
+          Kept by the agent; the critic checks they match the work on tasks with a full review (tier
+          2 and above).
         </span>
         <Button variant="ghost" className="ml-auto" onClick={docs.reload}>
           Refresh

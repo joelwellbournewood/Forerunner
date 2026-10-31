@@ -47,7 +47,8 @@ describe("Reviews tab", () => {
     const revise = rows[1];
     if (!revise) throw new Error("no review");
     expect(within(revise).getByTestId("review-grade")).toHaveTextContent("64 / 100");
-    expect(within(revise).getByTestId("review-verdict")).toHaveTextContent("revise");
+    // Plain words for the verdict and the tier (U-074).
+    expect(within(revise).getByTestId("review-verdict")).toHaveTextContent("sent back");
     expect(revise).toHaveTextContent("confidence 80%");
     expect(revise).toHaveTextContent("Add the search box to the header");
     const finding = within(revise).getByTestId("finding");

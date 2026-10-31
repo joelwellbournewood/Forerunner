@@ -445,7 +445,7 @@ describe.skipIf(!gitBackend)("handover-live on the fake git host and the fake pr
     expect(text).toMatch(/Settings: handover enabled, budget USD 3 /);
     expect(text).toMatch(/^Handover test \d{4}-\d{2}-\d{2} on widget/m);
     // The fresh agent made the change: the seeded task is done and its pull request is open.
-    expect(text).toMatch(/^Session \S+ completed: 1 done, 0 need you, 0 failed; task done \(http/m);
+    expect(text).toMatch(/^Session \S+ completed: 1 done; task done \(http/m);
     const pr = /^PR: (http:\/\/127\.0\.0\.1:\d+\/octo\/widget\/pull\/(\d+))$/m.exec(text);
     expect(pr, text).not.toBeNull();
     expect(text).toMatch(

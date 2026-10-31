@@ -319,6 +319,20 @@ percentage and colours at 80 % and 100 %. CHF inputs convert with `chfMicroToUsd
 referenceMoney)` at the rate implied by a Money pair (default 0.80, ADR 0008). A setting whose
 value is a Money pair renders as CHF.
 
+**Plain words (U-074).** `lib/plain-words.ts` turns the daemon's every-channel texts into what
+the app says: `inAppText` drops "Say yes to confirm, or reply yes to the email." and turns "Say
+undo or tap Undo in the change log." into "Undo it from Changes." (the change card's undo line,
+a command's read-back, a pending chat confirmation, an Inbox card's steps); `withoutUndoWord`
+strips a change sentence's spoken "Undo.": the settings dialog shows its Undo button, a Chat
+reply an **Undo** button for each action with an `undoToken` (`POST /changes/:id/undo`, the
+outcome said under the reply), an Inbox message a link to Changes. `reviewLevel`,
+`verdictLabel` and `autonomyLabel` name the tier, the critic's call and the autonomy level
+(Tasks, Plan, Reviews, the new-task dialog, the project header and card). Ids are shown as
+names: a setting's scope (`scopeName`: you, the agent, the project), a lesson's project, a
+task's dependencies (by title), the Inbox's answered list (the answer's words, never JSON). The
+Chat header says what happens: a small change is made at once with Undo, a bigger one is read
+back and waits for Yes. The intake card's estimates are CHF (`usdMicroToChfMicro`).
+
 ### Charts
 
 `components/charts.tsx` draws the two charts in SVG without a library: `TrendLine` (one series,

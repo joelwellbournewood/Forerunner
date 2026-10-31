@@ -112,7 +112,7 @@ describe("Settings: models per agent and specialist", () => {
     });
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      "Set the max tokens per call of the coder specialist for Alice from the default to 8000. Undo.",
+      "Set the max tokens per call of the coder specialist for Alice from the default to 8000.",
     );
     await user.click(within(done).getByTestId("command-close"));
     await waitFor(async () =>

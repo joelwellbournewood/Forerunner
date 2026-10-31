@@ -119,7 +119,8 @@ describe("project docs at session end (spec G.5)", () => {
     expect(status).toContain(`### 2026-10-20 session ${result.sessionId}`);
     expect(status).toContain("- Done: Add clamp");
     expect(status).toMatch(/## Done\n\n- Add clamp\n/);
-    expect(status).toContain("- Note: stop reason completed; spent $0.30");
+    // The ledger's CHF for USD 0.30 (U-074).
+    expect(status).toContain("- Note: stop reason completed; spent CHF 0.24");
     expect(await show(bare, "fr/add-clamp", "src/x.ts")).toBe("export const x = 1;\n");
     expect(await show(bare, "main", STATUS_DOC)).toBeNull();
     expect(await show(bare, "main", "README.md")).toBe("# sample\n");

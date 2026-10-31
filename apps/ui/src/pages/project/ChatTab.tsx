@@ -4,6 +4,7 @@ import { streamChat } from "../../api/chat-stream.ts";
 import { describeError, type TaskView } from "../../api/client.ts";
 import { Badge, Button, INPUT_CLASS, Money } from "../../components/ui.tsx";
 import type { MoneyLike } from "../../lib/money.ts";
+import { inAppText, withoutUndoWord } from "../../lib/plain-words.ts";
 import { formatDuration } from "../../lib/time.ts";
 import type { ChatMessage } from "../../store/chat-history.ts";
 import { useClient, useIdentity, useUiState, useUiStore } from "../../store/context.tsx";
@@ -108,6 +109,44 @@ export function ChatTab({
     }
   };
 
+  // "Undo." in a reply is a button (U-074): the action's change log id, through the same
+  // undo route as Changes; the outcome is said under the reply and the button goes.
+  const undo = async (messageId: string, index: number, changeId: string) => {
+    if (!changeId) return;
+    const note = (undoNote: string, done: boolean) =>
+      setMessages((prev) =>
+        prev.map((x) =>
+          x.id !== messageId || !x.reply
+            ? x
+            : {
+                ...x,
+                undoNote,
+                reply: done
+                  ? {
+                      ...x.reply,
+                      actions: x.reply.actions.map((a, i) =>
+                        i === index ? { ...a, undoToken: null } : a,
+                      ),
+                    }
+                  : x.reply,
+              },
+        ),
+      );
+    try {
+      const result = await client.undoChange(changeId);
+      if (result.status === "done" || result.status === "partial") {
+        note(
+          result.sentence ? `Undone: ${withoutUndoWord(result.sentence).text}` : "Undone.",
+          true,
+        );
+      } else {
+        note(`Not undone: ${result.reason ?? "the change cannot be undone any more"}.`, true);
+      }
+    } catch (err) {
+      note(`Not undone: ${describeError(err)}`, false);
+    }
+  };
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const text = input;
@@ -117,9 +156,10 @@ export function ChatTab({
 
   return (
     <div className="flex h-full min-h-[24rem] flex-col gap-2" data-testid="chat">
-      <p className="text-xs text-neutral-500">
-        Quick chat is read-only by default: it answers from the project summary and docs on a fast
-        model. Actions are read back and need your confirmation.
+      <p className="text-xs text-neutral-500" data-testid="chat-intro">
+        Quick chat answers from the project summary and docs on a fast model. A small change you ask
+        for (a task, a note for the next session) is made at once, with Undo; a bigger one is read
+        back first and waits for your Yes.
       </p>
       <div
         ref={listRef}
@@ -144,7 +184,9 @@ export function ChatTab({
             {m.streaming && m.text.length === 0 ? (
               <output className="text-neutral-500">Thinking… (waiting for the first token)</output>
             ) : (
-              <span className="whitespace-pre-wrap">{m.text}</span>
+              <span className="whitespace-pre-wrap">
+                {m.role === "agent" ? withoutUndoWord(m.text).text : m.text}
+              </span>
             )}
             {m.streaming && m.text.length > 0 ? <span className="animate-pulse">▍</span> : null}
             {m.error ? (
@@ -166,7 +208,26 @@ export function ChatTab({
                     {a.kind}: {a.summary}
                   </Badge>
                 ))}
+                {m.reply.actions.map((a, i) =>
+                  a.undoToken ? (
+                    <Button
+                      key={`undo-${a.undoToken}`}
+                      variant="ghost"
+                      className="px-2 py-0.5 text-xs"
+                      onClick={() => void undo(m.id, i, a.undoToken ?? "")}
+                      disabled={busy}
+                      data-testid="chat-undo"
+                    >
+                      Undo
+                    </Button>
+                  ) : null,
+                )}
               </div>
+            ) : null}
+            {m.undoNote ? (
+              <output className="mt-1 block text-xs" data-testid="chat-undo-note">
+                {m.undoNote}
+              </output>
             ) : null}
             {m.reply?.pendingConfirmation &&
             confirmationOpen &&
@@ -175,7 +236,7 @@ export function ChatTab({
                 className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-neutral-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
                 data-testid="pending-confirmation"
               >
-                <p className="text-sm">{m.reply.pendingConfirmation.readback}</p>
+                <p className="text-sm">{inAppText(m.reply.pendingConfirmation.readback)}</p>
                 <p className="text-xs text-neutral-600 dark:text-neutral-300">
                   Estimated <Money value={m.reply.pendingConfirmation.estimate} />
                 </p>

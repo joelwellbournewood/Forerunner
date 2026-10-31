@@ -73,7 +73,7 @@ describe("the speed-versus-quality slider", () => {
       ) as HTMLElement;
     const row = await findRow();
     expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("balanced (0)");
-    expect(within(row).getByTestId("setting-scope")).toHaveTextContent("project: proj_atlas");
+    expect(within(row).getByTestId("setting-scope")).toHaveTextContent("Atlas");
 
     // Up to quality with the range input itself.
     await user.click(within(row).getByTestId("setting-change"));
@@ -109,7 +109,7 @@ describe("the speed-versus-quality slider", () => {
     // Low risk: done at once, the sentence names what the move changes.
     let done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      `Set the speed-versus-quality slider for Atlas from unset to 1: ${QUALITY}. Undo.`,
+      `Set the speed-versus-quality slider for Atlas from unset to 1: ${QUALITY}.`,
     );
     expect(harness.daemon.state.speedQuality.proj_atlas).toBe(1);
     expect(harness.daemon.state.changes[0]).toMatchObject({
@@ -132,7 +132,7 @@ describe("the speed-versus-quality slider", () => {
     await user.click(within(dialog).getByTestId("setting-apply"));
     done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      `Set the speed-versus-quality slider for Atlas from 1 to -1: ${SPEED}. Undo.`,
+      `Set the speed-versus-quality slider for Atlas from 1 to -1: ${SPEED}.`,
     );
     expect(harness.daemon.state.speedQuality.proj_atlas).toBe(-1);
     expect(postedCalls(harness, "/commands/execute")[1]?.body).toMatchObject({

@@ -80,8 +80,10 @@ again as soon as the service answers.
   context compression.
 - **Data**: files and datasets the project knows about; agents see metadata and samples, never
   whole files.
-- **Chat**: a quick, read-only chat with the fast model about this project. "Make this a task"
-  turns a message into a ready task, which the next session works on. Each project keeps its
+- **Chat**: a quick chat with the fast model about this project. A small change you ask for
+  (a task, a note for the next session) is made at once and its reply has an **Undo** button;
+  a bigger one is read back first and waits for your **Yes**. "Make this a task" turns a
+  message into a ready task, which the next session works on. Each project keeps its
   own conversation in this window: switching tabs or reloading keeps it, a Yes/No question you
   have not answered yet included.
 
@@ -130,6 +132,11 @@ Each unread message has **Mark read**; **Mark all read** over the messages marks
 one at once.
 
 ## Autonomy and budgets
+
+Money is shown in CHF everywhere you read it: cards, the session log, summaries, notifications
+and the Inbox. The **review level** of a task (its risk tier) says how carefully the critic
+checks the work: checks only (0), a light review (1), a full review (2), a full review and your
+sign-off (3).
 
 Each project has an autonomy level from 0 (advisor: plans only) to 4 (autopilot: everything
 except destructive, financial and credential actions). The default is 2: routine reversible

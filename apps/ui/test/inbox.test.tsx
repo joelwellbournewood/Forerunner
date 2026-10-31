@@ -187,21 +187,23 @@ describe("Inbox", () => {
     expect(milestones).toHaveTextContent("Foundations");
     expect(milestones).toHaveTextContent("by 2026-11-01");
     expect(milestones).toHaveTextContent("Scaffold the repository");
-    expect(milestones).toHaveTextContent("tier default, priority high, coder");
+    expect(milestones).toHaveTextContent("project default review, priority high, coder");
     expect(milestones).toHaveTextContent("Set up CI");
     expect(milestones).toHaveTextContent(
-      'tier 2, priority medium, after "Scaffold the repository"',
+      'full review (tier 2), priority medium, after "Scaffold the repository"',
     );
     const docs = within(card).getByTestId("intake-docs");
     expect(docs).toHaveTextContent("Docs (2): README.md, docs/overview.md");
     expect(docs).toHaveTextContent("as a pull request");
     const first = within(card).getByTestId("intake-first-session");
-    expect(first).toHaveTextContent("First session (USD 0.65): Scaffold first.");
-    expect(first).toHaveTextContent("Scaffold the repository (~USD 0.40)");
-    expect(first).toHaveTextContent("Set up CI (~USD 0.25)");
+    // Money in CHF (U-074).
+    expect(first).toHaveTextContent("First session (CHF 0.52): Scaffold first.");
+    expect(first).toHaveTextContent("Scaffold the repository (~CHF 0.32)");
+    expect(first).toHaveTextContent("Set up CI (~CHF 0.20)");
     expect(card).toHaveTextContent(
-      "Planning call: USD 0.01. Nothing is written until you approve.",
+      "Planning call: CHF 0.01. Nothing is written until you approve.",
     );
+    expect(card).not.toHaveTextContent("USD");
     // The request keeps its ordinary controls: the options and the raw card behind details.
     const request = card.closest('[data-testid="request"]') as HTMLElement;
     expect(request).toHaveAttribute("data-request-id", "req_intake");

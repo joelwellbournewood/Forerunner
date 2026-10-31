@@ -93,7 +93,9 @@ async function findingsOf(store: StateStore, row: HumanRequestRow): Promise<Find
   return reviewId ? store.finding.forReview(reviewId) : [];
 }
 
-const usd = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
+const usd = (micro: number): string => `USD ${(micro / 1_000_000).toFixed(2)}`;
+/** The person reads CHF (U-074); a USD figure only when the records hold no CHF. */
+const chf = (micro: number): string => `CHF ${(micro / 1_000_000).toFixed(2)}`;
 
 async function apply(
   deps: { store: StateStore; clock: Clock; humanId: string },
@@ -122,9 +124,14 @@ async function apply(
     const m = checks.metrics;
     const said = [
       m.claimedDone !== null ? `${m.claimedDone} done` : null,
-      m.claimedCostUsdMicro !== null ? `a cost of ${usd(m.claimedCostUsdMicro)}` : null,
+      m.claimedCostChfMicro !== null
+        ? `a cost of ${chf(m.claimedCostChfMicro)}`
+        : m.claimedCostUsdMicro !== null
+          ? `a cost of ${usd(m.claimedCostUsdMicro)}`
+          : null,
     ].filter((x): x is string => x !== null);
-    correction = `Corrected after the session review (request ${row.id}): by the records, ${m.doneTasks} of the task(s) the session planned or ran are done (${m.plannedDoneTasks} of ${m.plannedTasks} planned) and it spent ${usd(m.actualUsdMicro)}${said.length ? `; the summary said ${said.join(" and ")}` : ""}.`;
+    const spent = m.actualChfMicro !== null ? chf(m.actualChfMicro) : usd(m.actualUsdMicro);
+    correction = `Corrected after the session review (request ${row.id}): by the records, ${m.doneTasks} of the task(s) the session planned or ran are done (${m.plannedDoneTasks} of ${m.plannedTasks} planned) and it spent ${spent}${said.length ? `; the summary said ${said.join(" and ")}` : ""}.`;
   }
   return store.transaction(async (tx) => {
     if (correction) {

@@ -28,6 +28,7 @@
  * (a level 0 or 1 session only files its plan and runs nothing).
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
 import {
   type Clock,
   errorMessage,
@@ -368,6 +369,8 @@ export interface HandoverReport {
     inReview?: string[];
     skipped?: string[];
     spentUsdMicro: number;
+    /** The ledger's CHF for the spend (U-074); absent on reports written before it. */
+    spentChfMicro?: number;
     summary: string;
   };
   task: { status: TaskStatus; prUrl: string | null };
@@ -434,7 +437,7 @@ export interface HandoverJobDeps {
 export function formatHandoverReport(r: HandoverReport): string {
   const lines = [
     `Handover test ${r.date} on ${r.projectName}: "${r.seed.title}" by a fresh agent (${r.agentName}, no memory).`,
-    `Session ${r.sessionId} ${r.session.status}: ${countsBrief(countsOf(r.session))}; task ${r.task.status}${r.task.prUrl ? ` (${r.task.prUrl})` : ""}; USD ${(r.session.spentUsdMicro / 1_000_000).toFixed(4)}.`,
+    `Session ${r.sessionId} ${r.session.status}: ${countsBrief(countsOf(r.session))}; task ${r.task.status}${r.task.prUrl ? ` (${r.task.prUrl})` : ""}; ${formatChf(r.session.spentChfMicro ?? usdToChfMicro(Math.max(0, Math.round(r.session.spentUsdMicro)), DEFAULT_CHF_PER_USD))}.`,
   ];
   if (r.stuck.length === 0)
     lines.push("The agent got stuck nowhere: no stuck place, no docs task.");
@@ -663,6 +666,7 @@ export class HandoverJob {
         inReview: result.inReview,
         skipped: result.skipped,
         spentUsdMicro: result.spentUsdMicro,
+        ...(result.spentChfMicro !== undefined ? { spentChfMicro: result.spentChfMicro } : {}),
         summary: result.summary,
       },
       task: { status: taskAfter.status, prUrl: taskAfter.pr_url },

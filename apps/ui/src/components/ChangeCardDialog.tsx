@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { CommandResultJson } from "../api/client.ts";
 import { type ChangeCardView, parseChangeCard } from "../api/contracts.ts";
+import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
 import { Badge, Button, ErrorBanner } from "./ui.tsx";
 
 /** The change card of spec Q.4, as a block: what, old → new, scope, duration, impact, undo. */
@@ -46,7 +47,9 @@ export function ChangeCard({
         </p>
       ) : null}
       {card.undoHint ? (
-        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">{card.undoHint}</p>
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400" data-testid="card-undo">
+          {inAppText(card.undoHint)}
+        </p>
       ) : null}
       {card.parts && card.parts.length > 0 ? (
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs">
@@ -91,7 +94,7 @@ export function CommandResult({
       >
         {card ? <ChangeCard card={card} /> : null}
         <p className="text-sm" data-testid="command-readback">
-          {result.readback}
+          {inAppText(result.readback ?? "")}
         </p>
         {result.decision === "needs_device" ? (
           <p className="text-xs text-neutral-600 dark:text-neutral-400" data-testid="needs-device">
@@ -120,7 +123,7 @@ export function CommandResult({
       <div className="space-y-2" data-testid="command-done">
         {card ? <ChangeCard card={card} /> : null}
         <output className="block text-sm" data-testid="command-sentence">
-          {result.sentence}
+          {withoutUndoWord(result.sentence ?? "").text}
           {result.status === "partial" && result.reason ? ` (${result.reason})` : ""}
         </output>
         <div className="flex gap-2">

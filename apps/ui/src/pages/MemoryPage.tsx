@@ -106,6 +106,10 @@ function LessonRow({
   onProposed?: (proposal: LessonView) => void;
 }) {
   const client = useClient();
+  // The project's name, never its id (U-074).
+  const projectName = useUiState(
+    (s) => s.projects.find((p) => p.id === lesson.projectId)?.name ?? null,
+  );
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(lesson.text);
   const [tags, setTags] = useState(lesson.tags.join(", "));
@@ -224,7 +228,11 @@ function LessonRow({
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
         <span>source {lesson.source}</span>
-        {lesson.projectId ? <span>project {lesson.projectId}</span> : <span>all projects</span>}
+        {lesson.projectId ? (
+          <span data-testid="lesson-project">project {projectName ?? "no longer listed"}</span>
+        ) : (
+          <span>all projects</span>
+        )}
         {lesson.filePath ? <code>{lesson.filePath}</code> : null}
         <span className="ml-auto flex gap-1">
           {!editing ? (

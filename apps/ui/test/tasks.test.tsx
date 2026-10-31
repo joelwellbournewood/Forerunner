@@ -46,7 +46,8 @@ describe("Tasks tab", () => {
     expect(second.getByText("in_review")).toBeInTheDocument();
     expect(second.getByText("coder")).toBeInTheDocument();
     expect(second.getByText("CHF 3.60")).toBeInTheDocument();
-    expect(second.getByText("revise")).toBeInTheDocument();
+    // The critic's call in plain words (U-074).
+    expect(second.getByText("sent back")).toBeInTheDocument();
     expect(second.getByTestId("pr-link")).toHaveAttribute(
       "href",
       "https://example.test/org/atlas/pull/12",

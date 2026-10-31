@@ -1,4 +1,4 @@
-import { CostLedger, FixedRateSource } from "@forerunner/billing";
+import { CostLedger, DEFAULT_CHF_PER_USD, FixedRateSource } from "@forerunner/billing";
 import type { CommandDef } from "@forerunner/commands";
 import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
 import { ForerunnerError } from "@forerunner/platform";
@@ -63,6 +63,17 @@ import type {
   TaskView,
 } from "./api-types.ts";
 import { PERFORMANCE_DEFAULT_DAYS, PERFORMANCE_MAX_DAYS } from "./api-types.ts";
+import {
+  autonomyWords,
+  chfOf,
+  decisionWords,
+  fallbackLine,
+  moreEventLines,
+  retryWords,
+  reviewLevel,
+  skipReason,
+  verdictWords,
+} from "./event-lines.ts";
 import { projectHealth } from "./project-health.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
@@ -293,7 +304,7 @@ export function eventView(e: EventRow, chfPerUsd: number): EventView {
     sessionId: e.session_id,
     seq: e.seq,
     type: e.type,
-    text: describeEvent(e.type, payload),
+    text: describeEvent(e.type, payload, chfPerUsd),
     payload: e.payload,
     cost: money(e.cost_usd_micro, chfPerUsd),
     at: e.created_at,
@@ -301,37 +312,48 @@ export function eventView(e: EventRow, chfPerUsd: number): EventView {
   };
 }
 
-export function describeEvent(type: string, p: Record<string, unknown>): string {
+/**
+ * The session log's sentence for an event (spec K.3): plain words, money in CHF at
+ * `chfPerUsd` (U-074). Types without a line here are worded by `moreEventLines`
+ * (`event-lines.ts`), and an unknown type by `fallbackLine`: never raw JSON.
+ */
+export function describeEvent(
+  type: string,
+  p: Record<string, unknown>,
+  chfPerUsd: number = DEFAULT_CHF_PER_USD,
+): string {
   const s = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "");
   const n = (k: string) => (typeof p[k] === "number" ? (p[k] as number) : 0);
+  const chf = (k: string) => chfOf(n(k), chfPerUsd);
   switch (type) {
     case "session.started":
-      return `Session started (${s("trigger")}), budget ${(n("budgetCapUsdMicro") / 1e6).toFixed(2)} USD, ${n("stepCap")} steps, autonomy ${n("autonomy")}.`;
+      return `Session started (${s("trigger")}), budget ${chf("budgetCapUsdMicro")}, ${n("stepCap")} steps, autonomy ${autonomyWords(n("autonomy"))}.`;
     case "session.brief":
       return `State brief ready: ${n("unread")} unread, ${n("ready")} ready task(s)${Array.isArray(p.warnings) && p.warnings.length ? `, warnings: ${(p.warnings as string[]).join("; ")}` : ""}.`;
     case "session.planned":
-      return `Plan: ${n("items")} item(s), estimate ${(n("estimateUsdMicro") / 1e6).toFixed(2)} USD. ${s("summary")}`;
+      return `Plan: ${n("items")} item(s), estimate ${chf("estimateUsdMicro")}. ${s("summary")}`;
     case "session.paused":
       return `Paused: ${s("reason")}.`;
     case "session.plan_filed":
-      return `Plan filed for your approval (${n("items")} item(s), request ${s("requestId")})${p.changed ? "; it changed since the plan you approved, nothing ran" : ""}.`;
+      return `Plan filed for your approval in the Inbox (${n("items")} item(s))${p.changed ? "; it changed since the plan you approved, nothing ran" : ""}.`;
     case "session.plan_approved":
-      return `Running the plan you approved (${n("items")} item(s), proposed by session ${s("approvedSessionId")}).`;
+      return `Running the plan you approved (${n("items")} item(s)).`;
     case "task.started":
-      return `Started "${s("title")}" with ${s("specialist")} (estimate ${(n("estimateUsdMicro") / 1e6).toFixed(2)} USD).`;
+      return `Started "${s("title")}" with ${s("specialist")} (estimate ${chf("estimateUsdMicro")}).`;
     case "task.finished":
-      return `Finished task: ${s("outcome")} (${(n("costUsdMicro") / 1e6).toFixed(2)} USD). ${s("summary").slice(0, 200)}`;
+      return `Finished task: ${s("outcome").replace(/_/g, " ")} (${chf("costUsdMicro")}). ${s("summary").slice(0, 200)}`;
     case "task.claims_released":
       return `Put ${n("count")} task(s) back to ready: their claim had lapsed or no agent held it.`;
     case "task.skipped":
-      return `Skipped task: ${s("reason")}${s("holder") ? ` (held by ${s("holder")})` : ""}.`;
+      return `Skipped a task: ${skipReason(s("reason"))}.`;
     case "inbox.message":
-      return `Inbox: ${s("type")} message from ${s("from")}.`;
+      // A name, never an id (U-074): the runner adds `fromName`; older rows say "another agent".
+      return `Read a ${s("type") || "new"} message from ${s("fromName") || "another agent"}.`;
     case "session.error":
       return `Error: ${s("code")} ${s("message")}`;
     case "session.ended":
       // The summary's six categories (U-072); `needsHuman` is absent on events before it.
-      return `Session ended: ${s("status")} (${s("stopReason")}), spent ${(n("spentUsdMicro") / 1e6).toFixed(2)} USD: ${countsList(
+      return `Session ended: ${s("status")} (${s("stopReason").replace(/_/g, " ")}), spent ${chf("spentUsdMicro")}: ${countsList(
         {
           done: n("completed"),
           failed: n("failed"),
@@ -352,18 +374,18 @@ export function describeEvent(type: string, p: Record<string, unknown>): string 
     case "change":
       return s("sentence");
     case "critic.review_started":
-      return `Critic review started at tier ${n("tier")} (attempt ${n("attempt") + 1}).`;
+      return `The critic started ${reviewLevel(n("tier"))} (attempt ${n("attempt") + 1}).`;
     case "critic.verdict":
-      return `Critic verdict: ${s("verdict")} (grade ${n("grade")}, confidence ${n("confidence").toFixed(2)}, ${n("findings")} finding(s), ${n("openFindings")} open) -> ${s("decision")}${s("retry") ? ` (${s("retry")})` : ""}${s("nextTier") ? ` on ${s("nextTier")}` : ""}. ${s("summary")}`;
+      return `Critic: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${n("findings")} finding(s), ${n("openFindings")} open): ${criticNext(s("decision"), s("retry"), s("nextTier"))}. ${s("summary")}`;
     case "critic.review_failed":
       return `Critic review failed: ${s("warning")}`;
     case "critic.session_review_metrics": {
       const m = (p.metrics ?? {}) as Record<string, unknown>;
       const k = (key: string) => (typeof m[key] === "number" ? (m[key] as number) : 0);
-      return `Session review measured: ${k("plannedDoneTasks")} of ${k("plannedTasks")} planned task(s) done, ${(k("actualUsdMicro") / 1e6).toFixed(2)} USD spent of a ${(k("estimateUsdMicro") / 1e6).toFixed(2)} USD estimate.`;
+      return `Session review measured: ${k("plannedDoneTasks")} of ${k("plannedTasks")} planned task(s) done, ${chfOf(k("actualUsdMicro"), chfPerUsd)} spent of a ${chfOf(k("estimateUsdMicro"), chfPerUsd)} estimate.`;
     }
     case "critic.session_review":
-      return `Session review: ${s("verdict")} (grade ${n("grade")}, ${n("findings")} finding(s)). ${s("summary")}`;
+      return `Session review: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${n("findings")} finding(s)). ${s("summary")}`;
     case "task.blocked_by_findings":
       return `Cannot close the task: ${s("warning")}`;
     case "memory.loaded":
@@ -375,8 +397,14 @@ export function describeEvent(type: string, p: Record<string, unknown>): string 
     case "memory.recorded":
       return `Memory: recorded ${n("recorded")} lesson(s) (${n("merged")} merged, ${n("rejected")} rejected).`;
     default:
-      return `${type} ${JSON.stringify(p).slice(0, 200)}`;
+      return moreEventLines(type, p, chfPerUsd) ?? fallbackLine(type, p);
   }
+}
+
+/** What happens after a verdict: the decision and, for a retry, how (U-074: no ladder words). */
+function criticNext(decision: string, retry: string, nextTier: string): string {
+  const how = retry && retry !== "human" ? `, ${retryWords(retry)}` : "";
+  return `${decisionWords(decision)}${how}${nextTier ? ` (${nextTier})` : ""}`;
 }
 
 export function messageView(m: MessageRow, fromName: string): MessageView {

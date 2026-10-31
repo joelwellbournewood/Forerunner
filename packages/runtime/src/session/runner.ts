@@ -1,3 +1,4 @@
+import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
 import {
   type Clock,
   errorMessage,
@@ -43,12 +44,8 @@ import {
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
-<<<<<<< HEAD
-import { fileBlockedByFindingsRequest, fileReviewFailedRequest } from "./findings.ts";
-=======
 import { countsOf, countsSentence } from "./counts.ts";
-import { fileBlockedByFindingsRequest } from "./findings.ts";
->>>>>>> 4ec2a67 (runtime, critic: one set of session counts everywhere (U-072))
+import { fileBlockedByFindingsRequest, fileReviewFailedRequest } from "./findings.ts";
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
 import {
   describeHeard,
@@ -290,6 +287,8 @@ export interface SessionResult {
   promotions: PromotionTally | null;
   sessionReview: SessionReviewOutcome | null;
   spentUsdMicro: number;
+  /** The spend in CHF as the cost ledger converted it (what a person reads, U-074). */
+  spentChfMicro?: number;
   steps: number;
   summary: string;
   handoff: Record<string, unknown>;
@@ -328,6 +327,12 @@ export interface SessionRunnerDeps {
   peersOf?: (agentId: string, projectId: string | undefined) => Promise<string[]>;
   /** Called after every `task.finished` event; failures are logged, never fatal. */
   onTaskFinished?: (info: TaskFinishedInfo) => void | Promise<void>;
+  /**
+   * The day's CHF per USD for amounts a person reads before they are spent (the plan's
+   * estimates on its approval card, U-074); `DEFAULT_CHF_PER_USD` without it. Spent amounts
+   * come from the cost ledger's own CHF.
+   */
+  chfPerUsd?: () => number;
   /**
    * Context layer (ADR 0003): probes Headroom at session start when the project asks for it and
    * turns the proxy's counter delta into `session.headroom_saved_tokens` at the end.
@@ -838,7 +843,13 @@ export class SessionRunner {
               : []),
           ].join(" "),
           steps: plan.items.map(
-            (i) => `${i.title} (${i.specialist}, ~$${(i.estimateUsdMicro / 1e6).toFixed(2)})`,
+            (i) =>
+              `${i.title} (${i.specialist}, about ${formatChf(
+                usdToChfMicro(
+                  Math.max(0, Math.round(i.estimateUsdMicro)),
+                  this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD,
+                ),
+              )})`,
           ),
           options: [...PLAN_APPROVAL_OPTIONS],
           blocking: true,
@@ -1372,7 +1383,10 @@ export class SessionRunner {
         await emit("inbox.carried_forward", { ids: carriedForward.map((m) => m.id) });
     }
     await this.ackAnswered(agent.id, emit);
-    const spent = (await store.costLedger.sum({ sessionId: session.id })).usd_micro;
+    const spentTotals = await store.costLedger.sum({ sessionId: session.id });
+    const spent = spentTotals.usd_micro;
+    // What the person reads is CHF, from the ledger's own conversion (U-074).
+    const spentChf = spentTotals.chf_micro;
     const summary = summarize({
       completed,
       inReview,
@@ -1385,7 +1399,7 @@ export class SessionRunner {
       retried,
       blockedByFindings,
       merges,
-      spent,
+      spentChf,
       stopReason,
       plan,
       waiting,
@@ -1416,7 +1430,7 @@ export class SessionRunner {
               inFlight: [...inReview, ...retried].map(titleOf),
               blocked: [...needsHuman, ...failed, ...blockedByFindings].map(titleOf),
               next: skipped.map(titleOf),
-              note: `stop reason ${stopReason}; spent $${(spent / 1e6).toFixed(2)}`,
+              note: `stop reason ${stopReason}; spent ${formatChf(spentChf)}`,
             },
             prBranch: prBranches.at(-1) ?? null,
           });
@@ -1705,12 +1719,9 @@ export class SessionRunner {
       completed: completed.length,
       inReview: inReview.length,
       failed: failed.length,
-<<<<<<< HEAD
+      needsHuman: needsHuman.length,
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
-=======
-      needsHuman: needsHuman.length,
->>>>>>> 4ec2a67 (runtime, critic: one set of session counts everywhere (U-072))
       skipped: skipped.length,
       retried: retried.length,
       blockedByFindings: blockedByFindings.length,
@@ -1748,6 +1759,7 @@ export class SessionRunner {
       promotions,
       sessionReview,
       spentUsdMicro: spent,
+      spentChfMicro: spentChf,
       steps: budget.snapshot().steps,
       summary,
       handoff,
@@ -2148,7 +2160,17 @@ export class SessionRunner {
       };
       read.push(entry);
       if (entry.kind !== "message") interrupt ??= entry;
-      await emit("inbox.message", { id: m.id, type: m.type, from: m.from_agent_id, sessionId });
+      // The log names the sender, never only its id (U-074).
+      const fromName = m.from_agent_id
+        ? ((await this.deps.store.agent.get(m.from_agent_id))?.name ?? null)
+        : null;
+      await emit("inbox.message", {
+        id: m.id,
+        type: m.type,
+        from: m.from_agent_id,
+        fromName,
+        sessionId,
+      });
       // At the end no plan follows to take an ordinary message in: it is read and named in the
       // handoff, and the next session's brief carries it and acts on it (checklist.ts).
       const actByReading = !opts.atEnd && ACK_BY_READING.has(m.type);
@@ -2241,7 +2263,8 @@ function summarize(x: {
   retried: string[];
   blockedByFindings: string[];
   merges?: readonly MergeOutcome[];
-  spent: number;
+  /** The session's spend in CHF micro-units, as the ledger converted it (U-074). */
+  spentChf: number;
   stopReason: string;
   plan: SessionPlan | null;
   /** Lines the human said during the session (spec O.9); the count only, peers read this. */
@@ -2267,21 +2290,15 @@ function summarize(x: {
       : []),
     ...summarizeLeftOut(x.plan),
     ...summarizeWaiting(x.waiting ?? []),
-    `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}.${
-      x.cancelled?.length ? ` Cancelled: ${x.cancelled.length}.` : ""
-    } Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
+    // One set of counts (U-072): the log's session.ended line and the notification count the same.
+    countsSentence(countsOf(x), x.plan?.items.length ?? 0),
+    ...(x.cancelled?.length ? [`Cancelled: ${x.cancelled.length}.`] : []),
     ...summarizeMoved(x.movedWhileRunning ?? []),
     ...(x.reviewFailed?.length
       ? [
           `Review failed: ${x.reviewFailed.length} (asked you in the Inbox: rework, accept or cancel).`,
         ]
       : []),
-<<<<<<< HEAD
-    ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
-=======
-    // One set of counts (U-072): the log's session.ended line and the notification count the same.
-    countsSentence(countsOf(x), x.plan?.items.length ?? 0),
->>>>>>> 4ec2a67 (runtime, critic: one set of session counts everywhere (U-072))
     ...(x.blockedByFindings.length
       ? [
           `Blocked by open findings: ${x.blockedByFindings.length} (asked you: rework, accept or cancel).`,
@@ -2292,7 +2309,7 @@ function summarize(x: {
     ...(x.endInbox?.read.length
       ? [summarizeEndInbox(x.endInbox, x.stoppedAtEnd ?? false, x.skipped.length)]
       : []),
-    `Spent $${(x.spent / 1e6).toFixed(2)}.`,
+    `Spent ${formatChf(x.spentChf)}.`,
   ];
   return parts.join(" ");
 }

@@ -501,7 +501,8 @@ describe("specialist approval: approve runs the eval set", () => {
     await costly.approvals.syncAnswers();
     const bc = card(await costly.store.humanRequest.mustGet(b.request.id));
     expect(bc.outcome).toBe("over_budget");
-    expect(String(bc.reason)).toMatch(/\$6\.00.*\$5\.00/);
+    // In CHF (U-074): USD 6.00 and 5.00 at the default rate.
+    expect(String(bc.reason)).toMatch(/CHF 4\.80.*CHF 4\.00/);
     expect(costly.runs).toHaveLength(0);
     expect(costly.provider.calls).toHaveLength(0);
 
@@ -991,7 +992,7 @@ describe("specialist approval: the claim life cycle", () => {
     });
     const r = await w.approvals.approve(NAME, w.human);
     expect(r.outcome).toBe("over_budget");
-    expect(r.detail).toMatch(/budget is \$1\.50 \(what is left of this month's testing share/);
+    expect(r.detail).toMatch(/budget is CHF 1\.20 \(what is left of this month's testing share/);
     expect(w.runs).toHaveLength(0);
 
     // Next month the share is whole again.

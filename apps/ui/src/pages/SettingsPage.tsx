@@ -19,7 +19,7 @@ import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { HotkeySettings } from "../shell/HotkeySettings.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
-import type { ThemePreference } from "../store/store.ts";
+import type { ThemePreference, UiState } from "../store/store.ts";
 import { AgentNameSection } from "./AgentNameSection.tsx";
 import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
@@ -40,6 +40,17 @@ export function groupByScope(settings: SettingView[]): Record<Scope, SettingView
   const groups: Record<Scope, SettingView[]> = { global: [], human: [], agent: [], project: [] };
   for (const s of settings) groups[s.scope].push(s);
   return groups;
+}
+
+/** A setting's scope as the person reads it: "you", the agent's or the project's name (U-074). */
+export function scopeName(
+  s: Pick<SettingView, "scope" | "scopeId">,
+  names: Pick<UiState, "me" | "agents" | "projects">,
+): string {
+  if (!s.scopeId || s.scope === "global") return s.scope === "global" ? "everyone" : s.scope;
+  if (s.scope === "human") return s.scopeId === names.me?.id ? "you" : "another person";
+  if (s.scope === "agent") return names.agents.find((a) => a.id === s.scopeId)?.name ?? "an agent";
+  return names.projects.find((p) => p.id === s.scopeId)?.name ?? "a project";
 }
 
 export function isMoney(value: unknown): value is MoneyLike {
@@ -577,7 +588,7 @@ function FastModeCard({
 export function SettingsPage() {
   const client = useClient();
   const store = useUiStore();
-  const { theme, connection, config, me } = useUiState((s) => s);
+  const { theme, connection, config, me, agents, projects } = useUiState((s) => s);
   const settings = useAsync((signal) => client.settings(undefined, signal), [client]);
   const groups = groupByScope(settings.data ?? []);
   const [editing, setEditing] = useState<{ setting: SettingView; command: SettingCommand } | null>(
@@ -820,8 +831,7 @@ export function SettingsPage() {
                       >
                         <td className="py-1 pr-2">
                           <Badge testId="setting-scope">
-                            {s.scope}
-                            {s.scopeId ? `: ${s.scopeId}` : ""}
+                            {scopeName(s, { me, agents, projects })}
                           </Badge>
                         </td>
                         <td className="py-1 pr-2 font-mono text-xs">{s.key}</td>

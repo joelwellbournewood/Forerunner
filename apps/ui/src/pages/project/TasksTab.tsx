@@ -15,6 +15,7 @@ import {
   statusTone,
 } from "../../components/ui.tsx";
 import type { MoneyLike } from "../../lib/money.ts";
+import { reviewLevel, verdictLabel } from "../../lib/plain-words.ts";
 import {
   defaultTransitionReason,
   humanTransitions,
@@ -184,7 +185,9 @@ export function TasksTab({
                 <th className="py-1 pr-2">Status</th>
                 <th className="py-1 pr-2">Specialist</th>
                 <th className="py-1 pr-2">Cost</th>
-                <th className="py-1 pr-2">Verdict</th>
+                <th className="py-1 pr-2" title="The critic's last review of the task">
+                  Critic
+                </th>
                 <th className="py-1 pr-2">Links</th>
                 <th className="py-1">Move to</th>
               </tr>
@@ -204,7 +207,7 @@ export function TasksTab({
                     <td className="py-1.5 pr-2">
                       <div className="font-medium">{t.title}</div>
                       <div className="text-xs text-neutral-500">
-                        {t.id} · tier {t.riskTier} · {PRIORITY_LABELS[t.priority]} priority
+                        {reviewLevel(t.riskTier)} · {PRIORITY_LABELS[t.priority]} priority
                         {t.attempt > 1 ? ` · attempt ${t.attempt}` : ""}
                         {t.dependsOn.length > 0 ? ` · after ${describeDependencies(t, byId)}` : ""}
                       </div>
@@ -245,7 +248,7 @@ export function TasksTab({
                             run.verdict === "accept" || run.verdict === "pass" ? "good" : "warn"
                           }
                         >
-                          {run.verdict}
+                          {verdictLabel(run.verdict)}
                         </Badge>
                       ) : (
                         "—"
@@ -516,9 +519,11 @@ function TransitionDialog({
         </Field>
         {error ? <ErrorBanner message={error} /> : null}
         <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose} data-testid="dismiss-transition">
+            {pending?.to === "cancelled" ? "Keep task" : "Close"}
+          </Button>
           <Button variant="primary" type="submit" disabled={busy} data-testid="confirm-transition">
-            {busy ? "Saving…" : "Confirm"}
+            {busy ? "Saving…" : pending?.to === "cancelled" ? "Cancel task" : "Confirm"}
           </Button>
         </div>
       </form>

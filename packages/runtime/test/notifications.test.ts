@@ -474,7 +474,8 @@ describe("notifier", () => {
       needsHuman: ["decide"],
     });
     expect(stop.notification.kind).toBe("budget_stop");
-    expect(stop.notification.title).toContain("USD 5.00");
+    // CHF, as the person reads money (U-074): USD 5.00 at the default rate.
+    expect(stop.notification.title).toContain("CHF 4.00");
     expect(stop.urgency).toBe("urgent");
   });
 });

@@ -5,6 +5,7 @@ import { type Clock, errorMessage, ForerunnerError, join, log } from "@forerunne
 import type { HumanRequestRow, JsonObject, StateStore } from "@forerunner/state";
 import { loadEvalTasksLite, PROCESS_SANDBOX_REFUSED } from "../models/eval-runner.ts";
 import type { EvalRunnerPort, EvalRunOutcome } from "../models/watch.ts";
+import { chfText } from "../money-words.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import { isPidAlive } from "../update/lock.ts";
 import { specialistAnswer } from "../wiring/request-answers.ts";
@@ -1089,7 +1090,7 @@ export class SpecialistApprovals {
           : "";
       return keep(
         "over_budget",
-        `its eval set may spend up to $${(ceiling / 1e6).toFixed(2)}; the approval eval budget is $${(budget / 1e6).toFixed(2)}${left}`,
+        `its eval set may spend up to ${chfText(ceiling)}; the approval eval budget is ${chfText(budget)}${left}`,
       );
     }
     if (record) {

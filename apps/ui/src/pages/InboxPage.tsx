@@ -21,6 +21,8 @@ import {
   Loading,
   statusTone,
 } from "../components/ui.tsx";
+import { formatChf, usdMicroToChfMicro } from "../lib/money.ts";
+import { inAppText, reviewLevel, withoutUndoWord } from "../lib/plain-words.ts";
 import {
   daemonRunnerKeys,
   desktopUnlockWindowStore,
@@ -138,7 +140,8 @@ export function intakeCardOf(card: unknown): IntakeCardView | null {
   };
 }
 
-const usd = (micro: number): string => `USD ${(micro / 1e6).toFixed(2)}`;
+/** The intake card's estimates in CHF (U-074), at the default rate the card has no other for. */
+const usd = (micro: number): string => formatChf(usdMicroToChfMicro(micro));
 
 function IntakeTaskList({ tasks }: { tasks: IntakeCardTask[] }) {
   return (
@@ -148,7 +151,7 @@ function IntakeTaskList({ tasks }: { tasks: IntakeCardTask[] }) {
           {t.title}
           <span className="text-neutral-500">
             {" "}
-            · tier {t.riskTier ?? "default"}, priority {t.priority}
+            · {reviewLevel(t.riskTier)}, priority {t.priority}
             {t.specialist ? `, ${t.specialist}` : ""}
             {t.dependsOn.length
               ? `, after ${t.dependsOn
@@ -398,7 +401,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
                 </Button>
               )}
             </div>
-            <p className="mt-1 whitespace-pre-wrap">{m.body}</p>
+            <MessageBody body={m.body} />
           </li>
         ))}
       </ol>
@@ -416,7 +419,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
               >
                 <Badge tone={statusTone(r.status)}>{r.status}</Badge> {r.why}
                 {r.answer !== null ? (
-                  <span className="text-neutral-500"> → {JSON.stringify(r.answer)}</span>
+                  <span className="text-neutral-500"> → {answerText(r.answer)}</span>
                 ) : null}
               </li>
             ))}
@@ -425,6 +428,43 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
       ) : null}
     </section>
   );
+}
+
+/**
+ * A message as the person reads it (U-074): a change sentence's spoken "Undo." becomes a link to
+ * Changes, where the change can be undone.
+ */
+function MessageBody({ body }: { body: string }) {
+  const { text, undo } = withoutUndoWord(body);
+  return (
+    <p className="mt-1 whitespace-pre-wrap">
+      {text}
+      {undo ? (
+        <>
+          {" "}
+          <Link
+            to="/changes"
+            className="text-blue-700 hover:underline dark:text-blue-300"
+            data-testid="message-undo"
+          >
+            Undo in Changes
+          </Link>
+        </>
+      ) : null}
+    </p>
+  );
+}
+
+/** An answer as it was given: the option's words, never JSON (U-074). */
+function answerText(answer: unknown): string {
+  if (typeof answer === "string") return answer;
+  if (answer && typeof answer === "object") {
+    const o = answer as Record<string, unknown>;
+    for (const k of ["choice", "answer", "decision", "text"]) {
+      if (typeof o[k] === "string") return o[k] as string;
+    }
+  }
+  return "answered";
 }
 
 function RequestCard({
@@ -493,7 +533,7 @@ function RequestCard({
       {request.steps.length > 0 ? (
         <ol className="mt-1 list-decimal pl-5 text-sm text-neutral-700 dark:text-neutral-300">
           {request.steps.map((s) => (
-            <li key={s}>{s}</li>
+            <li key={s}>{inAppText(s)}</li>
           ))}
         </ol>
       ) : null}
