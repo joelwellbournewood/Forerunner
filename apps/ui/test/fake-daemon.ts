@@ -73,6 +73,7 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
+import { NO_MODEL_CHAT_REPLY } from "@forerunner/runtime/setup/no-model";
 import { acceptsAnswer, personQuestionsAnswer } from "@forerunner/runtime/wiring/request-answers";
 import {
   decodeStoredKey,
@@ -176,6 +177,12 @@ export interface FakeDaemonOptions {
   heartbeatMs?: number;
   /** Delay between streamed chat tokens; 5 ms by default. */
   tokenDelayMs?: number;
+  /**
+   * The install has no Claude key yet (U-047), as the real daemon answers then: Chat runs the
+   * commands that need no model ("add a task: …" adds a ready task) and answers any other line
+   * with `NO_MODEL_CHAT_REPLY`, which names the setup assistant; nothing is refused with 503.
+   */
+  noModel?: boolean;
   /**
    * Cloud runner vault keys the fake's "OS keyring" holds, runner id -> base64 of 32 bytes
    * (spec S.12, ADR 0068). `/runner-unlock/wrap` wraps them as the daemon does.
@@ -1682,6 +1689,47 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       };
     }
     const project = state.projects.find((p) => p.id === projectId);
+    // U-047, as the daemon without a Claude key: a command that needs no model runs ("add a
+    // task: …" adds a ready task), any other line is told where the setup assistant is.
+    if (options.noModel) {
+      const added = /^add a task:\s*(.+)$/i.exec(text.trim());
+      if (added?.[1] && project) {
+        const title = added[1].trim();
+        const task: TaskView = {
+          id: nextId("task"),
+          projectId: project.id,
+          milestoneId: null,
+          title,
+          outcome: title,
+          acceptanceCriteria: [],
+          riskTier: project.defaultRiskTier ?? 1,
+          status: "ready",
+          priority: 5,
+          claimedBy: null,
+          claimExpires: null,
+          dependsOn: [],
+          budget: money(0),
+          estimate: money(0),
+          actual: money(0),
+          specialist: null,
+          attempt: 0,
+          prUrl: null,
+          branch: null,
+          reason: "",
+          updatedAt: new Date().toISOString(),
+          version: 1,
+        };
+        state.tasks.unshift(task);
+        return {
+          ...base,
+          ttftMs: 0,
+          cost: money(0),
+          reply: `Created the ready task "${title}".`,
+          actions: [{ kind: "task.create", summary: title, id: task.id }],
+        };
+      }
+      return { ...base, ttftMs: 0, cost: money(0), reply: NO_MODEL_CHAT_REPLY };
+    }
     return {
       ...base,
       reply: `${project ? `${project.name}: ` : ""}you asked "${text.trim()}". The last session opened PR #12; one question waits in the inbox.`,

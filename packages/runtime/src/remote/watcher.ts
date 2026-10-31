@@ -11,6 +11,7 @@ import {
 import type { CommandLoop, PendingView } from "../loop/commands.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import type { StartEntry, StartRequest } from "../session/triggers.ts";
+import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import {
   VOICE_RELAY_MAX_AGE_MS,
   VOICE_RELAY_MAX_MS,
@@ -551,7 +552,7 @@ export class RemoteCommandWatcher {
 
   private async runChat(row: RemoteCommandRow, env: ChatEnvelope): Promise<Outcome> {
     if (!this.deps.chat) {
-      throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+      throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
     }
     const reply = await this.deps.chat({
       humanId: this.deps.humanId,

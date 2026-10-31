@@ -36,6 +36,7 @@ import {
 } from "../provider/types.ts";
 import { FORWARDED_SENTENCE, type HeardSource, heardMessageBody } from "../session/live-chat.ts";
 import type { StartRequest } from "../session/triggers.ts";
+import { NO_MODEL_CHAT_REPLY } from "../setup/no-model.ts";
 import { isYes } from "../wiring/state-ports.ts";
 import { completeSentencesOf, SentenceGate } from "./sentences.ts";
 
@@ -85,7 +86,12 @@ export interface ConversationDeps {
   tokens: TokenIssuer;
   /** Not used by the agent itself: session control goes through the command registry. */
   kill?: KillSwitch;
-  provider: ModelProvider;
+  /**
+   * The model. Null on an install without a Claude key or subscription (U-047): the commands
+   * the parser understands still run (they need no model), and a line only the model can
+   * answer is told what is missing and where the setup assistant is (`NO_MODEL_CHAT_REPLY`).
+   */
+  provider: ModelProvider | null;
   /** Pricing of a turn when `pricingFor` is absent. */
   pricing: RunPricing;
   /**
@@ -395,11 +401,14 @@ export class ConversationAgent {
       text: string,
       actions: ChatAction[],
       extra: Partial<ChatReply> = {},
+      /** `notice`: a reply about the app, not content (`lastMessage` skips it; U-047). */
+      meta: { notice?: boolean } = {},
     ): Promise<ChatReply> => {
       const reply = cancelledForStop ? `${CARD_CANCELLED_SENTENCE} ${text}` : text;
       await store.event.append(sessionId, "chat.reply", {
         transcriptId,
         text: reply,
+        ...(meta.notice ? { notice: true } : {}),
         actions: actions.map((a) => a.kind),
         ...(extra.ttftMs !== undefined ? { ttftMs: extra.ttftMs } : {}),
         ...(extra.costUsdMicro ? { costUsdMicro: extra.costUsdMicro } : {}),
@@ -512,8 +521,20 @@ export class ConversationAgent {
       transcriptId,
     );
 
+    // U-047: without a model the line cannot be answered; the commands above ran without one.
+    // The reply says what is missing and where the setup assistant is (never `fr setup`).
+    const provider = this.deps.provider;
+    if (!provider)
+      return finish(
+        forwarded ? `${NO_MODEL_CHAT_REPLY} ${FORWARDED_SENTENCE}` : NO_MODEL_CHAT_REPLY,
+        [],
+        { ...(forwarded ? { forwarded } : {}) },
+        // Not content: "make this a task" after it takes the line before it.
+        { notice: true },
+      );
+
     // The model path: a fast model with the registry's command tools and nothing else.
-    const context = await this.context(req.humanId, agent, projectId, req.text, conv);
+    const context = await this.context(req.humanId, agent, projectId, req.text, conv, provider);
     const results: CommandResultView[] = [];
     const tools = new ToolRegistry();
     for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
@@ -526,14 +547,14 @@ export class ConversationAgent {
       mode: "text_chat",
       modeDefaults: modelConfig?.modeDefaults ?? MODE_DEFAULTS,
       override: modeOverride(parseAgentModelConfig(agent.model_config).config, "text_chat"),
-      capabilities: providerCapabilities(this.deps.provider),
+      capabilities: providerCapabilities(provider),
       // A chat turn is no project's work: the default ceiling (Opus), never the top rung.
       ceiling: DEFAULT_CEILING,
     });
     // The turn's wall clock: the run's timeout plus room for the command tools around it.
     const turnMs = Math.max(60_000, textChat.timeoutMs + 30_000);
     const model =
-      this.deps.modelId ?? modelIdFor(textChat.tier, this.deps.provider.name, modelConfig?.ladder);
+      this.deps.modelId ?? modelIdFor(textChat.tier, provider.name, modelConfig?.ladder);
     // The effort (spec D.16): a spoken turn takes the voice mode's default, a typed one the
     // chat mode's (the principal's `modes.text_chat.effort` when set, spec D.4), shifted by the
     // active project's speed-versus-quality slider as its row reads now, so a slider change
@@ -574,7 +595,7 @@ export class ConversationAgent {
           DEFAULT_TURN_BUDGET_USD_MICRO,
           CHAT_TURN_CALL_ROOM *
             pricing.estimate(
-              this.deps.provider.countTokens(
+              provider.countTokens(
                 system +
                   JSON.stringify(messages) +
                   JSON.stringify(
@@ -625,7 +646,7 @@ export class ConversationAgent {
     const result = await this.deps.hooksDriver.run({
       token,
       budget,
-      provider: this.deps.provider,
+      provider,
       model,
       billingSourceId: this.deps.billingSourceId,
       system,
@@ -941,6 +962,7 @@ export class ConversationAgent {
     projectId: string | null,
     query: string,
     conv: ConversationState,
+    provider: ModelProvider,
   ): Promise<{
     stable: string;
     volatile: string;
@@ -970,7 +992,7 @@ export class ConversationAgent {
       open_requests: openRequests.fact,
       running_sessions: sessions.filter((s) => s.summary !== "conversation").length,
     });
-    const retrieved = await this.retrieve(humanId, agent, projectId, query);
+    const retrieved = await this.retrieve(humanId, agent, projectId, query, provider);
     return {
       stable: `# Projects\n${stable || "(none)"}`,
       volatile: [volatile, ...retrieved.blocks].join("\n\n"),
@@ -993,12 +1015,13 @@ export class ConversationAgent {
     agent: AgentRow,
     projectId: string | null,
     query: string,
+    provider: ModelProvider,
   ): Promise<{
     blocks: string[];
     sources: ChatSources;
     stats: { docs: RetrievalStats; lessons: RetrievalStats };
   }> {
-    const count = (t: string) => this.deps.provider.countTokens(t);
+    const count = (t: string) => provider.countTokens(t);
     const lessonsBudget = this.deps.retrieval?.lessonsMaxTokens ?? DEFAULT_CHAT_LESSONS_TOKENS;
     const docsBudget = this.deps.retrieval?.docsMaxTokens ?? DEFAULT_CHAT_DOCS_TOKENS;
     const blocks: string[] = [];

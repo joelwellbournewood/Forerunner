@@ -234,6 +234,7 @@ import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
 import { type StartCheck, startCheck } from "../session/start-check.ts";
 import { fileFiredKeys, Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
+import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import {
   describePlanAllowance,
   PLAN_USD_MONTHLY_ENV,
@@ -2629,8 +2630,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     timezone: async () => (await store.human.mustGet(human.id)).timezone,
     runSession: async ({ agentId, projectId, taskId, budgetCapUsdMicro }) => {
       await schemaSync.assertCanSync("session.start");
-      if (!provider)
-        throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+      if (!provider) throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
       const project = await store.project.mustGet(projectId);
       await refreshCapabilities();
       // No memory anywhere in the session (spec P.15 "only the repo and docs", ADR 0060):
@@ -2690,8 +2690,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     { store, clock, humanId: human.id, agentId: agent.id },
     async (req: StartRequest) => {
       await schemaSync.assertCanSync("session.start");
-      if (!provider)
-        throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+      if (!provider) throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
       const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
       // What the run is offered is decided now: the capability rows and settings as they stand.
       await refreshCapabilities();
@@ -3007,35 +3006,38 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     mirrorApprovals.wake();
     return out;
   };
-  const conversation = provider
-    ? new ConversationAgent({
-        store,
-        clock,
-        tokens,
-        kill,
-        provider,
-        // The text_chat rung in force (haiku by default); the tables follow an adopt.
-        pricing: livePricing(provider, () =>
+  // U-047: Chat exists without a model too. The commands its parser understands ("add a task:
+  // …", "make this a task", "start a session", "switch to …") need no model and run; a line
+  // only the model can answer is told the key is missing and where the setup assistant is.
+  const conversation = new ConversationAgent({
+    store,
+    clock,
+    tokens,
+    kill,
+    provider,
+    // The text_chat rung in force (haiku by default); the tables follow an adopt.
+    pricing: provider
+      ? livePricing(provider, () =>
           rungModelFor(provider, modelConfig.get().modeDefaults.text_chat.tier),
-        ),
-        // A turn is priced as the model it calls: the principal's chat rung may differ (D.4).
-        pricingFor: (model: string) => livePricing(provider, () => model),
-        billingSourceId,
-        hooksDriver: driver,
-        startSession: (req) => scheduler.request(req),
-        prompt: registry.principals.get("conversation-agent")?.prompt,
-        maxEffort: registry.principals.get("conversation-agent")?.max_effort,
-        modelConfig: () => modelConfig.get(),
-        commands,
-        // Spec J.1, O.2 (ADR 0061): the principal's lessons and the project's doc sections
-        // for the question, each under its token budget, in the volatile context.
-        memory,
-        docsDirs: async (projectId) => {
-          const project = await store.project.get(projectId);
-          return project ? docs.docsDirsFor(project) : [];
-        },
-      })
-    : null;
+        )
+      : { estimate: () => 0, cost: () => 0 },
+    // A turn is priced as the model it calls: the principal's chat rung may differ (D.4).
+    ...(provider ? { pricingFor: (model: string) => livePricing(provider, () => model) } : {}),
+    billingSourceId,
+    hooksDriver: driver,
+    startSession: (req) => scheduler.request(req),
+    prompt: registry.principals.get("conversation-agent")?.prompt,
+    maxEffort: registry.principals.get("conversation-agent")?.max_effort,
+    modelConfig: () => modelConfig.get(),
+    commands,
+    // Spec J.1, O.2 (ADR 0061): the principal's lessons and the project's doc sections
+    // for the question, each under its token budget, in the volatile context.
+    memory,
+    docsDirs: async (projectId) => {
+      const project = await store.project.get(projectId);
+      return project ? docs.docsDirsFor(project) : [];
+    },
+  });
   // Voice (spec O; ADR 0012, ADR 0048): the loop over the conversation agent, behind the
   // daemon's /voice routes. The providers are the local helpers and the cloud ones by secret
   // reference; none is probed here. Which one is preferred is the Extensions panel's choice
@@ -3075,7 +3077,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     registry: voiceRegistry,
     preferences: voicePreferenceSource,
     hasSecret: vaultHasSecret(vault),
-    conversation: () => conversation,
+    // Voice needs the model for every reply: without one it is unavailable and says why.
+    conversation: () => (provider ? conversation : null),
     commands,
     store,
     clock,
@@ -3206,7 +3209,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // carries for the undo (ADR 0049).
       start: (req) => scheduler.requestStart(req),
       commands,
-      chat: conversation ? (req) => conversation.chat(req) : null,
+      // U-047: the phone's chat runs commands without a model too, as the desktop's does.
+      chat: (req) => conversation.chat(req),
       voice: (req) => voiceRelay.turn(req),
       conversationSessionId: () =>
         conversation
@@ -3833,7 +3837,7 @@ export function pairingGuideUrl(feed: UpdateConfig["feed"]): string | null {
 
 function unavailableProvider(): ModelProvider {
   const fail = () => {
-    throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+    throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
   };
   return {
     name: "none",

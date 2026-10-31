@@ -45,6 +45,7 @@ import {
   providerCapabilities,
 } from "../provider/types.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
+import { SETUP_ASSISTANT_PATH } from "../setup/no-model.ts";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
 import { intakeAnswer } from "../wiring/request-answers.ts";
 import { markAnswer } from "./answer-mark.ts";
@@ -78,8 +79,7 @@ export const isIntakeKey = (key: string): boolean => key.startsWith(INTAKE_KEY_P
 /** `tool` of the audit rows the intake writes: the proposal filed, the answer applied. */
 export const INTAKE_AUDIT_TOOL = "project.intake";
 /** Why an intake cannot run on this install: no Claude key or subscription (`unavailable`). */
-export const INTAKE_NEEDS_A_MODEL =
-  "Planning from the brief needs a Claude key or subscription; add one in the setup assistant (Settings -> Accounts and keys -> Open the setup assistant), then retry.";
+export const INTAKE_NEEDS_A_MODEL = `Planning from the brief needs a Claude key or subscription. Add one in the app: ${SETUP_ASSISTANT_PATH}, then retry.`;
 export const INTAKE_OPTIONS = ["approve", "reject"] as const;
 /** The one model call's hard cap unless `project.settings.intake_budget_usd_micro` says otherwise. */
 export const DEFAULT_INTAKE_BUDGET_USD_MICRO = 2_000_000;

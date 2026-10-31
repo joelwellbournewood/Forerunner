@@ -416,6 +416,8 @@ export class CommandLoop implements ConversationCommands {
       const rows = await this.deps.store.event.list(turn.sessionId, Math.max(0, seq - 30), 30);
       for (const e of [...rows].reverse()) {
         if (e.type !== "chat.reply" && e.type !== "chat.human") continue;
+        // A notice about the app ("No Claude key …", U-047) is no message to make a task of.
+        if ((e.payload as { notice?: unknown } | null)?.notice === true) continue;
         const text = (e.payload as { text?: unknown } | null)?.text;
         if (typeof text === "string" && text.trim() && text !== turn.wordsUsed) return text;
       }

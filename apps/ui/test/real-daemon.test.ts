@@ -1035,3 +1035,57 @@ describe("the UI client against the real daemon: a task a session is running", (
     ]);
   });
 });
+
+describe("the UI client against the real daemon without a Claude key (U-047)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-nokey-"));
+    // No provider and an empty vault: the install before the setup assistant ran.
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock: new SimulatedClock("2026-03-05T08:00:00Z"),
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("Chat runs a command that needs no model, and names the setup assistant for any other line", async () => {
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "No key yet", goal: "Chat works" });
+    const line = (text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId: project.id, text, source: "text" });
+    const added = await line("add a task: write the README");
+    expect(added.reply).not.toMatch(/fr setup/);
+    expect((await client.tasks(project.id)).map((t) => [t.title, t.status])).toContainEqual([
+      "write the README",
+      "ready",
+    ]);
+    const told = await line("What should we do first?");
+    expect(told.reply).toContain("Settings → Accounts and keys → Open the setup assistant");
+    expect(told.reply).not.toMatch(/fr setup/);
+  });
+});

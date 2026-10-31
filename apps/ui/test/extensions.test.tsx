@@ -1,3 +1,4 @@
+import { NO_MODEL_CREDENTIAL } from "@forerunner/runtime/setup/no-model";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";

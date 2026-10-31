@@ -45,6 +45,7 @@ import {
 } from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
 import type { StartRequest } from "../session/triggers.ts";
+import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import { createPlanAllowanceRoutes } from "../setup/plan-allowance-routes.ts";
 import { createSetupRoutes } from "../setup/routes.ts";
 import { createSourcesRoutes } from "../sources/routes.ts";
@@ -1445,12 +1446,15 @@ export function createDaemonApp(
       ? null
       : c.json({ ...NOT_YOURS, message: "not your conversation" }, 403);
 
+  // U-047: the daemon composes the conversation agent with or without a model, so a line
+  // reaches the command parser first ("add a task: …" needs no model) and only a line the model
+  // must answer is told the key is missing (the agent's own reply). The refusal below is for a
+  // composition with no conversation at all, and names the setup assistant, never `fr setup`.
   app.post("/chat", async (c) => {
     const body = await parse(c, ChatRequestBody);
     const refused = notYourConversation(c, body.humanId);
     if (refused) return refused;
-    if (!rt.conversation)
-      throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+    if (!rt.conversation) throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
     const r = await rt.conversation.chat({
       humanId: body.humanId,
       agentId: body.agentId,
@@ -1466,8 +1470,7 @@ export function createDaemonApp(
     const body = await parse(c, ChatRequestBody);
     const refused = notYourConversation(c, body.humanId);
     if (refused) return refused;
-    if (!rt.conversation)
-      throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+    if (!rt.conversation) throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
     const conv = rt.conversation;
     return streamSSE(c, async (stream) => {
       let r: Awaited<ReturnType<typeof conv.chat>>;

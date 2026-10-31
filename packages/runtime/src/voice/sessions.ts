@@ -11,6 +11,7 @@ import type { Clock } from "@forerunner/platform";
 import { errorMessage, ForerunnerError, isForerunnerError } from "@forerunner/platform";
 import type { StateStore } from "@forerunner/state";
 import type { ConversationAgent } from "../conversation/agent.ts";
+import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import { VoiceBridge, type VoiceBridgeCommands } from "./bridge.ts";
 import { VOICE_INSTALL_RUNNING_REASON } from "./local-profile.ts";
 import type {
@@ -133,7 +134,8 @@ export interface VoiceSessionsDeps {
 export const DEFAULT_MAX_VOICE_SESSIONS = 4;
 export const DEFAULT_KEEP_STOPPED = 8;
 export const DEFAULT_RETAIN_STOPPED_MS = 10 * 60_000;
-const NO_MODEL = "no model credential configured; run fr setup";
+// U-047: the missing credential is added in the app's setup assistant, never with `fr setup`.
+const NO_MODEL = NO_MODEL_CREDENTIAL;
 
 interface Picked {
   stt: { provider: SttProvider; pick: VoiceProviderPick };

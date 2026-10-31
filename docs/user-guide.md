@@ -95,7 +95,10 @@ again as soon as the service answers.
   a bigger one is read back first and waits for your **Yes**. "Make this a task" turns a
   message into a ready task, which the next session works on. Each project keeps its
   own conversation in this window: switching tabs or reloading keeps it, a Yes/No question you
-  have not answered yet included.
+  have not answered yet included. Before you have added a Claude key, Chat still runs the
+  commands that need no model ("add a task: …", "make this a task", "start a session", "switch
+  to …"); anything else is answered with where to add the key: Settings → Accounts and keys →
+  Open the setup assistant.
 
 **A project without a repository** works in its own folder on this computer (where its docs
 are): the agents read and write there, and the critic reviews what each task changed. To give

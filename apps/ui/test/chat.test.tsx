@@ -32,6 +32,34 @@ describe("Quick chat", () => {
     });
   });
 
+  it("without a Claude key, a command still runs and any other line says where to add one (U-047)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ noModel: true });
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "add a task: write the README");
+    await user.click(screen.getByTestId("chat-send"));
+    const added = await screen.findByTestId("chat-agent");
+    await waitFor(() => expect(added).toHaveAttribute("data-streaming", "false"));
+    expect(added).toHaveTextContent('Created the ready task "write the README".');
+    expect(added).not.toHaveTextContent(/fr setup/);
+    expect(harness.daemon.state.tasks.find((t) => t.title === "write the README")?.status).toBe(
+      "ready",
+    );
+
+    await user.type(input, "What should we do first?");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(2));
+    const told = screen.getAllByTestId("chat-agent")[1] as HTMLElement;
+    await waitFor(() => expect(told).toHaveAttribute("data-streaming", "false"));
+    expect(told).toHaveTextContent("No Claude key or subscription is set up yet");
+    expect(told).toHaveTextContent("Settings → Accounts and keys → Open the setup assistant");
+    expect(told).not.toHaveTextContent(/fr setup/);
+    // No error: the line was answered, not refused.
+    expect(within(told).queryByText(/HTTP 503|provider_auth/)).toBeNull();
+  });
+
   it("shows a pending confirmation with Yes/No and sends the word yes", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

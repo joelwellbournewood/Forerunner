@@ -1893,6 +1893,23 @@ first root win on the same repo-relative path.
 
 ### Conversation agent (`src/conversation/agent.ts`)
 
+**Without a model (U-047).** The daemon composes the agent whether or not a Claude key or
+subscription exists (`ConversationDeps.provider` may be null). Before, without one it was not
+composed at all and `POST /chat` and `/chat/stream` refused every line with 503 "no model
+credential configured; run fr setup", even "add a task: …", which needs no model, and named a
+command the installed app does not have. Now everything before the model path runs as it
+does with a key (the pending card's yes / no, undo, the parser's commands and questions, the
+forward to a live session), and a line only the model can answer gets `NO_MODEL_CHAT_REPLY`
+(`src/setup/no-model.ts`: the missing key, `SETUP_ASSISTANT_PATH` "Settings → Accounts and
+keys → Open the setup assistant", and the commands that still work), recorded with `notice:
+true` so "make this a task" after it takes the person's line, not the notice
+(`CommandLoop.lastMessage` skips it). The phone's chat (`RemoteCommandWatcher`, `kind: "chat"`)
+goes the same way. Voice keeps needing the model (`VoiceSessions` gets the agent only with a
+provider). Every refusal for want of a model credential (a session start, the handover job,
+voice, the remote chat without an agent, the intake's `INTAKE_NEEDS_A_MODEL`) carries
+`NO_MODEL_CREDENTIAL`, which names the setup assistant and never `fr setup`. Tests:
+`chat-without-model.test.ts`; `apps/ui/test/chat.test.tsx` and `real-daemon.test.ts`.
+
 The fast channel for text and voice (spec O, J, Q): Haiku at low effort, a stable cached
 system prompt (project summaries) and a volatile first message (time, active project, unread
 count, open requests, running sessions). It has no tools of its own: what the human says is
