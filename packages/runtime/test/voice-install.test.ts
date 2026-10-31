@@ -532,6 +532,114 @@ describe("fr voice install", () => {
     );
   });
 
+  describe("U-069: the install folder's path budget", () => {
+    /** An install folder whose `voice\venv-gpu\Lib\site-packages` plus PyTorch's ~120 deeper characters passes 260. */
+    const deepInstall = () => {
+      const root = mkdtempSync(join(tmpdir(), "fr-voice-deep-"));
+      const dir = join(root, `Forerunner ${"x".repeat(100)}`, "dependencies");
+      return { dir, source: "install" as const, note: null };
+    };
+    const install = async (
+      dependencies: { dir: string; source: "install" | "env" | "data"; note: string | null },
+      longPaths: boolean | null,
+      platform: "windows" | "linux" = "windows",
+    ) => {
+      const { dirs, env } = home();
+      const fake = fakeRunner({ longPaths });
+      const { events, out } = collect();
+      const r = await installVoice("cpu", {
+        dirs,
+        env,
+        platform,
+        run: fake.run,
+        out,
+        clock: new SimulatedClock("2026-10-31T10:00:00Z"),
+        dependencies,
+      });
+      return { r, dirs, fake, events };
+    };
+
+    it("Windows without long paths: a folder too deep for PyTorch's files sends voice to the data folder, with a note", async () => {
+      const deep = deepInstall();
+      const { r, dirs, fake, events } = await install(deep, false);
+      expect(r).toMatchObject({ ok: true, exitCode: 0 });
+      // The real limit was asked for, not assumed.
+      expect(fake.calls.some((c) => c.argv[0] === "reg")).toBe(true);
+      const data = voiceDirs(dirs, dirs.data);
+      expect(readVoiceSettings(dirs)?.install?.venv).toBe(data.venv("cpu"));
+      expect(existsSync(deep.dir)).toBe(false);
+      const note = messages(events, "warning").find((m) => m.includes("long paths"));
+      expect(note).toContain(deep.dir);
+      expect(note).toContain("260");
+      expect(note).toContain(dirs.data);
+      expect(messages(events, "log")).toContain(`dependencies folder: ${data.root}`);
+    });
+
+    it("Windows with long paths on: the same folder is kept beside the app", async () => {
+      const deep = deepInstall();
+      const { r, dirs, events } = await install(deep, true);
+      expect(r).toMatchObject({ ok: true, exitCode: 0 });
+      expect(readVoiceSettings(dirs)?.install?.venv).toBe(voiceDirs(dirs, deep.dir).venv("cpu"));
+      expect(messages(events, "warning").some((m) => m.includes("long paths"))).toBe(false);
+    });
+
+    it("Windows where the value cannot be read counts as long paths off", async () => {
+      const deep = deepInstall();
+      const { r, dirs } = await install(deep, null);
+      expect(r.ok).toBe(true);
+      expect(readVoiceSettings(dirs)?.install?.venv).toBe(voiceDirs(dirs, dirs.data).venv("cpu"));
+    });
+
+    it("a folder that fits asks nothing and stays", async () => {
+      const root = mkdtempSync(join(tmpdir(), "fr-voice-short-"));
+      const short = { dir: join(root, "dependencies"), source: "install" as const, note: null };
+      const { r, dirs, fake } = await install(short, false);
+      expect(r.ok).toBe(true);
+      expect(fake.calls.some((c) => c.argv[0] === "reg")).toBe(false);
+      expect(readVoiceSettings(dirs)?.install?.venv).toBe(voiceDirs(dirs, short.dir).venv("cpu"));
+    });
+
+    it("a folder too deep for espeak-ng's own limit also goes to the data folder, on any OS", async () => {
+      const root = mkdtempSync(join(tmpdir(), "fr-voice-espeak-"));
+      const deep = {
+        dir: join(root, `Forerunner ${"y".repeat(120)}`, "dependencies"),
+        source: "install" as const,
+        note: null,
+      };
+      const { r, dirs, events } = await install(deep, true, "linux");
+      expect(r).toMatchObject({ ok: true, exitCode: 0 });
+      expect(readVoiceSettings(dirs)?.install?.venv).toBe(voiceDirs(dirs, dirs.data).venv("cpu"));
+      expect(messages(events, "warning").find((m) => m.includes("espeak-ng"))).toContain(deep.dir);
+    });
+  });
+
+  it("U-077: a temporary folder that cannot be removed at the end leaves the finished install finished, with a warning", async () => {
+    const { dirs, env } = home();
+    const fake = fakeRunner();
+    const { events, out } = collect();
+    const tmp = voiceDirs(dirs).tmp;
+    const r = await installVoice("cpu", {
+      dirs,
+      env,
+      platform: "linux",
+      run: fake.run,
+      out,
+      clock: new SimulatedClock("2026-10-31T10:00:00Z"),
+      removeTree: (path) => {
+        if (path === tmp)
+          throw Object.assign(new Error(`EBUSY: resource busy or locked, rmdir '${path}'`), {
+            code: "EBUSY",
+          });
+      },
+    });
+    expect(r).toMatchObject({ ok: true, exitCode: 0 });
+    expect(events.find((e) => e.type === "result")).toMatchObject({ ok: true, exitCode: 0 });
+    expect(messages(events, "warning")).toContainEqual(expect.stringContaining(tmp));
+    expect(readVoiceSettings(dirs)?.verified?.stt.device).toBe("cpu");
+    // The lock was given back: the next install is not refused.
+    expect(existsSync(voiceDirs(dirs).lock)).toBe(false);
+  });
+
   it("switching profiles removes the other venv after the new one is verified", async () => {
     const { dirs, env } = home();
     await installVoice("cpu", {

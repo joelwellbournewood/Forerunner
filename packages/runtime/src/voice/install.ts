@@ -680,8 +680,13 @@ export interface InstallDeps {
   ifChanged?: boolean;
   gpu?: GpuView;
   signal?: AbortSignal;
-  /** Where the packages and models go; `resolveDependenciesDir(env, dirs)` by default (U-011). */
+  /**
+   * Where the packages and models go; `resolveDependenciesDir(env, dirs)` by default (U-011),
+   * the data folder when the install would not fit there (`placeVoiceInstall`, U-069).
+   */
   dependencies?: DependenciesDir;
+  /** Removes a folder (`rmSync` recursive); a test seam for a folder a process still holds. */
+  removeTree?: (path: string) => void;
 }
 
 /** The voice folders of every place an install may have put them: now, recorded, 1.0.2's. */
@@ -791,13 +796,92 @@ export const ESPEAK_PATH_MAX: Partial<Record<Platform, number>> = {
   windows: 229,
 };
 
-export function espeakDataPath(venv: string, platform: Platform, pythonVersion: string): string {
+/** The venv's site-packages folder as Python lays it out on `platform`. */
+export function sitePackagesPath(venv: string, platform: Platform, pythonVersion: string): string {
   const [maj, min] = parseVersion(pythonVersion);
-  const site =
-    platform === "windows"
-      ? join(venv, "Lib", "site-packages")
-      : join(venv, "lib", `python${maj}.${min}`, "site-packages");
-  return join(site, "espeakng_loader", "espeak-ng-data");
+  return platform === "windows"
+    ? join(venv, "Lib", "site-packages")
+    : join(venv, "lib", `python${maj}.${min}`, "site-packages");
+}
+
+export function espeakDataPath(venv: string, platform: Platform, pythonVersion: string): string {
+  return join(sitePackagesPath(venv, platform, pythonVersion), "espeakng_loader", "espeak-ng-data");
+}
+
+/** Windows' MAX_PATH: where long paths are off, a path of 260 characters or more cannot be opened. */
+export const WINDOWS_MAX_PATH = 260;
+/**
+ * How far below site-packages PyTorch's deepest files reach, about (U-069): the GPU wheel's
+ * headers and kernels under `torch\include\...`. pip fails to unpack them when the whole path
+ * passes `WINDOWS_MAX_PATH` and long paths are off.
+ */
+export const TORCH_DEEPEST_BELOW_SITE = 120;
+
+const LONG_PATHS_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem";
+
+/**
+ * Whether Windows' long paths are on (`LongPathsEnabled` = 1 under
+ * `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem`; Python 3.12 and pip follow it). A
+ * value that cannot be read counts as off, the default.
+ */
+export async function windowsLongPathsEnabled(run: VoiceProcRunner): Promise<boolean> {
+  const r = await run({
+    argv: ["reg", "query", LONG_PATHS_KEY, "/v", "LongPathsEnabled"],
+    timeoutMs: 15_000,
+  });
+  if (r.code !== 0) return false;
+  const m = /LongPathsEnabled\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(r.stdout.toString("utf8"));
+  return m?.[1] !== undefined && Number.parseInt(m[1], 16) !== 0;
+}
+
+/**
+ * Why the voice install would not work in `dependenciesDir`, or null (U-069): espeak-ng's own
+ * limit on its data folder's path (any OS, `ESPEAK_PATH_MAX`), and on Windows with long paths
+ * off the deepest PyTorch file (site-packages plus about `TORCH_DEEPEST_BELOW_SITE` characters)
+ * against `WINDOWS_MAX_PATH`. Asks the registry only when the folder would not fit without long
+ * paths.
+ */
+export async function voicePathProblem(
+  dirs: AppDirs,
+  dependenciesDir: string,
+  platform: Platform,
+  run: VoiceProcRunner,
+): Promise<string | null> {
+  // Both profiles' venvs have the same length; the GPU wheel holds the deepest files.
+  const venv = voiceDirs(dirs, dependenciesDir).venv("gpu");
+  const version = VOICE_PYTHON.min.join(".");
+  const espeak = espeakDataPath(venv, platform, version);
+  const espeakMax = ESPEAK_PATH_MAX[platform] ?? 159;
+  if (espeak.length > espeakMax)
+    return `The folder ${dependenciesDir} is too deep for espeak-ng, which Kokoro uses for speech: its data folder would be ${espeak.length} characters long and espeak-ng reads at most ${espeakMax}.`;
+  if (platform !== "windows") return null;
+  const deepest = sitePackagesPath(venv, platform, version).length + 1 + TORCH_DEEPEST_BELOW_SITE;
+  if (deepest < WINDOWS_MAX_PATH) return null;
+  if (await windowsLongPathsEnabled(run)) return null;
+  return `The folder ${dependenciesDir} is too deep for Windows without long paths: PyTorch's deepest files would be about ${deepest} characters long, and Windows opens no path of ${WINDOWS_MAX_PATH} or more while long paths are off.`;
+}
+
+/**
+ * Where the voice install goes (U-069): the dependencies folder when the install fits there,
+ * else the data folder with a note saying why and what keeps it beside the app. The data folder
+ * itself is never moved (a path too long there is refused by the espeak check with its reason).
+ */
+export async function placeVoiceInstall(
+  dependencies: DependenciesDir,
+  deps: { dirs: AppDirs; platform: Platform; run: VoiceProcRunner },
+): Promise<DependenciesDir> {
+  if (dependencies.source === "data" || dependencies.dir === deps.dirs.data) return dependencies;
+  const problem = await voicePathProblem(deps.dirs, dependencies.dir, deps.platform, deps.run);
+  if (!problem) return dependencies;
+  const keep =
+    deps.platform === "windows" && problem.includes("long paths")
+      ? "turn on Windows long paths (LongPathsEnabled = 1, or the group policy Enable Win32 long paths) or install Forerunner in a shorter folder"
+      : "install Forerunner in a shorter folder";
+  return {
+    dir: deps.dirs.data,
+    source: "data",
+    note: `${problem} Voice goes to the data folder ${deps.dirs.data} instead. To keep it beside the app, ${keep}, then install voice again.`,
+  };
 }
 
 function assertEspeakPath(venv: string, platform: Platform, pythonVersion: string): void {
@@ -830,7 +914,12 @@ export async function installVoice(
   const run = deps.run ?? defaultVoiceRunner;
   const clock = deps.clock ?? systemClock;
   const helpersDir = deps.helpersDir ?? DEFAULT_HELPERS_DIR;
-  const dependencies = deps.dependencies ?? resolveDependenciesDir(deps.env, deps.dirs);
+  // Checked before anything is written (U-069): a folder the install would not fit in sends it
+  // to the data folder, with a note.
+  const dependencies = await placeVoiceInstall(
+    deps.dependencies ?? resolveDependenciesDir(deps.env, deps.dirs),
+    { dirs: deps.dirs, platform, run },
+  );
   const vd = voiceDirs(deps.dirs, dependencies.dir);
   const venv = vd.venv(profile);
   const vpy = venvPythonPath(venv, platform);
@@ -1296,9 +1385,22 @@ export async function installVoice(
     out({ type: "error", message });
     return finish(1, `voice profile ${profile} not installed: ${message.split("\n")[0]}`);
   } finally {
-    rmSync(vd.tmp, { recursive: true, force: true });
+    // U-077: a temporary file a process still holds (EBUSY on Windows) must not turn a finished
+    // install into a failed one; what is left is removed at the next install.
+    try {
+      (deps.removeTree ?? removeTree)(vd.tmp);
+    } catch (e) {
+      out({
+        type: "warning",
+        message: `could not remove the temporary folder ${vd.tmp} (${errorMessage(e)}); it is removed at the next install`,
+      });
+    }
     release?.();
   }
+}
+
+function removeTree(path: string): void {
+  rmSync(path, { recursive: true, force: true });
 }
 
 /** Delete the venvs and the models, turn local voice off (profile none). */

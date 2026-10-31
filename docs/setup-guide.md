@@ -169,7 +169,11 @@ installing Forerunner on another drive keeps the large GPU download (about 8 GB)
 pip's download cache and temporary files go there as well. When that folder cannot be written
 (Forerunner in `C:\Program Files`, or the Linux `.deb`), they go to your data folder instead and
 Settings → Voice says so; beside an AppImage they go into `Forerunner-dependencies` next to the
-`.AppImage` file. Settings → Voice shows the folder. Nothing is installed into your system
+`.AppImage` file. On Windows without long paths, an install folder so deep that PyTorch's files
+would pass Windows' 260-character limit sends them to your data folder too, and Settings → Voice
+says why: to keep them beside the app, turn on long paths (Group Policy "Enable Win32 long
+paths", or `LongPathsEnabled` = 1) or install Forerunner in a shorter folder, then install voice
+again. Settings → Voice shows the folder. Nothing is installed into your system
 Python. A voice install from before 1.0.3 keeps working where it is and moves at its next
 install. If the GPU
 check fails, `fr voice install --gpu` prints a `WARNING` with the reason and voice keeps working

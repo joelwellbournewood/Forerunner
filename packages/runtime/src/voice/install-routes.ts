@@ -10,6 +10,7 @@
 import {
   type AppDirs,
   type Clock,
+  currentPlatform,
   ForerunnerError,
   newId,
   type Platform,
@@ -18,9 +19,11 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { type DependenciesDir, resolveDependenciesDir } from "../dependencies.ts";
 import {
+  defaultVoiceRunner,
   detectNvidiaGpu,
   type InstallDeps,
   installVoice,
+  placeVoiceInstall,
   readVoiceSettings,
   recommendedProfile,
   recordedVoiceRoot,
@@ -76,8 +79,23 @@ export class VoiceInstallJobs {
   private listeners = new Set<(e: VoiceInstallEntryView | null) => void>();
   private gpu: GpuView | null = null;
   private dependencies: DependenciesDir | null = null;
+  private placed: Promise<DependenciesDir> | null = null;
 
   constructor(private readonly deps: VoiceInstallJobsDeps) {}
+
+  /**
+   * Where the next install goes once its path budget is checked (U-069), for the card: the data
+   * folder with the note when the dependencies folder is too deep. Checked once; the install
+   * checks again itself.
+   */
+  private placement(): Promise<DependenciesDir> {
+    this.placed ??= placeVoiceInstall(this.dependenciesDir(), {
+      dirs: this.deps.dirs,
+      platform: this.deps.platform ?? currentPlatform(),
+      run: this.deps.run ?? defaultVoiceRunner,
+    });
+    return this.placed;
+  }
 
   /** Resolved once: whether the install folder can be written does not change while running. */
   private dependenciesDir(): DependenciesDir {
@@ -101,7 +119,7 @@ export class VoiceInstallJobs {
     const gpu = await this.gpuView();
     const profile = s?.profile ?? null;
     const recorded = s?.profile && s.profile !== "none" ? recordedVoiceRoot(s) : null;
-    const next = this.dependenciesDir();
+    const next = await this.placement();
     return {
       profile,
       profiles: VOICE_PROFILES.map((p) => ({ ...VOICE_PROFILE_INFO[p] })),

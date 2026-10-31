@@ -292,10 +292,24 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
     `<folder of the .AppImage>/Forerunner-dependencies`;
   - else the data folder, with a note saying why (`folderNote` in `GET /voice/install`).
 
+  Then the path budget (U-069, `placeVoiceInstall` / `voicePathProblem`), before anything is
+  written and in `GET /voice/install` for the card: a dependencies folder the install would not
+  fit in sends it to the data folder with a note (a `warning` event, `folderNote`) that says why
+  and what keeps it beside the app. Two limits: espeak-ng's data folder path
+  (`ESPEAK_PATH_MAX`, any OS), and on Windows with long paths off PyTorch's deepest file,
+  site-packages plus about `TORCH_DEEPEST_BELOW_SITE` (120) characters, against
+  `WINDOWS_MAX_PATH` (260). Long paths are read from the registry
+  (`reg query HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled`,
+  `windowsLongPathsEnabled`) only when the folder would not fit without them; a value that
+  cannot be read counts as off. The data folder itself is never moved: a path too long there is
+  refused by the espeak check below.
+
   Under it: a venv per profile, `voice/venv-cpu` / `venv-gpu`, the models in `voice/models`
   (the helpers' `HF_HOME`; the speech recognition model in its own plain folder
   `voice/models/faster-whisper/<model>`, `whisperModelDir`, U-024), pip's cache in `voice/pip-cache` (`PIP_CACHE_DIR`) and its
-  temporary files in `voice/tmp` (`TMP`, `TEMP`, `TMPDIR`; removed after the install; 1.0.2
+  temporary files in `voice/tmp` (`TMP`, `TEMP`, `TMPDIR`; removed after the install, and a
+  folder a process still holds (EBUSY) is left with a warning instead of turning a finished
+  install into a failed one, U-077; 1.0.2
   unpacked the GPU wheels into `%TEMP%` on C:). `<config>/voice.json` holds the profile, what
   was installed (venv, interpreter, the requirements file's SHA-256) and what the last check
   verified per side (`device`, `computeType`, `fallback`). No `voice.json` means the profile was
@@ -734,14 +748,21 @@ failing and falling back with exit 2, idempotency and resuming, a broken venv re
 Python 3.12 (3.10 and 3.11 refused) with the winget/apt line, the torch-alone and PyPI-only
 hashed pip runs, `pip check`, the environment's extra index dropped, cancelling, the lock file
 named in a refusal, the atomic `voice.json`, the espeak-ng path limit, switching and removing,
-the GPU detection and the setup question, U-024's plain model folder passed to the fetcher
+the GPU detection and the setup question, U-069's path budget (Windows with long paths off and
+a folder too deep for PyTorch's files: the data folder with a note naming the folder, 260 and
+the data folder, the registry asked; long paths on: kept; a value that cannot be read: off; a
+folder that fits: nothing asked; a folder too deep for espeak-ng on any OS: the data folder),
+U-077's temporary folder held at the end (EBUSY) leaving the install finished with a warning and
+the lock freed, U-024's plain model folder passed to the fetcher
 (`--whisper-dir`) and the check (`--model-dir`) with a broken download fetched once more shown
 as a warning, all with a fake process runner from `voice-install-helpers.ts`, whose
 `modelsRetry` makes the fetcher report a retry), `voice-local-profile.test.ts` (what
 `voice.json` means for the helpers' argv (`--model-dir` included, U-024), interpreter and
 `HF_HOME`; rebuilt and stopped on a change; `FORERUNNER_PYTHON`
 winning; a swap deferred while a session or a sentence is in use; refused while an install
-runs), `voice-install-routes.test.ts` (the job, its replay as JSON and SSE, 409s, the cancel
+runs), `voice-install-routes.test.ts` (`GET /voice/install` naming the data folder and why on
+Windows without long paths for a folder too deep, and the install folder with long paths on,
+U-069; the job, its replay as JSON and SSE, 409s, the cancel
 route, a daemon stop cancelling a running install and local voice blocked meanwhile, the
 daemon mount behind the token) and
 `voice-install-cli.test.ts` (`fr voice install/remove/status`, `fr setup --voice` and the

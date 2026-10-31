@@ -43,6 +43,37 @@ function setup(opts: { busy?: string | null; nvidia?: boolean; gate?: Promise<vo
   return { app, jobs, dirs, env, fake, released: () => released };
 }
 
+describe("GET /voice/install: where the next install goes (U-069)", () => {
+  it("Windows without long paths and an install folder too deep: Settings → Voice names the data folder and says why", async () => {
+    const h = mkdtempSync(join(tmpdir(), "fr-voice-routes-deep-"));
+    const env = { FORERUNNER_HOME: h };
+    const dirs: AppDirs = appDirs({ env });
+    const deep = join(h, `Forerunner ${"x".repeat(100)}`, "dependencies");
+    const view = async (longPaths: boolean) => {
+      const fake = fakeRunner({ nvidiaSmi: NVIDIA, longPaths });
+      const jobs = new VoiceInstallJobs({
+        dirs,
+        env,
+        clock: new SimulatedClock("2026-10-31T10:00:00Z"),
+        platform: "windows",
+        run: fake.run,
+        busy: () => null,
+        release: async () => {},
+        dependencies: () => ({ dir: deep, source: "install", note: null }),
+      });
+      const app = createVoiceInstallRoutes({ jobs });
+      return VoiceInstallView.parse(await (await app.request("/voice/install")).json());
+    };
+    const off = await view(false);
+    expect(off.folder).toBe(voiceDirs(dirs, dirs.data).root);
+    expect(off.folderNote).toContain("too deep for Windows without long paths");
+    expect(off.folderNote).toContain("turn on Windows long paths");
+    const on = await view(true);
+    expect(on.folder).toBe(voiceDirs(dirs, deep).root);
+    expect(on.folderNote).toBeNull();
+  });
+});
+
 describe("GET/POST /voice/install", () => {
   it("shows the catalog with sizes and trade-offs, the GPU and gpu recommended with NVIDIA", async () => {
     const { app } = setup();

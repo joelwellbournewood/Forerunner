@@ -41,6 +41,11 @@ export interface FakeOptions {
    * it once more (its `retry` line, U-024), then succeeded.
    */
   modelsRetry?: string;
+  /**
+   * Windows' LongPathsEnabled as `reg query` prints it (U-069): true 0x1, false 0x0; null or
+   * absent: the value is not there (reg exits 1).
+   */
+  longPaths?: boolean | null;
 }
 
 export function fakeRunner(opts: FakeOptions = {}) {
@@ -66,6 +71,17 @@ export function fakeRunner(opts: FakeOptions = {}) {
       stderr: "",
       error: `spawn ${cmd} ENOENT`,
     };
+    if (cmd === "reg") {
+      if (opts.longPaths === undefined || opts.longPaths === null)
+        return fail(
+          1,
+          "",
+          "ERROR: The system was unable to find the specified registry key or value.",
+        );
+      return ok(
+        `\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem\r\n    LongPathsEnabled    REG_DWORD    ${opts.longPaths ? "0x1" : "0x0"}\r\n\r\n`,
+      );
+    }
     if (cmd === "nvidia-smi") {
       if (!opts.nvidiaSmi) return notFound;
       req.onStdout?.(Buffer.from(opts.nvidiaSmi));
