@@ -65,6 +65,11 @@ wait on you, and the latest critic grade. The active project is always shown in 
 - **Chat**: a quick, read-only chat with the fast model about this project. "Make this a task"
   turns a message into a draft task.
 
+With the GitHub Projects mirror turned on in a project's settings, Forerunner asks once in the
+Inbox before it creates the board. **Do not mirror this project** turns the mirror off for that
+project, and nothing is asked again; turn it on again in the settings (or `fr mirror enable`)
+to be asked again.
+
 ## Sessions
 
 A session starts on a schedule, on a trigger (a pull request comment, CI, an email command) or

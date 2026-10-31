@@ -1,5 +1,6 @@
 import { ForerunnerError, SimulatedClock } from "@forerunner/platform";
 import { Scheduler, type StartRequest } from "@forerunner/runtime";
+import { requestView } from "@forerunner/runtime/daemon/views";
 import {
   type JsonObject,
   openStore,
@@ -28,6 +29,7 @@ import {
   MIRROR_STATUS_LABELS,
   type MirrorApprovalRequest,
   type MirrorCliCommand,
+  type MirrorHumanPort,
   type MirrorSettings,
   mirrorAgentId,
   mirrorSettingsOf,
@@ -57,7 +59,7 @@ async function world(
   opts: {
     mirrorSettings?: Record<string, unknown> | null;
     host?: GitHost;
-    human?: { ask(req: MirrorApprovalRequest): Promise<"approve" | "deny"> };
+    human?: MirrorHumanPort;
     batchSize?: number;
     repos?: string[];
     /** false: the only agent is a specialist, so the mirror finds no principal for a run session. */
@@ -549,10 +551,27 @@ describe("ProjectsMirror", () => {
       options: [MIRROR_APPROVE_OPTION, MIRROR_DENY_OPTION],
     });
     expect(w.host.projectCalls).toHaveLength(0);
-    expect((await w.settings())?.approved).toBe(false);
+    // U-031: the no turned the mirror off (it used to stay on, unapproved, and the schedule
+    // asked again); the owner is kept, nothing was approved.
+    expect(await w.settings()).toBeNull();
+    const off = await w.store.project.mustGet(w.projectId);
+    expect(off.settings[MIRROR_SETTINGS_KEY]).toMatchObject({ enabled: false, owner: "acme" });
+    expect((off.settings[MIRROR_SETTINGS_KEY] as JsonObject).approved).toBeUndefined();
     const denied = await w.store.auditLog.list({ tool: "github.projects.ensure_project" });
     expect(denied[0]).toMatchObject({ allowed: false });
+    await expect(w.mirror.sync(w.projectId)).rejects.toMatchObject({ code: "tool_not_allowed" });
+    expect(asked).toHaveLength(1);
 
+    // Turned on again (as `fr mirror enable` writes it), the next sync asks again.
+    await w.store.project.update(off.id, off.version, {
+      settings: {
+        ...off.settings,
+        [MIRROR_SETTINGS_KEY]: {
+          ...(off.settings[MIRROR_SETTINGS_KEY] as JsonObject),
+          enabled: true,
+        },
+      },
+    });
     answer = "approve";
     const r = await w.mirror.sync(w.projectId);
     expect(r.created).toBe(1);
@@ -560,6 +579,89 @@ describe("ProjectsMirror", () => {
     await w.addTask("y");
     await w.mirror.sync(w.projectId);
     expect(asked).toHaveLength(2); // deny + approve; never asked again once approved
+  });
+
+  it("a no turns the mirror off for the project: the 15-minute schedule asks nothing more; an explicit enable asks again (U-031)", async () => {
+    const w = await world();
+    await w.addTask("x");
+    const port = new HumanRequestMirrorPort(w.store, w.clock, { pollMs: 1_000 });
+    const mirror = new ProjectsMirror({
+      store: w.store,
+      clock: w.clock,
+      hostFor: () => w.host,
+      human: port,
+      humanId: w.humanId,
+    });
+    const outcomes: unknown[] = [];
+    const scheduler = new Scheduler(
+      {
+        clock: w.clock,
+        start: mirrorStartHandler({
+          sync: (projectId, opts) => {
+            const run = mirror.sync(projectId, opts);
+            run.then(
+              (r) => outcomes.push(r),
+              (e: unknown) => outcomes.push(e),
+            );
+            return run;
+          },
+        }),
+      },
+      1_000,
+    );
+    scheduleMirror(scheduler, { projectId: w.projectId }); // every 15 minutes, as the daemon
+    const requests = () => w.store.humanRequest.list({ project_id: w.projectId });
+    const settled = async (n: number) => {
+      for (let i = 0; i < 500 && outcomes.length < n; i++) {
+        await w.clock.advance(1_000);
+        await new Promise((r) => setTimeout(r, 1));
+      }
+      expect(outcomes).toHaveLength(n);
+    };
+
+    // The first scheduled run asks; the person clicks the option the Inbox shows for "no".
+    await scheduler.tick();
+    await untilTimer(w.clock);
+    const [asked] = await requests();
+    if (!asked) throw new Error("the mirror did not ask");
+    const no = requestView(asked, null).options[1];
+    expect(no).toBe(MIRROR_DENY_OPTION);
+    await w.store.humanRequest.answer(asked.id, asked.version, no as string, w.humanId);
+    await settled(1);
+    expect(outcomes[0]).toMatchObject({ code: "approval_required" });
+
+    // The mirror is off for the project, through the setting `fr mirror disable` and the
+    // panel write: `enabled: false`, the owner kept for a later enable.
+    const project = await w.store.project.mustGet(w.projectId);
+    expect(mirrorSettingsOf(project)).toBeNull();
+    expect(project.settings[MIRROR_SETTINGS_KEY]).toMatchObject({ enabled: false, owner: "acme" });
+
+    // Two more scheduled runs, 15 minutes apart: nothing is asked again, nothing is created.
+    await scheduler.tick(w.clock.now() + 15 * 60_000 + 1);
+    await settled(2);
+    await scheduler.tick(w.clock.now() + 30 * 60_000 + 2);
+    await settled(3);
+    expect(await requests()).toHaveLength(1);
+    expect(w.host.projectCalls).toHaveLength(0);
+
+    // An explicit enable (what `fr mirror enable` writes) asks again.
+    const off = await w.store.project.mustGet(w.projectId);
+    await w.store.project.update(off.id, off.version, {
+      settings: {
+        ...off.settings,
+        [MIRROR_SETTINGS_KEY]: {
+          ...(off.settings[MIRROR_SETTINGS_KEY] as JsonObject),
+          enabled: true,
+        },
+      },
+    });
+    await scheduler.tick(w.clock.now() + 45 * 60_000 + 3);
+    await untilTimer(w.clock);
+    for (let i = 0; i < 200 && (await requests()).length < 2; i++)
+      await new Promise((r) => setTimeout(r, 2));
+    expect((await w.store.humanRequest.open({ projectId: w.projectId })).map((r) => r.why)).toEqual(
+      [asked.why],
+    );
   });
 
   it("HumanRequestMirrorPort files a request and reads the answer back through the store", async () => {
@@ -588,11 +690,44 @@ describe("ProjectsMirror", () => {
     await w.clock.advance(1_500);
     expect(await pending).toBe("approve");
 
+    // No answer in time: the request is withdrawn and nothing is created. It is not a no
+    // (U-031: only a no turns the mirror off), so it reads as `unanswered`.
     const timeout = port.ask(req);
     await untilTimer(w.clock);
     await w.clock.advance(11_000);
-    expect(await timeout).toBe("deny");
+    expect(await timeout).toBe("unanswered");
     expect(await w.store.humanRequest.open({ projectId: w.projectId })).toHaveLength(0);
+
+    const no = port.ask(req);
+    await untilTimer(w.clock);
+    await w.clock.advance(1_500);
+    const [second] = await w.store.humanRequest.open({ projectId: w.projectId });
+    await w.store.humanRequest.answer(
+      second?.id ?? "",
+      second?.version ?? 0,
+      MIRROR_DENY_OPTION,
+      w.humanId,
+    );
+    await w.clock.advance(1_500);
+    expect(await no).toBe("deny");
+  });
+
+  it("an unanswered question switches nothing off: the next run asks again (U-031)", async () => {
+    const asked: MirrorApprovalRequest[] = [];
+    const w = await world({
+      human: {
+        async ask(req: MirrorApprovalRequest) {
+          asked.push(req);
+          return "unanswered" as const;
+        },
+      },
+    });
+    await w.addTask("x");
+    await expect(w.mirror.sync(w.projectId)).rejects.toMatchObject({ code: "approval_required" });
+    expect(await w.settings()).toMatchObject({ enabled: true, owner: "acme" });
+    await expect(w.mirror.sync(w.projectId)).rejects.toMatchObject({ code: "approval_required" });
+    expect(asked).toHaveLength(2);
+    expect(w.host.projectCalls).toHaveLength(0);
   });
 
   it("scheduleMirror runs through the session scheduler and the start handler routes other requests on", async () => {

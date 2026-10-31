@@ -192,7 +192,12 @@ export interface MirrorApprovalRequest {
   why: string;
   options: string[];
 }
-export type MirrorApprovalAnswer = "approve" | "deny";
+/**
+ * `deny` is the person's no, which turns the mirror off for the project (U-031); `unanswered`
+ * is no answer at all (the wait timed out, the request was withdrawn or expired): nothing is
+ * created and nothing is switched off, so the next run asks again.
+ */
+export type MirrorApprovalAnswer = "approve" | "deny" | "unanswered";
 
 /** Asked once before the mirror creates a board on GitHub. Backed by HumanRequestRepo in production. */
 export interface MirrorHumanPort {
@@ -204,7 +209,8 @@ export const MIRROR_DENY_OPTION = "Do not mirror this project";
 
 /**
  * Production port: files a human request and polls the store (through the Clock) until it is
- * answered. A timeout withdraws the request and counts as deny; nothing is created meanwhile.
+ * answered. A timeout withdraws the request and counts as `unanswered`; nothing is created
+ * meanwhile.
  */
 export class HumanRequestMirrorPort implements MirrorHumanPort {
   constructor(
@@ -234,15 +240,15 @@ export class HumanRequestMirrorPort implements MirrorHumanPort {
       await this.clock.sleep(pollMs);
       const cur = await this.store.humanRequest.mustGet(row.id);
       if (cur.status === "answered") return answerToDecision(cur.answer, req.options);
-      if (cur.status !== "open") return "deny";
+      if (cur.status !== "open") return "unanswered";
     }
     try {
       const cur = await this.store.humanRequest.mustGet(row.id);
       if (cur.status === "open") await this.store.humanRequest.withdraw(cur.id, cur.version);
     } catch {
-      // the answer is deny either way
+      // unanswered either way
     }
-    return "deny";
+    return "unanswered";
   }
 }
 
@@ -386,6 +392,11 @@ export interface ProjectsMirrorDeps {
   human?: MirrorHumanPort;
   /** Human to address approval requests to (the project owner), if known. */
   humanId?: string | null;
+  /**
+   * Called once a no turned the mirror off for a project (U-031): the daemon drops the
+   * project's schedule and tells the screens, as after `PUT /projects/:id/settings`.
+   */
+  onDisabled?: (projectId: string) => void | Promise<void>;
   batchSize?: number;
   /** Link shown for a review; default forerunner://reviews/<id>. */
   reviewLink?: (review: ReviewRow) => string;
@@ -501,20 +512,33 @@ export class ProjectsMirror {
             options: [MIRROR_APPROVE_OPTION, MIRROR_DENY_OPTION],
           });
           if (answer !== "approve") {
+            const declined = answer === "deny";
             await this.audit(
               actor,
               "github.projects.ensure_project",
               `${owner}/${title}`,
-              "denied",
+              declined ? "denied; mirror turned off for the project" : "not answered",
               {
                 allowed: false,
-                denied_reason: "human declined to create the GitHub project",
+                denied_reason: declined
+                  ? "human declined to create the GitHub project"
+                  : "nobody answered whether to create the GitHub project",
               },
             );
+            // U-031: a no is kept. The mirror is turned off for the project through the same
+            // setting `fr mirror disable` and the project settings panel write, so the
+            // 15-minute schedule stops asking; turning it on again asks again (`approved` was
+            // never set). An unanswered question switches nothing off: the next run asks again.
+            if (declined) {
+              await this.turnOff(projectId);
+              await this.deps.onDisabled?.(projectId);
+            }
             throw new ForerunnerError(
               "approval_required",
-              `creating the GitHub project "${title}" under ${owner} was not approved`,
-              { details: { projectId, owner, title } },
+              declined
+                ? `creating the GitHub project "${title}" under ${owner} was declined; the mirror is now off for "${project.name}" (turn it on again in the project settings or with "fr mirror enable" to be asked again)`
+                : `creating the GitHub project "${title}" under ${owner} was not approved`,
+              { details: { projectId, owner, title, mirrorDisabled: declined } },
             );
           }
           settings = await this.saveSettings(projectId, { approved: true });
@@ -751,6 +775,27 @@ export class ProjectsMirror {
     });
     this.hosts.set(key, host);
     return host;
+  }
+
+  /**
+   * `settings.github_mirror.enabled = false`, the rest kept (the owner, the title, the secret
+   * reference for a later enable): what `fr mirror disable` and the settings panel write.
+   * Retried on a version conflict, as `saveSettings`.
+   */
+  private async turnOff(projectId: string): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      const current = await this.deps.store.project.mustGet(projectId);
+      const existing = (current.settings[MIRROR_SETTINGS_KEY] ?? {}) as JsonObject;
+      try {
+        await this.deps.store.project.update(projectId, current.version, {
+          settings: { ...current.settings, [MIRROR_SETTINGS_KEY]: { ...existing, enabled: false } },
+        });
+        return;
+      } catch (e) {
+        if (e instanceof ForerunnerError && e.code === "version_conflict" && attempt < 5) continue;
+        throw e;
+      }
+    }
   }
 
   /** Merge a patch into settings.github_mirror with optimistic concurrency (retried). */

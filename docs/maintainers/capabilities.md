@@ -173,7 +173,17 @@ result carries `sessionId: null, eventId: null`.
 Enforcement in code, not prompts: `sync` throws `tool_not_allowed` unless
 `project.settings.github_mirror.enabled === true` (the human's opt-in, set by `fr mirror enable`
 or the UI); with a `MirrorHumanPort` wired, creating a board is asked once
-(`approval_required` on a denial; `approved: true` is remembered); unknown fields or options are
+(`approval_required` on a denial; `approved: true` is remembered). The port answers `approve`,
+`deny` (the person's no) or `unanswered` (the wait timed out, the request was withdrawn or
+expired). A no is kept (U-031): `sync` writes `settings.github_mirror.enabled = false` (the
+owner, title and secret reference kept), the same setting `fr mirror disable` and the project
+settings panel write, calls `deps.onDisabled(projectId)` (the daemon drops the project's
+15-minute schedule) and throws `approval_required` with `details.mirrorDisabled: true` and a
+message that says how to turn it on again; turning it on again asks again, since `approved`
+was never set. Before, a no saved nothing and every scheduled run filed the same card again.
+An `unanswered` question switches nothing off: the next run asks again
+(`projects-mirror.test.ts`: the no through the production port and two more scheduled runs,
+one card in all; the re-enable; the unanswered case). Unknown fields or options are
 refused by the host before any request (`validation`). Every outward action appends an audit
 row (`github.projects.ensure_project`, `ensure_fields`, `upsert_item`, `archive_item`; a denied
 creation is logged with `allowed: false`).

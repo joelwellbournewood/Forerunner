@@ -2069,6 +2069,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     fetchImpl: opts.fetchImpl,
     human: mirrorApprovals,
     humanId: human.id,
+    // U-031: a no turned the mirror off for the project; its 15-minute schedule goes with it
+    // (as after `PUT /projects/:id/settings`), and the screens hear the project changed.
+    onDisabled: async (projectId) => {
+      await refreshMirrorSchedules();
+      events.emit("project", { id: projectId });
+    },
     ...(opts.gitHost ? { hostFor: () => gitHost } : {}),
   });
   const mirrorRuns = new Map<string, Promise<MirrorRunResult>>();
@@ -3439,7 +3445,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
  * instead of blocking until the human decides), wakes when a request is answered in the inbox
  * instead of waiting for the next poll, and reuses an open request for the same project (a
  * second sync, or a daemon restart, never files a duplicate). A timeout withdraws the request
- * and counts as deny; nothing is created meanwhile.
+ * and counts as `unanswered` (as does a request withdrawn or expired elsewhere): nothing is
+ * created and, unlike the person's no (U-031), nothing is switched off.
  */
 export class DaemonMirrorApprovals implements MirrorHumanPort {
   private readonly pending = new Map<string, string>();
@@ -3500,15 +3507,15 @@ export class DaemonMirrorApprovals implements MirrorHumanPort {
         await this.sleepOrWake(pollMs);
         const cur = await this.store.humanRequest.mustGet(row.id);
         if (cur.status === "answered") return mirrorDecision(cur.answer, req.options);
-        if (cur.status !== "open") return "deny";
+        if (cur.status !== "open") return "unanswered";
       }
       try {
         const cur = await this.store.humanRequest.mustGet(row.id);
         if (cur.status === "open") await this.store.humanRequest.withdraw(cur.id, cur.version);
       } catch {
-        // the answer is deny either way
+        // unanswered either way
       }
-      return "deny";
+      return "unanswered";
     } finally {
       this.pending.delete(req.projectId);
     }
