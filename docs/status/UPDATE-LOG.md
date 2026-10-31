@@ -38,7 +38,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-078 are open; U-036 is won't fix.
+- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-079 are open; U-036 is won't fix.
 
 ## Open and fixed, not released
 
@@ -106,6 +106,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-076 | 2026-10-31, 1.0.4 (audit) | [wrong outcome] Update and restart, and Roll back, end running sessions without asking; Run evaluations does not show what it will cost. | Ask first while sessions run; show the cost. | open |
 | U-077 | 2026-10-31, 1.0.4 (audit); hands-on | [cosmetic and small] The setup name field prefilled with "me"; "never in a file" while the vault fell back to a file; a failed update check still says "not checked yet"; the palette shows ⌘K on Windows; the Cancel dialog's buttons read "Cancel" and "Confirm"; a hidden first-close notice is never shown again; a minimized window reopens at the default place; and other details listed in the entry. | Fix in a batch. | open |
 | U-078 | 2026-10-31, owner | You cannot choose which Claude credential is used first (subscription or API key); chat, planning and reviews always use the API key when there is one; and nothing guarantees an API key is never run through Claude Code, where promotional API credits do not apply. | You set the order in Settings; every call follows it and falls back to the next when one runs out; an API key always goes straight to the API (ADR 0100). | open |
+| U-079 | 2026-10-31, CI and owner | Tasks that need a full review cannot run on an installed app even with Docker: the app looks for a sandbox image only a source checkout can build, and treats Docker in Windows-container mode as usable; the task then fails with jargon and is retried. | Docker is required for full-review tasks (owner); the app fetches the published sandbox image and checks Docker is ready, Settings shows it, and tasks wait with plain steps instead of failing (ADR 0101). | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -318,6 +319,37 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **Check in the app:** Extensions → Add an entry → its permissions are shown; Confirm enables
   it and nothing appears in the Inbox; Cancel adds nothing.
 - **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
+
+### U-079 Full-review tasks need a sandbox the installed app cannot get
+
+- **Found:** 2026-10-31. CI's diagnostics after U-037: on Linux CI, Docker is installed but
+  every full-review task failed with "Unable to find image 'forerunner-runner:local' … pull
+  access denied"; on Windows CI, Docker runs Windows containers and every such task failed with
+  "invalid mount path: '/work'". The owner decided: "better to force to use Docker, so that reviews
+  can be comprehensive".
+- **What happens:**
+  - Tasks at risk tier 2 and above run their commands (tests, builds) in a container sandbox,
+    or in a process stand-in only when the project setting `allowProcessSandbox` is on.
+  - The sandbox image defaults to `forerunner-runner:local` (`sandbox/container.ts`), which only
+    `docker build … services/cloud-runner/Dockerfile` in a source checkout makes. The release
+    workflow already publishes `ghcr.io/<owner>/forerunner-runner:<version>` and `:latest`; the
+    app never uses it.
+  - Docker in Windows-container mode counts as available, though it cannot run the Linux image.
+  - Without a usable sandbox the task fails with "task at risk tier 2 needs a container sandbox
+    … enable the project setting allowProcessSandbox", and the retry ladder runs it again.
+  - Since U-037, tasks of projects without a repository take the same path, so on any machine
+    with Docker but no image they all failed (the CI failures of the Desktop app and CI runs).
+- **Action (owner's decision; design in ADR 0101):**
+  1. Full-review tasks (tier 2+) always run in the container sandbox; the app no longer offers a
+     process fallback for them.
+  2. The desktop build names the published image (`ghcr.io/<owner>/forerunner-runner`, the
+     release's version, else `latest`) and the app pulls it when needed, with progress.
+  3. Docker readiness is checked (installed, running, Linux containers, image present) and shown
+     in Settings → Sandbox (Docker) with plain steps for each state and a Download button.
+  4. While the sandbox is not ready, full-review tasks wait (not failed, no retry used); the
+     Start dialog and the session summary say which tasks wait for Docker and what to do.
+  5. Tests do not depend on the CI machine's Docker: they pin the sandbox they test.
+- **Status:** open.
 
 ### U-078 Choose which Claude credential is used first
 
