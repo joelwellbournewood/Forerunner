@@ -123,8 +123,7 @@ function VoiceProviders({ voice }: { voice: AsyncState<VoiceStatusView> }) {
           Extensions
         </Link>{" "}
         (voice-deepgram for speech recognition, voice-cartesia or voice-elevenlabs for speech); a
-        cloud one needs its key. A change applies at the next voice session. FORERUNNER_VOICE_STT
-        and FORERUNNER_VOICE_TTS override both.
+        cloud one needs its key, typed on its row there. A change applies at the next voice session.
       </p>
     </div>
   );

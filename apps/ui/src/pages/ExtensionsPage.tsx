@@ -774,8 +774,8 @@ export function ExtensionsPage() {
                 Settings → Voice
               </Link>
               , which also shows the voice providers in force. A cloud voice capability here
-              (voice-deepgram, voice-cartesia, voice-elevenlabs) is used instead while it is on; it
-              needs its key.
+              (voice-deepgram, voice-cartesia, voice-elevenlabs) is used instead while it is on;
+              type its key in the box on its row.
             </p>
           ) : null}
           {g.kind === "model_provider" ? (
