@@ -187,6 +187,22 @@ export const TaskView = z.object({
 });
 export type TaskView = z.infer<typeof TaskView>;
 
+/**
+ * `POST /tasks/:id/transition` (U-061): the task after the move, and the change log entry the
+ * move wrote (the Tasks tab says it is logged and offers its Undo while `undoToken` is set).
+ */
+export const TaskTransitionView = TaskView.extend({
+  change: z
+    .object({
+      changeLogId: z.string(),
+      /** The change log id while the move can be undone (POST /changes/:id/undo); null for done. */
+      undoToken: z.string().nullable(),
+      sentence: z.string(),
+    })
+    .nullable(),
+});
+export type TaskTransitionView = z.infer<typeof TaskTransitionView>;
+
 export const MILESTONE_STATUSES = ["planned", "active", "done", "cancelled"] as const;
 
 export const MilestoneView = z.object({
@@ -383,6 +399,12 @@ export const ChatRequestBody = z.object({
   projectId: z.string().optional(),
   text: z.string().min(1),
   source: z.enum(["text", "voice", "phone"]).optional(),
+  /**
+   * The line was typed in a project's own Chat tab (U-056): its `projectId` is the turn's
+   * project, whatever the active project is. Elsewhere (the conversation panel, voice, the
+   * phone) the active project the registry recorded applies, so every channel uses one.
+   */
+  projectTab: z.boolean().optional(),
 });
 export type ChatRequestBody = z.infer<typeof ChatRequestBody>;
 
@@ -725,6 +747,34 @@ export const DesktopControlView = z.object({
   since: z.string().nullable(),
 });
 export type DesktopControlView = z.infer<typeof DesktopControlView>;
+
+/**
+ * One entry of a human's desktop allowlist (spec L, `@forerunner/capabilities` desktop): a name
+ * matches the executable or the window class; an object names `app`, `exe` or `windowClass`.
+ */
+export const DesktopAllowEntryView = z.union([
+  z.string(),
+  z.object({
+    app: z.string().optional(),
+    exe: z.string().optional(),
+    windowClass: z.string().optional(),
+    note: z.string().optional(),
+  }),
+]);
+export type DesktopAllowEntryView = z.infer<typeof DesktopAllowEntryView>;
+
+/**
+ * The heading of the Settings section that edits the desktop allowlist (U-060): the desktop
+ * approval card names it ("add it in Settings under …", `@forerunner/capabilities` desktop).
+ */
+export const DESKTOP_ALLOWLIST_CONTROL = "Desktop control: allowed applications";
+
+/** `GET` and `PUT /desktop/allowlist/:humanId` (Settings → Desktop control, U-060). */
+export const DesktopAllowlistView = z.object({
+  humanId: z.string(),
+  entries: z.array(DesktopAllowEntryView),
+});
+export type DesktopAllowlistView = z.infer<typeof DesktopAllowlistView>;
 
 /** `GET /desktop/status` (and the body of `POST /desktop/resume`): the controller's status. */
 export const DesktopStatusView = z.looseObject({
@@ -1354,6 +1404,11 @@ export const ChangeLogView = z.object({
   sentence: z.string(),
   /** True while POST /changes/:id/undo would work. */
   undoable: z.boolean(),
+  /**
+   * Why Undo would not work although the row is still `undoable` (U-061): the task moved on,
+   * the note was read. Absent or null when Undo is offered or the row is no longer undoable.
+   */
+  undoBlockedReason: z.string().nullable().optional(),
   createdAt: z.string(),
   version: z.number().int(),
 });

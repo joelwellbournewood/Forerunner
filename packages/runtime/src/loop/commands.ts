@@ -251,7 +251,31 @@ export class CommandLoop implements ConversationCommands {
     return viewOf(r, commandsOf(pending?.card));
   }
 
-  async undo(changeLogId: string | null, turn: CommandTurn): Promise<CommandResultView> {
+  /**
+   * Why a row's Undo would not work now, in plain words, or null when it would (U-061): what
+   * the change log shows in place of the button. The row's own human is the context.
+   */
+  async undoBlocked(row: ChangeLogRow): Promise<string | null> {
+    try {
+      return await this.executor.undoBlockedReason(row, await this.contextForRow(row));
+    } catch (e) {
+      this.logger.warn("could not check whether a change can be undone", {
+        changeLogId: row.id,
+        error: errorMessage(e),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Undo a change (spec Q.11). The undo is confirmed like the change it makes (U-057): one that
+   * raises or widens a limit comes back `pending` with its card, answered like any other.
+   */
+  async undo(
+    changeLogId: string | null,
+    turn: CommandTurn,
+    opts: { confirmation?: ConfirmationAnswer } = {},
+  ): Promise<CommandResultView> {
     const ctx = await this.contextFor(turn);
     const id = changeLogId ?? (await this.executor.undoable(turn.humanId))[0]?.id;
     if (!id) {
@@ -264,7 +288,7 @@ export class CommandLoop implements ConversationCommands {
     }
     const ended = await this.endedStart(id, turn.humanId);
     if (ended) return ended;
-    const r = await this.executor.undo(id, ctx);
+    const r = await this.executor.undo(id, ctx, opts);
     return viewOf(r, ["undo"]);
   }
 

@@ -7,6 +7,7 @@ import type {
   ConsolidationProposalView,
   ConsolidationReportView,
   DaemonDeviceView,
+  DesktopAllowEntryView,
   DesktopControlView,
   EmailCommandRowView,
   EmailSentRowView,
@@ -91,6 +92,7 @@ import type {
   ModelWatchReportSummary,
   QueueItemView,
 } from "../src/api/contracts.ts";
+import { TASK_TRANSITIONS } from "../src/lib/task-transitions.ts";
 import {
   AGENTS,
   AUDIT_EXPORT,
@@ -328,6 +330,13 @@ export interface FakeDaemonState {
   desktop: { revoked: boolean; revokedReason: string | null; control: DesktopControlView };
   /** Each project's speed-versus-quality slider (spec D.16), as its settings hold it. */
   speedQuality: Record<string, -1 | 0 | 1>;
+  /**
+   * Values `settings.set` stored for the keys the fake keeps no other state for (U-060):
+   * `key` for a global one, `key:projectId` for a project one; `/settings` reads them back.
+   */
+  settingValues: Record<string, unknown>;
+  /** `GET`/`PUT /desktop/allowlist/:humanId` (Settings → Desktop control, U-060). */
+  desktopAllowlist: DesktopAllowEntryView[];
   /** `GET /settings/models` with every temperature; `model.settings.set` changes it. */
   modelSettings: ModelSettingsView;
   acceptsTemperature: boolean;
@@ -559,6 +568,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     fastMode: {},
     desktop: { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } },
     speedQuality: {},
+    settingValues: {},
+    desktopAllowlist: [{ app: "code" }],
     modelSettings: clone(MODEL_SETTINGS),
     acceptsTemperature: options.acceptsTemperature ?? true,
     voiceSessions: new Map(),
@@ -1091,11 +1102,36 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (parsed.data.version !== task.version) {
       return errorBody(c, 409, "conflict", "task changed since you loaded it");
     }
+    const from = task.status;
     task.status = parsed.data.to;
     task.reason = parsed.data.reason;
     task.version += 1;
     task.updatedAt = new Date().toISOString();
-    return c.json(task);
+    // As the daemon (U-061): the registry's task.transition, logged as `ui` with the reason;
+    // a cancel is undone by reopening, done stays done.
+    const reversible =
+      parsed.data.to === "cancelled" ? from !== "cancelled" : allowedBack(parsed.data.to, from);
+    const sentence = `Moved the task "${task.title}" from ${from} to ${parsed.data.to}.${reversible ? " Undo." : ""}`;
+    const entry = pushChange({
+      commands: [
+        {
+          name: "task.transition",
+          params: { task: task.id, to: parsed.data.to, project: task.projectId },
+        },
+      ],
+      before: { task_id: task.id, status: from, title: task.title },
+      after: { task_id: task.id, status: parsed.data.to, title: task.title },
+      scope: "project",
+      projectId: task.projectId,
+      source: "ui",
+      wordsUsed: parsed.data.reason,
+      sentence,
+      reversible,
+    });
+    return c.json({
+      ...task,
+      change: { changeLogId: entry.id, undoToken: reversible ? entry.id : null, sentence },
+    });
   });
   app.post("/tasks/:id/dependencies", async (c) => {
     const task = state.tasks.find((t) => t.id === c.req.param("id"));
@@ -1380,7 +1416,77 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json(m);
   });
 
-  const chatReply = (text: string, projectId: string | undefined): ChatReplyView => {
+  /** A change log row as the daemon records one (newest first). */
+  const pushChange = (row: {
+    commands: unknown[];
+    before: unknown;
+    after: unknown;
+    scope: ChangeLogView["scope"];
+    projectId: string | null;
+    source: string;
+    wordsUsed: string;
+    sentence: string;
+    reversible: boolean;
+  }): ChangeLogView => {
+    const entry: ChangeLogView = {
+      id: nextId("chg"),
+      humanId: ME.id,
+      agentId: "agent_alice",
+      wordsUsed: row.wordsUsed,
+      commands: row.commands,
+      before: row.before,
+      after: row.after,
+      scope: row.scope,
+      projectId: row.projectId,
+      expiresAt: null,
+      undoState: row.reversible ? "undoable" : "irreversible",
+      undoneAt: null,
+      source: row.source,
+      sentence: row.sentence,
+      undoable: row.reversible,
+      createdAt: new Date().toISOString(),
+      version: 1,
+    };
+    state.changes.unshift(entry);
+    return entry;
+  };
+  /** A task row as the daemon's task.create writes one. */
+  const newTask = (projectId: string, title: string, status: string): TaskView => ({
+    id: nextId("task"),
+    projectId,
+    milestoneId: null,
+    title,
+    outcome: "",
+    acceptanceCriteria: [],
+    riskTier: 1,
+    status,
+    priority: 0,
+    claimedBy: null,
+    claimExpires: null,
+    dependsOn: [],
+    budget: money(0),
+    estimate: money(0),
+    actual: money(0),
+    specialist: null,
+    attempt: 0,
+    prUrl: null,
+    branch: null,
+    reason: "created by chat",
+    updatedAt: new Date().toISOString(),
+    version: 1,
+  });
+  /** The workflow graph's way back from `to` to `from` (the daemon's TASK_TRANSITIONS). */
+  const allowedBack = (to: string, from: string) => (TASK_TRANSITIONS[to] ?? []).includes(from);
+
+  const chatReply = (
+    text: string,
+    projectId: string | undefined,
+    projectTab = false,
+  ): ChatReplyView => {
+    // As the daemon (U-056): the recorded active project is every channel's; a project's own
+    // Chat tab wins for its turn only, and the reply names the active project, not the tab's.
+    const active = () => state.projects.find((p) => p.active)?.id ?? null;
+    const turnProject = projectTab && projectId ? projectId : (active() ?? projectId ?? null);
     const base = {
       actions: [] as ChatReplyView["actions"],
       pendingConfirmation: null as ChatReplyView["pendingConfirmation"],
@@ -1388,9 +1494,62 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       ttftMs: 420,
       cost: money(12_000),
       transcriptId: nextId("tr"),
-      activeProjectId: projectId ?? null,
+      activeProjectId: active() ?? (projectTab ? null : (projectId ?? null)),
     };
     const lower = text.trim().toLowerCase();
+    const switchTo = /^switch to (.+)$/i.exec(text.trim());
+    if (switchTo) {
+      const wanted = (switchTo[1] ?? "").toLowerCase();
+      const target = state.projects.find((p) => p.name.toLowerCase().includes(wanted));
+      if (target) {
+        const before = active();
+        for (const p of state.projects) p.active = p.id === target.id;
+        const sentence = `Switched the active project to ${target.name}. Undo.`;
+        const entry = pushChange({
+          commands: [{ name: "project.switch", params: { project: target.id } }],
+          before: { activeProject: before },
+          after: { activeProject: target.id },
+          scope: "global",
+          projectId: target.id,
+          source: "chat",
+          wordsUsed: text,
+          sentence,
+          reversible: true,
+        });
+        return {
+          ...base,
+          activeProjectId: target.id,
+          reply: sentence,
+          actions: [
+            { kind: "project.switch", summary: sentence, id: entry.id, undoToken: entry.id },
+          ],
+        };
+      }
+    }
+    const addTask = /^add a task:?\s+(.+)$/i.exec(text.trim());
+    if (addTask && turnProject) {
+      const target = state.projects.find((p) => p.id === turnProject);
+      const title = (addTask[1] ?? "").trim();
+      const task = newTask(turnProject, title, "ready");
+      state.tasks.unshift(task);
+      const sentence = `Created the ready task "${title}" in ${target?.name ?? turnProject}. Undo.`;
+      const entry = pushChange({
+        commands: [{ name: "task.create", params: { title, project: turnProject } }],
+        before: { task_id: null, project_id: turnProject },
+        after: { task_id: task.id, project_id: turnProject, status: "ready" },
+        scope: "project",
+        projectId: turnProject,
+        source: "chat",
+        wordsUsed: text,
+        sentence,
+        reversible: true,
+      });
+      return {
+        ...base,
+        reply: sentence,
+        actions: [{ kind: "task.create", summary: sentence, id: entry.id, undoToken: entry.id }],
+      };
+    }
     if (state.pendingConfirmation && lower === "yes") {
       const confirmed = state.pendingConfirmation;
       state.pendingConfirmation = null;
@@ -2713,7 +2872,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     language: "low",
     calibration: "medium",
     handover: "medium",
+    voice_alerts: "low",
+    model_watch: "medium",
   };
+  /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
+  const settingSlot = (key: string, projectId: string | null) =>
+    projectId ? `${key}:${projectId}` : key;
+  const PROJECT_KEYS = new Set([
+    "small_project_mode",
+    "critic_ceiling",
+    "session_reserve_share",
+    "handover",
+    "shared_with",
+  ]);
   const plan = (name: string, params: Record<string, unknown>): PlanOutcome => {
     const projectRef = typeof params.project === "string" ? params.project : undefined;
     if (name === "email.mode.set") {
@@ -3461,10 +3632,62 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     };
     return c.json(result);
   });
-  const withUndoable = (ch: ChangeLogView, now: string): ChangeLogView => ({
-    ...ch,
-    undoable: ch.undoState === "undoable" && (!ch.expiresAt || ch.expiresAt > now),
-  });
+  /** As the daemon's `undoBlocked` (U-061): why a still-undoable row's Undo would not work. */
+  const undoBlocked = (ch: ChangeLogView): string | null => {
+    const name = (ch.commands[0] as { name?: string } | undefined)?.name;
+    const after = (ch.after ?? {}) as { task_id?: string; status?: string; title?: string };
+    const before = (ch.before ?? {}) as { status?: string };
+    if (name !== "task.create" && name !== "task.transition") return null;
+    const task = state.tasks.find((t) => t.id === after.task_id);
+    if (!task) return "the task no longer exists";
+    if (name === "task.create") {
+      if (task.status === "cancelled") return `the task "${task.title}" is already cancelled`;
+      return (TASK_TRANSITIONS[task.status] ?? []).includes("cancelled")
+        ? null
+        : `the task "${task.title}" is ${task.status}; a ${task.status} task cannot be cancelled, so its creation cannot be undone`;
+    }
+    if (task.status !== after.status) {
+      return `the task "${task.title}" moved on to ${task.status} since; undo would not put it back where it was`;
+    }
+    return task.status === "cancelled" || allowedBack(task.status, before.status ?? "")
+      ? null
+      : `a ${task.status} task cannot go back to ${before.status}`;
+  };
+  const withUndoable = (ch: ChangeLogView, now: string): ChangeLogView => {
+    const open = ch.undoState === "undoable" && (!ch.expiresAt || ch.expiresAt > now);
+    const blocked = open ? undoBlocked(ch) : null;
+    return {
+      ...ch,
+      undoable: open && !blocked,
+      ...(blocked ? { undoBlockedReason: blocked } : {}),
+    };
+  };
+  /** The modes narrowest first: an undo to a wider one asks for the device (U-057). */
+  const EMAIL_RANK: Record<string, number> = {
+    off: 0,
+    read_only: 1,
+    draft_only: 2,
+    allowlist: 3,
+    full_discretion: 4,
+  };
+  /** As the daemon's `undoRisk` (U-057): an undo that raises or widens asks like the raise. */
+  const undoRisk = (ch: ChangeLogView): Risk => {
+    const name = (ch.commands[0] as { name?: string } | undefined)?.name;
+    const before = (ch.before ?? {}) as Record<string, unknown>;
+    const after = (ch.after ?? {}) as Record<string, unknown>;
+    if (
+      name === "budget.set" &&
+      typeof before.monthlyCapChf === "number" &&
+      typeof after.monthlyCapChf === "number"
+    ) {
+      return before.monthlyCapChf > after.monthlyCapChf ? "high" : "low";
+    }
+    if (name === "email.mode.set" && typeof before.mode === "string") {
+      const now = emailOf(String(before.agent_id ?? "agent_alice")).settings.mode;
+      return (EMAIL_RANK[before.mode] ?? 0) > (EMAIL_RANK[now] ?? 0) ? "high" : "low";
+    }
+    return "low";
+  };
   app.get("/changes", (c) => {
     const projectId = c.req.query("projectId");
     const onlyUndoable = c.req.query("undoable") === "true";
@@ -3479,16 +3702,66 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const entry = state.changes.find((ch) => ch.id === c.req.param("id"));
     if (!entry) return c.json(noPending(c.req.param("id")));
     const now = new Date().toISOString();
-    if (!withUndoable(entry, now).undoable) {
+    const view = withUndoable(entry, now);
+    if (!view.undoable) {
       const result: CommandResultJson = {
         status: "refused",
-        reason: `change is ${entry.undoState}`,
+        reason:
+          view.undoBlockedReason ?? `this change can no longer be undone (${entry.undoState})`,
         code: "validation",
         card: null,
         commands: ["undo"],
       };
       return c.json(result);
     }
+    // U-057: an undo that raises or widens waits for the confirmation that raise needs.
+    const risk = undoRisk(entry);
+    const decision = decide(risk);
+    if (decision !== "act") {
+      const id = nextId("pend");
+      const at = new Date();
+      const expiresAt = new Date(at.getTime() + 10 * 60_000).toISOString();
+      const what = entry.sentence.replace(/ Undo\.$/, "");
+      const undoCard = card(
+        {
+          command: "undo",
+          what: `undo: ${what}`,
+          oldValue: "as it is now",
+          newValue: "as it was before this change",
+          scope: entry.scope,
+          sentence: `Undo ${what}.`,
+          projectId: entry.projectId,
+        },
+        risk,
+      );
+      const readback = `${undoCard.what}. ${
+        decision === "needs_yes" ? "Say yes to confirm." : "Confirm in the app on a paired device."
+      }`;
+      state.pendingCommands.set(id, {
+        card: undoCard,
+        decision,
+        apply: () => performUndo(entry),
+        createdAt: at.toISOString(),
+        expiresAt,
+        readback,
+        wordsUsed: "undo",
+      });
+      emit("inbox.changed", { blockingCount: blockingCount() });
+      const result: CommandResultJson = {
+        status: "pending",
+        readback,
+        pendingId: id,
+        decision,
+        expiresAt,
+        card: undoCard,
+        commands: ["undo"],
+      };
+      return c.json(result);
+    }
+    return c.json(performUndo(entry));
+  });
+  const performUndo = (entry: ChangeLogView): CommandResultJson => {
+    const now = new Date().toISOString();
     // Put the value back for the commands the fake applies to its state.
     const first = (entry.commands[0] ?? null) as { name?: string } | null;
     const before = (Array.isArray(entry.before) ? entry.before[0] : entry.before) as Record<
@@ -3529,11 +3802,47 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       project.budget = money(Math.round((before.budgetChf * 1_000_000) / 0.8));
       emit("project.changed", { id: project.id });
     }
+    if (first?.name === "budget.set" && typeof before?.monthlyCapChf === "number") {
+      me.monthlyCap = money(Math.round((before.monthlyCapChf * 1_000_000) / 0.8));
+    }
+    if (first?.name === "settings.set" && typeof before?.key === "string") {
+      const slot = settingSlot(
+        before.key,
+        typeof before.project_id === "string" ? before.project_id : null,
+      );
+      if (before.value === null || before.value === undefined) delete state.settingValues[slot];
+      else state.settingValues[slot] = before.value;
+      if (before.key === "default_autonomy" && typeof before.value === "number") {
+        me.defaultAutonomy = before.value;
+      }
+    }
+    let sentence = `Undone: ${entry.sentence.replace(/ Undo\.$/, ".")}`;
+    // As the daemon (U-061): a cancel is undone by reopening, a creation by cancelling.
+    const after = (entry.after ?? {}) as { task_id?: string; status?: string; title?: string };
+    const task = state.tasks.find((t) => t.id === after.task_id);
+    if (first?.name === "task.transition" && task && typeof before?.status === "string") {
+      const previous = before.status;
+      const reopenTo = ["draft", "ready", "needs_human", "failed"].includes(previous)
+        ? previous
+        : "ready";
+      task.status = task.status === "cancelled" ? reopenTo : previous;
+      task.version += 1;
+      sentence =
+        after.status === "cancelled"
+          ? reopenTo === previous
+            ? `Undone: reopened the task "${task.title}"; it is ${reopenTo} again.`
+            : `Undone: reopened the task "${task.title}" as ${reopenTo} (it was ${previous}; a session picks it up again).`
+          : `Undone: the task "${task.title}" is back to ${previous}.`;
+    }
+    if (first?.name === "task.create" && task) {
+      task.status = "cancelled";
+      task.version += 1;
+      sentence = `Undone: cancelled the task "${task.title}" you created.`;
+    }
     entry.undoState = "undone";
     entry.undoneAt = now;
     entry.undoable = false;
     entry.version += 1;
-    const sentence = `Undone: ${entry.sentence.replace(/ Undo\.$/, ".")}`;
     const undoRow: ChangeLogView = {
       ...entry,
       id: nextId("chg"),
@@ -3544,12 +3853,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       undoneAt: null,
       undoable: false,
       wordsUsed: "undo",
+      source: "ui",
       sentence,
       createdAt: now,
       version: 1,
     };
     state.changes.unshift(undoRow);
-    const result: CommandResultJson = {
+    return {
       status: "done",
       sentence,
       changeLogId: undoRow.id,
@@ -3557,8 +3867,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       card: null,
       commands: ["undo"],
     };
-    return c.json(result);
-  });
+  };
 
   app.get("/projects/:id/queue", (c) => {
     const id = c.req.param("id");

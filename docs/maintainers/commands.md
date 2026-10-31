@@ -267,7 +267,35 @@ closure kept from the run, or after a restart the command's `undo(params, before
 the row; the row becomes `undone`, an `undo` row is logged ("Undone: the active project is
 back to PharmaWatch.") and posted. Only the human the change was made for (`row.human_id`)
 may undo it; an agent's undo and another human's undo or manual `revert` are refused with
-`approval_required`. `undoable(humanId, projectId?)` lists the candidates. Temporary changes (`expires_at`) get a Clock timer; at the time the executor
+`approval_required`. `undoable(humanId, projectId?)` lists the candidates.
+
+An undo is confirmed like the change it makes (U-057, ADR 0105). `undoRiskOf(row)` takes the
+highest `undoRisk(params, before, after, ctx)` of the row's commands, the risk of putting
+`before` back on today's state; the undo then goes through the same gate as a forward change
+(`act`, a pending card answered with a yes or tap, or the paired device), with an undo card
+("undo: the monthly cap", old and new value swapped) and the Inbox request. `budget.set`:
+putting back a higher cap is the raise's risk (the monthly ceiling, or a cap above it: high;
+a cap within it: medium), a lower one acts at once; `email.mode.set`: a wider mode (or email
+commands back on) is high, a narrower one acts at once; `autonomy.set`: a higher level asks as
+raising it would; `settings.set`: the restored value's `settingRisk`, except the safe side a
+spec names with `narrows` (a lower default autonomy, fast mode off, fewer people, a lower
+highest model, less the model watch may do, a monthly job off); `model.settings.set`: the
+value's risk. A command without `undoRisk` undoes at once. The confirmed undo re-reads the row
+(`performUndo`), so an undo answered after the row changed is refused.
+
+An undo that cannot work says so (U-061): `undoBlockedReason(row)` is the row state (undone,
+reverted) and each command's `undoBlocked` in plain words, checked before the gate and again
+before the run, and `CommandLoop.undoBlocked` gives it to `GET /changes`, which offers no Undo
+then. `task.create` cannot be undone once the task cannot be cancelled; `task.transition` once
+the task moved on; `note.add` once a session read the note; `session.pause` once the session
+ended; `capability.grant` once the extension is gone. State-based undos that used to return
+without a change now throw. `undoSentence` gives the sentence when "<what> is back to <old
+value>" would not be true (`task.create`: "Undone: cancelled the task ..."; `task.transition`:
+"Undone: reopened the task ..."). A move to `cancelled` is reversible: its undo reopens the
+task through `TaskRepo.reopen` (the status before the cancel when a person can set it, else
+`ready`); a move to `done` stays final.
+
+Temporary changes (`expires_at`) get a Clock timer; at the time the executor
 reverts them (same undo), marks the row `expired`, logs a revert row (`undo_state`
 `irreversible`, commands carry `revert_of`) with "Reverted tonight's session budget for
 PharmaWatch to CHF 5; the window until 06:00 ended." and posts it. `resumeScheduled(ctxFor)`

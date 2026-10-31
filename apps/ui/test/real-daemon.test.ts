@@ -817,4 +817,43 @@ describe("the UI client against the real daemon: a task a session is running", (
       reason: "Cancelled in the app",
     });
   });
+
+  it("a task move is logged with Undo; an undo that cannot work says why (U-061)", async () => {
+    const task = await client.createTask(projectId, {
+      title: "Move me",
+      outcome: "moved",
+      acceptanceCriteria: [],
+      riskTier: 1,
+      status: "ready",
+      priority: 1,
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    const moved = await client.transitionTask(task.id, {
+      version: task.version,
+      to: "cancelled",
+      reason: "not needed",
+    });
+    expect(moved.status).toBe("cancelled");
+    expect(moved.change?.undoToken).toBe(moved.change?.changeLogId);
+    const undone = await client.undoChange(moved.change?.undoToken ?? "");
+    expect(undone.sentence).toBe('Undone: reopened the task "Move me"; it is ready again.');
+    const created = await client.chat({
+      humanId,
+      agentId,
+      projectId,
+      projectTab: true,
+      text: "add a task: finish me",
+      source: "text",
+    });
+    const changeId = created.actions[0]?.id ?? "";
+    const made = (await client.tasks(projectId)).find((t) => t.title === "finish me");
+    for (const to of ["claimed", "in_progress", "in_review", "done"] as const) {
+      const t = await rt.store.task.mustGet(made?.id ?? "");
+      await rt.store.task.transition(t.id, t.version, to, "work", { agentId });
+    }
+    const row = (await client.changes({ projectId })).find((r) => r.id === changeId);
+    expect(row).toMatchObject({ undoable: false, undoState: "undoable" });
+    expect(row?.undoBlockedReason).toContain("a done task cannot be cancelled");
+  });
 });

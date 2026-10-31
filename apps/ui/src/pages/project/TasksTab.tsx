@@ -119,6 +119,10 @@ export function TasksTab({
   const [editing, setEditing] = useState<TaskView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const byId = useMemo(() => new Map((tasks.data ?? []).map((t) => [t.id, t])), [tasks.data]);
+  // The last move, as the change log has it (U-061): its sentence and, while it can be undone,
+  // the change log id its Undo sends.
+  const [moved, setMoved] = useState<{ sentence: string; undoToken: string | null } | null>(null);
+  const [undoBusy, setUndoBusy] = useState(false);
 
   const byTask = useMemo(() => latestRunByTask(runs.data ?? []), [runs.data]);
   const specialists = useMemo(
@@ -132,8 +136,13 @@ export function TasksTab({
 
   const doTransition = async (task: TaskView, to: string, reason: string) => {
     try {
-      const updated = await client.transitionTask(task.id, { version: task.version, to, reason });
+      const { change, ...updated } = await client.transitionTask(task.id, {
+        version: task.version,
+        to,
+        reason,
+      });
       tasks.setData((prev) => (prev ? prev.map((t) => (t.id === updated.id ? updated : t)) : prev));
+      setMoved(change ? { sentence: change.sentence, undoToken: change.undoToken } : null);
       setError(null);
     } catch (err) {
       setError(describeError(err));
@@ -200,6 +209,41 @@ export function TasksTab({
         </Button>
       </div>
       {error ? <ErrorBanner message={error} /> : null}
+      {moved ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="task-moved">
+          <output data-testid="task-moved-sentence">{moved.sentence}</output>
+          {moved.undoToken ? (
+            <Button
+              variant="ghost"
+              disabled={undoBusy}
+              onClick={() => {
+                const id = moved.undoToken;
+                if (!id) return;
+                setUndoBusy(true);
+                void client
+                  .undoChange(id)
+                  .then((r) => {
+                    if (r.status === "done" || r.status === "partial") {
+                      setMoved({ sentence: r.sentence ?? "Undone.", undoToken: null });
+                      setError(null);
+                      tasks.reload();
+                    } else {
+                      setError(`Not undone: ${r.reason ?? r.status}.`);
+                    }
+                  })
+                  .catch((err: unknown) => setError(describeError(err)))
+                  .finally(() => setUndoBusy(false));
+              }}
+              data-testid="task-moved-undo"
+            >
+              Undo
+            </Button>
+          ) : null}
+          <Link to="/changes" className="text-xs text-blue-700 hover:underline dark:text-blue-300">
+            In Changes
+          </Link>
+        </div>
+      ) : null}
       {tasks.loading && !tasks.data ? <Loading what="tasks" /> : null}
       {tasks.error && !tasks.data ? (
         <ErrorBanner message={tasks.error} onRetry={tasks.reload} />

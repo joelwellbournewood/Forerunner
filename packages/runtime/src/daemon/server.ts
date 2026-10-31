@@ -1,7 +1,15 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
-import { errorMessage, ForerunnerError, join, log, osFacts, redact } from "@forerunner/platform";
+import {
+  type ErrorCode,
+  errorMessage,
+  ForerunnerError,
+  join,
+  log,
+  osFacts,
+  redact,
+} from "@forerunner/platform";
 import type { LessonStatus, MilestoneRow, SessionRow } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
@@ -107,6 +115,7 @@ import {
   type StartSessionView,
   StartVoiceSessionBody,
   type SyncHealth,
+  type TaskTransitionView,
   TransitionTaskBody,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
@@ -932,20 +941,52 @@ export function createDaemonApp(
     return c.json(milestoneView(m));
   });
 
+  // A move in the Tasks tab (U-061): the registry's `task.transition`, so the move is in the
+  // change log as `ui` with the dialog's reason, and a cancel can be undone (reopened). The
+  // dialog's Confirm is the tap a cancel or a done asks for; a stale version is refused as the
+  // store refuses it.
   app.post("/tasks/:id/transition", async (c) => {
     const body = await parse(c, TransitionTaskBody);
-    const t = await rt.store.task.transition(
-      c.req.param("id"),
-      body.version,
-      body.to as never,
-      body.reason,
-      { humanId: rt.human.id },
+    const task = await rt.store.task.mustGet(c.req.param("id"));
+    if (task.version !== body.version) {
+      throw new ForerunnerError(
+        "version_conflict",
+        `the task changed since it was shown (version ${task.version}, not ${body.version}); reload and try again`,
+        { details: { taskId: task.id, expected: body.version, actual: task.version } },
+      );
+    }
+    const turn = await turnFor({
+      wordsUsed: body.reason,
+      source: "ui",
+      projectId: task.project_id,
+    });
+    const r = await rt.commands.execute(
+      {
+        name: "task.transition",
+        params: { task: task.id, to: body.to, reason: body.reason, project: task.project_id },
+      },
+      turn,
+      { confirmation: { kind: "tap", by: { kind: "human", id: rt.human.id } } },
     );
+    if (r.status !== "done" && r.status !== "partial") {
+      throw new ForerunnerError(
+        (r.code ?? "validation") as ErrorCode,
+        r.reason ?? `the task was not moved (${r.status})`,
+        { details: { taskId: task.id, to: body.to } },
+      );
+    }
+    const t = await rt.store.task.mustGet(task.id);
     // A person's move (Cancel, Mark failed, Needs me, Send to review) stops the task's run if
     // one is going; the session goes on with its other tasks and leaves the task as set (U-039).
     rt.kill.stopTask(t.id, `${t.status} by you: ${body.reason}`);
     rt.events.emit("project", { id: t.project_id });
-    return c.json(taskView(t, chf(), specialistLimit));
+    const view: TaskTransitionView = {
+      ...taskView(t, chf(), specialistLimit),
+      change: r.changeLogId
+        ? { changeLogId: r.changeLogId, undoToken: r.undoToken ?? null, sentence: r.sentence ?? "" }
+        : null,
+    };
+    return c.json(view);
   });
 
   // The tasks a task waits on, changed after it was created (U-040): checked as at creation,
@@ -1680,10 +1721,21 @@ export function createDaemonApp(
       limit: intQuery(c, "limit", 100, 1000),
     });
     const now = rt.clock.nowIso();
-    return c.json(rows.map((row) => changeLogView(row, now)));
+    // U-061: Undo is offered only when it would work; otherwise the row says why.
+    const views = await Promise.all(
+      rows.map(async (row) => {
+        const view = changeLogView(row, now);
+        if (!view.undoable) return view;
+        const blocked = await rt.commands.undoBlocked(row);
+        return blocked ? { ...view, undoable: false, undoBlockedReason: blocked } : view;
+      }),
+    );
+    return c.json(c.req.query("undoable") === "true" ? views.filter((v) => v.undoable) : views);
   });
+  // The Changes screen's, the settings dialog's and the email page's Undo: logged as `ui`
+  // (U-061), confirmed like the change it makes (U-057: a raise comes back pending).
   app.post("/changes/:id/undo", async (c) => {
-    const turn = await turnFor({ wordsUsed: "undo" });
+    const turn = await turnFor({ wordsUsed: "undo", source: "ui" });
     return c.json(commandResult(await rt.commands.undo(c.req.param("id"), turn)));
   });
 

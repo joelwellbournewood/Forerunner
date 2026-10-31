@@ -98,6 +98,14 @@ export const capabilityGrant: CommandDef<CapabilityGrantParams> = {
       sentence: sentenceOf(row.name, p.permissions),
     };
   },
+  // U-061: an extension removed since has nothing left to take back.
+  async undoBlocked(_p, before, _after, ctx) {
+    const b = asObject(before);
+    if (typeof b.extension_id !== "string") return "this change does not name the extension";
+    return (await ctx.store.extension.get(b.extension_id))
+      ? null
+      : "the extension was removed since; there is nothing to take back";
+  },
   async undo(_p, before, _after, ctx) {
     const b = asObject(before);
     if (typeof b.extension_id !== "string") return;

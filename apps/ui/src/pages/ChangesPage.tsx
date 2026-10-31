@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { type ChangeLogView, describeError } from "../api/client.ts";
+import { type ChangeLogView, type CommandResultJson, describeError } from "../api/client.ts";
+import { CommandResult } from "../components/ChangeCardDialog.tsx";
 import { RouteMissing } from "../components/RouteMissing.tsx";
 import { Badge, Button, ErrorBanner, INPUT_CLASS, Loading, type Tone } from "../components/ui.tsx";
 import { formatDateTime } from "../lib/time.ts";
@@ -60,18 +61,52 @@ export function ChangesPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // An undo that raises a limit waits for its confirmation like the change itself (U-057).
+  const [asking, setAsking] = useState<CommandResultJson | null>(null);
+  const desktopDeviceId = useUiState((s) => s.me?.desktopDeviceId ?? null);
   const projectName = (id: string | null) =>
     id ? (projects.find((p) => p.id === id)?.name ?? id) : null;
   const humanName = (id: string | null) => (id && me && id === me.id ? me.name : id);
+
+  /** What an undo or its confirmation answered, as the page says it (U-061: never "Undone" for nothing). */
+  const show = (r: CommandResultJson) => {
+    setAsking(r.status === "pending" ? r : null);
+    if (r.status === "done" || r.status === "partial") setNote(r.sentence ?? "Undone.");
+    else if (r.status === "cancelled") setNote("Undo cancelled. Nothing changed.");
+    else if (r.status === "refused") setError(`Not undone: ${r.reason ?? "refused"}.`);
+  };
 
   const undo = async (id: string) => {
     if (busy) return;
     setBusy(id);
     setError(null);
+    setNote(null);
     try {
-      const r = await client.undoChange(id);
-      if (r.status === "done" || r.status === "partial") setNote(r.sentence ?? "Undone.");
-      else setError(`Undo ${r.status}${r.reason ? `: ${r.reason}` : ""}`);
+      show(await client.undoChange(id));
+      changes.reload();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Yes, or this PC for a high-risk undo (ADR 0030: the daemon checks the device row); No cancels.
+  const answer = async (yes: boolean) => {
+    if (busy || asking?.status !== "pending" || !asking.pendingId) return;
+    const pendingId = asking.pendingId;
+    setBusy(pendingId);
+    setError(null);
+    try {
+      const r = await client.confirmCommand(
+        pendingId,
+        !yes
+          ? { answer: "no" }
+          : asking.decision === "needs_device"
+            ? { answer: "device", ...(desktopDeviceId ? { deviceId: desktopDeviceId } : {}) }
+            : { answer: "tap" },
+      );
+      show(r);
       changes.reload();
     } catch (err) {
       setError(describeError(err));
@@ -127,6 +162,22 @@ export function ChangesPage() {
         <output className="block text-sm" data-testid="changes-note">
           {note}
         </output>
+      ) : null}
+      {asking ? (
+        <div
+          className="rounded border border-amber-300 p-3 dark:border-amber-700"
+          data-testid="changes-undo-pending"
+        >
+          <p className="mb-2 text-sm">
+            Undoing this puts a value back that needs your confirmation, as setting it would.
+          </p>
+          <CommandResult
+            result={asking}
+            busy={busy !== null}
+            onConfirm={(a) => void answer(a === "yes")}
+            onDismiss={() => setAsking(null)}
+          />
+        </div>
       ) : null}
       {changes.data && changes.data.length === 0 ? (
         <p className="text-sm text-neutral-500" data-testid="changes-empty">
@@ -209,6 +260,13 @@ export function ChangesPage() {
                   Undo
                 </Button>
               </div>
+            ) : c.undoBlockedReason ? (
+              <p
+                className="mt-2 text-xs text-neutral-600 dark:text-neutral-400"
+                data-testid="change-undo-blocked"
+              >
+                Cannot be undone now: {c.undoBlockedReason}.
+              </p>
             ) : null}
           </li>
         ))}

@@ -716,8 +716,58 @@ export class CommandExecutor {
     );
   }
 
-  /** One-click undo while the row is undoable. Only the human the change was made for may undo. */
-  async undo(changeLogId: string, ctx: CommandContext): Promise<ExecuteResult> {
+  /**
+   * Why a change log row cannot be undone now, in plain words, or null when it can (U-061):
+   * the row's state, its window, and each command's own check (`undoBlocked`: the task moved
+   * on, the note was read). The Changes screen offers Undo only when this is null.
+   */
+  async undoBlockedReason(row: ChangeLogRow, ctx: CommandContext): Promise<string | null> {
+    if (row.undo_state !== "undoable") {
+      return row.undo_state === "undone"
+        ? "this change was already undone"
+        : row.undo_state === "expired"
+          ? "this change already reverted on its own"
+          : "this change cannot be undone";
+    }
+    if (row.expires_at && Date.parse(row.expires_at) <= this.clock.now()) {
+      return "this change already reverted on its own";
+    }
+    for (const step of stepsOf(row)) {
+      const def = this.registry.get(step.name);
+      if (!def?.undoBlocked) continue;
+      const reason = await def.undoBlocked(step.params, step.before, step.after, ctx);
+      if (reason) return reason;
+    }
+    return null;
+  }
+
+  /**
+   * The risk of undoing a row (U-057): the highest of its commands' `undoRisk` (the risk of
+   * putting the old value back on today's state); a command without one is low.
+   */
+  async undoRiskOf(row: ChangeLogRow, ctx: CommandContext): Promise<Risk> {
+    let risk: Risk = "low";
+    for (const step of stepsOf(row)) {
+      const def = this.registry.get(step.name);
+      if (!def?.undoRisk) continue;
+      const r = await def.undoRisk(step.params, step.before, step.after, ctx);
+      if (RISK_RANK[r] > RISK_RANK[risk]) risk = r;
+    }
+    return risk;
+  }
+
+  /**
+   * One-click undo while the row is undoable. Only the human the change was made for may undo.
+   * The undo goes through the same confirmation as a forward change (U-057): the risk of the
+   * value it restores decides, so undoing a lowered monthly cap (a raise) waits for this PC or
+   * the phone with biometric, and an undo that cannot work is refused in plain words (U-061).
+   */
+  async undo(
+    changeLogId: string,
+    ctx: CommandContext,
+    opts: { confirmation?: ConfirmationAnswer } = {},
+  ): Promise<ExecuteResult> {
+    this.sweepPending();
     const row = await this.store.changeLog.get(changeLogId);
     const card = this.cards.get(changeLogId) ?? null;
     if (!row) {
@@ -756,7 +806,35 @@ export class CommandExecutor {
         code: "validation",
       };
     }
+    let risk: Risk;
     try {
+      const blocked = await this.undoBlockedReason(row, ctx);
+      if (blocked) return { status: "refused", card, reason: blocked, code: "validation" };
+      risk = await this.undoRiskOf(row, ctx);
+    } catch (e) {
+      return refusal(e, card);
+    }
+    const decide = (r: Risk) =>
+      this.policy.decide(r, ctx.actor, ctx.source, { limitChange: false });
+    return this.gate({
+      decision: decide(risk),
+      card: undoCardOf(row, card, risk),
+      ctx,
+      perform: () => this.performUndo(changeLogId, ctx),
+      redecide: async () =>
+        decide(await this.undoRiskOf(await this.store.changeLog.mustGet(changeLogId), ctx)),
+      answer: opts.confirmation,
+    });
+  }
+
+  /** The undo itself, once confirmed: the row is read again, since the card may be minutes old. */
+  private async performUndo(changeLogId: string, ctx: CommandContext): Promise<ExecuteResult> {
+    const row = await this.store.changeLog.get(changeLogId);
+    const card = this.cards.get(changeLogId) ?? null;
+    if (!row) return { status: "refused", card, reason: "no such change", code: "not_found" };
+    try {
+      const blocked = await this.undoBlockedReason(row, ctx);
+      if (blocked) return { status: "refused", card, reason: blocked, code: "validation" };
       await this.runUndo(row, ctx);
     } catch (e) {
       return refusal(e, card);
@@ -764,9 +842,15 @@ export class CommandExecutor {
     const current = await this.store.changeLog.mustGet(changeLogId);
     await this.store.changeLog.markUndone(changeLogId, current.version);
     this.clearTimers(changeLogId);
-    const sentence = card
-      ? `Undone: ${card.what} is back to ${card.oldValue}.`
-      : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`;
+    const steps = stepsOf(row);
+    const single = steps.length === 1 ? (steps[0] as UndoStep) : null;
+    const own = single ? this.registry.get(single.name)?.undoSentence : undefined;
+    const sentence =
+      single && own
+        ? own(single.params, single.before, single.after)
+        : card
+          ? `Undone: ${card.what} is back to ${card.oldValue}.`
+          : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`;
     const undoRow = await this.store.changeLog.record({
       human_id: ctx.humanId,
       agent_id: ctx.agentId,
@@ -806,18 +890,16 @@ export class CommandExecutor {
   private async runUndo(row: ChangeLogRow, ctx: CommandContext): Promise<void> {
     const closure = this.undoClosures.get(row.id);
     if (closure) return closure();
-    const commands = row.commands as { name: string; params: unknown }[];
-    const befores = commands.length === 1 ? [row.before] : (row.before as JsonValue[]);
-    const afters = commands.length === 1 ? [row.after] : (row.after as JsonValue[]);
-    for (let i = commands.length - 1; i >= 0; i--) {
-      const c = commands[i] as { name: string; params: unknown };
+    const steps = stepsOf(row);
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const c = steps[i] as UndoStep;
       const def = this.registry.get(c.name);
       if (!def?.undo) {
         throw new ForerunnerError("not_supported", `${c.name} has no state-based undo`, {
           details: { command: c.name },
         });
       }
-      await def.undo(c.params, befores[i] ?? null, afters[i] ?? null, ctx);
+      await def.undo(c.params, c.before, c.after, ctx);
     }
   }
 
@@ -936,6 +1018,52 @@ function genericCard(def: CommandDef<unknown>, params: unknown, risk: Risk): Cha
     risk,
     sentence: `${def.description}${def.reversible ? " Undo." : ""}`,
     reversible: def.reversible,
+  });
+}
+
+/** One command of a change log row with its own before and after. */
+interface UndoStep {
+  name: string;
+  params: unknown;
+  before: JsonValue;
+  after: JsonValue;
+}
+
+/** The commands of a row with their before and after (a composed row stores arrays). */
+function stepsOf(row: ChangeLogRow): UndoStep[] {
+  const commands = (Array.isArray(row.commands) ? row.commands : []) as {
+    name: string;
+    params: unknown;
+  }[];
+  const single = commands.length === 1;
+  const befores = single ? [row.before] : Array.isArray(row.before) ? row.before : [];
+  const afters = single ? [row.after] : Array.isArray(row.after) ? row.after : [];
+  return commands.map((c, i) => ({
+    name: c.name,
+    params: c.params,
+    before: (befores[i] ?? null) as JsonValue,
+    after: (afters[i] ?? null) as JsonValue,
+  }));
+}
+
+/**
+ * The card an undo shows while it waits for a confirmation (U-057): the change it takes back,
+ * from the value it has now to the value it restores, with the restored value's risk.
+ */
+function undoCardOf(row: ChangeLogRow, card: ChangeCard | null, risk: Risk): ChangeCard {
+  const what = card?.what ?? row.sentence.replace(/\s*Undo\.$/, "");
+  const restores = card ? `${card.what} back to ${card.oldValue}` : what;
+  return buildCard({
+    command: "undo",
+    what: `undo: ${what}`,
+    oldValue: card?.newValue ?? "as it is now",
+    newValue: card?.oldValue ?? "as it was before this change",
+    scope: row.scope,
+    risk,
+    sentence: `Undo ${restores}.`,
+    reversible: false,
+    projectId: row.project_id,
+    projectName: card?.projectName ?? null,
   });
 }
 

@@ -3039,10 +3039,36 @@ change card and one change log row; `source` is `text`, `voice`, `phone` or `ui`
 (`CommandSourceBody`), the settings screen sends `ui` and the row is logged with it;
 `confirm: "tap"` is the settings-screen path after the card was shown), `GET /commands/pending`, `POST /commands/:id/confirm` (`yes`, `no`, `tap`, or
 `device` with `deviceId` and `biometric`; a chat yes on a high-risk card is refused), `POST
-/commands/:id/cancel`, `GET /changes?projectId=&undoable=` (`ChangeLogView[]`) and
-`POST /changes/:id/undo`. Results are `CommandResultViewSchema`; `/me.activeProjectId` is the
-registry's record. `ChatReplyView.pendingConfirmation` carries the commands and the decision,
+/commands/:id/cancel`, `GET /changes?projectId=&undoable=` (`ChangeLogView[]`; a row the
+registry still calls `undoable` but whose undo would not work now, `CommandLoop.undoBlocked`,
+answers `undoable: false` with `undoBlockedReason` in plain words, and `undoable=true` leaves it
+out, U-061) and `POST /changes/:id/undo` (the Changes screen's, the settings dialog's and the
+email page's Undo, logged with source `ui`; an undo that raises a limit answers `pending` with
+its undo card like a forward change and is confirmed on `/commands/:id/confirm`, U-057, ADR
+0105). `POST /tasks/:id/transition` (the Tasks tab, U-061) runs the registry's
+`task.transition` with the dialog's Confirm as the tap, after the version check (409
+`version_conflict` for a stale dialog), so the move is a change log row (source `ui`, the reason
+as the words used) and answers `TaskTransitionView`: the task and `change { changeLogId,
+undoToken, sentence }`; a cancel's undo reopens the task. Results are
+`CommandResultViewSchema`; `/me.activeProjectId` is the registry's record, the one active
+project of every channel (U-056): the header's switcher, the palette and Home's Make active run
+`project.switch` (source `ui`) and the app shows `/me`'s project at start. `POST /chat` and
+`/chat/stream` take `projectTab: true` from a project's own Chat tab: that turn uses the body's
+`projectId` and the active project stays as recorded (the reply's `activeProjectId` names the
+recorded one); without it the recorded project wins over the body's. `ChatReplyView.pendingConfirmation` carries the commands and the decision,
 `actions[].undoToken` the change log id while undoable, and `question` the parser's question.
+
+**Every setting in Settings (U-060).** `GET /settings` is `settingsView`
+(`src/daemon/settings-view.ts`): every setting a person can change, each with a plain `label`,
+the value in force and the command that changes it (`settings.set`, `budget.set`,
+`autonomy.set` through `POST /commands/execute`): the default autonomy, the monthly cap (the
+default CHF 150 when unset, not CHF 0), the time zone, quiet hours, the notification channel,
+voice alerts, the monthly calibration, the model watch's consent; per project the autonomy, the
+budget, the budget per session (`project.session_cap`, the CHF 5 default when unset), the
+highest model (`critic_ceiling`), small-project mode, the handover test, fast mode and the
+speed-versus-quality slider. Two stored settings no run reads yet are listed as information
+and say so (validation rule 7): the language (`locale`) and the review reserve
+(`session_reserve_share`; sessions keep 20%).
 
 **This PC as the paired device (ADR 0030; the P1 of the 2026-10-23 triage).** A high-risk
 card (`needs_device`) from the desktop app is confirmed on the desktop's own device row: the
@@ -4489,10 +4515,7 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   command loop would match `pc` rows. A sign-off request left open when the human moves
   the task on from the UI stays open in the inbox until answered; its answer is then skipped
   as `stale` (nothing withdraws it when the next review files a new one).
-- Commands: `POST /changes/:id/undo` takes no body, so its turn is `text` and an undo made
-  from the Changes screen is logged with source `chat` while the settings screen's own
-  changes are `ui` (RT-P5-4 closed the execute and parse routes only); a `source` on the undo
-  route and the UI client's `undoChange` would close it. The command tools' `gate:
+- Commands: the command tools' `gate:
   "registry"` is set by `CommandLoop.tools`, not by `toToolSpecs` in `@forerunner/commands`,
   so a caller that builds command tools from the registry without the loop gets tools the
   hooks hold as before.

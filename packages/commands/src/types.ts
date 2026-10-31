@@ -372,6 +372,26 @@ export interface CommandDef<P = unknown> {
   run(params: P, ctx: CommandContext): Promise<CommandOutcome>;
   /** State-based undo from the change log (works after a restart). */
   undo?(params: P, before: JsonValue, after: JsonValue, ctx: CommandContext): Promise<void>;
+  /**
+   * The risk of the undo (U-057, ADR 0105): the risk of putting `before` back on the current
+   * state. An undo that raises or widens a limit is confirmed like the forward change that
+   * would set that value (raising the monthly cap needs a paired device); one that lowers or
+   * narrows acts at once. Absent: low, the undo acts at once.
+   */
+  undoRisk?(params: P, before: JsonValue, after: JsonValue, ctx: CommandContext): Promise<Risk>;
+  /**
+   * Why the undo cannot be done now, in plain words (U-061): the task moved on, the note was
+   * already read. Null when it can. The executor refuses with it before anything runs, and the
+   * change log offers Undo only when it is null, so nothing says "Undone" when nothing changed.
+   */
+  undoBlocked?(
+    params: P,
+    before: JsonValue,
+    after: JsonValue,
+    ctx: CommandContext,
+  ): Promise<string | null>;
+  /** The sentence of a done undo, when "<what> is back to <old value>" would not be true. */
+  undoSentence?(params: P, before: JsonValue, after: JsonValue): string;
 }
 
 export interface CommandCall {

@@ -58,6 +58,10 @@ Only an agent's claim puts a task in `claimed` or `in_progress` (`AGENT_ONLY_STA
 `reason: "agent_only_status"`). A person's move there left the task with no holder and no
 expiry, so no session planned it and nothing returned it to ready (U-013).
 
+`cancelled` and `done` are terminal in the graph. The one way out of `cancelled` is
+`reopen`, the undo of a cancel (U-061): the task goes back to the status it had when a
+person can set it (`draft`, `ready`, `needs_human`, `failed`), else to `ready`, unclaimed.
+
 ### Reasons on plan, task and milestone changes
 
 Spec B.5: every change to a plan, task or milestone is versioned with author and reason.

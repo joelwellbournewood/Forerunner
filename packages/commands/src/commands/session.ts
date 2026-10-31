@@ -348,6 +348,16 @@ export const sessionPause: CommandDef<SessionPauseParams> = {
       projectId: s.project_id,
     };
   },
+  // U-061: a session that ended since cannot be resumed; the undo says so.
+  async undoBlocked(_p, before, _after, ctx) {
+    const b = asObject(before);
+    if (typeof b.session_id !== "string") return "this change does not name the session it paused";
+    const s = await ctx.store.session.get(b.session_id);
+    if (!s) return "the session no longer exists";
+    return s.status === "paused" || s.status === "running"
+      ? null
+      : `the session already ended (${s.status}); there is nothing to resume`;
+  },
   async undo(_p, before, _after, ctx) {
     const b = asObject(before);
     if (typeof b.session_id !== "string") return;

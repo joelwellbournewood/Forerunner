@@ -59,6 +59,17 @@ export const noteAdd: CommandDef<NoteAddParams> = {
       projectId: project.id,
     };
   },
+  // U-061: the undo dismisses the queued note; once a session took it, there is nothing to take back.
+  async undoBlocked(_p, _before, after, ctx) {
+    const a = asObject(after);
+    if (typeof a.queue_item_id !== "string") return "this change does not name the note it queued";
+    const item = await ctx.store.queue.get(a.queue_item_id);
+    if (!item) return "the note is no longer in the queue";
+    if (item.status === "queued") return null;
+    return item.status === "dismissed"
+      ? "the note was already dismissed"
+      : "a session already read the note; it cannot be taken back";
+  },
   async undo(_p, _before, after, ctx) {
     const a = asObject(after);
     if (typeof a.queue_item_id !== "string") return;

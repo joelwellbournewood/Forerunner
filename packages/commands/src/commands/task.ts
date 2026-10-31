@@ -9,6 +9,8 @@ import {
 } from "@forerunner/runtime/priority";
 import {
   canTransition,
+  type JsonValue,
+  reopenTarget,
   TASK_STATUSES,
   TASK_TRANSITIONS,
   type TaskRow,
@@ -86,17 +88,37 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       projectId: project.id,
     };
   },
-  async undo(_params, _before, after, ctx) {
-    const a = asObject(after);
-    if (typeof a.task_id !== "string") return;
-    const task = await ctx.store.task.get(a.task_id);
-    if (!task || !canTransition(TASK_TRANSITIONS, task.status, "cancelled")) return;
+  // U-061: the undo cancels the task, which only works while it can still be cancelled.
+  async undoBlocked(params, _before, after, ctx) {
+    const task = await createdTask(after, ctx);
+    if (!task) return `the task ${quote(params.title)} no longer exists`;
+    if (task.status === "cancelled") return `the task ${quote(task.title)} is already cancelled`;
+    if (!canTransition(TASK_TRANSITIONS, task.status, "cancelled")) {
+      return `the task ${quote(task.title)} is ${task.status}; a ${task.status} task cannot be cancelled, so its creation cannot be undone`;
+    }
+    return null;
+  },
+  undoSentence: (params) => `Undone: cancelled the task ${quote(params.title)} you created.`,
+  async undo(params, _before, after, ctx) {
+    const task = await createdTask(after, ctx);
+    if (!task || !canTransition(TASK_TRANSITIONS, task.status, "cancelled")) {
+      // Never "Undone" when nothing changed (U-061); `undoBlocked` says why in words first.
+      throw new ForerunnerError(
+        "validation",
+        `the task ${quote(params.title)} cannot be cancelled any more, so its creation cannot be undone`,
+      );
+    }
     await ctx.store.task.transition(task.id, task.version, "cancelled", "undo of task.create", {
       humanId: ctx.actor.kind === "human" ? ctx.actor.id : null,
       agentId: ctx.actor.kind === "agent" ? ctx.actor.id : null,
     });
   },
 };
+
+async function createdTask(after: JsonValue, ctx: CommandContext): Promise<TaskRow | undefined> {
+  const a = asObject(after);
+  return typeof a.task_id === "string" ? ctx.store.task.get(a.task_id) : undefined;
+}
 
 const transitionParams = z.object({
   /** Task id, or a title (prefix or part) within the project. */
@@ -130,6 +152,14 @@ function transitionSentence(task: TaskRow, to: TaskStatus, reversible: boolean):
   return `Moved the task ${quote(task.title)} from ${task.status} to ${to}.${reversible ? " Undo." : ""}`;
 }
 
+/**
+ * Whether a move can be taken back (U-061): the graph's way back, or a cancel, which the undo
+ * reopens (`TaskRepo.reopen`). A task marked done stays done.
+ */
+export function transitionUndoable(from: TaskStatus, to: TaskStatus): boolean {
+  return to === "cancelled" ? from !== "cancelled" : canTransition(TASK_TRANSITIONS, to, from);
+}
+
 export const taskTransition: CommandDef<TaskTransitionParams> = {
   name: "task.transition",
   description:
@@ -152,7 +182,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
       );
     }
     const project = await ctx.store.project.mustGet(task.project_id);
-    const reversible = canTransition(TASK_TRANSITIONS, params.to, task.status);
+    const reversible = transitionUndoable(task.status, params.to);
     return buildCard({
       command: "task.transition",
       what: `the task ${quote(task.title)}`,
@@ -169,7 +199,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   },
   async run(params, ctx) {
     const task = await findTask(params, ctx);
-    const reversible = canTransition(TASK_TRANSITIONS, params.to, task.status);
+    const reversible = transitionUndoable(task.status, params.to);
     const updated = await ctx.store.task.transition(
       task.id,
       task.version,
@@ -181,21 +211,62 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
       },
     );
     return {
-      before: { task_id: task.id, status: task.status },
-      after: { task_id: task.id, status: updated.status },
+      before: { task_id: task.id, status: task.status, title: task.title },
+      after: { task_id: task.id, status: updated.status, title: task.title },
       sentence: transitionSentence(task, params.to, reversible),
       projectId: task.project_id,
       reversible,
     };
   },
+  // U-061: Undo works while the task is where the move left it; after a later move (a session
+  // took it, someone moved it again) the undo says so instead of moving it somewhere new.
+  async undoBlocked(_params, before, after, ctx) {
+    const b = asObject(before);
+    const a = asObject(after);
+    if (typeof a.task_id !== "string" || typeof b.status !== "string") {
+      return "this change does not name the task it moved";
+    }
+    const task = await ctx.store.task.get(a.task_id);
+    if (!task) {
+      return `${typeof a.title === "string" ? `the task ${quote(a.title)}` : "the task"} no longer exists`;
+    }
+    if (task.status !== a.status) {
+      return `the task ${quote(task.title)} moved on to ${task.status} since; undo would not put it back where it was`;
+    }
+    if (!transitionUndoable(b.status as TaskStatus, task.status)) {
+      return `a ${task.status} task cannot go back to ${b.status}`;
+    }
+    return null;
+  },
+  undoSentence(_params, before, after) {
+    const b = asObject(before);
+    const a = asObject(after);
+    const title = typeof a.title === "string" ? `the task ${quote(a.title)}` : "the task";
+    const previous = String(b.status) as TaskStatus;
+    if (a.status === "cancelled") {
+      const to = reopenTarget(previous);
+      return to === previous
+        ? `Undone: reopened ${title}; it is ${to} again.`
+        : `Undone: reopened ${title} as ${to} (it was ${previous}; a session picks it up again).`;
+    }
+    return `Undone: ${title} is back to ${previous}.`;
+  },
   async undo(_params, before, after, ctx) {
     const b = asObject(before);
     const a = asObject(after);
-    if (typeof a.task_id !== "string" || typeof b.status !== "string") return;
+    if (typeof a.task_id !== "string" || typeof b.status !== "string") {
+      throw new ForerunnerError("validation", "this change does not name the task it moved");
+    }
     const task = await ctx.store.task.mustGet(a.task_id);
-    await ctx.store.task.transition(task.id, task.version, b.status as TaskStatus, "undo", {
+    const actor = {
       humanId: ctx.actor.kind === "human" ? ctx.actor.id : null,
       agentId: ctx.actor.kind === "agent" ? ctx.actor.id : null,
-    });
+    };
+    // A cancel is taken back by reopening the task (the graph keeps cancelled final otherwise).
+    if (task.status === "cancelled" && a.status === "cancelled") {
+      await ctx.store.task.reopen(task.id, task.version, b.status as TaskStatus, "undo", actor);
+      return;
+    }
+    await ctx.store.task.transition(task.id, task.version, b.status as TaskStatus, "undo", actor);
   },
 };

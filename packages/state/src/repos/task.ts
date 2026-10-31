@@ -21,6 +21,17 @@ const KEEPS_CLAIM: readonly TaskStatus[] = ["claimed", "in_progress", "in_review
  * holder and no expiry: no session would pick it up and nothing returned it to ready.
  */
 export const AGENT_ONLY_STATUSES: readonly TaskStatus[] = ["claimed", "in_progress"];
+/** Statuses a reopened task goes back to as they were; from any other it goes to `ready`. */
+export const REOPEN_STATUSES: readonly TaskStatus[] = ["draft", "ready", "needs_human", "failed"];
+
+/**
+ * Where a cancelled task reopens to (U-061): the status it had before the cancel when a person
+ * can set it, else `ready`, so a session plans it again (an agent's `claimed`, `in_progress`
+ * or `in_review` needs a session's claim).
+ */
+export function reopenTarget(previous: TaskStatus): TaskStatus {
+  return REOPEN_STATUSES.includes(previous) ? previous : "ready";
+}
 
 /** A dependency a ready task still waits on: the task it names, or null when no such task exists. */
 export interface WaitsOn {
@@ -217,6 +228,36 @@ export class TaskRepo extends Repository<TaskRow> {
     }
     if (current.status === "failed" && to === "ready") patch.attempt = current.attempt + 1;
     return this.update(id, expectedVersion, patch);
+  }
+
+  /**
+   * Reopen a cancelled task (U-061): the undo of a cancel, the one way out of `cancelled`,
+   * which the workflow graph keeps terminal for every other move. The task goes to
+   * `reopenTarget(previous)` without a claim; any other status is refused.
+   */
+  async reopen(
+    id: string,
+    expectedVersion: number,
+    previous: TaskStatus,
+    reason: string,
+    actor: Actor = {},
+  ): Promise<TaskRow> {
+    const current = await this.mustGet(id);
+    if (current.status !== "cancelled") {
+      throw new ForerunnerError(
+        "validation",
+        `only a cancelled task can be reopened; this one is ${current.status}`,
+        { details: { taskId: id, status: current.status } },
+      );
+    }
+    return this.update(id, expectedVersion, {
+      status: reopenTarget(previous),
+      reason,
+      claimed_by: null,
+      claim_expires: null,
+      author_agent: actor.agentId ?? null,
+      author_human: actor.humanId ?? null,
+    });
   }
 
   /** Ready tasks of a project whose dependencies are all done, highest priority first. */

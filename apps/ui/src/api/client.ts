@@ -139,6 +139,8 @@ import {
   StoredSecretsView as StoredSecretsViewSchema,
   type StoreSecretView,
   StoreSecretView as StoreSecretViewSchema,
+  type TaskTransitionView,
+  TaskTransitionView as TaskTransitionViewSchema,
   type TaskView,
   TaskView as TaskViewSchema,
   type TransitionTaskBody as TransitionTaskBodySchema,
@@ -293,6 +295,7 @@ export type {
   StartSessionView,
   StoredSecretsView,
   StoreSecretView,
+  TaskTransitionView,
   TaskView,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
@@ -488,7 +491,8 @@ export interface DaemonClient {
     signal?: AbortSignal,
   ): Promise<TaskView[]>;
   createTask(projectId: string, body: CreateTaskInput): Promise<TaskView>;
-  transitionTask(taskId: string, body: TransitionTaskBody): Promise<TaskView>;
+  /** The task after the move, and the change log entry it wrote with its Undo (U-061). */
+  transitionTask(taskId: string, body: TransitionTaskBody): Promise<TaskTransitionView>;
   /** The tasks a task waits on, all of them (U-040); refused for an unknown, cancelled or circular one. */
   setTaskDependencies(taskId: string, body: SetTaskDependenciesBody): Promise<TaskView>;
   /** What a session started now would plan: runnable, left out for budget, waiting (U-040). */
@@ -871,7 +875,7 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     createTask: (projectId, body) =>
       post(routePath("createTask", { id: projectId }), TaskViewSchema, body),
     transitionTask: (taskId, body) =>
-      post(routePath("transitionTask", { id: taskId }), TaskViewSchema, body),
+      post(routePath("transitionTask", { id: taskId }), TaskTransitionViewSchema, body),
     setTaskDependencies: (taskId, body) =>
       post(routePath("setTaskDependencies", { id: taskId }), TaskViewSchema, body),
     startCheck: (projectId, filter, signal) =>
