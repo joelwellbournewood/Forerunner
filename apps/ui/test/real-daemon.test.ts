@@ -100,6 +100,7 @@ describe("the UI client against the real daemon", () => {
       ["costEstimates", () => client.costEstimates()],
       ["settings", () => client.settings()],
       ["modelSettings", () => client.modelSettings()],
+      ["billingOrder", () => client.billingOrder()],
       ["extensions", () => client.extensions()],
       ["extensionCatalog", () => client.extensionCatalog()],
       ["voiceStatus", () => client.voiceStatus()],
@@ -706,6 +707,51 @@ describe("the UI client against the real daemon", () => {
     expect(refused).toBeInstanceOf(ApiError);
     expect((refused as ApiError).status).toBe(400);
     expect((refused as ApiError).message).toContain("positive amount of CHF per month");
+  });
+
+  it("Settings' Claude order: the credentials in order, Move up's order stored and in Changes (U-078)", async () => {
+    const before = await client.billingOrder();
+    expect(before).toMatchObject({
+      chosen: false,
+      order: ["subscription", "plan_credits", "api_key"],
+    });
+    // A subscription row and an API key row as a start seeds them (turned off here, so the
+    // other cases' sessions keep running on the stand-in provider).
+    for (const [kind, ref, priority] of [
+      ["subscription", "anthropic_subscription_token", 1],
+      ["api_key", "anthropic_api_key", 2],
+    ] as const) {
+      await rt.store.billingSource.insert({
+        human_id: humanId,
+        kind,
+        label: kind,
+        credential_ref: ref,
+        limits: {},
+        enabled: false,
+        priority,
+      });
+    }
+    const listed = await client.billingOrder();
+    expect(listed.sources.map((s) => [s.kind, s.name, s.via, s.blocked])).toEqual([
+      ["subscription", "Claude subscription", "claude_code", "disabled"],
+      ["api_key", "API key", "api", "disabled"],
+    ]);
+    // What Move up on the API key row posts.
+    const saved = await client.setBillingOrder(["api_key", "subscription"]);
+    expect(saved).toMatchObject({ chosen: true, order: ["api_key", "subscription"] });
+    expect(saved.sources.map((s) => s.kind)).toEqual(["api_key", "subscription"]);
+    expect((await client.billingOrder()).order).toEqual(["api_key", "subscription"]);
+    const change = (await client.changes({})).find((r) => r.sentence.includes("is used first"));
+    expect(change?.sentence).toBe(
+      "Set which Claude credential is used first from not chosen (the defaults) to the API key, then the Claude subscription: every model call uses them in this order, and when one cannot be used the next one is. Undo.",
+    );
+    const refused = await client.setBillingOrder(["api_key", "api_key"]).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(400);
+    expect((refused as ApiError).message).toContain("each once");
   });
 
   it("setup's GitHub check: the repositories the token reaches, with their access and warnings (U-051)", async () => {

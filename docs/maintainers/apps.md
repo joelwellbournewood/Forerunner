@@ -776,7 +776,12 @@ model watch answer likewise withdraws the report's open card, as the daemon does
 U-026: Add on a built-in entry with `confirmIn: "panel"` waits with no Inbox card, a plain yes
 and an unpaired device are refused 403, this PC's `desktopDeviceId` grants it, and Cancel leaves
 nothing, which the fake mirrors: every catalog add waits, only an `inbox` row gets a card, and
-the approve route takes this PC's device only),
+the approve route takes this PC's device only; U-078: Settings' Claude order, `billingOrder`
+listing the person's credential rows with `name`, `via` and why one cannot be used,
+`setBillingOrder` storing what Move up posts, the order read back and the change sentence in
+Changes in words, an order naming a kind twice refused 400, which the fake mirrors:
+`options.billingOrder` seeds its rows and a chosen order, its POST validates the same way and
+writes the same change log sentence),
 model watch answer likewise withdraws the report's open card, as the daemon does since U-035; a task only the person can do whose questions are in the Inbox, answered with what the form sends, closes (U-022: the fake's answer route mirrors `syncPersonQuestions`, done or back to ready, Cancel the task cancels); every card naming its task beside its project (U-073); a failed plan from the brief read with its error and retried, `drafting` then `failed` again on the scripted model (U-046: the fake serves `GET /projects/:id/intake` from `state.intake`, `drafting` after a creation with `intake: true` or a Retry of a failed one)),
 `client` (config resolution, route paths, token header,
 contract validation rejects malformed bodies, `/health` with its sandbox and extensions

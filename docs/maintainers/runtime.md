@@ -726,6 +726,20 @@ audit row; 400 for a bad amount, 409 while the environment decides). Test:
 `plan-allowance-route.test.ts` (the default in CHF, a save, the row and the file, a restart,
 the environment override).
 
+**The Claude order's routes** (`src/daemon/billing-order-routes.ts`, shapes in
+`src/daemon/billing-order-types.ts`, re-exported by `api-types.ts`; U-078, ADR 0100), mounted
+next to the command routes: `GET /settings/billing-order` (`BillingOrderView`: `chosen`, the
+`order` the rows are in (the person's, else the task runs' default, subscription first), and
+per real source `kind`, `name`, `via` (`claude_code` or `api`), `usable` and why not
+(`blocked`: `disabled`, `no_credential`, `resting` with `restingUntil`, `allowance` at the plan
+share's stop line, `monthly_cap`), the subscription's `planShare` and `planShareCap`, and
+`monthSpent` / `monthlyCap` in USD and CHF at the day's rate); `POST /settings/billing-order
+{ order }` (each kind once, 1 to 3; stored through the registry's `settings.set billing_order`
+with a tap, so Changes lists it with Undo; one `settings.billing_order` audit row with the old
+and new order; 400 for an empty list, an unknown kind or a kind twice). Tests:
+`billing-order.test.ts` (the order through the route, the view's statuses, a restart),
+`apps/ui/test/real-daemon.test.ts`.
+
 `buildProgram(deps)` builds the commander program (tests inspect it; the module parses
 `process.argv` only when it is the entry point). The module commands registered on it:
 

@@ -4,6 +4,7 @@ import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, TaskPrioritySchema } from "../p
 import { SECRET_STORE_ROUTES } from "../secrets/store-types.ts";
 import { PLAN_ALLOWANCE_ROUTES, SETUP_ROUTES } from "../setup/types.ts";
 import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
+import { BILLING_ORDER_ROUTES } from "./billing-order-types.ts";
 
 /** Settings -> Devices shapes (spec R.2): the daemon's `/devices` routes' bodies and answers. */
 export {
@@ -81,6 +82,14 @@ export {
   VoiceProfileSchema,
   voiceInstallCommand,
 } from "../voice/install-types.ts";
+/** Settings -> Claude: which to use first (U-078, ADR 0100): the person's order of credentials. */
+export {
+  BILLING_ORDER_ROUTES,
+  BillingOrderBody,
+  BillingOrderKind,
+  BillingOrderSourceView,
+  BillingOrderView,
+} from "./billing-order-types.ts";
 
 /**
  * Local daemon API contract (ADR 0011). The desktop and Android shells, the approvals web
@@ -2188,6 +2197,8 @@ export const DAEMON_ROUTES = {
   ...SETUP_ROUTES,
   // Settings -> Claude subscription allowance (U-052).
   ...PLAN_ALLOWANCE_ROUTES,
+  // Settings -> Claude: which to use first (U-078).
+  ...BILLING_ORDER_ROUTES,
   // The mailbox passwords and cloud voice keys typed in the app (U-054).
   ...SECRET_STORE_ROUTES,
   // Settings -> Voice (ADR 0090): the voice profile, its install and progress.

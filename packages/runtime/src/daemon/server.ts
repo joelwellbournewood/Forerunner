@@ -126,6 +126,7 @@ import {
   VoiceTextBody,
 } from "./api-types.ts";
 import { createAuditRoutes } from "./audit-export.ts";
+import { createBillingOrderRoutes } from "./billing-order-routes.ts";
 import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
@@ -1639,6 +1640,36 @@ export function createDaemonApp(
       ...(typeof costUsdMicro === "number" ? { cost: money(costUsdMicro, chf()) } : {}),
     };
   };
+
+  // Settings -> Claude: which to use first (U-078, ADR 0100): the order goes through the
+  // registry's `settings.set billing_order` (low risk, so it runs at once and Changes lists it
+  // with Undo); the router reads it at every pick.
+  app.route(
+    "/",
+    createBillingOrderRoutes({
+      store: rt.store,
+      vault: rt.vault,
+      clock: rt.clock,
+      humanId: rt.human.id,
+      chfPerUsd: chf,
+      setOrder: async (order) => {
+        const turn = await turnFor({
+          source: "ui",
+          wordsUsed: `Settings: use ${order.join(", then ")} first`,
+        });
+        const r = await rt.commands.execute(
+          { name: "settings.set", params: { key: "billing_order", value: order } },
+          turn,
+          { confirmation: { kind: "tap", by: { kind: "human", id: rt.human.id } } },
+        );
+        if (r.status !== "done" && r.status !== "partial")
+          throw new ForerunnerError(
+            (r.code ?? "validation") as ErrorCode,
+            r.reason ?? `the order was not saved (${r.status})`,
+          );
+      },
+    }),
+  );
 
   app.get("/commands", (c) =>
     c.json(

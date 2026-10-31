@@ -4,6 +4,10 @@ import {
   AcceptCandidateView as AcceptCandidateViewSchema,
   type AddSourceBody,
   AgentView as AgentViewSchema,
+  type BillingOrderKind,
+  type BillingOrderSourceView,
+  type BillingOrderView,
+  BillingOrderView as BillingOrderViewSchema,
   type ChangeLogView,
   ChangeLogView as ChangeLogViewSchema,
   type ChangeMilestoneBody as ChangeMilestoneBodySchema,
@@ -220,6 +224,9 @@ export type {
   AcceptCandidateView,
   AddSourceBody,
   ApplyUpdateResult,
+  BillingOrderKind,
+  BillingOrderSourceView,
+  BillingOrderView,
   CatalogView,
   ChangeLogView,
   ChatReplyView,
@@ -752,6 +759,10 @@ export interface DaemonClient {
   planAllowance(signal?: AbortSignal): Promise<PlanAllowanceView>;
   setPlanAllowance(chfMonthly: number): Promise<PlanAllowanceView>;
 
+  // Settings -> Claude: which to use first (U-078): the person's order of credentials.
+  billingOrder(signal?: AbortSignal): Promise<BillingOrderView>;
+  setBillingOrder(order: BillingOrderKind[]): Promise<BillingOrderView>;
+
   // The mailbox passwords and cloud voice keys typed in the app (U-054): sent once to the
   // daemon's vault, never read back (the list says only whether each is stored).
   storedSecrets(name?: string, signal?: AbortSignal): Promise<StoredSecretsView>;
@@ -1172,6 +1183,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("planAllowance"), PlanAllowanceViewSchema, undefined, signal),
     setPlanAllowance: (chfMonthly) =>
       post(routePath("setPlanAllowance"), PlanAllowanceViewSchema, { chfMonthly }),
+    billingOrder: (signal) =>
+      get(routePath("billingOrder"), BillingOrderViewSchema, undefined, signal),
+    setBillingOrder: (order) =>
+      post(routePath("setBillingOrder"), BillingOrderViewSchema, { order }),
     storedSecrets: (name, signal) =>
       get(routePath("storedSecrets"), StoredSecretsViewSchema, name ? { name } : undefined, signal),
     storeSecret: (name, value) =>

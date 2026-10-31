@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
 import type {
   AgentView,
+  BillingOrderKind,
+  BillingOrderSourceView,
+  BillingOrderView,
   ChangeLogView,
   ChatReplyView,
   CommandResultJson,
@@ -202,6 +205,15 @@ export interface FakeDaemonOptions {
   pairingAvailable?: boolean;
   /** FORERUNNER_PLAN_USD_MONTHLY decides the subscription allowance (U-052). Default false. */
   planAllowanceOverridden?: boolean;
+  /**
+   * Settings -> Claude: which to use first (U-078): the credentials `GET /settings/billing-order`
+   * lists (each source's fields over a usable default), and the order chosen at start (none by
+   * default). Default: a subscription and an API key, both usable.
+   */
+  billingOrder?: {
+    sources?: Partial<BillingOrderSourceView>[];
+    order?: BillingOrderKind[] | null;
+  };
   /**
    * The time a pairing's ten-minute expiry counts from (epoch ms); the wall clock by default.
    * The Devices tests share one stepped clock between the fake and the section.
@@ -4281,6 +4293,88 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     allowance.usdMonthly = Math.round((chfMonthly / allowanceRate) * 100) / 100;
     allowance.origin = "config";
     return c.json(allowanceView());
+  });
+  // Settings -> Claude: which to use first (U-078), mirroring
+  // packages/runtime/src/daemon/billing-order-routes.ts: the rows in the person's order (else
+  // the task runs' default, subscription first), the order stored through settings.set (a
+  // change log row with Undo), each kind once.
+  const KIND_NAMES: Record<BillingOrderKind, string> = {
+    subscription: "Claude subscription",
+    api_key: "API key",
+    plan_credits: "Plan credits",
+  };
+  const billingSources: BillingOrderSourceView[] = (
+    options.billingOrder?.sources ?? [{ kind: "subscription" }, { kind: "api_key" }]
+  ).map((s, i) => {
+    const kind = s.kind ?? "api_key";
+    return {
+      id: `bs_${kind}_${i}`,
+      kind,
+      name: KIND_NAMES[kind],
+      via: kind === "subscription" ? "claude_code" : "api",
+      usable: true,
+      blocked: null,
+      restingUntil: null,
+      planShare: kind === "subscription" ? 0 : null,
+      planShareCap: kind === "subscription" ? 0.95 : null,
+      monthSpent: { usdMicro: 0, chfMicro: 0 },
+      monthlyCap: null,
+      ...s,
+    };
+  });
+  let billingOrder: BillingOrderKind[] | null = options.billingOrder?.order ?? null;
+  const BILLING_DEFAULT_ORDER: BillingOrderKind[] = ["subscription", "plan_credits", "api_key"];
+  const billingOrderView = (): BillingOrderView => {
+    const order = billingOrder ?? BILLING_DEFAULT_ORDER;
+    const rank = (k: BillingOrderKind) => {
+      const i = order.indexOf(k);
+      return i >= 0 ? i : order.length + BILLING_DEFAULT_ORDER.indexOf(k);
+    };
+    return {
+      chosen: billingOrder !== null,
+      order: [...order],
+      sources: [...billingSources].sort((a, b) => rank(a.kind) - rank(b.kind)),
+    };
+  };
+  const ORDER_WORDS: Record<BillingOrderKind, string> = {
+    subscription: "the Claude subscription",
+    api_key: "the API key",
+    plan_credits: "the plan credits",
+  };
+  const orderWords = (o: BillingOrderKind[] | null) =>
+    o ? o.map((k) => ORDER_WORDS[k]).join(", then ") : "not chosen (the defaults)";
+  app.get("/settings/billing-order", (c) => c.json(billingOrderView()));
+  app.post("/settings/billing-order", async (c) => {
+    const { order } = (await c.req.json().catch(() => ({}))) as { order?: unknown };
+    const kinds = ["subscription", "api_key", "plan_credits"];
+    const valid =
+      Array.isArray(order) &&
+      order.length >= 1 &&
+      order.length <= 3 &&
+      order.every((k) => typeof k === "string" && kinds.includes(k)) &&
+      new Set(order).size === order.length;
+    if (!valid) {
+      return errorBody(
+        c,
+        400,
+        "validation",
+        "Give the order as a list of your credentials, each once: subscription, api_key, plan_credits.",
+      );
+    }
+    const next = order as BillingOrderKind[];
+    pushChange({
+      commands: [{ name: "settings.set", params: { key: "billing_order", value: next } }],
+      before: { key: "billing_order", project_id: null, value: billingOrder },
+      after: { key: "billing_order", project_id: null, value: next },
+      scope: "global",
+      projectId: null,
+      source: "ui",
+      wordsUsed: `Settings: use ${next.join(", then ")} first`,
+      sentence: `Set which Claude credential is used first from ${orderWords(billingOrder)} to ${orderWords(next)}: every model call uses them in this order, and when one cannot be used the next one is. Undo.`,
+      reversible: true,
+    });
+    billingOrder = next;
+    return c.json(billingOrderView());
   });
   // The mailbox passwords and cloud voice keys typed in the app (U-054), mirroring
   // packages/runtime/src/secrets/store-routes.ts: an allowlist, the value kept here for the
