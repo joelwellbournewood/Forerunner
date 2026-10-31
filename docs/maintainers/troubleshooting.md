@@ -153,7 +153,10 @@ made in the `.wxs`, with every `[`, `]`, `{` and `}` of the PowerShell written `
 formats it as Windows Installer does and fails on a reference it does not expect, and on Windows
 runs it against real processes. Locally: install the MSI, start Forerunner, then
 `msiexec /i <msi> REINSTALL=ALL REINSTALLMODE=amus /qn /l*v upgrade.log` and look for
-`StopRunningForerunner` in the log.
+`StopRunningForerunner` in the log. "the uninstall left <install>\dependencies" or "...the
+fr:// registration under HKCU" point at `wix/uninstall-cleanup.wxs` (U-067): search the uninstall
+log for `WixRemoveFoldersEx` (it logs the folder it recursed, or why it skipped it) and for
+`FR_DEPENDENCIES_DIR` (set only when `REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE`).
 
 ## How to change it
 

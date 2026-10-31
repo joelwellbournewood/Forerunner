@@ -15,7 +15,9 @@
 # started again and uninstalled. The installer's stop step (apps/desktop/src-tauri/wix/
 # stop-running.wxs) must end it first each time: msiexec exits 0 (not 3010, files in use, nor
 # 1603), the step ran without an error, nothing runs from the install folder afterwards, and the
-# uninstall leaves none of the files the MSI installed. Exit 1 when any required place fails.
+# uninstall leaves none of the files the MSI installed, nor `<install>\dependencies` (which must
+# survive the reinstall) nor the person's fr:// registration (U-067, wix/uninstall-cleanup.wxs).
+# Exit 1 when any required place fails.
 #
 # Usage: pwsh -File scripts/installed-check.ps1 -Msi <path to the .msi>
 param([Parameter(Mandatory = $true)][string]$Msi)
@@ -134,6 +136,10 @@ function Test-WithForerunnerRunning([string]$dir, [string]$exePath, [string]$hom
     $running = @(Get-FolderProcesses $dir)
     Write-Host "running from $dir before the upgrade ($($started.How)): $(Describe-Processes $running)"
     if ($running.Count -eq 0) { throw 'nothing runs from the install folder, so the upgrade proves nothing' }
+    # What the app downloads into the install folder (voice, U-067): it survives an upgrade and
+    # goes with the uninstall.
+    $marker = Join-Path $dir 'dependencies\voice\models\marker.bin'
+    New-Item -ItemType File -Force -Path $marker | Out-Null
 
     # The same MSI again with every file replaced: the same ProductCode makes /i a maintenance
     # install, and REINSTALL=ALL makes it replace each file, as an upgrade does.
@@ -144,10 +150,18 @@ function Test-WithForerunnerRunning([string]$dir, [string]$exePath, [string]$hom
     $left = @(Get-FolderProcesses $dir)
     if ($left.Count) { throw "still running from the install folder after the upgrade: $(Describe-Processes $left)" }
     if (Get-Process -Id $started.Daemon.pid -ErrorAction SilentlyContinue) { throw "the service (pid $($started.Daemon.pid)) still runs after the upgrade" }
+    if (-not (Test-Path -LiteralPath $marker)) { throw 'the upgrade removed the downloaded dependencies' }
 
     # The upgraded app starts, then it is uninstalled while it runs.
     $again = Start-Forerunner $dir $exePath $runtimeDir
     Write-Host "running before the uninstall ($($again.How)): $(Describe-Processes (Get-FolderProcesses $dir))"
+    # The app registers fr:// for the person at every start (HKCU); when this session could not
+    # run the app, register it the same way so the uninstall has something to remove.
+    $link = 'HKCU:\Software\Classes\fr'
+    if (-not (Test-Path -LiteralPath $link)) {
+      New-Item -Path $link -Force | Out-Null
+      New-ItemProperty -LiteralPath $link -Name 'URL Protocol' -Value '' -Force | Out-Null
+    }
     $xlog = Join-Path $work "uninstall-$index.log"
     $x = Start-Process msiexec.exe -ArgumentList @('/x', "`"$Msi`"", '/qn', '/norestart', '/l*v', "`"$xlog`"") -Wait -PassThru
     Assert-Exit $x.ExitCode 'uninstall with Forerunner running' $xlog
@@ -156,7 +170,9 @@ function Test-WithForerunnerRunning([string]$dir, [string]$exePath, [string]$hom
     if ($left.Count) { throw "still running from the install folder after the uninstall: $(Describe-Processes $left)" }
     $remaining = @($installedFiles | Where-Object { Test-Path -LiteralPath $_ })
     if ($remaining.Count) { throw "the uninstall left $($remaining.Count) installed file(s), e.g. $($remaining | Select-Object -First 3)" }
-    return "upgrade and uninstall with $($started.How) running: exit 0, nothing left running, no installed file left"
+    if (Test-Path -LiteralPath (Join-Path $dir 'dependencies')) { throw "the uninstall left $(Join-Path $dir 'dependencies')" }
+    if (Test-Path -LiteralPath $link) { throw 'the uninstall left the fr:// registration under HKCU' }
+    return "upgrade and uninstall with $($started.How) running: exit 0, nothing left running, no installed file, dependencies or fr:// registration left"
   } finally {
     [Environment]::SetEnvironmentVariable('FORERUNNER_HOME', $previousHome, 'User')
   }
@@ -254,7 +270,8 @@ foreach ($c in $cases) {
         $results += [pscustomobject]@{ Case = "$($c.Name): uninstall"; Ok = $false; Detail = "msiexec /x exit $($x.ExitCode)"; Required = $c.Required }
       }
     }
-    # The app made it, so the uninstall leaves it; the next case starts clean.
+    # The uninstall removes it (U-067; checked above); after a failed case the next one starts
+    # clean all the same.
     Remove-Item -LiteralPath (Join-Path $dir 'dependencies') -Recurse -Force -ErrorAction SilentlyContinue
   }
 }

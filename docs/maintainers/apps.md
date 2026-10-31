@@ -1175,6 +1175,25 @@ Windows does and checks the script; on Windows it runs it against real processes
 from the folder, a "daemon" there with a child outside it, and a bystander that must survive).
 `scripts/installed-check.ps1` installs, starts, reinstalls and uninstalls with Forerunner running.
 
+**What the uninstall removes (`wix/uninstall-cleanup.wxs`, U-067).** Two components linked
+through `componentRefs` (per-machine and per-user data apart, for ICE57). `<install>\dependencies`
+(the app's downloads, voice above all) goes with WiX's `util:RemoveFolderEx`: it runs before
+costing, when `INSTALLDIR` is not resolved yet, so the install records the folder in
+`HKLM\Software\Forerunner\Installer\DependenciesDir`, a `RegistrySearch` reads it back, and a
+`SetProperty` after `AppSearch` hands it to the removal only when `REMOVE~="ALL" AND NOT
+UPGRADINGPRODUCTCODE`, so an upgrade (which removes the old version with
+`UPGRADINGPRODUCTCODE` set) keeps the downloads. On every other run the property is empty and
+the util action logs "Missing folder property" and goes on (it is `Return="ignore"` in the util
+library): an expected line in install logs. The folder removal follows no junction and is
+rolled back with the rest of a failed uninstall. `HKCU\Software\Classes\fr`, which
+`register_all()` writes for the person at every start, is removed with a `RemoveRegistryKey`
+for the person who uninstalls; the MSI's own `HKLM` registration goes with Tauri's component.
+Data in `%APPDATA%`/`%LOCALAPPDATA%` (dependencies kept there when the install folder could not
+be written included) and the keys stay (`docs/setup-guide.md`, "Uninstall").
+`scripts/msi-stop-running.test.ts` checks the conditions and the namespace that makes
+tauri-bundler give candle the util extension; the installed-app check requires a downloaded
+file to survive the reinstall, and the folder and the key to be gone after the uninstall.
+
 **Deep links (`deeplink.rs`).** Scheme `fr`, registered by the bundler on Windows and Linux
 (`tauri.conf.json` → `plugins.deep-link.desktop.schemes`) and at start with `register_all()`
 (AppImage, dev); the single-instance plugin forwards a second launch to the running shell.

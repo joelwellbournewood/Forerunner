@@ -25,7 +25,9 @@ const DESKTOP = join(process.cwd(), "apps", "desktop", "src-tauri");
 const wxs = readFileSync(join(DESKTOP, "wix", "stop-running.wxs"), "utf8");
 const conf = JSON.parse(readFileSync(join(DESKTOP, "tauri.conf.json"), "utf8")) as {
   bundle: { windows: { wix: { fragmentPaths?: string[]; componentRefs?: string[] } } };
+  plugins: { "deep-link": { desktop: { schemes: string[] } } };
 };
+const cleanup = readFileSync(join(DESKTOP, "wix", "uninstall-cleanup.wxs"), "utf8");
 
 function unxml(text: string): string {
   return text
@@ -272,4 +274,61 @@ describe("the MSI stops Forerunner's own processes before it replaces files (U-0
       }
     },
   );
+});
+
+/**
+ * U-067: an uninstall leaves nothing the app added: `<install>\dependencies` (voice, gigabytes)
+ * and the person's `fr://` registration (HKCU). An upgrade must keep the dependencies: the old
+ * version is removed with UPGRADINGPRODUCTCODE set.
+ */
+describe("the uninstall removes the app's own additions (U-067)", () => {
+  const component = (id: string) =>
+    new RegExp(`<Component Id="${id}"[\\s\\S]*?</Component>`).exec(cleanup)?.[0] ?? "";
+
+  it("is linked into the installer, and its util namespace gives candle the util extension", () => {
+    const wix = conf.bundle.windows.wix;
+    expect(wix.fragmentPaths).toContain("wix/uninstall-cleanup.wxs");
+    expect(wix.componentRefs).toEqual(
+      expect.arrayContaining(["RemoveForerunnerDependencies", "RemoveForerunnerLinkRegistration"]),
+    );
+    // tauri-bundler adds `-ext Wix<Name>.dll` to candle for each namespace matching this.
+    const namespaces = [...cleanup.matchAll(/"http:\/\/schemas\.microsoft\.com\/wix\/(\w+)"/g)].map(
+      (m) => m[1],
+    );
+    expect(namespaces).toContain("UtilExtension");
+  });
+
+  it("removes <install>\\dependencies on a real uninstall only, never on an upgrade", () => {
+    const deps = component("RemoveForerunnerDependencies");
+    expect(deps).toContain(
+      '<RegistryValue Root="HKLM" Key="Software\\Forerunner\\Installer" Name="DependenciesDir" Type="string" Value="[INSTALLDIR]dependencies" KeyPath="yes" />',
+    );
+    expect(deps).toContain('<util:RemoveFolderEx On="uninstall" Property="FR_DEPENDENCIES_DIR" />');
+    // RemoveFolderEx runs before costing: the folder is read back from what the install recorded.
+    expect(cleanup).toContain(
+      '<RegistrySearch Id="ForerunnerDependenciesDir" Root="HKLM" Key="Software\\Forerunner\\Installer" Name="DependenciesDir" Type="raw" />',
+    );
+    const set = /<SetProperty Id="FR_DEPENDENCIES_DIR" ([^>]*)>([^<]*)<\/SetProperty>/.exec(
+      cleanup,
+    );
+    expect(attr(set?.[1] ?? "", "Value")).toBe("[FR_DEPENDENCIES_RECORDED]");
+    expect(attr(set?.[1] ?? "", "After")).toBe("AppSearch");
+    expect(attr(set?.[1] ?? "", "Sequence")).toBe("execute");
+    expect(unxml(set?.[2] ?? "").trim()).toBe('REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE');
+    // Nothing else sets the property the folder removal reads.
+    const markup = cleanup.replace(/<!--[\s\S]*?-->/g, "");
+    expect(markup.match(/FR_DEPENDENCIES_DIR/g)).toHaveLength(2);
+    expect(wxs).not.toContain("FR_DEPENDENCIES_DIR");
+  });
+
+  it("removes the person's fr:// registration, in a component of per-user data only", () => {
+    expect(conf.plugins["deep-link"].desktop.schemes).toEqual(["fr"]);
+    const link = component("RemoveForerunnerLinkRegistration");
+    expect(link).toContain(
+      '<RemoveRegistryKey Root="HKCU" Key="Software\\Classes\\fr" Action="removeOnUninstall" />',
+    );
+    expect(link).toMatch(/<RegistryValue Root="HKCU" [^>]*KeyPath="yes" \/>/);
+    expect(link).not.toContain("HKLM");
+    expect(component("RemoveForerunnerDependencies")).not.toContain("HKCU");
+  });
 });

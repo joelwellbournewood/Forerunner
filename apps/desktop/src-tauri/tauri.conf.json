@@ -25,8 +25,12 @@
     "windows": {
       "wix": {
         "version": "1.0.4",
-        "fragmentPaths": ["wix/stop-running.wxs"],
-        "componentRefs": ["StopRunningForerunner"]
+        "fragmentPaths": ["wix/stop-running.wxs", "wix/uninstall-cleanup.wxs"],
+        "componentRefs": [
+          "StopRunningForerunner",
+          "RemoveForerunnerDependencies",
+          "RemoveForerunnerLinkRegistration"
+        ]
       }
     },
     "icon": [

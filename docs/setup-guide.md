@@ -280,11 +280,26 @@ machines by the run itself, but only you can tell whether a fix does what you as
 ## Uninstall
 
 **Windows.** Settings → Apps → Forerunner → Uninstall (or `winget uninstall Forerunner`).
-The uninstaller (and an upgrade) stops Forerunner first if it is still running; you can also
-right-click the tray icon and choose **Quit Forerunner** before.
-Then, if you want everything gone: delete `%APPDATA%\forerunner` and
-`%LOCALAPPDATA%\forerunner`, and remove the `forerunner-*` entries in Credential Manager
-(Control Panel → Credential Manager → Windows Credentials).
+The uninstaller (and an upgrade) stops Forerunner first if it is still running, including what
+it started (voice, connectors, the browser it drives); you can also right-click the tray icon
+and choose **Quit Forerunner** before.
+
+What the uninstall removes:
+- the install folder, including its `dependencies` folder (what Forerunner downloaded there:
+  voice with its models, often several gigabytes). An upgrade keeps that folder, so voice does
+  not have to be downloaded again;
+- the `fr://` link registration, for the Windows user who uninstalls (another user who used
+  Forerunner on the same PC keeps theirs; it does nothing without the app).
+
+What stays, so a later install finds your work:
+- your settings, projects, memory and logs in `%APPDATA%\forerunner` and
+  `%LOCALAPPDATA%\forerunner`, including downloaded dependencies Forerunner kept there because
+  the install folder could not be written to;
+- your keys and tokens in Credential Manager (the `forerunner-*` entries).
+
+If you want everything gone: delete `%APPDATA%\forerunner` and `%LOCALAPPDATA%\forerunner`,
+and remove the `forerunner-*` entries in Credential Manager (Control Panel → Credential Manager
+→ Windows Credentials).
 
 **Linux.** `sudo apt-get remove forerunner` for the `.deb`, or delete the AppImage. Then delete
 `~/.config/forerunner`, `~/.local/share/forerunner`, `~/.cache/forerunner`,

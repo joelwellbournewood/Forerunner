@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  U-067: an uninstall removes what the app itself added to the install folder and to the
+  person's registry, which Windows Installer does not know about:
+
+  - <install>\dependencies: what the app downloads there (voice: Python, the models, gigabytes;
+    U-011). WiX's util:RemoveFolderEx removes the folder and everything below it, without
+    following junctions, through Windows Installer's own file removal (so a rolled-back uninstall
+    puts the files back). It runs before costing, when INSTALLDIR is not known yet, so the folder
+    is recorded in the registry at install (DependenciesDir) and read back by a RegistrySearch.
+    FR_DEPENDENCIES_DIR is set only for a real uninstall (REMOVE="ALL" AND NOT
+    UPGRADINGPRODUCTCODE): an upgrade removes the old version with UPGRADINGPRODUCTCODE set, and
+    the downloads must survive it. On every other run the property stays empty and the util
+    action logs "Missing folder property" and goes on (it is Return="ignore" in the util library);
+    that line in an install log is expected.
+  - HKCU\Software\Classes\fr: the fr:// link the app registers for the person at every start
+    (tauri-plugin-deep-link register_all). The MSI's own registration (HKLM) goes with Tauri's
+    component. Removed for the person who uninstalls; another Windows user's registration stays.
+
+  Dependencies the app put in the data folder (when the install folder could not be written)
+  are data and stay, with the settings and the keys (docs/setup-guide.md, "Uninstall").
+  Per-machine and per-user data are in separate components (ICE57). tauri.conf.json links this
+  fragment through componentRefs; the util namespace makes tauri-bundler give candle the util
+  extension. scripts/msi-stop-running.test.ts checks the conditions; the Windows installed-app
+  check (scripts/installed-check.ps1) uninstalls and looks.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Fragment>
+    <Property Id="FR_DEPENDENCIES_RECORDED" Secure="yes">
+      <RegistrySearch Id="ForerunnerDependenciesDir" Root="HKLM" Key="Software\Forerunner\Installer" Name="DependenciesDir" Type="raw" />
+    </Property>
+    <SetProperty Id="FR_DEPENDENCIES_DIR" Value="[FR_DEPENDENCIES_RECORDED]" After="AppSearch" Sequence="execute">REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE</SetProperty>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="RemoveForerunnerDependencies" Guid="9B509835-6FF5-49DC-903C-048191F84AD6">
+        <RegistryValue Root="HKLM" Key="Software\Forerunner\Installer" Name="DependenciesDir" Type="string" Value="[INSTALLDIR]dependencies" KeyPath="yes" />
+        <util:RemoveFolderEx On="uninstall" Property="FR_DEPENDENCIES_DIR" />
+      </Component>
+      <Component Id="RemoveForerunnerLinkRegistration" Guid="230875E7-8F7F-4283-8D7C-39C4F0FD9E77">
+        <RegistryValue Root="HKCU" Key="Software\Forerunner\Installer" Name="RemovesLinkRegistration" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveRegistryKey Root="HKCU" Key="Software\Classes\fr" Action="removeOnUninstall" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>
