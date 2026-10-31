@@ -162,6 +162,7 @@ import {
 } from "../notifications/index.ts";
 import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
+import { ClaudeCodeProvider } from "../provider/claude-code.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
 import {
   DEFAULT_PROVIDER_CAPABILITIES,
@@ -1305,19 +1306,29 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   await schemaSync.refresh("startup");
 
   // Model provider: injected, else Anthropic from the vault, else none (chat and sessions refuse).
+  // An API key goes to the Messages API. A subscription token alone never does (U-048, ADR
+  // 0098): Anthropic documents it for Claude Code only, so chat, intake, the critic and the
+  // model watch call Claude Code through the Agent SDK with it, read from the vault per call.
   const providers = new ProviderRegistry();
   let provider: ModelProvider | null = opts.provider ?? null;
   if (!provider) {
-    const oauth = await vault.get(SECRET_NAMES.anthropicOauth);
     const key = await vault.get(SECRET_NAMES.anthropic);
-    if (oauth || key) {
+    if (key) {
       provider = new AnthropicMessagesProvider({
-        apiKey: key ?? undefined,
-        authToken: key ? undefined : (oauth ?? undefined),
+        apiKey: key,
         baseURL: config?.anthropicApiBase,
         defaultHeaders: config?.anthropicWorkspaceId
           ? { "anthropic-workspace-id": config.anthropicWorkspaceId }
           : undefined,
+        clock,
+      });
+    } else if (await vault.has(SECRET_NAMES.anthropicOauth)) {
+      provider = new ClaudeCodeProvider({
+        token: () => vault.get(SECRET_NAMES.anthropicOauth),
+        cwd: join(dirs.cache, "claude-code"),
+        baseURL: config?.anthropicApiBase,
+        ...(opts.sdkQuery ? { query: opts.sdkQuery } : {}),
+        clientApp: `forerunner/${opts.appVersion ?? env.FORERUNNER_VERSION ?? APP_VERSION}`,
         clock,
       });
     }

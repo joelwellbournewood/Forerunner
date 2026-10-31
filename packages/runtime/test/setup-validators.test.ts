@@ -99,13 +99,16 @@ describe("Anthropic key validation", () => {
     });
     expect(r.ok).toBe(true);
     expect(headers!.get("x-api-key")).toBe("sk-ant-api03-x");
+    // A subscription token is told apart and never sent anywhere (U-048): it is for Claude
+    // Code only, so the check is its format; the last request is still the API key's.
     const r2 = await validateAnthropicKey({
-      key: "sk-ant-oat01-y",
+      key: `sk-ant-oat01-${"y".repeat(40)}`,
       apiBase: "http://x",
       fetchImpl: f,
     });
     expect(r2.details.kind).toBe("subscription");
-    expect(headers!.get("authorization")).toBe("Bearer sk-ant-oat01-y");
+    expect(headers!.get("authorization")).toBeNull();
+    expect(headers!.get("x-api-key")).toBe("sk-ant-api03-x");
   });
 
   it("reports 401 and missing tiers", async () => {

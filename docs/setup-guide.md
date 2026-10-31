@@ -107,7 +107,11 @@ the moment you paste it:
    - **Claude subscription** (Pro or Max): on a computer with Claude Code signed in, run
      `claude setup-token` and paste the token it prints (`sk-ant-oat…`).
 
-   You can add both; routing prefers the subscription and falls back to the key.
+   You can add both; routing prefers the subscription and falls back to the key. Anthropic
+   allows a subscription token only in Claude Code, so Forerunner never sends it anywhere
+   itself: it hands it to the copy of Claude Code that comes with Forerunner, which runs your
+   tasks, and, when no API key is saved, your chat replies and reviews too. A chat reply then
+   takes a second or two longer than with an API key.
 3. **GitHub.** Click **Create a token on GitHub**. GitHub opens its form for a fine-grained
    token with Forerunner's permissions already filled in. Under "Repository access", choose
    "Only select repositories" and pick the ones your agent may work in, then click

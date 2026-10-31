@@ -14,6 +14,13 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
 - `ProviderRegistry` (`provider/registry.ts`) holds providers by name. The model ladder
   (`models/ladder.ts`) maps each tier to a model id per provider; the billing router picks the
   source and credential.
+- Anthropic has two adapters under the one name `anthropic` (ADR 0098): the Messages adapter
+  (`provider/anthropic.ts`) for an API key, and `ClaudeCodeProvider` (`provider/claude-code.ts`)
+  when the only credential is a Claude subscription token. That token is for Claude Code only,
+  so the second adapter makes each call as one Claude Code turn through the Agent SDK and maps
+  its raw stream events the same way; the Messages adapter refuses a `sk-ant-oat…` credential.
+  A vendor whose consumer login is tied to its own client follows the same rule: run the
+  vendor's client, never copy its headers.
 - Streams emit `message_start` (the answering model id and, when the vendor reports it as the
   message opens, `usage` with the input side of the bill: input, cache read and cache write
   tokens, output 0, so a call cut off before `message_end` still shows what its input cost),
@@ -76,7 +83,10 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
 
 ## Tests
 
-`packages/runtime/test/anthropic-provider.test.ts` is the template (11 tests; two for the flags:
+`claude-code-provider.test.ts` covers the Claude Code adapter (a tool call handed over under its
+own name and the stream stopped at the response, the quoted transcript, a missing or refused
+token, the schema shape, and the Messages adapter and the setup check refusing a subscription
+token). `packages/runtime/test/anthropic-provider.test.ts` is the template (11 tests; two for the flags:
 no temperature and fast mode only on an API key, a proxied copy keeping them; `speed: "fast"`
 and the beta header on an API key with an Opus id, nothing on a Sonnet id, a subscription token
 or a request without `speed`; and the abort rule: the input-side `usage` on `message_start`,

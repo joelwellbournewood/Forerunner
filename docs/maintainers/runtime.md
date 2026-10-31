@@ -238,6 +238,28 @@ critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
 
+**Which provider compose builds (U-048, ADR 0098).** An injected provider, else the Messages
+adapter on the vault's `anthropic_api_key`, else, with only `anthropic_subscription_token`,
+`ClaudeCodeProvider` (`src/provider/claude-code.ts`), else none. A subscription token is for
+Claude Code only (Anthropic's terms; Claude Code itself sends it as `Authorization: Bearer` with
+`anthropic-beta: oauth-2025-04-20`, which Forerunner never copies), so the Messages adapter
+refuses one (`SUBSCRIPTION_TOKEN_PREFIX`) and `validateAnthropicKey` only checks its format.
+`ClaudeCodeProvider` runs each model call of chat, intake, the critic and the model watch as one
+Agent SDK `query()`: the token as `CLAUDE_CODE_OAUTH_TOKEN` in a `scrubEnv` environment, read from
+the vault at every call; `systemPrompt: { type: "custom" }` with the request's system prompt;
+`tools: []`; the request's tools on an in-process MCP server named `forerunner` that runs
+nothing (`allowedTools: []`, `permissionMode: "dontAsk"`); `maxTurns: 1`, `settingSources: []`,
+`persistSession: false`, `cwd` `<cache>/claude-code`; `CLAUDE_CODE_MAX_OUTPUT_TOKENS` from
+`max_tokens`; effort, and `thinking: disabled` where `anthropicThinkingOff` says so. It reads
+the raw stream (`includePartialMessages`) up to `message_stop`, maps it as the Messages adapter
+does (the `mcp__forerunner__` prefix removed from tool names) and stops the subprocess; the
+loop runs the tools. Earlier turns are quoted in one user turn (`promptFor`). Claude Code's
+error kinds map to `provider_auth` (a refused token, with the step to replace it),
+`provider_rate_limit` or `provider_error`. `listModels()` is empty; `fastMode` is false. Tests:
+`subscription-only-provider.test.ts` (a chat message on a subscription-only install: the
+reply through the SDK with the token in Claude Code's environment, no request of Forerunner's
+own to the Messages API or with the token), `claude-code-provider.test.ts`.
+
 **The Anthropic adapter's abort path** (`src/provider/anthropic.ts`). The request's `signal` is
 handed to the SDK, and every way the SDK reacts to it ends the stream with `error: aborted`:
 the request promise rejecting before the response (the SDK's `APIUserAbortError`, no longer
@@ -557,8 +579,8 @@ credential was stored after the daemon started, the links: the Claude Console's 
 GitHub's fine-grained token form with `contents=write&pull_requests=write&issues=write&statuses=read&metadata=read`
 filled in, `GITHUB_TOKEN_URL`); `POST /setup/profile { name?, timezone? }` (config.json and
 the human row; an unknown IANA zone is a 400); `POST /setup/anthropic { value }` (a
-`sk-ant-oat…` value is a subscription token, format-checked; anything else an API key checked
-with `GET /v1/models`; a GitHub token is a 400); `POST /setup/github { token, repos? }`
+`sk-ant-oat…` value is a subscription token, format-checked and never sent anywhere (ADR 0098);
+anything else an API key checked with `GET /v1/models`; a GitHub token is a 400); `POST /setup/github { token, repos? }`
 (`GET /user` and each repository's permissions; an Anthropic credential is a 400); `POST
 /setup/finish` (writes `config.json` when there is none, marks `setupAcknowledgedAt`, and when
 `restartNeeded` restarts the daemon through `rt.restarter` with reason `setup` 300 ms after

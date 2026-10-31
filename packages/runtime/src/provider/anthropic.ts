@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { canonicalModelId } from "@forerunner/billing";
 import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
 import { FAST_MODE_BETA } from "../models/fast-mode.ts";
+import { SUBSCRIPTION_TOKEN_PREFIX } from "../setup/validators.ts";
 import {
   type ChatMessage,
   type ContentBlock,
@@ -22,7 +23,9 @@ import {
  * prefixes for prompt caching, never sends temperature (current Claude models reject it) and
  * sends `speed: "fast"` with the fast-mode beta header when the request asks (spec D.20, ADR
  * 0057), on an API key and an Opus model id only (ADR 0072).
- * The credential is passed in by the billing router; this class never reads env itself.
+ * The credential is an API key (or a gateway's bearer token); a Claude subscription token is
+ * refused here and runs through Claude Code instead (`ClaudeCodeProvider`, U-048, ADR 0098).
+ * This class never reads env itself.
  */
 
 /** Fast mode is API only for Opus (spec D.20): never on a subscription. */
@@ -55,7 +58,11 @@ export function anthropicThinkingOff(
 
 export interface AnthropicProviderOptions {
   apiKey?: string;
-  /** OAuth token from `claude setup-token` (subscription). Exactly one of apiKey/authToken is set. */
+  /**
+   * A bearer token for an LLM gateway or proxy in front of the API (sent as
+   * `Authorization: Bearer`). Exactly one of apiKey/authToken is set. Never a Claude
+   * subscription token: the constructor refuses one (`SUBSCRIPTION_TOKEN_PREFIX`).
+   */
   authToken?: string;
   baseURL?: string;
   /** Sent with every request, e.g. X-Headroom-Project when the base URL is the Headroom proxy. */
@@ -74,9 +81,14 @@ export class AnthropicMessagesProvider implements ModelProvider {
 
   constructor(opts: AnthropicProviderOptions) {
     if (!opts.apiKey && !opts.authToken) {
+      throw new ForerunnerError("provider_auth", "anthropic provider needs an API key");
+    }
+    if (
+      [opts.apiKey, opts.authToken].some((v) => v?.trim().startsWith(SUBSCRIPTION_TOKEN_PREFIX))
+    ) {
       throw new ForerunnerError(
         "provider_auth",
-        "anthropic provider needs an API key or a subscription token",
+        "a Claude subscription token runs only in Claude Code (ClaudeCodeProvider), never on the Messages API",
       );
     }
     this.opts = opts;

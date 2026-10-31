@@ -298,7 +298,7 @@ describe("AnthropicMessagesProvider", () => {
     expect(await second).toBeUndefined();
   });
 
-  it("uses a subscription token as a bearer credential when given", async () => {
+  it("uses a gateway bearer token as a bearer credential when given", async () => {
     let headers: Headers | null = null;
     const fetchImpl: typeof fetch = async (_i, init) => {
       headers = new Headers(init?.headers);
@@ -475,7 +475,7 @@ describe("AnthropicMessagesProvider", () => {
   });
 
   it("requires a credential and classifies model ids into tiers", () => {
-    expect(() => new AnthropicMessagesProvider({})).toThrow(/API key or a subscription token/);
+    expect(() => new AnthropicMessagesProvider({})).toThrow(/needs an API key/);
     expect(tierFromId("claude-sonnet-5-5")).toBe("sonnet");
     expect(tierFromId("claude-fable-5-1")).toBe("fable");
     expect(tierFromId("something-else")).toBeNull();

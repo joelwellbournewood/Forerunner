@@ -502,7 +502,8 @@ export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string | undefi
   return out;
 }
 
-async function loadSdkQuery(): Promise<QueryLike> {
+/** The SDK's `query`, imported on first use so a unit test never loads Claude Code. */
+export async function loadSdkQuery(): Promise<QueryLike> {
   const mod = (await import("@anthropic-ai/claude-agent-sdk")) as unknown as { query: QueryLike };
   return mod.query;
 }

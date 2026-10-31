@@ -55,7 +55,7 @@ export const CREDENTIAL_REQUESTS: Record<
     ],
     whereToClick: "console.anthropic.com → API keys → Create key",
     howVerified:
-      "Forerunner calls GET /v1/models with the key; a 200 proves the key works, a 401 means it is wrong or revoked. No tokens are generated during the check.",
+      "Forerunner calls GET /v1/models with the key; a 200 proves the key works, a 401 means it is wrong or revoked. No tokens are generated during the check. A subscription token (sk-ant-oat…) is never sent anywhere by Forerunner: its format is checked and Claude Code uses it.",
   },
   subscription: {
     name: "Claude subscription token",
@@ -223,12 +223,16 @@ export interface AnthropicValidationOptions {
 export async function validateAnthropicKey(
   opts: AnthropicValidationOptions,
 ): Promise<ValidationResult> {
+  // A subscription token is for Claude Code only (U-048, ADR 0098): Forerunner never sends it
+  // to the API itself, so it is checked for its shape, like `--subscription-token`.
+  if (opts.key.trim().startsWith(SUBSCRIPTION_TOKEN_PREFIX))
+    return validateSubscriptionTokenFormat(opts.key);
   const f = opts.fetchImpl ?? fetch;
   const base = (opts.apiBase ?? "https://api.anthropic.com").replace(/\/$/, "");
-  const isOauth = opts.key.startsWith("sk-ant-oat");
-  const headers: Record<string, string> = { "anthropic-version": "2023-06-01" };
-  if (isOauth) headers.Authorization = `Bearer ${opts.key}`;
-  else headers["x-api-key"] = opts.key;
+  const headers: Record<string, string> = {
+    "anthropic-version": "2023-06-01",
+    "x-api-key": opts.key,
+  };
   if (opts.workspaceId) headers["anthropic-workspace-id"] = opts.workspaceId;
   let res: Response;
   try {
@@ -246,7 +250,7 @@ export async function validateAnthropicKey(
       ok: false,
       summary: "Anthropic rejected the key (401).",
       problems: ["The key is invalid or revoked."],
-      details: { kind: isOauth ? "subscription" : "api_key" },
+      details: { kind: "api_key" },
     };
   if (res.status === 403)
     return {
@@ -276,7 +280,7 @@ export async function validateAnthropicKey(
         ? `Key works; ${ids.length} models visible.`
         : "Key works but the expected models are not visible.",
     problems,
-    details: { kind: isOauth ? "subscription" : "api_key", models: ids },
+    details: { kind: "api_key", models: ids },
   };
 }
 
