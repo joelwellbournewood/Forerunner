@@ -167,6 +167,10 @@ import {
   VoiceStatusView as VoiceStatusViewSchema,
   type VoiceTurnView,
 } from "@forerunner/runtime/daemon/api-types";
+import {
+  type SandboxStatusView,
+  SandboxStatusView as SandboxStatusViewSchema,
+} from "@forerunner/runtime/sandbox/readiness-types";
 import { z } from "zod";
 import type { DaemonConfig } from "./config.ts";
 import {
@@ -296,6 +300,7 @@ export type {
   RevokeDeviceView,
   RollbackResult,
   RunView,
+  SandboxStatusView,
   ScanResultView,
   SessionView,
   SetTaskDependenciesBody,
@@ -621,6 +626,15 @@ export interface DaemonClient {
    * panel (spec O) reads from it whether a voice session can start and why not.
    */
   voiceStatus(signal?: AbortSignal): Promise<VoiceStatusView>;
+
+  // Settings -> Sandbox (Docker) (U-079, ADR 0101); the download's progress is followed with
+  // `followSandboxPull` in `api/sandbox.ts`.
+  /** The Docker sandbox for full-review tasks: its state, the steps for it, the download. */
+  sandboxStatus(signal?: AbortSignal): Promise<SandboxStatusView>;
+  /** Check again: a fresh look at Docker and the image. */
+  checkSandbox(): Promise<SandboxStatusView>;
+  /** Download the sandbox (202): a running download is followed, not started twice. */
+  pullSandbox(): Promise<SandboxStatusView>;
 
   // Updates screen (spec M)
   /** Local state with the last check's result; never asks the release feed. */
@@ -1014,6 +1028,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     },
     voiceStatus: (signal) =>
       get(routePath("voiceStatus"), VoiceStatusViewSchema, undefined, signal),
+    sandboxStatus: (signal) =>
+      get(routePath("sandboxStatus"), SandboxStatusViewSchema, undefined, signal),
+    checkSandbox: () => post(routePath("checkSandbox"), SandboxStatusViewSchema),
+    pullSandbox: () => post(routePath("pullSandbox"), SandboxStatusViewSchema),
     updateExtensionPermissions: (id, permissions) =>
       put(routePath("extensionPermissions", { id }), ExtensionViewSchema, { permissions }),
     removeExtension: async (id) => {

@@ -26,6 +26,7 @@ import { DesktopAllowlistSection } from "./DesktopAllowlistSection.tsx";
 import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
 import { PlanAllowanceSection } from "./PlanAllowanceSection.tsx";
+import { SandboxSettingsCard } from "./SandboxSettingsCard.tsx";
 import {
   describeSetting,
   type FieldSpec,
@@ -797,6 +798,8 @@ export function SettingsPage() {
       <ModelSettingsSection />
 
       <VoiceSettingsCard />
+
+      <SandboxSettingsCard />
 
       <DesktopAllowlistSection />
 

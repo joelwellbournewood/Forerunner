@@ -76,6 +76,14 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
+import {
+  SANDBOX_WHY,
+  type SandboxPullEntryView,
+  type SandboxState,
+  type SandboxStatusView,
+  sandboxNextStep,
+  sandboxWords,
+} from "@forerunner/runtime/sandbox/readiness-types";
 import { NO_MODEL_CHAT_REPLY } from "@forerunner/runtime/setup/no-model";
 import { acceptsAnswer, personQuestionsAnswer } from "@forerunner/runtime/wiring/request-answers";
 import {
@@ -277,6 +285,55 @@ export interface FakeDaemonOptions {
   setup?: Partial<SetupStatusView>;
   /** The available release's artefact for this platform, e.g. the desktop's MSI (ADR 0092). */
   updateArtifact?: { name: string; url: string };
+  /**
+   * Settings → Sandbox (Docker) (U-079): the state `GET /sandbox` starts in (default ready).
+   * While it is not ready, the start check names the tier 2+ ready tasks as waiting for it.
+   */
+  sandbox?: { state: SandboxState; platform?: string; pullable?: boolean; waiting?: number };
+  /** The state the next `POST /sandbox/check` finds (the person started Docker meanwhile). */
+  sandboxAfterCheck?: SandboxState;
+}
+
+/** `GET /sandbox` as the daemon words it, from the same words module. */
+export function fakeSandboxView(
+  state: SandboxState,
+  opts: { platform?: string; pullable?: boolean; waiting?: number } = {},
+): SandboxStatusView {
+  const platform = opts.platform ?? "windows";
+  const pullable = opts.pullable ?? true;
+  const image = pullable ? "ghcr.io/test-owner/forerunner-runner:1.0.5" : "forerunner-runner:local";
+  const downloadBytes = state === "image_missing" || state === "pulling" ? 640_000_000 : null;
+  const engine =
+    state === "not_installed" || state === "not_running" || state === "windows_containers"
+      ? "none"
+      : "docker";
+  const words = sandboxWords({
+    state,
+    platform,
+    image,
+    pullable,
+    engine,
+    engineVersion: "27.3.1",
+    downloadBytes,
+  });
+  return {
+    state,
+    ready: state === "ready",
+    engine,
+    engineVersion: engine === "none" ? null : "27.3.1",
+    platform,
+    image,
+    imageSource: pullable ? "build" : "local",
+    pullable,
+    downloadBytes,
+    reason: engine === "none" ? "docker: fake daemon" : "docker 27.3.1 reachable",
+    headline: words.headline,
+    steps: words.steps,
+    why: SANDBOX_WHY,
+    waiting: state === "ready" ? 0 : (opts.waiting ?? 0),
+    checkedAt: new Date().toISOString(),
+    pull: null,
+  };
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -371,6 +428,9 @@ export interface FakeDaemonState {
   nextVoiceLine: string | null;
   /** `GET /voice/install` and the last install job's events (ADR 0090). */
   voiceInstall: VoiceInstallView;
+  /** `GET /sandbox` and the last download's events (U-079). */
+  sandbox: SandboxStatusView;
+  sandboxEntries: SandboxPullEntryView[];
   voiceInstallEntries: VoiceInstallEntryView[];
   /** The `afterSeq` of every install events stream opened (where a stream resumed). */
   voiceInstallStreamsAfter: number[];
@@ -478,6 +538,7 @@ function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
   budgetUsdMicro: number | null,
+  sandbox: SandboxStatusView | null = null,
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   // High first, as the daemon's stored numbers order them (U-041).
@@ -490,6 +551,7 @@ function fakeStartCheck(
   const runnable: StartCheckView["runnable"] = [];
   const overBudget: StartCheckView["overBudget"] = [];
   const waiting: StartCheckView["waiting"] = [];
+  const sandboxTasks: StartCheckView["runnable"] = [];
   let total = 0;
   for (const t of ready) {
     const waitsOn = t.dependsOn
@@ -505,7 +567,9 @@ function fakeStartCheck(
     }
     const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
     const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
-    if (total + estimate > work) overBudget.push(named);
+    // U-079: a full-review task waits while the Docker sandbox is not ready.
+    if (sandbox && !sandbox.ready && t.riskTier >= 2) sandboxTasks.push(named);
+    else if (total + estimate > work) overBudget.push(named);
     else {
       runnable.push(named);
       total += estimate;
@@ -519,6 +583,20 @@ function fakeStartCheck(
     runnable,
     overBudget,
     waiting,
+    waitingForSandbox:
+      sandbox && !sandbox.ready && sandboxTasks.length > 0
+        ? {
+            state: sandbox.state,
+            headline: sandbox.headline,
+            step: sandboxNextStep({
+              state: sandbox.state,
+              platform: sandbox.platform,
+              image: sandbox.image,
+              pullable: sandbox.pullable,
+            }),
+            tasks: sandboxTasks,
+          }
+        : null,
   };
 }
 
@@ -603,6 +681,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     voiceInstall: { ...clone(VOICE_INSTALL), ...(options.voiceInstall ?? {}) },
     voiceInstallEntries: [],
     voiceInstallStreamsAfter: [],
+    sandbox: fakeSandboxView(options.sandbox?.state ?? "ready", options.sandbox ?? {}),
+    sandboxEntries: [],
     voiceHold: false,
     voiceRefusePress: false,
   };
@@ -1224,7 +1304,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return errorBody(c, 404, "not_found", "no such project");
     }
     const raw = Number(c.req.query("budgetUsdMicro") ?? "");
-    return c.json(fakeStartCheck(state.tasks, id, Number.isInteger(raw) && raw > 0 ? raw : null));
+    return c.json(
+      fakeStartCheck(state.tasks, id, Number.isInteger(raw) && raw > 0 ? raw : null, state.sandbox),
+    );
   });
   app.get("/projects/:id/runs", (c) => {
     const id = c.req.param("id");
@@ -2088,6 +2170,81 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // at once; the events route replays it (JSON, or SSE that ends with the job).
   let voiceInstallDone: VoiceInstallView | null = null;
   let voiceInstallStreams = 0;
+
+  // Settings → Sandbox (Docker) (U-079): the state, Check again, and a download that runs to
+  // its end once its events are read (JSON, or SSE that ends with the download).
+  let sandboxCheckUsed = false;
+  let sandboxDone: SandboxStatusView | null = null;
+  const sandboxOpts = () => ({
+    platform: state.sandbox.platform,
+    pullable: state.sandbox.pullable,
+    waiting: state.sandbox.waiting,
+  });
+  app.get("/sandbox", (c) => c.json(state.sandbox));
+  app.post("/sandbox/check", (c) => {
+    if (options.sandboxAfterCheck && !sandboxCheckUsed) {
+      sandboxCheckUsed = true;
+      state.sandbox = fakeSandboxView(options.sandboxAfterCheck, sandboxOpts());
+    } else state.sandbox = { ...state.sandbox, checkedAt: new Date().toISOString() };
+    return c.json(state.sandbox);
+  });
+  app.post("/sandbox/pull", (c) => {
+    if (state.sandbox.pull?.state === "running") return c.json(state.sandbox, 202);
+    if (state.sandbox.state !== "image_missing" || !state.sandbox.pullable)
+      return errorBody(
+        c,
+        409,
+        "conflict",
+        `the sandbox cannot be downloaded yet: ${state.sandbox.headline}`,
+      );
+    const image = state.sandbox.image;
+    const events = [
+      { type: "step" as const, message: `downloading ${image}` },
+      { type: "layers" as const, done: 1, total: 3 },
+      { type: "layers" as const, done: 3, total: 3 },
+      { type: "result" as const, ok: true, image, message: `the sandbox ${image} is downloaded` },
+    ];
+    state.sandboxEntries = events.map((event, i) => ({ seq: i + 1, event }));
+    const at = new Date().toISOString();
+    const job = {
+      id: nextId("pull"),
+      image,
+      startedAt: at,
+      layersTotal: 3,
+    };
+    sandboxDone = {
+      ...fakeSandboxView("ready", sandboxOpts()),
+      pull: {
+        ...job,
+        state: "done",
+        finishedAt: at,
+        layersDone: 3,
+        recent: state.sandboxEntries,
+      },
+    };
+    state.sandbox = {
+      ...fakeSandboxView("pulling", sandboxOpts()),
+      pull: { ...job, state: "running", finishedAt: null, layersDone: 0, recent: [] },
+    };
+    return c.json(state.sandbox, 202);
+  });
+  app.get("/sandbox/pull/events", (c) => {
+    const after = Number(c.req.query("afterSeq") ?? 0);
+    const entries = state.sandboxEntries.filter((e) => e.seq > after);
+    if (sandboxDone) {
+      state.sandbox = sandboxDone;
+      sandboxDone = null;
+    }
+    if (!(c.req.header("accept") ?? "").includes("text/event-stream")) return c.json(entries);
+    return streamSSE(c, async (stream) => {
+      for (const e of entries)
+        await stream.writeSSE({
+          event: "sandbox.pull",
+          data: JSON.stringify(e),
+          id: String(e.seq),
+        });
+    });
+  });
 
   app.get("/voice/install", (c) => c.json(state.voiceInstall));
   app.post("/voice/install", async (c) => {

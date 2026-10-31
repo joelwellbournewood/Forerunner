@@ -6,10 +6,12 @@ import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
+import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ScriptedProvider } from "../../../packages/runtime/test/helpers.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
+import { followSandboxPull } from "../src/api/sandbox.ts";
 
 /**
  * The UI's own client against the real daemon (U-008 in docs/status/UPDATE-LOG.md). The screen
@@ -22,6 +24,18 @@ import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../sr
  */
 
 const REGISTRY = fileURLToPath(new URL("../../../evals/registry", import.meta.url));
+
+/**
+ * The sandbox every composition here means (U-079): no container engine, whatever the machine
+ * has, so a task at tier 0 or 1 runs in the process stand-in and CI's own Docker (no runner
+ * image on Linux, Windows containers on Windows) never decides a result.
+ */
+const NO_ENGINE = {
+  engine: "none" as const,
+  problem: "not_installed" as const,
+  reason: "test: no engine",
+  checkedAt: "2026-03-05T08:00:00.000Z",
+};
 
 /** What a call came back with, when it is a mismatch between the screens and the daemon. */
 function mismatch(error: unknown): string | null {
@@ -55,6 +69,7 @@ describe("the UI client against the real daemon", () => {
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
     });
     const { app, token } = createDaemonApp(rt);
     client = createClient(
@@ -104,6 +119,7 @@ describe("the UI client against the real daemon", () => {
       ["extensions", () => client.extensions()],
       ["extensionCatalog", () => client.extensionCatalog()],
       ["voiceStatus", () => client.voiceStatus()],
+      ["sandboxStatus", () => client.sandboxStatus()],
       ["updates", () => client.updates()],
       ["updatesStatus", () => client.updatesStatus()],
       ["modelWatchReports", () => client.modelWatchReports()],
@@ -942,6 +958,9 @@ async function composeWithWaitingRun(): Promise<{
     registryDir: REGISTRY,
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.0.0-ui-contract",
+    // No Docker here, whatever the machine has (U-079): tasks at tier 0 and 1 run in the
+    // process stand-in, as they do for a person without Docker.
+    sandboxDetection: NO_ENGINE,
   });
   const { app, token } = createDaemonApp(rt);
   const client = createClient(
@@ -1082,6 +1101,106 @@ describe("the UI client against the real daemon: a task a session is running", (
   });
 });
 
+describe("the UI client against the real daemon: Settings → Sandbox (Docker) (U-079)", () => {
+  const IMAGE = "registry.example/forerunner-runner:ui-contract";
+  const engine = new FakeContainerEngine({
+    registry: { [IMAGE]: { layers: 2, bytes: 500_000_000 } },
+  });
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-sandbox-"));
+    // Docker answers, the image is not here yet: the engine is a stand-in, never CI's Docker.
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home, FORERUNNER_RUNNER_IMAGE: IMAGE },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock: new SimulatedClock("2026-10-31T08:00:00Z"),
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxRun: engine.run,
+      sandboxWhich: engine.which,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("the card's status, the Start dialog's waiting task, Download with its progress, Check again", async () => {
+    const before = await client.sandboxStatus();
+    expect(before).toMatchObject({
+      state: "image_missing",
+      ready: false,
+      image: IMAGE,
+      pullable: true,
+      downloadBytes: 500_000_000,
+      waiting: 0,
+    });
+    expect(before.steps[0]).toContain("Download the sandbox");
+
+    // A full-review task waits; the Start dialog says so with the step.
+    const project = await client.createProject({ name: "Docker", goal: "Reviewed" });
+    await client.createTask(project.id, {
+      title: "Rework the payment flow",
+      outcome: "it is reworked",
+      acceptanceCriteria: [],
+      riskTier: 2,
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    const check = await client.startCheck(project.id);
+    expect(check.runnable).toEqual([]);
+    expect(check.waitingForSandbox).toMatchObject({
+      state: "image_missing",
+      tasks: [{ title: "Rework the payment flow" }],
+    });
+    expect((await client.sandboxStatus()).waiting).toBe(1);
+
+    // Download the sandbox: 202 with the download, its events to the end, then ready.
+    const started = await client.pullSandbox();
+    expect(started.pull?.image).toBe(IMAGE);
+    const events: string[] = [];
+    await followSandboxPull(client, 0, (e) => events.push(e.event.type));
+    await rt.sandbox.readiness.settled;
+    expect(events).toContain("layers");
+    expect(events.at(-1)).toBe("result");
+    const after = await client.sandboxStatus();
+    expect(after).toMatchObject({ state: "ready", ready: true, waiting: 0 });
+    expect(after.pull).toMatchObject({ state: "done", layersDone: 2, layersTotal: 2 });
+    expect(engine.callsOf("pull")).toEqual([["docker", "pull", IMAGE]]);
+    expect((await client.startCheck(project.id)).waitingForSandbox).toBeNull();
+
+    // Docker quits: Check again says so, with the step; a Download is refused with it.
+    engine.set({ running: false });
+    const stopped = await client.checkSandbox();
+    expect(stopped.state).toBe("not_running");
+    expect(stopped.headline).toBe("Docker is installed but not running.");
+    const refused = await client.pullSandbox().catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(409);
+    expect((refused as ApiError).message).toContain("Docker is installed but not running.");
+    engine.set({ running: true });
+  });
+});
+
 describe("the UI client against the real daemon without a Claude key (U-047)", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;
@@ -1099,6 +1218,7 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
     });
     const { app, token } = createDaemonApp(rt);
     client = createClient(

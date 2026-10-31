@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { describeError, type StartCheckView, type StartSessionView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS, Money } from "../../components/ui.tsx";
@@ -51,6 +51,16 @@ function stuck(w: StartCheckView["waiting"][number]): boolean {
 }
 
 /**
+ * The full-review tasks that wait for the Docker sandbox (U-079), with what is wrong and the
+ * step to take: they are not failed, and they run in a session once the sandbox is ready.
+ */
+export function sandboxWaitingText(w: NonNullable<StartCheckView["waitingForSandbox"]>): string {
+  const names = w.tasks.map((t) => `"${t.title}"`).join(", ");
+  const one = w.tasks.length === 1;
+  return `${names} ${one ? "needs" : "need"} a full review, which runs in the Docker sandbox, and it is not ready: ${w.headline} Next: ${w.step}. ${one ? "It waits" : "They wait"}; nothing fails and no retry is used.`;
+}
+
+/**
  * The tasks a session started now would not run (U-040): the ones waiting on another task and
  * the ones that do not fit the work budget, each by title with what holds it back.
  */
@@ -72,6 +82,14 @@ function NotInThisSession({ check }: { check: StartCheckView }) {
           session a larger budget, or the task a smaller one.
         </li>
       ))}
+      {check.waitingForSandbox && check.waitingForSandbox.tasks.length > 0 ? (
+        <li data-testid="start-session-sandbox">
+          {sandboxWaitingText(check.waitingForSandbox)}{" "}
+          <Link to="/settings#sandbox" className="text-blue-700 hover:underline dark:text-blue-300">
+            Open Settings → Sandbox (Docker)
+          </Link>
+        </li>
+      ) : null}
     </ul>
   );
 }
@@ -116,7 +134,10 @@ export function StartSessionDialog({
     check.data !== null &&
     !noReadyTask &&
     !nothingRuns &&
-    check.data.waiting.length + check.data.overBudget.length > 0;
+    check.data.waiting.length +
+      check.data.overBudget.length +
+      (check.data.waitingForSandbox?.tasks.length ?? 0) >
+      0;
   // U-046: the dialog names the plan from the brief only as it really stands: it said a plan
   // waits in the Inbox when none did (the intake had failed, or was never asked for).
   const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;

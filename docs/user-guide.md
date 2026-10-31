@@ -37,9 +37,11 @@ In short:
   Linux, cloud voice providers, pairing a real phone, and running the installed MSI, AppImage
   or `.deb`.
 - **GitHub:** a live run on 1.0.0 cloned this repository, pushed and opened a real pull
-  request. On a PC without Docker or Podman the agent cannot run shell commands, so it cannot
-  run your checks: the critic then sends the change back and it retries a few times before
-  asking you. Install Docker or Podman to avoid that.
+  request.
+- **Docker:** tasks that get a full review (risk tier 2 and above) run only in the Docker
+  sandbox. On a PC without it they wait instead of failing; Settings → **Sandbox (Docker)** says
+  what to do (below, under Sessions). The switch to Linux containers and the sandbox download
+  on a real Windows PC with Docker Desktop were not tested by CI.
 
 The phone shows notices only while the app is open, because push is not set up yet. Email and
 the cloud runner are built and pass their tests, but you are the first to run them for real.
@@ -146,6 +148,17 @@ A session plans the ready tasks that fit its budget, highest priority first; a t
 for the budget is left out and the smaller ones after it still run. **Start session** says
 before you start when no ready task can run (each one that waits on another task, and each
 one larger than the budget, by name) and what to do; the session's summary names the same.
+
+**Full-review tasks wait for Docker.** A task at risk tier 2 or 3 runs its tests and builds in
+the Docker sandbox, isolated from your computer, so the critic sees real results. While the
+sandbox is not ready (Docker not installed or not started, Docker Desktop on Windows
+containers, or the sandbox not downloaded yet), such a task waits: the session runs your other
+tasks, **Start session** and the summary name it under "Waiting for Docker" with the next step,
+and the Inbox has one notice saying Docker is needed. Nothing fails and no retry is used. Open
+Settings → **Sandbox (Docker)**: it shows the step (install Docker Desktop, start it, switch it
+to Linux containers, **Download the sandbox** with its size and progress), and **Check again**
+after each one. The task runs in the next session once the card says Ready. A task that an
+earlier version marked failed for want of a sandbox goes back to ready by itself then.
 
 When a session ends, its summary, the last line of its log and the notification count the same
 things: tasks done, failed, needing you, sent back by the critic for another attempt, waiting
@@ -342,8 +355,9 @@ your agents may reach beyond their built-in tools.
 
 - **Settings**: your agent's name, the model and its key or subscription (set in the setup)
   and which is used first, budgets and autonomy, **Voice** (installing local voice, CPU or GPU, and which voice providers
-  are in force), **Email** (your agent's mailbox and mode, on the Email page) and your paired
-  devices.
+  the sandbox download), **Email** (your agent's mailbox and mode, on the Email page) and your
+  paired devices.
+  are in force), **Sandbox (Docker)** (whether full-review tasks can run, the step to take,
 - **Extensions**: each extra capability with what it is granted (tools, domains, secrets,
   scopes), what it has cost, and an On/Off switch that takes effect at once, also for a session
   that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice
