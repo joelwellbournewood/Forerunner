@@ -217,8 +217,18 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **What happens:** the first start creates the principal agent with the name in
   `FORERUNNER_AGENT_NAME`, else "Alice" (`packages/runtime/src/daemon/compose.ts`). Nothing
   renames it later: setting the variable afterwards only picks an existing agent by name.
-- **Action (owner's request):** Settings gets a name field for your agent.
-- **Status:** open.
+- **Action (owner's request):** Settings → "Your agent" renames it (`POST /agents/:id/rename`,
+  1 to 60 characters, unique among your agents, not the critic). The new name shows at once
+  in the app, in commit authors and in notifications; the phone shows it within 30 s. A start
+  with the old `FORERUNNER_AGENT_NAME` still picks the same agent. Not covered: a second PC's
+  service and a running cloud runner pick the name up at their next start
+  (`docs/maintainers/runtime.md`). Commit 62bb1dd.
+  Tests: `agent-rename-route.test.ts`, `services/state-api/test/routes.test.ts`,
+  `apps/ui/test/settings-agent-name.test.tsx`, `apps/ui/test/real-daemon.test.ts` (the UI's
+  client against the real daemon); each failed before the change.
+- **Check in the app:** Settings → Your agent: type a new name, Save. The header, the Start
+  session dialog and a new session's log show the new name; quit and reopen, it stays.
+- **Status:** open (fix committed; fixed once CI is green).
 
 ### U-026 Adding an extension yourself asks for approval a second time, in the Inbox
 

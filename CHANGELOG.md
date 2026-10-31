@@ -16,6 +16,7 @@ Problems and their status, released or not, are tracked in
 
 ### Added
 
+- **Rename your agent** in Settings → Your agent; it was always "Alice" (U-025).
 - **Mark all read** in the inbox marks every unread message read with one click (U-020).
 
 ### Changed
