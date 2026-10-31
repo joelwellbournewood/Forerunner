@@ -169,6 +169,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | J.8 | Level 2 Standard: routine reversible actions free, everything else approved. Default. | 5 | done | packages/runtime/test/autonomy.test.ts; packages/runtime/test/hooks.test.ts; packages/runtime/test/loop.test.ts; packages/runtime/test/approvals-durable.test.ts |
 | J.9 | Level 3 Trusted: also merges reviewed PRs and deploys to staging. | 5 | done | packages/runtime/test/autonomy.test.ts; packages/capabilities/test/cloudflare-client.test.ts; packages/capabilities/test/cloudflare-deploy.test.ts; packages/capabilities/test/cloudflare-hooks.test.ts; packages/capabilities/test/cloudflare-tools.test.ts; packages/capabilities/test/cloudflare-wiring.test.ts; packages/runtime/test/loop-merge.test.ts; packages/runtime/test/hooks.test.ts; packages/capabilities/test/github.test.ts |
 | J.10 | Level 4 Autopilot: everything except destructive, financial and credential actions. | 5 | done | packages/runtime/test/autonomy.test.ts; packages/runtime/test/hooks.test.ts; packages/capabilities/test/cloudflare-wiring.test.ts; packages/runtime/test/approvals-durable.test.ts |
+| J.11 | The person chooses how much control to give, from very little to all of it: the autonomy level per project and the access granted to services (a GitHub token from read-only to full). Each level says what it allows and what it risks, every feature works with what it was given and, where that is not enough, says which permission it lacks; no screen warns against a level the person chose. | 5 | todo | |
 
 ## K. Interface
 
@@ -376,8 +377,8 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 
 ## Counts
 
-Status on 2026-10-24 (after the status pass of the 2026-10-23 build day, counted from the
-tables above): 203 done, 21 in progress, 4 todo of 228.
+Status on 2026-10-31 (counted by `pnpm gates:verify` from the tables above): 213 done, 13 in
+progress, 3 todo of 229.
 
 | Module | Area | Count |
 | --- | --- | --- |
@@ -390,7 +391,7 @@ tables above): 203 done, 21 in progress, 4 todo of 228.
 | G | Memory, documentation and learning | 7 |
 | H | Critic | 7 |
 | I | Budget and cost | 7 |
-| J | Human interaction | 10 |
+| J | Human interaction | 11 |
 | K | Interface | 8 |
 | L | Capabilities | 6 |
 | M | Self-improvement and updates | 6 |
@@ -403,4 +404,4 @@ tables above): 203 done, 21 in progress, 4 todo of 228.
 | T | Email commands | 14 |
 | U | Data model | 19 |
 | V | Release 1.0 criteria | 9 |
-| **Total** | | **228** |
+| **Total** | | **229** |

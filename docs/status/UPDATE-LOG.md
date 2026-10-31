@@ -38,7 +38,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-079 are open; U-036 is won't fix.
+- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-081 are open; U-036 is won't fix.
 
 ## Open and fixed, not released
 
@@ -107,6 +107,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-077 | 2026-10-31, 1.0.4 (audit); hands-on | [cosmetic and small] The setup name field prefilled with "me"; "never in a file" while the vault fell back to a file; a failed update check still says "not checked yet"; the palette shows ⌘K on Windows; the Cancel dialog's buttons read "Cancel" and "Confirm"; a hidden first-close notice is never shown again; a minimized window reopens at the default place; and other details listed in the entry. | Fix in a batch. | open |
 | U-078 | 2026-10-31, owner | You cannot choose which Claude credential is used first (subscription or API key); chat, planning and reviews always use the API key when there is one; and nothing guarantees an API key is never run through Claude Code, where promotional API credits do not apply. | You set the order in Settings; every call follows it and falls back to the next when one runs out; an API key always goes straight to the API (ADR 0100). | open |
 | U-079 | 2026-10-31, CI and owner | Tasks that need a full review cannot run on an installed app even with Docker: the app looks for a sandbox image only a source checkout can build, and treats Docker in Windows-container mode as usable; the task then fails with jargon and is retried. | Docker is required for full-review tasks (owner); the app fetches the published sandbox image and checks Docker is ready, Settings shows it, and tasks wait with plain steps instead of failing (ADR 0101). | open |
+| U-080 | 2026-10-31, owner | A cancelled task cannot be brought back. The owner's 1.0.4 project held "Confirm stack, hosting and repository with the human", cancelled, with a critic review that "needs you": nowhere to answer its questions, and the tasks after it never start. | A **Reopen** button on every cancelled task in the Tasks tab; a reopened question task turns into an Inbox card with its questions. Until then: a new task with the same kind of title, and **Depends on…** on the tasks that waited. | open |
+| U-081 | 2026-10-31, owner | GitHub access is one fixed set: the assistant pre-fills one token, the guide says never to give admin rights and the check warns about them, yet creating a repository for you (U-037) needs exactly that; nothing says that CI files need the Workflows permission or that the Projects mirror cannot work with a fine-grained token on a personal account. | You choose how much access to give, from read-only to full, each level with what it allows and what it risks; every feature works with what the token allows and says which permission it lacks. | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -319,6 +321,71 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **Check in the app:** Extensions → Add an entry → its permissions are shown; Confirm enables
   it and nothing appears in the Inbox; Cancel adds nothing.
 - **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
+
+### U-081 Choose how much GitHub access to give
+
+- **Found:** 2026-10-31, by the owner after asking which rights to give a fine-grained token:
+  "I want the user to be able to give as much or as little control as they want."
+- **What happens:**
+  - The setup assistant's **Create a token on GitHub** pre-fills one set (Contents, Pull
+    requests and Issues read and write; Commit statuses and Metadata read). The setup guide says
+    "Only select repositories" and "Do not give admin rights", and the check warns about a
+    repository the token administers.
+  - Creating a repository (U-037, ADR 0097) needs Administration (write), per GitHub's REST
+    docs, and probably access to all repositories, since a new repository is on no list of
+    selected ones (not checked against GitHub). So the recommended token cannot do it, and the
+    token that can is the one the check warns about.
+  - A push that changes `.github/workflows` is refused without the Workflows permission;
+    nothing says so.
+  - The GitHub Projects mirror needs Projects access, which GitHub gives fine-grained tokens for
+    organizations only; on a personal account the mirror cannot work, and nothing says so before
+    it asks to create a board.
+- **Action (proposal):**
+  1. The assistant offers levels, each with what it allows and what it risks, and a token link
+     that pre-fills it: read only; standard (today's set, selected repositories); standard plus
+     CI files (Workflows); full (all repositories and Administration: Forerunner may create
+     repositories for you, and the token could also delete or rename any of them, which the app
+     itself never does without you).
+  2. The check reports, per feature, what this token allows (reading, pushing, pull requests,
+     CI files, creating repositories, the Projects mirror) instead of warning about a level the
+     person chose.
+  3. Every feature checks the token before it acts and, when a permission is missing, says
+     which one and where to add it, instead of failing with GitHub's error.
+  4. The setup guide's permission table becomes the levels table; requirement J.11.
+- **Check in the app:** Settings → Accounts and keys → Open the setup assistant → GitHub:
+  choose a level, the GitHub link pre-fills it, paste the token, and the check lists what works
+  with it. With the standard level, **Create a repository** says which permission it needs.
+- **Status:** open.
+
+### U-080 A cancelled task cannot be reopened
+
+- **Found:** 2026-10-31, by the owner in 1.0.4: a project's task "Confirm stack, hosting and
+  repository with the human" was cancelled, with a critic review (30, "needs you") saying a
+  person must answer the stack, hosting, domain and repository questions. There was no place to
+  answer them, and the owner could not tell whether it blocked the project.
+- **What happens:**
+  - The U-022 fix (ADR 0095) files the questions of an old task like this one only while it
+    waits (`ready` or `needs_human`, `FILE_FROM` in `session/person-questions.ts`). A cancelled
+    one is left as it is.
+  - `cancelled` is final in the workflow graph. The one way out is **Undo** in Changes (U-061),
+    for a cancel the new version logged; a cancel made by 1.0.4 has no such entry.
+  - A task that depends on a cancelled task never runs. The new version says so on the Tasks
+    tab and offers **Depends on…**.
+- **Action:**
+  1. A **Reopen** button on every cancelled task in the Tasks tab, with a reason, logged in
+     Changes with Undo. It reopens the task to its status before the cancel when that is known,
+     else to `ready` (`TaskRepo.reopen`).
+  2. A reopened question task is filed as an Inbox card with its questions at once (the
+     approvals sync), and the tasks that waited on it run once it is done.
+  3. Tests at the route, the UI and `real-daemon.test.ts`, and the owner's case end to end: an
+     old question task cancelled, Reopen, the Inbox card with the questions, the answers, the
+     task done, the dependent task planned.
+- **Until then (the test build):** create a task titled "Confirm stack, hosting, domain and
+  repository with the human"; the Inbox asks its questions. On each task that waited on the
+  cancelled one, **Depends on…** swaps it for the new task.
+- **Check in the app:** Tasks tab → a cancelled task → **Reopen** → for a question task, the
+  Inbox shows its questions; answer them and the task is done.
+- **Status:** open.
 
 ### U-079 Full-review tasks need a sandbox the installed app cannot get
 
