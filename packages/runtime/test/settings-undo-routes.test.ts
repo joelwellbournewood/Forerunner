@@ -8,6 +8,7 @@ import {
   ChangeLogView,
   ChatReplyView,
   CommandResultViewSchema,
+  ModelSettingsView,
   ProjectCard,
   TaskTransitionView,
 } from "../src/daemon/api-types.ts";
@@ -232,5 +233,19 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     );
     expect(refused).toMatchObject({ status: "refused", reason: why });
     expect((await rt.store.task.mustGet(taskId)).status).toBe("done");
+  });
+
+  it("U-059: model rows say which speed applies and the highest model they run at", async () => {
+    const view = ModelSettingsView.parse(await get("/settings/models"));
+    const modes = view.agents[0]?.modes ?? [];
+    const chatRow = modes.find((m) => m.mode === "text_chat");
+    const planning = modes.find((m) => m.mode === "planning");
+    expect(chatRow?.speedModeApplies).toBe(false);
+    expect(planning?.speedModeApplies).toBe(false);
+    expect(chatRow?.ceiling).toMatchObject({ tier: "opus", raisable: false });
+    expect(planning?.ceiling).toMatchObject({ tier: "opus", raisable: true });
+    const specialist = view.specialists[0]?.settings;
+    expect(specialist?.speedModeApplies).toBe(true);
+    expect(specialist?.ceiling?.note).toContain("Highest model");
   });
 });

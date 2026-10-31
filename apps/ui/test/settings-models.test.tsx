@@ -225,3 +225,63 @@ describe("Settings: models per agent and specialist", () => {
     expect(await screen.findAllByTestId("setting-row")).toHaveLength(SETTINGS.length);
   });
 });
+
+/**
+ * Model settings show only choices that run (U-059): chat and planning always run at standard
+ * speed, so their speed has no choice; every row says the highest model it runs at, chat
+ * offers nothing above opus, and fable is offered to a specialist with what it takes to run.
+ */
+describe("Settings: models show what runs (U-059)", () => {
+  it("chat and planning offer no speed choice; the specialists do", async () => {
+    renderApp("/settings", createHarness());
+    for (const mode of ["planning", "text_chat"]) {
+      const row = await rowOf("agent", "Alice", mode);
+      const speed = within(row).getByTestId("model-setting-speed_mode");
+      expect(speed).toHaveTextContent("standard (always)");
+      expect(speed).toHaveAttribute("data-fixed", "true");
+      expect(within(speed).queryByTestId("model-setting-change")).toBeNull();
+    }
+    const coder = await rowOf("specialist", "coder");
+    expect(
+      within(within(coder).getByTestId("model-setting-speed_mode")).getByTestId(
+        "model-setting-change",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("model-provider")).toHaveTextContent(
+      "Chat and planning always run at standard speed",
+    );
+  });
+
+  it("each row says its highest model; chat offers nothing above opus, a specialist says what fable needs", async () => {
+    const user = userEvent.setup();
+    renderApp("/settings", createHarness());
+    const chat = await rowOf("agent", "Alice", "text_chat");
+    expect(within(chat).getByTestId("model-settings-ceiling")).toHaveTextContent(
+      "Chat runs at most opus; no setting raises it.",
+    );
+    await user.click(
+      within(within(chat).getByTestId("model-setting-tier")).getByTestId("model-setting-change"),
+    );
+    let dialog = await screen.findByTestId("setting-dialog");
+    const chatOptions = [
+      ...within(dialog).getByTestId("setting-value").querySelectorAll("option"),
+    ].map((o) => o.value);
+    expect(chatOptions).toEqual(["default", "haiku", "sonnet", "opus"]);
+    await user.click(within(dialog).getByText("Cancel"));
+
+    const coder = await rowOf("specialist", "coder");
+    expect(within(coder).getByTestId("model-settings-ceiling")).toHaveTextContent(
+      "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
+    );
+    await user.click(
+      within(within(coder).getByTestId("model-setting-tier")).getByTestId("model-setting-change"),
+    );
+    dialog = await screen.findByTestId("setting-dialog");
+    const fable = [...within(dialog).getByTestId("setting-value").querySelectorAll("option")].find(
+      (o) => o.value === "fable",
+    );
+    expect(fable?.textContent).toBe(
+      "fable (runs only where a project's highest model is fable; else opus)",
+    );
+  });
+});

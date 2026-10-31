@@ -82,15 +82,34 @@ export interface ModelSettingTarget {
   maxEffort?: string;
 }
 
-/** The values a field offers for a target: a specialist's efforts stop at its `max_effort`. */
+/** The highest model a row runs at (U-059): from the daemon's row, `null` when it names none. */
+export type ModelCeiling = NonNullable<RunSettings["ceiling"]>;
+
+/**
+ * The values a field offers for a target: a specialist's efforts stop at its `max_effort`; a
+ * model above a ceiling no setting raises (chat: opus) is not offered at all (U-059).
+ */
 export function optionsFor(
   field: ModelSettingField,
   target: Pick<ModelSettingTarget, "maxEffort">,
+  ceiling?: ModelCeiling | null,
 ): readonly string[] | undefined {
   const all = OPTIONS[field];
-  if (!all || field !== "effort" || !target.maxEffort) return all;
+  if (!all) return all;
+  if (field === "tier" && ceiling && !ceiling.raisable) {
+    const cap = all.indexOf(ceiling.tier);
+    return cap < 0 ? all : all.slice(0, cap + 1);
+  }
+  if (field !== "effort" || !target.maxEffort) return all;
   const cap = all.indexOf(target.maxEffort);
   return cap < 0 ? all : all.slice(0, cap + 1);
+}
+
+/** "fable (runs only where a project's highest model is fable)" for a rung above the ceiling. */
+export function tierLabel(tier: string, ceiling?: ModelCeiling | null): string {
+  const tiers = OPTIONS.tier ?? [];
+  if (!ceiling || tiers.indexOf(tier) <= tiers.indexOf(ceiling.tier)) return tier;
+  return `${tier} (runs only where a project's highest model is ${tier}; else ${ceiling.tier})`;
 }
 
 const show = (v: string | number | null) => (v === null ? "none" : String(v));
@@ -103,13 +122,14 @@ export function modelSettingCommand(
   target: ModelSettingTarget,
   field: ModelSettingField,
   current: SettingValue,
+  ceiling?: ModelCeiling | null,
 ): { setting: SettingView; command: SettingCommand } {
   const where = {
     agent: target.agent,
     ...(target.mode !== undefined ? { mode: target.mode } : {}),
     ...(target.specialist !== undefined ? { specialist: target.specialist } : {}),
   };
-  const options = optionsFor(field, target);
+  const options = optionsFor(field, target, ceiling);
   const rule = NUMBER_RULES[field];
   const defaultLabel = `default (${show(current.default)}, ${SOURCE_LABELS[current.defaultSource]})`;
   const command: SettingCommand = {
@@ -119,7 +139,10 @@ export function modelSettingCommand(
       ? {
           options: [
             { value: "default", label: defaultLabel },
-            ...options.map((o) => ({ value: o, label: o })),
+            ...options.map((o) => ({
+              value: o,
+              label: field === "tier" ? tierLabel(o, ceiling) : o,
+            })),
           ],
         }
       : {}),
@@ -142,12 +165,13 @@ export function modelSettingCommand(
   const label = MODEL_SETTING_COLUMNS.find((c) => c.field === field)?.label ?? field;
   const setting: SettingView = {
     key: `${target.specialist ? `specialist.${target.specialist}` : `agent.${target.mode}`}.${field}`,
+    label: `${label} for ${target.subject}`,
     scope: "agent",
     scopeId: target.agent,
     value: current.value,
     description: `${label} for ${target.subject}; ${defaultLabel}${
       rule ? `; a number from ${rule.min} to ${rule.max}, or "default"` : ""
-    }`,
+    }${field === "tier" && ceiling ? `. ${ceiling.note}` : ""}`,
     risk: field === "tier" || field === "effort" || field === "speed_mode" ? "medium" : "low",
   };
   return { setting, command };
@@ -280,7 +304,9 @@ export function ModelSettingsSection() {
             · fast mode {data.provider.fastMode ? "available" : "not available"}. Defaults come from
             the effort table or the specialist's registry file. A specialist with no speed mode of
             its own follows the project's Opus fast mode; standard keeps it standard, and fast
-            applies only where the project allows fast mode.
+            applies only where the project allows fast mode. Chat and planning always run at
+            standard speed, so they offer no speed choice. Each row says the highest model it runs
+            at; a project's Highest model (in All settings below) raises it.
           </p>
           {data.configError ? (
             <ErrorBanner
@@ -322,11 +348,32 @@ export function ModelSettingsSection() {
                         {r.note}
                       </span>
                     ) : null}
+                    {r.settings.ceiling ? (
+                      <span
+                        className="block text-xs text-neutral-500"
+                        data-testid="model-settings-ceiling"
+                      >
+                        {r.settings.ceiling.note}
+                      </span>
+                    ) : null}
                   </td>
                   {columns.map((c) => {
                     const value = r.settings[c.key];
                     if (!value) return <td key={c.field} />;
                     const target = r.target;
+                    // Chat and planning always run at standard speed (U-059): no choice there.
+                    if (c.field === "speed_mode" && r.settings.speedModeApplies === false) {
+                      return (
+                        <td
+                          key={c.field}
+                          className="py-1 pr-2 text-xs text-neutral-500"
+                          data-testid="model-setting-speed_mode"
+                          data-fixed="true"
+                        >
+                          standard (always)
+                        </td>
+                      );
+                    }
                     return (
                       <ValueCell
                         key={c.field}
@@ -337,7 +384,10 @@ export function ModelSettingsSection() {
                         }
                         onEdit={
                           target
-                            ? () => setEditing(modelSettingCommand(target, c.field, value))
+                            ? () =>
+                                setEditing(
+                                  modelSettingCommand(target, c.field, value, r.settings.ceiling),
+                                )
                             : null
                         }
                       />

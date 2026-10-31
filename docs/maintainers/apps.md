@@ -232,7 +232,10 @@ value)` builds a synthetic row (`specialist.<name>.<field>` or `agent.<mode>.<fi
 `agent`) and a `SettingCommand` named `model.settings.set` whose `params` give `{ agent, mode |
 specialist, field, value }` (`null` for "default"; numbers checked against the command's ranges
 before the post; a rung or effort outside the lists refused); `SettingCommand.options` makes the
-dialog a select.
+dialog a select. The rows say what runs (U-059): a row whose `speedModeApplies` is false (chat
+and planning) shows "standard (always)" with no button; each row shows its `ceiling.note`; the
+model list stops at a ceiling nothing raises (chat: no fable) and labels a rung above a raisable
+one ("fable (runs only where a project's highest model is fable; else opus)").
 
 ### Realtime and streaming
 

@@ -2335,6 +2335,12 @@ export const MODEL_SETTINGS: ModelSettingsView = {
           speedMode: setting("standard"),
           timeoutMinutes: setting(5),
           temperature: setting(null),
+          speedModeApplies: false,
+          ceiling: {
+            tier: "opus",
+            raisable: true,
+            note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
+          },
         },
         {
           mode: "text_chat",
@@ -2345,6 +2351,12 @@ export const MODEL_SETTINGS: ModelSettingsView = {
           speedMode: setting("standard"),
           timeoutMinutes: setting(0.5),
           temperature: setting(null),
+          speedModeApplies: false,
+          ceiling: {
+            tier: "opus",
+            raisable: false,
+            note: "Chat runs at most opus; no setting raises it.",
+          },
         },
       ],
     },
@@ -2383,6 +2395,12 @@ export const MODEL_SETTINGS: ModelSettingsView = {
         speedMode: setting("standard"),
         timeoutMinutes: setting(45, "specialist"),
         temperature: setting(null),
+        speedModeApplies: true,
+        ceiling: {
+            tier: "opus",
+            raisable: true,
+            note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
+          },
       },
     },
     {
@@ -2399,6 +2417,12 @@ export const MODEL_SETTINGS: ModelSettingsView = {
         speedMode: setting("fast", "specialist", "fast"),
         timeoutMinutes: setting(40, "specialist"),
         temperature: setting(0.2, "specialist"),
+        speedModeApplies: true,
+        ceiling: {
+            tier: "opus",
+            raisable: true,
+            note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
+          },
       },
     },
   ],

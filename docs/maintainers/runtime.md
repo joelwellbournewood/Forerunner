@@ -3506,7 +3506,11 @@ log row and an undo. The daemon serves the screen's view at `GET /settings/model
 (`buildModelSettingsView`, `src/daemon/model-settings-view.ts`): the provider's flags, the
 effort table, the principal's planning and chat modes (editable), the critic's two review modes
 (read-only: spec H sets its model), and every runnable specialist with the principal's
-overrides; `temperature` is present only when the provider accepts one. The command's ports
+overrides; `temperature` is present only when the provider accepts one. Each row says what
+runs (U-059): `speedModeApplies` is false for chat and planning (they always run standard, no
+fast-mode price), and `ceiling { tier, raisable, note }` names the highest model it runs at:
+chat opus, raised by nothing; planning, the specialists and the critic the project's highest
+model (`critic_ceiling`, opus unless set), which Settings shows per project as "Highest model". The command's ports
 (`CommandPorts.modelSettings`) are the runnable specialists' names and the provider's flags.
 
 ### Briefs (`src/brief.ts`)

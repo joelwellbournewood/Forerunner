@@ -48,6 +48,22 @@ export interface ModelSettingsViewInput {
 
 const minutes = (ms: number) => Math.round((ms / 60_000) * 100) / 100;
 
+/**
+ * Where the highest model of a row comes from (U-059, spec D.3): the specialists, their
+ * retries, planning and the critic run under the project's highest model (`critic_ceiling`,
+ * opus unless a project sets it); a chat turn is no project's work and stays under opus.
+ */
+export const PROJECT_CEILING_NOTE = `Runs at most ${DEFAULT_CEILING} unless a project raises its highest model (Settings, per project: Highest model).`;
+export const CHAT_CEILING_NOTE = `Chat runs at most ${DEFAULT_CEILING}; no setting raises it.`;
+/** Chat turns and planning go at standard speed: neither has a fast-mode price (ADR 0072). */
+export const STANDARD_SPEED_MODES: readonly string[] = ["text_chat", "planning"];
+
+function ceilingOf(mode: string): RunSettingsView["ceiling"] {
+  return mode === "text_chat"
+    ? { tier: DEFAULT_CEILING, raisable: false, note: CHAT_CEILING_NOTE }
+    : { tier: DEFAULT_CEILING, raisable: true, note: PROJECT_CEILING_NOTE };
+}
+
 function value(
   r: ResolvedRunSettings,
   field: RunSettingField,
@@ -74,6 +90,8 @@ function settingsView(r: ResolvedRunSettings, input: ModelSettingsViewInput): Ru
     timeoutMinutes: value(r, "timeout_minutes", (v) => minutes(v.timeoutMs)),
     // Temperature appears only for a provider that accepts it (spec D.4).
     ...(r.acceptsTemperature ? { temperature: value(r, "temperature", (v) => v.temperature) } : {}),
+    speedModeApplies: !STANDARD_SPEED_MODES.includes(r.mode),
+    ceiling: ceilingOf(r.mode),
   };
 }
 

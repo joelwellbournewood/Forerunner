@@ -909,6 +909,8 @@ export const SettingView = z.object({
   value: z.unknown(),
   description: z.string(),
   risk: z.enum(["low", "medium", "high"]),
+  /** The plain name the settings screen shows in place of the key (U-060), e.g. "Quiet hours". */
+  label: z.string().optional(),
 });
 
 /**
@@ -937,6 +939,19 @@ export const RunSettingsView = z.object({
   speedMode: ModelSettingValueView,
   timeoutMinutes: ModelSettingValueView,
   temperature: ModelSettingValueView.optional(),
+  /**
+   * False where the runs always go at standard speed whatever is set (chat and planning: no
+   * fast-mode price, ADR 0072), so the screen offers no speed choice there (U-059).
+   */
+  speedModeApplies: z.boolean().optional(),
+  /**
+   * The highest model the row's runs use whatever is chosen (U-059, spec D.3): `raisable` when
+   * a project's highest model (`critic_ceiling`) lifts it, with the sentence the screen shows.
+   */
+  ceiling: z
+    .object({ tier: z.string(), raisable: z.boolean(), note: z.string() })
+    .nullable()
+    .optional(),
 });
 export type RunSettingsView = z.infer<typeof RunSettingsView>;
 
