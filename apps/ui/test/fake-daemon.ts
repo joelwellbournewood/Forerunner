@@ -940,7 +940,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       goal: parsed.data.goal,
       stage: "idea",
       status: "active",
-      autonomyLevel: parsed.data.autonomyLevel ?? 2,
+      // U-058: the person's default autonomy, as the daemon's create path reads it.
+      autonomyLevel: parsed.data.autonomyLevel ?? me.defaultAutonomy,
       nextMilestone: null,
       health: "idle",
       spend: money(0),

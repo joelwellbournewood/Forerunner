@@ -842,6 +842,18 @@ describe("the UI client against the real daemon: a task a session is running", (
     expect((await client.me()).activeProjectId).toBe(projectId);
   });
 
+  it("a project created in the app starts at the default autonomy (U-058)", async () => {
+    const set = await client.executeCommands({
+      commands: [{ name: "settings.set", params: { key: "default_autonomy", value: 3 } }],
+      wordsUsed: "Settings: Default autonomy for new projects to 3",
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(set.status).toBe("done");
+    const created = await client.createProject({ name: "At three", goal: "Default autonomy" });
+    expect(created.autonomyLevel).toBe(3);
+  });
+
   it("undo of a lowered monthly cap waits for this PC; Changes logs it as ui (U-057, U-061)", async () => {
     const lowered = await client.executeCommands({
       commands: [{ name: "budget.set", params: { scope: "month", amountChf: 90 } }],

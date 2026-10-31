@@ -741,6 +741,26 @@ streamed progress and the new devices, a stream that drops mid-job resumed from 
 while a voice session is open, `installProgress`; the providers in force with their reasons,
 the link to Extensions and the re-read on `extension.changed`, U-023).
 
+Settings, undo and the change log (U-056 to U-061): `active-project` (the header's switcher
+and the palette post `project.switch` with `source: "ui"` and the daemon records it; the header
+starts on `/me`'s project; switch by chat to Beacon, then Atlas's Chat tab: the body carries
+`projectTab: true`, the task lands in Atlas, the header stays Beacon; opening a project page
+switches nothing), `default-autonomy` (Settings → default autonomy 3, then New project: no
+level sent, the project starts at 3), `undo-confirm` (Changes: the undo of a lowered monthly
+cap shows the device card, this PC confirms with its own row, the cap is back; No changes
+nothing), `undo-changes` (a Tasks-tab cancel is in the change log with its reason and its Undo
+reopens the task; Changes shows "Cannot be undone now" with no button; a refused undo reads
+"Not undone"; an undo from Changes is logged `ui`), `settings-all` (every row with a plain
+label and a value in words; quiet hours, the model watch, the per-session cap and the highest
+model through their controls with the bodies sent; the language without a control; the
+desktop allowlist under the heading the approval card names, added and removed), and
+`settings-models`' U-059 cases (no speed choice for chat and planning; the highest model per
+row; chat offers nothing above opus; fable labelled for a specialist; the Highest model row
+exists). `real-daemon` adds the same journeys against the real daemon (`/me.activeProjectId`
+and `projectTab`, the default autonomy, the pending undo confirmed on this PC and logged `ui`,
+the task move's `change` and its reopen, `undoBlockedReason`, the settings labels and quiet
+hours, the model rows, the desktop allowlist).
+
 Unit tests (`test/*.test.ts[x]`): `real-daemon` (U-008: the whole runtime composed as
 `fr daemon` composes it, with the scripted provider, and the UI's own `createClient` over
 `app.request`; 43 read calls of the screens parsed with the UI's schemas, a route missing or

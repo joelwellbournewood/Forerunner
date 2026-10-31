@@ -1754,7 +1754,8 @@ executor resolves the same way) and is written like any other code change: on a 
 through a pull request, never by a push to the default branch, and never over an existing
 file. `scaffoldProject(project)` runs for every way a project comes into being:
 `createProjectRecord` (`daemon/create-project.ts`, behind `POST /projects` and an accepted
-source proposal, spec A.4) awaits it right after the row is inserted, so the card the
+source proposal, spec A.4; a body without `autonomyLevel` starts the project at the human's
+`default_autonomy`, as `project.create` does, U-058) awaits it right after the row is inserted, so the card the
 dashboard gets back already names the PR, unless the body asks for the intake
 (`intake: true`), which drafts the set on approval and scaffolds the templates on a rejection
 (`IntakeService.docs`); `project.create` by chat, voice or the palette reaches it through the
@@ -4281,6 +4282,16 @@ the override's effort shifted by the project's slider on a typed turn, a spoken 
 `voice_chat`'s default, the conversation agent's `max_effort` holding both); `intake.test.ts`
 (the principal's planning rung under the project's ceiling, priced as that model, and its
 planning effort the base the project's slider shifts);
+`settings-undo-routes.test.ts` (U-056 to U-061, the composed daemon on a file store, crossing
+a restart): a switch by chat and by the header's `project.switch` is `/me`'s and every
+channel's, a project's Chat tab (`projectTab`) puts "add a task" in its project without moving
+the active one, and the record survives a restart; a project created in the app starts at the
+default autonomy, before and after a restart; the undo of a lowered monthly cap is pending for
+the device, refused on a tap, done on this PC and logged `ui`; a Tasks-tab cancel is a change
+log row (`ui`, the reason) whose undo reopens the task, and a stale version is 409; an undo
+that cannot work is offered with its reason and refused with it; every setting listed with a
+label; the model rows' speed and highest model; the desktop approval card and the model watch's
+deferral name controls that exist; `settingsView` shows unset caps as the defaults.
 `model-settings-routes.test.ts` (6): `GET /settings/models` in the route table, the agents and
 the ten specialists with the table and registry defaults and no temperature, a
 `model.settings.set` from the UI channel written, shown with source `agent`, in the change log

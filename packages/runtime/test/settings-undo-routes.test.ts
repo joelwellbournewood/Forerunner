@@ -134,6 +134,17 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     expect(await activeProjectId()).toBe(beta.id);
   });
 
+  it("U-058: a project created in the app starts at the person's default autonomy, also after a restart", async () => {
+    const set = await execute(
+      [{ name: "settings.set", params: { key: "default_autonomy", value: 3 } }],
+      { confirm: "tap", wordsUsed: "Settings: default autonomy to 3" },
+    );
+    expect(set.status).toBe("done");
+    expect((await createProject("Gamma")).autonomyLevel).toBe(3);
+    await restart();
+    expect((await createProject("Delta")).autonomyLevel).toBe(3);
+  });
+
   it("U-057: undoing a lowered monthly cap waits for this PC's confirmation; a tap is refused", async () => {
     const capNow = async () => (await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro;
     const originalCap = await capNow();

@@ -18,7 +18,7 @@ const logger = log("create-project");
  * through the command port (`scaffoldProjectDocs`).
  */
 export interface CreateProjectDeps {
-  store: Pick<StateStore, "project" | "queue">;
+  store: Pick<StateStore, "project" | "queue" | "human">;
   human: { id: string };
   agent: { id: string };
   events: { emit(event: string, payload: unknown): unknown };
@@ -34,6 +34,10 @@ export async function createProjectRecord(
   deps: CreateProjectDeps,
   body: z.infer<typeof CreateProjectBody>,
 ): Promise<ProjectRow> {
+  // U-058: a project that names no level starts at the person's default (Settings, "the
+  // default autonomy for new projects"), as `project.create` by chat or voice does.
+  const autonomy =
+    body.autonomyLevel ?? (await deps.store.human.get(deps.human.id))?.default_autonomy ?? 2;
   const p = await deps.store.project.insert({
     name: body.name,
     goal: body.goal,
@@ -41,7 +45,7 @@ export async function createProjectRecord(
     stage: "planning",
     status: "active",
     budget_usd_micro: body.budgetUsdMicro ?? 0,
-    autonomy_level: body.autonomyLevel ?? 2,
+    autonomy_level: autonomy,
     summary_cache: body.brief ? { brief: body.brief } : {},
     data_assets: [],
     settings: { members: [deps.agent.id] },
