@@ -53,7 +53,7 @@ export function normalAnswer(text: string): string {
 
 /**
  * Card keys (`change_card.key`) of the cards read below. Each equals the constant its producer
- * files the card with (`SIGNOFF_KEY` in `@forerunner/critic`, `BLOCKED_FINDINGS_KEY`,
+ * files the card with (`SIGNOFF_KEY` in `@forerunner/critic`, `BLOCKED_FINDINGS_KEY`, `REVIEW_FAILED_KEY`,
  * `PLAN_KEY_PREFIX`, `INTAKE_KEY_PREFIX`, `SPECIALIST_KEY_PREFIX`,
  * `MODEL_WATCH_REQUEST_PREFIX`); `request-answers.test.ts` asserts it, so a renamed key fails
  * there instead of letting its answers through unchecked.
@@ -61,6 +61,8 @@ export function normalAnswer(text: string): string {
 export const ANSWER_CARD_KEYS = {
   signoff: "critic:signoff",
   blockedFindings: "findings:blocked",
+  /** A critic review that failed (U-045): rework, accept or cancel, read as the findings card. */
+  reviewFailed: "critic:review_failed",
   planPrefix: "plan:",
   intakePrefix: "intake:",
   specialistPrefix: "specialist:",
@@ -242,6 +244,7 @@ const READERS: ReadonlyArray<{
 }> = [
   { matches: (k) => k === ANSWER_CARD_KEYS.signoff, read: signoffAnswer },
   { matches: (k) => k === ANSWER_CARD_KEYS.blockedFindings, read: blockedFindingsAnswer },
+  { matches: (k) => k === ANSWER_CARD_KEYS.reviewFailed, read: blockedFindingsAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.planPrefix), read: planAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.intakePrefix), read: intakeAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.specialistPrefix), read: specialistAnswer },

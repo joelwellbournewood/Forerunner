@@ -200,6 +200,7 @@ import {
   type BlockedSyncResult,
   type SignoffSyncResult,
   syncBlockedByFindings,
+  syncReviewFailedAnswers,
   syncSignoffAnswers,
 } from "../session/findings.ts";
 import {
@@ -902,6 +903,11 @@ export interface RuntimeApp {
     /** Answered cross-project offers applied (spec G.6). */
     memoryOffers: { accepted: number; dismissed: number; stale: number };
     findings: BlockedSyncResult;
+    /**
+     * Answered cards of a critic review that failed (U-045): rework, accept or cancel. Optional
+     * for the harnesses that compose a partial sync (`tests/e2e/src/gate5-daemon.ts`).
+     */
+    reviewFailed?: BlockedSyncResult;
     signoffs: SignoffSyncResult;
     plans: PlanApprovalSyncResult;
     /**
@@ -2837,6 +2843,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       memory: await memory.syncApprovals(),
       memoryOffers: await memory.syncOffers(),
       findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
+      // A critic review that failed (U-045): each option of its card does what it says.
+      reviewFailed: await syncReviewFailedAnswers({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+      }),
       signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
       // A rebase conflict and a reviewed PR left open (U-028): each option does what it says.
       pullRequests: await syncPrAnswers({ store, clock, humanId: human.id, agentId: agent.id }),

@@ -1262,7 +1262,8 @@ different answer to the same question supersedes the older row, the same answer 
 
 The Inbox shows a request's options as buttons (`optionLabel`: a string as it is, an old
 object option as its `label` or `choice`, capitalised) and a click sends that text back as the
-answer. Every reader of an answer (`isYes`, `signoffAnswer`, `blockedFindingsAnswer`,
+answer. Every reader of an answer (`isYes`, `signoffAnswer`, `blockedFindingsAnswer` (also
+the reader of the failed-review card, `ANSWER_CARD_KEYS.reviewFailed`, U-045),
 `planAnswer`, `intakeAnswer`, `specialistAnswer`, the model watch's reader) is written against
 those strings, so a path that answers for the person another way answers with the option it
 means. `reviewVerdictOption(request, "approve" | "reject")` is that mapping for the phone's
@@ -1384,7 +1385,30 @@ blocking request per task (`change_card.key = "findings:blocked"`, options `rewo
 `RuntimeApp.syncApprovals()` after every inbox answer, applies it: `rework` goes
 `failed -> ready` with the findings as the next brief's constraints, `accept` resolves the
 open findings against the run and closes the task, `cancel` cancels it; the card records
-`applied_at` and the outcome. The sign-off ends with the human the same way
+`applied_at` and the outcome. **A critic review that failed (U-045)**, an error and not a
+verdict (the critic's model unreachable, its reply unreadable), left the task in review for
+good up to 1.0.4: the runner only emitted `critic.review_failed`, no session plans a task in
+review, and `expireClaims` never touches one. `reviewTask` now returns the failure to the
+runner, which: ends the session `killed` when the session was stopped meanwhile; leaves a
+task a person moved during the review as they set it, counted as in U-039
+(`task.moved_while_running` with `during: "review"`); and otherwise files one blocking card
+for the task (`fileReviewFailedRequest`, `change_card.key = "critic:review_failed"` with the
+run, the error and the open finding ids; the why names the task, the error and what each
+option does; reused while open), counts it in `SessionResult.reviewFailed` (also in
+`inReview`), emits `critic.review_failed` with the `humanRequestId`, and the summary reads
+"Review failed: N (asked you in the Inbox: rework, accept or cancel)." The card's options are
+the blocked-findings card's and act the same way (`syncReviewFailedAnswers`, sharing
+`syncInReviewCards` with `syncBlockedByFindings`, run from `syncApprovals()`; result key
+`reviewFailed`): `rework` goes `failed -> ready` (the attempt counted; the next session runs
+the task and the critic reviews the new run), `accept` resolves any open findings against the
+run and closes the task without a review, `cancel` cancels it. Its key has the findings card's
+reader in `acceptsAnswer`, so a typed answer that is none of the options is refused with them,
+and the phone's Reviews tab maps approve to `accept` and reject to `rework`. Tests:
+`review-failed.test.ts` (the session files the card and goes on; a task moved during the review;
+each option answered with `requestView(row).options` through the daemon's answer route; a typed
+answer refused; a second failure reuses the card). A task left in review by a failed review
+before this change has no card; the person moves it on the Tasks tab (Mark done, Needs me,
+Mark failed, Cancel). The sign-off ends with the human the same way
 (`syncSignoffAnswers`, same file; phase 5 follow-up RT-P5-1): every `human` decision (a
 tier 3 review, a `human` verdict, the ladder's last rung, filed by `CriticService`,
 `applyVerdict` or the loop's ladder branch) carries a `change_card` keyed `critic:signoff`
@@ -1415,7 +1439,8 @@ stored summary (tier 0 by default, `SessionRunnerDeps.sessionReviewTier`), persi
 review with `session_id` set; `critic.session_review` carries the grade and a `human` verdict
 as an escalation. Lesson proposals (repeat findings) are recorded in critic memory through the
 memory port. Events: `critic.review_started`, `critic.verdict`, `critic.review_failed`
-(the task stays in review), `critic.session_review`, `task.blocked_by_findings`.
+(the task stays in review with a card for the person, U-045), `critic.session_review`,
+`task.blocked_by_findings`.
 
 **Merge of a reviewed PR (`ReviewedPrMerge`, `src/loop/merge.ts`, spec J.9,
 [ADR 0062](../decisions/0062-merge-after-review-checks-rule.md)).** When the verdict closes a

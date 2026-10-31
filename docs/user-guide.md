@@ -106,6 +106,10 @@ On a card whose answer must be one of its options (a sign-off, a plan, an approv
 answer that is none of them is not taken: the card stays and says "Choose one of: …" with its
 options; type one of them or click its button. A question that asks for your own words takes
 any text.
+When the critic cannot review a task (its model is unreachable, for example), the task waits
+in review and a card asks you: **rework** runs it again in the next session and the critic
+reviews the new run, **accept** takes the work as it is without a review, **cancel** cancels
+the task.
 Each unread message has **Mark read**; **Mark all read** over the messages marks every unread
 one at once.
 

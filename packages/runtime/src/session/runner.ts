@@ -43,7 +43,7 @@ import {
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
-import { fileBlockedByFindingsRequest } from "./findings.ts";
+import { fileBlockedByFindingsRequest, fileReviewFailedRequest } from "./findings.ts";
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
 import {
   describeHeard,
@@ -266,6 +266,11 @@ export interface SessionResult {
    * it was moved to (`cancelled`, `failed`, `needsHuman`, `inReview`).
    */
   movedWhileRunning: MovedWhileRunning[];
+  /**
+   * Tasks whose critic review failed (an error, not a verdict): each waits in review (also in
+   * `inReview`) with a card in the Inbox whose options act (U-045).
+   */
+  reviewFailed: string[];
   /** Tasks the critic sent back to ready (revise or a retry rung). */
   retried: string[];
   /** Tasks whose close was refused because a finding is still open (B.4). */
@@ -368,6 +373,12 @@ export const DEFAULT_RESERVE_SHARE = 0.2;
 
 /** The runner's re-read of a running task's row (U-039): a person's move stops the run within it. */
 export const DEFAULT_TASK_WATCH_MS = 5_000;
+
+/** A critic review that failed with an error, not a verdict (U-045). */
+interface ReviewFailure {
+  failed: true;
+  error: string;
+}
 
 /** A task moved while its run was going (U-039): the state set then, which stands. */
 export interface MovedWhileRunning {
@@ -561,6 +572,8 @@ export class SessionRunner {
     const needsHuman: string[] = [];
     const cancelled: string[] = [];
     const movedWhileRunning: MovedWhileRunning[] = [];
+    /** Tasks whose critic review failed; each has a card in the Inbox (U-045). */
+    const reviewFailed: string[] = [];
     /** Ready tasks that wait on a task not done (U-040), named in the summary. */
     let waiting: WaitingTask[] = [];
     let plan: SessionPlan | null = null;
@@ -584,6 +597,41 @@ export class SessionRunner {
         }
       }
       heldClaims.clear();
+    };
+    /**
+     * A task someone else moved while this session held it (U-039: during its run; U-045:
+     * during its review): the state set stands, it is counted in the list of that state and
+     * named, and the session goes on.
+     */
+    const recordMove = async (t: TaskRow, outcome: string, during: "run" | "review") => {
+      const moved: MovedWhileRunning = {
+        taskId: t.id,
+        title: t.title,
+        status: t.status,
+        byPerson: t.author_human !== null,
+      };
+      movedWhileRunning.push(moved);
+      const into: Partial<Record<TaskRow["status"], string[]>> = {
+        cancelled,
+        failed,
+        needs_human: needsHuman,
+        in_review: inReview,
+        done: completed,
+      };
+      (into[t.status] ?? skipped).push(t.id);
+      await emit("task.moved_while_running", {
+        ...moved,
+        during,
+        reason: t.reason,
+        outcome,
+        warning: `"${t.title}" was moved to ${t.status} while ${
+          during === "run" ? "it ran; its run was stopped" : "it was reviewed"
+        } and the session goes on`,
+      });
+      await releaseIfHeld(
+        t.id,
+        `moved to ${t.status} while it ${during === "run" ? "ran" : "was reviewed"}`,
+      );
     };
 
     try {
@@ -1020,28 +1068,7 @@ export class SessionRunner {
           if (controller.signal.aborted && result.outcome === "killed")
             throw new ForerunnerError("killed", "session stopped during task");
           if (task.status !== "in_progress") {
-            const moved: MovedWhileRunning = {
-              taskId: task.id,
-              title: task.title,
-              status: task.status,
-              byPerson: task.author_human !== null,
-            };
-            movedWhileRunning.push(moved);
-            const into: Partial<Record<TaskRow["status"], string[]>> = {
-              cancelled,
-              failed,
-              needs_human: needsHuman,
-              in_review: inReview,
-              done: completed,
-            };
-            (into[task.status] ?? skipped).push(task.id);
-            await emit("task.moved_while_running", {
-              ...moved,
-              reason: task.reason,
-              outcome: result.outcome,
-              warning: `"${task.title}" was moved to ${task.status} while it ran; its run was stopped and the session goes on`,
-            });
-            await releaseIfHeld(task.id, `moved to ${task.status} while it ran`);
+            await recordMove(task, result.outcome, "run");
             continue;
           }
           lessonCandidates.push(...(result.lessons ?? []));
@@ -1107,6 +1134,45 @@ export class SessionRunner {
               : null;
             if (!reviewed) {
               inReview.push(task.id);
+            } else if ("failed" in reviewed) {
+              // U-045: the review failed (an error, not a verdict). A session stopped meanwhile
+              // ends as killed; a task the person moved meanwhile stays as they set it; else
+              // the task waits in review and the person gets one card whose options act.
+              if (controller.signal.aborted)
+                throw new ForerunnerError("killed", "session stopped during the review");
+              const now = await store.task.mustGet(task.id);
+              if (now.status !== "in_review") {
+                await recordMove(now, "review_failed", "review");
+                continue;
+              }
+              inReview.push(task.id);
+              reviewFailed.push(task.id);
+              let humanRequestId: string | null = null;
+              try {
+                const filed = await fileReviewFailedRequest({
+                  store,
+                  task: now,
+                  session,
+                  humanId: agent.owner_human_id,
+                  agentId: agent.id,
+                  runId: result.runId ?? null,
+                  error: reviewed.error,
+                });
+                humanRequestId = filed.request.id;
+              } catch (e) {
+                this.logger.warn("review-failed request not filed", {
+                  taskId: task.id,
+                  error: errorMessage(e),
+                });
+              }
+              await emit("critic.review_failed", {
+                taskId: task.id,
+                warning: `critic review failed: ${reviewed.error}${
+                  humanRequestId ? "; asked you to rework, accept or cancel" : ""
+                }`,
+                humanRequestId,
+                escalation: true,
+              });
             } else {
               reviews.push({
                 taskId: task.id,
@@ -1310,6 +1376,7 @@ export class SessionRunner {
       needsHuman,
       cancelled,
       movedWhileRunning,
+      reviewFailed,
       retried,
       blockedByFindings,
       merges,
@@ -1393,6 +1460,7 @@ export class SessionRunner {
         by_person: m.byPerson,
       })),
       blocked_by_findings: blockedByFindings,
+      review_failed: reviewFailed,
       sent_back: retried,
       reviews: reviews.map((r) => ({
         task_id: r.taskId,
@@ -1633,6 +1701,7 @@ export class SessionRunner {
       inReview: inReview.length,
       failed: failed.length,
       cancelled: cancelled.length,
+      reviewFailed: reviewFailed.length,
       skipped: skipped.length,
       retried: retried.length,
       blockedByFindings: blockedByFindings.length,
@@ -1654,6 +1723,7 @@ export class SessionRunner {
       needsHuman,
       cancelled,
       movedWhileRunning,
+      reviewFailed,
       retried,
       blockedByFindings,
       reviews,
@@ -1716,14 +1786,14 @@ export class SessionRunner {
 
   /**
    * One task through the critic at its tier (spec H). The port applies the verdict through the
-   * state workflow and returns the decision; a port failure keeps the task in review and is
-   * surfaced as an event, never swallowed.
+   * state workflow and returns the decision; a port failure is returned as a `ReviewFailure`,
+   * which the runner turns into a card for the person (U-045), never swallowed.
    */
   private async reviewTask(
     req: Parameters<CriticPort["reviewTask"]>[0] & {
       emit: (t: string, p: Record<string, unknown>, cost?: number) => Promise<void>;
     },
-  ): Promise<TaskReviewOutcome | null> {
+  ): Promise<TaskReviewOutcome | ReviewFailure | null> {
     const { emit, ...request } = req;
     const critic = this.deps.critic;
     if (!critic) return null;
@@ -1736,11 +1806,8 @@ export class SessionRunner {
     try {
       outcome = await critic.reviewTask(request);
     } catch (e) {
-      await emit("critic.review_failed", {
-        taskId: request.task.id,
-        warning: `critic review failed: ${errorMessage(e)}`,
-      });
-      return null;
+      // The caller files the card and reports it (U-045).
+      return { failed: true, error: errorMessage(e) };
     }
     await emit(
       "critic.verdict",
@@ -2160,6 +2227,8 @@ function summarize(x: {
   movedWhileRunning?: readonly MovedWhileRunning[];
   /** Ready tasks waiting on a task not done (U-040), named with what they wait on. */
   waiting?: readonly WaitingTask[];
+  /** Tasks whose critic review failed, each with a card (U-045). */
+  reviewFailed?: string[];
   retried: string[];
   blockedByFindings: string[];
   merges?: readonly MergeOutcome[];
@@ -2193,6 +2262,11 @@ function summarize(x: {
       x.cancelled?.length ? ` Cancelled: ${x.cancelled.length}.` : ""
     } Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
     ...summarizeMoved(x.movedWhileRunning ?? []),
+    ...(x.reviewFailed?.length
+      ? [
+          `Review failed: ${x.reviewFailed.length} (asked you in the Inbox: rework, accept or cancel).`,
+        ]
+      : []),
     ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
     ...(x.blockedByFindings.length
       ? [

@@ -98,22 +98,54 @@ export interface BlockedSyncResult {
  */
 export { blockedFindingsAnswer, signoffAnswer };
 
-/**
- * Apply every answered blocked-findings request of the human that was not applied yet. The
- * task must still be in review; otherwise the answer is recorded as skipped. Every outcome is
- * written to the request's card (`applied_at`, `outcome`) so it is applied once.
- */
-export async function syncBlockedByFindings(deps: {
+/** Who applies the answers of the in-review cards (the blocked findings, the failed review). */
+interface InReviewSyncDeps {
   store: StateStore;
   clock: Clock;
   humanId: string;
   /** Actor of the transitions (the principal agent); the human's id is recorded with it. */
   agentId?: string | null;
-}): Promise<BlockedSyncResult> {
+}
+
+/** The reasons an in-review card's answer records on the task (spec B.5). */
+interface InReviewReasons {
+  accept: (requestId: string) => string;
+  rework: (requestId: string) => string;
+  reworkReady: string;
+  cancel: (requestId: string) => string;
+}
+
+/**
+ * Apply every answered blocked-findings request of the human that was not applied yet. The
+ * task must still be in review; otherwise the answer is recorded as skipped. Every outcome is
+ * written to the request's card (`applied_at`, `outcome`) so it is applied once.
+ */
+export async function syncBlockedByFindings(deps: InReviewSyncDeps): Promise<BlockedSyncResult> {
+  return syncInReviewCards(deps, BLOCKED_FINDINGS_KEY, "blocked-findings", {
+    accept: (id) => `human accepted the open findings as resolved by the work (request ${id})`,
+    rework: (id) => `human asked for a rework against the open findings (request ${id})`,
+    reworkReady: "rework: the open findings are constraints of the next brief",
+    cancel: (id) => `human cancelled the task over its open findings (request ${id})`,
+  });
+}
+
+/**
+ * The cards whose task waits in review for the person's word, with the options rework, accept
+ * and cancel (`blockedFindingsAnswer` reads them): accept resolves the task's open findings
+ * against the card's run and closes it, rework sends it back to ready through `failed` (the
+ * attempt counted), cancel cancels it. A task no longer in review, or an answer outside the
+ * options, is skipped and recorded as such.
+ */
+async function syncInReviewCards(
+  deps: InReviewSyncDeps,
+  key: string,
+  what: string,
+  reasons: InReviewReasons,
+): Promise<BlockedSyncResult> {
   const logger = log("findings");
   const { store, clock } = deps;
   const out: BlockedSyncResult = { reworked: 0, accepted: 0, cancelled: 0, skipped: 0 };
-  for (const row of await unappliedAnswers(store, deps.humanId, BLOCKED_FINDINGS_KEY)) {
+  for (const row of await unappliedAnswers(store, deps.humanId, key)) {
     const card = (row.change_card ?? {}) as JsonObject;
     const actor = { agentId: deps.agentId ?? undefined, humanId: deps.humanId };
     const finish = (outcome: string) =>
@@ -132,49 +164,118 @@ export async function syncBlockedByFindings(deps: {
         const runId = typeof card.run_id === "string" ? card.run_id : null;
         for (const f of await store.finding.openFor(task.id))
           await store.finding.resolve(f.id, f.version, runId);
-        await store.task.transition(
-          task.id,
-          task.version,
-          "done",
-          `human accepted the open findings as resolved by the work (request ${row.id})`,
-          actor,
-        );
+        await store.task.transition(task.id, task.version, "done", reasons.accept(row.id), actor);
         out.accepted++;
       } else if (answer === "rework") {
         const failed = await store.task.transition(
           task.id,
           task.version,
           "failed",
-          `human asked for a rework against the open findings (request ${row.id})`,
+          reasons.rework(row.id),
           actor,
         );
-        await store.task.transition(
-          failed.id,
-          failed.version,
-          "ready",
-          "rework: the open findings are constraints of the next brief",
-          actor,
-        );
+        await store.task.transition(failed.id, failed.version, "ready", reasons.reworkReady, actor);
         out.reworked++;
       } else {
         await store.task.transition(
           task.id,
           task.version,
           "cancelled",
-          `human cancelled the task over its open findings (request ${row.id})`,
+          reasons.cancel(row.id),
           actor,
         );
         out.cancelled++;
       }
       await finish(answer);
     } catch (e) {
-      logger.warn("blocked-findings answer not applied", {
+      logger.warn(`${what} answer not applied`, {
         requestId: row.id,
         error: errorMessage(e),
       });
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------
+// A critic review that failed (U-045)
+
+/**
+ * A critic review that failed (an error, not a verdict: the critic's model unreachable, its
+ * reply unreadable) left the task in review for good: no later session plans a task in review
+ * and nothing else moved it. The session now files one blocking card for the task, with the
+ * error, whose options are those of the blocked-findings card and act the same way
+ * (`syncReviewFailedAnswers`): rework sends the task back to ready (the next session runs it
+ * and the critic reviews the new run), accept takes the work as it is and closes the task
+ * (open findings of an earlier review resolved against the run), cancel cancels it.
+ */
+export const REVIEW_FAILED_KEY = "critic:review_failed";
+export const REVIEW_FAILED_OPTIONS = ["rework", "accept", "cancel"] as const;
+
+export interface ReviewFailedRequestInput {
+  store: StateStore;
+  task: TaskRow;
+  /** The session whose review failed; null when filed outside a session. */
+  session: Pick<SessionRow, "id"> | null;
+  humanId: string;
+  /** The principal agent that ran the task (author of the request). */
+  agentId: string;
+  /** The run the review was of; an accepted finding is resolved against it. */
+  runId: string | null;
+  /** What the review failed with, as the person reads it. */
+  error: string;
+}
+
+/** File (or reuse) the blocking card for a task whose critic review failed (U-045). */
+export async function fileReviewFailedRequest(
+  input: ReviewFailedRequestInput,
+): Promise<{ request: HumanRequestRow; reused: boolean }> {
+  const { store, task } = input;
+  const open = (await store.humanRequest.open({ humanId: input.humanId }, { limit: 500 })).find(
+    (r) => r.task_id === task.id && keyOf(r) === REVIEW_FAILED_KEY,
+  );
+  if (open) return { request: open, reused: true };
+  const findings = (await store.finding.openFor(task.id)).slice(0, 50);
+  const error = input.error.trim().slice(0, 500) || "no reason given";
+  const request = await store.humanRequest.insert({
+    human_id: input.humanId,
+    project_id: task.project_id,
+    task_id: task.id,
+    session_id: input.session?.id ?? null,
+    kind: "approval",
+    why: `The critic could not review "${task.title}" (${error}), so the work is not checked and the task waits in review for you. rework: the task runs again in the next session and the critic reviews the new run. accept: take the work as it is, without a review${
+      findings.length
+        ? `; its ${findings.length} open finding(s) from an earlier review are marked resolved`
+        : ""
+    }. cancel: cancel the task.`.slice(0, 4000),
+    steps: [
+      `Review error: ${error}`,
+      ...findings.map((f) => `[${f.severity}] ${f.description} -> ${f.required_action}`),
+    ],
+    options: [...REVIEW_FAILED_OPTIONS],
+    blocking: true,
+    risk: "medium",
+    change_card: {
+      key: REVIEW_FAILED_KEY,
+      task_id: task.id,
+      run_id: input.runId,
+      error,
+      finding_ids: findings.map((f) => f.id),
+      applied_at: null,
+    },
+    author_agent: input.agentId,
+  });
+  return { request, reused: false };
+}
+
+/** Apply the answered review-failed cards (U-045); run from `RuntimeApp.syncApprovals`. */
+export async function syncReviewFailedAnswers(deps: InReviewSyncDeps): Promise<BlockedSyncResult> {
+  return syncInReviewCards(deps, REVIEW_FAILED_KEY, "review-failed", {
+    accept: (id) => `human accepted the work without a critic review (request ${id})`,
+    rework: (id) => `human asked for a rework after the critic review failed (request ${id})`,
+    reworkReady: "rework: the next session runs the task again and the critic reviews it",
+    cancel: (id) => `human cancelled the task after the critic review failed (request ${id})`,
+  });
 }
 
 function keyOf(r: HumanRequestRow): string | undefined {
