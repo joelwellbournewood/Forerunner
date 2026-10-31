@@ -36,6 +36,8 @@ describe("new projects start at the default autonomy (U-058)", () => {
     await waitFor(() => expect(postedCalls(harness, "/projects")).toHaveLength(1));
     // The dialog names no level: the person's default applies.
     expect(postedCalls(harness, "/projects")[0]?.body).not.toHaveProperty("autonomyLevel");
-    expect(await screen.findByTestId("project-header")).toHaveTextContent("autonomy 3");
+    expect(await screen.findByTestId("project-header")).toHaveTextContent(
+      "autonomy: Trusted (level 3)",
+    );
   });
 });

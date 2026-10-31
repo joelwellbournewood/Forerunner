@@ -59,19 +59,22 @@ describe("secrets typed in the app (U-054)", () => {
     expect(saved).not.toContain(PASSWORD);
   });
 
-  it("Email: another agent's mailbox password gets its own name", async () => {
+  it("Email: the SMTP password has its own name; only your agent has a mailbox (U-075)", async () => {
+    // U-054 was written while the page still showed a card for the critic; U-075 (in parallel)
+    // shows the principal agent only, the one whose mailbox the daemon uses.
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/settings/capabilities/email", harness);
-    const critic = await emailCard("agent_critic");
-    const box = within(await within(critic).findByTestId("email-mailbox")).getByTestId(
+    const alice = await emailCard("agent_alice");
+    await expect(emailCard("agent_critic")).rejects.toThrow("no email card for agent_critic");
+    const box = within(await within(alice).findByTestId("email-mailbox")).getByTestId(
       "smtp-password",
     );
     await user.type(within(box).getByTestId("smtp-password-input"), PASSWORD);
     await user.click(within(box).getByTestId("smtp-password-save"));
     await waitFor(() =>
       expect(postedCalls(harness, "/secrets/store").map((c) => c.body)).toEqual([
-        { name: "critic_smtp_password", value: PASSWORD },
+        { name: "agent_smtp_password", value: PASSWORD },
       ]),
     );
   });
@@ -96,8 +99,9 @@ describe("secrets typed in the app (U-054)", () => {
       { name: "deepgram_api_key", value: DEEPGRAM },
     ]);
     expect(document.body.textContent).not.toContain(DEEPGRAM);
-    // The voice card no longer sends the person to `fr setup` for the key.
-    expect(screen.getByTestId("voice-providers")).not.toHaveTextContent("fr setup");
+    // Nothing on the page sends the person to `fr setup` for the key (the voice card itself
+    // moved to Settings -> Voice with U-023).
+    expect(document.body.textContent).not.toContain("fr setup");
     // A row without a cloud key has no key box.
     const others = rows.filter((r) => r.dataset.extensionId !== "ext_voice_deepgram");
     for (const r of others) expect(within(r).queryByTestId("extension-voice-key")).toBeNull();

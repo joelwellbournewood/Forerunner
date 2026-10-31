@@ -42,7 +42,7 @@ describe("Quick chat", () => {
     await user.click(screen.getByTestId("chat-send"));
     const added = await screen.findByTestId("chat-agent");
     await waitFor(() => expect(added).toHaveAttribute("data-streaming", "false"));
-    expect(added).toHaveTextContent('Created the ready task "write the README".');
+    expect(added).toHaveTextContent('Created the ready task "write the README" in Atlas.');
     expect(added).not.toHaveTextContent(/fr setup/);
     expect(harness.daemon.state.tasks.find((t) => t.title === "write the README")?.status).toBe(
       "ready",

@@ -97,7 +97,7 @@ describe("plain words (U-074)", () => {
     renderApp("/projects/proj_atlas/tasks");
     const rows = await screen.findAllByTestId("task-row");
     const second = rows[1] as HTMLElement;
-    expect(second).toHaveTextContent("after Index the documentation pages");
+    expect(second).toHaveTextContent('after "Index the documentation pages"');
     expect(second).not.toHaveTextContent("task_1");
     expect(second).toHaveTextContent(/(checks only|light review|full review)/);
     expect(second).not.toHaveTextContent(/· tier \d/);

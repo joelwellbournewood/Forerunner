@@ -741,6 +741,136 @@ describe("the UI client against the real daemon", () => {
       spy.mockRestore();
     }
   });
+
+  it("one active project: the header's switch is /me's, a project's Chat tab wins for its turn (U-056)", async () => {
+    const tab = await client.createProject({ name: "Tab project", goal: "Its own chat tab" });
+    const switched = await client.executeCommands({
+      commands: [{ name: "project.switch", params: { project: projectId } }],
+      wordsUsed: "Switch project: Contract",
+      source: "ui",
+    });
+    expect(switched.status).toBe("done");
+    expect((await client.me()).activeProjectId).toBe(projectId);
+    const reply = await client.chat({
+      humanId,
+      agentId,
+      projectId: tab.id,
+      projectTab: true,
+      text: "add a task: write the tab README",
+      source: "text",
+    });
+    expect(reply.actions.map((a) => a.kind)).toEqual(["task.create"]);
+    expect((await client.tasks(tab.id)).map((t) => t.title)).toContain("write the tab README");
+    expect(reply.activeProjectId).toBe(projectId);
+    expect((await client.me()).activeProjectId).toBe(projectId);
+  });
+
+  it("a project created in the app starts at the default autonomy (U-058)", async () => {
+    const set = await client.executeCommands({
+      commands: [{ name: "settings.set", params: { key: "default_autonomy", value: 3 } }],
+      wordsUsed: "Settings: Default autonomy for new projects to 3",
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(set.status).toBe("done");
+    const created = await client.createProject({ name: "At three", goal: "Default autonomy" });
+    expect(created.autonomyLevel).toBe(3);
+  });
+
+  it("undo of a lowered monthly cap waits for this PC; Changes logs it as ui (U-057, U-061)", async () => {
+    const lowered = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 90 } }],
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(lowered.status).toBe("done");
+    const undo = await client.undoChange(lowered.changeLogId ?? "");
+    expect(undo).toMatchObject({ status: "pending", decision: "needs_device" });
+    const confirmed = await client.confirmCommand(undo.pendingId ?? "", { answer: "device" });
+    expect(confirmed.status).toBe("done");
+    const rows = await client.changes({});
+    expect(rows.find((r) => r.id === confirmed.changeLogId)?.source).toBe("ui");
+    expect(rows.find((r) => r.id === lowered.changeLogId)?.undoState).toBe("undone");
+  });
+
+  it("a task move is logged with Undo; an undo that cannot work says why (U-061)", async () => {
+    const task = await client.createTask(projectId, {
+      title: "Move me",
+      outcome: "moved",
+      acceptanceCriteria: [],
+      riskTier: 1,
+      status: "ready",
+      priority: 1,
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    const moved = await client.transitionTask(task.id, {
+      version: task.version,
+      to: "cancelled",
+      reason: "not needed",
+    });
+    expect(moved.status).toBe("cancelled");
+    expect(moved.change?.undoToken).toBe(moved.change?.changeLogId);
+    const undone = await client.undoChange(moved.change?.undoToken ?? "");
+    expect(undone.sentence).toBe('Undone: reopened the task "Move me"; it is ready again.');
+    const created = await client.chat({
+      humanId,
+      agentId,
+      projectId,
+      projectTab: true,
+      text: "add a task: finish me",
+      source: "text",
+    });
+    const changeId = created.actions[0]?.id ?? "";
+    const made = (await client.tasks(projectId)).find((t) => t.title === "finish me");
+    for (const to of ["claimed", "in_progress", "in_review", "done"] as const) {
+      const t = await rt.store.task.mustGet(made?.id ?? "");
+      await rt.store.task.transition(t.id, t.version, to, "work", { agentId });
+    }
+    const row = (await client.changes({ projectId })).find((r) => r.id === changeId);
+    expect(row).toMatchObject({ undoable: false, undoState: "undoable" });
+    expect(row?.undoBlockedReason).toContain("a done task cannot be cancelled");
+  });
+
+  it("Settings lists every setting with a label; the model rows say what runs; the allowlist saves (U-059, U-060)", async () => {
+    const settings = await client.settings();
+    const byKey = new Map(settings.map((s) => [s.key, s]));
+    for (const key of [
+      "human.quiet_hours",
+      "human.notify_channel",
+      "human.voice_alerts",
+      "human.language",
+      "human.model_watch",
+      "project.session_cap",
+      "project.critic_ceiling",
+      "project.small_project_mode",
+    ])
+      expect(byKey.get(key)?.label, key).toEqual(expect.any(String));
+    const quiet = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "quiet_hours", value: { start: "22:00", end: "07:00" } },
+        },
+      ],
+      source: "ui",
+    });
+    expect(quiet.status).toBe("done");
+    expect((await client.settings()).find((s) => s.key === "human.quiet_hours")?.value).toEqual({
+      start: "22:00",
+      end: "07:00",
+    });
+    const models = await client.modelSettings();
+    const chat = models.agents[0]?.modes.find((m) => m.mode === "text_chat");
+    expect(chat?.speedModeApplies).toBe(false);
+    expect(chat?.ceiling?.raisable).toBe(false);
+    const saved = await client.setDesktopAllowlist(humanId, ["code", "firefox"]);
+    expect(saved.entries).toEqual([{ app: "code" }, { app: "firefox" }]);
+    expect((await client.desktopAllowlist(humanId)).entries).toEqual([
+      { app: "code" },
+      { app: "firefox" },
+    ]);
+  });
 });
 
 /** The UI client against a real daemon whose first specialist run waits until it is stopped. */
@@ -903,136 +1033,6 @@ describe("the UI client against the real daemon: a task a session is running", (
       to: "cancelled",
       reason: "Cancelled in the app",
     });
-  });
-
-  it("one active project: the header's switch is /me's, a project's Chat tab wins for its turn (U-056)", async () => {
-    const tab = await client.createProject({ name: "Tab project", goal: "Its own chat tab" });
-    const switched = await client.executeCommands({
-      commands: [{ name: "project.switch", params: { project: projectId } }],
-      wordsUsed: "Switch project: Contract",
-      source: "ui",
-    });
-    expect(switched.status).toBe("done");
-    expect((await client.me()).activeProjectId).toBe(projectId);
-    const reply = await client.chat({
-      humanId,
-      agentId,
-      projectId: tab.id,
-      projectTab: true,
-      text: "add a task: write the tab README",
-      source: "text",
-    });
-    expect(reply.actions.map((a) => a.kind)).toEqual(["task.create"]);
-    expect((await client.tasks(tab.id)).map((t) => t.title)).toContain("write the tab README");
-    expect(reply.activeProjectId).toBe(projectId);
-    expect((await client.me()).activeProjectId).toBe(projectId);
-  });
-
-  it("a project created in the app starts at the default autonomy (U-058)", async () => {
-    const set = await client.executeCommands({
-      commands: [{ name: "settings.set", params: { key: "default_autonomy", value: 3 } }],
-      wordsUsed: "Settings: Default autonomy for new projects to 3",
-      source: "ui",
-      confirm: "tap",
-    });
-    expect(set.status).toBe("done");
-    const created = await client.createProject({ name: "At three", goal: "Default autonomy" });
-    expect(created.autonomyLevel).toBe(3);
-  });
-
-  it("undo of a lowered monthly cap waits for this PC; Changes logs it as ui (U-057, U-061)", async () => {
-    const lowered = await client.executeCommands({
-      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 90 } }],
-      source: "ui",
-      confirm: "tap",
-    });
-    expect(lowered.status).toBe("done");
-    const undo = await client.undoChange(lowered.changeLogId ?? "");
-    expect(undo).toMatchObject({ status: "pending", decision: "needs_device" });
-    const confirmed = await client.confirmCommand(undo.pendingId ?? "", { answer: "device" });
-    expect(confirmed.status).toBe("done");
-    const rows = await client.changes({});
-    expect(rows.find((r) => r.id === confirmed.changeLogId)?.source).toBe("ui");
-    expect(rows.find((r) => r.id === lowered.changeLogId)?.undoState).toBe("undone");
-  });
-
-  it("a task move is logged with Undo; an undo that cannot work says why (U-061)", async () => {
-    const task = await client.createTask(projectId, {
-      title: "Move me",
-      outcome: "moved",
-      acceptanceCriteria: [],
-      riskTier: 1,
-      status: "ready",
-      priority: 1,
-      dependsOn: [],
-      budgetUsdMicro: 0,
-    });
-    const moved = await client.transitionTask(task.id, {
-      version: task.version,
-      to: "cancelled",
-      reason: "not needed",
-    });
-    expect(moved.status).toBe("cancelled");
-    expect(moved.change?.undoToken).toBe(moved.change?.changeLogId);
-    const undone = await client.undoChange(moved.change?.undoToken ?? "");
-    expect(undone.sentence).toBe('Undone: reopened the task "Move me"; it is ready again.');
-    const created = await client.chat({
-      humanId,
-      agentId,
-      projectId,
-      projectTab: true,
-      text: "add a task: finish me",
-      source: "text",
-    });
-    const changeId = created.actions[0]?.id ?? "";
-    const made = (await client.tasks(projectId)).find((t) => t.title === "finish me");
-    for (const to of ["claimed", "in_progress", "in_review", "done"] as const) {
-      const t = await rt.store.task.mustGet(made?.id ?? "");
-      await rt.store.task.transition(t.id, t.version, to, "work", { agentId });
-    }
-    const row = (await client.changes({ projectId })).find((r) => r.id === changeId);
-    expect(row).toMatchObject({ undoable: false, undoState: "undoable" });
-    expect(row?.undoBlockedReason).toContain("a done task cannot be cancelled");
-  });
-
-  it("Settings lists every setting with a label; the model rows say what runs; the allowlist saves (U-059, U-060)", async () => {
-    const settings = await client.settings();
-    const byKey = new Map(settings.map((s) => [s.key, s]));
-    for (const key of [
-      "human.quiet_hours",
-      "human.notify_channel",
-      "human.voice_alerts",
-      "human.language",
-      "human.model_watch",
-      "project.session_cap",
-      "project.critic_ceiling",
-      "project.small_project_mode",
-    ])
-      expect(byKey.get(key)?.label, key).toEqual(expect.any(String));
-    const quiet = await client.executeCommands({
-      commands: [
-        {
-          name: "settings.set",
-          params: { key: "quiet_hours", value: { start: "22:00", end: "07:00" } },
-        },
-      ],
-      source: "ui",
-    });
-    expect(quiet.status).toBe("done");
-    expect((await client.settings()).find((s) => s.key === "human.quiet_hours")?.value).toEqual({
-      start: "22:00",
-      end: "07:00",
-    });
-    const models = await client.modelSettings();
-    const chat = models.agents[0]?.modes.find((m) => m.mode === "text_chat");
-    expect(chat?.speedModeApplies).toBe(false);
-    expect(chat?.ceiling?.raisable).toBe(false);
-    const saved = await client.setDesktopAllowlist(humanId, ["code", "firefox"]);
-    expect(saved.entries).toEqual([{ app: "code" }, { app: "firefox" }]);
-    expect((await client.desktopAllowlist(humanId)).entries).toEqual([
-      { app: "code" },
-      { app: "firefox" },
-    ]);
   });
 });
 
