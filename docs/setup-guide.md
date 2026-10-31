@@ -149,6 +149,13 @@ request"). Until Claude is connected your agent cannot start work.
 enforced by the program, not by the agent: a session that would exceed them stops. Change
 them in Settings.
 
+**Claude subscription allowance.** With a Claude subscription, open Settings → **Claude
+subscription allowance** and enter, in CHF a month, how much API-equivalent use your plan
+covers. Claude does not tell Forerunner how much of your plan it has used, so Forerunner
+estimates it against this amount and stops subscription work at 95% of it (an API key takes
+over when one is saved). The default is USD 50 (about CHF 40), low on purpose: a Max plan
+covers much more, and with the default its work stops early.
+
 **Where to work.** In Settings → Sources, connect GitHub organisations or accounts, chosen
 repositories or local folders; a scan proposes a project per repository. Or create a project
 from Home.

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { DEVICES_ROUTES } from "../devices/types.ts";
-import { SETUP_ROUTES } from "../setup/types.ts";
+import { PLAN_ALLOWANCE_ROUTES, SETUP_ROUTES } from "../setup/types.ts";
 import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
 
 /** Settings -> Devices shapes (spec R.2): the daemon's `/devices` routes' bodies and answers. */
@@ -16,6 +16,9 @@ export {
 } from "../devices/types.ts";
 /** The setup assistant's shapes (ADR 0092): the `/setup` routes' bodies and answers. */
 export {
+  PLAN_ALLOWANCE_ROUTES,
+  PlanAllowanceBody,
+  PlanAllowanceView,
   SETUP_ROUTES,
   SetupAnthropicBody,
   SetupCheckView,
@@ -1992,6 +1995,8 @@ export const DAEMON_ROUTES = {
     "DELETE /sources/:id ({ ok, id, candidatesRemoved }; projects created from it stay)",
   ...DEVICES_ROUTES,
   ...SETUP_ROUTES,
+  // Settings -> Claude subscription allowance (U-052).
+  ...PLAN_ALLOWANCE_ROUTES,
   // Settings -> Voice (ADR 0090): the voice profile, its install and progress.
   ...VOICE_INSTALL_ROUTES,
   dataAssets: "GET /projects/:id/data (DataAssetView[])",

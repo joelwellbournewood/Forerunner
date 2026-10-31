@@ -30,7 +30,10 @@ subscription's allowance as an estimated API-equivalent per UTC month: the daemo
 plan usage share from the month's "subscription" ledger rows over it, and a share a probe or a
 run reported wins when larger; the daemon always seeds one (`fr setup --plan-usd-monthly`,
 `FORERUNNER_PLAN_USD_MONTHLY`, `config.json`, else USD 50; ADR 0044 item 8), so the plan level
-is never silently absent. `BillingSourceProbe.status(source)`
+is never silently absent. In the app it is Settings → Claude subscription allowance (U-052):
+the person enters CHF a month, `POST /settings/plan-allowance` converts at the day's rate and
+writes USD to `config.json` (`subscription.planUsdMonthly`) and to the subscription row's
+`limits.planUsdMicro`, so the next pick and plan share use it and the next start resolves it. `BillingSourceProbe.status(source)`
 returns `{ available, planUsageShare?, monthSpentUsdMicro?, reason? }`; `FakeProbe` is the
 test double, the daemon's probe is `VaultLedgerProbe` in the runtime (below).
 

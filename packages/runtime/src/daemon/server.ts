@@ -37,6 +37,7 @@ import {
 } from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
 import type { StartRequest } from "../session/triggers.ts";
+import { createPlanAllowanceRoutes } from "../setup/plan-allowance-routes.ts";
 import { createSetupRoutes } from "../setup/routes.ts";
 import { createSourcesRoutes } from "../sources/routes.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
@@ -657,6 +658,23 @@ export function createDaemonApp(
       appVersion: rt.appVersion,
       restarter: rt.restarter,
       ...(rt.fetchImpl ? { fetchImpl: rt.fetchImpl } : {}),
+    }),
+  );
+  // Settings -> Claude subscription allowance (U-052): CHF in, USD stored as the runtime reads it.
+  app.route(
+    "/",
+    createPlanAllowanceRoutes({
+      dirs: rt.dirs,
+      env: rt.env,
+      vault: rt.vault,
+      clock: rt.clock,
+      store: rt.store,
+      humanId: rt.human.id,
+      chfPerUsd: rt.chfPerUsd,
+      current: () => rt.billing.planAllowance,
+      onChanged: (a) => {
+        rt.billing.planAllowance = a;
+      },
     }),
   );
 

@@ -89,3 +89,37 @@ export const SETUP_ROUTES = {
   setupFinish:
     "POST /setup/finish (SetupFinishView: marks the assistant done in config.json; when a credential was stored since the daemon started it restarts (restart.json reason setup, exit 86) and the shell relaunches it)",
 } as const;
+
+/**
+ * Settings → Claude subscription allowance (U-052; `plan-allowance-routes.ts`): the plan
+ * allowance of ADR 0044, entered in CHF, stored in USD as the runtime expects.
+ */
+export const PlanAllowanceView = z.object({
+  /** A Claude subscription token is saved: the allowance applies to it. */
+  subscription: z.boolean(),
+  /** USD of API-equivalent usage per month, as stored. */
+  usdMonthly: z.number(),
+  /** The same in CHF at `chfPerUsd`. */
+  chfMonthly: z.number(),
+  chfPerUsd: z.number(),
+  /** Where the value in force came from: `default`, `config` (this field), `env`, ... */
+  origin: z.string(),
+  /** `FORERUNNER_PLAN_USD_MONTHLY` (or the composition) sets it and the field cannot. */
+  overridden: z.boolean(),
+  /** The share of the allowance at which subscription work stops (the row's `planShareCap`). */
+  stopShare: z.number(),
+});
+export type PlanAllowanceView = z.infer<typeof PlanAllowanceView>;
+
+export const PlanAllowanceBody = z.object({
+  /** CHF per month: a positive amount, at most CHF 100,000. */
+  chfMonthly: z.number().positive().max(100_000),
+});
+export type PlanAllowanceBody = z.infer<typeof PlanAllowanceBody>;
+
+export const PLAN_ALLOWANCE_ROUTES = {
+  planAllowance:
+    "GET /settings/plan-allowance (PlanAllowanceView: the Claude subscription's monthly allowance in USD as stored and in CHF at the day's rate, where it comes from, whether the environment overrides it; U-052)",
+  setPlanAllowance:
+    "POST /settings/plan-allowance { chfMonthly } (PlanAllowanceView: converted to USD at the day's rate and stored in config.json and on the subscription billing row, in force for the next pick; 400 validation for a non-positive amount, 409 when FORERUNNER_PLAN_USD_MONTHLY decides)",
+} as const;

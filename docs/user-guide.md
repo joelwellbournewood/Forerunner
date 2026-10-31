@@ -102,6 +102,12 @@ third-party sites.
 Budgets exist per month, per project, per session, per task and per run. The runtime refuses a
 model call that would cross a cap; it never relies on the agent noticing.
 
+On a Claude subscription, Settings → **Claude subscription allowance** says how much
+API-equivalent use your plan covers a month, in CHF. Forerunner cannot see your plan's real
+usage, so it estimates against this amount and stops subscription work at 95% of it; an API
+key takes over when you have one. The default (USD 50, about CHF 40) is low on purpose: enter
+what your plan covers, or a Max plan's work stops early.
+
 ## Kill switch
 
 The tray icon and the red button in the header stop every session of one agent or of

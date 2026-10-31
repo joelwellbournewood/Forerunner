@@ -606,6 +606,19 @@ proxy's refusal, timed out) with the code, never only "fetch failed". The Messag
 connection errors and `ClaudeCodeProvider`'s failures cut the credential out of their text the
 same way. `test/setup-routes.test.ts` covers all of it with a memory vault and a routed fetch.
 
+**The subscription allowance's routes** (`src/setup/plan-allowance-routes.ts`, shapes in
+`src/setup/types.ts`, U-052), mounted next to the setup routes: `GET /settings/plan-allowance`
+(`PlanAllowanceView`: `subscription` (a token is saved), the allowance in force in USD and in
+CHF at `rt.chfPerUsd()`, its `origin` (`default`, `config`, or `env`/`option` from compose),
+`overridden` when `FORERUNNER_PLAN_USD_MONTHLY` or the composition decides, `stopShare` from the
+row's `planShareCap`); `POST /settings/plan-allowance { chfMonthly }` (positive, at most
+100,000; converted to USD at the day's rate, rounded to cents; written to `config.json`'s
+`subscription.planUsdMonthly`, created through `runSetup` when missing, and to the subscription
+row's `limits.planUsdMicro`; `rt.billing.planAllowance` follows; a `settings.plan_allowance`
+audit row; 400 for a bad amount, 409 while the environment decides). Test:
+`plan-allowance-route.test.ts` (the default in CHF, a save, the row and the file, a restart,
+the environment override).
+
 `buildProgram(deps)` builds the commander program (tests inspect it; the module parses
 `process.argv` only when it is the entry point). The module commands registered on it:
 

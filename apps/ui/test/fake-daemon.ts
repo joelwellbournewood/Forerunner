@@ -184,6 +184,8 @@ export interface FakeDaemonOptions {
    * (`pairingAvailable: false`, `POST /devices/pairing` 503 unavailable). Default true.
    */
   pairingAvailable?: boolean;
+  /** FORERUNNER_PLAN_USD_MONTHLY decides the subscription allowance (U-052). Default false. */
+  planAllowanceOverridden?: boolean;
   /**
    * The time a pairing's ten-minute expiry counts from (epoch ms); the wall clock by default.
    * The Devices tests share one stepped clock between the fake and the section.
@@ -3527,6 +3529,46 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       ...(ok ? { login: "joel", repos } : {}),
       status: setup,
     });
+  });
+  // Settings -> Claude subscription allowance (U-052), mirroring
+  // packages/runtime/src/setup/plan-allowance-routes.ts: CHF in, USD stored at the day's rate.
+  const allowanceRate = 0.8;
+  const allowance = {
+    usdMonthly: 50,
+    origin: "default",
+    overridden: options.planAllowanceOverridden ?? false,
+  };
+  const allowanceView = () => ({
+    subscription: setup.credentials.subscription,
+    usdMonthly: allowance.usdMonthly,
+    chfMonthly: Math.round(allowance.usdMonthly * allowanceRate * 100) / 100,
+    chfPerUsd: allowanceRate,
+    origin: allowance.overridden ? "env" : allowance.origin,
+    overridden: allowance.overridden,
+    stopShare: 0.95,
+  });
+  app.get("/settings/plan-allowance", (c) => c.json(allowanceView()));
+  app.post("/settings/plan-allowance", async (c) => {
+    const { chfMonthly } = (await c.req.json().catch(() => ({}))) as { chfMonthly?: unknown };
+    if (typeof chfMonthly !== "number" || !(chfMonthly > 0) || chfMonthly > 100_000) {
+      return errorBody(
+        c,
+        400,
+        "validation",
+        "Enter the allowance as a positive amount of CHF per month, e.g. 160.",
+      );
+    }
+    if (allowance.overridden) {
+      return errorBody(
+        c,
+        409,
+        "validation",
+        "FORERUNNER_PLAN_USD_MONTHLY is set on this computer and decides the allowance; remove it to set the allowance here.",
+      );
+    }
+    allowance.usdMonthly = Math.round((chfMonthly / allowanceRate) * 100) / 100;
+    allowance.origin = "config";
+    return c.json(allowanceView());
   });
   app.post("/setup/finish", (c) => {
     const restarting = setup.restartNeeded;

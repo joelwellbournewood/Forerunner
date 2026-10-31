@@ -335,6 +335,25 @@ describe("the UI client against the real daemon", () => {
     expect(answered.status).toBe("answered");
   });
 
+  it("Settings' subscription allowance: CHF in, USD stored, read back in CHF (U-052)", async () => {
+    const before = await client.planAllowance();
+    expect(before).toMatchObject({ usdMonthly: 50, origin: "default", overridden: false });
+    expect(before.chfMonthly).toBeCloseTo(50 * before.chfPerUsd, 2);
+    const saved = await client.setPlanAllowance(160);
+    expect(saved.origin).toBe("config");
+    expect(saved.usdMonthly).toBeCloseTo(160 / saved.chfPerUsd, 2);
+    expect(saved.chfMonthly).toBeCloseTo(160, 1);
+    expect(rt.billing.planAllowance.usdMonthly).toBe(saved.usdMonthly);
+    expect((await client.planAllowance()).usdMonthly).toBe(saved.usdMonthly);
+    const refused = await client.setPlanAllowance(0).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(400);
+    expect((refused as ApiError).message).toContain("positive amount of CHF per month");
+  });
+
   it("setup's GitHub check: the repositories the token reaches, with their access and warnings (U-051)", async () => {
     // GitHub as the daemon's check meets it; the token is a fixture, never a real one.
     const token = ["github_pat_", "realdaemon_", "1".repeat(40)].join(""); // not-a-secret

@@ -23,6 +23,7 @@ import type { ThemePreference } from "../store/store.ts";
 import { AgentNameSection } from "./AgentNameSection.tsx";
 import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
+import { PlanAllowanceSection } from "./PlanAllowanceSection.tsx";
 import { SourcesSection } from "./SourcesSection.tsx";
 import { VoiceSettingsCard } from "./VoiceSettingsCard.tsx";
 
@@ -604,6 +605,8 @@ export function SettingsPage() {
           Open the setup assistant
         </Link>
       </div>
+
+      <PlanAllowanceSection />
 
       <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
         <h2 className="font-semibold">Appearance</h2>

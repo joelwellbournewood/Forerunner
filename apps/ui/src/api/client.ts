@@ -86,6 +86,8 @@ import {
   type PerformanceModeView,
   type PerformanceView,
   PerformanceView as PerformanceViewSchema,
+  type PlanAllowanceView,
+  PlanAllowanceView as PlanAllowanceViewSchema,
   type ProjectCard,
   ProjectCard as ProjectCardSchema,
   type ProjectSummary,
@@ -259,6 +261,7 @@ export type {
   PendingChangeView,
   PerformanceModeView,
   PerformanceView,
+  PlanAllowanceView,
   ProjectCard,
   ProjectSettingsView,
   ProjectSummary,
@@ -699,6 +702,10 @@ export interface DaemonClient {
   setupAnthropic(value: string): Promise<SetupCheckView>;
   setupGitHub(body: SetupGitHubBody): Promise<SetupCheckView>;
   setupFinish(): Promise<SetupFinishView>;
+
+  // Settings -> Claude subscription allowance (U-052): CHF a month in, USD stored by the daemon.
+  planAllowance(signal?: AbortSignal): Promise<PlanAllowanceView>;
+  setPlanAllowance(chfMonthly: number): Promise<PlanAllowanceView>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -1090,6 +1097,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     setupAnthropic: (value) => post(routePath("setupAnthropic"), SetupCheckViewSchema, { value }),
     setupGitHub: (body) => post(routePath("setupGitHub"), SetupCheckViewSchema, body),
     setupFinish: () => post(routePath("setupFinish"), SetupFinishViewSchema, {}),
+    planAllowance: (signal) =>
+      get(routePath("planAllowance"), PlanAllowanceViewSchema, undefined, signal),
+    setPlanAllowance: (chfMonthly) =>
+      post(routePath("setPlanAllowance"), PlanAllowanceViewSchema, { chfMonthly }),
     auditExport: async (filter, signal) => {
       const format: AuditExportFormat = filter?.format ?? "jsonl";
       const res = await raw({
