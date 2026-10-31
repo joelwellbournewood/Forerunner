@@ -378,7 +378,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   4. An API key is never sent through Claude Code: the Claude Code paths refuse one and strip
      `ANTHROPIC_API_KEY` from Claude Code's environment. A subscription is never sent to the
      API directly (ADR 0098).
-- **Fix (ADR 0100; commits c1b5169 … cc4d53f on this branch, merged as 7 commits):**
+- **Fix (ADR 0100; commits 3c8f044 … cc4d53f):**
   - The order is a human setting (`billing_order`, set by `settings.set`, listed in Changes with
     Undo); the router sorts usable sources by it for every purpose. Without it, today's defaults.
   - Every non-task call goes through a `RoutedProvider`: the Messages API for a key, Claude Code
