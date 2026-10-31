@@ -93,22 +93,55 @@ skip with a visible reason when no daemon is reachable and CI records that in th
 - Problems found in a released version go into `docs/status/UPDATE-LOG.md` first:
   - an ID (`U-NNN`), what the user sees, the action, and status `open`;
   - commits that work on it name the ID;
+  - every entry has **Check in the app**: the steps a person takes to see the fix;
   - it becomes `fixed` only with commits, the failing-then-passing test and CI runs;
   - releases are cut in batches when the owner asks, never one per fix.
+
+## Validation (binding; details in `docs/maintainers/validation.md`)
+
+1.0.0 to 1.0.4 passed every check and still shipped an app that did not start, buttons that did
+the opposite of their label, and a kill switch that came back on every start. The tests proved
+the code agreed with itself, not that a person could use it. So, for every change:
+
+- **Test what the person sees and sends.** Click the control; assert what appears and what goes
+  over the wire. Answer Inbox requests in tests with the option strings the Inbox shows
+  (`requestView(row).options`), never with "yes" typed by the test. Do not assert an internal
+  shape unless the visible result is asserted too.
+- **The real daemon, not only the stand-in.** A new or changed route gets a case in
+  `apps/ui/test/real-daemon.test.ts`, and `apps/ui/test/fake-daemon.ts` changes in the same
+  commit.
+- **Cross the lifecycle.** Persisted state is tested across a restart; processes and timers are
+  tested for what is left after stop, Quit, uninstall and upgrade.
+- **Windows first.** Spaces, non-ASCII letters, another drive, a standard (non-administrator)
+  user, files held open, links in caches.
+- **Person steps for the person, agent steps for agents.** A question for the person goes to
+  the Inbox with the question in it; a specialist only gets work its tools allow; every button
+  leads to a state something processes.
+- **Fixes: failing test, fix, then the siblings.** Search for the same bug class elsewhere
+  (the table in `validation.md`) and fix or log what you find.
+- **Reviewers and critics walk the journey**, not only the diff: the U-entry's "Check in the
+  app" steps, every Inbox option's outcome, restart, Quit, Windows.
+- **No release without the owner trying the build** (`docs/setup-guide.md`, "Trying a build
+  before it is released") and the release checklist in `validation.md`.
 
 ## Definition of done (per change)
 
 CI green on Windows and Linux (and Android for app changes). New behaviour has tests that fail
-without it. Lint and types clean. The maintainer doc for every touched module updated in the same
-PR, or the PR body says `docs: none needed: <reason>`. Requirement status in
-`docs/requirements.md` updated. Never weaken a test or a check to make it pass.
+without it, written at the boundary the person uses (see Validation). Lint and types clean. The
+maintainer doc for every touched module updated in the same PR, or the PR body says
+`docs: none needed: <reason>`. A person-facing change updates the user guide and its U-entry's
+"Check in the app" steps. Requirement status in `docs/requirements.md` updated. Never weaken a
+test or a check to make it pass.
 
 ## Rules from the build prompt (always in force)
 
 - Nothing hardcoded to one org, account or host. Every build runs on Windows and Linux, with an
   Android client.
 - Enforce limits in code, never only in prompts.
-- Decide open points yourself, record an ADR in `docs/decisions/`, keep going.
+- Decide open points yourself, record an ADR in `docs/decisions/`, keep going. Exception: a
+  choice about what a person sees or must do (a screen, a question, what a button does,
+  whether something keeps running) goes to the owner as options in the U-entry; build only
+  what is decided.
 - Never idle: if blocked, build the stand-in, log it in `docs/status/BLOCKERS.md`, continue.
 - Never mark a check passed without evidence (command, date, result, CI link) in
   `docs/status/gates.md`.

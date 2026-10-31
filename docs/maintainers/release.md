@@ -280,6 +280,8 @@ prompts and the item briefs it was run with are kept on the `build-briefs` branc
 
 ## How to change it
 
+- **The release checklist** is in `validation.md` ("Release"); every box needs evidence in
+  `docs/status/gates.md`.
 - **Before cutting one: the owner tries the build.** Run the Desktop app workflow
   (`desktop.yml`, `workflow_dispatch`) on the development branch, or use the run of its pull
   request. A green run uploads `desktop-windows-latest` (the MSI) and `desktop-ubuntu-latest`

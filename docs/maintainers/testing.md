@@ -7,6 +7,9 @@ server, fake git host) and `e2e` (the nine release scenarios on the scenario wor
 phase gate harnesses, fake provider; live-model runs are the opt-in `tests/live` suite). This
 file has one subsection per stand-in under each heading.
 
+What a change must prove, and how (the person's boundary, the real daemon, restarts, Windows),
+is in `validation.md`; this file describes the tools.
+
 ## Purpose
 
 ### Fake provider

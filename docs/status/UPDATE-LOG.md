@@ -12,6 +12,9 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - `fixed`: fixed and verified on the development branch, not in a published version yet.
   - `released x.y.z`: in that published version.
   - `won't fix`: with the reason.
+- **Check in the app.** Every entry has a line saying what a person does to see the fix
+  (where to click, what should happen). The owner walks these before a release; a test should
+  do the same steps (`docs/maintainers/validation.md`).
 - **Fixed needs evidence.** An entry moves to `fixed` only with:
   - the commits;
   - the test that failed before the fix and passes after it;
@@ -99,6 +102,11 @@ stands. Each entry says what you see first, then the cause and the fix for maint
     (the installer step runs before the files-in-use check, only when a version is installed,
     never fails the install, and targets only the install folder). The Windows installed-app
     check in CI runs the installer step on every uninstall.
+- **Check in the app:** with 1.0.4 still running, install the test MSI: it installs without a
+  "files in use" message. Close the window: a notification says Forerunner is still running
+  (once). Start a session, then tray → Quit Forerunner: it asks first; confirm. Task Manager
+  shows no `Forerunner.exe` and no `node.exe` from the install folder, and the folder can be
+  renamed. Open Forerunner again: it starts normally.
 - **Status:** open.
 
 ### U-019 The kill switch comes back after every restart
@@ -112,6 +120,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   start.
 - **Action:** Resume removes the file (`POST /kill/resume`, used by the header and the tray).
   Test: `packages/runtime/test/kill-resume-restart.test.ts` fails without the fix.
+- **Check in the app:** click Stop all in the header, then Resume. Quit from the tray and open
+  Forerunner again. Start a session: it starts, with no "kill switch is active" message.
 - **Status:** open.
 
 ### U-022 Questions for the person go to a specialist that cannot ask them
@@ -239,6 +249,9 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   `packages/runtime/test/extensions-registry.test.ts` (answered with the shown options, an old
   row, the withdrawal); each fails without the fix. Old requests synced to the phone app and the
   approvals page still show their options as JSON text; new ones show Approve and Deny.
+- **Check in the app:** Extensions → add voice-local (or any entry). The Inbox card shows
+  Approve and Deny. Deny: the extension is gone. Add it again, Approve: it shows as installed
+  and enabled. Add one more and remove it before answering: its card leaves the Inbox.
 - **Status:** open.
 
 ### U-020 The inbox has no "mark all read"
@@ -247,6 +260,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **Action:** a "Mark all read" button over the messages marks every unread message read,
   through the same route as Mark read. Test: `apps/ui/test/inbox.test.tsx` ("marks every
   unread message read with one click") fails without it. The Android inbox does not have it yet.
+- **Check in the app:** with two or more unread messages, Inbox → Mark all read (N): every
+  message turns read and the button goes away; reload, they stay read.
 - **Status:** open.
 
 ## Released

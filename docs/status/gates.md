@@ -225,3 +225,12 @@ stand on their builders' verification and this check (BLOCKERS.md "Open review f
 | 7 | Fresh install < 15 min on both | **met, re-timed on 2026-10-25 on fresh runners**: Linux `fresh install took 258s` (install 7 s, typecheck 31 s, unit tests 212 s, app directories 6 s), Windows `fresh install took 494s` (10 s, 38 s, 420 s, 10 s), both under the 900 s budget, on a36a0f9 (the final code head's scripts are unchanged since); first timed on 2026-10-20 (Linux 89 s, Windows 200 s, before the unit suite grew) | `.github/workflows/fresh-install.yml` (`scripts/install.sh`, `install.ps1`), run 40195327081 on 2026-10-25 (https://github.com/joelwellbournewood/Forerunner/actions/runs/40195327081); 2026-10-20: https://github.com/joelwellbournewood/Forerunner/actions/runs/39357536106 |
 | 8 | Docs handover test passes | **met on the fake provider on both OS**: scenario 8 "Handover" (a fresh agent with only the repository and its docs fixes a seeded defect, opens the PR and the critic accepts it) passed three consecutive runs on 2026-10-20, on e42c730 and 422d9c0, and on the final code head a76e259 in CI run 151 on both OS and locally; the monthly handover job on Forerunner's own repository with a live model (V.8) is handover item 2 | `pnpm exec vitest run --project e2e tests/e2e/scenarios/08-handover.scenario.test.ts` (2026-10-25, CI run 151: https://github.com/joelwellbournewood/Forerunner/actions/runs/40198201562) |
 | 9 | This file has evidence for all of the above | **met for the rows above** (2026-10-25): every criterion row names its evidence or the missing item; `pnpm gates:verify` is clean; what is not met is named in criteria 1, 2, 5 and 6 and in PROGRESS.md "Where to pick up" | this table; `pnpm gates:verify` on a76e259 (2026-10-25) |
+
+## Release acceptance (from the release after 1.0.4)
+
+The release checklist in `docs/maintainers/validation.md`: one row per release. The owner's
+run-through is the last box; without it the release is not cut.
+
+| Release | CI run (both OS) | Desktop app run (installers) | Owner tried the build (date, run, U-entries checked, core path) | Status |
+| --- | --- | --- | --- | --- |
+| next (U-018 to U-021 so far) | pending | 41206539501 (started 2026-10-31) | pending | pending |

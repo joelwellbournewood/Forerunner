@@ -23,6 +23,7 @@ fails a PR that changes a module without touching its doc.
 | release.md | signing, staged rollout, rollback |
 | migrations.md | schema and memory-format migrations |
 | security.md | threat model and the injection test suite |
+| validation.md | the rules every change is proven against, the bug classes that reached people, author / reviewer / release checklists |
 | testing.md | test environment, stand-ins, the nine scenarios |
 | troubleshooting.md | common failures and fixes |
 | sandbox.md | Docker/Podman container adapter, process stand-in, worktree mounts, egress |

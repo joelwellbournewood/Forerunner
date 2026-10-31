@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "@forerunner/platform/paths";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain JS module
 import { evaluate } from "./docs-check.mjs";
@@ -20,5 +22,13 @@ describe("docs-check", () => {
       true,
     );
     expect(evaluate(["packages/billing/src/router.ts"], "docs: none needed").ok).toBe(false);
+  });
+
+  it("is not waived by the pull request template left as it is", () => {
+    const template = readFileSync(
+      join(process.cwd(), ".github", "pull_request_template.md"),
+      "utf8",
+    );
+    expect(evaluate(["packages/billing/src/router.ts"], template).ok).toBe(false);
   });
 });
