@@ -1,3 +1,4 @@
+import { email as agentEmail } from "@forerunner/capabilities";
 import { INSTALL_WRAP_KEY_NAME } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
 import { requestView } from "../src/daemon/views.ts";
@@ -1197,5 +1198,46 @@ describe("a built-in entry added in the panel is confirmed there, with no Inbox 
     );
     expect(widened).toMatchObject({ status: "pending_approval", confirmIn: "inbox" });
     expect((await cards()).filter((c) => c.status === "open")).toHaveLength(1);
+  });
+});
+
+/**
+ * U-075: email is set in one place, the Email page. Its settings live in an `extension` row per
+ * agent (`email:<agentId>`), which the panel listed with a switch and a Remove: the switch did
+ * nothing and Remove deleted the mailbox settings. The row is shown read-only and points there.
+ */
+describe("an agent's email settings row is set on the Email page, read-only in the panel (U-075)", () => {
+  let h: RegistryHarness;
+  afterEach(async () => {
+    h.stopLogs();
+    await h.registry.close();
+    await h.store.close();
+  });
+
+  it("is listed as managed on the Email page and refuses a toggle, a removal and a re-permissioning", async () => {
+    h = await registryHarness();
+    const settings = new agentEmail.EmailSettingsStore(h.store.extension, h.clock);
+    await settings.update("agent-1", { settings: { mode: "draft_only" } });
+    const before = await settings.get("agent-1");
+    const [row] = await h.registry.list();
+    if (!row) throw new Error("no email row");
+    expect(row).toMatchObject({ name: "email:agent-1", kind: "capability", managedIn: "email" });
+    expect(row.description).toContain("Email page");
+    for (const attempt of [
+      () => h.registry.toggle(row.id, false, human),
+      () => h.registry.remove(row.id, human),
+      () => h.registry.updatePermissions(row.id, { tools: ["email:agent-1.x"] }, human),
+    ]) {
+      await expect(attempt()).rejects.toMatchObject({
+        code: "validation",
+        message: expect.stringContaining("set on the Email page"),
+      });
+    }
+    // Nothing changed: the Email page's settings and the row are as they were.
+    expect(await settings.get("agent-1")).toEqual(before);
+    expect((await h.registry.get(row.id)).rowVersion).toBe(row.rowVersion);
+    // A catalog row is not managed elsewhere.
+    const fake = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+    expect(fake.managedIn).toBeNull();
   });
 });

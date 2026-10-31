@@ -420,4 +420,36 @@ describe("Extensions panel", () => {
     harness.store.dispatch({ type: "extension.changed" });
     await waitFor(() => expect(screen.getAllByTestId("extension")).toHaveLength(5));
   });
+
+  it("the agent's email row is read-only and points to the Email page (U-075)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const browser = harness.daemon.state.extensions.find((e) => e.id === "ext_browser");
+    if (!browser) throw new Error("fixture");
+    // The row the daemon lists once the Email page has been opened (the agent's settings).
+    harness.daemon.state.extensions.push({
+      ...browser,
+      id: "ext_email_alice",
+      name: "email:agent_alice",
+      status: "enabled",
+      enabled: true,
+      description:
+        "Your agent's own mailbox: its mode, limits and mailbox are set on the Email page.",
+      permissions: { ...browser.permissions, tools: [], domains: [] },
+      source: null,
+      managedIn: "email",
+    });
+    renderApp("/extensions", harness);
+    const rows = await screen.findAllByTestId("extension");
+    const email = rows.find((r) => r.dataset.extensionId === "ext_email_alice");
+    if (!email) throw new Error("no email row");
+    // No switch that does nothing and no Remove that would delete the mailbox settings.
+    expect(within(email).queryByTestId("extension-toggle")).toBeNull();
+    expect(within(email).queryByTestId("extension-remove")).toBeNull();
+    const link = within(email).getByRole("link", { name: "set on the Email page" });
+    expect(link).toHaveAttribute("href", "/settings/capabilities/email");
+    await user.click(link);
+    expect(await screen.findByTestId("email-intro")).toBeInTheDocument();
+    expect(postedCalls(harness, "/extensions/ext_email_alice/toggle")).toEqual([]);
+  });
 });

@@ -238,7 +238,12 @@ async function select<T extends Probeable>(
       `${note}no local ${label} provider and no cloud key configured; using "${fake.name}"`,
     );
   }
-  throw new ForerunnerError("unavailable", `no ${label} provider available`, {
-    details: { statuses },
-  });
+  // Each provider's own reason stays in the message (U-075): "local voice is off ...; turn it
+  // on in Settings -> Voice" is what tells the person what to do, not "no provider".
+  const why = statuses.map((s) => `${s.name}: ${s.reason}`).join("; ");
+  throw new ForerunnerError(
+    "unavailable",
+    `no ${label} provider available${why ? `: ${why}` : ""}`,
+    { details: { statuses } },
+  );
 }

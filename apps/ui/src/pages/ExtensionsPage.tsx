@@ -7,6 +7,7 @@ import {
   EXTENSION_KINDS,
   type ExtensionKind,
   type ExtensionPermissions,
+  type ManagedPlace,
 } from "../api/contracts.ts";
 import { Dialog } from "../components/Dialog.tsx";
 import {
@@ -60,6 +61,11 @@ export function summarizePermissions(p: ExtensionPermissions): string {
     .map((k) => `${p[k].length} ${PERMISSION_LABELS[k]}`);
   return parts.length === 0 ? "no permissions" : parts.join(" · ");
 }
+
+/** Where a row another screen owns is set (U-075), as the row's link says it. */
+const MANAGED_LINKS: Record<ManagedPlace, { to: string; label: string }> = {
+  email: { to: "/settings/capabilities/email", label: "set on the Email page" },
+};
 
 const VOICE_SIDES = ["stt", "tts"] as const;
 const SIDE_LABELS: Record<(typeof VOICE_SIDES)[number], string> = { stt: "STT", tts: "TTS" };
@@ -303,6 +309,8 @@ function ExtensionRow({
   const e = extension;
   const pending = e.status === "pending_approval";
   const voiceState = voiceBadges(e, voice);
+  // Set on another screen (U-075): no switch and no Remove here, a pointer there instead.
+  const managed = e.managedIn ? MANAGED_LINKS[e.managedIn] : null;
 
   const run = async (action: () => Promise<ExtensionView | undefined>) => {
     if (busy) return;
@@ -346,7 +354,15 @@ function ExtensionRow({
           cost <Money value={e.cost} />
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-1">
-          {pending ? (
+          {managed ? (
+            <Link
+              to={managed.to}
+              className="text-xs text-blue-700 hover:underline dark:text-blue-300"
+              data-testid="extension-managed"
+            >
+              {managed.label}
+            </Link>
+          ) : pending ? (
             <>
               <Button
                 variant="primary"
@@ -388,7 +404,7 @@ function ExtensionRow({
               {e.enabled ? "On" : "Off"}
             </button>
           )}
-          {confirmRemove ? (
+          {managed ? null : confirmRemove ? (
             <>
               <Button
                 variant="danger"

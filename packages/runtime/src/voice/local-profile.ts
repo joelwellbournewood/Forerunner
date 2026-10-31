@@ -36,6 +36,10 @@ import {
 import { readVoiceSettings, recordedVoiceRoot, venvPythonPath, voiceDirs } from "./install.ts";
 import { type VoiceProfile, voiceInstallCommand } from "./install-types.ts";
 
+/** Why local voice refuses while a voice install runs (`LocalVoiceOptions.blocked`, compose.ts). */
+export const VOICE_INSTALL_RUNNING_REASON =
+  "a voice install is running (Settings -> Voice); local voice is back when it ends";
+
 export interface LocalVoiceSettings {
   profile: VoiceProfile;
   /** Why local voice is off (profile none, or a profile whose venv is missing); null when on. */

@@ -1033,15 +1033,16 @@ function AgentEmailCard({ agent }: { agent: AgentView }) {
   );
 }
 
-/** Settings -> Capabilities -> Email: one card per agent of the signed-in human. */
+/**
+ * Settings -> Capabilities -> Email: one card per principal agent of the signed-in human. Email
+ * is set here and nowhere else (U-075). The daemon reads the principal agent's mailbox only (the
+ * email tools, the notifier's email channel, email commands), so the critic gets no card: a
+ * mailbox set for it would be read by nothing.
+ */
 export function EmailSettingsPage() {
   const me = useUiState((s) => s.me);
   const agents = useUiState((s) => s.agents);
-  const mine = me
-    ? agents
-        .filter((a) => a.ownerHumanId === me.id)
-        .sort((a, b) => (a.kind === "principal" ? -1 : b.kind === "principal" ? 1 : 0))
-    : [];
+  const mine = me ? agents.filter((a) => a.ownerHumanId === me.id && a.kind === "principal") : [];
 
   return (
     <section aria-labelledby="email-settings-title" className="space-y-5">
@@ -1060,6 +1061,12 @@ export function EmailSettingsPage() {
         change. The limits below stay on in every sending mode, every change is audited, and the
         policy applies the new setting to the very next email.
       </p>
+      {mine.length > 0 ? (
+        <p className="text-xs text-neutral-500" data-testid="email-principal-only">
+          Email is used by your agent ({mine.map((a) => a.name).join(", ")}) only; the critic
+          reviews work and has no mailbox.
+        </p>
+      ) : null}
       {!me ? <Loading what="your agents" /> : null}
       {me && mine.length === 0 ? (
         <EmptyState testId="email-no-agents">

@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { SESSION_OVERRIDE_KEY } from "@forerunner/commands";
-import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { appDirs, ForerunnerError, join, SimulatedClock } from "@forerunner/platform";
 import { FakeProvider, lastUserText, textReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,6 +20,8 @@ import {
   VOICE_PRESS_WAIT_MS,
   VOICE_SESSION_AUDIT_TOOL,
 } from "../src/voice/bridge.ts";
+import { writeVoiceSettings } from "../src/voice/install.ts";
+import { VOICE_INSTALL_RUNNING_REASON } from "../src/voice/local-profile.ts";
 import {
   type AudioChunk,
   CartesiaTts,
@@ -31,6 +33,7 @@ import {
   VoiceProviderRegistry,
 } from "../src/voice/pkg.ts";
 import { VOICE_PREFERENCE_ENV, VOICE_SECRET_REFS } from "../src/voice/providers.ts";
+import { voiceUnavailableReason } from "../src/voice/sessions.ts";
 import { encodePcm } from "../src/voice/views.ts";
 
 /**
@@ -1323,6 +1326,61 @@ describe("voice unavailable", () => {
       });
     return { rt, req };
   };
+
+  it("Talk without voice installed says what to do, with the reason kept (U-075)", async () => {
+    // A fresh install whose setup answered "none": the daemon's own providers (local voice off,
+    // the cloud ones without a key), as Talk reads them before opening the microphone.
+    const home = mkdtempSync(join(tmpdir(), "fr-voice-none-"));
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    writeVoiceSettings(dirs, { version: 1, profile: "none", updatedAt: clock.nowIso() });
+    const rt = await composeRuntime({
+      env,
+      dirs,
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new FakeProvider({ replies: [], clock, latency: "none" }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+    });
+    try {
+      const { app, token } = createDaemonApp(rt);
+      const req = (path: string, init: RequestInit = {}) =>
+        app.request(path, {
+          ...init,
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        });
+      const status = VoiceStatusView.parse(await json(await req("/voice/status")));
+      expect(status.available).toBe(false);
+      // What to do comes first; the reason the registry had is still there.
+      expect(status.reason).toMatch(/^install voice in Settings → Voice \(/);
+      expect(status.reason).toContain("faster-whisper: local voice is off (voice profile none)");
+      expect(status.reason).toContain("deepgram: no value for secret:deepgram_api_key");
+      const started = await req("/voice/sessions", { method: "POST", body: "{}" });
+      expect(started.status).toBe(503);
+      expect(String((await json(started)).message)).toMatch(
+        /^install voice in Settings → Voice \(no STT provider available: /,
+      );
+    } finally {
+      await rt.close();
+    }
+  });
+
+  it("while a voice install runs the advice is to wait for it, not to install again (U-075)", () => {
+    const running = new ForerunnerError(
+      "unavailable",
+      `no STT provider available: faster-whisper: ${VOICE_INSTALL_RUNNING_REASON}`,
+    );
+    expect(voiceUnavailableReason(running)).toBe(
+      `wait for the voice install in Settings → Voice to finish (${running.message})`,
+    );
+    // Anything else is passed on as it is.
+    expect(voiceUnavailableReason(new Error("socket closed"))).toBe("socket closed");
+  });
 
   it("reports the reason when no provider is configured and refuses a session with 503", async () => {
     const { rt, req } = await compose(new VoiceProviderRegistry(), new MemoryVault());

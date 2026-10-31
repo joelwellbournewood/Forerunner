@@ -285,6 +285,25 @@ describe("the UI client against the real daemon", () => {
     expect(await cardsFor(cancelled.id)).toEqual([]);
   });
 
+  it("extensions: the agent's email row is read-only and points to the Email page; email is no catalog entry (U-075)", async () => {
+    // Opening the Email page creates the agent's settings row, which the panel lists.
+    const settings = await client.emailSettings(agentId);
+    const row = (await client.extensions()).find((e) => e.name === `email:${agentId}`);
+    expect(row).toMatchObject({ kind: "capability", managedIn: "email" });
+    // Its switch and Remove are refused with where it is set; nothing changes.
+    for (const attempt of [
+      () => client.toggleExtension(row?.id ?? "", !row?.enabled),
+      () => client.removeExtension(row?.id ?? ""),
+    ]) {
+      const refused = await attempt().catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(ApiError);
+      expect(refused).toMatchObject({ status: 400 });
+      expect((refused as ApiError).message).toContain("set on the Email page");
+    }
+    expect(await client.emailSettings(agentId)).toEqual(settings);
+    expect((await client.extensionCatalog()).entries.map((e) => e.id)).not.toContain("email");
+  });
+
   it("answering a request: an answer that is none of a card's options is refused with them, the card stays (U-034)", async () => {
     const card = await rt.store.humanRequest.insert({
       human_id: humanId,

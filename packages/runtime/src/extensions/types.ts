@@ -44,6 +44,13 @@ export type GrantStage = (typeof GRANT_STAGES)[number];
 export const CONFIRM_PLACES = ["panel", "inbox"] as const;
 export type ConfirmPlace = (typeof CONFIRM_PLACES)[number];
 
+/**
+ * Rows another screen owns, shown read-only in the panel with a pointer there (U-075):
+ * `email` is an agent's email settings row (`email:<agentId>`), set on the Email page.
+ */
+export const MANAGED_PLACES = ["email"] as const;
+export type ManagedPlace = (typeof MANAGED_PLACES)[number];
+
 export const ACTION_CLASSES = [
   "read",
   "routine_reversible",
@@ -236,6 +243,8 @@ export const ExtensionView = z.object({
   pendingStage: z.enum(GRANT_STAGES).nullable(),
   /** Where a pending row is decided (`CONFIRM_PLACES`, U-026); null when nothing is pending. */
   confirmIn: z.enum(CONFIRM_PLACES).nullable(),
+  /** Set on another screen and read-only here (`MANAGED_PLACES`, U-075); null for the panel's own rows. */
+  managedIn: z.enum(MANAGED_PLACES).nullable(),
   review: PermissionReview.nullable(),
   cost: Money,
   version: z.string(),

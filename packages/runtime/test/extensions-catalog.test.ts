@@ -21,7 +21,6 @@ describe("extension catalog", () => {
     const ids = file.entries.map((e) => e.id);
     for (const id of [
       "browser",
-      "email",
       "desktop-control",
       "cloudflare",
       "voice-deepgram",
@@ -36,11 +35,16 @@ describe("extension catalog", () => {
     // U-023: one place for each thing. Local voice is installed and chosen in Settings ->
     // Voice, and the model provider is set in setup; their rows switched nothing, so the
     // catalog no longer offers them (an installed one is retired at the next start).
-    for (const gone of ["voice-local", "anthropic"]) {
+    // U-075: email is set on the Email page; the catalog row could only gate it off from here.
+    for (const gone of ["voice-local", "anthropic", "email"]) {
       expect(ids).not.toContain(gone);
       expect(RETIRED_CATALOG_ENTRIES[gone]).toEqual(expect.any(String));
     }
     expect(RETIRED_CATALOG_ENTRIES["voice-local"]).toContain("Settings → Voice");
+    expect(RETIRED_CATALOG_ENTRIES.email).toContain("Email page");
+    // A secret name in the catalog is one the code reads: the mailbox password the email row
+    // named (agent_mailbox_password) was read by nothing (the Email page names its own).
+    expect(JSON.stringify(file)).not.toContain("agent_mailbox_password");
     const connectors = file.entries.filter((e) => e.kind === "connector");
     expect(connectors.length).toBeGreaterThanOrEqual(3);
     for (const c of connectors) expect(c.transport).toBeDefined();

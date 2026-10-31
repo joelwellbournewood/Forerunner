@@ -8,10 +8,11 @@
  * refuses with `unavailable` carrying the same reason.
  */
 import type { Clock } from "@forerunner/platform";
-import { errorMessage, ForerunnerError } from "@forerunner/platform";
+import { errorMessage, ForerunnerError, isForerunnerError } from "@forerunner/platform";
 import type { StateStore } from "@forerunner/state";
 import type { ConversationAgent } from "../conversation/agent.ts";
 import { VoiceBridge, type VoiceBridgeCommands } from "./bridge.ts";
+import { VOICE_INSTALL_RUNNING_REASON } from "./local-profile.ts";
 import type {
   AudioSink,
   LatencyTargets,
@@ -32,6 +33,32 @@ import {
   type VoicePreferences,
   type VoiceSide,
 } from "./providers.ts";
+
+/** The registry's refusal when no provider of a side can run (`VoiceProviderRegistry.select*`). */
+const NO_PROVIDER = /^no (STT|TTS) provider available/;
+
+/**
+ * What a person reads when no voice provider can run (U-075): what to do first, then the
+ * registry's reason with each provider's own ("faster-whisper: local voice is off ...").
+ * Talk shows it as "voice is unavailable: <this>. Type instead."; read-aloud says it too.
+ * While an install runs the advice is to wait for it. Any other error is passed on as it is.
+ */
+export function voiceUnavailableReason(e: unknown): string {
+  const message = errorMessage(e);
+  if (!isForerunnerError(e, "unavailable") || !NO_PROVIDER.test(message)) return message;
+  if (message.includes(VOICE_INSTALL_RUNNING_REASON))
+    return `wait for the voice install in Settings → Voice to finish (${message})`;
+  return `install voice in Settings → Voice (${message})`;
+}
+
+/** The registry's `unavailable` with the advice of `voiceUnavailableReason`; other errors as they are. */
+function withVoiceAdvice(e: unknown): unknown {
+  if (!isForerunnerError(e, "unavailable")) return e;
+  const reason = voiceUnavailableReason(e);
+  return reason === e.message
+    ? e
+    : new ForerunnerError("unavailable", reason, { details: e.details, cause: e });
+}
 
 export interface VoiceProviderPick {
   name: string;
@@ -163,7 +190,7 @@ export class VoiceSessions {
     } catch (e) {
       return {
         available: false,
-        reason: errorMessage(e),
+        reason: voiceUnavailableReason(e),
         statuses: await this.probe(preferences),
         ...base,
       };
@@ -181,7 +208,9 @@ export class VoiceSessions {
       );
     }
     // The panel's choice as it stands now: a toggle since the last session is seen here.
-    const picked = await this.pick(await this.preferences());
+    const picked = await this.pick(await this.preferences()).catch((e: unknown) => {
+      throw withVoiceAdvice(e);
+    });
     const bridge = await VoiceBridge.create({
       agent,
       commands: this.deps.commands,
@@ -325,9 +354,11 @@ export async function pickTts(
   preferred: VoicePreferences | undefined,
   hasSecret: ((ref: string) => Promise<boolean>) | undefined,
 ): Promise<{ provider: TtsProvider; pick: VoiceProviderPick; statuses: ProviderStatus[] }> {
-  const tts = await registry.selectTts(
-    selectInputFor("tts", preferred ?? noVoicePreferences(), hasSecret),
-  );
+  const tts = await registry
+    .selectTts(selectInputFor("tts", preferred ?? noVoicePreferences(), hasSecret))
+    .catch((e: unknown) => {
+      throw withVoiceAdvice(e);
+    });
   return {
     provider: tts.provider,
     pick: { name: tts.name, kind: tts.kind, policy: tts.policy, reason: tts.reason },

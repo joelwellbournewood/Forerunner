@@ -60,8 +60,13 @@ describe("Settings -> Capabilities -> Email", () => {
     await user.click(await screen.findByTestId("capability-email"));
     expect(await screen.findByTestId("email-intro")).toHaveTextContent("never your personal inbox");
     const cards = await screen.findAllByTestId("email-agent");
-    // Alice's two agents (principal first); Bob's agent is not hers to see.
-    expect(cards.map((c) => c.dataset.agentId)).toEqual(["agent_alice", "agent_critic"]);
+    // U-075: only Alice's own agent has a card. The daemon uses the principal agent's mailbox
+    // alone, so a configurable card for the critic set something nothing reads; Bob's agent
+    // is not hers to see.
+    expect(cards.map((c) => c.dataset.agentId)).toEqual(["agent_alice"]);
+    expect(screen.getByTestId("email-principal-only")).toHaveTextContent(
+      "Email is used by your agent (Alice's agent) only",
+    );
     const alice = await card();
     await waitFor(() =>
       expect(within(alice).getByTestId("email-mode")).toHaveTextContent("Draft only"),
@@ -90,14 +95,6 @@ describe("Settings -> Capabilities -> Email", () => {
       FULL_DISCRETION_WARNING,
     );
     expect(within(alice).getByTestId("email-mode-apply")).toBeDisabled();
-    // The critic has no mailbox yet and says so.
-    const critic = await card("agent_critic");
-    await waitFor(() =>
-      expect(within(critic).getByTestId("email-address")).toHaveTextContent(
-        "no mailbox configured",
-      ),
-    );
-    expect(within(critic).getByTestId("email-mode")).toHaveTextContent("Off");
   });
 
   it("a switch to full discretion runs email.mode.set: the card with the sentence repeated, No cancels it and changes nothing, the device confirmation sets the mode with a change log row, and Undo puts it back; no PUT carries the mode", async () => {
@@ -282,29 +279,36 @@ describe("Settings -> Capabilities -> Email", () => {
     expect(harness.daemon.state.email.agent_alice?.settings.paused).toBe(false);
   });
 
-  it("saves the mailbox with credentials as references and rotates the marker", async () => {
+  it("saves the mailbox with credentials as references", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
+    // An agent without a mailbox yet (U-075: the principal's card is the only one).
+    const stored = harness.daemon.state.email.agent_alice;
+    if (!stored) throw new Error("fixture");
+    stored.settings.mailbox = null;
     renderApp("/settings/capabilities/email", harness);
-    const critic = await card("agent_critic");
-    const mailbox = await within(critic).findByTestId("email-mailbox");
-    await user.type(within(mailbox).getByTestId("mailbox-address"), "critic@agents.example.test");
+    const alice = await card();
+    await waitFor(() =>
+      expect(within(alice).getByTestId("email-address")).toHaveTextContent("no mailbox configured"),
+    );
+    const mailbox = await within(alice).findByTestId("email-mailbox");
+    await user.type(within(mailbox).getByTestId("mailbox-address"), "alice@agents.example.test");
     await user.type(within(mailbox).getByTestId("imap-host"), "imap.example.test");
-    await user.type(within(mailbox).getByTestId("imap-user"), "critic");
-    await user.type(within(mailbox).getByTestId("imap-ref"), "secret:critic_imap");
+    await user.type(within(mailbox).getByTestId("imap-user"), "alice");
+    await user.type(within(mailbox).getByTestId("imap-ref"), "secret:alice_imap");
     await user.click(within(mailbox).getByTestId("mailbox-save"));
     await waitFor(() =>
-      expect(postedCalls(harness, "/agents/agent_critic/email/settings")).toHaveLength(1),
+      expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(1),
     );
-    expect(postedCalls(harness, "/agents/agent_critic/email/settings")[0]?.body).toEqual({
+    expect(postedCalls(harness, "/agents/agent_alice/email/settings")[0]?.body).toEqual({
       settings: {
         mailbox: {
-          address: "critic@agents.example.test",
+          address: "alice@agents.example.test",
           imap: {
             host: "imap.example.test",
             port: 993,
-            user: "critic",
-            passwordRef: "secret:critic_imap",
+            user: "alice",
+            passwordRef: "secret:alice_imap",
           },
           smtp: null,
         },
@@ -312,13 +316,19 @@ describe("Settings -> Capabilities -> Email", () => {
     });
     expect(await within(mailbox).findByTestId("mailbox-saved")).toHaveTextContent("Saved.");
     await waitFor(() =>
-      expect(within(critic).getByTestId("email-address")).toHaveTextContent(
-        "critic@agents.example.test",
+      expect(within(alice).getByTestId("email-address")).toHaveTextContent(
+        "alice@agents.example.test",
       ),
     );
+  });
+
+  it("refuses a value in place of a reference and rotates the marker", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/settings/capabilities/email", harness);
     // A value in place of a reference is the daemon's 400, shown as such and nothing saved.
     const alice = await card();
-    const aliceMailbox = within(alice).getByTestId("email-mailbox");
+    const aliceMailbox = await within(alice).findByTestId("email-mailbox");
     await user.clear(within(aliceMailbox).getByTestId("smtp-ref"));
     await user.type(within(aliceMailbox).getByTestId("smtp-ref"), "hunter22xyz");
     await user.click(within(aliceMailbox).getByTestId("mailbox-save"));
@@ -438,10 +448,10 @@ describe("Settings -> Capabilities -> Email", () => {
     ]);
     expect(sentRows[0]).toHaveTextContent("to others");
     expect(sentRows[1]).toHaveTextContent("to you");
-    // The critic has no commands and nothing sent.
-    const critic = await card("agent_critic");
-    expect(await within(critic).findByTestId("email-command-empty")).toBeInTheDocument();
-    expect(await within(critic).findByTestId("email-sent-empty")).toBeInTheDocument();
+    // The critic has no mailbox and no card (U-075).
+    expect(
+      screen.getAllByTestId("email-agent").some((c) => c.dataset.agentId === "agent_critic"),
+    ).toBe(false);
   });
 
   it("names the missing routes on a daemon without them and keeps the rest of the page", async () => {
@@ -454,9 +464,9 @@ describe("Settings -> Capabilities -> Email", () => {
     expect(missing).toHaveAttribute("data-route", "emailSettings");
     expect(missing).toHaveTextContent("GET /agents/:agentId/email/settings");
     expect(within(alice).queryByTestId("email-mode-picker")).toBeNull();
-    // The other agent's routes are served and its card is complete.
-    const critic = await card("agent_critic");
-    expect(await within(critic).findByTestId("email-mode-picker")).toBeInTheDocument();
+    // The rest of the page stays.
+    expect(screen.getByTestId("email-intro")).toBeInTheDocument();
+    expect(screen.getByTestId("email-principal-only")).toBeInTheDocument();
   });
   it("ADR 0081: a mode change to off says on the card that commands go off with it, the toggle follows the stored value; turning them on at off shows the daemon's plain refusal", async () => {
     const user = userEvent.setup();

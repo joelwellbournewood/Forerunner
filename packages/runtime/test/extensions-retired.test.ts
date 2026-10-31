@@ -175,4 +175,60 @@ describe("rows of catalog entries another screen owns are retired at the next st
       await rt.close();
     }
   });
+
+  it("U-075: a 1.0.4 `email` row switched off no longer gates email off against the Email page", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ext-retired-email-"));
+    const env = { FORERUNNER_HOME: home };
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const compose = () =>
+      composeRuntime({
+        env,
+        dirs: appDirs({ env }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "1.0.5-test",
+        startServices: false,
+      });
+    let rt: RuntimeApp = await compose();
+    // The catalog's email row, installed and then switched off in Extensions: it owned the
+    // email_* tools, so the gate refused them whatever the Email page said.
+    const row = await rt.store.extension.insert({
+      kind: "capability",
+      name: "email",
+      ext_version: "1.0.0",
+      enabled: false,
+      permissions: permissions({
+        tools: ["email_list", "email_read", "email_draft", "email_send"],
+        actionClasses: ["read", "routine_reversible", "external_send"],
+        secrets: ["agent_mailbox_password"],
+      }) as unknown as JsonObject,
+      source_url: "catalog:email",
+      status: "installed",
+      config: { catalogId: "email", description: "email as 1.0.4 installed it" } as JsonObject,
+    });
+    const send = rt.capabilities.email.ports.tools.find((t) => t.name === "email_send");
+    if (!send) throw new Error("no email_send tool");
+    await expect(rt.gate.check(send)).rejects.toMatchObject({ code: "tool_not_allowed" });
+    await rt.close();
+
+    rt = await compose();
+    try {
+      // The Email page alone decides now: the gate lets the tool through to the email policy.
+      const tool = rt.capabilities.email.ports.tools.find((t) => t.name === "email_send");
+      if (!tool) throw new Error("no email_send tool");
+      await expect(rt.gate.check(tool)).resolves.toBeUndefined();
+      expect(await rt.store.extension.get(row.id)).toBeUndefined();
+      const audit = await rt.store.auditLog.list({ tool: "extensions.retire" });
+      expect(JSON.parse(audit[0]?.result_summary ?? "{}")).toMatchObject({
+        catalogId: "email",
+        reason: RETIRED_CATALOG_ENTRIES.email,
+      });
+    } finally {
+      await rt.close();
+    }
+  });
 });

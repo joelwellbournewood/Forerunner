@@ -1549,6 +1549,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const emitExtension = (type: string, e: ExtensionView) =>
     emit("extension.changed", { type, id: e.id, name: e.name });
   const findExtension = (c: Context) => state.extensions.find((e) => e.id === c.req.param("id"));
+  // As the daemon's registry (U-075): a row another screen owns is not switched, removed or
+  // re-permissioned here.
+  const managedRefusal = (c: Context, e: ExtensionView) =>
+    errorBody(
+      c,
+      400,
+      "validation",
+      `${e.name} is set on the Email page, not in Extensions: open Settings → Capabilities → Email`,
+    );
   const normalizePermissions = (p: Partial<ExtensionPermissions> | undefined) => ({
     tools: [...(p?.tools ?? [])],
     actionClasses: [...(p?.actionClasses ?? [])],
@@ -1776,6 +1785,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         pendingPermissions: null,
         pendingStage: "grant",
         confirmIn: body.confirmIn === "panel" ? "panel" : "inbox",
+        managedIn: null,
         review: {
           tools:
             entry.kind === "connector"
@@ -1828,6 +1838,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // A URL install is discovered first (the human allows the connector to start), then granted.
         pendingStage: "discovery",
         confirmIn: "inbox",
+        managedIn: null,
         review: {
           tools: [],
           resources: [],
@@ -1879,6 +1890,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!e) return errorBody(c, 404, "not_found", "no such extension");
     const body = (await c.req.json()) as { enabled?: unknown };
     if (typeof body.enabled !== "boolean") return errorBody(c, 400, "validation", "enabled");
+    if (e.managedIn) return managedRefusal(c, e);
     if (e.status === "pending_approval") {
       return c.json(
         { code: "approval_required", message: "approve the extension before enabling it" },
@@ -1961,6 +1973,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const e = findExtension(c);
     if (!e) return errorBody(c, 404, "not_found", "no such extension");
     const body = (await c.req.json()) as { permissions?: Partial<ExtensionPermissions> };
+    if (e.managedIn) return managedRefusal(c, e);
     const next = normalizePermissions({ ...e.permissions, ...(body.permissions ?? {}) });
     e.rowVersion += 1;
     e.updatedAt = new Date().toISOString();
@@ -1980,6 +1993,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.delete("/extensions/:id", (c) => {
     const e = findExtension(c);
     if (!e) return errorBody(c, 404, "not_found", "no such extension");
+    if (e.managedIn) return managedRefusal(c, e);
     state.extensions = state.extensions.filter((x) => x.id !== e.id);
     emitExtension("extension.removed", e);
     withdrawExtensionRequest(e);

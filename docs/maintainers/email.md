@@ -228,8 +228,11 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 - Settings: one `extension` row per agent, `kind = "capability"`, `name = "email:<agentId>"`,
   `config = { settings, commands }` (validated by `AgentEmailConfigSchema` on read and write;
   rows from older versions fall back field by field). `enabled` mirrors "mode is not off or
-  commands are on"; `permissions` lists `email:<mode>`, `email-commands`, `paused` for the
-  Extensions panel. Mailbox credentials are `secret:<name>` references; the schema refuses a
+  commands are on"; `permissions` lists `email:<mode>`, `email-commands`, `paused`. The
+  Extensions panel lists the row read-only (U-075): `ExtensionView.managedIn: "email"`, a
+  description and a link to the Email page instead of a switch and a Remove, and the registry
+  refuses `toggle`, `remove` and `updatePermissions` on it (400 "set on the Email page"):
+  the switch did nothing and Remove deleted the settings. Mailbox credentials are `secret:<name>` references; the schema refuses a
   value, and a name that says API key, token, PAT, client secret or private key
   (`INSTALL_CREDENTIAL_NAME_PATTERN`): the row also names the host the password is sent to, so
   a mailbox password is a secret created for the mailbox, never one of the install's own
@@ -329,10 +332,13 @@ policy's on every call, so a mode changed under a running session refuses the ne
 hold it for the human below autonomy 4 before the policy sees it; `email_list` and
 `email_read` return untrusted output the hooks wrap and scan, and a flagged read is one
 `injection.flagged` audit row and one urgent notification (runtime.md, "Prompt injection").
-The catalog entry `email` names the four tools and the classes `read`, `routine_reversible`
-and `external_send`; the agent's settings row (`email:<agentId>`) is the spec's own switch,
-the catalog entry is the panel's. `RuntimeApp.capabilities.email` exposes the ports and the
-presence switch. The email command watcher stays on the cloud runner.
+Email is set in one place, the Email page (U-075): the agent's settings row
+(`email:<agentId>`) is the only switch. There is no `email` catalog entry any more (its row
+owned the four tools, so switching it off in Extensions made the gate refuse them while the
+Email page said email was on, and the secret it named, `agent_mailbox_password`, was read by
+nothing; the mailbox names its own references). An `email` row a 1.0.4 install added is
+retired at the next start (`extensions.md`, "Retired entries"), so no extension row owns the
+email tools. `RuntimeApp.capabilities.email` exposes the ports and the presence switch. The email command watcher stays on the cloud runner.
 
 The daemon mounts `emailRouteTable()` (ADR 0066; `server.ts`, adapted to Hono's context like
 the desktop routes) over the same ports: `settings`, `sentLog` and `identity` from
@@ -532,13 +538,10 @@ same file; the live e2e runs under `tests/e2e/`.
   records, the last reaches the runner, which should not hand it to the session's model.
 - The mailbox is opened once per daemon from the settings at that moment; a changed host or
   credential reference takes effect after a restart (the connection is kept, not re-read).
-- An installed `email` capability row is not re-synced from the catalog: a row installed
-  before the tool names were set to `email_*` keeps its old `permissions.tools`, so the
-  extension gate does not recognise the daemon's `email_*` tools as the row's and a toggle-off
-  revokes no run token by tool name; presence (`emailPresence`) still drops the tools at the
-  next session start. Remove and re-add the capability from the catalog (`DELETE
-  /extensions/:id`, then `POST /extensions` with the catalog id `email`) to refresh it; the
-  same gap is listed for the browser in `browser.md`.
+- Only the principal agent's mailbox is used (the daemon's email ports, the notifier's email
+  channel, the cloud runner's watcher); the Email page shows a card for the principal only and
+  says so (U-075). The routes still accept another agent of the human, so a script could store
+  settings for the critic that nothing reads.
 
 ## Requirements covered
 

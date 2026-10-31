@@ -28,23 +28,6 @@
       "tags": ["web"]
     },
     {
-      "id": "email",
-      "kind": "capability",
-      "name": "email",
-      "description": "The agent's own mailbox (never the human's). Mode per agent: off, read only, draft only, allowlist, full discretion; daily and per-recipient caps always on.",
-      "version": "1.0.0",
-      "module": "@forerunner/capabilities/email",
-      "permissions": {
-        "tools": ["email_list", "email_read", "email_draft", "email_send"],
-        "actionClasses": ["read", "routine_reversible", "external_send"],
-        "domains": [],
-        "paths": [],
-        "secrets": ["agent_mailbox_password"],
-        "scopes": ["read the agent mailbox", "send within the mode and caps set in Settings"]
-      },
-      "tags": ["mail"]
-    },
-    {
       "id": "desktop-control",
       "kind": "capability",
       "name": "desktop-control",

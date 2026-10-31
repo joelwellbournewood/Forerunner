@@ -251,7 +251,7 @@ import {
 } from "../voice/index.ts";
 import type { VoiceProcRunner } from "../voice/install.ts";
 import { VoiceInstallJobs } from "../voice/install-routes.ts";
-import { LocalVoice } from "../voice/local-profile.ts";
+import { LocalVoice, VOICE_INSTALL_RUNNING_REASON } from "../voice/local-profile.ts";
 import {
   type AudioSink,
   type LatencyTargets,
@@ -2894,10 +2894,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     dirs,
     env,
     clock,
-    blocked: () =>
-      installRunning()
-        ? "a voice install is running (Settings -> Voice); local voice is back when it ends"
-        : null,
+    blocked: () => (installRunning() ? VOICE_INSTALL_RUNNING_REASON : null),
   });
   const voiceRegistry =
     opts.voice?.registry ??

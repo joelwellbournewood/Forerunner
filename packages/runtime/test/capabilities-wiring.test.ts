@@ -396,7 +396,11 @@ describe("the sandboxed browser and agent email wired into the daemon", () => {
     expect(catalogTools(BROWSER_CAPABILITY_NAME)).toEqual(
       [...agentBrowser.BROWSER_TOOL_NAMES].sort(),
     );
-    expect(catalogTools("email")).toEqual([...agentEmail.EMAIL_TOOL_NAMES].sort());
+    // U-075: email is set on the Email page alone; no catalog entry (and so no row the panel
+    // could switch off) owns the email tools.
+    expect((catalog.entries as Json[]).some((e) => e.id === "email")).toBe(false);
+    for (const name of agentEmail.EMAIL_TOOL_NAMES)
+      expect(await rt.extensions.lookupTool(name)).toBeUndefined();
   });
 
   it("a human installs the browser capability through the inbox and configures the agent's email: the tools join the next run", async () => {

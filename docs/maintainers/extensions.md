@@ -52,6 +52,13 @@ read and session start; a switched-off row, or one whose grant no longer lists i
 key, excludes its cloud providers from the registry's fallback (`voice.md`, "Which provider is
 preferred"). A pending or errored row, or one whose entry left the catalog, is not listed.
 
+**Rows another screen owns (U-075).** An agent's email settings row (`email:<agentId>`, kind
+`capability`, written by the email capability's settings store) is listed with
+`managedIn: "email"` and a description pointing to the Email page; `toggle`, `remove` and
+`updatePermissions` refuse it with `validation` ("set on the Email page", 400 on the routes),
+so the panel shows a link there instead of a switch and a Remove (`managedPlaceOf`,
+`MANAGED_PLACES`).
+
 Panel status is derived from the row: `pending_approval` while `extension.status` is
 `pending_approval` (the view's `pendingStage` says whether the human is asked to allow the
 discovery start or the grant); `error` while it is `error` (the last error is in
@@ -233,13 +240,15 @@ until a capability module charges through the ledger.
 `permissions` (declared, same shape as the row), optional `requiresAutonomy`, optional
 `voice` (capabilities only: `{ stt?: [names], tts?: [names] }`, the voice registry's provider
 names the entry stands for, in order of preference; at least one side), `tags`. The
-built-in file ships browser, email, desktop-control, cloudflare, voice-deepgram,
-voice-cartesia, voice-elevenlabs, mcp-filesystem, mcp-fetch and mcp-github. `mcp-github`'s
+built-in file ships browser, desktop-control, cloudflare, voice-deepgram, voice-cartesia,
+voice-elevenlabs, mcp-filesystem, mcp-fetch and mcp-github. `mcp-github`'s
 description says what it adds and that the built-in GitHub features do not need it (U-023).
 
 **Retired entries (U-023).** `RETIRED_CATALOG_ENTRIES` names the built-in ids that were taken
 out because another screen owns what they stood for, with the reason a person reads:
-`voice-local` (Settings -> Voice) and `anthropic` (the setup; nothing read the row). They
+`voice-local` (Settings -> Voice), `anthropic` (the setup; nothing read the row) and `email`
+(U-075: the Email page; its row owned the email tools, so switching it off gated email off
+behind the Email page, and its `agent_mailbox_password` secret was read by nothing). They
 cannot be added again (`mustGet` answers `validation` with the reason, 400 on the route) and a
 remote catalog cannot bring them back (`refresh()` skips them like built-in ids). At every
 start the daemon calls `registry.retireEntries()` (`compose.ts`, before `start()`): a row whose
@@ -327,15 +336,17 @@ concatenation):
   capabilities and the `voice` provider names of the `voice-*` entries (and none elsewhere);
   a `voice` field on a non-capability, or naming no provider, is rejected; bad entries rejected; remote catalog over `node:http` merges without
   overriding built-ins and is not built-in; env URL; `fetchJson` refuses by content-length and
-  cuts a chunked stream at the cap; the retired entries (`voice-local`, `anthropic`) are not
-  shipped and carry their reason, and `mcp-github` says the built-in GitHub does not need it
-  (U-023).
+  cuts a chunked stream at the cap; the retired entries (`voice-local`, `anthropic`, `email`)
+  are not shipped and carry their reason, no entry names `agent_mailbox_password`, and
+  `mcp-github` says the built-in GitHub does not need it (U-023, U-075).
 - `extensions-retired.test.ts` (U-023, across restarts on one file-backed home): an installed
   `voice-local` row and a pending `anthropic` row with its Inbox card, as 1.0.4 wrote them, are
   gone from `GET /extensions` after the next start, the card is withdrawn, each has an
   `extensions.retire` audit row with the reason, `/voice/status` names neither, adding
   `voice-local` again answers 400 naming Settings -> Voice, another row is untouched, and a third
-  start retires nothing more.
+  start retires nothing more; U-075: a 1.0.4 `email` row switched off made the gate refuse
+  `email_send` (`tool_not_allowed`) whatever the Email page said; after the next start the row
+  is retired with its reason and the gate lets the tool through to the email policy.
 - `extensions-mcp.test.ts`: inference table (name first, annotations only tighten, conflicts
   recorded), conflict flagged in the summary, colliding names renamed deterministically,
   prefix helpers, `withoutSecretRefs`, field inference, schema, review contents, bridged
@@ -374,7 +385,9 @@ concatenation):
   `approve`; deny adds nothing; one that needs its secret to start is confirmed twice in the
   panel (discovery, then the grant with the tools found) without a card; a remote catalog entry
   asks in the Inbox even from the panel; a widening of a panel-confirmed extension asks in the
-  Inbox.
+  Inbox; an agent's email settings row (written by `EmailSettingsStore`) is listed with
+  `managedIn: "email"` and the Email page in its description, and `toggle`, `remove` and
+  `updatePermissions` refuse it naming the Email page with nothing changed (U-075).
 - `extensions-gate.test.ts`: approved tool runs through `GatedEnforcementHooks` and is wrapped
   as untrusted; pending → `approval_required` (audited); disable → `tool_not_allowed` in code
   and a running run's token revoked live (next hook `killed`, its kill switch registration

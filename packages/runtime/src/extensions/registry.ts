@@ -56,6 +56,7 @@ import {
   GRANT_STAGES,
   type GrantAnswer,
   type GrantStage,
+  type ManagedPlace,
   normalizePermissions,
   PermissionReview,
   parsePermissions,
@@ -203,6 +204,36 @@ function toJson(cfg: ExtensionConfig): JsonObject {
 export function panelKind(kind: string): ExtensionPanelKind {
   if (kind === "mcp_server") return "connector";
   return kind as ExtensionPanelKind;
+}
+
+/**
+ * An agent's email settings row (`email:<agentId>`, kind `capability`), written by the email
+ * capability's settings store (`emailExtensionName` in @forerunner/capabilities; not imported
+ * here, that package depends on this one). Its settings are the Email page's.
+ */
+const EMAIL_SETTINGS_ROW = { kind: "capability", prefix: "email:" } as const;
+
+/** Where a row is set when another screen owns it (U-075); null for the panel's own rows. */
+export function managedPlaceOf(row: Pick<ExtensionRow, "kind" | "name">): ManagedPlace | null {
+  return row.kind === EMAIL_SETTINGS_ROW.kind && row.name.startsWith(EMAIL_SETTINGS_ROW.prefix)
+    ? "email"
+    : null;
+}
+
+const MANAGED_DESCRIPTIONS: Record<ManagedPlace, string> = {
+  email:
+    "Your agent's own mailbox: its mode, limits and mailbox are set on the Email page (Settings → Capabilities → Email).",
+};
+
+/** A switch, a removal or a re-permissioning here would act behind the screen that owns the row. */
+function refuseManaged(row: ExtensionRow): void {
+  const place = managedPlaceOf(row);
+  if (!place) return;
+  throw new ForerunnerError(
+    "validation",
+    `${row.name} is set on the Email page, not in Extensions: open Settings → Capabilities → Email`,
+    { details: { extensionId: row.id, managedIn: place } },
+  );
 }
 
 export function isConnectorKind(kind: string): boolean {
@@ -830,6 +861,7 @@ export class ExtensionRegistry {
 
   async toggle(id: string, enabled: boolean, actor: Actor = {}): Promise<ExtensionView> {
     const row = await this.deps.extensions.mustGet(id);
+    refuseManaged(row);
     if (row.status === ROW_STATUS_PENDING) {
       throw new ForerunnerError("approval_required", `${row.name} is waiting for approval`, {
         details: { extensionId: id },
@@ -860,6 +892,7 @@ export class ExtensionRegistry {
 
   async remove(id: string, actor: Actor = {}): Promise<void> {
     const row = await this.deps.extensions.mustGet(id);
+    refuseManaged(row);
     const revoked = await this.revokeLive(row);
     await this.deps.extensions.delete(id);
     this.toolIndex = null;
@@ -911,6 +944,7 @@ export class ExtensionRegistry {
     actor: Actor = {},
   ): Promise<ExtensionView> {
     const row = await this.deps.extensions.mustGet(id);
+    refuseManaged(row);
     if (row.status === ROW_STATUS_PENDING) {
       throw new ForerunnerError("approval_required", `${row.name} already has a pending request`, {
         details: { extensionId: id },
@@ -1189,19 +1223,21 @@ export class ExtensionRegistry {
     }
     const usdMicro = row.cost_usd_micro + extra;
     const rate = this.deps.chfPerUsd?.() ?? 0;
+    const managedIn = managedPlaceOf(row);
     return {
       id: row.id,
       name: row.name,
       kind: panelKind(row.kind),
       status: statusOf(row),
       enabled: row.enabled,
-      description: cfg.description,
+      description: managedIn ? MANAGED_DESCRIPTIONS[managedIn] : cfg.description,
       permissions: parsePermissions(row.permissions),
       pendingPermissions: cfg.pendingPermissions
         ? normalizePermissions(cfg.pendingPermissions as Partial<ExtensionPermissions>)
         : null,
       pendingStage: row.status === ROW_STATUS_PENDING ? (cfg.pendingStage ?? "grant") : null,
       confirmIn: row.status === ROW_STATUS_PENDING ? (cfg.confirmIn ?? "inbox") : null,
+      managedIn,
       review: cfg.pendingReview ?? cfg.review,
       cost: { usdMicro, chfMicro: Math.round(usdMicro * rate) },
       version: row.ext_version,

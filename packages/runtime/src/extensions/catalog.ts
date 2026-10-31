@@ -162,6 +162,10 @@ export const RETIRED_CATALOG_ENTRIES: Readonly<Record<string, string>> = {
     "local voice is installed and chosen in Settings → Voice, which also shows the voice providers in force",
   anthropic:
     "the model provider and its key or subscription token are set in Settings (setup); nothing read this row",
+  // U-075: the row's tools were the email tools, so switching it off gated email off behind the
+  // Email page's back, and the secret it named (agent_mailbox_password) was read by nothing.
+  email:
+    "email is set on the Email page (Settings → Capabilities → Email): your agent's mailbox, its mode and its limits",
 };
 
 /** The reason a retired catalog id gives, or null for any other id. */

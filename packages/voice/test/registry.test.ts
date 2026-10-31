@@ -22,6 +22,28 @@ const clock = new SimulatedClock(0);
 const fake = new FakeStt({ clock, scripts: [{ final: "" }] });
 
 describe("VoiceProviderRegistry", () => {
+  it("nothing can run: the error keeps each provider's own reason (U-075)", async () => {
+    // Talk on a PC without voice installed said only "no STT provider available"; the reason
+    // that says what to do (local voice is off, run the install) was dropped here.
+    const off =
+      "local voice is off (voice profile none); turn it on in Settings -> Voice or with fr voice install --cpu (or --gpu)";
+    const reg = new VoiceProviderRegistry()
+      .registerStt(new StubStt("faster-whisper", "local", { ok: false, reason: off }))
+      .registerStt(new StubStt("deepgram", "cloud", { ok: true, reason: "would be fine" }), {
+        secretRef: "secret:deepgram_api_key",
+      });
+    const failed = await reg.selectStt({ hasSecret: () => false }).catch((e: unknown) => e);
+    expect(failed).toMatchObject({ code: "unavailable" });
+    const message = (failed as Error).message;
+    expect(message).toContain("no STT provider available");
+    expect(message).toContain(`faster-whisper: ${off}`);
+    expect(message).toContain("deepgram: no value for secret:deepgram_api_key");
+    // With nothing registered there is no reason to keep.
+    await expect(new VoiceProviderRegistry().selectTts()).rejects.toThrow(
+      /^no TTS provider available$/,
+    );
+  });
+
   it("prefers a local provider when it is available", async () => {
     const reg = new VoiceProviderRegistry()
       .registerStt(new StubStt("faster-whisper", "local", { ok: true, reason: "importable" }))

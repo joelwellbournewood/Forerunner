@@ -65,6 +65,10 @@ export type GrantStage = (typeof GRANT_STAGES)[number];
 export const CONFIRM_PLACES = ["panel", "inbox"] as const;
 export type ConfirmPlace = (typeof CONFIRM_PLACES)[number];
 
+/** A row another screen owns, read-only in the panel (U-075): `email`, the Email page. */
+export const MANAGED_PLACES = ["email"] as const;
+export type ManagedPlace = (typeof MANAGED_PLACES)[number];
+
 export const ExtensionPermissions = z.object({
   tools: z.array(z.string()).default([]),
   actionClasses: z.array(z.string()).default([]),
@@ -123,6 +127,7 @@ export const ExtensionView = z.object({
   pendingStage: z.enum(GRANT_STAGES).nullable(),
   // An older daemon does not send it: its pending rows are all asked in the Inbox.
   confirmIn: z.enum(CONFIRM_PLACES).nullable().default(null),
+  managedIn: z.enum(MANAGED_PLACES).nullable().default(null),
   review: PermissionReview.nullable(),
   cost: Money,
   version: z.string(),
