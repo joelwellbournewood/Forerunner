@@ -34,6 +34,8 @@ describe("monthly jobs in the composed daemon", () => {
   let provider: ScriptedProvider;
   const clock = new SimulatedClock("2026-10-23T08:00:00Z");
   const records: NotificationRecord[] = [];
+  /** The handover's agent for the project the first test makes. */
+  let handoverAgent = "";
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), "fr-monthly-jobs-"));
@@ -62,11 +64,18 @@ describe("monthly jobs in the composed daemon", () => {
     rt.notifier.emitter.on("record", (r) => void records.push(r));
   }, 120_000);
   afterAll(async () => {
+    // The last tick (15 November) also starts the project's monthly handover, missed on
+    // 1 November: a session that runs git in the project's workspace. Closing the runtime does
+    // not wait for a scheduled run, and on Windows a folder a running git works in cannot be
+    // removed (Windows CI: EBUSY on every retry). Wait for that run to end first.
+    const started = Date.now();
+    while (handoverAgent && rt?.scheduler.isActive(handoverAgent) && Date.now() - started < 90_000)
+      await new Promise((r) => setTimeout(r, 50));
+    expect(rt?.scheduler.isActive(handoverAgent)).toBe(false);
     await rt?.close();
-    // Windows: a process that has just ended (git) can still hold the workspace folder for a
-    // moment (EBUSY); the removal is retried rather than failing the suite.
+    // A process that has just ended (git) can still hold the folder for a moment on Windows.
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-  });
+  }, 120_000);
 
   it("the handover's fresh agent gets no lesson in any model call, the shared scope included", async () => {
     await rt.memory.ctx.repo.add({
@@ -96,6 +105,7 @@ describe("monthly jobs in the composed daemon", () => {
       small_project_mode: false,
       active: true,
     });
+    handoverAgent = handoverAgentId(project.id);
     const before = provider.calls.length;
     const r = await rt.jobs.handover.run(project.id);
     expect(r.status).toBe("ran");
