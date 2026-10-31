@@ -482,8 +482,12 @@ describe("daemon client", () => {
       "ext_slack",
     ]);
     expect((await client.extensionCatalog()).entries.length).toBe(4);
-    const added = await client.addExtension({ catalogId: "data-analyst" });
-    expect(added.status).toBe("enabled");
+    // As the daemon: a catalog add waits; from the panel it is confirmed there (U-026), with
+    // this PC's device answer and nothing less.
+    const added = await client.addExtension({ catalogId: "data-analyst", confirmIn: "panel" });
+    expect(added).toMatchObject({ status: "pending_approval", confirmIn: "panel" });
+    await expect(client.approveExtension(added.id)).rejects.toMatchObject({ status: 403 });
+    expect((await client.approveExtension(added.id, { answer: "device" })).status).toBe("enabled");
     const pending = await client.addExtension({ url: "https://mcp.example.test/x" });
     expect(pending.status).toBe("pending_approval");
     await expect(client.toggleExtension(pending.id, true)).rejects.toMatchObject({ status: 403 });

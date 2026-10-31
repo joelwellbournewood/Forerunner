@@ -153,6 +153,7 @@ import {
   type AddExtensionInput,
   type ApplyUpdateResult,
   ApplyUpdateResult as ApplyUpdateResultSchema,
+  type ApproveExtensionInput,
   type CatalogView,
   CatalogView as CatalogViewSchema,
   DataAssetList,
@@ -551,7 +552,8 @@ export interface DaemonClient {
   /** 201 when installed at once, 202 (status `pending_approval`) while the human decides. */
   addExtension(body: AddExtensionInput): Promise<ExtensionView>;
   toggleExtension(id: string, enabled: boolean): Promise<ExtensionView>;
-  approveExtension(id: string): Promise<ExtensionView>;
+  /** A device answer (`confirmation`) for a row the panel confirms (U-026); none: a plain yes. */
+  approveExtension(id: string, confirmation?: ApproveExtensionInput): Promise<ExtensionView>;
   denyExtension(id: string): Promise<void>;
   updateExtensionPermissions(
     id: string,
@@ -916,7 +918,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     addExtension: (body) => post(routePath("addExtension"), ExtensionViewSchema, body),
     toggleExtension: (id, enabled) =>
       post(routePath("toggleExtension", { id }), ExtensionViewSchema, { enabled }),
-    approveExtension: (id) => post(routePath("approveExtension", { id }), ExtensionViewSchema, {}),
+    approveExtension: (id, confirmation) =>
+      post(routePath("approveExtension", { id }), ExtensionViewSchema, confirmation ?? {}),
     denyExtension: async (id) => {
       await post(routePath("denyExtension", { id }), OkView, {});
     },

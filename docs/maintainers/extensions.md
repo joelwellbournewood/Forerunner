@@ -129,6 +129,32 @@ pending row throws `approval_required`; re-enabling an installed row never asks 
 `syncApprovals()` returns `{ approved, denied, discovered }` (`discovered`: a discovery yes
 that is now waiting for the grant).
 
+### Confirmed in the panel (U-026, ADR 0096)
+
+Where a pending row is decided is `config.confirmIn` / `ExtensionView.confirmIn`: `panel` or
+`inbox` (`CONFIRM_PLACES`; a row from before reads as `inbox`; null when nothing is pending).
+`addFromCatalog(id, actor, { confirmIn: "panel" })` (the panel's Add, `POST /extensions
+{ catalogId, confirmIn: "panel" }`) of a **built-in** entry runs the install above (a built-in
+connector's secret-free discovery included) but does not call `ask()`: the row waits at its stage
+with its review and no request, the audit row and the `extension.requested` event carry
+`confirmIn: "panel"`. The panel shows the change card and Confirm calls `approve()` through the
+route; after a discovery yes on such a row the grant is not asked in the Inbox either
+(`discoverAfterYes` returns the row at stage `grant`), so the panel confirms it again with the
+tools found. Deny (the dialog's Cancel) deletes the fresh row. A remote catalog entry is `inbox`
+whatever is asked; a URL add, a widening (`updatePermissions` sets `inbox`) and an agent's
+proposal keep the Inbox. `syncApprovals()` never sees a panel row (no request id).
+
+The route grants a panel row only on a device answer: `POST /extensions/:id/approve
+{ answer: "device", deviceId?, biometric? }` calls `ExtensionsRoutesDeps.confirmOnDevice`, which
+the daemon wires to `confirmGrantOnDevice` (`daemon/server.ts`): the command registry's
+`ConfirmationPolicy.check("needs_device", ...)` on the device row, this PC's own desktop row when
+no id (or `desktop`) is named, an `extensions.confirm_device` audit row for every answer, and
+`approval_required` (403) with the policy's reason on a refusal (a foreign, revoked or unknown
+device, a phone without biometric, a web page or runner). Without the device answer a panel row
+is refused (403 "granted in the Extensions panel with Confirm on this device"); a mount without
+`confirmOnDevice` refuses a device answer with 503 rather than skip the check. A device answer
+sent for an Inbox row is checked the same way (the panel's Approve always sends one).
+
 ### Live revocation and the kill switch
 
 `remove()` withdraws the extension's open approval request once the row is deleted
@@ -241,9 +267,9 @@ rows.
 | `GET /extensions?kind=` | | `ExtensionView[]` |
 | `GET /extensions/catalog` | | `{ remoteUrl, entries }` |
 | `GET /extensions/:id` | | `ExtensionView` |
-| `POST /extensions` | `{ catalogId }` or `{ url }` | 201 enabled, 202 pending (`pendingStage` says which step) |
+| `POST /extensions` | `{ catalogId, confirmIn?: "panel" }` or `{ url }` | 201 enabled, 202 pending (`pendingStage` says which step, `confirmIn` where it is decided) |
 | `POST /extensions/:id/toggle` | `{ enabled }` | `ExtensionView` |
-| `POST /extensions/:id/approve` | | 202 after a discovery yes (grant still open), 200 enabled |
+| `POST /extensions/:id/approve` | `{}` or `{ answer: "device", deviceId?, biometric? }` (required for a `panel` row) | 202 after a discovery yes (grant still open), 200 enabled; 403 a refused or missing device confirmation |
 | `POST /extensions/:id/deny` | | `{ ok }` |
 | `PUT /extensions/:id/permissions` | `{ permissions }` (partial) | 200 applied, 202 pending |
 | `DELETE /extensions/:id` | | `{ ok }` |
@@ -342,7 +368,13 @@ concatenation):
   change; no secret value in rows, requests, audit rows or logs on the install, approve,
   toggle, error and remove paths; an entry that declares or references the install wrapping
   key refused at add (catalog and URL manifest) and at `updatePermissions` with
-  `secret_reserved`, nothing started, nobody asked, the grant unchanged.
+  `secret_reserved`, nothing started, nobody asked, the grant unchanged; confirmed in the panel
+  (U-026): a built-in entry added with `confirmIn: "panel"` files no card (none in the store),
+  waits with its reviewed tools and risk, is skipped by `syncApprovals` and is enabled by
+  `approve`; deny adds nothing; one that needs its secret to start is confirmed twice in the
+  panel (discovery, then the grant with the tools found) without a card; a remote catalog entry
+  asks in the Inbox even from the panel; a widening of a panel-confirmed extension asks in the
+  Inbox.
 - `extensions-gate.test.ts`: approved tool runs through `GatedEnforcementHooks` and is wrapped
   as untrusted; pending → `approval_required` (audited); disable → `tool_not_allowed` in code
   and a running run's token revoked live (next hook `killed`, its kill switch registration
@@ -352,7 +384,13 @@ concatenation):
   reopen off, `start()` after `resume()` reconnects; `stop("all")` kills a real stdio
   connector's process tree (`killedProcesses: 1`) and the client closes.
 - `extensions-routes.test.ts`: every route, status codes, 202 on `approve` after a discovery
-  yes, audit trail with the actor.
+  yes, audit trail with the actor; the panel's Add (U-026): 202 with `confirmIn: "panel"` and no
+  card, a plain `approve` refused 403 naming Confirm on this device, a device the check refuses
+  403 with its reason and the row still waiting, this PC's device granting it, a URL body with
+  `confirmIn` refused 400, and a mount without `confirmOnDevice` answering 503 to a device answer.
+  The daemon's check itself runs in `apps/ui/test/real-daemon.test.ts` (the UI's client against
+  the composed daemon: no card, plain yes and an unpaired device refused, this PC's
+  `desktopDeviceId` granted, `extensions.confirm_device` audit rows, Cancel leaving nothing).
 
 Run: `pnpm vitest run --project unit packages/runtime/test/extensions-*.test.ts`.
 

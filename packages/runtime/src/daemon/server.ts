@@ -13,7 +13,8 @@ import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
-import { createExtensionsRoutes } from "../extensions/routes.ts";
+import { createExtensionsRoutes, type DeviceConfirmation } from "../extensions/routes.ts";
+import type { ExtensionView } from "../extensions/types.ts";
 import { sessionOfStart } from "../loop/commands.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
@@ -493,7 +494,13 @@ export function createDaemonApp(
   // updates screen (spec M) and the model watch (spec D). Each keeps its own error mapping.
   app.route(
     "/",
-    createExtensionsRoutes({ registry: rt.extensions, actor: () => ({ humanId: rt.human.id }) }),
+    createExtensionsRoutes({
+      registry: rt.extensions,
+      actor: () => ({ humanId: rt.human.id }),
+      // Add in the panel is confirmed there (U-026, ADR 0096) at the bar of every high-risk
+      // change on this PC: the command registry's policy on a paired device row.
+      confirmOnDevice: (answer, extension) => confirmGrantOnDevice(rt, answer, extension),
+    }),
   );
   app.route(
     "/",
@@ -2135,3 +2142,63 @@ export async function startDaemon(
 }
 
 export type { EventView };
+
+/**
+ * The Extensions panel's confirmation of a grant (U-026, ADR 0096), checked exactly like a
+ * high-risk change card's device answer (`POST /commands/:id/confirm`, ADR 0030): the command
+ * registry's `ConfirmationPolicy` at `needs_device`, against the device row. An answer that
+ * names no device (or the literal `desktop`) is answered by this PC's own desktop row; any other
+ * id is checked as given, so a foreign, revoked or unknown device, a web page and a phone
+ * without its biometric are refused. Every answer, accepted or refused, is an
+ * `extensions.confirm_device` audit row; a refusal throws `approval_required` with the reason.
+ */
+export async function confirmGrantOnDevice(
+  rt: RuntimeApp,
+  answer: DeviceConfirmation,
+  extension: Pick<ExtensionView, "id" | "name" | "kind">,
+): Promise<void> {
+  const thisPc = !answer.deviceId || answer.deviceId === "desktop";
+  const deviceId = thisPc ? (rt.remote.device?.id ?? null) : answer.deviceId;
+  let refused: string | null = null;
+  try {
+    if (!deviceId) {
+      throw new ForerunnerError(
+        "approval_required",
+        "this PC has no paired device row to confirm with; restart Forerunner, then confirm again",
+      );
+    }
+    const device = await rt.store.device.get(deviceId);
+    rt.commands.executor.policy.check(
+      "needs_device",
+      {
+        kind: "device",
+        deviceId,
+        biometric: answer.biometric,
+        by: { kind: "human", id: rt.human.id },
+      },
+      { humanId: rt.human.id, emailToken: "", device },
+    );
+  } catch (e) {
+    refused = errorMessage(e);
+    throw e;
+  } finally {
+    await rt.store.auditLog.append({
+      tool: "extensions.confirm_device",
+      allowed: refused === null,
+      denied_reason: refused,
+      agent_id: null,
+      human_id: rt.human.id,
+      input_summary: JSON.stringify({
+        extensionId: extension.id,
+        name: extension.name,
+        kind: extension.kind,
+        deviceId,
+        given: answer.deviceId,
+      }),
+      result_summary: refused === null ? "confirmed on a paired device" : "refused",
+      cost_usd_micro: 0,
+      occurred_at: rt.clock.nowIso(),
+      author_human: rt.human.id,
+    });
+  }
+}

@@ -357,7 +357,7 @@ interface PendingCommand {
 
 const clone = <T>(value: T): T => structuredClone(value);
 
-function errorBody(c: Context, status: 400 | 401 | 404 | 409, code: string, message: string) {
+function errorBody(c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) {
   return c.json({ code, message }, status);
 }
 
@@ -1757,37 +1757,49 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return e ? c.json(e) : errorBody(c, 404, "not_found", "no such extension");
   });
   app.post("/extensions", async (c) => {
-    const body = (await c.req.json()) as { catalogId?: string; url?: string };
+    const body = (await c.req.json()) as { catalogId?: string; url?: string; confirmIn?: string };
     const now = new Date().toISOString();
     let view: ExtensionView;
     if (body.catalogId) {
       const entry = CATALOG.entries.find((e) => e.id === body.catalogId);
       if (!entry) return errorBody(c, 404, "not_found", `no catalog entry ${body.catalogId}`);
-      const pending = entry.kind === "connector";
+      // As the daemon's registry: every install waits for a decision, a built-in entry added
+      // in the panel there (U-026: no Inbox card), anything else in the Inbox.
       view = {
         id: nextId("ext"),
         name: entry.name,
         kind: entry.kind,
-        status: pending ? "pending_approval" : "enabled",
-        enabled: !pending,
+        status: "pending_approval",
+        enabled: false,
         description: entry.description,
-        permissions: pending
-          ? normalizePermissions(undefined)
-          : normalizePermissions(entry.permissions),
-        pendingPermissions: pending ? normalizePermissions(entry.permissions) : null,
-        pendingStage: pending ? "grant" : null,
-        review: pending
-          ? {
-              tools: [],
-              resources: [],
-              permissions: normalizePermissions(entry.permissions),
-              risk: entry.permissions.secrets.length > 0 ? "high" : "medium",
-              summary: [
-                `reaches ${entry.permissions.domains.join(", ") || "no domain"}`,
-                ...entry.permissions.secrets.map((s) => `needs secret:${s}`),
-              ],
-            }
-          : null,
+        permissions: normalizePermissions(entry.permissions),
+        pendingPermissions: null,
+        pendingStage: "grant",
+        confirmIn: body.confirmIn === "panel" ? "panel" : "inbox",
+        review: {
+          tools:
+            entry.kind === "connector"
+              ? [
+                  {
+                    name: "list_issues",
+                    bridgedName: `${entry.id}.list_issues`,
+                    description: "List issues",
+                    actionClass: "read",
+                    risk: "low",
+                    pathFields: [],
+                    domainFields: [],
+                    inferredFrom: "name pattern",
+                  },
+                ]
+              : [],
+          resources: [],
+          permissions: normalizePermissions(entry.permissions),
+          risk: entry.permissions.secrets.length > 0 ? "high" : "medium",
+          summary: [
+            `reaches ${entry.permissions.domains.join(", ") || "no domain"}`,
+            ...entry.permissions.secrets.map((s) => `needs secret:${s}`),
+          ],
+        },
         cost: money(0),
         version: entry.version,
         source: `catalog:${entry.id}`,
@@ -1815,6 +1827,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         pendingPermissions: normalizePermissions({ domains: [host], actionClasses: ["read"] }),
         // A URL install is discovered first (the human allows the connector to start), then granted.
         pendingStage: "discovery",
+        confirmIn: "inbox",
         review: {
           tools: [],
           resources: [],
@@ -1836,7 +1849,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     state.extensions.push(view);
     emitExtension("extension.requested", view);
-    if (view.status === "pending_approval") {
+    if (view.status === "pending_approval" && view.confirmIn === "inbox") {
       // The registry files a capability grant request in the inbox (spec L.5); answering it
       // approves or denies the extension.
       state.requests.unshift({
@@ -1887,6 +1900,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (e.pendingPermissions) e.permissions = e.pendingPermissions;
     e.pendingPermissions = null;
     e.pendingStage = null;
+    e.confirmIn = null;
     e.rowVersion += 1;
     e.updatedAt = new Date().toISOString();
     emitExtension("extension.approved", e);
@@ -1901,9 +1915,37 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     req.version += 1;
     emit("inbox.changed", { blockingCount: blockingCount() });
   };
-  app.post("/extensions/:id/approve", (c) => {
+  app.post("/extensions/:id/approve", async (c) => {
     const e = findExtension(c);
     if (!e) return errorBody(c, 404, "not_found", "no such extension");
+    let body: { answer?: string; deviceId?: string } = {};
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      body = {};
+    }
+    if (body.answer === "device") {
+      // As the daemon (ADR 0096): this PC's own row when no id is named, the only device this
+      // fake has; any other id is refused by the confirmation policy and the row still waits.
+      const deviceId =
+        !body.deviceId || body.deviceId === "desktop" ? me.desktopDeviceId : body.deviceId;
+      if (!deviceId)
+        return errorBody(
+          c,
+          403,
+          "approval_required",
+          "this PC has no paired device row to confirm with; restart Forerunner, then confirm again",
+        );
+      if (deviceId !== ME.desktopDeviceId)
+        return errorBody(c, 403, "approval_required", "unknown device; pair it first");
+    } else if (e.confirmIn === "panel") {
+      return errorBody(
+        c,
+        403,
+        "approval_required",
+        `${e.name} is granted in the Extensions panel with Confirm on this device (high risk: a paired device confirms it)`,
+      );
+    }
     approveExtension(e);
     return c.json(e);
   });
@@ -1925,6 +1967,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (widens(e.permissions, next)) {
       e.pendingPermissions = next;
       e.pendingStage = "grant";
+      e.confirmIn = "inbox";
       e.status = "pending_approval";
       e.enabled = false;
       emitExtension("extension.requested", e);

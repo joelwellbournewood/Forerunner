@@ -58,6 +58,13 @@ export type Risk = (typeof RISK_LEVELS)[number];
 export const GRANT_STAGES = ["discovery", "grant"] as const;
 export type GrantStage = (typeof GRANT_STAGES)[number];
 
+/**
+ * Where a pending row is decided (U-026): `panel` (added here from the built-in catalog,
+ * confirmed in the panel on this device) or `inbox` (a card in the Inbox).
+ */
+export const CONFIRM_PLACES = ["panel", "inbox"] as const;
+export type ConfirmPlace = (typeof CONFIRM_PLACES)[number];
+
 export const ExtensionPermissions = z.object({
   tools: z.array(z.string()).default([]),
   actionClasses: z.array(z.string()).default([]),
@@ -114,6 +121,8 @@ export const ExtensionView = z.object({
   permissions: ExtensionPermissions,
   pendingPermissions: ExtensionPermissions.nullable(),
   pendingStage: z.enum(GRANT_STAGES).nullable(),
+  // An older daemon does not send it: its pending rows are all asked in the Inbox.
+  confirmIn: z.enum(CONFIRM_PLACES).nullable().default(null),
   review: PermissionReview.nullable(),
   cost: Money,
   version: z.string(),
@@ -147,7 +156,10 @@ export const CatalogView = z.object({
 });
 export type CatalogView = z.infer<typeof CatalogView>;
 
-export type AddExtensionInput = { catalogId: string } | { url: string };
+/** `confirmIn: "panel"`: the panel's Add on a catalog entry, confirmed in the panel (U-026). */
+export type AddExtensionInput = { catalogId: string; confirmIn?: "panel" } | { url: string };
+/** The panel's confirmation of a grant: a device answer, this PC's when `deviceId` is absent. */
+export type ApproveExtensionInput = { answer: "device"; deviceId?: string };
 export type UpdatePermissionsInput = Partial<ExtensionPermissions>;
 
 export const OkView = z.looseObject({ ok: z.literal(true) });

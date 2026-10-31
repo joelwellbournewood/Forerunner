@@ -1,3 +1,4 @@
+import { ForerunnerError } from "@forerunner/platform";
 import { afterEach, describe, expect, it } from "vitest";
 import { createExtensionsRoutes, ExtensionView } from "../src/extensions/index.ts";
 import {
@@ -184,5 +185,72 @@ describe("extensions routes", () => {
     } finally {
       await http.close();
     }
+  });
+
+  it("Add in the panel (U-026): 202 waiting there with no Inbox card; the grant only with a device confirmation", async () => {
+    h = await registryHarness({ inbox: true });
+    const asked: { deviceId: string | null; biometric: boolean; extensionId: string }[] = [];
+    const a = createExtensionsRoutes({
+      registry: h.registry,
+      actor: () => ({ humanId: "h-1" }),
+      // The daemon's check (server.ts): the confirmation policy on this PC's device row.
+      confirmOnDevice: async (answer, extension) => {
+        asked.push({ ...answer, extensionId: extension.id });
+        if (answer.deviceId === "dev_foreign")
+          throw new ForerunnerError("approval_required", "the device belongs to someone else");
+      },
+    });
+    const res = await a.fetch(
+      json("POST", "/extensions", { catalogId: FAKE_CATALOG_ID, confirmIn: "panel" }),
+    );
+    expect(res.status).toBe(202);
+    const view = ExtensionView.parse(await res.json());
+    expect(view).toMatchObject({ status: "pending_approval", confirmIn: "panel" });
+    expect(await h.store.humanRequest.list(undefined, { limit: 10 })).toEqual([]);
+    // A plain yes (what the panel sent before, a script) is not the confirmation it needs.
+    const bare = await a.fetch(json("POST", `/extensions/${view.id}/approve`, {}));
+    expect(bare.status).toBe(403);
+    const refusal = await read(bare);
+    expect(refusal.code).toBe("approval_required");
+    expect(String(refusal.message)).toContain("Confirm on this device");
+    // A device the policy refuses: 403 with its reason, the row still waits.
+    const foreign = await a.fetch(
+      json("POST", `/extensions/${view.id}/approve`, { answer: "device", deviceId: "dev_foreign" }),
+    );
+    expect(foreign.status).toBe(403);
+    expect((await read(foreign)).message).toBe("the device belongs to someone else");
+    expect((await h.registry.get(view.id)).status).toBe("pending_approval");
+    // This PC's own device: granted.
+    const ok = await a.fetch(json("POST", `/extensions/${view.id}/approve`, { answer: "device" }));
+    expect(ok.status).toBe(200);
+    expect(ExtensionView.parse(await ok.json())).toMatchObject({
+      status: "enabled",
+      confirmIn: null,
+    });
+    expect(asked).toEqual([
+      { deviceId: "dev_foreign", biometric: false, extensionId: view.id },
+      { deviceId: null, biometric: false, extensionId: view.id },
+    ]);
+    expect(await h.store.humanRequest.list(undefined, { limit: 10 })).toEqual([]);
+    // Only a catalog entry is added in the panel; a URL is reviewed after discovery, in the Inbox.
+    const url = await a.fetch(
+      json("POST", "/extensions", { url: "https://mcp.example.test/x", confirmIn: "panel" }),
+    );
+    expect(url.status).toBe(400);
+  });
+
+  it("a mount without the device check refuses a device answer instead of skipping it", async () => {
+    h = await registryHarness({ inbox: true });
+    const a = app();
+    const view = ExtensionView.parse(
+      await (
+        await a.fetch(
+          json("POST", "/extensions", { catalogId: FAKE_CATALOG_ID, confirmIn: "panel" }),
+        )
+      ).json(),
+    );
+    const r = await a.fetch(json("POST", `/extensions/${view.id}/approve`, { answer: "device" }));
+    expect(r.status).toBe(503);
+    expect((await h.registry.get(view.id)).status).toBe("pending_approval");
   });
 });

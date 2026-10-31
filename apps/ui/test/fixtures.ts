@@ -647,6 +647,7 @@ export const EXTENSIONS: ExtensionView[] = [
     },
     pendingPermissions: null,
     pendingStage: null,
+    confirmIn: null,
     review: null,
     cost: money(1_250_000),
     version: "1.4.0",
@@ -674,6 +675,7 @@ export const EXTENSIONS: ExtensionView[] = [
     },
     pendingPermissions: null,
     pendingStage: null,
+    confirmIn: null,
     review: null,
     cost: money(0),
     version: "0.1.0",
@@ -701,6 +703,7 @@ export const EXTENSIONS: ExtensionView[] = [
     },
     pendingPermissions: null,
     pendingStage: null,
+    confirmIn: null,
     review: null,
     cost: money(0),
     version: "1.0.0",
@@ -728,6 +731,7 @@ export const EXTENSIONS: ExtensionView[] = [
     },
     pendingPermissions: null,
     pendingStage: null,
+    confirmIn: null,
     review: null,
     cost: money(6_000_000),
     version: "1.2.0",
@@ -757,6 +761,7 @@ export const EXTENSIONS: ExtensionView[] = [
     },
     pendingPermissions: null,
     pendingStage: null,
+    confirmIn: null,
     review: null,
     cost: money(0),
     version: "0.3.0",
@@ -784,6 +789,7 @@ export const EXTENSIONS: ExtensionView[] = [
       scopes: ["chat:write", "channels:read"],
     },
     pendingStage: "grant",
+    confirmIn: "inbox",
     review: {
       tools: [
         {

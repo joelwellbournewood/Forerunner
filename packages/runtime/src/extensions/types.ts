@@ -34,6 +34,16 @@ export const ROW_STATUS_ERROR = "error";
 export const GRANT_STAGES = ["discovery", "grant"] as const;
 export type GrantStage = (typeof GRANT_STAGES)[number];
 
+/**
+ * Where a pending row is decided (U-026, ADR 0096). `panel`: a built-in catalog entry the
+ * person added in the Extensions panel; the panel shows its change card and the grant is
+ * confirmed there on this PC's device, with no Inbox card. `inbox`: everything the person did
+ * not just see (a URL or a remote catalog entry, a widening, an agent's proposal) waits for a
+ * card in the Inbox.
+ */
+export const CONFIRM_PLACES = ["panel", "inbox"] as const;
+export type ConfirmPlace = (typeof CONFIRM_PLACES)[number];
+
 export const ACTION_CLASSES = [
   "read",
   "routine_reversible",
@@ -224,6 +234,8 @@ export const ExtensionView = z.object({
   pendingPermissions: ExtensionPermissions.nullable(),
   /** What a pending row waits for: the discovery run, or the grant itself. */
   pendingStage: z.enum(GRANT_STAGES).nullable(),
+  /** Where a pending row is decided (`CONFIRM_PLACES`, U-026); null when nothing is pending. */
+  confirmIn: z.enum(CONFIRM_PLACES).nullable(),
   review: PermissionReview.nullable(),
   cost: Money,
   version: z.string(),

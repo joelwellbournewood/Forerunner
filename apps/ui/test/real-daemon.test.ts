@@ -239,6 +239,52 @@ describe("the UI client against the real daemon", () => {
     expect((await client.extensions()).map((e) => e.id)).not.toContain(denyMe.id);
   });
 
+  it("extensions: Add on a built-in entry is confirmed in the panel on this PC's device, with no Inbox card; Cancel adds nothing (U-026)", async () => {
+    const cardsFor = async (extensionId: string) =>
+      (await client.inbox(humanId)).requests.filter(
+        (r) => (r.changeCard as { extensionId?: string } | null)?.extensionId === extensionId,
+      );
+    const me = await client.me();
+    expect(me.desktopDeviceId).toEqual(expect.any(String));
+    // What the panel's Add sends: the entry waits with its change card, nothing in the Inbox.
+    const added = await client.addExtension({ catalogId: "desktop-control", confirmIn: "panel" });
+    expect(added).toMatchObject({
+      status: "pending_approval",
+      pendingStage: "grant",
+      confirmIn: "panel",
+    });
+    expect(added.review?.permissions.tools).toContain("desktop_click");
+    expect(added.review?.permissions.scopes.length).toBeGreaterThan(0);
+    expect(await cardsFor(added.id)).toEqual([]);
+    // A plain yes is not the high-risk confirmation: refused, the row still waits.
+    const plain = await client.approveExtension(added.id).catch((e: unknown) => e);
+    expect(plain).toBeInstanceOf(ApiError);
+    expect(plain).toMatchObject({ status: 403, code: "approval_required" });
+    expect((plain as ApiError).message).toContain("Confirm on this device");
+    // A device that is not one of this human's paired devices: refused by the policy.
+    const foreign = await client
+      .approveExtension(added.id, { answer: "device", deviceId: "device_not_paired" })
+      .catch((e: unknown) => e);
+    expect(foreign).toMatchObject({ status: 403, code: "approval_required" });
+    expect((await client.extension(added.id)).status).toBe("pending_approval");
+    // This PC's device, as the dialog's Confirm sends it: granted, and still no card.
+    const granted = await client.approveExtension(added.id, {
+      answer: "device",
+      deviceId: me.desktopDeviceId ?? "",
+    });
+    expect(granted).toMatchObject({ status: "enabled", confirmIn: null });
+    expect(await cardsFor(added.id)).toEqual([]);
+    const audit = await rt.store.auditLog.list({ tool: "extensions.confirm_device" });
+    expect(audit.map((a) => a.allowed)).toEqual([false, true]);
+
+    // Cancel: the dialog takes the row back; nothing is left and no card was ever filed.
+    const cancelled = await client.addExtension({ catalogId: "cloudflare", confirmIn: "panel" });
+    expect(cancelled.confirmIn).toBe("panel");
+    await client.denyExtension(cancelled.id);
+    expect((await client.extensions()).map((e) => e.id)).not.toContain(cancelled.id);
+    expect(await cardsFor(cancelled.id)).toEqual([]);
+  });
+
   it("answering a request: an answer that is none of a card's options is refused with them, the card stays (U-034)", async () => {
     const card = await rt.store.humanRequest.insert({
       human_id: humanId,

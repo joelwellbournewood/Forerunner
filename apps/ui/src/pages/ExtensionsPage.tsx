@@ -2,6 +2,7 @@ import { type FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type ExtensionView, type VoiceStatusView } from "../api/client.ts";
 import {
+  type AddExtensionInput,
   type CatalogEntryView,
   EXTENSION_KINDS,
   type ExtensionKind,
@@ -119,17 +120,181 @@ function PermissionList({ permissions }: { permissions: ExtensionPermissions }) 
   );
 }
 
+/**
+ * The change card of a grant (U-026): what the extension may do once granted, as the daemon
+ * reviewed it: the step, the risk, the summary, every tool with its class and risk, and the
+ * tools, action classes, domains, paths, secrets and scopes it is granted.
+ */
+function GrantCard({ extension }: { extension: ExtensionView }) {
+  const e = extension;
+  const review = e.review;
+  const risk = review?.risk ?? "high";
+  const permissions = e.pendingPermissions ?? review?.permissions ?? e.permissions;
+  return (
+    <div
+      className="rounded border border-neutral-200 p-3 text-sm dark:border-neutral-700"
+      data-testid="grant-card"
+      data-risk={risk}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{e.name}</span>
+        <Badge>{e.kind.replace("_", " ")}</Badge>
+        {e.version ? <span className="text-xs text-neutral-500">v{e.version}</span> : null}
+        <Badge tone={risk === "high" ? "bad" : risk === "medium" ? "warn" : "neutral"}>
+          {risk} risk
+        </Badge>
+      </div>
+      <p className="mt-1 text-xs" data-testid="grant-stage">
+        {e.pendingStage === "discovery"
+          ? "Step 1 of 2: start it once so it lists its tools, with the secrets it names. Nothing is granted yet; you confirm the grant next."
+          : "Grant: from now on your agents may use what is listed below."}
+      </p>
+      {review && review.summary.length > 0 ? (
+        <ul className="mt-1 list-disc pl-5 text-xs">
+          {review.summary.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ul>
+      ) : null}
+      {review && review.tools.length > 0 ? (
+        <ul className="mt-1 text-xs" data-testid="grant-tools">
+          {review.tools.map((t) => (
+            <li key={t.bridgedName} className="font-mono">
+              {t.bridgedName}{" "}
+              <span className="font-sans text-neutral-500">
+                ({t.actionClass}, {t.risk} risk)
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="mt-2" data-testid="grant-permissions">
+        <PermissionList permissions={permissions} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The panel's confirmation of a grant (U-026, ADR 0096). Add on a built-in catalog entry opens
+ * it with the change card; Confirm sends a device answer (this PC is a paired device, ADR 0030)
+ * that the daemon checks like any high-risk change, and grants it with no Inbox card. After a
+ * discovery step the card is shown again with the tools found, for the grant. Cancel on an Add
+ * takes the row back, so nothing is added; opened from a row's Approve it only closes.
+ */
+function ConfirmGrantDialog({
+  extension,
+  fromAdd,
+  onUpdated,
+  onDone,
+  onClose,
+}: {
+  extension: ExtensionView;
+  /** Opened by Add: Cancel (or closing the dialog) takes the row back. */
+  fromAdd: boolean;
+  onUpdated: (view: ExtensionView) => void;
+  onDone: (view: ExtensionView) => void;
+  onClose: (removed: boolean) => void;
+}) {
+  const client = useClient();
+  const desktopDeviceId = useUiState((s) => s.me?.desktopDeviceId ?? null);
+  const [current, setCurrent] = useState(extension);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // A high-risk change is confirmed on a paired device; without `/me`'s id the daemon
+      // answers with this PC's own row, as for a change card.
+      const next = await client.approveExtension(current.id, {
+        answer: "device",
+        ...(desktopDeviceId ? { deviceId: desktopDeviceId } : {}),
+      });
+      if (next.status === "pending_approval") {
+        setCurrent(next);
+        onUpdated(next);
+      } else onDone(next);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = async () => {
+    if (busy) return;
+    if (!fromAdd) {
+      onClose(false);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await client.denyExtension(current.id);
+      onClose(true);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open
+      onClose={() => void cancel()}
+      title={`Add ${current.name}?`}
+      testId="grant-dialog"
+      wide
+    >
+      <div className="space-y-3 text-sm">
+        <GrantCard extension={current} />
+        <p
+          className="text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="grant-needs-device"
+        >
+          High risk: granting a capability is confirmed in the app on a paired device, and this PC
+          counts as one. Nothing is granted until you confirm
+          {fromAdd ? "; Cancel adds nothing" : ""}.
+        </p>
+        {error ? <ErrorBanner message={error} testId="grant-error" /> : null}
+        <div className="flex gap-2">
+          <Button
+            variant="primary"
+            onClick={() => void confirm()}
+            disabled={busy}
+            data-testid="grant-confirm"
+          >
+            {current.pendingStage === "discovery"
+              ? "Start it once on this device"
+              : "Confirm on this device"}
+          </Button>
+          <Button onClick={() => void cancel()} disabled={busy} data-testid="grant-cancel">
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
 function ExtensionRow({
   extension,
   voice,
   onChange,
   onRemoved,
+  onApprove,
 }: {
   extension: ExtensionView;
   /** The daemon's voice status, for the `voice-*` rows' "in force" badges. */
   voice: VoiceStatusView | null;
   onChange: (next: ExtensionView) => void;
   onRemoved: (id: string) => void;
+  /** Approve opens the confirmation with the change card (U-026). */
+  onApprove: (extension: ExtensionView) => void;
 }) {
   const client = useClient();
   const [busy, setBusy] = useState(false);
@@ -185,7 +350,7 @@ function ExtensionRow({
             <>
               <Button
                 variant="primary"
-                onClick={() => void run(() => client.approveExtension(e.id))}
+                onClick={() => onApprove(e)}
                 disabled={busy}
                 data-testid="extension-approve"
               >
@@ -275,9 +440,18 @@ function ExtensionRow({
             >
               {e.review.risk} risk
             </Badge>
-            <Link to="/inbox" className="text-blue-700 hover:underline dark:text-blue-300">
-              also in the inbox
-            </Link>
+            {e.confirmIn === "panel" ? (
+              <span
+                className="text-neutral-600 dark:text-neutral-400"
+                data-testid="extension-confirm-here"
+              >
+                confirmed here with Approve, not in the inbox
+              </span>
+            ) : (
+              <Link to="/inbox" className="text-blue-700 hover:underline dark:text-blue-300">
+                also in the inbox
+              </Link>
+            )}
           </div>
           <ul className="mt-1 list-disc pl-5 text-xs">
             {e.review.summary.map((s) => (
@@ -348,7 +522,7 @@ function AddExtensionDialog({
     );
   }, [catalog.data, query, kind]);
 
-  const add = async (body: { catalogId: string } | { url: string }, key: string) => {
+  const add = async (body: AddExtensionInput, key: string) => {
     if (busy) return;
     setBusy(key);
     setError(null);
@@ -382,7 +556,7 @@ function AddExtensionDialog({
           <div className="min-w-64 flex-1">
             <Field
               label="From a URL (MCP server)"
-              hint="Reviewed and permissioned on install; you approve before it runs."
+              hint="Started for discovery only after your yes in the Inbox, then reviewed there again for the grant."
             >
               <input
                 className={INPUT_CLASS}
@@ -450,7 +624,7 @@ function AddExtensionDialog({
               </span>
               <Button
                 variant="primary"
-                onClick={() => void add({ catalogId: e.id }, e.id)}
+                onClick={() => void add({ catalogId: e.id, confirmIn: "panel" }, e.id)}
                 disabled={busy !== null}
                 data-testid="catalog-add"
               >
@@ -485,6 +659,11 @@ export function ExtensionsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<string>("all");
+  /** The grant being confirmed in the panel (U-026), and whether Add opened it. */
+  const [confirming, setConfirming] = useState<{
+    extension: ExtensionView;
+    fromAdd: boolean;
+  } | null>(null);
 
   const upsert = (next: ExtensionView) => {
     extensions.setData((prev) => {
@@ -594,6 +773,7 @@ export function ExtensionsPage() {
                   voice={voice.data}
                   onChange={upsert}
                   onRemoved={drop}
+                  onApprove={(view) => setConfirming({ extension: view, fromAdd: false })}
                 />
               ))}
             </ul>
@@ -605,6 +785,12 @@ export function ExtensionsPage() {
         onClose={() => setAddOpen(false)}
         onAdded={(view) => {
           upsert(view);
+          // A built-in entry added here is confirmed here, with its change card (U-026).
+          if (view.status === "pending_approval" && view.confirmIn === "panel") {
+            setNotice(null);
+            setConfirming({ extension: view, fromAdd: true });
+            return;
+          }
           setNotice(
             view.status === "pending_approval"
               ? `${view.name} was added and waits for your approval: review its permissions below or in the inbox.`
@@ -612,6 +798,27 @@ export function ExtensionsPage() {
           );
         }}
       />
+      {confirming ? (
+        <ConfirmGrantDialog
+          key={confirming.extension.id}
+          extension={confirming.extension}
+          fromAdd={confirming.fromAdd}
+          onUpdated={upsert}
+          onDone={(view) => {
+            upsert(view);
+            setConfirming(null);
+            setNotice(`${view.name} is added and enabled.`);
+          }}
+          onClose={(removed) => {
+            const name = confirming.extension.name;
+            setConfirming(null);
+            if (removed) {
+              drop(confirming.extension.id);
+              setNotice(`Cancelled: ${name} was not added.`);
+            }
+          }}
+        />
+      ) : null}
     </section>
   );
 }

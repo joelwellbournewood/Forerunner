@@ -161,6 +161,13 @@ your agents may reach beyond their built-in tools.
   that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice
   providers (Deepgram, Cartesia, ElevenLabs: used instead of local voice while on, each with its
   key) and connectors (MCP servers) such as filesystem, fetch and GitHub.
+- **Adding one.** Extensions → **Add** → **Add** on an entry of the catalog opens a confirmation
+  right there with what it may do: its tools, the secrets and domains it uses, its scopes and its
+  risk. **Confirm on this device** grants it (this PC is your paired device; a grant is a
+  high-risk change), and nothing more is asked in the Inbox. **Cancel** adds nothing. The Inbox
+  still asks about grants you did not just see: an extension added from a URL (after it was
+  started once to list its tools), wider permissions for an extension, or anything an agent
+  proposes.
 - The **GitHub** connector gives agents extra GitHub tools (issues, pull requests, search). The
   built-in GitHub features (your repositories, pull requests, the Projects mirror) do not need
   it.

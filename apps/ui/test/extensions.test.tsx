@@ -262,10 +262,8 @@ describe("Extensions panel", () => {
     ]);
   });
 
-  it("adds a connector from the catalog, which waits for approval, then approves it", async () => {
-    const user = userEvent.setup();
-    const harness = createHarness();
-    renderApp("/extensions", harness);
+  /** Add on the catalog entry "linear" in the panel: the confirmation dialog it opens. */
+  const addLinear = async (user: ReturnType<typeof userEvent.setup>) => {
     await screen.findAllByTestId("extension");
     await user.click(screen.getByTestId("add-extension"));
     const dialog = await screen.findByTestId("add-extension-dialog");
@@ -273,21 +271,117 @@ describe("Extensions panel", () => {
     await user.type(within(dialog).getByTestId("catalog-search"), "linear");
     await waitFor(() => expect(within(dialog).getAllByTestId("catalog-entry")).toHaveLength(1));
     await user.click(within(dialog).getByTestId("catalog-add"));
-    await waitFor(() => expect(postedCalls(harness, "/extensions")).toHaveLength(1));
-    expect(postedCalls(harness, "/extensions")[0]?.body).toEqual({ catalogId: "linear" });
+    return screen.findByTestId("grant-dialog");
+  };
+
+  it("Add on a built-in entry opens a confirmation in the panel with the change card; Confirm grants it on this device, with no Inbox card (U-026)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/extensions", harness);
+    const confirm = await addLinear(user);
+    expect(postedCalls(harness, "/extensions")[0]?.body).toEqual({
+      catalogId: "linear",
+      confirmIn: "panel",
+    });
+    expect(screen.queryByTestId("add-extension-dialog")).toBeNull();
+    // The change card: risk, tools with their class and risk, domains, secrets, scopes.
+    const card = within(confirm).getByTestId("grant-card");
+    expect(card).toHaveAttribute("data-risk", "high");
+    expect(card).toHaveTextContent("high risk");
+    expect(within(card).getByTestId("grant-tools")).toHaveTextContent(
+      "linear.list_issues (read, low risk)",
+    );
+    const permissions = within(card).getByTestId("grant-permissions");
+    expect(permissions).toHaveTextContent("api.linear.app");
+    expect(permissions).toHaveTextContent("secret:linear_key");
+    expect(permissions).toHaveTextContent("read, routine_reversible");
+    expect(within(confirm).getByTestId("grant-needs-device")).toHaveTextContent(
+      "confirmed in the app on a paired device",
+    );
+    expect(within(confirm).getByTestId("grant-needs-device")).toHaveTextContent(
+      "Cancel adds nothing",
+    );
+    // Nothing went to the Inbox for what the person is doing right here.
+    expect(harness.daemon.state.requests.some((r) => r.kind === "capability_grant")).toBe(false);
+    await user.click(within(confirm).getByTestId("grant-confirm"));
+    await waitFor(() => expect(screen.queryByTestId("grant-dialog")).toBeNull());
+    const approve = harness.daemon.state.calls.find((c) =>
+      /\/extensions\/ext_\d+\/approve$/.test(c.path),
+    );
+    // The high-risk answer is a device answer naming this PC, as on a change card.
+    expect(approve?.body).toEqual({ answer: "device", deviceId: "device_this_pc" });
     expect(await screen.findByTestId("extensions-notice")).toHaveTextContent(
-      "waits for your approval",
+      "Linear is added and enabled.",
     );
     const linear = (await screen.findAllByTestId("extension")).find((r) =>
       r.textContent?.includes("Linear"),
     );
     if (!linear) throw new Error("no linear row");
-    expect(linear).toHaveAttribute("data-status", "pending_approval");
-    // The grant request also reached the inbox (spec L.5).
-    expect(harness.daemon.state.requests.some((r) => r.kind === "capability_grant")).toBe(true);
-    await user.click(within(linear).getByTestId("extension-approve"));
-    await waitFor(() => expect(linear).toHaveAttribute("data-status", "enabled"));
+    expect(linear).toHaveAttribute("data-status", "enabled");
     expect(within(linear).getByTestId("extension-toggle")).toHaveAttribute("aria-checked", "true");
+    expect(harness.daemon.state.requests.some((r) => r.kind === "capability_grant")).toBe(false);
+  });
+
+  it("Cancel in the confirmation adds nothing (U-026)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/extensions", harness);
+    const confirm = await addLinear(user);
+    await user.click(within(confirm).getByTestId("grant-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("grant-dialog")).toBeNull());
+    expect(
+      harness.daemon.state.calls.some((c) => /\/extensions\/ext_\d+\/deny$/.test(c.path)),
+    ).toBe(true);
+    expect(harness.daemon.state.calls.some((c) => c.path.endsWith("/approve"))).toBe(false);
+    expect(await screen.findByTestId("extensions-notice")).toHaveTextContent(
+      "Cancelled: Linear was not added.",
+    );
+    expect(screen.getAllByTestId("extension").some((r) => r.textContent?.includes("Linear"))).toBe(
+      false,
+    );
+    expect(harness.daemon.state.extensions.some((e) => e.name === "Linear")).toBe(false);
+    expect(harness.daemon.state.requests.some((r) => r.kind === "capability_grant")).toBe(false);
+  });
+
+  it("a confirmation the daemon refuses says why in the dialog and grants nothing (U-026)", async () => {
+    const user = userEvent.setup();
+    // `/me` names a device this daemon does not have (a stale id): the policy refuses it.
+    const harness = createHarness({ me: { desktopDeviceId: "device_gone" } });
+    renderApp("/extensions", harness);
+    const confirm = await addLinear(user);
+    await user.click(within(confirm).getByTestId("grant-confirm"));
+    expect(await within(confirm).findByTestId("grant-error")).toHaveTextContent(
+      "unknown device; pair it first",
+    );
+    expect(screen.getByTestId("grant-dialog")).toBeInTheDocument();
+    expect(harness.daemon.state.extensions.find((e) => e.name === "Linear")?.status).toBe(
+      "pending_approval",
+    );
+  });
+
+  it("Approve on a row waiting from a URL opens the same confirmation and sends the device answer", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/extensions", harness);
+    const rows = await screen.findAllByTestId("extension");
+    const slack = rows.find((r) => r.dataset.extensionId === "ext_slack");
+    if (!slack) throw new Error("no slack row");
+    // Its card is in the Inbox: the review says so.
+    expect(within(slack).getByTestId("extension-review")).toHaveTextContent("also in the inbox");
+    await user.click(within(slack).getByTestId("extension-approve"));
+    const confirm = await screen.findByTestId("grant-dialog");
+    expect(within(confirm).getByTestId("grant-tools")).toHaveTextContent(
+      "slack.post_message (external_send, high risk)",
+    );
+    expect(within(confirm).getByTestId("grant-needs-device")).not.toHaveTextContent(
+      "Cancel adds nothing",
+    );
+    await user.click(within(confirm).getByTestId("grant-confirm"));
+    await waitFor(() => expect(slack).toHaveAttribute("data-status", "enabled"));
+    expect(postedCalls(harness, "/extensions/ext_slack/approve")[0]?.body).toEqual({
+      answer: "device",
+      deviceId: "device_this_pc",
+    });
   });
 
   it("adds an MCP server from a URL and denies it", async () => {

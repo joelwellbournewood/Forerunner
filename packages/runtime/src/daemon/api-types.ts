@@ -1905,9 +1905,11 @@ export const DAEMON_ROUTES = {
   extensions: "GET /extensions?kind=",
   extensionCatalog: "GET /extensions/catalog",
   extension: "GET /extensions/:id",
-  addExtension: "POST /extensions { catalogId } | { url } (202 while the human decides)",
+  addExtension:
+    "POST /extensions { catalogId, confirmIn?: panel } | { url } (202 while the human decides; panel: confirmed in the panel, no Inbox card, U-026)",
   toggleExtension: "POST /extensions/:id/toggle { enabled }",
-  approveExtension: "POST /extensions/:id/approve",
+  approveExtension:
+    "POST /extensions/:id/approve { answer?: device, deviceId?, biometric? } (a row added in the panel needs the device answer, U-026)",
   denyExtension: "POST /extensions/:id/deny",
   extensionPermissions: "PUT /extensions/:id/permissions { permissions }",
   removeExtension: "DELETE /extensions/:id",

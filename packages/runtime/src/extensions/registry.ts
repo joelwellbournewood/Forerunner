@@ -42,6 +42,8 @@ import {
 } from "./mcp.ts";
 import {
   type Actor,
+  CONFIRM_PLACES,
+  type ConfirmPlace,
   EMPTY_PERMISSIONS,
   type ExtensionApprovalPort,
   type ExtensionEvent,
@@ -181,6 +183,8 @@ const ExtensionConfig = z
     pendingReview: PermissionReview.nullable().default(null),
     pendingRequestId: z.string().nullable().default(null),
     pendingStage: z.enum(GRANT_STAGES).nullable().default(null),
+    /** Where the pending decision is made (U-026); absent on rows from before: the Inbox. */
+    confirmIn: z.enum(CONFIRM_PLACES).nullable().default(null),
     requiresAutonomy: z.number().int().min(0).max(4).nullable().default(null),
     error: z.string().nullable().default(null),
   })
@@ -337,9 +341,22 @@ export class ExtensionRegistry {
 
   // ----- install ---------------------------------------------------------------------------
 
-  async addFromCatalog(catalogId: string, actor: Actor = {}): Promise<ExtensionView> {
+  /**
+   * Add a catalog entry. With `confirmIn: "panel"` (the Extensions panel's Add, U-026) a
+   * built-in entry is not asked in the Inbox: the row waits with its review for the panel's
+   * confirmation (`approve`, which the route only calls after the device check, ADR 0096). A
+   * remote catalog entry is not trusted that far and asks in the Inbox whatever is asked.
+   */
+  async addFromCatalog(
+    catalogId: string,
+    actor: Actor = {},
+    opts: { confirmIn?: ConfirmPlace } = {},
+  ): Promise<ExtensionView> {
     const entry = this.deps.catalog.mustGet(catalogId);
-    return this.install(entry, actor, `catalog:${entry.id}`, this.deps.catalog.isBuiltin(entry.id));
+    const builtin = this.deps.catalog.isBuiltin(entry.id);
+    return this.install(entry, actor, `catalog:${entry.id}`, builtin, {
+      confirmIn: builtin && opts.confirmIn === "panel" ? "panel" : "inbox",
+    });
   }
 
   /**
@@ -418,7 +435,11 @@ export class ExtensionRegistry {
     actor: Actor,
     sourceUrl: string,
     trusted = false,
+    opts: { confirmIn?: ConfirmPlace } = {},
   ): Promise<ExtensionView> {
+    // Only a built-in entry, whose permissions the panel showed before the click, is decided
+    // there; anything else is a grant the person did not just see (U-026).
+    const confirmIn: ConfirmPlace = trusted && opts.confirmIn === "panel" ? "panel" : "inbox";
     const existing = await this.deps.extensions.byName(entry.kind, entry.name);
     if (existing) throw alreadyInstalled(entry, existing.id);
     refuseReservedSecrets(entry.name, [
@@ -475,6 +496,7 @@ export class ExtensionRegistry {
       transport: entry.transport ?? null,
       review,
       pendingStage: stage,
+      confirmIn,
       requiresAutonomy: entry.requiresAutonomy ?? null,
     });
     let row: ExtensionRow;
@@ -501,11 +523,19 @@ export class ExtensionRegistry {
       source: sourceUrl,
       stage,
       trusted,
+      confirmIn,
       tools: review.permissions.tools,
       secrets: review.permissions.secrets,
       domains: review.permissions.domains,
     });
-    this.emit("extension.requested", row, actor, { source: sourceUrl, stage, risk: review.risk });
+    this.emit("extension.requested", row, actor, {
+      source: sourceUrl,
+      stage,
+      risk: review.risk,
+      confirmIn,
+    });
+    // The panel shows this row's change card and confirms it there: no Inbox card (U-026).
+    if (confirmIn === "panel") return this.view(row);
     const answer = await this.deps.approvals.ask({
       extensionId: row.id,
       name: row.name,
@@ -607,6 +637,7 @@ export class ExtensionRegistry {
         pendingReview: null,
         pendingRequestId: null,
         pendingStage: null,
+        confirmIn: null,
         error: null,
       }),
       author_human: actor.humanId ?? row.author_human,
@@ -699,6 +730,8 @@ export class ExtensionRegistry {
       tools: review.permissions.tools,
       risk: review.risk,
     });
+    // Added in the panel: the grant is confirmed there too, with the tools just found.
+    if (cfg.confirmIn === "panel") return this.view(updated);
     const answer = await this.deps.approvals.ask({
       extensionId: updated.id,
       name: updated.name,
@@ -736,6 +769,7 @@ export class ExtensionRegistry {
           pendingReview: null,
           pendingRequestId: null,
           pendingStage: null,
+          confirmIn: null,
         }),
       });
       await this.audit("extensions.deny", updated, actor, { kept: "previous permissions" });
@@ -935,7 +969,14 @@ export class ExtensionRegistry {
     };
     const updated = await this.deps.extensions.update(id, row.version, {
       status: ROW_STATUS_PENDING,
-      config: toJson({ ...cfg, pendingPermissions: wanted, pendingReview, pendingStage: "grant" }),
+      // A widening is a grant the person did not just see: the Inbox asks (U-026).
+      config: toJson({
+        ...cfg,
+        pendingPermissions: wanted,
+        pendingReview,
+        pendingStage: "grant",
+        confirmIn: "inbox",
+      }),
     });
     this.toolIndex = null;
     await this.audit("extensions.update_permissions", updated, actor, {
@@ -1160,6 +1201,7 @@ export class ExtensionRegistry {
         ? normalizePermissions(cfg.pendingPermissions as Partial<ExtensionPermissions>)
         : null,
       pendingStage: row.status === ROW_STATUS_PENDING ? (cfg.pendingStage ?? "grant") : null,
+      confirmIn: row.status === ROW_STATUS_PENDING ? (cfg.confirmIn ?? "inbox") : null,
       review: cfg.pendingReview ?? cfg.review,
       cost: { usdMicro, chfMicro: Math.round(usdMicro * rate) },
       version: row.ext_version,

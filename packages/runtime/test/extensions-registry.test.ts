@@ -1079,3 +1079,123 @@ describe("the Extensions panel's Approve and Deny close the Inbox card (U-030)",
     expect(await inbox()).toEqual([]);
   });
 });
+
+/**
+ * U-026: Add on a built-in catalog entry in the Extensions panel used to file a second,
+ * blocking Inbox card for what the person had just done. The permissions of a built-in entry
+ * are known before the click, so the panel confirms the grant itself (the route checks the
+ * confirmation on this PC's device, ADR 0096) and no card is filed. What the person did not
+ * just see keeps the Inbox: a URL or a remote catalog entry, a widening, an agent's proposal.
+ */
+describe("a built-in entry added in the panel is confirmed there, with no Inbox card (U-026)", () => {
+  let h: RegistryHarness;
+  afterEach(async () => {
+    h.stopLogs();
+    await h.registry.close();
+    await h.store.close();
+  });
+  const cards = async () => h.store.humanRequest.list(undefined, { limit: 100 });
+
+  it("files no card; the row waits with its review for the panel's confirmation, which grants it", async () => {
+    h = await registryHarness({ inbox: true });
+    const view = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human, { confirmIn: "panel" });
+    expect(view).toMatchObject({
+      status: "pending_approval",
+      pendingStage: "grant",
+      confirmIn: "panel",
+    });
+    // The change card the panel shows: the discovered tools with their class and risk.
+    expect(view.review?.tools.map((t) => [t.bridgedName, t.actionClass])).toEqual([
+      ["fake.fetch_page", "read"],
+      ["fake.post_comment", "external_send"],
+    ]);
+    expect(view.review?.risk).toBe("high");
+    expect(await cards()).toEqual([]);
+    const audit = await h.store.auditLog.list({ tool: "extensions.add" });
+    expect(JSON.parse(audit[0]?.result_summary ?? "{}")).toMatchObject({ confirmIn: "panel" });
+    // The sync loop has nothing to read for it: no request, no answer.
+    expect(await h.registry.syncApprovals(human)).toEqual({
+      approved: [],
+      denied: [],
+      discovered: [],
+    });
+    const enabled = await h.registry.approve(view.id, human);
+    expect(enabled).toMatchObject({ status: "enabled", confirmIn: null, connected: true });
+    expect(enabled.permissions.tools).toEqual(["fake.fetch_page", "fake.post_comment"]);
+    expect(await cards()).toEqual([]);
+  });
+
+  it("Cancel adds nothing: the row is gone, no card was ever filed and nothing was granted", async () => {
+    h = await registryHarness({ inbox: true });
+    const view = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human, { confirmIn: "panel" });
+    await h.registry.deny(view.id, human);
+    expect(await h.store.extension.get(view.id)).toBeUndefined();
+    expect(await h.registry.list()).toEqual([]);
+    expect(await cards()).toEqual([]);
+    expect(h.registry.bridgedTools()).toEqual([]);
+  });
+
+  it("a built-in entry that needs its secret to start: discovery and grant are both confirmed in the panel", async () => {
+    h = await registryHarness({ inbox: true, requireSecret: true });
+    const view = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human, { confirmIn: "panel" });
+    expect(view).toMatchObject({ pendingStage: "discovery", confirmIn: "panel" });
+    expect(await cards()).toEqual([]);
+    // The first confirmation starts it once with its secret and lists its tools; the grant is
+    // asked in the panel again, with what was found.
+    const discovered = await h.registry.approve(view.id, human);
+    expect(discovered).toMatchObject({
+      status: "pending_approval",
+      pendingStage: "grant",
+      confirmIn: "panel",
+    });
+    expect(discovered.review?.tools.map((t) => t.bridgedName)).toEqual([
+      "fake.fetch_page",
+      "fake.post_comment",
+    ]);
+    expect(await cards()).toEqual([]);
+    expect((await h.registry.approve(view.id, human)).status).toBe("enabled");
+    expect(await cards()).toEqual([]);
+  });
+
+  it("what the person did not just see keeps the Inbox: a remote catalog entry asks there even from the panel", async () => {
+    const http = await startHttpFixture({
+      "/catalog.json": {
+        version: 1,
+        entries: [fakeCatalogEntry({ id: "remote-one", name: "remote-one" })],
+      },
+    });
+    try {
+      const catalog = new ExtensionCatalog(loadBuiltinCatalog(), {
+        remoteUrl: http.url("/catalog.json"),
+      });
+      await catalog.refresh();
+      h = await registryHarness({ inbox: true, catalog });
+      const view = await h.registry.addFromCatalog("remote-one", human, { confirmIn: "panel" });
+      expect(view).toMatchObject({ pendingStage: "discovery", confirmIn: "inbox" });
+      const filed = await cards();
+      expect(filed).toHaveLength(1);
+      expect(filed[0]?.options).toEqual(["Approve", "Deny"]);
+    } finally {
+      await http.close();
+    }
+  });
+
+  it("a widening of a panel-confirmed extension is asked in the Inbox", async () => {
+    h = await registryHarness({ inbox: true });
+    const view = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human, { confirmIn: "panel" });
+    await h.registry.approve(view.id, human);
+    const narrowed = await h.registry.updatePermissions(
+      view.id,
+      { tools: ["fake.fetch_page"] },
+      human,
+    );
+    expect(narrowed.status).toBe("enabled");
+    const widened = await h.registry.updatePermissions(
+      view.id,
+      { tools: ["fake.fetch_page", "fake.post_comment"] },
+      human,
+    );
+    expect(widened).toMatchObject({ status: "pending_approval", confirmIn: "inbox" });
+    expect((await cards()).filter((c) => c.status === "open")).toHaveLength(1);
+  });
+});
