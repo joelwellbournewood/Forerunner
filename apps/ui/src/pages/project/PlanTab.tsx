@@ -20,6 +20,7 @@ import {
 } from "../../components/ui.tsx";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
+import { describeDependencies } from "./DependencyPicker.tsx";
 
 export interface MilestoneRow {
   id: string;
@@ -704,6 +705,8 @@ function SmallProjectPlan({
   milestones: ReturnType<typeof useAsync<MilestoneView[]>>;
 }) {
   const all = tasks.data ?? [];
+  // Dependencies by title, as on the Tasks tab (U-040).
+  const byId = useMemo(() => new Map(all.map((t) => [t.id, t])), [all]);
   const { current, others } = useMemo(
     () => smallProjectMilestone(project, milestones.data),
     [project, milestones.data],
@@ -800,7 +803,7 @@ function SmallProjectPlan({
               <span className="font-medium">{t.title}</span>
               <span className="text-xs text-neutral-500">
                 tier {t.riskTier} · priority {t.priority}
-                {t.dependsOn.length > 0 ? ` · after ${t.dependsOn.join(", ")}` : ""}
+                {t.dependsOn.length > 0 ? ` · after ${describeDependencies(t, byId)}` : ""}
               </span>
             </li>
           ))}

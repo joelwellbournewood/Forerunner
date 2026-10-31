@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { milestonesFromTasks } from "../src/pages/project/PlanTab.tsx";
-import { PROJECTS, TASKS } from "./fixtures.ts";
+import { money, PROJECTS, TASKS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Project page", () => {
@@ -106,6 +106,49 @@ describe("Project page", () => {
     expect(warning).toHaveTextContent(/Tasks tab/);
     expect(warning).toHaveTextContent(/add a task: write the README/);
     expect(warning).toHaveTextContent(/Inbox/);
+  });
+
+  it("warns when ready tasks exist but none can run: what each waits on, what the budget leaves out (U-040)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const tasks = harness.daemon.state.tasks;
+    const ready = tasks.find((t) => t.id === "task_3");
+    if (!ready) throw new Error("fixture changed");
+    // The one ready task of proj_atlas is larger than the default session's work budget.
+    ready.estimate = money(10_000_000);
+    tasks.push(
+      { ...ready, id: "task_old", title: "Try the old approach", status: "cancelled" },
+      {
+        ...ready,
+        id: "task_follow",
+        title: "Write the migration guide",
+        estimate: money(0),
+        dependsOn: ["task_old"],
+      },
+    );
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    const warning = await within(dialog).findByTestId("start-session-cannot-run");
+    expect(within(dialog).queryByTestId("start-session-no-work")).toBeNull();
+    expect(warning).toHaveTextContent("None of the 2 ready tasks can run in this session.");
+    expect(within(warning).getByTestId("start-session-waiting")).toHaveTextContent(
+      '"Write the migration guide" waits on "Try the old approach" (cancelled): that will not be done by itself. Change what it depends on (Tasks tab, Depends on…) or mark the failed task ready again.',
+    );
+    expect(within(warning).getByTestId("start-session-over-budget")).toHaveTextContent(
+      '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00',
+    );
+    // A larger budget lets the large task in; the waiting one is still named.
+    await user.type(within(dialog).getByLabelText(/Session budget/), "20");
+    await waitFor(() =>
+      expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull(),
+    );
+    const leftOut = await within(dialog).findByTestId("start-session-left-out");
+    expect(leftOut).toHaveTextContent(
+      '"Write the migration guide" waits on "Try the old approach"',
+    );
+    expect(within(leftOut).queryByTestId("start-session-over-budget")).toBeNull();
   });
 
   it("says a start is queued instead of opening a session that does not exist yet (U-003)", async () => {

@@ -223,6 +223,7 @@ import {
   type TaskExecutor,
 } from "../session/runner.ts";
 import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
+import { type StartCheck, startCheck } from "../session/start-check.ts";
 import { fileFiredKeys, Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import {
@@ -641,6 +642,12 @@ export interface RuntimeApp {
   tools: ToolRegistry;
   executor: TaskExecutor;
   runner: SessionRunner;
+  /**
+   * What a session of the project started now would plan (U-040): the tasks it would run, the
+   * ones left out for budget and the ones waiting on another task, priced and cut as the
+   * runner does, with the cap a start without a budget gets (the project's session cap).
+   */
+  startCheck(projectId: string, budgetUsdMicro?: number): Promise<StartCheck>;
   /**
    * PM intake (spec A.2, ADR 0055): the brief as one proposal in the inbox (plan, doc set,
    * first-session plan), applied on the approving answer by `syncApprovals`.
@@ -3343,6 +3350,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     tools,
     executor,
     runner,
+    // The cap is the one `runSession` gives a start without a budget; the pricing is the
+    // composed planner's (`StaticPlanner(500_000, estimates)`).
+    startCheck: async (projectId, budgetUsdMicro) => {
+      const project = await store.project.mustGet(projectId);
+      const cap =
+        budgetUsdMicro ??
+        sessionCapFromSettings(project.settings, clock.now(), DEFAULT_SESSION_CAP_USD_MICRO)
+          .usdMicro;
+      return startCheck({ store, estimates, defaultEstimateUsdMicro: 500_000 }, project.id, cap);
+    },
     scheduler,
     conversation,
     gitHost,

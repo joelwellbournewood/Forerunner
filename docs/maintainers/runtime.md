@@ -710,6 +710,33 @@ delivered and read (`read_at`) before the status doc, the summary cache, the pee
 the note to the human and the session record are written; those writes stay where and as they
 were (the task states were written as each task ended).
 
+**What cannot run is named (U-040).** Up to 1.0.4 a session said "Nothing to plan: no task is
+ready" while ready tasks existed: a dependency that was cancelled, failed or a typo kept a task
+out of every plan for good, and `cutPlanToBudget` stopped at the first item that did not fit,
+so one large task emptied the plan. Now `cutPlanToBudget` leaves out an item that does not fit
+what is left and keeps the smaller ones after it, in the planner's order; the items left out
+are on the plan as `leftOutForBudget` with `workBudgetUsdMicro` (the plan's reason still reads
+"(N item(s) cut to fit the budget)"). After the cut the runner reads
+`store.task.waitingTasks(project)` (ready tasks waiting on a task not done, each dependency with
+its title and status). `session.planned` carries both lists, and the summary names them:
+"Left out for budget: "Title" (about $5.00); this session's work budget was $1.60. …" and
+"Waiting on other tasks: "B" waits on "A" (cancelled); … A cancelled, failed or missing task is
+never done by itself: change the waiting task's dependencies on the Tasks tab, or mark the
+failed one ready again."; an empty plan with either list reads "Nothing to plan: no ready task
+can run in this session (below)." instead of "no task is ready". Dependencies are checked when
+entered and can be changed (`TaskRepo.checkDependencies` / `setDependencies`,
+`docs/maintainers/data-model.md`): `POST /projects/:id/tasks` refuses an id that is no task of
+the project or a cancelled task, `POST /tasks/:id/dependencies` also the task itself and a
+cycle, each 409 conflict with cause `validation` and a message naming the tasks.
+`GET /projects/:id/start-check?budgetUsdMicro=` (`session/start-check.ts`, `rt.startCheck`)
+answers what a session started now would plan: the ready count, `runnable`, `overBudget` and
+`waiting`, priced as the composed planner prices (`planEstimateUsdMicro` over the learned
+estimates) and cut as the runner cuts (`DEFAULT_RESERVE_SHARE`), with the project's session cap
+when no budget is given. Tests: `task-dependencies.test.ts` (the cut; a large task and two small
+ones; tasks waiting on a cancelled and a failed one; the routes' refusals with their messages;
+the start check), `packages/state/test/suite.ts` (`waitingTasks`, `checkDependencies`) and
+`apps/ui/test/real-daemon.test.ts` ("dependencies").
+
 **A person's move on a running task (U-039).** Up to 1.0.4, Cancel, Mark failed or Needs me
 on a task a session was running only wrote the row: the run went on, and when it returned the
 runner moved the task from the state the person set (`cancelled -> in_review` is no edge), so

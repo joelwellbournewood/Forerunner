@@ -22,7 +22,14 @@ import {
 } from "../../lib/task-transitions.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
+import { DependencyPicker, describeDependencies, hasStuckDependency } from "./DependencyPicker.tsx";
 import { NewTaskDialog } from "./NewTaskDialog.tsx";
+
+/** The reason sent when the dependencies dialog's reason is left empty (spec B.5, U-010). */
+export const DEFAULT_DEPENDENCIES_REASON = "Dependencies changed in the app";
+
+/** Statuses whose dependencies no longer matter: the task will not run again. */
+const FINISHED: readonly string[] = ["done", "cancelled"];
 
 /** Latest run per task, for the verdict, review and PR columns. */
 export function latestRunByTask(runs: RunView[]): Map<string, RunView> {
@@ -74,7 +81,9 @@ export function TasksTab({
   const [filter, setFilter] = useState<TaskFilter>({ status: "", specialist: "", text: "" });
   const [newOpen, setNewOpen] = useState(false);
   const [transition, setTransition] = useState<{ task: TaskView; to: string } | null>(null);
+  const [editing, setEditing] = useState<TaskView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const byId = useMemo(() => new Map((tasks.data ?? []).map((t) => [t.id, t])), [tasks.data]);
 
   const byTask = useMemo(() => latestRunByTask(runs.data ?? []), [runs.data]);
   const specialists = useMemo(
@@ -196,8 +205,17 @@ export function TasksTab({
                       <div className="text-xs text-neutral-500">
                         {t.id} · tier {t.riskTier} · priority {t.priority}
                         {t.attempt > 1 ? ` · attempt ${t.attempt}` : ""}
-                        {t.dependsOn.length > 0 ? ` · after ${t.dependsOn.join(", ")}` : ""}
+                        {t.dependsOn.length > 0 ? ` · after ${describeDependencies(t, byId)}` : ""}
                       </div>
+                      {t.status === "ready" && hasStuckDependency(t, byId) ? (
+                        <div
+                          className="text-xs text-amber-800 dark:text-amber-200"
+                          data-testid="stuck-dependency"
+                        >
+                          Waits on a task that will not be done by itself: no session runs this one
+                          until you change what it depends on.
+                        </div>
+                      ) : null}
                       {t.reason ? (
                         <div className="text-xs text-neutral-600 dark:text-neutral-400">
                           {t.reason}
@@ -271,6 +289,16 @@ export function TasksTab({
                             {transitionLabel(to)}
                           </Button>
                         ))}
+                        {FINISHED.includes(t.status) ? null : (
+                          <Button
+                            variant="ghost"
+                            className="px-2 py-0.5 text-xs"
+                            onClick={() => setEditing(t)}
+                            data-testid="edit-dependencies"
+                          >
+                            Depends on…
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -289,6 +317,22 @@ export function TasksTab({
         defaultRiskTier={defaultRiskTier}
         onCreated={(task) => tasks.setData((prev) => (prev ? [task, ...prev] : [task]))}
       />
+      <DependenciesDialog
+        task={editing}
+        tasks={tasks.data}
+        onClose={() => setEditing(null)}
+        onSave={async (task, dependsOn, reason) => {
+          const updated = await client.setTaskDependencies(task.id, {
+            version: task.version,
+            dependsOn,
+            reason,
+          });
+          tasks.setData((prev) =>
+            prev ? prev.map((t) => (t.id === updated.id ? updated : t)) : prev,
+          );
+          setEditing(null);
+        }}
+      />
       <TransitionDialog
         pending={transition}
         onClose={() => setTransition(null)}
@@ -299,6 +343,92 @@ export function TasksTab({
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Change the tasks a task waits on (U-040): the project's tasks by title, with the version the
+ * row shows and an optional reason; the daemon refuses a cancelled task, the task itself and a
+ * cycle with a message naming them, shown here.
+ */
+function DependenciesDialog({
+  task,
+  tasks,
+  onClose,
+  onSave,
+}: {
+  task: TaskView | null;
+  tasks: readonly TaskView[] | null;
+  onClose: () => void;
+  onSave: (task: TaskView, dependsOn: string[], reason: string) => Promise<void>;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [shown, setShown] = useState<string | null>(null);
+  // A new task to edit resets the form to what that task waits on now.
+  if (task && shown !== task.id) {
+    setShown(task.id);
+    setSelected([...task.dependsOn]);
+    setReason("");
+    setError(null);
+  }
+  if (!task && shown !== null) setShown(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || !task) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onSave(task, selected, reason.trim() || DEFAULT_DEPENDENCIES_REASON);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      open={task !== null}
+      onClose={onClose}
+      title={task ? `Depends on: ${task.title}` : ""}
+      testId="dependencies-dialog"
+    >
+      <form onSubmit={submit} className="space-y-3">
+        <fieldset className="text-sm">
+          <legend className="mb-1 block font-medium">This task runs after</legend>
+          <DependencyPicker
+            tasks={tasks}
+            selected={selected}
+            onChange={setSelected}
+            excludeId={task?.id}
+          />
+          <span className="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+            A session plans this task only once every task ticked here is done. Untick all to let it
+            run on its own.
+          </span>
+        </fieldset>
+        <Field
+          label="Reason (optional)"
+          hint={`Recorded on the task; your agent reads it. Left empty: "${DEFAULT_DEPENDENCIES_REASON}".`}
+        >
+          <input
+            className={INPUT_CLASS}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            data-testid="dependencies-reason"
+          />
+        </Field>
+        {error ? <ErrorBanner message={error} /> : null}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={busy} data-testid="save-dependencies">
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 

@@ -70,7 +70,7 @@ describe("Tasks tab", () => {
     const ready = rows[2] as HTMLElement;
     expect(
       within(ready)
-        .getAllByRole("button")
+        .getAllByTestId(/^transition-/)
         .map((b) => b.textContent),
     ).toEqual(["Needs me", "Mark failed", "Cancel"]);
     // U-013: Claim is an agent's lock; a person's left the task held by nobody.
@@ -125,7 +125,7 @@ describe("Tasks tab", () => {
     ) as HTMLElement;
     expect(
       within(row)
-        .getAllByRole("button")
+        .getAllByTestId(/^transition-/)
         .map((b) => b.textContent),
     ).toEqual(["Send to review", "Needs me", "Mark failed", "Cancel"]);
     await user.click(within(row).getByTestId("transition-cancelled"));
@@ -151,6 +151,97 @@ describe("Tasks tab", () => {
     expect(
       within(await screen.findByTestId("transition-dialog")).queryByTestId("transition-stops-run"),
     ).toBeNull();
+  });
+
+  it("shows what a task waits on by title, and a ready task stuck behind a cancelled one (U-040)", async () => {
+    const harness = createHarness();
+    harness.daemon.state.tasks.push(
+      {
+        ...(TASKS[2] as (typeof TASKS)[number]),
+        id: "task_old",
+        title: "Try the old approach",
+        status: "cancelled",
+      },
+      {
+        ...(TASKS[2] as (typeof TASKS)[number]),
+        id: "task_blocked",
+        title: "Write the migration guide",
+        dependsOn: ["task_old"],
+      },
+    );
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const rows = await screen.findAllByTestId("task-row");
+    const rowOf = (id: string) =>
+      rows.find((r) => r.getAttribute("data-task-id") === id) as HTMLElement;
+    expect(rowOf("task_2")).toHaveTextContent('after "Index the documentation pages"');
+    expect(rowOf("task_2")).not.toHaveTextContent("task_1 ");
+    expect(rowOf("task_blocked")).toHaveTextContent('after "Try the old approach" (cancelled)');
+    expect(within(rowOf("task_blocked")).getByTestId("stuck-dependency")).toHaveTextContent(
+      "no session runs this one until you change what it depends on",
+    );
+    expect(within(rowOf("task_3")).queryByTestId("stuck-dependency")).toBeNull();
+  });
+
+  it("changes what a task depends on by title, and shows the daemon's refusal of a cycle (U-040)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const rowOf = async (id: string) =>
+      (await screen.findAllByTestId("task-row")).find(
+        (r) => r.getAttribute("data-task-id") === id,
+      ) as HTMLElement;
+    // A done task's dependencies no longer matter: no control.
+    expect(within(await rowOf("task_1")).queryByTestId("edit-dependencies")).toBeNull();
+    await user.click(within(await rowOf("task_3")).getByTestId("edit-dependencies"));
+    let dialog = await screen.findByTestId("dependencies-dialog");
+    // Titles, not ids; the task itself is not offered.
+    const options = within(dialog).getAllByTestId("dependency-option");
+    expect(options.map((o) => o.closest("label")?.textContent)).toEqual([
+      "Index the documentation pages (done)",
+      "Add the search box to the header (in_review)",
+    ]);
+    await user.click(within(dialog).getByLabelText(/Add the search box to the header/));
+    await user.click(within(dialog).getByTestId("save-dependencies"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_3/dependencies")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/task_3/dependencies")[0]?.body).toEqual({
+      version: 1,
+      dependsOn: ["task_2"],
+      reason: "Dependencies changed in the app",
+    });
+    await waitFor(async () =>
+      expect(await rowOf("task_3")).toHaveTextContent(
+        'after "Add the search box to the header" (in_review)',
+      ),
+    );
+    // The other way round would make the two wait on each other: refused, the dialog says why.
+    await user.click(within(await rowOf("task_2")).getByTestId("edit-dependencies"));
+    dialog = await screen.findByTestId("dependencies-dialog");
+    await user.click(within(dialog).getByLabelText(/Decide the versioning scheme/));
+    await user.click(within(dialog).getByTestId("save-dependencies"));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      'Depends on: "Decide the versioning scheme" already waits on "Add the search box to the header"',
+    );
+    expect(await rowOf("task_2")).toHaveTextContent('after "Index the documentation pages"');
+  });
+
+  it("New task picks what it depends on by title and sends the ids (U-040)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    await user.type(within(dialog).getByTestId("task-title"), "Announce the search");
+    await user.type(within(dialog).getByTestId("task-outcome"), "A post announces it");
+    // No free-text ids any more: the project's tasks by title.
+    expect(within(dialog).queryByRole("textbox", { name: /Depends on/ })).toBeNull();
+    await user.click(await within(dialog).findByLabelText(/Add the search box to the header/));
+    await user.click(within(dialog).getByTestId("create-task"));
+    await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(1));
+    expect(postedCalls(harness, "/projects/proj_atlas/tasks")[0]?.body).toMatchObject({
+      title: "Announce the search",
+      dependsOn: ["task_2"],
+    });
   });
 
   it("creates a task from the dialog with the budget converted at the project's rate", async () => {

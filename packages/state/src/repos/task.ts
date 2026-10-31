@@ -22,6 +22,26 @@ const KEEPS_CLAIM: readonly TaskStatus[] = ["claimed", "in_progress", "in_review
  */
 export const AGENT_ONLY_STATUSES: readonly TaskStatus[] = ["claimed", "in_progress"];
 
+/** A dependency a ready task still waits on: the task it names, or null when no such task exists. */
+export interface WaitsOn {
+  id: string;
+  title: string | null;
+  status: TaskStatus | null;
+}
+
+/** A ready task that cannot run yet, and what it waits on (U-040). */
+export interface WaitingTask {
+  task: TaskRow;
+  waitsOn: WaitsOn[];
+}
+
+/**
+ * Dependency states a task never leaves by itself: a task that waits on one is stuck until a
+ * person changes its dependencies or moves the other task (U-040). A missing task (deleted, a
+ * typo kept from before the check) is stuck too.
+ */
+export const STUCK_DEPENDENCY_STATUSES: readonly TaskStatus[] = ["cancelled", "failed"];
+
 /**
  * Tasks: the workflow graph, atomic claims with expiry, dependency-aware readiness and
  * the "no close with open findings" rule.
@@ -201,6 +221,42 @@ export class TaskRepo extends Repository<TaskRow> {
 
   /** Ready tasks of a project whose dependencies are all done, highest priority first. */
   async readyTasks(projectId: string, opts: ListOptions = {}): Promise<TaskRow[]> {
+    const { ready, depById } = await this.readyWithDependencies(projectId);
+    const runnable = ready.filter((t) =>
+      t.depends_on.every((d) => depById.get(d)?.status === "done"),
+    );
+    const offset = opts.offset ?? 0;
+    return opts.limit === undefined
+      ? runnable.slice(offset)
+      : runnable.slice(offset, offset + opts.limit);
+  }
+
+  /**
+   * Ready tasks of a project that cannot run yet because a dependency is not done (U-040),
+   * highest priority first, each with the dependencies it still waits on (title and status,
+   * null for a task that does not exist). The Start dialog and the session summary name them,
+   * so a task waiting on a cancelled or failed task is never stuck silently.
+   */
+  async waitingTasks(projectId: string): Promise<WaitingTask[]> {
+    const { ready, depById } = await this.readyWithDependencies(projectId);
+    const out: WaitingTask[] = [];
+    for (const task of ready) {
+      const waitsOn = task.depends_on
+        .filter((d) => depById.get(d)?.status !== "done")
+        .map((d) => {
+          const dep = depById.get(d);
+          return { id: d, title: dep?.title ?? null, status: dep?.status ?? null };
+        });
+      if (waitsOn.length) out.push({ task, waitsOn });
+    }
+    return out;
+  }
+
+  /** The project's ready tasks in plan order and the rows their dependencies name. */
+  private async readyWithDependencies(projectId: string): Promise<{
+    ready: TaskRow[];
+    depById: Map<string, { status: TaskStatus; title: string }>;
+  }> {
     const ready = await this.list(
       { project_id: projectId, status: "ready" },
       {
@@ -212,20 +268,111 @@ export class TaskRepo extends Repository<TaskRow> {
       },
     );
     const depIds = [...new Set(ready.flatMap((t) => t.depends_on))];
-    const statusById = new Map<string, TaskStatus>();
+    const depById = new Map<string, { status: TaskStatus; title: string }>();
     for (let i = 0; i < depIds.length; i += 500) {
       const chunk = depIds.slice(i, i + 500);
-      const rows = await this.db.query<{ id: string; status: TaskStatus }>(
-        `SELECT "id", "status" FROM ${this.qt} WHERE "id" IN (${chunk.map(() => "?").join(", ")})`,
+      const rows = await this.db.query<{ id: string; status: TaskStatus; title: string }>(
+        `SELECT "id", "status", "title" FROM ${this.qt} WHERE "id" IN (${chunk.map(() => "?").join(", ")})`,
         chunk,
       );
-      for (const r of rows) statusById.set(r.id, r.status);
+      for (const r of rows) depById.set(r.id, { status: r.status, title: r.title });
     }
-    const runnable = ready.filter((t) => t.depends_on.every((d) => statusById.get(d) === "done"));
-    const offset = opts.offset ?? 0;
-    return opts.limit === undefined
-      ? runnable.slice(offset)
-      : runnable.slice(offset, offset + opts.limit);
+    return { ready, depById };
+  }
+
+  /**
+   * Check the dependencies a person gives a task (U-040) and return them without duplicates.
+   * Each must be a task of the same project, not the task itself, not cancelled (a task that
+   * waits on a cancelled one never runs), and the new edges must not close a cycle (the tasks
+   * on it would wait on each other for good). Refused with `validation`, a message that names
+   * each problem by the task's title where there is one, and `details.reason`:
+   * `unknown_dependency`, `self_dependency`, `cancelled_dependency` or `dependency_cycle`.
+   * `taskId` is null for a task about to be created (it cannot be part of a cycle yet).
+   */
+  async checkDependencies(
+    projectId: string,
+    taskId: string | null,
+    dependsOn: readonly string[],
+  ): Promise<string[]> {
+    const ids = [...new Set(dependsOn.map((d) => d.trim()).filter((d) => d.length > 0))];
+    if (taskId !== null && ids.includes(taskId)) {
+      throw new ForerunnerError("validation", "A task cannot depend on itself.", {
+        details: { reason: "self_dependency", taskId },
+      });
+    }
+    const rows = new Map<string, TaskRow>();
+    for (const id of ids) {
+      const row = await this.get(id);
+      if (row && row.project_id === projectId) rows.set(id, row);
+    }
+    const unknown = ids.filter((id) => !rows.has(id));
+    if (unknown.length) {
+      throw new ForerunnerError(
+        "validation",
+        `Depends on: ${unknown.map((u) => `"${u}"`).join(", ")} ${
+          unknown.length === 1 ? "is not a task" : "are not tasks"
+        } of this project. Pick the tasks it waits on from the project's list.`,
+        { details: { reason: "unknown_dependency", unknown } },
+      );
+    }
+    const cancelled = ids.filter((id) => rows.get(id)?.status === "cancelled");
+    if (cancelled.length) {
+      throw new ForerunnerError(
+        "validation",
+        `Depends on: ${cancelled.map((c) => `"${rows.get(c)?.title}"`).join(", ")} ${
+          cancelled.length === 1 ? "is" : "are"
+        } cancelled and will never be done, so a task waiting on ${
+          cancelled.length === 1 ? "it" : "them"
+        } would never run.`,
+        { details: { reason: "cancelled_dependency", cancelled } },
+      );
+    }
+    if (taskId !== null) {
+      // A new edge task -> dep closes a cycle when the dependency already waits on the task,
+      // directly or through others. Walk the project's graph from each new dependency.
+      const all = await this.list({ project_id: projectId }, { limit: 10_000 });
+      const depsOf = new Map(all.map((t) => [t.id, t.depends_on]));
+      for (const start of ids) {
+        const seen = new Set<string>();
+        const stack = [start];
+        while (stack.length) {
+          const at = stack.pop() as string;
+          if (at === taskId) {
+            const self = all.find((t) => t.id === taskId);
+            throw new ForerunnerError(
+              "validation",
+              `Depends on: "${rows.get(start)?.title}" already waits on "${self?.title ?? taskId}" (directly or through other tasks), so "${self?.title ?? taskId}" cannot wait on it: neither would ever run.`,
+              { details: { reason: "dependency_cycle", taskId, dependency: start } },
+            );
+          }
+          if (seen.has(at)) continue;
+          seen.add(at);
+          stack.push(...(depsOf.get(at) ?? []));
+        }
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * Change the tasks a task waits on (U-040), checked as `checkDependencies` does, with the
+   * version check and the person's reason on the row (spec B.5).
+   */
+  async setDependencies(
+    id: string,
+    expectedVersion: number,
+    dependsOn: readonly string[],
+    reason: string,
+    actor: Actor = {},
+  ): Promise<TaskRow> {
+    const current = await this.mustGet(id);
+    const ids = await this.checkDependencies(current.project_id, current.id, dependsOn);
+    return this.update(id, expectedVersion, {
+      depends_on: ids,
+      reason,
+      author_agent: actor.agentId ?? null,
+      author_human: actor.humanId ?? null,
+    });
   }
 
   /** Tasks currently claimed by an agent (the peer-awareness feed). */

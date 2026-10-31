@@ -49,7 +49,9 @@ import {
   KillBody,
   RenameAgentBody,
   RunnerUnlockWrapBody,
+  SetTaskDependenciesBody,
   STORABLE_SECRET_NAMES,
+  type StartCheckView,
   StartSessionBody,
   StartSessionView,
   StartVoiceSessionBody,
@@ -366,6 +368,116 @@ const clone = <T>(value: T): T => structuredClone(value);
 
 function errorBody(c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) {
   return c.json({ code, message }, status);
+}
+
+/**
+ * The daemon's dependency check (`TaskRepo.checkDependencies`, U-040) over the fake's tasks:
+ * the checked list, or the refusal message the daemon answers 409 with.
+ */
+function checkFakeDependencies(
+  tasks: readonly TaskView[],
+  projectId: string,
+  taskId: string | null,
+  dependsOn: readonly string[],
+): { ok: true; ids: string[] } | { ok: false; message: string } {
+  const ids = [...new Set(dependsOn.map((d) => d.trim()).filter((d) => d.length > 0))];
+  if (taskId !== null && ids.includes(taskId))
+    return { ok: false, message: "A task cannot depend on itself." };
+  const rows = new Map(
+    tasks.filter((t) => t.projectId === projectId && ids.includes(t.id)).map((t) => [t.id, t]),
+  );
+  const unknown = ids.filter((id) => !rows.has(id));
+  if (unknown.length)
+    return {
+      ok: false,
+      message: `Depends on: ${unknown.map((u) => `"${u}"`).join(", ")} ${
+        unknown.length === 1 ? "is not a task" : "are not tasks"
+      } of this project. Pick the tasks it waits on from the project's list.`,
+    };
+  const cancelled = ids.filter((id) => rows.get(id)?.status === "cancelled");
+  if (cancelled.length)
+    return {
+      ok: false,
+      message: `Depends on: ${cancelled.map((c) => `"${rows.get(c)?.title}"`).join(", ")} ${
+        cancelled.length === 1 ? "is" : "are"
+      } cancelled and will never be done, so a task waiting on ${
+        cancelled.length === 1 ? "it" : "them"
+      } would never run.`,
+    };
+  if (taskId !== null) {
+    const depsOf = new Map(tasks.map((t) => [t.id, t.dependsOn]));
+    const titleOf = (id: string) => tasks.find((t) => t.id === id)?.title ?? id;
+    for (const start of ids) {
+      const seen = new Set<string>();
+      const stack = [start];
+      while (stack.length) {
+        const at = stack.pop() as string;
+        if (at === taskId)
+          return {
+            ok: false,
+            message: `Depends on: "${titleOf(start)}" already waits on "${titleOf(taskId)}" (directly or through other tasks), so "${titleOf(taskId)}" cannot wait on it: neither would ever run.`,
+          };
+        if (seen.has(at)) continue;
+        seen.add(at);
+        stack.push(...(depsOf.get(at) ?? []));
+      }
+    }
+  }
+  return { ok: true, ids };
+}
+
+/** The daemon's session cap for a start without a budget (compose's default: CHF 5). */
+const FAKE_SESSION_CAP_USD_MICRO = 6_250_000;
+
+/**
+ * The daemon's start check (U-040) over the fake's tasks: ready tasks by priority, those whose
+ * dependencies are all done priced by their estimate (else budget, else the planner's
+ * 500 000), cut to the cap less the 20% review reserve by skipping what does not fit.
+ */
+function fakeStartCheck(
+  tasks: readonly TaskView[],
+  projectId: string,
+  budgetUsdMicro: number | null,
+): StartCheckView {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const ready = tasks
+    .filter((t) => t.projectId === projectId && t.status === "ready")
+    .sort((a, b) => b.priority - a.priority);
+  const cap = budgetUsdMicro ?? FAKE_SESSION_CAP_USD_MICRO;
+  const work = Math.floor(cap * 0.8);
+  const runnable: StartCheckView["runnable"] = [];
+  const overBudget: StartCheckView["overBudget"] = [];
+  const waiting: StartCheckView["waiting"] = [];
+  let total = 0;
+  for (const t of ready) {
+    const waitsOn = t.dependsOn
+      .filter((d) => byId.get(d)?.status !== "done")
+      .map((d) => ({
+        taskId: d,
+        title: byId.get(d)?.title ?? null,
+        status: byId.get(d)?.status ?? null,
+      }));
+    if (waitsOn.length) {
+      waiting.push({ taskId: t.id, title: t.title, waitsOn });
+      continue;
+    }
+    const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
+    const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
+    if (total + estimate > work) overBudget.push(named);
+    else {
+      runnable.push(named);
+      total += estimate;
+    }
+  }
+  return {
+    projectId,
+    sessionBudget: money(cap),
+    workBudget: money(work),
+    ready: ready.length,
+    runnable,
+    overBudget,
+    waiting,
+  };
 }
 
 /**
@@ -921,6 +1033,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const parsed = CreateTaskBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    // Like the daemon (U-040): an unknown or cancelled dependency is refused, nothing written.
+    const deps = checkFakeDependencies(state.tasks, id, null, parsed.data.dependsOn);
+    if (!deps.ok) return errorBody(c, 409, "conflict", deps.message);
     const task: TaskView = {
       id: nextId("task"),
       projectId: id,
@@ -934,7 +1049,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       priority: parsed.data.priority,
       claimedBy: null,
       claimExpires: null,
-      dependsOn: parsed.data.dependsOn,
+      dependsOn: deps.ids,
       budget: money(parsed.data.budgetUsdMicro),
       estimate: money(0),
       actual: money(0),
@@ -962,6 +1077,30 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     task.version += 1;
     task.updatedAt = new Date().toISOString();
     return c.json(task);
+  });
+  app.post("/tasks/:id/dependencies", async (c) => {
+    const task = state.tasks.find((t) => t.id === c.req.param("id"));
+    if (!task) return errorBody(c, 404, "not_found", "no such task");
+    const parsed = SetTaskDependenciesBody.safeParse(await c.req.json());
+    if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    const deps = checkFakeDependencies(state.tasks, task.projectId, task.id, parsed.data.dependsOn);
+    if (!deps.ok) return errorBody(c, 409, "conflict", deps.message);
+    if (parsed.data.version !== task.version) {
+      return errorBody(c, 409, "conflict", "task changed since you loaded it");
+    }
+    task.dependsOn = deps.ids;
+    task.reason = parsed.data.reason;
+    task.version += 1;
+    task.updatedAt = new Date().toISOString();
+    return c.json(task);
+  });
+  app.get("/projects/:id/start-check", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    const raw = Number(c.req.query("budgetUsdMicro") ?? "");
+    return c.json(fakeStartCheck(state.tasks, id, Number.isInteger(raw) && raw > 0 ? raw : null));
   });
   app.get("/projects/:id/runs", (c) => {
     const id = c.req.param("id");

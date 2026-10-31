@@ -11,8 +11,10 @@ import {
   type JsonObject,
   SESSION_TRANSITIONS,
   type SessionRow,
+  STUCK_DEPENDENCY_STATUSES,
   type StateStore,
   type TaskRow,
+  type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
@@ -128,6 +130,10 @@ export interface SessionPlan {
   items: PlanItem[];
   estimateUsdMicro: number;
   summary: string;
+  /** Planned items that did not fit the work budget (`cutPlanToBudget`, U-040), in order. */
+  leftOutForBudget?: PlanItem[];
+  /** The work budget the plan was cut to, set with `leftOutForBudget`. */
+  workBudgetUsdMicro?: number;
 }
 
 export interface PlannerContext {
@@ -357,6 +363,9 @@ export interface SessionRunnerDeps {
   taskWatchMs?: number;
 }
 
+/** Share of a session's cap kept for reviews; the plan is cut to the rest (`cutPlanToBudget`). */
+export const DEFAULT_RESERVE_SHARE = 0.2;
+
 /** The runner's re-read of a running task's row (U-039): a person's move stops the run within it. */
 export const DEFAULT_TASK_WATCH_MS = 5_000;
 
@@ -424,7 +433,7 @@ export class SessionRunner {
       2) as AutonomyLevel;
     const stepCap = opts.stepCap ?? 200;
     const wallClockMs = opts.wallClockMs ?? 4 * 60 * 60 * 1000;
-    const reserveShare = opts.reserveShare ?? 0.2;
+    const reserveShare = opts.reserveShare ?? DEFAULT_RESERVE_SHARE;
     const claimTtlMs = opts.claimTtlMs ?? 30 * 60 * 1000;
 
     if (this.deps.kill.isFrozen({ agentId: agent.id })) {
@@ -552,6 +561,8 @@ export class SessionRunner {
     const needsHuman: string[] = [];
     const cancelled: string[] = [];
     const movedWhileRunning: MovedWhileRunning[] = [];
+    /** Ready tasks that wait on a task not done (U-040), named in the summary. */
+    let waiting: WaitingTask[] = [];
     let plan: SessionPlan | null = null;
     let brief: StateBrief | null = null;
     let stopReason = "completed";
@@ -703,6 +714,9 @@ export class SessionRunner {
         budget,
       });
       plan = cutPlanToBudget(plan, Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)));
+      // What cannot run is named, never silent (U-040): the ready tasks that wait on a task not
+      // done (a cancelled or failed one waits for good) and the items left out for budget.
+      waiting = project ? await store.task.waitingTasks(project.id) : [];
       // B.5: the plan is a versioned change to the session with the agent as author and the
       // planner's summary as the reason. The row is read fresh here because its status may have
       // moved while the planner worked: the daemon's pause port marks a running row `paused` at
@@ -722,6 +736,25 @@ export class SessionRunner {
         items: plan.items.length,
         estimateUsdMicro: plan.estimateUsdMicro,
         summary: plan.summary,
+        ...(plan.leftOutForBudget?.length
+          ? {
+              leftOutForBudget: plan.leftOutForBudget.map((i) => ({
+                taskId: i.taskId,
+                title: i.title,
+                estimateUsdMicro: i.estimateUsdMicro,
+              })),
+              workBudgetUsdMicro: plan.workBudgetUsdMicro,
+            }
+          : {}),
+        ...(waiting.length
+          ? {
+              waiting: waiting.map((w) => ({
+                taskId: w.task.id,
+                title: w.task.title,
+                waitsOn: w.waitsOn,
+              })),
+            }
+          : {}),
       });
 
       // Levels 0 and 1 run nothing the human has not approved (spec J.6, J.7; ADR 0053): the
@@ -1283,6 +1316,7 @@ export class SessionRunner {
       spent,
       stopReason,
       plan,
+      waiting,
       heard: heard.length,
       endInbox,
       stoppedAtEnd,
@@ -2085,19 +2119,32 @@ export function planReason(plan: Pick<SessionPlan, "summary">): string {
     : reason;
 }
 
+/**
+ * The plan within the work budget (U-040): items are taken in the planner's order, and one
+ * that does not fit what is left is left out while the smaller ones after it still go in
+ * (before, the first item that did not fit ended the plan, so one large task emptied it). The
+ * items left out are on the plan as `leftOutForBudget`, in order, for the summary to name.
+ */
 export function cutPlanToBudget(plan: SessionPlan, workBudgetUsdMicro: number): SessionPlan {
   const items: PlanItem[] = [];
+  const leftOut: PlanItem[] = [];
   let total = 0;
   for (const item of plan.items) {
-    if (total + item.estimateUsdMicro > workBudgetUsdMicro) break;
+    if (total + item.estimateUsdMicro > workBudgetUsdMicro) {
+      leftOut.push(item);
+      continue;
+    }
     items.push(item);
     total += item.estimateUsdMicro;
   }
-  const cut = plan.items.length - items.length;
   return {
     items,
     estimateUsdMicro: total,
-    summary: cut > 0 ? `${plan.summary} (${cut} item(s) cut to fit the budget)` : plan.summary,
+    summary:
+      leftOut.length > 0
+        ? `${plan.summary} (${leftOut.length} item(s) cut to fit the budget)`
+        : plan.summary,
+    ...(leftOut.length > 0 ? { leftOutForBudget: leftOut, workBudgetUsdMicro } : {}),
   };
 }
 
@@ -2111,6 +2158,8 @@ function summarize(x: {
   cancelled?: string[];
   /** Tasks moved while their run was going (U-039), named in their own line. */
   movedWhileRunning?: readonly MovedWhileRunning[];
+  /** Ready tasks waiting on a task not done (U-040), named with what they wait on. */
+  waiting?: readonly WaitingTask[];
   retried: string[];
   blockedByFindings: string[];
   merges?: readonly MergeOutcome[];
@@ -2129,12 +2178,17 @@ function summarize(x: {
     ...(x.stopReason === "plan_awaiting_approval"
       ? ["The plan awaits your approval in the inbox; nothing ran."]
       : []),
-    // U-009: a session works only on ready tasks; say how to give it some.
+    // U-009: a session works only on ready tasks; say how to give it some. U-040: a ready task
+    // that waits on another, or that does not fit the budget, is not "no task is ready".
     ...(x.plan && x.plan.items.length === 0
       ? [
-          'Nothing to plan: no task is ready. Give the agent work first: add a task (the Tasks tab, or "add a task: ..." in Chat), mark a draft task ready on the Tasks tab, or approve the plan waiting in the Inbox.',
+          (x.waiting?.length ?? 0) + (x.plan.leftOutForBudget?.length ?? 0) > 0
+            ? "Nothing to plan: no ready task can run in this session (below)."
+            : 'Nothing to plan: no task is ready. Give the agent work first: add a task (the Tasks tab, or "add a task: ..." in Chat), mark a draft task ready on the Tasks tab, or approve the plan waiting in the Inbox.',
         ]
       : []),
+    ...summarizeLeftOut(x.plan),
+    ...summarizeWaiting(x.waiting ?? []),
     `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}.${
       x.cancelled?.length ? ` Cancelled: ${x.cancelled.length}.` : ""
     } Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
@@ -2153,6 +2207,55 @@ function summarize(x: {
     `Spent $${(x.spent / 1e6).toFixed(2)}.`,
   ];
   return parts.join(" ");
+}
+
+/** The planned tasks left out to fit the work budget (U-040), by title and estimate. */
+function summarizeLeftOut(plan: SessionPlan | null): string[] {
+  const out = plan?.leftOutForBudget ?? [];
+  if (out.length === 0) return [];
+  const usd = (micro: number) => `$${(micro / 1e6).toFixed(2)}`;
+  const named = out.map((i) => `"${i.title}" (about ${usd(i.estimateUsdMicro)})`).join(", ");
+  return [
+    `Left out for budget: ${named}; this session's work budget was ${usd(
+      plan?.workBudgetUsdMicro ?? 0,
+    )}. Start a session with a larger budget, or give ${out.length === 1 ? "the task" : "each task"} a smaller one on the Tasks tab.`,
+  ];
+}
+
+/**
+ * The ready tasks that wait on another (U-040), each with what it waits on and that task's
+ * state. A cancelled, failed or missing one does not finish by itself, so the line says what
+ * to do; one that is merely not done yet just waits.
+ */
+function summarizeWaiting(waiting: readonly WaitingTask[]): string[] {
+  if (waiting.length === 0) return [];
+  const shown = waiting.slice(0, 10);
+  const named = shown
+    .map(
+      (w) =>
+        `"${w.task.title}" waits on ${w.waitsOn
+          .map((d) =>
+            d.title === null
+              ? `a task that does not exist (${d.id})`
+              : `"${d.title}" (${STATUS_WORDS[d.status ?? "ready"] ?? d.status})`,
+          )
+          .join(" and ")}`,
+    )
+    .join("; ");
+  const more = waiting.length > shown.length ? `; and ${waiting.length - shown.length} more` : "";
+  const stuck = waiting.some((w) =>
+    w.waitsOn.some(
+      (d) =>
+        d.status === null || (STUCK_DEPENDENCY_STATUSES as readonly string[]).includes(d.status),
+    ),
+  );
+  return [
+    `Waiting on other tasks: ${named}${more}.${
+      stuck
+        ? " A cancelled, failed or missing task is never done by itself: change the waiting task's dependencies on the Tasks tab, or mark the failed one ready again."
+        : ""
+    }`,
+  ];
 }
 
 /** What a status reads as in the summary (the Tasks tab's words). */

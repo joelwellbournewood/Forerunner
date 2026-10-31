@@ -3,7 +3,9 @@ import { type CreateTaskInput, describeError, type TaskView } from "../../api/cl
 import { Dialog } from "../../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS } from "../../components/ui.tsx";
 import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
+import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
+import { DependencyPicker } from "./DependencyPicker.tsx";
 
 /** Prefill for "make this a task" from chat: a ready task with the message as the outcome (U-016). */
 export interface TaskSeed {
@@ -60,7 +62,12 @@ export function NewTaskDialog({
   const [priority, setPriority] = useState(5);
   const [budget, setBudget] = useState("");
   const [status, setStatus] = useState<"draft" | "ready">("ready");
-  const [dependsOn, setDependsOn] = useState("");
+  const [dependsOn, setDependsOn] = useState<string[]>([]);
+  // The tasks it may wait on, by title (U-040): picked, never typed as ids.
+  const projectTasks = useAsync(
+    (signal) => (open ? client.tasks(projectId, { limit: 500 }, signal) : Promise.resolve(null)),
+    [client, projectId, open],
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,7 +78,7 @@ export function NewTaskDialog({
     setStatus(seed?.status ?? "ready");
     setCriteria("");
     setBudget("");
-    setDependsOn("");
+    setDependsOn([]);
     setRiskTier(PROJECT_DEFAULT_TIER);
     setPriority(5);
     setError(null);
@@ -98,10 +105,7 @@ export function NewTaskDialog({
       ...(riskTier === PROJECT_DEFAULT_TIER ? {} : { riskTier: Number(riskTier) }),
       priority,
       status,
-      dependsOn: dependsOn
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
+      dependsOn,
       budgetUsdMicro: chf !== null ? chfMicroToUsdMicro(chf, reference) : 0,
     };
     try {
@@ -201,14 +205,18 @@ export function NewTaskDialog({
             </select>
           </Field>
         </div>
-        <Field label="Depends on" hint="Task ids, comma-separated.">
-          <input
-            className={INPUT_CLASS}
-            value={dependsOn}
-            onChange={(e) => setDependsOn(e.target.value)}
-            name="dependsOn"
+        <fieldset className="text-sm">
+          <legend className="mb-1 block font-medium">Depends on</legend>
+          <DependencyPicker
+            tasks={projectTasks.data}
+            loading={projectTasks.loading}
+            selected={dependsOn}
+            onChange={setDependsOn}
           />
-        </Field>
+          <span className="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+            The tasks that must be done before this one runs. Change them later on the Tasks tab.
+          </span>
+        </fieldset>
         {error ? <ErrorBanner message={error} /> : null}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>

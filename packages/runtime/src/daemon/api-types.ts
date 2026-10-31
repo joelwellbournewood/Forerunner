@@ -560,6 +560,54 @@ export const TransitionTaskBody = z.object({
   reason: z.string().min(1),
 });
 
+/**
+ * `POST /tasks/:id/dependencies` (U-040): the tasks this task waits on, all of them (an empty
+ * list removes every dependency), with the version the screen loaded and a reason for the row.
+ */
+export const SetTaskDependenciesBody = z.object({
+  version: z.number().int(),
+  dependsOn: z.array(z.string()),
+  reason: z.string().min(1),
+});
+export type SetTaskDependenciesBody = z.infer<typeof SetTaskDependenciesBody>;
+
+/** A ready task as the start check names it: what the planner prices it at. */
+export const StartCheckTaskView = z.object({
+  taskId: z.string(),
+  title: z.string(),
+  estimate: Money,
+});
+export type StartCheckTaskView = z.infer<typeof StartCheckTaskView>;
+
+/**
+ * `GET /projects/:id/start-check` (U-040): what a session started now would plan. `runnable`
+ * would run; `overBudget` would be left out because it does not fit the work budget (the cap
+ * less the review reserve); `waiting` waits on a task that is not done, each dependency with
+ * its title and status (both null for a task that does not exist).
+ */
+export const StartCheckView = z.object({
+  projectId: z.string(),
+  sessionBudget: Money,
+  workBudget: Money,
+  ready: z.number().int().nonnegative(),
+  runnable: z.array(StartCheckTaskView),
+  overBudget: z.array(StartCheckTaskView),
+  waiting: z.array(
+    z.object({
+      taskId: z.string(),
+      title: z.string(),
+      waitsOn: z.array(
+        z.object({
+          taskId: z.string(),
+          title: z.string().nullable(),
+          status: z.string().nullable(),
+        }),
+      ),
+    }),
+  ),
+});
+export type StartCheckView = z.infer<typeof StartCheckView>;
+
 export const AnswerRequestBody = z.object({ version: z.number().int(), answer: z.unknown() });
 
 /** Where task commands run on this machine (ADR 0007): a container when an engine is reachable. */
@@ -1870,7 +1918,12 @@ export const DAEMON_ROUTES = {
   project: "GET /projects/:id",
   projectSummary: "GET /projects/:id/summary",
   tasks: "GET /projects/:id/tasks?status=&limit=",
-  createTask: "POST /projects/:id/tasks",
+  createTask:
+    "POST /projects/:id/tasks (CreateTaskBody -> 201 TaskView; dependsOn must name tasks of the project that are not cancelled, else 409 conflict with cause validation and a message naming them, U-040)",
+  setTaskDependencies:
+    "POST /tasks/:id/dependencies (SetTaskDependenciesBody { version, dependsOn, reason } -> TaskView: the tasks it waits on, all of them; an id that is no task of the project, the task itself, a cancelled task or a cycle is 409 conflict with cause validation and a message naming it, a stale version 409 conflict, nothing written; 404 for an unknown task; U-040)",
+  startCheck:
+    "GET /projects/:id/start-check?budgetUsdMicro= (StartCheckView: what a session started now would plan: the ready tasks it would run, those left out for budget and those waiting on a task not done, priced and cut as the runner does; without a budget the project's session cap; 404 for an unknown project; U-040)",
   planProject:
     "POST /projects/:id/plan (ProjectPlanBody -> 201 PlanProjectView: the plan written as milestone and task rows; one milestone and a flat task list in small-project mode, spec B.6, where a later plan joins the project's open milestone (reusedMilestone), which keeps its name and takes the plan's new success criteria and a later target date (merged says what was added; an audit row project.plan carries the plan's reason); an unknown dependency, a cycle, an empty plan or one over the caps is refused as 409 conflict with cause validation (ADR 0025) and nothing is written; 404 for an unknown project)",
   transitionTask: "POST /tasks/:id/transition",

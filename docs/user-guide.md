@@ -59,7 +59,11 @@ wait on you, and the latest critic grade. The active project is always shown in 
   **Needs me** or **Send to review** on a task a session is working on stops that task's run
   at once; the session goes on with its other tasks and leaves the task as you set it, and its
   summary names the task you moved. The same move from the phone or Chat stops the run within
-  a few seconds.
+  a few seconds. A task shows the tasks it waits on by title ("after …"); **Depends on…**
+  changes them, from a list of the project's tasks. A task that waits on a cancelled or failed
+  task says so, since no session runs it until you change what it depends on (or mark the
+  failed one ready again). A task cannot wait on itself, on a cancelled task, or on a task
+  that already waits on it.
 - **Docs**: the standard document set the agent maintains.
 - **Reviews**: critic findings and grades over time.
 - **Costs**: spend by model, specialist and task, in CHF, with the savings from caching and
@@ -81,6 +85,11 @@ by hand. The live view shows the event stream in plain words, the current task a
 the step count and the running cost against the cap; escalations are highlighted. Raw output is
 behind a toggle. A session stops cleanly when it reaches 80% of its cap (it finishes the
 current task and starts nothing new), when its wall clock runs out, or when you stop it.
+
+A session plans the ready tasks that fit its budget, highest priority first; a task too large
+for the budget is left out and the smaller ones after it still run. **Start session** says
+before you start when no ready task can run (each one that waits on another task, and each
+one larger than the budget, by name) and what to do; the session's summary names the same.
 
 ## Inbox
 

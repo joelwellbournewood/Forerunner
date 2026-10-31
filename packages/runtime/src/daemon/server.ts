@@ -97,8 +97,10 @@ import {
   PinLessonBody,
   type PlanProjectView,
   RenameAgentBody,
+  SetTaskDependenciesBody,
   SpeakBody,
   type SpeakStartedView,
+  type StartCheckView,
   StartSessionBody,
   type StartSessionView,
   StartVoiceSessionBody,
@@ -842,6 +844,9 @@ export function createDaemonApp(
   app.post("/projects/:id/tasks", async (c) => {
     const body = await parse(c, CreateTaskBody);
     const project = await rt.store.project.mustGet(c.req.param("id"));
+    // U-040: a dependency that is no task of the project (a typo) or a cancelled one would
+    // keep the task from ever running; it is refused with the names, nothing is written.
+    const dependsOn = await rt.store.task.checkDependencies(project.id, null, body.dependsOn);
     const t = await rt.store.task.insert({
       project_id: project.id,
       milestone_id: body.milestoneId ?? null,
@@ -852,7 +857,7 @@ export function createDaemonApp(
       risk_tier: body.riskTier ?? defaultRiskTier(project),
       status: body.status,
       priority: body.priority,
-      depends_on: body.dependsOn,
+      depends_on: dependsOn,
       budget_usd_micro: body.budgetUsdMicro,
       est_cost_usd_micro: 0,
       actual_cost_usd_micro: 0,
@@ -931,6 +936,48 @@ export function createDaemonApp(
     rt.kill.stopTask(t.id, `${t.status} by you: ${body.reason}`);
     rt.events.emit("project", { id: t.project_id });
     return c.json(taskView(t, chf()));
+  });
+
+  // The tasks a task waits on, changed after it was created (U-040): checked as at creation,
+  // plus the task itself and a cycle, with the version the screen loaded and the reason.
+  app.post("/tasks/:id/dependencies", async (c) => {
+    const body = await parse(c, SetTaskDependenciesBody);
+    const t = await rt.store.task.setDependencies(
+      c.req.param("id"),
+      body.version,
+      body.dependsOn,
+      body.reason,
+      { humanId: rt.human.id },
+    );
+    rt.events.emit("project", { id: t.project_id });
+    return c.json(taskView(t, chf()));
+  });
+
+  // What a session started now would plan (U-040): the Start dialog names the tasks that would
+  // run, those left out for budget and those waiting on another task.
+  app.get("/projects/:id/start-check", async (c) => {
+    const budget = intQuery(c, "budgetUsdMicro", 0, Number.MAX_SAFE_INTEGER);
+    const r = await rt.startCheck(c.req.param("id"), budget > 0 ? budget : undefined);
+    const rate = chf();
+    const named = (t: { taskId: string; title: string; estimateUsdMicro: number }) => ({
+      taskId: t.taskId,
+      title: t.title,
+      estimate: money(t.estimateUsdMicro, rate),
+    });
+    const view: StartCheckView = {
+      projectId: r.projectId,
+      sessionBudget: money(r.sessionBudgetUsdMicro, rate),
+      workBudget: money(r.workBudgetUsdMicro, rate),
+      ready: r.ready,
+      runnable: r.runnable.map(named),
+      overBudget: r.overBudget.map(named),
+      waiting: r.waiting.map((w) => ({
+        taskId: w.taskId,
+        title: w.title,
+        waitsOn: w.waitsOn.map((d) => ({ taskId: d.id, title: d.title, status: d.status })),
+      })),
+    };
+    return c.json(view);
   });
 
   app.get("/projects/:id/runs", async (c) => {

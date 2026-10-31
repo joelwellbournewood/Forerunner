@@ -1,8 +1,8 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { describeError, type StartSessionView } from "../../api/client.ts";
+import { describeError, type StartCheckView, type StartSessionView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
-import { Button, ErrorBanner, Field, INPUT_CLASS } from "../../components/ui.tsx";
+import { Button, ErrorBanner, Field, INPUT_CLASS, Money } from "../../components/ui.tsx";
 import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient, useIdentity } from "../../store/context.tsx";
@@ -17,6 +17,50 @@ export function startNotice(result: StartSessionView["result"]): string {
     default:
       return "Starting: the session appears under Sessions in a moment.";
   }
+}
+
+/** How the dialog names what a waiting task waits on (U-040). */
+export function waitsOnText(waitsOn: StartCheckView["waiting"][number]["waitsOn"]): string {
+  return waitsOn
+    .map((d) =>
+      d.title === null
+        ? `a task that does not exist (${d.taskId})`
+        : `"${d.title}" (${d.status === "needs_human" ? "needs you" : d.status})`,
+    )
+    .join(" and ");
+}
+
+/** True when a waiting task waits on one that never finishes by itself (U-040). */
+function stuck(w: StartCheckView["waiting"][number]): boolean {
+  return w.waitsOn.some(
+    (d) => d.status === null || d.status === "cancelled" || d.status === "failed",
+  );
+}
+
+/**
+ * The tasks a session started now would not run (U-040): the ones waiting on another task and
+ * the ones that do not fit the work budget, each by title with what holds it back.
+ */
+function NotInThisSession({ check }: { check: StartCheckView }) {
+  return (
+    <ul className="mt-1 list-disc pl-5">
+      {check.waiting.map((w) => (
+        <li key={w.taskId} data-testid="start-session-waiting">
+          "{w.title}" waits on {waitsOnText(w.waitsOn)}
+          {stuck(w)
+            ? ": that will not be done by itself. Change what it depends on (Tasks tab, Depends on…) or mark the failed task ready again."
+            : "."}
+        </li>
+      ))}
+      {check.overBudget.map((t) => (
+        <li key={t.taskId} data-testid="start-session-over-budget">
+          "{t.title}" needs about <Money value={t.estimate} />, more than this session's work budget
+          of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
+          session a larger budget, or the task a smaller one.
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /**
@@ -43,13 +87,23 @@ export function StartSessionDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // A session works only on ready tasks (U-009): look before the human starts one for nothing.
-  const ready = useAsync(
+  // A session works only on ready tasks it can run (U-009, U-040): look before the human starts
+  // one for nothing, with the budget typed so far (the project's cap while it is empty).
+  const typedChf = budget.trim() ? chfToMicro(budget) : null;
+  const budgetUsdMicro =
+    typedChf !== null && typedChf > 0 ? chfMicroToUsdMicro(typedChf, reference) : undefined;
+  const check = useAsync(
     (signal) =>
-      open ? client.tasks(projectId, { status: "ready", limit: 1 }, signal) : Promise.resolve(null),
-    [client, projectId, open],
+      open ? client.startCheck(projectId, { budgetUsdMicro }, signal) : Promise.resolve(null),
+    [client, projectId, open, budgetUsdMicro],
   );
-  const noReadyTask = Array.isArray(ready.data) && ready.data.length === 0;
+  const noReadyTask = check.data !== null && check.data.ready === 0;
+  const nothingRuns = check.data !== null && !noReadyTask && check.data.runnable.length === 0;
+  const someLeftOut =
+    check.data !== null &&
+    !noReadyTask &&
+    !nothingRuns &&
+    check.data.waiting.length + check.data.overBudget.length > 0;
   useEffect(() => {
     if (!open) setNotice(null);
   }, [open]);
@@ -132,6 +186,31 @@ export function StartSessionDialog({
               <li>or ask in Chat, for example "add a task: write the README";</li>
               <li>or approve the plan waiting in the Inbox, if you gave a brief.</li>
             </ul>
+          </div>
+        ) : null}
+        {nothingRuns && check.data ? (
+          <div
+            role="note"
+            className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+            data-testid="start-session-cannot-run"
+          >
+            <p className="font-medium">
+              {check.data.ready === 1
+                ? "The ready task cannot run in this session."
+                : `None of the ${check.data.ready} ready tasks can run in this session.`}
+            </p>
+            <p className="mt-1">A session would plan nothing and end at once:</p>
+            <NotInThisSession check={check.data} />
+          </div>
+        ) : null}
+        {someLeftOut && check.data ? (
+          <div
+            role="note"
+            className="rounded border border-blue-200 bg-blue-50 p-2 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
+            data-testid="start-session-left-out"
+          >
+            <p className="font-medium">Not in this session:</p>
+            <NotInThisSession check={check.data} />
           </div>
         ) : null}
         {error ? <ErrorBanner message={error} /> : null}

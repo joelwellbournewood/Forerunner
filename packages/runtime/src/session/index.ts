@@ -19,4 +19,6 @@ export * from "./plan-approval.ts";
 /** Small-project mode (spec B.6): the default tier of a new task and the plan writer. */
 export * from "./project-plan.ts";
 export * from "./runner.ts";
+/** What a session started now would plan, and what it would not (U-040): the Start dialog. */
+export * from "./start-check.ts";
 export * from "./triggers.ts";

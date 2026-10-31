@@ -652,6 +652,60 @@ export function defineStateSuite(target: SuiteTarget): void {
         ]);
         expect([free.id, ghost.id, draft.id].includes(blocked.id)).toBe(false);
       });
+
+      it("waitingTasks names what each ready task waits on, a missing task as null (U-040)", async () => {
+        const dep = await readyTask("dep");
+        const blocked = await readyTask("blocked", { depends_on: [dep.id], priority: 10 });
+        const ghost = await readyTask("ghost", { depends_on: ["does-not-exist"] });
+        await readyTask("free");
+        expect(
+          (await store.task.waitingTasks(s.project.id)).map((w) => [w.task.id, w.waitsOn]),
+        ).toEqual([
+          [blocked.id, [{ id: dep.id, title: "dep", status: "ready" }]],
+          [ghost.id, [{ id: "does-not-exist", title: null, status: null }]],
+        ]);
+      });
+
+      it("checkDependencies refuses another project's task, a cancelled one, the task itself and a cycle through others (U-040)", async () => {
+        const a = await readyTask("a");
+        const b = await readyTask("b", { depends_on: [a.id] });
+        const c = await readyTask("c", { depends_on: [b.id] });
+        const gone = await store.task.insert({
+          project_id: s.project.id,
+          title: "gone",
+          status: "cancelled",
+        });
+        const other = await store.project.insert({ name: "Other", goal: "elsewhere" });
+        const foreign = await store.task.insert({ project_id: other.id, title: "foreign" });
+        // Duplicates and blanks are dropped; known ids pass.
+        expect(
+          await store.task.checkDependencies(s.project.id, null, [a.id, ` ${a.id} `, ""]),
+        ).toEqual([a.id]);
+        const reasonOf = async (taskId: string | null, deps: string[]) => {
+          try {
+            await store.task.checkDependencies(s.project.id, taskId, deps);
+            return "accepted";
+          } catch (e) {
+            return (e as { code: string; details?: { reason?: string } }).details?.reason;
+          }
+        };
+        expect(await reasonOf(null, [foreign.id])).toBe("unknown_dependency");
+        expect(await reasonOf(null, [gone.id])).toBe("cancelled_dependency");
+        expect(await reasonOf(a.id, [a.id])).toBe("self_dependency");
+        // a <- b <- c: a waiting on c closes the loop through b.
+        expect(await reasonOf(a.id, [c.id])).toBe("dependency_cycle");
+        expect(await reasonOf(c.id, [a.id, b.id])).toBe("accepted");
+        // setDependencies writes the checked list with the version check and the actor.
+        const set = await store.task.setDependencies(c.id, c.version, [a.id, a.id], "both", {
+          humanId: s.human.id,
+        });
+        expect(set.depends_on).toEqual([a.id]);
+        expect(set.reason).toBe("both");
+        await expectCode(
+          store.task.setDependencies(c.id, c.version, [], "stale"),
+          "version_conflict",
+        );
+      });
     });
 
     describe("messages", () => {

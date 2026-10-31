@@ -144,7 +144,15 @@ function IntakeTaskList({ tasks }: { tasks: IntakeCardTask[] }) {
             {" "}
             · tier {t.riskTier ?? "default"}, priority {t.priority}
             {t.specialist ? `, ${t.specialist}` : ""}
-            {t.dependsOn.length ? `, after ${t.dependsOn.join(", ")}` : ""}
+            {t.dependsOn.length
+              ? `, after ${t.dependsOn
+                  // The plan's keys name its own tasks: shown by title (U-040).
+                  .map((k) => {
+                    const dep = tasks.find((x) => x.key === k);
+                    return dep ? `"${dep.title}"` : k;
+                  })
+                  .join(", ")}`
+              : ""}
           </span>
         </li>
       ))}

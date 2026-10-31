@@ -88,6 +88,7 @@ describe("the UI client against the real daemon", () => {
       ["project", () => client.project(projectId)],
       ["projectSummary", () => client.projectSummary(projectId)],
       ["tasks", () => client.tasks(projectId)],
+      ["startCheck", () => client.startCheck(projectId)],
       ["runs", () => client.runs(projectId)],
       ["decisions", () => client.decisions(projectId)],
       ["peers", () => client.peers(projectId)],
@@ -219,6 +220,82 @@ describe("the UI client against the real daemon", () => {
     expect((await client.health()).killActive).toBe(true);
     expect((await client.resume()).killActive).toBe(false);
     expect((await client.health()).killActive).toBe(false);
+  });
+
+  it("dependencies: refused when unknown, changed by title from the Tasks tab, named by the start check (U-040)", async () => {
+    const deps = await client.createProject({ name: "Deps", goal: "Tasks that can run" });
+    const newTask = (
+      title: string,
+      dependsOn: string[] = [],
+      status: "draft" | "ready" = "draft",
+    ) =>
+      client.createTask(deps.id, {
+        title,
+        outcome: `${title} is done`,
+        acceptanceCriteria: [],
+        priority: 5,
+        status,
+        dependsOn,
+        budgetUsdMicro: 0,
+      });
+    // The New task dialog's call with a dependency that is no task of the project.
+    const refused = await newTask("Ship it", ["tsk_typo"]).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect(refused).toMatchObject({ status: 409 });
+    expect((refused as ApiError).message).toContain(
+      '"tsk_typo" is not a task of this project. Pick the tasks it waits on',
+    );
+    const parser = await newTask("Write the parser");
+    const tests = await newTask("Write the tests", [parser.id], "ready");
+    expect(tests.dependsOn).toEqual([parser.id]);
+    // The start check names the ready task and what it waits on.
+    const check = await client.startCheck(deps.id, { budgetUsdMicro: 5_000_000 });
+    expect(check).toMatchObject({ ready: 1, runnable: [], overBudget: [] });
+    expect(check.sessionBudget.usdMicro).toBe(5_000_000);
+    expect(check.waiting).toEqual([
+      {
+        taskId: tests.id,
+        title: "Write the tests",
+        waitsOn: [{ taskId: parser.id, title: "Write the parser", status: "draft" }],
+      },
+    ]);
+    // The Tasks tab's Depends on… dialog: every dependency it keeps, the version, a reason.
+    const freed = await client.setTaskDependencies(tests.id, {
+      version: tests.version,
+      dependsOn: [],
+      reason: "Dependencies changed in the app",
+    });
+    expect(freed).toMatchObject({
+      id: tests.id,
+      dependsOn: [],
+      reason: "Dependencies changed in the app",
+    });
+    expect((await client.startCheck(deps.id)).runnable.map((t) => t.title)).toEqual([
+      "Write the tests",
+    ]);
+    // A cycle is refused with the titles; nothing changes.
+    await client.setTaskDependencies(tests.id, {
+      version: freed.version,
+      dependsOn: [parser.id],
+      reason: "needs the parser",
+    });
+    const cycle = await client
+      .setTaskDependencies(parser.id, {
+        version: parser.version,
+        dependsOn: [tests.id],
+        reason: "loop",
+      })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(cycle).toBeInstanceOf(ApiError);
+    expect((cycle as ApiError).message).toContain(
+      '"Write the tests" already waits on "Write the parser"',
+    );
   });
 
   it("extensions: Approve or Deny in the panel takes the card out of the Inbox (U-030)", async () => {

@@ -111,6 +111,7 @@ import {
   ScanResultView as ScanResultViewSchema,
   type SessionView,
   SessionView as SessionViewSchema,
+  type SetTaskDependenciesBody,
   SettingView as SettingViewSchema,
   type SetupCheckView,
   SetupCheckView as SetupCheckViewSchema,
@@ -128,6 +129,8 @@ import {
   type SpeakBody,
   type SpeakView,
   SpeakView as SpeakViewSchema,
+  type StartCheckView,
+  StartCheckView as StartCheckViewSchema,
   type StartPairingBody,
   type StartSessionBody as StartSessionBodySchema,
   type StartSessionView,
@@ -278,6 +281,7 @@ export type {
   RunView,
   ScanResultView,
   SessionView,
+  SetTaskDependenciesBody,
   SetupCheckView,
   SetupFinishView,
   SetupStatusView,
@@ -285,6 +289,7 @@ export type {
   SourceCandidateView,
   SourceView,
   SpeakView,
+  StartCheckView,
   StartSessionView,
   StoredSecretsView,
   StoreSecretView,
@@ -484,6 +489,14 @@ export interface DaemonClient {
   ): Promise<TaskView[]>;
   createTask(projectId: string, body: CreateTaskInput): Promise<TaskView>;
   transitionTask(taskId: string, body: TransitionTaskBody): Promise<TaskView>;
+  /** The tasks a task waits on, all of them (U-040); refused for an unknown, cancelled or circular one. */
+  setTaskDependencies(taskId: string, body: SetTaskDependenciesBody): Promise<TaskView>;
+  /** What a session started now would plan: runnable, left out for budget, waiting (U-040). */
+  startCheck(
+    projectId: string,
+    filter?: { budgetUsdMicro?: number },
+    signal?: AbortSignal,
+  ): Promise<StartCheckView>;
   runs(projectId: string, filter?: { limit?: number }, signal?: AbortSignal): Promise<RunView[]>;
   /** Current decisions of a project (answered questions the agent never asks again). */
   decisions(projectId: string, signal?: AbortSignal): Promise<DecisionView[]>;
@@ -859,6 +872,15 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(routePath("createTask", { id: projectId }), TaskViewSchema, body),
     transitionTask: (taskId, body) =>
       post(routePath("transitionTask", { id: taskId }), TaskViewSchema, body),
+    setTaskDependencies: (taskId, body) =>
+      post(routePath("setTaskDependencies", { id: taskId }), TaskViewSchema, body),
+    startCheck: (projectId, filter, signal) =>
+      get(
+        routePath("startCheck", { id: projectId }),
+        StartCheckViewSchema,
+        { budgetUsdMicro: filter?.budgetUsdMicro },
+        signal,
+      ),
     runs: (projectId, filter, signal) =>
       get(routePath("runs", { id: projectId }), RunList, { limit: filter?.limit }, signal),
     decisions: (projectId, signal) =>
