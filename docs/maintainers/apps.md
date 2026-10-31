@@ -533,7 +533,9 @@ runtime's `ImportResultView`, parsed with it (U-006);
 "start a session", answered by "yes"/"no". The extension routes file a `capability_grant`
 request in the inbox for pending installs (answering it approves or denies), widen permissions
 into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emits
-`restart.requested` and bumps the version `/health` reports; the command routes mirror the
+`restart.requested` and bumps the version `/health` reports, or, like the daemon (U-070), answers
+400 `not_supported` (`reason: "installer_artifact"`) when the `updateArtifact` option names an
+installer; the command routes mirror the
 daemon (one card and one change log row per request, low risk acts, medium needs a yes or a
 tap, high needs `{ answer: "device" }` naming the one device row the fake has, the fixture's
 `ME.desktopDeviceId` (any other id is refused `approval_required` "unknown device; pair it

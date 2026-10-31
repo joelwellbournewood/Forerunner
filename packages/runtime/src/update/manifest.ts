@@ -99,6 +99,15 @@ export function artifactFor(
   return manifest.artifacts.find((a) => a.platform === platform);
 }
 
+/**
+ * An installer the person runs (the MSI, a setup `.exe`, the AppImage, a `.deb` or `.rpm`), not
+ * a runtime the staged install can run (U-070). The Updates screen offers it for download
+ * (`isInstallerArtifact` in `apps/ui/src/pages/UpdatesPage.tsx` uses the same list).
+ */
+export function isInstallerArtifact(name: string): boolean {
+  return /\.(msi|exe|appimage|deb|rpm)$/i.test(name.trim());
+}
+
 /** Artefact kind by file extension; only zip artefacts are unpacked by the staged install. */
 export type ArtifactKind = "zip" | "msi" | "appimage" | "deb" | "apk" | "other";
 

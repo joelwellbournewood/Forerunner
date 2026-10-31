@@ -237,6 +237,8 @@ export interface BuildReleaseOptions {
   /** Raw zip bytes instead of `files` (zip-slip tests). */
   zip?: Buffer;
   platforms?: ArtifactPlatform[];
+  /** Artefact file names per platform (default forerunner-<version>-<platform>.zip). */
+  names?: Partial<Record<ArtifactPlatform, string>>;
   /** Signing key; omitted = unsigned manifest. */
   key?: SigningKeyPair | null;
   draft?: boolean;
@@ -252,7 +254,7 @@ export function buildRelease(server: FakeReleaseServer, opts: BuildReleaseOption
   const bytes = opts.zip ?? makeZip(opts.files ?? { "app/VERSION": opts.version });
   const assets = new Map<string, Buffer>();
   const artifacts = platforms.map((platform) => {
-    const name = `forerunner-${opts.version}-${platform}.zip`;
+    const name = opts.names?.[platform] ?? `forerunner-${opts.version}-${platform}.zip`;
     assets.set(name, bytes);
     return {
       platform,

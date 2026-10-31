@@ -182,7 +182,7 @@ localSchemaVersion, platform?, fetchImpl?, humanId?, checkCacheMs? }`:
 | Method | Does |
 | --- | --- |
 | `check(by?, { fresh? })` → `UpdateCheck` | lists the channel, walks newest-first, stops at the first release that is not newer than `installedVersion()` (the pointer's current, else the running version); the first candidate that verifies, is schema-compatible and was not rolled back or failed here before becomes `available`; the ones skipped are `rejected: [{ version, reason, message }]`. The result is reused for `checkCacheMs` (default 60 s, `DEFAULT_CHECK_CACHE_MS`; 0 disables) while the installed version is unchanged, with `cached: true`: the screen asks on every view without a feed request or an audit row. `fresh: true` (the CLI, `apply`) always asks the feed; `invalidateCheck()` runs after apply, rollback and a health verdict. Only a real feed query audits `update.check`. |
-| `stage(signed)` → `StagedInstall` | verifies the manifest, picks the artefact for `platform` (`detectArtifactPlatform()`: windows-x64, linux-x64, android), streams the download to the staging directory while hashing (more bytes than the manifest says is `tampered` at once), checks size and SHA-256, unpacks a `.zip` with `unpackZip` (refuses `..` segments, absolute and drive-letter names, backslashes, NUL, symlink entries, and any entry that resolves outside the target) or keeps a non-zip artefact as one file, writes `release.json`, renames the staging directory into place. Any failure removes the staging directory. |
+| `stage(signed)` → `StagedInstall` | verifies the manifest, picks the artefact for `platform` (`detectArtifactPlatform()`: windows-x64, linux-x64, android), streams the download to the staging directory while hashing (more bytes than the manifest says is `tampered` at once), checks size and SHA-256, refuses an installer artefact before downloading it (U-070, `installerRefusal`), unpacks a `.zip` with `unpackZip` (refuses `..` segments, absolute and drive-letter names, backslashes, NUL, symlink entries, and any entry that resolves outside the target) or keeps a non-zip artefact as one file, writes `release.json`, renames the staging directory into place. Any failure removes the staging directory. |
 | `apply({ by, version? })` → `ApplyResult` | under the install lock. Trust first: the manifest is verified (signature, downgrade, schema) and a release that rolled back or failed here before is refused, each audited as denied, before anyone is asked; then an agent actor needs `human.ask({ kind: approval, key: "update.apply:<version>" })` to answer `approved` (`pending` or `denied` → `approval_required`, audited as denied), so no refused release ever becomes an inbox item; then stages; inserts the `release` row (`status: published`, changelog, signature, artefacts) or reuses it; writes the pointer `{ current: version, previous: <old current or running version>, state: pending_health_check }`; audits `update.apply`; calls `restarter.restart({ reason: "update", targetVersion, fromVersion })`. |
 | `healthCheck()` → `HealthOutcome` | the first-start check, see below. |
 | `rollback({ by, reason? })` → `RollbackResult` | under the install lock. Manual rollback to `previous` (`not_found` when there is none; agents need approval, key `update.rollback:<from>:<to>`): pointer `{ current: previous when its directory exists else null, previous: null, state: installed, lastRollback: {automatic: false} }`, release row → `rolled_back` with `health: { ok: false, detail, manual: true, checkedAt, reportedBy: { human, agent } }` (the reporter, for peer installs' refusals), audit `update.rollback`, `human.notify(warning)`, restart. |
@@ -543,15 +543,20 @@ cases; skipping the open-item lookup in `ensureRequest` fails the "not every tic
   releases on the channel that is one request each (bounded by `perPage`, default 30). A
   cache keyed by release id would remove the repeat fetches.
 - On the desktop, "Update and restart" cannot replace the running build yet (ADR 0092). The
-  manifest's `windows-x64` and `linux-x64` artefacts are the MSI and the AppImage, which the
-  installer keeps as one file under `<data>/versions/<version>/`; that directory holds no
-  runnable runtime, so the shell's locator skips it and starts the bundled runtime, and the
-  health check then rolls the update back (the running version is not `current`). Installing
-  the new MSI, AppImage or `.deb` over the old one is the way to update, and the app replaces a
-  daemon older than the one it carries. So the Updates screen offers **Download the installer**
-  (the artefact's URL, `AppUpdateView.available.artifactUrl`) instead of "Update and restart"
-  when the artefact is an installer (`isInstallerArtifact`: `.msi`, `.exe`, `.AppImage`, `.deb`,
-  `.rpm`). A desktop artefact the updater can stage (the runtime
+  manifest's `windows-x64` and `linux-x64` artefacts are the MSI and the AppImage, which are
+  installers, not a runtime the staged layout can run. Installing the new MSI, AppImage or
+  `.deb` over the old one is the way to update, and the app replaces a daemon older than the
+  one it carries. So the Updates screen offers **Download the installer** (the artefact's URL,
+  `AppUpdateView.available.artifactUrl`) instead of "Update and restart" when the artefact is
+  an installer (`isInstallerArtifact`: `.msi`, `.exe`, `.AppImage`, `.deb`, `.rpm`; the same
+  list in `manifest.ts` and `UpdatesPage.tsx`). The daemon refuses one too (U-070): `apply`
+  (the route, `fr update apply`, an agent) and `stage` answer `ForerunnerError("not_supported",
+  details.reason "installer_artifact")`, 400 on `POST /updates/apply`, with "Download the
+  installer from the Updates screen and run it", before anything is downloaded, staged or
+  recorded and before a human is asked; the refusal is an `update.apply` audit row. In 1.0.4 it
+  staged the file, restarted, came back on the old build, rolled back and marked the release
+  `rolled_back` in the shared table, so every install on the store refused it
+  (`update-installer-refused.test.ts`). A desktop artefact the updater can stage (the runtime
   payload with the UI, or running the downloaded installer) is follow-up work.
 - `health.reportedBy` names a human, not an install: the release row has no install column,
   so two installs of one human over one state cannot be told apart in a refusal (the text

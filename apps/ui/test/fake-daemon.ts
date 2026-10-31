@@ -1976,6 +1976,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const body = (await c.req.json().catch(() => ({}))) as { version?: string };
     const target = body.version ?? UPDATES_FEED.app.available?.version ?? state.version;
     const from = state.version;
+    // Like the daemon (U-070, `installerRefusal`): an installer is never applied as an update.
+    const artifact = options.updateArtifact?.name;
+    if (
+      target === UPDATES_FEED.app.available?.version &&
+      artifact &&
+      /\.(msi|exe|appimage|deb|rpm)$/i.test(artifact)
+    )
+      return c.json(
+        {
+          code: "not_supported",
+          message: `Release ${target} is an installer (${artifact}), which the background service cannot apply as an update. Download the installer from the Updates screen and run it: it installs over this version and keeps your settings and data.`,
+          details: { reason: "installer_artifact", version: target, artifact },
+        },
+        400,
+      );
     emit("restart.requested", {
       reason: "update",
       targetVersion: target,

@@ -37,6 +37,7 @@ import {
   type ArtifactPlatform,
   artifactFor,
   artifactKind,
+  isInstallerArtifact,
   type ReleaseArtifact,
   type ReleaseManifest,
   type SignedManifest,
@@ -217,6 +218,28 @@ export function previouslyRejectedMessage(
       ? `on another install (reported by ${who} on ${report.at})`
       : `on an install sharing this release table on ${report.at} (reporter not recorded)`;
   return `release ${version} ${what} ${where}; cut a new release`;
+}
+
+/**
+ * U-070: an installer (the MSI, a setup `.exe`, the AppImage, a `.deb`, an `.rpm`) is not a build
+ * the staged install can run. Staged and restarted into, it left the old build running; the
+ * health check then rolled the release back and marked it rolled back in the release table every
+ * install on the store shares, so the real release was refused everywhere. It is refused before
+ * anything is downloaded, staged or recorded, and nobody is asked to approve it.
+ */
+export function installerRefusal(version: string, artifact: ReleaseArtifact): ForerunnerError {
+  return new ForerunnerError(
+    "not_supported",
+    `Release ${version} for ${artifact.platform} is an installer (${artifact.name}), which the background service cannot apply as an update. Download the installer from the Updates screen and run it: it installs over this version and keeps your settings and data.`,
+    {
+      details: {
+        reason: "installer_artifact",
+        version,
+        platform: artifact.platform,
+        artifact: artifact.name,
+      },
+    },
+  );
 }
 
 export function detectArtifactPlatform(
@@ -502,6 +525,7 @@ export class UpdateManager {
         { details: { version: manifest.version, platform: this.platform } },
       );
     }
+    if (isInstallerArtifact(artifact.name)) throw installerRefusal(manifest.version, artifact);
     const dirs = this.deps.dirs;
     const finalDir = assertInsideVersions(dirs, versionDir(dirs, manifest.version));
     const staging = assertInsideVersions(
@@ -667,6 +691,20 @@ export class UpdateManager {
         `install ${target}`,
         errorMessage(e),
         refusalReason(e) ?? "error",
+      );
+      throw e;
+    }
+    // An installer is refused before the human is asked and before anything is staged (U-070).
+    const artifact = this.platform ? artifactFor(signed.manifest, this.platform) : undefined;
+    if (artifact && isInstallerArtifact(artifact.name)) {
+      const e = installerRefusal(target, artifact);
+      await this.audit(
+        "update.apply",
+        by,
+        false,
+        `install ${target}`,
+        errorMessage(e),
+        "installer_artifact",
       );
       throw e;
     }
