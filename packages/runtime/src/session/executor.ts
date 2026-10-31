@@ -50,6 +50,7 @@ import {
   type ModeDefault,
   modelIdFor,
   projectCeilingOf,
+  retryAction,
   specialistMode,
   speedQualityOffsetOf,
   startingTier,
@@ -70,6 +71,13 @@ import {
   type SpeedMode,
   type Usage,
 } from "../provider/types.ts";
+import {
+  alternateSpecialist,
+  hasWeb,
+  lostWebTools,
+  needsWeb,
+  type SpecialistProfile,
+} from "../registry/alternates.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { RUN_COMMAND_TOOL, type SpecialistDriver, TOOL_UNMAPPED_AUDIT } from "../registry/tools.ts";
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
@@ -122,6 +130,23 @@ export interface SpecialistSpec {
   speedMode?: SpeedMode;
   /** `temperature` from the registry file; sent only to a provider that accepts one. */
   temperature?: number;
+  /** The registry entry's one-line description; the choice of a stand-in reads it (U-044). */
+  description?: string;
+  /**
+   * `allowed_tools` as the registry wrote them, before the driver's mapping (U-044): what the
+   * specialist works with, e.g. `cc:WebFetch`, which the loop driver drops. Absent: `allowedTools`.
+   */
+  registryTools?: readonly string[];
+}
+
+/** A spec as the choice of a stand-in sees it (U-044). */
+function profileOf(spec: SpecialistSpec): SpecialistProfile {
+  return {
+    name: spec.name,
+    description: spec.description ?? "",
+    registryTools: spec.registryTools ?? spec.allowedTools,
+    driverTools: spec.allowedTools,
+  };
 }
 
 /** Name of the command tool the sandbox port replaces (declared in daemon/tools.ts); re-exported for the executor's callers. */
@@ -285,7 +310,7 @@ export function retryConstraints(
       attempt === 1
         ? "retry 1 of the ladder: the brief was improved with the critic's findings below"
         : attempt === 2
-          ? "retry 2 of the ladder: keep the scope small; split the task or hand it to another specialist if it does not fit"
+          ? "retry 2 of the ladder: two attempts by another specialist failed and the task was handed to you; keep the scope small and say in the report what should be split off if it does not fit"
           : attempt >= ESCALATE_AFTER_ATTEMPTS
             ? `retry ${attempt} of the ladder: this run is escalated one model rung under the project ceiling; after this the human decides`
             : `retry ${attempt} of the ladder`;
@@ -361,14 +386,22 @@ export class LoopTaskExecutor implements TaskExecutor {
   constructor(private readonly deps: LoopTaskExecutorDeps) {}
 
   async execute(ctx: Parameters<TaskExecutor["execute"]>[0]): Promise<TaskExecutionResult> {
+    return this.runTask(ctx, false);
+  }
+
+  /** `execute`; `routed` is set on the second pass after a web-routing hand-over (U-044). */
+  private async runTask(
+    ctx: Parameters<TaskExecutor["execute"]>[0],
+    routed: boolean,
+  ): Promise<TaskExecutionResult> {
     const { store, clock } = this.deps;
     const { task, session, token, budget } = ctx;
     // A plan's "ops" or "Data Analyst" is the registry's `ops-deploy` or `data-analyst` (U-014).
     const named = ctx.item.specialist;
-    const item = this.deps.specialists(named)
+    let item = this.deps.specialists(named)
       ? ctx.item
       : { ...ctx.item, specialist: canonicalSpecialistName(named) };
-    const defaultSpec = this.deps.specialists(item.specialist);
+    let defaultSpec = this.deps.specialists(item.specialist);
     if (!defaultSpec) {
       // Not a failure of the work: nothing ran. The task waits for the person, who is told
       // which names exist; running it again unchanged would only fail again.
@@ -378,6 +411,35 @@ export class LoopTaskExecutor implements TaskExecutor {
         summary: `No specialist is named "${named}", so nothing ran.${known.length ? ` The specialists are: ${known.join(", ")}.` : ""}`,
         costUsdMicro: 0,
       };
+    }
+
+    // The ladder's second rung (spec D.2, U-044), "split or change specialist": after two failed
+    // attempts the next one goes to another specialist that can do what this one can (the
+    // registry's tools and the driver's), never to the same one again. A specialist the person
+    // gave the task to after those attempts (no run of it yet) keeps it. With no stand-in the
+    // task waits for the person: a third run of the same brief by the same specialist could
+    // only spend money.
+    if (task.attempt > 0 && retryAction(task.attempt, "sonnet") === "split_or_change_specialist") {
+      const tried = new Set((await store.run.forTask(task.id)).map((r) => r.specialist));
+      if (tried.has(defaultSpec.name)) {
+        const pick = alternateSpecialist(profileOf(defaultSpec), this.profiles(), {
+          exclude: tried,
+        });
+        const next = pick ? this.deps.specialists(pick.name) : undefined;
+        if (!next) {
+          return {
+            outcome: "needs_human",
+            summary: `${task.attempt} attempts by the ${defaultSpec.name} failed, and the retry ladder now hands the task to another specialist, but none can do what the ${defaultSpec.name} does, so nothing ran. Split the task into smaller tasks (New task on the Tasks tab) and cancel this one, or cancel it.`,
+            costUsdMicro: 0,
+          };
+        }
+        this.deps.onEvent?.(task.id, {
+          type: "warning",
+          message: `after ${task.attempt} failed attempts by the ${defaultSpec.name}, the retry ladder hands this task to the ${next.name} (split or change specialist)`,
+        });
+        item = { ...item, specialist: next.name };
+        defaultSpec = next;
+      }
     }
 
     // Retry ladder (spec D.2): the open findings of the task become constraints of the brief
@@ -499,6 +561,30 @@ export class LoopTaskExecutor implements TaskExecutor {
       choice.driver === "sdk"
         ? (this.deps.specialists(item.specialist, "sdk") ?? defaultSpec)
         : defaultSpec;
+    // Web work goes where the web is (U-044). A specialist whose registry entry works from the
+    // web (`cc:WebFetch`, `cc:WebSearch`) gets no web tool on the loop driver, which runs what is
+    // billed to an API key; such a run could only fail and be retried. The task goes to a
+    // specialist that reaches the web on this driver and can do the rest of what this one does;
+    // with none, it waits for the person, and nothing runs or is spent.
+    const profile = profileOf(spec);
+    if (needsWeb(profile) && !hasWeb(profile)) {
+      const lost = lostWebTools(profile);
+      const pick = routed
+        ? null
+        : alternateSpecialist(profile, this.profiles(choice.driver), { requireWeb: true });
+      if (pick) {
+        this.deps.onEvent?.(task.id, {
+          type: "warning",
+          message: `the ${spec.name} gets no web tools on this run (${lost.join(", ")}); the ${pick.name}, which has them, takes the task`,
+        });
+        return this.runTask({ ...ctx, item: { ...item, specialist: pick.name } }, true);
+      }
+      return {
+        outcome: "needs_human",
+        summary: `The ${spec.name} works from the web (${lost.join(", ")}), but runs billed to an API key get no web tools, and no other specialist has them there, so nothing ran. Add a Claude subscription in the setup assistant (its runs have web tools) and set the task back to ready, or cancel it.`,
+        costUsdMicro: 0,
+      };
+    }
     // A run with no worktree on the SDK path still needs a working directory: its own,
     // under the executor's work root, and that is the only path the token allows.
     const sdkCwd =
@@ -851,6 +937,19 @@ export class LoopTaskExecutor implements TaskExecutor {
       finalReport: finalText,
       lessons: this.screenedLessons(task.id, finalText, spec.name),
     };
+  }
+
+  /**
+   * The runnable specialists as the choice of a stand-in sees them (U-044), in the form of
+   * `driver` (default: the composition's). Without `specialistNames` there is no candidate.
+   */
+  private profiles(driver?: SpecialistDriver): SpecialistProfile[] {
+    const out: SpecialistProfile[] = [];
+    for (const name of this.deps.specialistNames?.() ?? []) {
+      const s = this.deps.specialists(name, driver);
+      if (s) out.push(profileOf(s));
+    }
+    return out;
   }
 
   /** The SDK deps, or a clear error when a subscription pick has no SDK path to run on. */

@@ -1397,7 +1397,15 @@ project row), and applies the verdict with `applyVerdict`:
 The retry ladder is derived from `task.attempt` (counted by the store on `failed -> ready`;
 a run never counts itself): `LoopTaskExecutor` puts the open findings and the rung into the
 brief's constraints (`retryConstraints`) and runs attempt 3 one model rung up when the
-ceiling allows (`tierForAttempt`). Tier 0 tasks keep the mechanical path (checks only, no
+ceiling allows (`tierForAttempt`). The second rung, "split or change specialist" (U-044), is
+code, not a line in the brief: at `retryAction(task.attempt) === "split_or_change_specialist"`
+the executor reads the task's Run rows and, when the planned specialist already ran it, hands
+the run to `alternateSpecialist` (`src/registry/alternates.ts`, below), patches the task's
+`specialist` (so the third rung escalates the stand-in) and says so in a run warning; with no
+stand-in the task returns `needs_human` ("none can do what the coder does ... split the task
+or cancel it") and nothing runs. A specialist the person gave the task to after the failures
+(no run of it yet) keeps it. Before U-044 the same specialist ran the same brief again.
+Tier 0 tasks keep the mechanical path (checks only, no
 critic); the store still refuses to close one with an open finding and the runner surfaces
 it. Both blocked paths end with the human (`src/session/findings.ts`): the runner files one
 blocking request per task (`change_card.key = "findings:blocked"`, options `rework` /
@@ -3222,6 +3230,26 @@ every new specialist goes through review. The composition root turns registry en
 `SpecialistSpec`s for the executor, mapping their Claude Code tool names for the driver in use
 (`tools.ts`, see "Specialist tools on each driver" under Drivers, ADR 0043). See
 `adding-a-specialist.md` for the file format and the golden eval sets under `evals/registry/`.
+
+**Stand-ins and web work (`alternates.ts`, U-044).** `alternateSpecialist(from, candidates,
+{ exclude, requireWeb })` names the specialist that takes a task over: one whose registry tools
+cover `from`'s and whose tools on the run's driver cover `from`'s there, ranked by the words its
+description shares with `from`'s less the tools it has on top, then fewer extra tools, then the
+name; null when none fits. As shipped: coder and migration-specialist stand in for each other,
+tester goes to coder, designer and writer-marketing to each other, data-analyst to
+science-evaluator; researcher and science-evaluator have none. `SpecialistSpec` carries the
+entry's `description` and `registryTools` (`allowed_tools` as written) for it. The executor
+uses it at the ladder's second rung (above) and for web work. **The choice for web work:**
+the loop driver gets no web tool (WebFetch and WebSearch have no equivalent there; mapping them
+onto the browser capability would widen what a specialist reaches beyond its registry entry),
+so the planner and the executor route instead. After the billing pick, a specialist whose entry
+names a web tool (`needsWeb`) on a driver that offers none (`hasWeb`; on the loop driver
+`browser_navigate` counts) goes to a stand-in that reaches the web there (`requireWeb`, a
+registry entry naming the browser tool), else returns `needs_human` saying that runs billed to
+an API key get no web tools and to add a Claude subscription; nothing runs. The intake (the plan
+writer) is told the same when the install has no subscription (`IntakeDeps.webSpecialists`,
+`NO_WEB_RULE`: "Plan no task that needs the web"). Tests: `specialist-handover.test.ts`, the
+U-044 case in `intake.test.ts`.
 
 **The approval gate (`approval.ts`, spec C.5, [ADR 0071](../decisions/0071-specialist-approval-gate.md)).**
 `SpecialistApprovals` (composed as `RuntimeApp.specialistApprovals`) is the only way a proposal

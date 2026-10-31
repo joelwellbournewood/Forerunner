@@ -52,12 +52,12 @@ value.
 | --- | --- | --- |
 | `name` | `[a-z][a-z0-9-]*` | Must equal the directory name. |
 | `version` | semver string | Bump on every prompt or limit change (see prompt_version). |
-| `description` | string | One line, shown in the extensions panel. |
+| `description` | string | One line, shown in the extensions panel. The choice of a stand-in (U-044, `src/registry/alternates.ts`) reads its words: say what kind of work the specialist does, in words a specialist of the same kind would use. |
 | `default_tier` | `haiku\|sonnet\|opus\|fable` | Starting rung; the runtime applies the project ceiling and `startingTier` from the ladder. The loader does not check the ceiling. |
 | `default_effort`, `max_effort` | `low\|medium\|high\|xhigh\|max` | `default_effort` must not exceed `max_effort`. A run's effort starts from the effort table's row of the specialist's mode (spec D.4: "defaults from the effort table"; the model watch's adopted efforts apply there), not from `default_effort`, which is validated and shown in the extensions panel only. The runtime raises effort by tier (coder: high at tier 2+), the project slider and the agent's override, never above `max_effort`: the executor caps the run there with a session-log warning, `model.settings.set` refuses a higher override and the settings screen does not offer one (ADR 0072). |
 | `allowed_tools` | string[] | The ceiling of tools a token for this specialist may contain. Forerunner tool names (validated against `ToolRegistry.names()` when the loader is given them) or Claude Code tools as `cc:Read`, `cc:Edit`, `cc:Bash` (validated against `KNOWN_CLAUDE_CODE_TOOLS`). `*` is rejected anywhere. The names are the Agent SDK driver's; on the loop driver each `cc:` name becomes its built-in equivalent or is dropped with an audit row (see "How `allowed_tools` reach a run", ADR 0043). |
 | `allowed_domains` | string[] | Hosts the specialist always needs (`api.example.com`, `*.example.com`). Project grants add to this; `*` is rejected. |
-| `max_budget_usd` | number > 0 | Cap per run; the runtime takes `min(brief budget, this, parent remaining)`. |
+| `max_budget_usd` | number > 0 | Cap per run of a task without a budget of its own; a task's budget replaces it (U-042, `runCapOf`), and the session's remainder caps both. |
 | `max_turns` | integer | Model-call cap per run (defence in depth under the session step cap). |
 | `timeout_minutes` | integer, 1 to 1440 | Wall-clock cap per run. |
 | `max_tokens` | optional integer, 1 to 128000 | Output tokens per model call (spec D.4, ADR 0072). Absent: the effort table's row of the specialist's mode (`MODE_DEFAULTS[specialistMode(name)].maxTokens`: 4096 for the coding and research rows). |
@@ -169,8 +169,19 @@ the specialist and the tool, once per pair for the life of the composition: for 
 entry at compose, and for a bridged tool that has gone at a later run start. The run token
 carries the mapped names, so the hooks check what the driver calls. The eval runner uses the
 same function (`run_command` only with a sandbox port) and logs its drops. A specialist that
-needs the web on the loop driver must name a bridged fetch tool by its Forerunner name; its
-`cc:WebFetch` is dropped there and offered on the SDK driver only.
+needs the web on the loop driver must name a bridged fetch tool by its Forerunner name (or the
+browser capability's `browser_navigate`); its `cc:WebFetch` is dropped there and offered on the
+SDK driver only. An entry that names a web tool and gets none on the run's driver never runs
+there (U-044): the executor hands the task to a specialist that reaches the web on that driver
+and can do the rest, or the task waits for the person ("runs billed to an API key get no web
+tools"), and the intake plans no web work on an install without a subscription.
+
+**Stand-ins (U-044).** When the retry ladder's second rung changes the specialist, or web work
+needs one that reaches the web, `alternateSpecialist` picks a runnable entry whose registry tools
+cover the replaced one's and whose driver tools cover its driver tools, closest by the words the
+descriptions share less the extra tools; none, and the task goes to the person. A new entry
+with the same tools as an existing one becomes that one's stand-in candidate, so its
+`description` decides between them.
 
 ### prompt_version: what every run records
 

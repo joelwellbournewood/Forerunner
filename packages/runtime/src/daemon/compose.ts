@@ -1025,6 +1025,9 @@ export function specialistSpecFrom(
       ...(d.max_tokens !== undefined ? { maxTokens: d.max_tokens } : {}),
       ...(d.speed_mode !== undefined ? { speedMode: d.speed_mode } : {}),
       ...(d.temperature !== undefined ? { temperature: d.temperature } : {}),
+      // For the choice of a stand-in (U-044): what the entry is for and the tools it names.
+      description: d.description,
+      registryTools: [...d.allowed_tools],
     };
   };
 }
@@ -2104,6 +2107,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // A rejected proposal ends the deferral of a creation with `intake: true` (spec G.5): the
     // standard set from the templates, through the same scaffold the create path runs.
     docs,
+    // U-044: specialists reach the web only on a subscription (the Agent SDK's WebFetch and
+    // WebSearch); with an API key alone the intake plans no task that needs the web.
+    webSpecialists: () => hasOauth,
   });
 
   // GitHub Projects mirror: the host comes from the vault by the secret reference in the

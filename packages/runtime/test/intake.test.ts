@@ -15,6 +15,7 @@ import {
   IntakeService,
   intakeDocsBranch,
   intakeKey,
+  NO_WEB_RULE,
   parseIntakeReply,
 } from "../src/session/intake.ts";
 import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
@@ -648,6 +649,43 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     );
     expect(runs).toHaveLength(1);
     expect(runs[0]?.prompt_version).not.toBe("");
+  });
+
+  it("with an API key alone the intake is told to plan no web work; with a subscription it is not (U-044)", async () => {
+    // This install has no Claude subscription: every specialist run goes through the loop
+    // driver, where the researcher and the science-evaluator lose WebFetch and WebSearch.
+    replies.push({ text: "no json here" });
+    const apiOnly = await createProject({
+      name: "Web plan, key only",
+      goal: "g",
+      brief: "Compare hosts",
+    });
+    await expect(rt.intake.propose(apiOnly)).rejects.toMatchObject({ code: "validation" });
+    expect(provider.calls.at(-1)?.system).toContain(NO_WEB_RULE);
+    const withSubscription = new IntakeService({
+      store: rt.store,
+      clock,
+      tokens: rt.tokens,
+      driver: rt.driver,
+      provider,
+      pricing: { estimate: () => 1, cost: () => 1 },
+      billingSourceId: rt.billingSourceId,
+      modelConfig: rt.modelConfig,
+      human: rt.human,
+      agent: rt.agent,
+      gitHost: host,
+      projectsRoot: rt.data.assets.projectsRoot,
+      worktreeRoot: join(home, "wt-web"),
+      webSpecialists: () => true,
+    });
+    replies.push({ text: "no json here" });
+    const sub = await createProject({
+      name: "Web plan, subscription",
+      goal: "g",
+      brief: "Compare hosts",
+    });
+    await expect(withSubscription.propose(sub)).rejects.toMatchObject({ code: "validation" });
+    expect(provider.calls.at(-1)?.system).not.toContain(NO_WEB_RULE);
   });
 
   it("the intake Run row stores the effort the call ran at: the slider's shift, held at the cap", async () => {

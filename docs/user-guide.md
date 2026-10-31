@@ -161,6 +161,16 @@ budget; each run stops at CHF 2.40 (coder limit)"). The estimate a plan shows is
 forecast. When a task reaches its budget it waits for you with what it spent: raise the budget
 and set it back to ready, split it, or cancel it; the session goes on with the other tasks.
 
+When a task fails twice, the third attempt goes to another specialist that can do the same
+work (the coder's to the migration specialist, the tester's to the coder, and so on); the
+session log says so. When no other specialist can, the task waits for you on the Tasks tab
+with what to do (split it into smaller tasks, or cancel it) instead of running the same way a
+third time.
+
+Research on the web needs a Claude subscription: runs billed to an API key have no web tools.
+On an install with an API key only, project setup plans no web research, and a task given to
+the researcher waits for you, saying so, instead of failing and being retried.
+
 ## Kill switch
 
 The tray icon and the red button in the header stop every session of one agent or of
