@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join } from "@forerunner/platform/paths";
 import { describe, expect, it } from "vitest";
 
 /**

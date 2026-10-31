@@ -254,6 +254,29 @@ private build points at its own releases and key with `FORERUNNER_UPDATE_FEED` a
 `FORERUNNER_UPDATE_TRUSTED_KEYS` (or `update.json`, `docs/maintainers/updates.md`). You can also
 install the new MSI / AppImage / `.deb` over the old one; your data stays.
 
+## Trying a build before it is released
+
+Fixes collect on a development branch before a release is cut. You can install that build and
+try the fixes first, so a release is only published once you have seen them work. You need to
+be signed in to GitHub with access to the repository.
+
+1. On GitHub, open the repository's **Actions** tab and choose **Desktop app** on the left.
+2. Find a run for the branch (a run is started for every pull request; to start one, click
+   **Run workflow**, pick the branch, and click the green **Run workflow** button). A run takes
+   about 30 to 45 minutes.
+3. Wait for a green check mark. A red run has no installers: something failed its tests, and
+   nothing from it should be installed.
+4. Open the run and scroll to **Artifacts**. Download `desktop-windows-latest` (the `.msi`) or
+   `desktop-ubuntu-latest` (the `.AppImage` and `.deb`). It is a ZIP; extract it.
+5. Quit Forerunner from the tray, then install the MSI over your current version, as for a
+   release. Your settings, keys and projects stay.
+
+A test build carries the version number of the last release (the next number is set only when
+the release is cut), so the app shows that number. To go back, install the released MSI over
+it. Every installer in a green run has been installed and started on clean Windows and Linux
+machines by the run itself, but only you can tell whether a fix does what you asked; the
+**Open and fixed, not released** table in `docs/status/UPDATE-LOG.md` lists what to try.
+
 ## Uninstall
 
 **Windows.** Settings → Apps → Forerunner → Uninstall (or `winget uninstall Forerunner`).

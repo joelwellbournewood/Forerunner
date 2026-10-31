@@ -18,6 +18,10 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - the CI runs that passed.
 - **Commits name the issue.** A commit that works on an issue puts its ID in the subject, for
   example `ui: the start dialog opens the session it started (U-003)`.
+- **The owner tries a batch before it is released.** The Desktop app workflow run of the
+  development branch (Actions → Desktop app → Run workflow) builds the installers; the owner
+  installs that build ("Trying a build before it is released" in `docs/setup-guide.md`) and
+  checks the batch's fixes. A release is cut only after that.
 - **Releases are batches.** Fixes collect on the development branch
   (`claude/optimistic-einstein-zj5xx2`) and under `## [Unreleased]` in `CHANGELOG.md`. A release
   is cut only when the owner asks for one. Then:
@@ -31,7 +35,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012 and U-018 to U-021 are open.
+- Next release: not scheduled. U-012 and U-018 to U-024 are open.
 
 ## Open and fixed, not released
 
@@ -42,6 +46,9 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-019 | 2026-10-31, 1.0.4 | "kill switch is active for this agent; resume it first" when starting a session, even after clicking Resume: the kill switch comes back every time the app starts. | Resume removes the kill request file, so a restart no longer applies an old kill again. | open |
 | U-020 | 2026-10-31, 1.0.4 | The inbox has no way to mark every message read; each needs its own click. | A "Mark all read" button above the messages. | open |
 | U-021 | 2026-10-31, 1.0.4 | Enabling an extension puts an approval in the Inbox whose two buttons both read "[object Object]", and clicking either one denies it; removing the extension leaves the approval behind, so it can appear twice. | The buttons read Approve and Deny and do that, old requests included; removing an extension takes its approval out of the Inbox. | open |
+| U-022 | 2026-10-31, 1.0.4 | A task that needs your answers (stack, hosting, repository) is given to a specialist that cannot ask you; it fails up to four times, spending money, and the Inbox then shows a critic sign-off ("approval needed") instead of the questions. | To decide with the owner (see the entry). | open |
+| U-023 | 2026-10-31, 1.0.4 | Extensions and Settings overlap: enabling voice-local in Extensions installs nothing (the install is Settings → Voice); the anthropic row switches nothing; the GitHub connector does not say the built-in GitHub works without it. | To decide with the owner (see the entry). | open |
+| U-024 | 2026-10-31, 1.0.4 | Installing GPU voice ends with "Unable to open file 'model.bin'" for speech recognition, on the GPU and the CPU, although the download reports "whisper ready"; Talk says voice is not available. | Find the cause with the owner (see the entry); then download the speech model into a plain folder instead of the shared model cache. | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -103,6 +110,82 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   start.
 - **Action:** Resume removes the file (`POST /kill/resume`, used by the header and the tray).
   Test: `packages/runtime/test/kill-resume-restart.test.ts` fails without the fix.
+- **Status:** open.
+
+### U-022 Questions for the person go to a specialist that cannot ask them
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner: "there are some human needs for the test
+  project, but I was never asked anything in any structured way".
+- **What happens:** the project's plan (made by 1.0.3's project setup, before U-017) holds the
+  task "Confirm stack, hosting and repository with the human". A session gives it to a
+  specialist (`ops`). Specialists have no tool to ask the person and no write access to
+  `docs/decisions/`, so the run ends with nothing done. The critic grades it 30, "human". After
+  the retry ladder (four attempts, about 0.05 USD each) the Inbox gets a sign-off request about
+  the critic's findings. It does not contain the questions themselves, so there is nothing to
+  answer.
+- **Cause:**
+  - project setup planned a task that only the person can do; U-017 stopped that for new
+    projects only;
+  - nothing turns "needs the person's answer" into a question in the Inbox;
+  - the retry ladder retries a task whose blocker is the person, not the worker.
+- **Options for the action (owner to choose):**
+  1. A task whose acceptance criteria need the person's answers becomes an Inbox question at
+     once (the questions, with a free-text answer per question), and the answers are written to
+     the decision doc. No specialist runs and nothing is spent.
+  2. Specialists get an "ask the person" tool that files such a question and pauses the task
+     until it is answered.
+  3. Both: (1) for planned decision tasks and (2) for questions that come up during work.
+  In every option the critic's "human" verdict on a run that reports "I need the person's
+  answers" files the questions, not a sign-off, and the ladder stops at the first such verdict.
+- **Until then:** cancel that task on the Tasks tab and write the answers in Chat ("our stack
+  is …, hosting …, repository …") or in `docs/decisions/0001-*.md` in the project workspace.
+- **Status:** open.
+
+### U-023 Extensions and Settings overlap and some switches do nothing
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner: "after enabling the voice-local option in
+  extensions, nothing really happened … why is there a connector when there is also a
+  dedicated option in the settings menu?"
+- **What happens:**
+  - `voice-local` in Extensions only marks local voice as the preferred provider; it installs
+    nothing and has no tools. The install (CPU or GPU profile, ADR 0090) is Settings → Voice.
+    Local voice is already the default, so enabling it changes nothing visible. Neither screen
+    says so.
+  - The `anthropic` row (kind model provider) is read by no code: the model uses the key or
+    subscription token entered in setup.
+  - `mcp-github` is an extra MCP server that gives agents general GitHub tools (issues, PRs,
+    search) with the same token; the built-in GitHub features (repositories, the Projects
+    mirror) do not need it, and the panel does not say so.
+- **Options for the action (owner to choose):** remove `voice-local` from Extensions and keep
+  voice only in Settings (or have the row link to Settings → Voice and show the install
+  state); remove the `anthropic` row or show it read-only as "set in Settings"; describe
+  `mcp-github` as "extra agent tools; not needed for the built-in GitHub"; add an Extensions
+  section to the user guide.
+- **Status:** open.
+
+### U-024 Voice install: speech recognition cannot open its downloaded model
+
+- **Found:** 2026-10-31 in 1.0.4, by the owner, installing into `D:\AGENT\Forerunner`:
+  "whisper ready", "kokoro ready", then "model load failed: Unable to open file 'model.bin' in
+  model '…\dependencies\voice\models\hub\models--Systran--faster-whisper-base\snapshots\…'"
+  on the GPU and the CPU, so the profile is not installed and Talk is unavailable. The first
+  GPU install had not worked either.
+- **What is known:** `fr_voice_models.py` fetches the model with faster-whisper's
+  `download_model` into the Hugging Face cache (`HF_HOME` under `dependencies\voice\models`).
+  There `snapshots\<rev>\model.bin` is a link to `blobs\<hash>` where Windows allows links, and
+  a copy otherwise. A later run skips any file whose snapshot entry exists. So a `model.bin`
+  left broken by an interrupted first install (a closed app ends a running voice install, ADR
+  0090), or a link the speech library cannot open, stays broken on every retry.
+- **Not yet known:** which of the two it is. Needs from the owner: the output of
+  `Get-Item "<that snapshot folder>\model.bin" | Format-List FullName,Length,LinkType,Target`
+  and the file system of D: (`Get-Volume D`).
+- **Workaround:** quit Forerunner, delete the folder
+  `…\dependencies\voice\models\hub\models--Systran--faster-whisper-base`, and install voice
+  again.
+- **Likely action:** download the speech model into a plain folder (`download_model(...,
+  output_dir=...)`, real files and no links) and load it from there; on "Unable to open file",
+  delete that model's folder and fetch it once more before reporting failure. Test with a
+  broken and a truncated `model.bin`.
 - **Status:** open.
 
 ### U-021 Extension approvals show "[object Object]" and both buttons deny

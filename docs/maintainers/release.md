@@ -280,6 +280,13 @@ prompts and the item briefs it was run with are kept on the `build-briefs` branc
 
 ## How to change it
 
+- **Before cutting one: the owner tries the build.** Run the Desktop app workflow
+  (`desktop.yml`, `workflow_dispatch`) on the development branch, or use the run of its pull
+  request. A green run uploads `desktop-windows-latest` (the MSI) and `desktop-ubuntu-latest`
+  (AppImage, `.deb`), each already installed and started by `installed-check.*`. The owner
+  installs it ("Trying a build before it is released" in `docs/setup-guide.md`) and checks the
+  batch's U-entries; the release is cut only after that. The test build carries the last
+  release's version number (MSI versions are numeric, and `--set` runs only at release).
 - **Cut a release.** Move the `Unreleased` entries into a `## [X.Y.Z] - date` section, bump
   the versions listed above, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. Watch the
   four jobs; the Release appears as a draft-free release (pre-release when the tag has a `-`).
