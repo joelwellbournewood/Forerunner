@@ -15,7 +15,7 @@ import type {
   StateStore,
   TaskRow,
 } from "@forerunner/state";
-import { GitOps, gitAuthFor } from "./git.ts";
+import { GitOps, type GitTokenSource, gitAuthFor, resolveGitToken } from "./git.ts";
 import type { GitHost, RepoRef } from "./types.ts";
 
 /**
@@ -101,7 +101,8 @@ export interface PrTaskExecutorDeps {
    */
   workspaceFor?: (task: TaskRow) => Promise<string | null>;
   worktreeRoot: string;
-  token?: string;
+  /** The person's token, or a function that reads it for each task (U-082). */
+  token?: GitTokenSource;
   identity?: { name: string; email: string };
   /** Branch naming; default fr/<task-id-prefix>-<slug>. */
   branchFor?: (task: TaskRow) => string;
@@ -142,7 +143,7 @@ export class PrTaskExecutor implements TaskExecutor {
     const git = new GitOps({
       cwd: dir,
       // Scoped to the clone URL's origin; a local path or SSH remote gets no header.
-      auth: gitAuthFor(this.deps.token, target.clone),
+      auth: gitAuthFor(await resolveGitToken(this.deps.token), target.clone),
       identity: this.deps.identity,
     });
     if (existsSync(join(dir, ".git"))) await git.fetch();

@@ -5,8 +5,10 @@ import {
   type GitHost,
   type GitIdentity,
   GitOps,
+  type GitTokenSource,
   gitAuthFor,
   type RepoRef,
+  resolveGitToken,
 } from "@forerunner/capabilities";
 import {
   type Clock,
@@ -155,8 +157,8 @@ export interface MergePrArtifacts {
 export interface MergePrToolDeps {
   host: GitHost;
   clock: Clock;
-  /** Git over HTTPS for the rebase push (the PR executor's token). */
-  token?: string;
+  /** Git over HTTPS for the rebase push (the PR executor's token, read when it runs; U-082). */
+  token?: GitTokenSource;
   identity?: GitIdentity;
   checksWaitMs?: number;
   checksPollMs?: number;
@@ -215,9 +217,8 @@ async function mergeChecked(
   if (input.worktree) {
     // The token is scoped to the repository's clone origin: a worktree whose remote points at
     // another host never receives it.
-    const auth = deps.token
-      ? gitAuthFor(deps.token, (await host.getRepo(ref.repo)).cloneUrl)
-      : undefined;
+    const token = await resolveGitToken(deps.token);
+    const auth = token ? gitAuthFor(token, (await host.getRepo(ref.repo)).cloneUrl) : undefined;
     const git = new GitOps({
       cwd: input.worktree,
       ...(auth ? { auth } : {}),

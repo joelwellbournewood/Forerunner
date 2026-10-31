@@ -33,6 +33,23 @@ export interface GitAuth {
 }
 
 /**
+ * Where a git step takes the person's token: the token itself, or a function that reads it
+ * when the step runs. The daemon passes a function that reads the vault, so a token replaced in
+ * the app is used by the next clone, fetch or push (U-082), as the GitHub API client already
+ * does (U-049); a token read once at start kept pushing as the old token's owner.
+ */
+export type GitTokenSource =
+  | string
+  | undefined
+  | (() => Promise<string | null | undefined> | string | null | undefined);
+
+/** The token a git step uses now (`GitTokenSource`); undefined when there is none. */
+export async function resolveGitToken(source: GitTokenSource): Promise<string | undefined> {
+  const token = typeof source === "function" ? await source() : source;
+  return token || undefined;
+}
+
+/**
  * The auth for a clone URL: the token scoped to that URL's origin, or undefined when there is
  * no token or the URL is not http(s) (a local path or SSH remote needs no header).
  */

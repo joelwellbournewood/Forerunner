@@ -1,6 +1,13 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { type GitHost, GitOps, gitAuthFor, type RepoRef } from "@forerunner/capabilities";
+import {
+  type GitHost,
+  GitOps,
+  type GitTokenSource,
+  gitAuthFor,
+  type RepoRef,
+  resolveGitToken,
+} from "@forerunner/capabilities";
 import { docFile, renderStandardDoc, STANDARD_DOCS, scaffoldDocs } from "@forerunner/memory";
 import {
   type Clock,
@@ -307,7 +314,8 @@ export interface IntakeDeps {
   human: { id: string };
   agent: { id: string; name: string };
   gitHost: GitHost;
-  gitToken?: string;
+  /** The person's token, or a function that reads it when the docs are pushed (U-082). */
+  gitToken?: GitTokenSource;
   identity?: { name: string; email: string };
   /** `<data>/projects`: the workspace of a project without a repository lives under it. */
   projectsRoot: string;
@@ -1324,7 +1332,7 @@ export class IntakeService {
     await mkdir(join(this.deps.worktreeRoot, "intake"), { recursive: true });
     // The token is scoped to the repository's clone origin (gitAuthFor) and, per command, to
     // the remote's own URL inside GitOps.
-    const auth = gitAuthFor(this.deps.gitToken, info.cloneUrl);
+    const auth = gitAuthFor(await resolveGitToken(this.deps.gitToken), info.cloneUrl);
     const git = new GitOps({
       cwd: dir,
       ...(auth ? { auth } : {}),

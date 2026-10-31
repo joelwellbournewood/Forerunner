@@ -63,8 +63,8 @@ export interface RepoCreatorDeps {
   store: StateStore;
   clock: Clock;
   host: GitHost;
-  /** The person's GitHub token, read when needed; null: no repository can be created. */
-  token: () => string | null;
+  /** The person's GitHub token, read when needed (U-082); null: no repository can be created. */
+  token: () => Promise<string | null | undefined> | string | null | undefined;
   identity?: { name: string; email: string };
   /** `<data>/projects`: the workspace pushed as the first commit lives under it. */
   projectsRoot: string;
@@ -95,7 +95,7 @@ export class RepoCreator implements RepoCommandPort {
         `${project.name} already has a repository (${project.repos[0]}); one is created only for a project without one`,
       );
     }
-    if (!this.deps.token()) throw new ForerunnerError("unavailable", NO_TOKEN);
+    if (!(await this.deps.token())) throw new ForerunnerError("unavailable", NO_TOKEN);
     const login = (await this.deps.host.whoAmI()).login;
     const owner = req.owner?.trim() || login;
     const name = req.name?.trim() || repoNameFor(project.name, project.id);
@@ -121,7 +121,8 @@ export class RepoCreator implements RepoCommandPort {
     const { store } = this.deps;
     const preview = await this.preview(req);
     const project = await store.project.mustGet(req.projectId);
-    const token = this.deps.token() as string;
+    // Read again for the push: the one the repository was created with (U-082).
+    const token = (await this.deps.token()) as string;
     let info: RepoInfo;
     try {
       info = await this.deps.host.createRepo({

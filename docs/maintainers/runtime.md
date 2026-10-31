@@ -671,7 +671,7 @@ credentials by paste instead of a terminal. `GET /setup` (`SetupStatusView`: whi
 `setupAcknowledgedAt`, the name and time zone from the human row, `restartNeeded` when a
 credential of a kind the daemon started without was stored (a replaced one is read per call:
 the Messages adapter's `apiKeySource` and the git host's `tokenSource` read the vault before
-every request, U-049; the app's assistant calls `finish` when it is left through the sidebar
+every request, U-049, and every git step reads it through `githubTokenNow` when it runs, U-082; the app's assistant calls `finish` when it is left through the sidebar
 with `restartNeeded` set), the links: the Claude Console's keys page and
 GitHub's fine-grained token form with `contents=write&pull_requests=write&issues=write&statuses=read&metadata=read`
 filled in, `GITHUB_TOKEN_URL`); `POST /setup/profile { name?, timezone? }` (config.json and

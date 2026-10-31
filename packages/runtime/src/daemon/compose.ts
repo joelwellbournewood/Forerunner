@@ -1923,6 +1923,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
 
   // Git host and the PR executor.
   const ghToken = await vault.get(SECRET_NAMES.github);
+  // Every git step (clone, fetch, push) reads the token when it runs, as the API client does
+  // (U-049): a token replaced in the setup assistant is used at once. Read once, it kept
+  // pushing as the old token's owner while the API worked as the new one (U-082).
+  const githubTokenNow = async (): Promise<string | undefined> =>
+    (await vault.get(SECRET_NAMES.github)) ?? undefined;
   const gitHost: GitHost =
     opts.gitHost ??
     (ghToken
@@ -2086,7 +2091,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         return projectWorkspaceDir(dataAssets.projectsRoot, project.id);
       },
       worktreeRoot: dirs.worktrees,
-      token: ghToken ?? undefined,
+      token: githubTokenNow,
       identity: gitIdentity,
     });
   const executor = prExecutor(true);
@@ -2097,7 +2102,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     store,
     clock,
     host: gitHost,
-    token: () => ghToken ?? null,
+    token: githubTokenNow,
     identity: gitIdentity,
     projectsRoot: dataAssets.projectsRoot,
     worktreeRoot: dirs.worktrees,
@@ -2122,7 +2127,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     repoFor: repoOfProject,
     worktreeRoot: join(dirs.worktrees, "docs"),
     projectsRoot: dataAssets.projectsRoot,
-    token: ghToken ?? undefined,
+    token: githubTokenNow,
     identity: gitIdentity,
   });
   // The merge of a reviewed PR (spec J.9, ADR 0062): after an accepting review one `merge_pr`
@@ -2135,7 +2140,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     hooks,
     host: gitHost,
     worktreeRoot: dirs.worktrees,
-    token: ghToken ?? undefined,
+    token: githubTokenNow,
     identity: gitIdentity,
   });
   // The runner's ports; the handover job builds a second runner over the same ones (below).
@@ -2215,7 +2220,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     human: { id: human.id },
     agent: principal,
     gitHost,
-    ...(ghToken ? { gitToken: ghToken } : {}),
+    gitToken: githubTokenNow,
     identity: gitIdentity,
     projectsRoot: dataAssets.projectsRoot,
     worktreeRoot: dirs.worktrees,

@@ -1,5 +1,12 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { type GitHost, GitOps, gitAuthFor, type RepoRef } from "@forerunner/capabilities";
+import {
+  type GitHost,
+  GitOps,
+  type GitTokenSource,
+  gitAuthFor,
+  type RepoRef,
+  resolveGitToken,
+} from "@forerunner/capabilities";
 import {
   STATUS_DOC,
   type StatusLists,
@@ -66,7 +73,8 @@ export interface ProjectDocsDeps {
   worktreeRoot: string;
   /** Projects without a repository keep their docs under `<projectsRoot>/<project id>/workspace`. */
   projectsRoot: string;
-  token?: string;
+  /** The person's token, or a function that reads it for each commit (U-082). */
+  token?: GitTokenSource;
   identity?: { name: string; email: string };
 }
 
@@ -285,7 +293,7 @@ export class ProjectDocs implements ProjectDocsPort {
     // config rewrite or a host answer points elsewhere, and not at all to a non-http remote.
     const git = new GitOps({
       cwd: dir,
-      auth: gitAuthFor(this.deps.token, target.clone),
+      auth: gitAuthFor(await resolveGitToken(this.deps.token), target.clone),
       identity: this.deps.identity,
     });
     if (existsSync(join(dir, ".git"))) await git.fetch();
