@@ -110,11 +110,14 @@ refused, or a proxy or antivirus that inspects HTTPS stands in between.
    - **Claude subscription** (Pro or Max): on a computer with Claude Code signed in, run
      `claude setup-token` and paste the token it prints (`sk-ant-oat…`).
 
-   You can add both; routing prefers the subscription and falls back to the key. Anthropic
-   allows a subscription token only in Claude Code, so Forerunner never sends it anywhere
-   itself: it hands it to the copy of Claude Code that comes with Forerunner, which runs your
-   tasks, and, when no API key is saved, your chat replies and reviews too. A chat reply then
-   takes a second or two longer than with an API key.
+   You can add both, and choose which is used first in Settings → **Claude: which to use
+   first**; when one cannot be used (its allowance or cap reached, or Claude says its usage
+   limit is reached), the next one is. Until you choose, tasks use the subscription first and
+   chat replies, project setup and reviews the API key first. Anthropic allows a subscription
+   token only in Claude Code, so Forerunner never sends it anywhere itself: it hands it to the
+   copy of Claude Code that comes with Forerunner. An API key always goes straight to the API
+   and never through Claude Code, because promotional API credits apply only there. A chat
+   reply through Claude Code takes a second or two longer than one on an API key.
 3. **GitHub.** Click **Create a token on GitHub**. GitHub opens its form for a fine-grained
    token with Forerunner's permissions already filled in. Under "Repository access", choose
    "Only select repositories" and pick the ones your agent may work in, then click
@@ -155,6 +158,11 @@ covers. Claude does not tell Forerunner how much of your plan it has used, so Fo
 estimates it against this amount and stops subscription work at 95% of it (an API key takes
 over when one is saved). The default is USD 50 (about CHF 40), low on purpose: a Max plan
 covers much more, and with the default its work stops early.
+
+**Which Claude credential first.** With both saved, Settings → **Claude: which to use first**
+lists them in the order every call uses them, with **Move up** / **Move down**, how each is
+used (through Claude Code, or straight to the API where promotional credits apply), whether it
+can be used now and what it spent this month (see the user guide).
 
 **Where to work.** In Settings → Sources, connect GitHub organisations or accounts, chosen
 repositories or local folders; a scan proposes a project per repository. Or create a project

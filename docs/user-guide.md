@@ -216,6 +216,27 @@ usage, so it estimates against this amount and stops subscription work at 95% of
 key takes over when you have one. The default (USD 50, about CHF 40) is low on purpose: enter
 what your plan covers, or a Max plan's work stops early.
 
+### Which Claude credential is used first
+
+With both a Claude subscription and an API key saved, Settings → **Claude: which to use first**
+lists them in the order Forerunner uses them, for everything: tasks, Chat, project setup,
+reviews and the model watch. **Move up** and **Move down** change the order; the change is in
+Changes, where you can undo it. Each row says:
+
+- how it is used: the subscription always runs **through Claude Code**; an API key always goes
+  **straight to the API**, which is where promotional API credits apply (they do not apply to
+  use through Claude Code, so Forerunner never sends an API key there);
+- whether it can be used now, and why not: this month's allowance is reached, its monthly cap
+  is reached, it rests after a usage limit (until the time shown), or no key is saved;
+- what it has spent this month: the subscription as a share of its allowance, an API key in CHF.
+
+When the first one cannot be used, the next one is. If Claude says the subscription's usage
+limit is reached, the subscription rests until the time Claude gives (an hour when it gives
+none), the call is made again with the API key, and the session log says so; a task stopped
+that way goes back to ready and runs on the next credential, without counting as a failed
+attempt. Until you choose an order, tasks use the subscription first and Chat, project setup
+and reviews use the API key first.
+
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
 without a budget stops each run at its specialist's limit, and the Tasks tab says so ("no
@@ -319,8 +340,8 @@ out your words, each finished sentence of the reply and the end of the reply.
 Each thing has one place. **Settings** is how Forerunner itself works; **Extensions** is what
 your agents may reach beyond their built-in tools.
 
-- **Settings**: your agent's name, the model and its key or subscription (set in the setup),
-  budgets and autonomy, **Voice** (installing local voice, CPU or GPU, and which voice providers
+- **Settings**: your agent's name, the model and its key or subscription (set in the setup)
+  and which is used first, budgets and autonomy, **Voice** (installing local voice, CPU or GPU, and which voice providers
   are in force), **Email** (your agent's mailbox and mode, on the Email page) and your paired
   devices.
 - **Extensions**: each extra capability with what it is granted (tools, domains, secrets,

@@ -21,6 +21,7 @@ import { HotkeySettings } from "../shell/HotkeySettings.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference, UiState } from "../store/store.ts";
 import { AgentNameSection } from "./AgentNameSection.tsx";
+import { BillingOrderSection } from "./BillingOrderSection.tsx";
 import { DesktopAllowlistSection } from "./DesktopAllowlistSection.tsx";
 import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
@@ -659,6 +660,8 @@ export function SettingsPage() {
       </div>
 
       <PlanAllowanceSection />
+
+      <BillingOrderSection />
 
       <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
         <h2 className="font-semibold">Appearance</h2>
