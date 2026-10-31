@@ -12,8 +12,15 @@ use serde_json::Value;
 use crate::secret::{Secret, redact};
 
 pub const DAEMON_FILE: &str = "daemon.json";
-/// `GET /health` must answer within this on a local socket; anything slower is "not there".
+/// Once connected, `GET /health` must answer within this; a daemon slower than that is slow
+/// or busy (U-065), not gone.
 pub const HEALTH_TIMEOUT: Duration = Duration::from_millis(1500);
+/// How long the `/health` probe waits for the connection itself. It is longer than
+/// `HEALTH_TIMEOUT` because of Windows: a connection to a port where nothing listens is
+/// refused only after about two seconds (Windows tries again before it gives up). Under one
+/// limit for both, that refusal arrived as a time-out, so a daemon that had gone was taken
+/// for a slow one: the shell waited for it instead of starting the daemon.
+pub const HEALTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Every other request (the tray's actions: `/shutdown`, `/kill`, `/kill/resume`, the email
 /// toggle, desktop revoke; and the reads `/me`, `/desktop/status`, the email settings) waits
 /// this long for its answer (U-064). An action does work before it answers (the kill switch
@@ -340,10 +347,19 @@ impl DaemonClient {
             .no_proxy()
             .build()
             .map_err(|e| e.to_string())?;
+        // The probe: a long limit for the connection (a refusal on Windows takes about 2 s), the
+        // short one for the answer, and both together as the bound on the whole probe.
+        let health_http = reqwest::Client::builder()
+            .connect_timeout(HEALTH_CONNECT_TIMEOUT)
+            .read_timeout(HEALTH_TIMEOUT)
+            .timeout(HEALTH_CONNECT_TIMEOUT + HEALTH_TIMEOUT)
+            .no_proxy()
+            .build()
+            .map_err(|e| e.to_string())?;
         Ok(Self {
             base: url.trim_end_matches('/').to_string(),
             token,
-            health_http: timed(HEALTH_TIMEOUT)?,
+            health_http,
             request_http: timed(REQUEST_TIMEOUT)?,
             stream_http,
             timeouts: (HEALTH_TIMEOUT, REQUEST_TIMEOUT),
@@ -392,8 +408,9 @@ impl DaemonClient {
         parse_health(&text).map_err(HealthError::Bad)
     }
 
-    /// A time-out (the connection was accepted, or the listen queue is full) is a slow daemon;
-    /// any other failure means nothing usable answers there.
+    /// A time-out (the connection was accepted and no answer came, or the listen queue stayed
+    /// full for `HEALTH_CONNECT_TIMEOUT`) is a slow daemon; any other failure, a refused
+    /// connection included, means nothing usable answers there.
     fn classify(&self, e: reqwest::Error) -> HealthError {
         if e.is_timeout() {
             HealthError::Slow(self.scrub(e))
@@ -731,6 +748,32 @@ mod tests {
         assert!(HEALTH_TIMEOUT <= Duration::from_secs(2));
         let c = DaemonClient::new("http://127.0.0.1:1", Secret::new(token())).expect("client");
         assert_eq!(c.timeouts(), (HEALTH_TIMEOUT, REQUEST_TIMEOUT));
+    }
+
+    /// Windows CI: a refused connection reached the probe as a time-out, because Windows
+    /// refuses only after about two seconds and the probe gave up after 1.5. The connection
+    /// gets its own, longer limit; the answer keeps the short one.
+    #[test]
+    fn the_probe_waits_out_a_refusal_on_windows_and_keeps_the_short_answer_limit() {
+        assert!(HEALTH_CONNECT_TIMEOUT >= Duration::from_secs(4));
+        assert!(HEALTH_CONNECT_TIMEOUT < REQUEST_TIMEOUT);
+    }
+
+    /// The refusal is told apart however long it takes to arrive: the probe answers
+    /// `Unreachable` for a port where nothing listens, never `Slow`.
+    #[tokio::test]
+    async fn a_refusal_is_never_reported_as_a_slow_daemon() {
+        use crate::test_http::refused_url;
+        let started = std::time::Instant::now();
+        let refused = DaemonClient::new(&refused_url(), Secret::new(token())).expect("client");
+        match refused.health().await {
+            Err(HealthError::Unreachable(_)) => {}
+            other => panic!(
+                "expected Unreachable after {:?}, got {other:?}",
+                started.elapsed()
+            ),
+        }
+        assert!(started.elapsed() < HEALTH_CONNECT_TIMEOUT);
     }
 
     #[test]
