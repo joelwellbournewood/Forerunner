@@ -27,6 +27,13 @@ export interface RouteContext {
   runner: Runner;
   purpose: Purpose;
   modelTier: ModelTier;
+  /**
+   * The person's order of their credential kinds (U-078, ADR 0100), first used first. When
+   * set, the survivors are sorted by it for every purpose; a kind it does not name comes after
+   * the named ones, in the purpose's own order. The purpose's `preference` still decides which
+   * kinds the purpose may use at all. Absent or empty: the purpose's `preference` orders them.
+   */
+  order?: readonly BillingSourceKind[];
 }
 
 export interface RoutingPolicy {
@@ -63,11 +70,39 @@ export const DEFAULT_ROUTING_POLICY: RoutingPolicy = Object.freeze({
   }),
 }) as RoutingPolicy;
 
+/**
+ * The kinds a person puts in order (U-078, ADR 0100): every real credential kind. The fake
+ * source is the stand-in of an install without credentials and is never theirs to order.
+ */
+export const ORDERABLE_KINDS: readonly BillingSourceKind[] = Object.freeze([
+  "subscription",
+  "api_key",
+  "plan_credits",
+]);
+
+/**
+ * A person's order as stored (`human.notify_prefs.billing_order`): a non-empty list of
+ * distinct orderable kinds. Anything else (absent, malformed, a duplicate, `fake`) is null,
+ * which means no order is chosen and the defaults apply.
+ */
+export function billingOrderOf(value: unknown): BillingSourceKind[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out: BillingSourceKind[] = [];
+  for (const v of value) {
+    if (typeof v !== "string" || !ORDERABLE_KINDS.includes(v as BillingSourceKind)) return null;
+    if (out.includes(v as BillingSourceKind)) return null;
+    out.push(v as BillingSourceKind);
+  }
+  return out;
+}
+
 export type SkipCode =
   | "other_human"
   | "disabled"
   | "cloud_runner"
   | "unavailable"
+  /** The source met its provider's usage limit and rests until `status.restingUntil` (ADR 0100). */
+  | "cooldown"
   | "plan_share"
   | "monthly_limit"
   | "tier"
@@ -165,6 +200,12 @@ export class BillingRouter {
         skipped.push(skip(source, "unavailable", status.reason ?? "not available"));
         continue;
       }
+      if (status.restingUntil) {
+        skipped.push(
+          skip(source, "cooldown", `resting after a usage limit until ${status.restingUntil}`),
+        );
+        continue;
+      }
       if (source.kind === "subscription" && typeof status.planUsageShare === "number") {
         const cap = source.limits.planShareCap ?? this.policy.planShareCap;
         if (status.planUsageShare >= cap) {
@@ -186,7 +227,7 @@ export class BillingRouter {
         skipped.push(skip(source, "monthly_limit", "monthly limit for this source reached"));
         continue;
       }
-      candidates.push({ source, status, rank });
+      candidates.push({ source, status, rank: rankOf(source.kind, rank, ctx.order) });
     }
 
     candidates.sort(
@@ -218,6 +259,7 @@ export class BillingRouter {
     }
 
     let reason = `${chosen.source.kind} "${chosen.source.label}" for ${ctx.purpose} work on the ${ctx.runner} runner`;
+    if (ctx.order?.length) reason += ` (your order: ${ctx.order.join(", ")})`;
     if (chosen.source.kind === "subscription" && typeof chosen.status.planUsageShare === "number") {
       const cap = chosen.source.limits.planShareCap ?? this.policy.planShareCap;
       reason += ` (plan usage ${pct(chosen.status.planUsageShare)} below the cap ${pct(cap)})`;
@@ -227,6 +269,21 @@ export class BillingRouter {
     }
     return { source: chosen.source, status: chosen.status, reason, skipped };
   }
+}
+
+/**
+ * A survivor's rank: its place in the person's order when there is one (a kind the order does
+ * not name ranks after every named kind, in the purpose's order), else its place in the
+ * purpose's preference.
+ */
+function rankOf(
+  kind: BillingSourceKind,
+  preferenceRank: number,
+  order: readonly BillingSourceKind[] | undefined,
+): number {
+  if (!order || order.length === 0) return preferenceRank;
+  const i = order.indexOf(kind);
+  return i >= 0 ? i : order.length + preferenceRank;
 }
 
 function skip(source: BillingSource, code: SkipCode, reason: string): RouteSkip {

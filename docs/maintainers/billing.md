@@ -25,7 +25,7 @@ ask for budget; only this code and the runtime hooks can grant it.
 `BillingSource` fields: `id`, `kind`, `humanId`, `label`, `credentialRef` (a secret *name*,
 validated by `assertCredentialRef`, which rejects anything shaped like a token and never echoes
 the value), `enabled`, `priority` (lower first within a kind), `limits`
-(`monthlyUsdMicro`, `planShareCap`, `planUsdMicro`, `personalRunner`). `planUsdMicro` is a
+(`monthlyUsdMicro`, `planShareCap`, `planUsdMicro`, `personalRunner`, `restingUntil`). `planUsdMicro` is a
 subscription's allowance as an estimated API-equivalent per UTC month: the daemon computes the
 plan usage share from the month's "subscription" ledger rows over it, and a share a probe or a
 run reported wins when larger; the daemon always seeds one (`fr setup --plan-usd-monthly`,
@@ -39,9 +39,18 @@ test double, the daemon's probe is `VaultLedgerProbe` in the runtime (below).
 
 ### Routing policy (`src/router.ts`)
 
-`BillingRouter.pick({ humanId, agentId, runner, purpose, modelTier })` returns
+`BillingRouter.pick({ humanId, agentId, runner, purpose, modelTier, order? })` returns
 `{ source, status, reason, skipped }` or throws `ForerunnerError("unavailable")` whose
 `details.skipped` lists every source and why it was not used.
+
+**The person's order (U-078, ADR 0100).** `order` is the person's list of their credential
+kinds, first used first (`ORDERABLE_KINDS`: `subscription`, `api_key`, `plan_credits`; the
+stored form is read by `billingOrderOf`, which answers null for anything but a non-empty list
+of distinct orderable kinds). When it is given, the survivors are ranked by it for **every**
+purpose; a kind it does not name ranks after the named ones, in the purpose's own order. The
+purpose's `preference` still decides which kinds a purpose may use at all, and the owner and
+disabled invariants still hold. Without it (absent or empty) the ranking is the purpose's
+`preference`, as before. The runtime reads it from `human.notify_prefs.billing_order`.
 
 Two rules are invariants, not policy: a source is only ever used for its owner's agent (another
 human's subscription is skipped with code `other_human`, even if it is the only source), and a
@@ -55,9 +64,18 @@ disabled source is never used. Everything else is data in `RoutingPolicy`:
 | `kindsForTier` | none | Optional allowlist of kinds per model tier (e.g. `{ fable: ["api_key", "plan_credits"] }`) |
 
 Order of evaluation per source: owner, enabled, purpose preference, tier allowlist, cloud-runner
-rule, probe status, plan share cap, monthly limit. Survivors sort by preference rank, then
-`priority`, then id. Skip codes: `other_human`, `disabled`, `purpose`, `tier`, `cloud_runner`,
-`unavailable`, `plan_share`, `monthly_limit`.
+rule, probe status, rest after a usage limit, plan share cap, monthly limit. Survivors sort by
+the person's order when given (else the preference rank), then `priority`, then id. Skip
+codes: `other_human`, `disabled`, `purpose`, `tier`, `cloud_runner`, `unavailable`,
+`cooldown`, `plan_share`, `monthly_limit`.
+
+**The rest after a usage limit (ADR 0100).** A source whose provider answered that the
+credential's limit is reached (a Claude subscription's usage limit, an API key's credit balance
+or spend limit; the runtime's `provider_usage_limit`) gets `limits.restingUntil` (ISO): the
+reset time the error named, else one hour from then. A probe reports
+`BillingSourceStatus.restingUntil` while that time is ahead, and the router skips the source
+with code `cooldown` ("resting after a usage limit until ..."); the router itself reads no
+clock.
 
 **The pick from the daemon (ADR 0044).** The daemon calls `pick` once per task, from
 `LoopTaskExecutor` through `RouterTaskBilling` (`packages/runtime/src/wiring/billing-pick.ts`),
@@ -253,7 +271,7 @@ max(estimate, 1)` clamped to [-1, 10]. `errorStats(specialist, taskType?)` gives
 
 ## Tests
 
-`pnpm exec vitest run --project unit packages/billing/test` (10 files, 92 tests, no network):
+`pnpm exec vitest run --project unit packages/billing/test` (10 files, 104 tests, no network):
 `fast-mode-pricing.test.ts` pins the fast rows (the 5.5 row at the published 8 / 40 / 0.4 / 10,
 twice the standard row, `source: "list"`, not called a research preview; the 4.6 list row, the variant naming, costs and estimates at the variant's rate, an override of the
 variant alone, the API-only rule, the ledger and `allocation().byModel` listing the variant
@@ -261,7 +279,8 @@ apart); money
 rounding and formatting; rate fetch, cache, fallback and default flag with an injected fetch;
 pricing math including cache tokens, unknown model, id normalisation and overrides; source
 validation and the credential-shaped `credentialRef` rejection; every routing rule and the
-cross-human invariant; ledger record, totals, month window, allocation and savings with the
+cross-human invariant, the person's order for every purpose (and the defaults unchanged without
+one), the `cooldown` skip and the stored order's reading (`billingOrderOf`); ledger record, totals, month window, allocation and savings with the
 in-memory sink, plus savings from Run rows through a `RunSource` (ADR 0008 half-up rounding at
 the 0.5 micro boundary, CHF at each run's own rate, allocation by project / specialist / model,
 transform counts, Headroom session totals, `entriesAsRuns` folding); cap boundaries (79.9 / 80 /

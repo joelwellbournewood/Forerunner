@@ -2,7 +2,9 @@ import { ForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import {
   BillingRouter,
+  billingOrderOf,
   DEFAULT_ROUTING_POLICY,
+  ORDERABLE_KINDS,
   type RouteContext,
   type RoutingPolicy,
 } from "../src/router.ts";
@@ -224,5 +226,117 @@ describe("BillingRouter", () => {
     expect((await r.pick(ctx({ humanId: "bob", agentId: "b" }))).source.id).toBe("bob-api");
     await expect(r.pick(ctx())).rejects.toMatchObject({ code: "unavailable" });
     expect(seen).toEqual(["bob", "alice"]);
+  });
+});
+
+/**
+ * U-078 (ADR 0100): the person orders their credentials; the order applies to every purpose,
+ * the purpose's preference still decides which kinds it may use, and a source that met its
+ * provider's usage limit rests (`cooldown`) until the probe stops reporting it.
+ */
+describe("BillingRouter: the person's order and the rest after a usage limit (U-078)", () => {
+  const PURPOSES = ["session", "interactive", "chat", "critic", "batch"] as const;
+
+  it("orders the survivors by the person's order for every purpose", async () => {
+    for (const purpose of PURPOSES) {
+      const apiFirst = await router([aliceSub, aliceApi, aliceCredits]).pick(
+        ctx({ purpose, order: ["api_key", "subscription", "plan_credits"] }),
+      );
+      expect(apiFirst.source.id, purpose).toBe("alice-api");
+      expect(apiFirst.reason).toContain("your order: api_key, subscription, plan_credits");
+      const subFirst = await router([aliceSub, aliceApi, aliceCredits]).pick(
+        ctx({ purpose, order: ["subscription", "api_key"] }),
+      );
+      expect(subFirst.source.id, purpose).toBe("alice-sub");
+    }
+  });
+
+  it("without an order the per-purpose defaults are unchanged", async () => {
+    const picks: Record<string, string> = {};
+    for (const purpose of PURPOSES) {
+      picks[purpose] = (
+        await router([aliceSub, aliceApi, aliceCredits]).pick(ctx({ purpose }))
+      ).source.id;
+      expect(
+        (await router([aliceSub, aliceApi, aliceCredits]).pick(ctx({ purpose, order: [] }))).source
+          .id,
+      ).toBe(picks[purpose]);
+    }
+    expect(picks).toEqual({
+      session: "alice-sub",
+      interactive: "alice-sub",
+      chat: "alice-sub",
+      critic: "alice-sub",
+      batch: "alice-api",
+    });
+  });
+
+  it("a kind the order leaves out comes after the named ones, in the purpose's order", async () => {
+    const d = await router([aliceSub, aliceApi, aliceCredits]).pick(ctx({ order: ["api_key"] }));
+    expect(d.source.id).toBe("alice-api");
+    // Without the API key, the unnamed kinds keep the session's order: subscription first.
+    const rest = await router([aliceSub, aliceCredits]).pick(ctx({ order: ["api_key"] }));
+    expect(rest.source.id).toBe("alice-sub");
+  });
+
+  it("the order never lets a purpose use a kind its preference excludes", async () => {
+    const apiOnlySessions: RoutingPolicy = {
+      ...DEFAULT_ROUTING_POLICY,
+      preference: { ...DEFAULT_ROUTING_POLICY.preference, session: ["api_key"] },
+    };
+    const d = await router([aliceSub, aliceApi], undefined, apiOnlySessions).pick(
+      ctx({ order: ["subscription", "api_key"] }),
+    );
+    expect(d.source.id).toBe("alice-api");
+    expect(d.skipped[0]).toMatchObject({ sourceId: "alice-sub", code: "purpose" });
+  });
+
+  it("the order never crosses the owner invariant", async () => {
+    const d = await router([bobSub, aliceApi]).pick(ctx({ order: ["subscription", "api_key"] }));
+    expect(d.source.id).toBe("alice-api");
+    expect(d.skipped[0]).toMatchObject({ sourceId: "bob-sub", code: "other_human" });
+  });
+
+  it("skips a resting source with code cooldown and uses the next one in the order", async () => {
+    const probe = new FakeProbe({
+      "alice-sub": { available: true, planUsageShare: 0.1, restingUntil: "2026-11-01T15:00:00Z" },
+    });
+    const d = await router([aliceSub, aliceApi], probe).pick(
+      ctx({ purpose: "chat", order: ["subscription", "api_key"] }),
+    );
+    expect(d.source.id).toBe("alice-api");
+    expect(d.skipped).toEqual([
+      {
+        sourceId: "alice-sub",
+        kind: "subscription",
+        code: "cooldown",
+        reason: "resting after a usage limit until 2026-11-01T15:00:00Z",
+      },
+    ]);
+    // Resting alone: nothing can serve, and the error names the rest.
+    await expect(router([aliceSub], probe).pick(ctx())).rejects.toMatchObject({
+      code: "unavailable",
+      details: { skipped: [{ sourceId: "alice-sub", code: "cooldown" }] },
+    });
+    // Once the probe no longer reports it, the source serves again.
+    probe.set("alice-sub", { available: true, planUsageShare: 0.1 });
+    expect((await router([aliceSub, aliceApi], probe).pick(ctx())).source.id).toBe("alice-sub");
+  });
+
+  it("reads a stored order: distinct orderable kinds, anything else is no order", () => {
+    expect(billingOrderOf(["api_key", "subscription"])).toEqual(["api_key", "subscription"]);
+    expect(billingOrderOf(["plan_credits"])).toEqual(["plan_credits"]);
+    for (const bad of [
+      null,
+      undefined,
+      [],
+      ["fake"],
+      ["api_key", "api_key"],
+      ["x"],
+      "api_key",
+      [1],
+    ])
+      expect(billingOrderOf(bad), JSON.stringify(bad)).toBeNull();
+    expect(ORDERABLE_KINDS).toEqual(["subscription", "api_key", "plan_credits"]);
   });
 });

@@ -36,6 +36,12 @@ export interface BillingSourceLimits {
    * runner. Only then may a subscription be used off the owner's PC (spec, Security).
    */
   personalRunner?: boolean;
+  /**
+   * ISO time until which the source rests: its provider answered that the plan's or the
+   * account's usage limit is reached (U-078, ADR 0100). Until then the daemon's probe reports
+   * it and the router skips the source (`cooldown`); a time in the past means nothing.
+   */
+  restingUntil?: string;
 }
 
 export interface BillingSource {
@@ -58,6 +64,12 @@ export interface BillingSourceStatus {
   planUsageShare?: number;
   /** Spend this month in usd_micro, when the probe knows it (API-style sources). */
   monthSpentUsdMicro?: number;
+  /**
+   * Set while the source rests after a usage limit: the ISO time it may serve again (ADR 0100).
+   * A probe sets it only for a time still ahead; the router then skips the source with code
+   * `cooldown`.
+   */
+  restingUntil?: string;
   reason?: string;
   checkedAt?: string;
 }
@@ -113,6 +125,7 @@ const limitsSchema = z
     planShareCap: z.number().min(0).max(1).optional(),
     planUsdMicro: z.number().int().positive().optional(),
     personalRunner: z.boolean().optional(),
+    restingUntil: z.string().optional(),
   })
   .strict();
 
