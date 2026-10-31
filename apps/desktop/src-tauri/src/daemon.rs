@@ -14,6 +14,12 @@ use crate::secret::{Secret, redact};
 pub const DAEMON_FILE: &str = "daemon.json";
 /// `GET /health` must answer within this on a local socket; anything slower is "not there".
 pub const HEALTH_TIMEOUT: Duration = Duration::from_millis(1500);
+/// Every other request (the tray's actions: `/shutdown`, `/kill`, `/kill/resume`, the email
+/// toggle, desktop revoke; and the reads `/me`, `/desktop/status`, the email settings) waits
+/// this long for its answer (U-064). An action does work before it answers (the kill switch
+/// stops every run, Quit stops them and the processes they started), and an answer that comes
+/// after a short probe's limit is not a failure: the action happened.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// `/events` sends a heartbeat every 15 s; a stream silent for this long is dead.
 pub const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -256,12 +262,16 @@ pub fn is_fresh(file: &DaemonFile, child_pid: Option<u32>, before: Option<&Daemo
 }
 
 /// HTTP client for one daemon. Every error string is redacted before it leaves this type.
+/// `/health` uses a client with the short `HEALTH_TIMEOUT`; every other request uses its own
+/// with `REQUEST_TIMEOUT` (U-064); `/events` has a read timeout only.
 #[derive(Clone)]
 pub struct DaemonClient {
     base: String,
     token: Secret,
-    http: reqwest::Client,
+    health_http: reqwest::Client,
+    request_http: reqwest::Client,
     stream_http: reqwest::Client,
+    timeouts: (Duration, Duration),
 }
 
 impl std::fmt::Debug for DaemonClient {
@@ -269,6 +279,7 @@ impl std::fmt::Debug for DaemonClient {
         f.debug_struct("DaemonClient")
             .field("base", &self.base)
             .field("token", &self.token)
+            .field("timeouts", &self.timeouts)
             .finish()
     }
 }
@@ -278,11 +289,13 @@ impl DaemonClient {
         if !is_loopback_url(url) {
             return Err("refusing a daemon URL that is not loopback http".into());
         }
-        let http = reqwest::Client::builder()
-            .timeout(HEALTH_TIMEOUT)
-            .no_proxy()
-            .build()
-            .map_err(|e| e.to_string())?;
+        let timed = |timeout: Duration| {
+            reqwest::Client::builder()
+                .timeout(timeout)
+                .no_proxy()
+                .build()
+                .map_err(|e| e.to_string())
+        };
         let stream_http = reqwest::Client::builder()
             .read_timeout(STREAM_READ_TIMEOUT)
             .no_proxy()
@@ -291,9 +304,17 @@ impl DaemonClient {
         Ok(Self {
             base: url.trim_end_matches('/').to_string(),
             token,
-            http,
+            health_http: timed(HEALTH_TIMEOUT)?,
+            request_http: timed(REQUEST_TIMEOUT)?,
             stream_http,
+            timeouts: (HEALTH_TIMEOUT, REQUEST_TIMEOUT),
         })
+    }
+
+    /// The time limits the `/health` client and the request client were built with.
+    #[cfg(test)]
+    pub fn timeouts(&self) -> (Duration, Duration) {
+        self.timeouts
     }
 
     pub fn from_file(file: &DaemonFile) -> Result<Self, String> {
@@ -318,7 +339,7 @@ impl DaemonClient {
 
     pub async fn health(&self) -> Result<Health, String> {
         let res = self
-            .http
+            .health_http
             .get(self.url("/health"))
             .bearer_auth(self.token.expose())
             .send()
@@ -335,7 +356,7 @@ impl DaemonClient {
     /// POST a JSON body (or `{}`); returns the status and the parsed body (`null` when empty).
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<(u16, Value), String> {
         let res = self
-            .http
+            .request_http
             .post(self.url(path))
             .bearer_auth(self.token.expose())
             .json(body)
@@ -349,7 +370,7 @@ impl DaemonClient {
 
     pub async fn get_json(&self, path: &str) -> Result<(u16, Value), String> {
         let res = self
-            .http
+            .request_http
             .get(self.url(path))
             .bearer_auth(self.token.expose())
             .send()
@@ -576,6 +597,53 @@ mod tests {
             "no update staged (not_found, HTTP 404)"
         );
         assert_eq!(error_message(500, &Value::Null), "HTTP 500");
+    }
+
+    /// U-064: one 1.5 s client served `/health` and the actions alike, so a kill switch, Quit
+    /// or Resume the daemon answered a little later was reported as failed although it worked
+    /// (and Quit then ended the daemon hard). Actions wait for their answer; `/health` stays a
+    /// short probe.
+    #[tokio::test]
+    async fn actions_wait_for_a_slow_answer_and_the_health_probe_stays_short() {
+        use crate::test_http::{Route, TestServer, health_body};
+        let slow = Duration::from_millis(2_000);
+        let server = TestServer::start(vec![
+            Route::json("GET", "/health", 200, &health_body(0)).delayed(slow),
+            Route::json(
+                "POST",
+                "/kill",
+                200,
+                r#"{"killActive":true,"stoppedRuns":3}"#,
+            )
+            .delayed(slow),
+            Route::json("POST", "/shutdown", 202, r#"{"stopping":true}"#).delayed(slow),
+            Route::json("GET", "/me", 200, r#"{"agent":{"id":"a-1"}}"#).delayed(slow),
+        ]);
+        let client = DaemonClient::new(&server.url, Secret::new(token())).expect("client");
+        assert!(slow > HEALTH_TIMEOUT && slow < REQUEST_TIMEOUT);
+        let health = client.health().await;
+        assert!(health.is_err(), "a /health slower than the probe is a miss");
+        let (status, body) = client
+            .post_json("/kill", &serde_json::json!({ "scope": "all" }))
+            .await
+            .expect("the kill switch's answer arrives");
+        assert_eq!(status, 200);
+        assert_eq!(body["killActive"], true);
+        let (status, _) = client
+            .post_json("/shutdown", &serde_json::json!({}))
+            .await
+            .expect("Quit's answer arrives");
+        assert_eq!(status, 202);
+        let (status, me) = client.get_json("/me").await.expect("a read waits too");
+        assert_eq!((status, me["agent"]["id"].as_str()), (200, Some("a-1")));
+    }
+
+    #[test]
+    fn the_action_timeout_is_long_and_the_health_timeout_short() {
+        assert!(REQUEST_TIMEOUT >= Duration::from_secs(30));
+        assert!(HEALTH_TIMEOUT <= Duration::from_secs(2));
+        let c = DaemonClient::new("http://127.0.0.1:1", Secret::new(token())).expect("client");
+        assert_eq!(c.timeouts(), (HEALTH_TIMEOUT, REQUEST_TIMEOUT));
     }
 
     #[test]

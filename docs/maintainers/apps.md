@@ -1191,6 +1191,14 @@ back into the webview) is on an app origin (`inject::app_origins`: the bundled U
 server in a dev build), denies it anywhere else or before the first load, denies the camera
 (the UI never asks for it) and leaves every other kind to the webview. Every answer is logged.
 
+**Time limits (`daemon::DaemonClient`, U-064).** `GET /health` is a probe with a 1.5 s limit
+(`HEALTH_TIMEOUT`): slower counts as a miss. Every other request has its own client with a 30 s
+limit (`REQUEST_TIMEOUT`): the actions (`POST /shutdown`, `/kill`, `/kill/resume`, the email
+toggle, `/desktop/revoke`) do their work before they answer, and an answer after the probe's
+limit is not a failure (1.0.4 used one 1.5 s client for both, so a kill switch that worked
+could be reported as failed, and Quit ended a daemon hard that was shutting down). `/events`
+has a 60 s read timeout only.
+
 **Logs and secrets.** The shell logs through `tauri-plugin-log` to `<logs>/desktop-shell.log`
 (stdout as well in debug builds). The token is a `Secret` (`Debug`/`Display` print
 `[redacted]`), every error string from the HTTP client passes through `redact()`, and the
@@ -1238,7 +1246,8 @@ cd apps/desktop/src-tauri && cargo check           # Linux here; Windows in CI (
 
 Unit tests live next to the code (`#[cfg(test)]`): `dirs` (override on every platform,
 relative `FORERUNNER_HOME`, empty override ignored, the Windows/XDG cases of `paths.test.ts`,
-the full fixture table per platform, home fallback, app name); `daemon` (a zombie counts as ended, the file
+the full fixture table per platform, home fallback, app name); `daemon` (a zombie counts as ended; an action and a read answered after 2 s arrive while a
+`/health` that slow is a miss, against a local HTTP server, and the two time limits, U-064; the file
 `startDaemon` writes, missing/bad JSON/bad shape, off-machine URL refused, stale pid, attach vs
 start, freshness as a changed file, a grandchild pid written after the spawn attaches, daemon
 error bodies, client `Debug` hides the token, an older daemon replaced and a newer one kept);
