@@ -29,8 +29,13 @@ short:
 - A GitHub account with a fine-grained personal access token for the repositories your agent
   will work on. It needs **Contents: read and write** and **Pull requests: read and write** on
   those repositories (details in First run, step 2).
-- Optional: Docker Desktop (Windows) or Docker/Podman (Linux) so coding tasks run in a sandbox.
-  Without it, Forerunner still works; tasks run in a process sandbox with fewer guarantees.
+- For tasks that get a full review (risk tier 2 and above): Docker Desktop (Windows, with
+  **Linux containers**) or Docker/Podman (Linux), and disk for the sandbox image (a download
+  of a gigabyte or more; Settings shows the exact size). Those tasks run their tests and
+  builds in it, isolated from your computer, so the critic sees real results. Without Docker,
+  Forerunner still works: lighter tasks run in a process sandbox, and full-review tasks wait
+  (nothing fails) until Settings → Sandbox (Docker) says Ready. See "The Docker sandbox" under
+  First run.
 - Optional, for talking to your agent by voice on this PC (Windows x64 or Linux x86_64; not
   ARM): Python 3.12 (not 3.11 or older, not 3.13 yet), and for the fast option an NVIDIA
   graphics card with a current driver. Windows:
@@ -179,6 +184,30 @@ from Home.
    Both profiles need Python 3.12 on Windows x64 or Linux x86_64 (see "What you need"). The
    times are medians from a few turns on one Windows PC on 2026-10-26; the target is 1.2 s and
    neither profile meets it. Voice has not been tested on Linux.
+
+**The Docker sandbox (for full-review tasks).** Tasks at risk tier 2 and above run their tests
+and builds in a container with only the task's folder in it, so the critic reviews real
+results and nothing the task runs can touch the rest of your computer. Settings → **Sandbox
+(Docker)** says where it stands and what to do, one step at a time:
+
+1. **Install Docker Desktop** (Windows: <https://www.docker.com/products/docker-desktop/>, the
+   default settings, which use WSL 2; Linux: Docker Engine, Docker Desktop or Podman, with
+   your user allowed to run it). Restart Windows if the installer asks.
+2. **Start Docker Desktop** and wait until it says the engine is running.
+3. **Linux containers.** Docker Desktop on Windows can run Windows containers instead; the
+   sandbox needs Linux containers. If the card says "Windows containers", right-click the
+   Docker icon in the taskbar and choose **Switch to Linux containers**.
+4. **Download the sandbox.** Click **Download the sandbox** (its size is on the button);
+   the progress shows in the card and the download keeps running if you leave the page. A
+   session that finds full-review tasks waiting starts the download by itself.
+5. Click **Check again** after each step; the card says **Ready** at the end.
+
+Until then those tasks wait: the Start dialog and the session summary name them with the next
+step, the Inbox has one notice saying Docker is needed, nothing fails and no retry is used.
+They run in the next session once the card says Ready. The image is
+`ghcr.io/<owner>/forerunner-runner:<version>` (`:latest` for a build whose version has none
+published yet). If the download says the registry refused it, the image is not public yet
+(tell the maintainer), or sign in with `docker login ghcr.io`.
 
 Credentials go into the operating system's credential store (Windows Credential Manager, or
 GNOME Keyring / KWallet on Linux). They are never written to the configuration file, the

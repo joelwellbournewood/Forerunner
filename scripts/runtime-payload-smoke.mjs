@@ -103,8 +103,17 @@ async function main() {
   const setup = await get("/setup");
   if (setup.showAssistant !== true)
     throw new Error("/setup does not open the assistant on a fresh install");
+  // U-079: a CI build names the published sandbox image, and the installed runtime uses it.
+  const sandbox = await get("/sandbox");
+  const named = manifest.runnerImage;
+  if (process.env.GITHUB_REPOSITORY_OWNER && !named)
+    throw new Error("runtime.json names no sandbox image although the build knows its owner");
+  if (named && sandbox.image !== `${named.repository}:${named.tag}`)
+    throw new Error(
+      `/sandbox uses ${sandbox.image}, the payload names ${named.repository}:${named.tag}`,
+    );
   console.log(
-    `payload ${manifest.version} (${manifest.platform}-${manifest.arch}, node ${manifest.node}) answered /health, /me and /setup after ${Math.round((Date.now() - started) / 1000)} s`,
+    `payload ${manifest.version} (${manifest.platform}-${manifest.arch}, node ${manifest.node}) answered /health, /me, /setup and /sandbox (${sandbox.state}, ${sandbox.image}) after ${Math.round((Date.now() - started) / 1000)} s`,
   );
 }
 

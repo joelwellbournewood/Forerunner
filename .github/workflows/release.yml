@@ -138,8 +138,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # GHCR names are lowercase; the installers' runtime.json names the same lowercase owner
+      # (scripts/build-runtime-payload.mjs, U-079).
       - id: meta
-        run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         env:
           # No build record artefact in the run (the publish job downloads named artefacts).
@@ -149,8 +153,8 @@ jobs:
           file: services/cloud-runner/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/forerunner-runner:${{ steps.meta.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/forerunner-runner:latest
+            ghcr.io/${{ steps.meta.outputs.owner }}/forerunner-runner:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/forerunner-runner:latest
 
   publish:
     name: GitHub release

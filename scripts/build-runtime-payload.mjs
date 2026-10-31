@@ -7,7 +7,7 @@
 // starts its own daemon: no git, pnpm, PowerShell or Node.js on the machine.
 //
 // Layout of <out>:
-//   runtime.json                     { schema, version, platform, arch, node, entry }
+//   runtime.json                     { schema, version, platform, arch, node, entry, runnerImage? }
 //   package.json                     the app version (read by packages/runtime/src/version.ts)
 //   tsconfig.json                    `paths` for every @forerunner/* import (tsx resolves them)
 //   node/node[.exe]                  the Node.js binary that built the payload (or --node)
@@ -18,6 +18,13 @@
 // The workspace packages are resolved through tsconfig `paths` rather than node_modules/@forerunner
 // links: an installer cannot carry symlinks, and copies under node_modules would load
 // @forerunner/runtime twice (capabilities, commands, critic and memory import it back).
+//
+// `runnerImage` (U-079, ADR 0101) names the sandbox image the release workflow publishes,
+// `ghcr.io/<owner>/forerunner-runner:<version>`, with `latest` as the fallback the app pulls when
+// the registry has no image for this version (a development build). The owner is the build's:
+// `GITHUB_REPOSITORY_OWNER` (set in every GitHub Actions step), lowercased as GHCR names are, or
+// `FORERUNNER_RUNNER_IMAGE_REPOSITORY` for another registry. A local build without either names
+// no image, and the app falls back to the source checkout's `forerunner-runner:local`.
 //
 // Usage: node scripts/build-runtime-payload.mjs [--out <dir>] [--node <path>]
 //        (default out: apps/desktop/src-tauri/runtime, which tauri.conf.json bundles)
@@ -107,6 +114,18 @@ export function workspaceClosure(rootName, byName) {
 
 export function nodeBinaryName(platform) {
   return platform === "win32" ? "node.exe" : "node";
+}
+
+/**
+ * The sandbox image the build names (U-079), or null when the build knows no owner. Never an
+ * owner from source: the CI's `GITHUB_REPOSITORY_OWNER`, or an explicit repository.
+ */
+export function runnerImageFor(env, version) {
+  const explicit = env.FORERUNNER_RUNNER_IMAGE_REPOSITORY?.trim();
+  const owner = env.GITHUB_REPOSITORY_OWNER?.trim();
+  const repository = explicit || (owner ? `ghcr.io/${owner}/forerunner-runner` : "");
+  if (!repository || /\s/.test(repository) || !version) return null;
+  return { repository: repository.toLowerCase(), tag: version, fallbackTag: "latest" };
 }
 
 function parseArgs(argv) {
@@ -312,6 +331,8 @@ export function build(opts = {}) {
     node: nodeVersion,
     entry: RUNTIME_ENTRY,
   };
+  const runnerImage = runnerImageFor(opts.env ?? process.env, rootPkg.version);
+  if (runnerImage) manifest.runnerImage = runnerImage;
   writeFileSync(path.join(out, "runtime.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return { out, manifest, packages: closure, ...stats(out) };
 }
@@ -321,7 +342,11 @@ if (isMain) {
   try {
     const r = build(parseArgs(process.argv.slice(2)));
     console.log(
-      `runtime payload ${r.manifest.version} (${r.manifest.platform}-${r.manifest.arch}, node ${r.manifest.node}) in ${r.out}: ${r.files} files, ${(r.bytes / 1048576).toFixed(1)} MiB; packages ${r.packages.join(", ")}`,
+      `runtime payload ${r.manifest.version} (${r.manifest.platform}-${r.manifest.arch}, node ${r.manifest.node}) in ${r.out}: ${r.files} files, ${(r.bytes / 1048576).toFixed(1)} MiB; packages ${r.packages.join(", ")}; sandbox image ${
+        r.manifest.runnerImage
+          ? `${r.manifest.runnerImage.repository}:${r.manifest.runnerImage.tag} (else :${r.manifest.runnerImage.fallbackTag})`
+          : "none named (forerunner-runner:local)"
+      }`,
     );
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));

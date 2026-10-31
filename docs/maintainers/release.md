@@ -28,7 +28,7 @@ Triggered by a pushed tag matching `v*` only (the manual `workflow_dispatch` was
 | --- | --- | --- | --- |
 | `desktop` | `ubuntu-22.04`, `windows-latest` | `bundle/msi/*.msi`, `bundle/appimage/*.AppImage`, `bundle/deb/*.deb` (`if-no-files-found: error`) | `pnpm --filter @forerunner/desktop tauri build --ci` with the signing env below; its `beforeBuildCommand` builds the UI and the bundled runtime (below), then `node scripts/runtime-payload-smoke.mjs` starts that runtime the way the shell does and fails the job unless it answers `/health` with the payload's version, `/me` with `desktopDeviceId` and `/setup`. Then the installed-app check (below) installs the built installers and starts them with `--self-test`; `publish` needs this job, so an installer that does not start is never published. Ubuntu 22.04 is the oldest supported glibc for the AppImage. Only the installers are uploaded: `bundle/appimage/` and `bundle/deb/` also hold the AppDir and the deb's staging tree (hundreds of `.so` files, icons, `copyright`), which rc.3 uploaded with `bundle/*/*` and published, so its publish job hit GitHub's secondary rate limit before the APK went up (run 40248159390). |
 | `android` | `ubuntu-latest` | `apk/**/*.apk` | `android-actions/setup-android` with `packages: platform-tools` (the legacy `tools` package it installs by default is gone from the SDK repository, cb6097e), then `node scripts/android-keystore.mjs --require-secret` (the release keystore from the secrets; without `ANDROID_KEYSTORE_BASE64` the step fails and no development key is generated), then `node scripts/android-google-services.mjs` (writes `google-services.json` from `GOOGLE_SERVICES_JSON_BASE64` when set, so the APK carries FCM push; optional), then `tauri android build --apk --ci`, then `node scripts/android-apk-verify.mjs` (`apksigner verify --print-certs`; an unsigned, debug-signed or development-signed release APK fails the job before the upload) |
-| `runner-image` | `ubuntu-latest` | `ghcr.io/<owner>/forerunner-runner:<version>` and `:latest` | `services/cloud-runner/Dockerfile`; the tag is the git tag without `v` |
+| `runner-image` | `ubuntu-latest` | `ghcr.io/<owner>/forerunner-runner:<version>` and `:latest` | `services/cloud-runner/Dockerfile`; the tag is the git tag without `v`; `<owner>` is `github.repository_owner` lowercased (the `meta` step), the name the installers' `runtime.json` names (U-079). It is also the Docker sandbox every installed app pulls for its full-review tasks, so the package must be public (below). |
 | `publish` | `ubuntu-latest` | the GitHub Release | downloads the build artefacts by name (`desktop-*` into `artifacts/desktop-<os>/`, `android` into `artifacts/android/`; an unfiltered download also fetched docker/build-push-action's build record, which failed to download and failed rc.1's run 40229971920, so the image step also sets `DOCKER_BUILD_RECORD_UPLOAD: false`; `scripts/release-notes.test.ts` checks both), runs `node scripts/release-notes.mjs "$GITHUB_REF_NAME" > RELEASE_NOTES.md` with the job-level presence flags `ANDROID_KEYSTORE_BASE64` and `UPDATE_SIGNING_KEY` (`'present'` or empty, never the values; the same flags reach the manifest step's `release-notes.mjs` run, whose output becomes the signed manifest's notes, so both say the same; `WINDOWS_CERTIFICATE` is deliberately not passed while the Windows signing step is not wired), then, after the signed manifest, runs `node scripts/release-files.mjs artifacts` (step id `files`): it picks the `.msi`, `.AppImage`, `.deb`, `.apk` and `forerunner-release.json` under `artifacts/` (the manifest step's `find artifacts -name` picks see the same layout), fails when an installer or the APK is missing or two picked files share a name (release assets are flat), writes `artifacts/SHA256SUMS.txt` over exactly those files by the flat names they are published under (so `sha256sum -c SHA256SUMS.txt --ignore-missing` works in a download folder; never the sums file itself), and returns them plus the sums file as the `files` output. `softprops/action-gh-release` uploads `${{ steps.files.outputs.files }}`, `docs/user-guide.md` and `docs/setup-guide.md`; no glob, so nothing else under `artifacts/` can reach the release. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a pre-release. |
 
 `scripts/release-notes.mjs <tag>` prints Markdown: the `CHANGELOG.md` section for the tag
@@ -136,9 +136,29 @@ nine scenarios, then tag `v1.0.0`.
 
 ### The cloud runner image and the state service
 
-`services/cloud-runner/Dockerfile` builds one image used as the sandbox image in CI
-(`ci.yml`, job `sandbox-image`) and as the cloud runner. `runner-image` pushes it to GHCR with
-`GITHUB_TOKEN`; no personal token is needed. Deploy with
+`services/cloud-runner/Dockerfile` builds one image used as the sandbox image (in CI, `ci.yml`
+job `sandbox-image`, and on every installed app, U-079) and as the cloud runner. `runner-image`
+pushes it to GHCR with `GITHUB_TOKEN`; no personal token is needed.
+
+**The sandbox image is pulled by every installed app (U-079, ADR 0101).** The desktop build
+writes `runnerImage: { repository: "ghcr.io/<owner>/forerunner-runner", tag: "<version>",
+fallbackTag: "latest" }` into the payload's `runtime.json` (`scripts/build-runtime-payload.mjs`,
+`runnerImageFor`: `GITHUB_REPOSITORY_OWNER` lowercased, or `FORERUNNER_RUNNER_IMAGE_REPOSITORY`;
+a local build without either names none and the app uses `forerunner-runner:local`).
+Settings → Sandbox (Docker) downloads `:<version>`, and `:latest` when the registry has no
+image for that version (a development build from the Desktop app workflow, whose version is
+the last release's or one not tagged yet). `scripts/runtime-payload-smoke.mjs` fails a CI build
+whose payload names no image, or whose daemon uses another one.
+
+**Owner action, once:** GHCR packages are private when first pushed. Make the
+`forerunner-runner` package public (GitHub → the owner's profile or organization → Packages →
+`forerunner-runner` → Package settings → Danger Zone → Change visibility → Public), or every
+person needs `docker login ghcr.io` with a token that can read packages before the download
+works. A private package shows in the app as "the registry refused the download ... the
+package must be public, or sign in with docker login". Check it after the first release with
+`docker logout ghcr.io && docker pull ghcr.io/<owner>/forerunner-runner:latest`.
+
+Deploy with
 `docker run -d --name forerunner-runner -v forerunner-data:/data -e FORERUNNER_STATE_URL=postgres://… ghcr.io/<owner>/forerunner-runner:<version>`;
 the state service is the same image with `pnpm state-api` as the command (see
 `state-service.md` and `cloud-runner.md`). Rollback is `docker run` with the previous tag.
@@ -168,10 +188,11 @@ after the UI build; it writes `apps/desktop/src-tauri/runtime/` (gitignored), wh
    (`workspacePaths`; tsx resolves `@forerunner/*` through it, so the packages load once);
 5. copies the Node binary that runs the builder (`--node <path>` for another) to
    `node/node[.exe]` and checks it runs;
-6. writes `runtime.json` (`schema`, `version`, `platform`, `arch`, `node`, `entry`) last; the
-   shell reads its version, and the runtime takes it as the sign that it runs from an install
-   (the registry then lives in `<data>/registry`, seeded from the bundle at every start;
-   `adding-a-specialist.md`).
+6. writes `runtime.json` (`schema`, `version`, `platform`, `arch`, `node`, `entry`, and
+   `runnerImage` when the build knows its owner, U-079) last; the shell reads its version, and
+   the runtime takes it as the sign that it runs from an install (the registry then lives in
+   `<data>/registry`, seeded from the bundle at every start; `adding-a-specialist.md`) and
+   reads the sandbox image from it (`sandbox/image.ts`, `readBuildRunnerImage`).
 
 The result on Linux x64 (1.0.0 sources, Node 22.22): 6,535 files, 471 MiB, most of it the
 Agent SDK's native `claude` (280 MB) and Node (118 MB); the `.deb` is 196 MiB. The payload is

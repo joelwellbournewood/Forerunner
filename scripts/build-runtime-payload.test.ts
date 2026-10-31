@@ -4,6 +4,7 @@ import {
   isPrunable,
   nodeBinaryName,
   RUNTIME_ENTRY,
+  runnerImageFor,
   workspaceClosure,
   workspacePaths,
   // @ts-expect-error plain JS module
@@ -131,6 +132,25 @@ describe("payload files", () => {
     ]) {
       expect(isPrunable(f)).toBe(false);
     }
+  });
+
+  it("names the sandbox image the release publishes, from the build's owner, never from source (U-079)", () => {
+    expect(runnerImageFor({ GITHUB_REPOSITORY_OWNER: "Some-Owner" }, "1.0.5")).toEqual({
+      repository: "ghcr.io/some-owner/forerunner-runner",
+      tag: "1.0.5",
+      fallbackTag: "latest",
+    });
+    expect(
+      runnerImageFor(
+        {
+          FORERUNNER_RUNNER_IMAGE_REPOSITORY: "registry.example/team/runner",
+          GITHUB_REPOSITORY_OWNER: "x",
+        },
+        "2.0.0",
+      ),
+    ).toMatchObject({ repository: "registry.example/team/runner", tag: "2.0.0" });
+    // A local build knows no owner: no image is named, the app uses forerunner-runner:local.
+    expect(runnerImageFor({}, "1.0.5")).toBeNull();
   });
 
   it("names the node binary per OS and runs the CLI the shell runs", () => {
