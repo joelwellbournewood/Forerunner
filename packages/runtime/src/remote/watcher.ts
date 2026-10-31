@@ -698,10 +698,14 @@ export class RemoteCommandWatcher {
     const params = StopParams.parse(row.params ?? {});
     const scope = this.scopeOf(params, verb);
     const reason = `remote ${verb} from device ${row.device_id}${params.reason ? `: ${params.reason}` : ""}`;
-    const report = await this.deps.kill.stop(scope, reason);
+    // A stop ends the runs and freezes nothing, so new work may start; a kill freezes. A stop
+    // never lifts a kill already in force (U-032: it was a kill followed by `resume()`).
+    const report = await this.deps.kill.stop(
+      scope,
+      reason,
+      verb === "stop" ? { freeze: false } : {},
+    );
     this.lastKill = report;
-    // A stop ends the runs but leaves the daemon free to start new ones; a kill freezes.
-    if (verb === "stop") this.deps.kill.resume();
     return {
       ok: true,
       result: {

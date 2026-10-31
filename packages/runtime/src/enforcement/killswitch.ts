@@ -22,6 +22,16 @@ interface Registration {
   protected?: boolean;
 }
 
+/** `stop()` options. */
+export interface StopOptions {
+  /**
+   * Default true: the scope stays stopped (new work in it is refused) until `resume()`.
+   * False ends the runs in scope and leaves the freeze as it was (a session's Stop button, the
+   * phone's `stop`): it never lifts a kill already in force (U-032).
+   */
+  freeze?: boolean;
+}
+
 export interface KillReport {
   stoppedRuns: number;
   killedProcesses: number;
@@ -34,13 +44,24 @@ export class KillSwitch {
   private regs = new Map<number, Registration>();
   private nextId = 1;
   private readonly logger = log("killswitch");
-  private frozen: KillScope | "all" | null = null;
+  /**
+   * Every scope stopped since the last `resume()`. A narrower stop never replaces a wider one:
+   * a session stopped during Stop all leaves everything stopped (U-032).
+   */
+  private frozen: (KillScope | "all")[] = [];
   private listeners = new Set<(report: KillReport, reason: string) => void>();
   private readonly protectedSessions = new Set<string>();
 
+  /**
+   * `onResume` runs at the start of every `resume()`. The daemon removes `kill.json` there, the
+   * file that makes a kill survive a restart, so no path that lifts the kill can leave the file
+   * for the next start to apply again (U-019, U-032). If it throws, the kill stays in force and
+   * the error reaches the caller.
+   */
   constructor(
     private readonly tokens?: TokenIssuer,
     private readonly onFreezeClaims?: (scope: KillScope | "all") => Promise<void> | void,
+    private readonly onResume?: () => void,
   ) {}
 
   /** Register a run; returns an unregister function to call when it ends normally. */
@@ -64,21 +85,29 @@ export class KillSwitch {
   }
 
   isFrozen(scope: KillScope): boolean {
-    if (this.frozen === null) return false;
+    if (this.frozen.length === 0) return false;
     if (scope.sessionId && this.protectedSessions.has(scope.sessionId)) return false;
-    if (this.frozen === "all") return true;
-    if (this.frozen.sessionId && this.frozen.sessionId === scope.sessionId) return true;
-    if (this.frozen.agentId && !this.frozen.sessionId && this.frozen.agentId === scope.agentId)
-      return true;
-    return false;
+    return this.frozen.some((f) => {
+      if (f === "all") return true;
+      if (f.sessionId) return f.sessionId === scope.sessionId;
+      return !!f.agentId && f.agentId === scope.agentId;
+    });
   }
 
-  /** Lift a stop so new sessions may start again. */
+  /**
+   * Lift every stop so new sessions may start again, in this process and at the next start:
+   * `onResume` first (the daemon's `kill.json`), then the freeze here.
+   */
   resume(): void {
-    this.frozen = null;
+    this.onResume?.();
+    this.frozen = [];
   }
 
-  async stop(scope: KillScope | "all" = "all", reason = "kill switch"): Promise<KillReport> {
+  async stop(
+    scope: KillScope | "all" = "all",
+    reason = "kill switch",
+    opts: StopOptions = {},
+  ): Promise<KillReport> {
     const t0 = performance.now();
     const matches = (r: Registration) =>
       scope === "all" ||
@@ -108,7 +137,7 @@ export class KillSwitch {
               (scope.agentId ? c.agentId === scope.agentId : true))),
       ).length;
     }
-    this.frozen = scope;
+    if (opts.freeze !== false) this.freeze(scope);
     try {
       await this.onFreezeClaims?.(scope);
     } catch (e) {
@@ -124,6 +153,18 @@ export class KillSwitch {
     this.logger.warn("stopped", { ...report, reason });
     for (const l of this.listeners) l(report, reason);
     return report;
+  }
+
+  /** Add `scope` to the stopped scopes; "all" covers every other, so it replaces them. */
+  private freeze(scope: KillScope | "all"): void {
+    if (scope === "all") {
+      this.frozen = ["all"];
+      return;
+    }
+    if (this.frozen.includes("all")) return;
+    const same = (f: KillScope | "all") =>
+      f !== "all" && f.agentId === scope.agentId && f.sessionId === scope.sessionId;
+    if (!this.frozen.some(same)) this.frozen.push({ ...scope });
   }
 
   activeCount(scope?: KillScope): number {

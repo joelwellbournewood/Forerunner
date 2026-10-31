@@ -162,14 +162,15 @@ export class RemoteCommandWatcher {
       }
       case "stop": {
         // Stop the running cloud session(s) of the agent but leave the runner free to start new
-        // ones: stop, then lift the freeze.
+        // ones: a stop freezes nothing, and never lifts a kill already in force (U-032: it was
+        // a kill followed by `resume()`, which lifted it and, in the daemon, its kill file).
         const params = KillParams.parse(row.params ?? {});
         const scope: KillScope =
           params.scope === "all"
             ? { agentId: this.deps.agentId }
             : { agentId: params.scope.agentId ?? this.deps.agentId, ...params.scope };
-        const report = await this.deps.kill.stop(scope, `remote stop from device ${row.device_id}`);
-        this.deps.kill.resume();
+        const reason = `remote stop from device ${row.device_id}`;
+        const report = await this.deps.kill.stop(scope, reason, { freeze: false });
         return { stoppedRuns: report.stoppedRuns, killDurationMs: report.durationMs };
       }
       case "start": {

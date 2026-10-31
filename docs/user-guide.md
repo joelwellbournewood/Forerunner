@@ -97,7 +97,9 @@ model call that would cross a cap; it never relies on the agent noticing.
 
 The tray icon and the red button in the header stop every session of one agent or of
 everyone, revoke the run tokens and freeze claims within two seconds. Nothing starts until you
-click **Resume** (the same button, or the tray); the stop lasts across restarts until then.
+click **Resume** (the same button, or the tray) or start a session from the phone; the stop
+lasts across restarts until then. **Stop** on one session, from its page or the phone, ends
+that session only and leaves the kill switch on.
 
 ## Closing and quitting
 

@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
 import { errorMessage, ForerunnerError, join, log, osFacts, redact } from "@forerunner/platform";
-import type { LessonStatus, MilestoneRow } from "@forerunner/state";
+import type { LessonStatus, MilestoneRow, SessionRow } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
@@ -11,7 +11,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType } from "zod";
 import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
-import { clearKillRequest, writeKillRequest } from "../enforcement/killfile.ts";
+import { writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
 import { sessionOfStart } from "../loop/commands.ts";
@@ -988,8 +988,11 @@ export function createDaemonApp(
     }
   });
 
-  app.get("/sessions/:id", async (c) => {
-    const s = await rt.store.session.mustGet(c.req.param("id"));
+  app.get("/sessions/:id", async (c) =>
+    c.json(await liveSessionView(await rt.store.session.mustGet(c.req.param("id")))),
+  );
+  /** The live view's session: the row, the agent's name and the task in flight. */
+  const liveSessionView = async (s: SessionRow) => {
     const name = (await rt.store.agent.get(s.agent_id))?.name ?? s.agent_id;
     const last = (await rt.store.event.list(s.id, 0, 10_000))
       .filter((e) => e.type === "task.started" || e.type === "task.finished")
@@ -1002,8 +1005,8 @@ export function createDaemonApp(
             specialist: String((last.payload as { specialist: string }).specialist),
           }
         : null;
-    return c.json(sessionView(s, name, chf(), current));
-  });
+    return sessionView(s, name, chf(), current);
+  };
 
   app.get("/sessions/:id/events", async (c) => {
     const id = c.req.param("id");
@@ -1053,11 +1056,14 @@ export function createDaemonApp(
     });
   });
 
+  // The live view's Stop: end this session's runs and freeze nothing. A kill the person set
+  // with Stop all stays in force, here and after a restart (U-032: this was a stop followed by
+  // `resume()`, which lifted it). The answer is the session, the shape the live view reads; it
+  // was the kill report, which the view refused as a malformed answer.
   app.post("/sessions/:id/stop", async (c) => {
     const s = await rt.store.session.mustGet(c.req.param("id"));
-    const report = await rt.kill.stop({ sessionId: s.id }, "stopped from the app");
-    rt.kill.resume();
-    return c.json(report);
+    await rt.kill.stop({ sessionId: s.id }, "stopped from the app", { freeze: false });
+    return c.json(await liveSessionView(await rt.store.session.mustGet(s.id)));
   });
 
   app.post("/kill", async (c) => {
@@ -1089,10 +1095,10 @@ export function createDaemonApp(
     return c.json({ stopping: true, ...report }, 202);
   });
   app.post("/kill/resume", async (c) => {
-    rt.kill.resume();
     // The request file makes a kill survive a crash; once resumed it must not come back on the
-    // next start (U-019).
-    clearKillRequest(rt.dirs.runtime);
+    // next start (U-019). The daemon's kill switch removes it on every resume (`onResume` in
+    // compose.ts), so the phone's start lifts it the same way (U-032).
+    rt.kill.resume();
     rt.events.emit("session", { type: "kill.resumed", payload: {} });
     return c.json({ killActive: rt.kill.isFrozen({ agentId: rt.agent.id }), ok: true });
   });

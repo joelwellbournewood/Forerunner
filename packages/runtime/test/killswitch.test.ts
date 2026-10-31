@@ -76,4 +76,59 @@ describe("kill switch", () => {
     ks.resume();
     expect(ks.isFrozen({ agentId: "alice" })).toBe(false);
   });
+
+  // U-032: a session's Stop was `stop({ sessionId })` then `resume()`, and both replaced the
+  // freeze: a Stop during Stop all lifted the kill the person had set.
+  it("a stop that does not freeze ends the runs and leaves the kill in force", async () => {
+    const ks = new KillSwitch();
+    await ks.stop("all", "stop all");
+    const run = new AbortController();
+    ks.register({ agentId: "alice", sessionId: "s1", controller: run, label: "late" });
+    expect(run.signal.aborted).toBe(true);
+    const report = await ks.stop({ sessionId: "s1" }, "stopped from the app", { freeze: false });
+    expect(report.scope).toEqual({ sessionId: "s1" });
+    expect(ks.isFrozen({ agentId: "alice" })).toBe(true);
+    expect(ks.isFrozen({ agentId: "bob", sessionId: "s2" })).toBe(true);
+
+    // Without a kill in force it freezes nothing: new work may start at once.
+    const free = new KillSwitch();
+    const busy = new AbortController();
+    free.register({ agentId: "alice", sessionId: "s3", controller: busy, label: "busy" });
+    expect((await free.stop({ agentId: "alice" }, "stop", { freeze: false })).stoppedRuns).toBe(1);
+    expect(busy.signal.aborted).toBe(true);
+    expect(free.isFrozen({ agentId: "alice", sessionId: "s4" })).toBe(false);
+  });
+
+  it("a narrower kill never lifts a wider one; resume lifts them all", async () => {
+    const ks = new KillSwitch();
+    await ks.stop("all", "stop all");
+    await ks.stop({ agentId: "alice", sessionId: "s1" }, "stop session s1");
+    expect(ks.isFrozen({ agentId: "bob", sessionId: "s2" })).toBe(true);
+    ks.resume();
+    await ks.stop({ agentId: "alice" }, "stop alice");
+    await ks.stop({ sessionId: "s5" }, "stop s5");
+    expect(ks.isFrozen({ agentId: "alice", sessionId: "s6" })).toBe(true);
+    expect(ks.isFrozen({ agentId: "bob", sessionId: "s5" })).toBe(true);
+    expect(ks.isFrozen({ agentId: "bob", sessionId: "s7" })).toBe(false);
+    ks.resume();
+    expect(ks.isFrozen({ agentId: "alice", sessionId: "s6" })).toBe(false);
+    expect(ks.isFrozen({ agentId: "bob", sessionId: "s5" })).toBe(false);
+  });
+
+  it("resume clears what makes a kill survive a restart first; if that fails the kill stays", async () => {
+    let cleared = 0;
+    let fail = false;
+    const ks = new KillSwitch(undefined, undefined, () => {
+      if (fail) throw new Error("file held open");
+      cleared++;
+    });
+    await ks.stop("all", "stop all");
+    fail = true;
+    expect(() => ks.resume()).toThrow("file held open");
+    expect(ks.isFrozen({ agentId: "alice" })).toBe(true);
+    fail = false;
+    ks.resume();
+    expect(cleared).toBe(1);
+    expect(ks.isFrozen({ agentId: "alice" })).toBe(false);
+  });
 });

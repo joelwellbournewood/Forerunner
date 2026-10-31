@@ -1873,7 +1873,8 @@ export const DAEMON_ROUTES = {
     "POST /sessions (StartSessionBody -> 202 StartSessionView: started, queued behind the agent's running session, or deferred by quiet hours; a started one waits up to 15 s for its session and carries it; a run that fails before its session begins answers that error)",
   session: "GET /sessions/:id",
   sessionEvents: "GET /sessions/:id/events?afterSeq= (JSON) | Accept: text/event-stream (SSE)",
-  stopSession: "POST /sessions/:id/stop",
+  stopSession:
+    "POST /sessions/:id/stop (SessionView; ends the session's runs and freezes nothing, a kill in force stays)",
   kill: "POST /kill",
   resume: "POST /kill/resume",
   shutdown:

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { appDirs, type Clock, join, log } from "@forerunner/platform";
 import type { KillScope, KillSwitch } from "./killswitch.ts";
 
@@ -64,9 +64,13 @@ export function parseKillRequest(raw: unknown): KillRequest | null {
   };
 }
 
+/**
+ * Remove the request so the next start does not apply it again. The daemon's kill switch calls
+ * this on every `resume()` (its `onResume`, wired in `daemon/compose.ts`; U-019, U-032). A file
+ * already gone is fine; any other failure throws, and the kill stays in force.
+ */
 export function clearKillRequest(runtimeDir: string = appDirs().runtime): void {
-  const p = killFilePath(runtimeDir);
-  if (existsSync(p)) unlinkSync(p);
+  rmSync(killFilePath(runtimeDir), { force: true });
 }
 
 export class KillFileWatcher {

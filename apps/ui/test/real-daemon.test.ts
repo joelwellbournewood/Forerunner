@@ -204,4 +204,20 @@ describe("the UI client against the real daemon", () => {
     expect(result.projectId).toBe(projectId);
     expect(result.entryCount).toBeGreaterThanOrEqual(1);
   });
+
+  it("stop session: answers with the session, and Stop all set before stays in force (U-032)", async () => {
+    const started = await client.startSession({ agentId, projectId, trigger: "manual" });
+    const id = started.session?.id ?? (await client.sessions({ projectId }))[0]?.id ?? "";
+    expect(id).not.toBe("");
+    expect((await client.kill({ scope: "all", reason: "stop all from the UI" })).killActive).toBe(
+      true,
+    );
+    // The live view's Stop button: it reads the answer as the session it shows.
+    const stopped = await client.stopSession(id, "stopped from the live view");
+    expect(stopped.id).toBe(id);
+    // The header still shows the kill and Resume; only Resume lifts it.
+    expect((await client.health()).killActive).toBe(true);
+    expect((await client.resume()).killActive).toBe(false);
+    expect((await client.health()).killActive).toBe(false);
+  });
 });

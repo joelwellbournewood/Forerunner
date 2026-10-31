@@ -7,8 +7,8 @@ import { type Seed, seedWorld } from "./helpers.ts";
 
 /**
  * Remote commands from the shared state: a kill from any device stops the runner's runs within
- * one poll interval, stop lifts the freeze, start resumes and asks the scheduler, pause is
- * refused, and every command gets a result row and an audit row.
+ * one poll interval, stop freezes nothing (and keeps a kill in force), start resumes and asks the
+ * scheduler, pause is refused, and every command gets a result row and an audit row.
  */
 let store: StateStore;
 let clock: SimulatedClock;
@@ -100,7 +100,7 @@ describe("remote commands from the shared state", () => {
     w.stop();
   });
 
-  it("stop ends the agent's runs but lifts the freeze; start resumes and asks the scheduler", async () => {
+  it("stop ends the agent's runs and freezes nothing; start resumes and asks the scheduler", async () => {
     const controller = new AbortController();
     kill.register({ agentId: seed.agent.id, sessionId: "s2", controller, label: "run" });
     const w = watcher();
@@ -130,6 +130,17 @@ describe("remote commands from the shared state", () => {
     expect((await store.remoteCommand.mustGet(start.id)).result).toMatchObject({
       result: "started",
     });
+  });
+
+  it("a stop during a kill ends the runs and keeps the kill (U-032)", async () => {
+    await kill.stop("all", "kill from the PC");
+    const controller = new AbortController();
+    kill.register({ agentId: seed.agent.id, sessionId: "s4", controller, label: "run" });
+    const w = watcher();
+    await store.remoteCommand.enqueue({ device_id: phoneId, target: "cloud", command: "stop" });
+    expect(await w.drain()).toBe(1);
+    expect(controller.signal.aborted).toBe(true);
+    expect(kill.isFrozen({ agentId: seed.agent.id })).toBe(true);
   });
 
   it("pause is refused with a failed result; commands for the PC or another runner are left alone", async () => {

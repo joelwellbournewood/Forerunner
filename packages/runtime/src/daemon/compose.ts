@@ -87,7 +87,7 @@ import { registerDataTools } from "../data/tools.ts";
 import type { DataLimits } from "../data/types.ts";
 import { DeviceManager } from "../devices/index.ts";
 import type { EnforcementHooks, HookDeps, RunBilling, RunContext } from "../enforcement/hooks.ts";
-import { KillFileWatcher } from "../enforcement/killfile.ts";
+import { clearKillRequest, KillFileWatcher } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
 import type { CapDecision, CapScope, CapsBilling, CapsPort } from "../enforcement/ports.ts";
 import { TokenIssuer } from "../enforcement/token.ts";
@@ -1422,18 +1422,25 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
 
   // Enforcement.
   const tokens = new TokenIssuer({ now: () => clock.now() });
-  const kill = new KillSwitch(tokens, async (scope) => {
-    // Freeze claims: release every claim held by the stopped agent(s) so peers can continue.
-    const agents =
-      scope === "all"
-        ? (await store.agent.list(undefined, { limit: 100 })).map((a) => a.id)
-        : scope.agentId
-          ? [scope.agentId]
-          : [];
-    for (const id of agents)
-      for (const t of await store.task.claimedBy(id))
-        await store.task.releaseClaim(t.id, id, "kill switch").catch(() => undefined);
-  });
+  const kill = new KillSwitch(
+    tokens,
+    async (scope) => {
+      // Freeze claims: release every claim held by the stopped agent(s) so peers can continue.
+      const agents =
+        scope === "all"
+          ? (await store.agent.list(undefined, { limit: 100 })).map((a) => a.id)
+          : scope.agentId
+            ? [scope.agentId]
+            : [];
+      for (const id of agents)
+        for (const t of await store.task.claimedBy(id))
+          await store.task.releaseClaim(t.id, id, "kill switch").catch(() => undefined);
+    },
+    // Whatever lifts the kill (Resume in the header or the tray, a start from the phone, a
+    // plan that starts a session) also removes `kill.json`, so the next start does not apply
+    // it again (U-019, U-032).
+    () => clearKillRequest(dirs.runtime),
+  );
   // A managed proxy dies with the global stop, like every other child process (ADR 0003).
   managedHeadroom?.bindKillSwitch(kill);
   const ports = statePorts(store, { chfPerUsd });
