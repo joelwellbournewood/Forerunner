@@ -99,6 +99,9 @@ describe("Opus fast mode wired into the daemon (D.20)", () => {
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
       sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      // The tier-3 task below runs its commands in the process stand-in: a test-only pin
+      // (U-079), which no setting a person can change gives.
+      sandboxProcessForEveryTier: true,
     });
     ({ app, token } = createDaemonApp(rt));
   }, 120_000);
@@ -134,10 +137,10 @@ describe("Opus fast mode wired into the daemon (D.20)", () => {
     const project = str(card.id);
     const row = await rt.store.project.mustGet(project);
     // The project has no repository, so since U-037 its tier-3 task runs in the project's
-    // workspace folder, in a sandbox lease: with no container engine here, the project allows
-    // the process stand-in, as a person without Docker would.
+    // workspace folder, in a sandbox lease: the composition pins the process stand-in for
+    // every tier (a test-only option, U-079).
     await rt.store.project.update(project, row.version, {
-      settings: { ...row.settings, fast_mode: true, allowProcessSandbox: true },
+      settings: { ...row.settings, fast_mode: true },
     });
     const task = await json(
       await post(`/projects/${project}/tasks`, {

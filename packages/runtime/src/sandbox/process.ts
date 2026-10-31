@@ -25,7 +25,7 @@ import type { NetworkPolicy, RunFn, Sandbox, SandboxLimits, SandboxRunOptions } 
  * pointing at an EgressProxy that enforces the task allowlist for well-behaved clients (and
  * denies everything for `{ mode: "none" }`). It is weaker than a container and says so: the
  * session log gets PROCESS_SANDBOX_WARNING, and `createSandbox` refuses it for risk tier >= 2
- * unless the project setting `allowProcessSandbox` is on.
+ * (U-079, ADR 0101: those tasks wait for the container sandbox; only a test pins otherwise).
  */
 export const PROCESS_SANDBOX_WARNING = "sandbox: process (no container engine)";
 

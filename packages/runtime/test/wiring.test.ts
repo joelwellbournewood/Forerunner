@@ -171,6 +171,8 @@ describe("daemon wiring", () => {
       available: false,
       engine: "none",
       reason: "test: no engine",
+      // U-079: the readiness state the Settings card words; no engine reads as not installed.
+      state: "not_installed",
     });
     expect(h.extensions).toEqual({ enabled: 0, pending: 0 });
   });

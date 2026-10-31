@@ -13,6 +13,7 @@ import {
 } from "@forerunner/platform";
 import { containPath, readWorktreeFile, worktreeFileExists, writeWorktreeFile } from "./contain.ts";
 import { type EgressDecision, EgressProxy } from "./egress-proxy.ts";
+import type { BuildRunnerImage } from "./image.ts";
 import type { NetworkPolicy, RunFn, Sandbox, SandboxLimits, SandboxRunOptions } from "./types.ts";
 
 /**
@@ -84,17 +85,22 @@ export const EGRESS_RELAY_SCRIPT = [
 
 /**
  * Image precedence: the project or app configuration, then `FORERUNNER_RUNNER_IMAGE`, then the
- * locally built `forerunner-runner:local` (`docker build -t forerunner-runner:local -f
- * services/cloud-runner/Dockerfile .`). No registry owner is ever assumed.
+ * image the desktop build named (`build`: `<repository>:<version>` from the payload's
+ * `runtime.json`, U-079), then the locally built `forerunner-runner:local` (`docker build -t
+ * forerunner-runner:local -f services/cloud-runner/Dockerfile .`). No registry owner is ever
+ * assumed: only the build names one. `resolveSandboxImage` (image.ts) adds the build's
+ * `:latest` fallback.
  */
 export function resolveRunnerImage(
   configured?: string,
   env: NodeJS.ProcessEnv = process.env,
+  build?: Pick<BuildRunnerImage, "repository" | "tag"> | null,
 ): string {
   const fromConfig = configured?.trim();
   if (fromConfig) return fromConfig;
   const fromEnv = env.FORERUNNER_RUNNER_IMAGE?.trim();
   if (fromEnv) return fromEnv;
+  if (build) return `${build.repository}:${build.tag}`;
   return DEFAULT_RUNNER_IMAGE;
 }
 

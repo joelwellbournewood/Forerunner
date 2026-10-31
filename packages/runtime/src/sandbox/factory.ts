@@ -1,4 +1,4 @@
-import { type Clock, currentPlatform, ForerunnerError, log } from "@forerunner/platform";
+import { type Clock, currentPlatform, log } from "@forerunner/platform";
 import {
   type ContainerEgressOptions,
   ContainerSandbox,
@@ -9,13 +9,16 @@ import {
 import { type DetectOptions, detectSandboxEngine, type EngineDetection } from "./detect.ts";
 import type { EgressDecision } from "./egress-proxy.ts";
 import { PROCESS_SANDBOX_WARNING, ProcessSandbox } from "./process.ts";
+import { sandboxNotReadyError } from "./readiness.ts";
 import type { NetworkPolicy, RunFn, Sandbox, SandboxLimits, WhichFn } from "./types.ts";
 
 /**
  * Picks the sandbox for a task: a container when an engine is reachable (and
  * FORERUNNER_SANDBOX_ENGINE is not "process"), else the process sandbox, which tasks at risk
- * tier >= 2 may only use when the project setting `allowProcessSandbox` is on. That rule is
- * enforced here, in code, not in a prompt.
+ * tier >= 2 never use (U-079: they wait for the container sandbox; `sandboxNotReadyError`).
+ * That rule is enforced here, in code, not in a prompt. The daemon's port passes a detection
+ * that says "none" unless the sandbox is ready (`SandboxReadinessService`), so an engine
+ * without the image, or on Windows containers, is never tried.
  */
 export interface CreateSandboxOptions {
   taskId: string;
@@ -24,7 +27,10 @@ export interface CreateSandboxOptions {
   network: NetworkPolicy;
   /** Task risk tier (0-3). Tier 2+ refuses the process sandbox unless allowProcessSandbox. */
   riskTier: number;
-  /** Project setting. Default false. */
+  /**
+   * Tests only (U-079): lets tier 2+ use the process stand-in. The daemon passes it only from
+   * the composition's test-only pin, never from a setting a person can change. Default false.
+   */
   allowProcessSandbox?: boolean;
   env?: Record<string, string>;
   /** Image from project/app configuration; falls back to FORERUNNER_RUNNER_IMAGE, then local. */
@@ -113,11 +119,22 @@ export async function createSandbox(opts: CreateSandboxOptions): Promise<Created
     return { sandbox, engine, warnings, detection };
   }
 
+  // U-079: a full-review task never runs in the process stand-in; it waits for the container
+  // sandbox (the runner puts it back to ready, its attempt count unchanged).
   if (opts.riskTier >= 2 && !opts.allowProcessSandbox) {
-    throw new ForerunnerError(
-      "not_supported",
-      `task at risk tier ${opts.riskTier} needs a container sandbox and none is reachable (${detection.reason}); enable the project setting allowProcessSandbox to run it in a process sandbox`,
-      { details: { riskTier: opts.riskTier, taskId: opts.taskId, reason: detection.reason } },
+    throw sandboxNotReadyError(
+      {
+        state: detection.problem ?? "not_installed",
+        image: resolveRunnerImage(opts.image, env),
+        choice: {
+          image: resolveRunnerImage(opts.image, env),
+          fallback: null,
+          source: "env",
+          pullable: true,
+        },
+        reason: detection.reason,
+      },
+      { id: opts.taskId, risk_tier: opts.riskTier },
     );
   }
   const warning = `${PROCESS_SANDBOX_WARNING}: ${detection.reason}`;

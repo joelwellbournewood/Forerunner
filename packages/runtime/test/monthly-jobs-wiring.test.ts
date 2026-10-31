@@ -50,12 +50,22 @@ describe("monthly jobs in the composed daemon", () => {
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       startServices: false,
+      // No Docker here, whatever the machine has (U-079): the handover's tier 1 seed runs in
+      // the process stand-in, as it does for a person without Docker.
+      sandboxDetection: {
+        engine: "none",
+        problem: "not_installed",
+        reason: "test: no engine",
+        checkedAt: clock.nowIso(),
+      },
     });
     rt.notifier.emitter.on("record", (r) => void records.push(r));
   }, 120_000);
   afterAll(async () => {
     await rt?.close();
-    rmSync(home, { recursive: true, force: true });
+    // Windows: a process that has just ended (git) can still hold the workspace folder for a
+    // moment (EBUSY); the removal is retried rather than failing the suite.
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
   it("the handover's fresh agent gets no lesson in any model call, the shared scope included", async () => {

@@ -80,6 +80,14 @@ describe("a person's move on a running task stops that task's run; the session g
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
+      // No Docker here, whatever the machine has (U-079): tasks at tier 0 and 1 run in the
+      // process stand-in, as they do for a person without Docker.
+      sandboxDetection: {
+        engine: "none",
+        problem: "not_installed",
+        reason: "test: no engine",
+        checkedAt: clock.nowIso(),
+      },
     });
     ({ app, token } = createDaemonApp(rt));
   }, 120_000);

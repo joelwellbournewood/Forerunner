@@ -1,7 +1,17 @@
 # 0007 — Sandboxes: Docker or Podman through one adapter, process sandbox as the stand-in
 
 Date: 2026-10-20
-Status: accepted
+Status: accepted; amended 2026-10-31 by ADR 0101 (U-079)
+
+> **Amendment (ADR 0101).** Tasks at risk tier 2 and above no longer use the process stand-in:
+> the project setting `allowProcessSandbox` is gone, and while the container sandbox is not
+> ready (no Docker, Docker not running, Docker Desktop on Windows containers, or the runner
+> image not on the computer) they wait instead of failing. A container is used only when the
+> sandbox is ready; Docker on Windows containers never counts. The image is the one the
+> desktop build names (`ghcr.io/<owner>/forerunner-runner:<version>`, else `:latest`), pulled
+> by the app with progress; `forerunner-runner:local` stays the source checkout's default.
+> The built interface is `run/writeFile/readFile/exists`, and the allowlist reaches the egress
+> proxy by the network gateway or a relay sidecar (`docs/maintainers/sandbox.md`).
 
 ## Context
 

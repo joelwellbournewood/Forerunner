@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DEVICES_ROUTES } from "../devices/types.ts";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, TaskPrioritySchema } from "../priority.ts";
+import { SANDBOX_ROUTES, SandboxStateSchema } from "../sandbox/readiness-types.ts";
 import { SECRET_STORE_ROUTES } from "../secrets/store-types.ts";
 import { PLAN_ALLOWANCE_ROUTES, SETUP_ROUTES } from "../setup/types.ts";
 import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
@@ -18,6 +19,24 @@ export {
   RevokeDeviceView,
   StartPairingBody,
 } from "../devices/types.ts";
+/** Settings -> Sandbox (Docker) shapes (U-079, ADR 0101): readiness, steps, the download. */
+export {
+  DOCKER_DESKTOP_URL,
+  LOCAL_IMAGE_BUILD_COMMAND,
+  SANDBOX_ROUTES,
+  SANDBOX_SETTINGS_PLACE,
+  SANDBOX_STATES,
+  SANDBOX_WHY,
+  SandboxPullEntryView,
+  SandboxPullEvent,
+  SandboxPullJobView,
+  type SandboxState,
+  SandboxStateSchema,
+  SandboxStatusView,
+  sandboxNextStep,
+  sandboxWords,
+  sizeWords,
+} from "../sandbox/readiness-types.ts";
 /** Secrets the app stores (U-054): the mailbox passwords and the cloud voice keys. */
 export {
   isStorableSecretName,
@@ -681,6 +700,20 @@ export const StartCheckView = z.object({
       ),
     }),
   ),
+  /**
+   * U-079: the ready tasks at tier 2+ a session would leave out while the Docker sandbox is
+   * not ready, with what is wrong and the step to take; null when none waits (an older daemon
+   * that does not send it reads as null).
+   */
+  waitingForSandbox: z
+    .object({
+      state: SandboxStateSchema,
+      headline: z.string(),
+      step: z.string(),
+      tasks: z.array(StartCheckTaskView),
+    })
+    .nullable()
+    .default(null),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 
@@ -689,9 +722,12 @@ export const AnswerRequestBody = z.object({ version: z.number().int(), answer: z
 /** Where task commands run on this machine (ADR 0007): a container when an engine is reachable. */
 export const SandboxHealth = z.object({
   kind: z.enum(["container", "process"]),
+  /** The container sandbox is ready (U-079: Linux containers and the image here). */
   available: z.boolean(),
   engine: z.enum(["docker", "podman", "none"]),
   reason: z.string(),
+  /** U-079's readiness state; absent from an older daemon. */
+  state: SandboxStateSchema.optional(),
 });
 export type SandboxHealth = z.infer<typeof SandboxHealth>;
 
@@ -2052,7 +2088,7 @@ export const DAEMON_ROUTES = {
   setTaskDependencies:
     "POST /tasks/:id/dependencies (SetTaskDependenciesBody { version, dependsOn, reason } -> TaskView: the tasks it waits on, all of them; an id that is no task of the project, the task itself, a cancelled task or a cycle is 409 conflict with cause validation and a message naming it, a stale version 409 conflict, nothing written; 404 for an unknown task; U-040)",
   startCheck:
-    "GET /projects/:id/start-check?budgetUsdMicro= (StartCheckView: what a session started now would plan: the ready tasks it would run, those left out for budget and those waiting on a task not done, priced and cut as the runner does; without a budget the project's session cap; 404 for an unknown project; U-040)",
+    "GET /projects/:id/start-check?budgetUsdMicro= (StartCheckView: what a session started now would plan: the ready tasks it would run, those left out for budget and those waiting on a task not done, priced and cut as the runner does; without a budget the project's session cap; waitingForSandbox: the tier 2+ tasks that wait while the Docker sandbox is not ready, with the step, U-079; 404 for an unknown project; U-040)",
   planProject:
     "POST /projects/:id/plan (ProjectPlanBody -> 201 PlanProjectView: the plan written as milestone and task rows; one milestone and a flat task list in small-project mode, spec B.6, where a later plan joins the project's open milestone (reusedMilestone), which keeps its name and takes the plan's new success criteria and a later target date (merged says what was added; an audit row project.plan carries the plan's reason); an unknown dependency, a cycle, an empty plan or one over the caps is refused as 409 conflict with cause validation (ADR 0025) and nothing is written; 404 for an unknown project)",
   transitionTask: "POST /tasks/:id/transition",
@@ -2203,6 +2239,8 @@ export const DAEMON_ROUTES = {
   ...SECRET_STORE_ROUTES,
   // Settings -> Voice (ADR 0090): the voice profile, its install and progress.
   ...VOICE_INSTALL_ROUTES,
+  // Settings -> Sandbox (Docker) (U-079, ADR 0101): readiness, Check again, the download.
+  ...SANDBOX_ROUTES,
   dataAssets: "GET /projects/:id/data (DataAssetView[])",
   registerDataAsset:
     "POST /projects/:id/data { locator, kind?, mode?, name?, sizeBytes? } | multipart file (+ kind, name) (201 DataAssetView; 413 above the upload cap)",

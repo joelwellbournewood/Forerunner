@@ -92,9 +92,13 @@ container engine.
 group (Linux) / Docker Desktop is not running (Windows).
 **Fix.** Linux: `sudo systemctl start docker` and `sudo usermod -aG docker $USER` (log out and
 in), or use rootless Podman (`podman` is detected the same way). Windows: start Docker Desktop
-(WSL 2 backend) or Podman Desktop. Without any engine the runtime uses the process sandbox
-stand-in (ADR 0007) and tests that need a daemon skip with a visible reason; CI records that in
-the job summary.
+(WSL 2 backend, **Linux containers**: Docker Desktop on Windows containers counts as no engine)
+or Podman Desktop. Without any engine the runtime uses the process sandbox stand-in for tasks
+at tier 0 and 1 (ADR 0007), tasks at tier 2+ wait (U-079, ADR 0101; Settings → Sandbox
+(Docker) shows the step), and tests that need a daemon skip with a visible reason; CI records
+that in the job summary. Unit and e2e tests never use the machine's Docker: they pin the
+sandbox (`sandboxDetection`, `FakeContainerEngine`, or the test-only
+`sandboxProcessForEveryTier`; `sandbox.md`).
 
 ### 8. Windows: `ENAMETOOLONG`, `Filename too long` or `EPERM` deep inside `node_modules`
 

@@ -136,6 +136,7 @@ import { ownsProject, ownsSession } from "./ownership.ts";
 import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
+import { createSandboxRoutes } from "./sandbox-routes.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
 import {
@@ -498,7 +499,9 @@ export function createDaemonApp(
       vaultBackend: rt.vault.backend,
       activeSessions: active.filter((s) => s.summary !== "conversation").length,
       killActive: rt.kill.isFrozen({ agentId: rt.agent.id }),
-      sandbox: sandboxHealth(rt.sandbox.detection),
+      sandbox: sandboxHealth(
+        rt.sandbox.readiness.current() ?? (await rt.sandbox.readiness.ensureChecked()),
+      ),
       extensions: {
         enabled: extensions.filter((e) => e.status === "enabled").length,
         pending: extensions.filter((e) => e.status === "pending_approval").length,
@@ -535,6 +538,8 @@ export function createDaemonApp(
   app.route("/model-watch", createModelWatchRoutes({ watch: rt.modelWatch }));
   // Settings -> Voice (ADR 0090): the voice profile and its install job with progress.
   app.route("/", createVoiceInstallRoutes({ jobs: rt.voiceInstall }));
+  // Settings -> Sandbox (Docker) (U-079, ADR 0101): readiness, Check again, the download.
+  app.route("/", createSandboxRoutes({ sandbox: rt.sandbox }));
   // Notifications (spec R.6, ADR 0017, ADR 0038): preferences, a test send, the recent list.
   app.route(
     "/",
@@ -1035,6 +1040,15 @@ export function createDaemonApp(
         title: w.title,
         waitsOn: w.waitsOn.map((d) => ({ taskId: d.id, title: d.title, status: d.status })),
       })),
+      // U-079: the full-review tasks that wait for the Docker sandbox, with the step to take.
+      waitingForSandbox: r.waitingForSandbox
+        ? {
+            state: r.waitingForSandbox.state,
+            headline: r.waitingForSandbox.headline,
+            step: r.waitingForSandbox.step,
+            tasks: r.waitingForSandbox.tasks.map(named),
+          }
+        : null,
     };
     return c.json(view);
   });

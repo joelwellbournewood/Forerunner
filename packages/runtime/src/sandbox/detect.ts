@@ -13,7 +13,10 @@ import type { RunFn, SandboxEngineName, WhichFn } from "./types.ts";
  * cached per process for `ttlMs` (default 60 s) on the injected Clock so a session does not
  * spawn `docker info` before every command. `FORERUNNER_SANDBOX_ENGINE=docker|podman|process`
  * narrows the probe to one engine or skips it. Never throws: an unusable engine is reported as
- * `engine: "none"` with the reason.
+ * `engine: "none"` with the reason and, for the Settings card's steps (U-079), the `problem`.
+ *
+ * Docker in Windows-container mode (`docker info` says `OSType` windows) never counts as an
+ * engine: it cannot run the Linux runner image (bind mounts to `/work` are refused).
  */
 export interface EngineDetection {
   engine: SandboxEngineName;
@@ -24,8 +27,24 @@ export interface EngineDetection {
   rootless?: boolean;
   /** The FORERUNNER_SANDBOX_ENGINE value that shaped this answer, if any. */
   override?: EngineOverride;
+  /**
+   * Why no engine is usable, when `engine` is "none" (U-079): no CLI on PATH, a CLI whose
+   * daemon does not answer, or Docker running Windows containers. Absent on an older pinned
+   * detection, which reads as `not_installed`.
+   */
+  problem?: EngineProblem;
   checkedAt: string;
 }
+
+/** Why no container engine can run the sandbox (U-079), most specific last. */
+export type EngineProblem = "not_installed" | "not_running" | "windows_containers";
+
+/** How specific a problem is: the one with the clearest next step wins across engines. */
+const PROBLEM_RANK: Record<EngineProblem, number> = {
+  not_installed: 0,
+  not_running: 1,
+  windows_containers: 2,
+};
 
 export type EngineOverride = "docker" | "podman" | "process";
 
@@ -91,6 +110,7 @@ async function probe(deps: ProbeDeps): Promise<EngineDetection> {
       engine: "none",
       reason: "FORERUNNER_SANDBOX_ENGINE=process: container engines skipped",
       override,
+      problem: "not_installed",
       checkedAt,
     };
   }
@@ -99,6 +119,7 @@ async function probe(deps: ProbeDeps): Promise<EngineDetection> {
   }
   const order: ("docker" | "podman")[] = override ? [override] : ["docker", "podman"];
   const reasons: string[] = [];
+  let problem: EngineProblem = "not_installed";
   for (const engine of order) {
     const r = engine === "docker" ? await probeDocker(deps) : await probePodman(deps);
     if (r.ok) {
@@ -118,51 +139,75 @@ async function probe(deps: ProbeDeps): Promise<EngineDetection> {
       return found;
     }
     reasons.push(`${engine}: ${r.reason}`);
+    if (PROBLEM_RANK[r.problem] > PROBLEM_RANK[problem]) problem = r.problem;
   }
-  const none: EngineDetection = { engine: "none", reason: reasons.join("; "), checkedAt };
+  const none: EngineDetection = { engine: "none", reason: reasons.join("; "), problem, checkedAt };
   if (override) none.override = override;
   logger.warn("no container engine reachable", { reason: none.reason });
   return none;
 }
 
-type ProbeResult = { ok: true; version: string; rootless: boolean } | { ok: false; reason: string };
+type ProbeResult =
+  | { ok: true; version: string; rootless: boolean }
+  | { ok: false; reason: string; problem: EngineProblem };
+
+/** The `docker info` template: version, security options, and the OS of the containers it runs. */
+export const DOCKER_INFO_FORMAT = "{{.ServerVersion}}|{{.SecurityOptions}}|{{.OSType}}";
 
 async function probeDocker(deps: ProbeDeps): Promise<ProbeResult> {
   try {
-    if ((await deps.which("docker")) === null) return { ok: false, reason: "docker not on PATH" };
-    const r = await deps.run(
-      ["docker", "info", "--format", "{{.ServerVersion}}|{{.SecurityOptions}}"],
-      {
-        allowFailure: true,
-        timeoutMs: PROBE_TIMEOUT_MS,
-      },
-    );
-    if (r.timedOut) return { ok: false, reason: "docker info timed out" };
-    const [version = "", security = ""] = r.stdout.trim().split("|");
+    if ((await deps.which("docker")) === null)
+      return { ok: false, reason: "docker not on PATH", problem: "not_installed" };
+    const r = await deps.run(["docker", "info", "--format", DOCKER_INFO_FORMAT], {
+      allowFailure: true,
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
+    if (r.timedOut) return { ok: false, reason: "docker info timed out", problem: "not_running" };
+    const [version = "", security = "", osType = ""] = r.stdout.trim().split("|");
     if (r.code !== 0 || !version) {
-      return { ok: false, reason: tail(r.stderr) || `docker info exited ${r.code}` };
+      return {
+        ok: false,
+        reason: tail(r.stderr) || `docker info exited ${r.code}`,
+        problem: "not_running",
+      };
+    }
+    // Docker Desktop on Windows can run Windows containers instead of Linux ones; the runner
+    // image is a Linux image, so that engine is not usable (U-079). An older engine that does
+    // not report OSType is taken as Linux.
+    const os = osType.trim().toLowerCase();
+    if (os && os !== "linux") {
+      return {
+        ok: false,
+        reason: `docker ${version} runs ${os} containers; the sandbox needs Linux containers (Docker Desktop: Switch to Linux containers)`,
+        problem: "windows_containers",
+      };
     }
     return { ok: true, version, rootless: /rootless/i.test(security) };
   } catch (e) {
-    return { ok: false, reason: errorMessage(e) };
+    return { ok: false, reason: errorMessage(e), problem: "not_running" };
   }
 }
 
 async function probePodman(deps: ProbeDeps): Promise<ProbeResult> {
   try {
-    if ((await deps.which("podman")) === null) return { ok: false, reason: "podman not on PATH" };
+    if ((await deps.which("podman")) === null)
+      return { ok: false, reason: "podman not on PATH", problem: "not_installed" };
     const r = await deps.run(
       ["podman", "info", "--format", "{{.Version.Version}}|{{.Host.Security.Rootless}}"],
       { allowFailure: true, timeoutMs: PROBE_TIMEOUT_MS },
     );
-    if (r.timedOut) return { ok: false, reason: "podman info timed out" };
+    if (r.timedOut) return { ok: false, reason: "podman info timed out", problem: "not_running" };
     const [version = "", rootless = ""] = r.stdout.trim().split("|");
     if (r.code !== 0 || !version) {
-      return { ok: false, reason: tail(r.stderr) || `podman info exited ${r.code}` };
+      return {
+        ok: false,
+        reason: tail(r.stderr) || `podman info exited ${r.code}`,
+        problem: "not_running",
+      };
     }
     return { ok: true, version, rootless: rootless.trim() !== "false" };
   } catch (e) {
-    return { ok: false, reason: errorMessage(e) };
+    return { ok: false, reason: errorMessage(e), problem: "not_running" };
   }
 }
 

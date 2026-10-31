@@ -41,6 +41,7 @@ import {
   type SessionStatusOutcome,
   type TaskReviewOutcome,
 } from "../loop/ports.ts";
+import { isSandboxNotReady } from "../sandbox/readiness.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
@@ -77,6 +78,13 @@ import {
   planIdOf,
   planKeyOf,
 } from "./plan-approval.ts";
+import {
+  needsContainerSandbox,
+  type SandboxGate,
+  type SandboxGateAnswer,
+  type SandboxWaitingTask,
+  summarizeSandboxWaiting,
+} from "./sandbox-gate.ts";
 
 /**
  * One working period of a principal agent (spec E). Code owns the skeleton: checklist, plan
@@ -398,6 +406,12 @@ export interface SessionRunnerDeps {
    */
   schemaSync?: SchemaSyncPort;
   /**
+   * U-079: whether tasks at risk tier 2+ can run now (the container sandbox is ready). Asked
+   * before every plan; while it is not, those tasks are left out of the plan and named in the
+   * summary, and their attempt count does not change. Absent: every ready task is planned.
+   */
+  sandboxGate?: SandboxGate;
+  /**
    * How often the runner re-reads a running task's row (U-039), default
    * `DEFAULT_TASK_WATCH_MS`: a person's move made where no route of this process sees it (the
    * phone through the state service, Chat) stops the task's run within this time. The daemon's
@@ -614,6 +628,9 @@ export class SessionRunner {
     const reviewFailed: string[] = [];
     /** Ready tasks that wait on a task not done (U-040), named in the summary. */
     let waiting: WaitingTask[] = [];
+    /** Ready tasks at tier 2+ that wait for the container sandbox (U-079). */
+    const waitingForSandbox: SandboxWaitingTask[] = [];
+    let sandboxAnswer: SandboxGateAnswer | null = null;
     let plan: SessionPlan | null = null;
     let brief: StateBrief | null = null;
     let stopReason = "completed";
@@ -788,7 +805,18 @@ export class SessionRunner {
       }
 
       // 2. Plan within budget. Plans over budget are cut before starting.
-      const readyTasks = project ? await store.task.readyTasks(project.id, { limit: 100 }) : [];
+      let readyTasks = project ? await store.task.readyTasks(project.id, { limit: 100 }) : [];
+      // U-079: a full-review task runs only in the container sandbox; while it is not ready
+      // the task waits (left out of the plan, its attempt count unchanged) and the session
+      // goes on with the others. The gate re-checks Docker before every plan.
+      if (this.deps.sandboxGate && readyTasks.some(needsContainerSandbox)) {
+        sandboxAnswer = await this.deps.sandboxGate.check();
+        if (!sandboxAnswer.ready) {
+          for (const t of readyTasks.filter(needsContainerSandbox))
+            waitingForSandbox.push({ id: t.id, title: t.title });
+          readyTasks = readyTasks.filter((t) => !needsContainerSandbox(t));
+        }
+      }
       plan = await this.deps.planner.plan({
         brief,
         briefText,
@@ -841,7 +869,37 @@ export class SessionRunner {
               })),
             }
           : {}),
+        ...(waitingForSandbox.length && sandboxAnswer
+          ? {
+              waitingForSandbox: {
+                state: sandboxAnswer.state,
+                step: sandboxAnswer.step,
+                tasks: waitingForSandbox.map((t) => ({ taskId: t.id, title: t.title })),
+              },
+            }
+          : {}),
       });
+      if (waitingForSandbox.length && sandboxAnswer) {
+        await emit("session.sandbox_waiting", {
+          state: sandboxAnswer.state,
+          step: sandboxAnswer.step,
+          tasks: waitingForSandbox.map((t) => ({ taskId: t.id, title: t.title })),
+          warning: summarizeSandboxWaiting(waitingForSandbox, sandboxAnswer)[0],
+        });
+        try {
+          await this.deps.sandboxGate?.waiting?.({
+            sessionId: session.id,
+            projectId: project?.id ?? null,
+            tasks: [...waitingForSandbox],
+            answer: sandboxAnswer,
+          });
+        } catch (e) {
+          this.logger.warn("sandbox waiting hook failed", {
+            sessionId: session.id,
+            error: errorMessage(e),
+          });
+        }
+      }
       try {
         await this.deps.onPlanned?.({
           sessionId: session.id,
@@ -1071,6 +1129,28 @@ export class SessionRunner {
               ...(notes.length ? { notes } : {}),
             });
           } catch (e) {
+            if (isSandboxNotReady(e)) {
+              // U-079: the sandbox stopped being ready after the plan (Docker quit): the task
+              // waits for it like the ones left out of the plan. Its claim is given back, so it
+              // is ready again with its attempt count unchanged, and the session goes on.
+              // (The finally below stops the claim renewal, the watch and the registration.)
+              const details = (e.details ?? {}) as Partial<SandboxGateAnswer>;
+              sandboxAnswer ??= {
+                ready: false,
+                state: details.state ?? "not_running",
+                step: details.step ?? "",
+                headline: details.headline ?? "The Docker sandbox is not ready.",
+              };
+              waitingForSandbox.push({ id: task.id, title: task.title });
+              await releaseIfHeld(task.id, "waits for the Docker sandbox (U-079)");
+              await emit("task.sandbox_waiting", {
+                taskId: task.id,
+                title: task.title,
+                state: details.state ?? null,
+                warning: errorMessage(e),
+              });
+              continue;
+            }
             const code = e instanceof ForerunnerError ? e.code : "internal";
             result = {
               outcome:
@@ -1466,6 +1546,8 @@ export class SessionRunner {
       stopReason,
       plan,
       waiting,
+      waitingForSandbox,
+      sandboxAnswer,
       heard: heard.length,
       endInbox,
       stoppedAtEnd,
@@ -2324,6 +2406,9 @@ function summarize(x: {
   movedWhileRunning?: readonly MovedWhileRunning[];
   /** Ready tasks waiting on a task not done (U-040), named with what they wait on. */
   waiting?: readonly WaitingTask[];
+  /** Ready tasks at tier 2+ waiting for the container sandbox (U-079), with the step to take. */
+  waitingForSandbox?: readonly SandboxWaitingTask[];
+  sandboxAnswer?: SandboxGateAnswer | null;
   /** Tasks whose critic review failed, each with a card (U-045). */
   reviewFailed?: string[];
   retried: string[];
@@ -2349,13 +2434,17 @@ function summarize(x: {
     // that waits on another, or that does not fit the budget, is not "no task is ready".
     ...(x.plan && x.plan.items.length === 0
       ? [
-          (x.waiting?.length ?? 0) + (x.plan.leftOutForBudget?.length ?? 0) > 0
+          (x.waiting?.length ?? 0) +
+            (x.plan.leftOutForBudget?.length ?? 0) +
+            (x.waitingForSandbox?.length ?? 0) >
+          0
             ? "Nothing to plan: no ready task can run in this session (below)."
             : 'Nothing to plan: no task is ready. Give the agent work first: add a task (the Tasks tab, or "add a task: ..." in Chat), mark a draft task ready on the Tasks tab, or approve the plan waiting in the Inbox.',
         ]
       : []),
     ...summarizeLeftOut(x.plan),
     ...summarizeWaiting(x.waiting ?? []),
+    ...summarizeSandboxWaiting(x.waitingForSandbox ?? [], x.sandboxAnswer ?? null),
     // One set of counts (U-072): the log's session.ended line and the notification count the same.
     countsSentence(countsOf(x), x.plan?.items.length ?? 0),
     ...(x.cancelled?.length ? [`Cancelled: ${x.cancelled.length}.`] : []),

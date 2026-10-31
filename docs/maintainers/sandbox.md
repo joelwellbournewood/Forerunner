@@ -2,9 +2,11 @@
 
 `packages/runtime/src/sandbox`: where a task's code runs. One Docker or Podman container per
 coding or test task with only the task worktree mounted and a per-task network policy the
-kernel enforces; a weaker process sandbox as the stand-in when no engine is reachable; an
-in-memory fake for unit tests. ADR 0007 records the decision. Spec: Architecture item 9, the
-platform table ("Sandboxes" row), Security "Sandboxing", module M (tests in Docker).
+kernel enforces; a weaker process sandbox as the stand-in for tasks at risk tier 0 and 1 when
+the container sandbox is not ready; an in-memory fake and a fake container engine for tests.
+Tasks at tier 2 and above (a full review) run only in the container and wait while it is not
+ready (U-079). ADR 0007 records the decision, ADR 0101 amends it. Spec: Architecture item 9,
+the platform table ("Sandboxes" row), Security "Sandboxing", module M (tests in Docker).
 
 ## Purpose
 
@@ -34,13 +36,21 @@ true without trusting a prompt:
 | --- | --- |
 | `types.ts` | `Sandbox`, `SandboxKind`, `NetworkPolicy`, `SandboxLimits`, `SandboxRunOptions`, `RunFn`, `WhichFn` |
 | `contain.ts` | `containPath` (lexical), `containPathReal` (symlink-aware walk), `readWorktreeFile`, `writeWorktreeFile`, `worktreeFileExists` |
-| `detect.ts` | `detectSandboxEngine()` with a per-process TTL cache on the `Clock`, `resetSandboxEngineCache()`, the `FORERUNNER_SANDBOX_ENGINE` override |
+| `detect.ts` | `detectSandboxEngine()` with a per-process TTL cache on the `Clock`, `resetSandboxEngineCache()`, the `FORERUNNER_SANDBOX_ENGINE` override, `DOCKER_INFO_FORMAT`, `EngineProblem` (`not_installed`, `not_running`, `windows_containers`) |
+| `image.ts` | `resolveSandboxImage` (config, `FORERUNNER_RUNNER_IMAGE`, the build's image with its `latest` fallback, the local default), `readBuildRunnerImage` / `parseBuildRunnerImage` (`runnerImage` in the payload's `runtime.json`), `isPullableImage` |
+| `readiness.ts` | `SandboxReadinessService` (the six states, `check`, `withSize`, the `docker pull` job with replayable events, `onChange`), `sandboxNotReadyError` / `isSandboxNotReady`, `parseManifestSize`, `PullProgress`, `pullSaysNotFound` / `pullSaysDenied` |
+| `readiness-types.ts` | browser-safe: `SANDBOX_STATES`, the view and event schemas, `SANDBOX_ROUTES`, `sandboxWords` / `sandboxNextStep` (the words the card, the summary, the Start dialog and the notice share), `SANDBOX_WHY` |
+| `fake-engine.ts` | `FakeContainerEngine`: a `docker`/`podman` stand-in for tests (state, images, registry, denied pulls, held pulls; `exec` runs on the host in the worktree) |
 | `worktree.ts` | `WorktreeManager`: `git worktree add -B` per task under `appDirs().worktrees`, `list`, `remove` + `prune`, root guard |
 | `egress-proxy.ts` | `EgressProxy`: HTTP forward + CONNECT tunnel, allowlist, token auth, source filter, upstream timeout, byte counters, audit callback |
 | `container.ts` | `ContainerSandbox` (docker / podman), the argv builders (`buildContainerRunArgv`, `buildNetworkCreateArgv`, `buildEgressSidecarArgv`), `parseNetworkGateway`, `parseContainerAddress`, `stripProxyEnv`, `resolveRunnerImage`, `EgressRoute` |
 | `process.ts` | `ProcessSandbox`, `PROCESS_SANDBOX_WARNING` |
 | `fake.ts` | `FakeSandbox` for callers' unit tests |
 | `factory.ts` | `createSandbox(opts)` → `{ sandbox, engine, warnings, detection }`, the risk-tier rule, `defaultEgressRoute` |
+| `../daemon/sandbox-port.ts` | `DetectingSandboxPort` (the executor's `RunSandboxPort`: the container only when ready, tier 2+ refused while not), `sandboxHealth` |
+| `../daemon/sandbox-wiring.ts` | `composeSandbox`: the readiness service, the port, the session runner's `SandboxGate`, the one Inbox notice, the requeue of old sandbox failures |
+| `../daemon/sandbox-routes.ts` | `GET /sandbox`, `POST /sandbox/check`, `POST /sandbox/pull`, `GET /sandbox/pull/events` |
+| `../session/sandbox-gate.ts` | `SandboxGate`, `needsContainerSandbox` (tier >= 2), the summary's waiting line |
 | `index.ts` | re-exports everything; `packages/runtime/src/index.ts` exports it from the package |
 
 ### The `Sandbox` interface
@@ -94,23 +104,67 @@ same way, because the child runs on the host.
 ### Choosing the engine (`detect.ts`, `factory.ts`)
 
 `detectSandboxEngine({ env, which, run, clock, ttlMs })` probes
-`docker info --format {{.ServerVersion}}|{{.SecurityOptions}}` (rootless shows up in the
-security options) and then `podman info --format {{.Version.Version}}|{{.Host.Security.Rootless}}`.
+`docker info --format {{.ServerVersion}}|{{.SecurityOptions}}|{{.OSType}}` (rootless shows up
+in the security options) and then `podman info --format {{.Version.Version}}|{{.Host.Security.Rootless}}`.
 It skips a CLI that is not on PATH, never throws (an unreachable daemon is
-`{ engine: "none", reason: "<daemon error>" }`) and caches the answer per process for 60 s on
-the injected `Clock` (`resetSandboxEngineCache()` for tests or after an install).
+`{ engine: "none", reason: "<daemon error>", problem: "not_running" }`) and caches the answer
+per process for 60 s on the injected `Clock` (`resetSandboxEngineCache()` for tests or after an
+install). Docker whose `OSType` is not `linux` (Docker Desktop on Windows containers) is
+`engine: "none"` with `problem: "windows_containers"`: it cannot run the Linux runner image
+(the bind mount to `/work` is refused), so it never counts. Across engines the most specific
+problem wins (`windows_containers` over `not_running` over `not_installed`).
 `FORERUNNER_SANDBOX_ENGINE=docker|podman` probes that engine only; `=process` skips the probes.
+
+### Readiness (`readiness.ts`, U-079)
+
+`SandboxReadinessService` answers one of six states: `not_installed`, `not_running`,
+`windows_containers` (from the detection's `problem`), `image_missing` (the engine answers but
+`<engine> image inspect <image>` fails), `pulling` (a download runs) and `ready`. The daemon
+composes it once (`composeSandbox` in `daemon/sandbox-wiring.ts`) and checks at start, before
+every session plans (the gate forces a fresh detection) and on Settings' Check again
+(`POST /sandbox/check`). The first check of a service never trusts the module's detection cache.
+`withSize()` adds the download size for the card: `docker manifest inspect --verbose <image>`,
+the layers of the host's platform summed (`parseManifestSize`), once per image; a check never
+asks the registry, so neither the daemon's start nor a plan waits on it.
+
+The download (`startPull`) is a background `docker pull <image>` like the voice install's job
+(ADR 0090): idempotent (a running download is returned), refused (`claim_conflict`, 409) while
+no engine runs Linux containers or for a local image; its output becomes `step`, `layers`
+(done of total, from docker's non-TTY `<12 hex>: Pull complete | Already exists` lines or
+podman's `Copying blob ... done`), `log`, `warning`, `error` and `result` events with sequence
+numbers; `close()` (the daemon's stop) aborts it. A build-named image is pulled at the app's
+version; when the registry answers "manifest unknown" the tag is marked unpublished for the
+process and `:latest` is pulled and used instead. "denied" / "unauthorized" is not "not found":
+the result says the package must be public or needs `docker login`. When the registry cannot be
+reached and `:latest` is already here, it stands in. After the job the service checks again.
+
+The session runner's `SandboxGate` (`session/sandbox-gate.ts`, wired in `sandbox-wiring.ts`):
+`check()` re-probes and answers `{ ready, state, step, headline }`; while not ready the runner
+leaves the ready tasks at tier 2+ out of the plan (`waitingForSandbox` on `session.planned`, a
+`session.sandbox_waiting` event, a "Waiting for Docker: ..." summary line) and calls
+`waiting()`, which starts the download when the image is all that is missing and keeps the one
+Inbox notice: `kind: "info"`, not blocking, author `sandbox-gate`, `change_card` `{ key:
+"sandbox.not_ready", state, tasks }`; not filed again for a state whose last notice is open or
+answered, replaced when the state changes, withdrawn once ready. A lease refused after the plan
+(`isSandboxNotReady`) gives the claim back (`releaseClaim`: in_progress -> ready, no attempt).
+On the change to `ready` the wiring moves tier 2+ tasks an older version failed with the old
+sandbox messages (`OLD_SANDBOX_FAILURE`) back to ready and restores their attempt count.
 
 `createSandbox({ taskId, worktree, limits, network, riskTier, allowProcessSandbox, env, image,
 ... })` picks:
 
-1. `ContainerSandbox` when an engine is reachable. On rootful Docker on Linux it adds
-   `--user <host uid>:<gid>` and `HOME=/tmp` so files in the worktree stay owned by the user,
-   and it picks the egress route (below).
-2. Otherwise `ProcessSandbox`, **unless `riskTier >= 2` and the project setting
-   `allowProcessSandbox` is off**: then it throws `ForerunnerError("not_supported")` with the
-   detection reason. This is the spec's "tasks at risk tier 2+ refuse to run code in it" rule,
-   enforced here and tested in `test/sandbox-factory.test.ts`.
+1. `ContainerSandbox` when the detection names an engine. The daemon's port passes the engine
+   only when the readiness is `ready`, so an engine without the image or on Windows containers
+   is never tried. On rootful Docker on Linux it adds `--user <host uid>:<gid>` and
+   `HOME=/tmp` so files in the worktree stay owned by the user, and it picks the egress route
+   (below).
+2. Otherwise `ProcessSandbox`, **unless `riskTier >= 2`**: then it throws
+   `sandboxNotReadyError` (`ForerunnerError("not_supported")`, `details.reason:
+   "sandbox_not_ready"` with the state, headline and step). This is the spec's "tasks at risk
+   tier 2+ refuse to run code in it" rule, enforced here and tested in
+   `test/sandbox-factory.test.ts`. `allowProcessSandbox` lifts it for tests only: the daemon's
+   port sets it only from the composition's `sandboxProcessForEveryTier` pin, never from a
+   project setting (the old project setting `allowProcessSandbox` is not read since U-079).
 
 It returns `warnings[]` for the session log: the process-sandbox warning (see below) and a note
 when the image fell back to the local default.
@@ -125,12 +179,12 @@ destroyed. The factory has already logged its warning by then. See `model-watch.
 
 | OS | Engine | Egress route | Notes |
 | --- | --- | --- | --- |
-| Windows 10/11 | Docker Desktop (WSL2 backend) | sidecar | `docker` CLI on PATH. The engine runs in a VM, so the relay sidecar reaches the Windows host as `host.docker.internal`; the proxy listens on `0.0.0.0` and Windows Firewall may ask once for node. |
+| Windows 10/11 | Docker Desktop (WSL2 backend), **Linux containers** | sidecar | `docker` CLI on PATH. The engine runs in a VM, so the relay sidecar reaches the Windows host as `host.docker.internal`; the proxy listens on `0.0.0.0` and Windows Firewall may ask once for node. Docker Desktop on Windows containers is `windows_containers` and never used. |
 | Windows 10/11 | Podman (podman machine) | sidecar | `podman` CLI; the relay reaches the host as `host.containers.internal`. |
 | Linux | Docker rootful | gateway | The host owns the internal network's bridge, so the proxy binds its gateway address and no extra container is needed. Container runs as the host `uid:gid`. |
 | Linux | Docker rootless | sidecar | The bridge lives in a user namespace; `--add-host host.docker.internal:host-gateway` (Docker 20.10+) gives the relay a route to the host. No `--user`. |
 | Linux | Podman rootless (default on Fedora) | sidecar | `host.containers.internal` is injected by Podman. SELinux hosts need `FORERUNNER_SANDBOX_SELINUX=1` (adds `relabel=private` to the mount). |
-| Any | none | | process sandbox with the warning; refused for tier 2+ unless allowed. |
+| Any | none, or not ready | | process sandbox with the warning for tier 0 and 1; tier 2+ waits (U-079). |
 
 `defaultEgressRoute(detection)` returns `gateway` for a rootful engine on native Linux and
 `sidecar` everywhere else; `FORERUNNER_EGRESS_ROUTE` or the `egress.route` option overrides it.
@@ -198,11 +252,17 @@ survives.
 `writeFile`/`readFile`/`exists` act on the host side of the bind mount through
 `containPathReal`; the container sees the change at once and the other way round.
 
-**Image.** `resolveRunnerImage(configured, env)`: the project or app configuration, then
-`FORERUNNER_RUNNER_IMAGE`, then `forerunner-runner:local`. No registry owner is ever assumed.
-The image is the runner image from `services/cloud-runner/Dockerfile` (the same image serves
-the cloud runner, as the spec asks); build it locally with
-`docker build -t forerunner-runner:local -f services/cloud-runner/Dockerfile .`.
+**Image.** `resolveSandboxImage({ configured, env, build })` (`image.ts`; `resolveRunnerImage`
+in `container.ts` has the same order without the fallback): the project's
+`settings.sandbox.image`, then `FORERUNNER_RUNNER_IMAGE`, then the image the desktop build
+named in the payload's `runtime.json` (`runnerImage: { repository, tag, fallbackTag }`, written
+by `scripts/build-runtime-payload.mjs` as `ghcr.io/<GITHUB_REPOSITORY_OWNER lowercased>/forerunner-runner`
+at the app version with `latest` as the fallback), then `forerunner-runner:local`. No registry
+owner is ever written in code: the build names it, or nothing does. The image is the runner
+image from `services/cloud-runner/Dockerfile` (the same image serves the cloud runner, as the
+spec asks), published by the release workflow's `runner-image` job; in a source checkout build
+it with `docker build -t forerunner-runner:local -f services/cloud-runner/Dockerfile .` (a
+`:local` tag is never pulled).
 
 ### Worktrees (`worktree.ts`)
 
@@ -287,7 +347,8 @@ or a predicate) and records `calls`. Executors and tools test against it.
 | Variable | Effect | Default |
 | --- | --- | --- |
 | `FORERUNNER_SANDBOX_ENGINE` | `docker`, `podman` (probe only that) or `process` (skip containers) | auto |
-| `FORERUNNER_RUNNER_IMAGE` | image when the project/app config names none | `forerunner-runner:local` |
+| `FORERUNNER_RUNNER_IMAGE` | image when the project config names none | the build's `runtime.json` image, else `forerunner-runner:local` |
+| `FORERUNNER_RUNNER_IMAGE_REPOSITORY` | build time only (`build-runtime-payload.mjs`): the repository the payload names instead of `ghcr.io/<owner>/forerunner-runner` | from `GITHUB_REPOSITORY_OWNER` |
 | `FORERUNNER_EGRESS_ROUTE` | `gateway` or `sidecar` | `gateway` on rootful Linux engines, else `sidecar` |
 | `FORERUNNER_EGRESS_BIND` | interface the proxy listens on for containers | the internal network's gateway (gateway route) / `0.0.0.0` (sidecar) |
 | `FORERUNNER_EGRESS_HOST` | gateway route: host in the container's proxy URL; sidecar route: host the relay connects to | the gateway address / `host.docker.internal` / `host.containers.internal` |
@@ -296,7 +357,12 @@ or a predicate) and records `calls`. Executors and tools test against it.
 
 Per-task inputs come from the task and the project: `limits` (cpus, memoryMb, pidsLimit,
 timeoutMs), `network` (the capability token's `allowedDomains` become the allowlist; an empty
-list is `{ mode: "none" }`), `riskTier`, `allowProcessSandbox`.
+list is `{ mode: "none" }`), `riskTier`. No project setting lets tier 2+ use the stand-in.
+
+Tests pin the sandbox they mean, never the machine's Docker: `composeRuntime({
+sandboxDetection })` (no engine: tier 0/1 in the stand-in, tier 2+ wait), `sandboxRun` /
+`sandboxWhich` from a `FakeContainerEngine` (any state, a working container path), or the
+test-only `sandboxProcessForEveryTier` (every tier in the stand-in, the readiness pinned ready).
 
 ## How to change it
 
@@ -318,8 +384,13 @@ list is `{ mode: "none" }`), `riskTier`, `allowProcessSandbox`.
 - **Change containment.** `contain.ts` is the single place; both adapters and the symlink
   fixtures in `test/sandbox-contain.test.ts` depend on it. Never relax `containPathReal` to the
   lexical check for a host-side read or write.
-- **Change the tier rule.** `createSandbox` in `factory.ts` and the test
-  "refuses the process sandbox for risk tier >= 2".
+- **Change the tier rule.** `createSandbox` in `factory.ts`, `needsContainerSandbox` in
+  `session/sandbox-gate.ts` (the runner's and the start check's filter) and the tests
+  "refuses the process sandbox for risk tier >= 2" and `test/sandbox-waiting.test.ts`.
+- **Add a readiness state.** `SANDBOX_STATES` and `sandboxWords` / `sandboxNextStep` in
+  `readiness-types.ts` (every screen reads the words from there), the probe in
+  `readiness.ts`, the card's badge (`apps/ui/src/pages/SandboxSettingsCard.tsx`), the fake
+  engine, and a case in `test/sandbox-readiness.test.ts`.
 
 ## Tests
 
@@ -366,6 +437,22 @@ beyond loopback):
   process sandbox with warning, `FORERUNNER_SANDBOX_ENGINE=process`; `defaultEgressRoute` per
   platform and rootless flag; the factory creates the internal network and passes
   `FORERUNNER_EGRESS_ROUTE/BIND/HOST/IMAGE` through to the container.
+- `sandbox-readiness.test.ts` (U-079, `FakeContainerEngine`): each state from the engine's
+  answers (not installed, not running, Windows containers never available and never tried, a
+  tier 0 lease in the stand-in and a tier 2 lease refused, image missing with the registry size
+  asked only by `withSize`, CI's Linux Docker with the unpullable local image, pulling then
+  ready with the layer counts, the development build's fallback to `latest`, a denied pull,
+  Podman, Check again after Docker started); the build's image from `runtime.json`, the
+  precedence, the manifest size, the layer progress.
+- `sandbox-waiting.test.ts` (composed runtime, fake engine): a tier 2 task waits with its
+  attempt count unchanged while the image downloads (the Start check names it, the summary
+  says what to do, one notice for two sessions), the download starts by itself, the notice goes
+  when ready, the next session runs it in the container; a project's `allowProcessSandbox`
+  changes nothing. `sandbox-ci-docker.test.ts`: CI's two machines (Linux Docker without the
+  image, Windows containers) run a tier 0 task in the stand-in and try no container.
+- `apps/ui/test/real-daemon.test.ts` ("Settings → Sandbox (Docker)"): the routes through the
+  UI's client, a download followed to the end, Check again after Docker stopped, a refused
+  Download; `apps/ui/test/settings-sandbox.test.tsx`: the card per state and the Start dialog.
 
 Integration (`pnpm vitest run --project integration packages/runtime/test/sandbox.integration.test.ts`):
 with a reachable engine and `node:22-bookworm-slim` (pulled on demand) it runs
@@ -390,7 +477,10 @@ same daemon. Windows CI covers the process sandbox and the selection logic.
 | --- | --- |
 | `sandbox: process (no container engine): docker: Cannot connect to the Docker daemon ...` | Daemon not running or the user is not in the `docker` group. Start Docker Desktop / `systemctl --user start docker` (rootless) / `sudo systemctl start docker`, then `fr doctor`. The cache clears after 60 s. |
 | Same with `docker not on PATH; podman not on PATH` | Install Docker Desktop (Windows: WSL2 backend enabled) or Podman; on Windows make sure the CLI is on PATH for the user running Forerunner, not only inside WSL. |
-| `task at risk tier 2 needs a container sandbox and none is reachable` | By design. Fix the engine, lower the tier, or turn on the project setting `allowProcessSandbox` (and accept the weaker sandbox). |
+| `task at risk tier 2 runs in the Docker sandbox, which is not ready: ...` (the task stays ready; "Waiting for Docker" in the summary) | By design (U-079): Settings → Sandbox (Docker) names the step (install Docker Desktop, start it, switch to Linux containers, Download). The task runs in the next session once the card says Ready. |
+| Settings → Sandbox (Docker) says Windows containers | Docker Desktop's taskbar icon → Switch to Linux containers, then Check again. |
+| Download ends with "the registry refused the download ... must be public" | The GHCR package `forerunner-runner` is private: the owner makes it public (`release.md`), or the person runs `docker login ghcr.io` with a token that reads packages. |
+| Download ends with "the registry has no ...:latest" | No release has published the runner image yet (the `runner-image` job of `release.yml`), or the build named another owner. Set `FORERUNNER_RUNNER_IMAGE` to a published image meanwhile. |
 | `cannot determine the gateway address of network ...; set FORERUNNER_EGRESS_ROUTE=sidecar` | The engine reported no IPv4 gateway for the internal network (IPv6-only or custom IPAM). Use the sidecar route. |
 | `warn` line `egress proxy cannot bind the network gateway; listening on the fallback` | The host does not own the bridge (engine in a VM, rootless, or a remote daemon over a socket): the gateway route was chosen but cannot work reliably. Set `FORERUNNER_EGRESS_ROUTE=sidecar`. |
 | Sidecar route: `unable to derive the IP value for host-gateway` | Docker older than 20.10 or no bridge with an address (seen in CI sandboxes). `--network none` tasks still work; the integration allowlist test skips this case. |
@@ -400,7 +490,7 @@ same daemon. Windows CI covers the process sandbox and the selection logic.
 | `sandbox path refused (symlink x leaves the worktree)` | A link inside the worktree points outside it. By design: the task works on files inside the worktree only; copy what it needs into the repository. |
 | Rootless Podman: `permission denied` on files in the worktree or `relabel` errors | SELinux: set `FORERUNNER_SANDBOX_SELINUX=1`. User mapping is automatic in rootless mode; do not pass `--user`. The sidecar route is chosen automatically. |
 | Files in the worktree owned by root after a task (rootful Docker) | The factory passes `--user uid:gid` on Linux; if you created the sandbox directly, pass `user`. |
-| `Unable to find image 'forerunner-runner:local'` | Build it (see "Change the image") or set `FORERUNNER_RUNNER_IMAGE`. The warning `sandbox: image not configured` in the session log points here. |
+| `Unable to find image 'forerunner-runner:local'` | Before U-079 a task failed with it; now the card says the image is not here. In a source checkout build it (see "Change the image") or set `FORERUNNER_RUNNER_IMAGE`. The warning `sandbox: image not configured` in the session log points here. |
 | `timeout: not found` on every command | The image has no coreutils; pass `timeoutWrapper: false` (the host-side cap still applies but cannot kill the in-container process). |
 | `worktree already exists, remove it first` | A previous session crashed. `WorktreeManager.list()` shows it; `remove(path, { force: true })` after saving anything needed. |
 | `not a worktree (no sidecar and no .git file)` | `remove()` only removes what `create()` made. Delete a stray directory under the worktree root by hand. |
@@ -429,10 +519,15 @@ same daemon. Windows CI covers the process sandbox and the selection logic.
   `timeout`, so this only concerns the process sandbox.
 - Podman on Windows is covered by the same argv path but has not been run in CI (no Windows
   CI engine); the selection logic and argv snapshots are.
-- ADR 0007 still describes the interface as `exec/copyIn/copyOut` and the allowlist as an
-  egress sidecar only; the built interface is `run/writeFile/readFile/exists` and the sidecar
-  is one of two routes (the gateway route needs no extra container). The ADR amendment is
-  pending.
+- ADR 0007 is amended by ADR 0101 (U-079), which also notes the built interface
+  (`run/writeFile/readFile/exists`) and the two egress routes.
+- The download's progress counts layers, not bytes: docker prints no byte counts without a
+  TTY. The card shows "n of m parts" and the size the registry listed.
+- A restart forgets that the registry has no image for this version: the first download after
+  it asks for the version tag again (one manifest lookup) before `latest`.
+- Only a real Windows PC with Docker Desktop proves the switch to Linux containers, the WSL 2
+  download and the bind mount of a Windows path; CI runs the states and the waiting with the
+  stand-in engine.
 
 ## Requirements covered
 
@@ -449,3 +544,6 @@ same daemon. Windows CI covers the process sandbox and the selection logic.
   in capabilities and critic.
 - ADR 0007 consequences: the process sandbox warning in the session log and the tier 2+ rule
   (`sandbox-process.test.ts`, `sandbox-factory.test.ts`).
+- U-079 / ADR 0101: readiness states, waiting instead of failing, the build-named image and its
+  download (`sandbox-readiness.test.ts`, `sandbox-waiting.test.ts`, `sandbox-ci-docker.test.ts`,
+  `apps/ui/test/settings-sandbox.test.tsx`, `apps/ui/test/real-daemon.test.ts`).

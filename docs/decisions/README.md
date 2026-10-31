@@ -25,7 +25,7 @@ Status: accepted | superseded by NNNN
 | 0004 | Agent drivers: Claude Agent SDK for live runs, in-process loop for the fake provider |
 | 0005 | Shared state schema: one TypeScript schema, two SQL dialects, versioned migrations |
 | 0006 | Vault: OS keychain via @napi-rs/keyring with an encrypted file store fallback |
-| 0007 | Sandbox: Docker/Podman adapter with a process sandbox stand-in when no daemon exists |
+| 0007 | Sandbox: Docker/Podman adapter with a process sandbox stand-in when no daemon exists; amended by 0101: tier 2+ never use the stand-in and wait for the Docker sandbox (U-079) |
 | 0008 | Money: USD micro-units in the ledger, CHF at a daily rate, plan usage as a share |
 | 0009 | Device identity and auth for the state service: Ed25519 device keys, scoped tokens |
 | 0010 | Test environment: fake provider with recorded replies, simulated clock, fake git host |
@@ -109,3 +109,4 @@ Status: accepted | superseded by NNNN
 | 0098 | A Claude subscription token runs only in Claude Code: with no API key, chat, intake, the critic and the model watch call it through the Agent SDK (`ClaudeCodeProvider`, one Claude Code turn per call, read per call); the Messages adapter and the setup check refuse to send it (U-048) |
 | 0099 | An undo is confirmed like the change it makes: the risk of the value it puts back (a higher cap, a wider email mode, a higher autonomy: the forward confirmation; a lower or narrower value: at once), through the same card, Inbox request and device as a forward change (U-057) |
 | 0100 | The person orders their Claude credentials (`human.notify_prefs.billing_order`, set in Settings through `settings.set`, low risk): the router ranks the survivors by it for every purpose, the per-purpose kinds still apply, and without it the defaults stay; every non-task call is routed per call (`RoutedProvider`: the Messages adapter for a key, Claude Code for the subscription) and booked to the source that paid; a `provider_usage_limit` rests the source until its reset (else an hour), retries a call once on the next source and puts a task back to ready without counting an attempt; an API key never runs through Claude Code; amends ADR 0098 (U-078) |
+| 0101 | Full-review tasks (tier 2+) run only in the Docker sandbox: readiness is one of not installed, not running, Windows containers, image missing, downloading, ready; while not ready they wait (left out of the plan, attempt count unchanged, one Inbox notice, steps in Settings → Sandbox (Docker)); the desktop build names `ghcr.io/<owner>/forerunner-runner:<version>` in `runtime.json` and the app pulls it, falling back to `latest` when the registry has no image for its version; `allowProcessSandbox` is gone; amends 0007 (U-079) |

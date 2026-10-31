@@ -186,7 +186,7 @@ import {
 } from "../registry/index.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
-import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
+import type { EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
 import {
   type ProposedSharedSecret,
@@ -321,7 +321,7 @@ import {
   pickPrincipal,
 } from "./identity.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
-import { DetectingSandboxPort } from "./sandbox-port.ts";
+import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
 import { fileTools } from "./tools.ts";
 
@@ -389,6 +389,11 @@ export interface ComposeOptions {
   sandboxDetection?: EngineDetection;
   sandboxRun?: RunFn;
   sandboxWhich?: WhichFn;
+  /**
+   * Tests only (U-079): every task, at every risk tier, runs in the process stand-in and the
+   * sandbox reads as ready. No setting, file or environment variable sets it; the app never does.
+   */
+  sandboxProcessForEveryTier?: boolean;
   /** "Update and restart"; default: write the restart request and exit with RESTART_EXIT_CODE. */
   restarter?: Restarter;
   /** How the daemon ends the process on a restart request (tests record the code). */
@@ -813,7 +818,11 @@ export interface RuntimeApp {
   sources: SourceDiscovery;
   /** One-way GitHub Projects mirror. */
   mirror: ProjectsMirror;
-  sandbox: { port: RunSandboxPort; detection: EngineDetection };
+  /**
+   * The sandbox (ADR 0007, U-079): the port every run opens a lease on, the readiness check and
+   * download behind Settings → Sandbox (Docker), and the session runner's gate.
+   */
+  sandbox: ComposedSandbox;
   /**
    * Notifications (spec R.6, ADR 0017): the one notifier behind the daemon routes, and the
    * producer hooks bound to it (what the request path, the session runner, the kill switch, the
@@ -1857,22 +1866,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     return out;
   };
 
-  // Sandbox (ADR 0007): a container when an engine is reachable, else the process stand-in;
-  // the health view reports which. Detection is probed once here (cached per process).
-  const sandboxDetection =
-    opts.sandboxDetection ??
-    (await detectSandboxEngine({ env, clock, run: opts.sandboxRun, which: opts.sandboxWhich }));
-  const sandboxPort: RunSandboxPort =
-    opts.sandbox ??
-    new DetectingSandboxPort({
-      env,
-      clock,
-      store,
-      audit: store.auditLog,
-      detection: sandboxDetection,
-      run: opts.sandboxRun,
-      which: opts.sandboxWhich,
-    });
+  // Sandbox (ADR 0007, U-079): a container when the sandbox is ready (Docker running Linux
+  // containers and the runner image here), else the process stand-in for tiers 0 and 1; tier
+  // 2+ tasks wait for it. Checked once here, again before every plan and on Check again.
+  const sandbox = await composeSandbox({
+    env,
+    clock,
+    store,
+    humanId: human.id,
+    ...(opts.sandboxDetection ? { detection: opts.sandboxDetection } : {}),
+    ...(opts.sandboxRun ? { run: opts.sandboxRun } : {}),
+    ...(opts.sandboxWhich ? { which: opts.sandboxWhich } : {}),
+    ...(opts.sandboxProcessForEveryTier ? { pinProcessForEveryTier: true } : {}),
+    onInbox: () => events.emit("inbox", {}),
+  });
+  const sandboxReadiness = await sandbox.readiness.check();
+  const sandboxPort: RunSandboxPort = opts.sandbox ?? sandbox.port;
 
   // Specialists (ADR 0043): the registry entries as the executor's `SpecialistSpec`s, their
   // `allowed_tools` mapped for the driver in use against the tools registered at each run
@@ -2144,6 +2153,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     docs,
     merge,
     schemaSync,
+    // U-079: full-review tasks wait while the container sandbox is not ready.
+    sandboxGate: sandbox.gate,
     // U-037: a plan with code work on a project without a repository gets the agent's
     // proposal of one (a card, or the repository itself at Autopilot).
     onPlanned: async ({ sessionId, projectId, plan }) => {
@@ -3489,7 +3500,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     human: human.name,
     agent: agent.name,
     critic: criticAgent.name,
-    sandbox: sandboxDetection.engine,
+    sandbox: `${sandboxReadiness.state} (${sandboxReadiness.engine}, ${sandboxReadiness.image})`,
     browser: browserMode,
     email: emailOn.enabled() ? "on" : "off",
     billingSources: billingRows.filter((r) => r.enabled).map((r) => r.kind),
@@ -3533,7 +3544,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         budgetUsdMicro ??
         sessionCapFromSettings(project.settings, clock.now(), DEFAULT_SESSION_CAP_USD_MICRO)
           .usdMicro;
-      return startCheck({ store, estimates, defaultEstimateUsdMicro: 500_000 }, project.id, cap);
+      return startCheck(
+        { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+        project.id,
+        cap,
+      );
     },
     scheduler,
     conversation,
@@ -3586,7 +3601,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     data: { assets: dataAssets, importer: dataImporter },
     sources,
     mirror,
-    sandbox: { port: sandboxPort, detection: sandboxDetection },
+    sandbox: { ...sandbox, port: sandboxPort },
     notifier,
     notifications,
     shells,
@@ -3639,6 +3654,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await modelWatch.settled();
       // A running voice install is cancelled (its process killed, nothing recorded; ADR 0090).
       await voiceInstall.cancel();
+      // So is a sandbox download (U-079): the engine keeps the layers it has.
+      await sandbox.close();
       await voiceRelay.close();
       await voice.close();
       await speechSessions.close();

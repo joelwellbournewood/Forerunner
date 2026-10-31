@@ -62,7 +62,7 @@ describe("detectSandboxEngine", () => {
     expect(d.version).toBe("27.1.0");
     expect(d.rootless).toBe(true);
     expect(f.calls).toEqual([
-      ["docker", "info", "--format", "{{.ServerVersion}}|{{.SecurityOptions}}"],
+      ["docker", "info", "--format", "{{.ServerVersion}}|{{.SecurityOptions}}|{{.OSType}}"],
     ]);
   });
 
