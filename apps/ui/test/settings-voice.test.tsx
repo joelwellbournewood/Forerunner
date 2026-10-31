@@ -1,3 +1,4 @@
+import { NO_MODEL_CREDENTIAL } from "@forerunner/runtime/setup/no-model";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
@@ -228,6 +229,18 @@ describe("Settings: voice providers (U-023)", () => {
       "no STT provider available",
     );
     expect(within(providers).getByTestId("voice-stt")).toHaveTextContent("none");
+    // U-047: without a Claude key the reason names the setup assistant, never `fr setup`.
+    harness.daemon.state.voiceStatus = {
+      ...harness.daemon.state.voiceStatus,
+      reason: NO_MODEL_CREDENTIAL,
+    };
+    harness.store.dispatch({ type: "extension.changed" });
+    await waitFor(() =>
+      expect(within(providers).getByTestId("voice-reason")).toHaveTextContent(
+        "Open the setup assistant",
+      ),
+    );
+    expect(within(providers).getByTestId("voice-reason")).not.toHaveTextContent("fr setup");
   });
 });
 
