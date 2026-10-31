@@ -4,8 +4,9 @@
 //! watch the exit code on a thread so the restart contract (`restart.rs`) can be applied.
 //! Closing the window leaves the daemon running (the shell stays in the tray). Quit stops it
 //! (U-018, ADR 0094): `stop_for_quit` asks it to shut down over HTTP and ends the process tree
-//! when it does not go. A daemon older than the runtime the app carries (ADR 0092) is ended by
-//! `stop_process` so the bundled one can take its place.
+//! when it does not go; the process the shell started is ended whatever its state, also while
+//! it is still starting or hangs (`end_own_tree`, U-062). A daemon older than the runtime the
+//! app carries (ADR 0092) is ended by `stop_process` so the bundled one can take its place.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -184,8 +185,61 @@ pub async fn stop_process(pid: u32, client: &DaemonClient) -> Result<(), String>
 
 /// How long Quit waits for the daemon to go after `POST /shutdown` before it ends the tree.
 pub const QUIT_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long Quit waits after ending the tree for `/health` to stop answering.
+/// How long Quit waits after ending the tree for `/health` to stop answering, and how long the
+/// process the shell started gets after a TERM before it is killed.
 pub const QUIT_FORCE_WAIT: Duration = Duration::from_secs(5);
+/// How long Quit lets the process the shell started end by itself once the daemon has stopped
+/// answering, before it ends that process's tree (U-062). Longer than the daemon's own bounded
+/// exit (`EXIT_DEADLINE_MS`, 8 s, in `packages/runtime/src/cli/main.ts`).
+pub const QUIT_CHILD_WAIT: Duration = Duration::from_secs(10);
+
+/// The argv that ends the process the shell spawned with everything under it: `taskkill /PID
+/// <pid> /T /F` on Windows (the tree), `kill -s TERM|KILL -- -<pid>` elsewhere (its process
+/// group: `spawn_daemon` makes the child the leader of its own group, and tsx and the daemon
+/// under it stay in that group).
+pub fn group_stop_argv(pid: u32, windows: bool, force: bool) -> (String, Vec<String>) {
+    if windows {
+        return stop_argv(pid, true);
+    }
+    let signal = if force { "KILL" } else { "TERM" };
+    (
+        "kill".into(),
+        vec!["-s".into(), signal.into(), "--".into(), format!("-{pid}")],
+    )
+}
+
+/// End the process the shell started and everything under it, whatever its state: still
+/// starting (the splash), hung, or already gone (U-062). The pid is the shell's own child,
+/// recorded only while the shell holds its `Child` and cleared once it was reaped, so it never
+/// names an unrelated process. Unix: TERM to the group, so the daemon can close its store, and
+/// KILL when the leader still runs after `QUIT_FORCE_WAIT`. Windows: the tree at once.
+pub async fn end_own_tree(pid: u32) -> Result<(), String> {
+    if pid == 0 || pid == std::process::id() {
+        return Err(format!("refusing to end pid {pid}"));
+    }
+    let (program, args) = group_stop_argv(pid, cfg!(windows), false);
+    let first = run_stop(&program, &args);
+    if cfg!(windows) {
+        return first;
+    }
+    if first.is_err() && crate::daemon::pid_alive(pid) == Some(false) {
+        // The group was already gone (kill answers "no such process"): nothing to end.
+        return Ok(());
+    }
+    let started = Instant::now();
+    while crate::daemon::pid_alive(pid) == Some(true) {
+        if started.elapsed() > QUIT_FORCE_WAIT {
+            log::warn!(
+                "pid {pid} still runs {} s after TERM; killing its group",
+                QUIT_FORCE_WAIT.as_secs()
+            );
+            let (program, args) = group_stop_argv(pid, false, true);
+            return run_stop(&program, &args);
+        }
+        tokio::time::sleep(POLL).await;
+    }
+    first
+}
 
 /// The processes Quit ends when the daemon did not go by itself: the pid `daemon.json` names
 /// (the daemon) and the one the shell spawned (`node …/tsx` or `fr.cmd`, the daemon's parent),
@@ -217,9 +271,13 @@ pub enum QuitOutcome {
 /// End one process (and on Windows its tree) without waiting for anything else.
 fn end_process(pid: u32) -> Result<(), String> {
     let (program, args) = stop_argv(pid, cfg!(windows));
-    let mut command = Command::new(&program);
+    run_stop(&program, &args)
+}
+
+fn run_stop(program: &str, args: &[String]) -> Result<(), String> {
+    let mut command = Command::new(program);
     command
-        .args(&args)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -250,17 +308,34 @@ async fn wait_until_gone(client: &DaemonClient, budget: Duration) -> bool {
 }
 
 /// Quit (U-018, ADR 0094): ask the daemon to stop every run and exit (`POST /shutdown`), wait
-/// for `/health` to stop answering, and end the process tree when it does not. Pids are only
-/// ended while the daemon still answers, so a stale `daemon.json` never ends an unrelated
-/// process that reused its pid.
+/// for `/health` to stop answering, and end the process tree when it does not. A pid from
+/// `daemon.json` is only ended while the daemon still answers, so a stale file never ends an
+/// unrelated process that reused its pid. The process the shell started (`child_pid`) is its
+/// own child, so it is ended whatever its state (U-062): when nothing answers because there is
+/// no `daemon.json` yet (the splash) or because the daemon hangs.
 pub async fn stop_for_quit(
-    client: &DaemonClient,
+    client: Option<&DaemonClient>,
     file_pid: Option<u32>,
     child_pid: Option<u32>,
 ) -> QuitOutcome {
-    if client.health().await.is_err() {
-        return QuitOutcome::NotRunning;
-    }
+    let answering = match client {
+        Some(c) => c.health().await.is_ok(),
+        None => false,
+    };
+    let (true, Some(client)) = (answering, client) else {
+        return match child_pid {
+            Some(pid) => {
+                log::warn!(
+                    "Quit: no daemon answers; ending the process the shell started (pid {pid}) and its tree"
+                );
+                match end_own_tree(pid).await {
+                    Ok(()) => QuitOutcome::Forced(vec![pid]),
+                    Err(e) => QuitOutcome::StillRunning(format!("pid {pid}: {e}")),
+                }
+            }
+            None => QuitOutcome::NotRunning,
+        };
+    };
     match client.post_json("/shutdown", &serde_json::json!({})).await {
         Ok((status, _)) if (200..300).contains(&status) => {
             if wait_until_gone(client, QUIT_TIMEOUT).await {
@@ -282,7 +357,13 @@ pub async fn stop_for_quit(
         return QuitOutcome::StillRunning("daemon.json names no pid".into());
     }
     for pid in &pids {
-        if let Err(e) = end_process(*pid) {
+        // The shell's own child is ended with its group (tsx and the daemon under it).
+        let ended = if Some(*pid) == child_pid {
+            end_own_tree(*pid).await
+        } else {
+            end_process(*pid)
+        };
+        if let Err(e) = ended {
             log::warn!("could not end pid {pid}: {e}");
         }
     }
@@ -345,6 +426,154 @@ mod tests {
         // Never pid 0 (a process group on Unix) and never the shell itself.
         assert!(quit_targets(Some(0), None).is_empty());
         assert!(quit_targets(Some(std::process::id()), None).is_empty());
+    }
+
+    #[test]
+    fn the_shells_own_child_is_ended_with_its_group() {
+        assert_eq!(
+            group_stop_argv(15422, false, false),
+            (
+                "kill".to_string(),
+                vec!["-s", "TERM", "--", "-15422"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect::<Vec<_>>()
+            )
+        );
+        assert_eq!(group_stop_argv(15422, false, true).1[1], "KILL");
+        // Windows: the tree, at once.
+        assert_eq!(group_stop_argv(15422, true, false), stop_argv(15422, true));
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fr-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// A process the way `spawn_daemon` starts one (its own group, no window) with a child of
+    /// its own, like `node …/tsx` and the daemon under it. Returns the grandchild's pid where
+    /// the test can learn it (Unix).
+    fn spawn_tree(dir: &Path) -> (Child, Option<u32>) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let file = dir.join("grandchild.pid");
+            let child = Command::new("sh")
+                .args(["-c", "sleep 60 & echo $! > \"$0\"; wait"])
+                .arg(&file)
+                .stdin(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .expect("spawn sh");
+            let started = Instant::now();
+            let grandchild = loop {
+                if let Some(pid) = std::fs::read_to_string(&file)
+                    .ok()
+                    .and_then(|t| t.trim().parse::<u32>().ok())
+                {
+                    break pid;
+                }
+                assert!(started.elapsed() < Duration::from_secs(10), "no grandchild");
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            (child, Some(grandchild))
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = dir;
+            let child = Command::new("cmd")
+                .args(["/d", "/c", "ping -n 60 127.0.0.1"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
+                .spawn()
+                .expect("spawn cmd");
+            (child, None)
+        }
+    }
+
+    fn assert_tree_gone(child: &mut Child, grandchild: Option<u32>) {
+        let started = Instant::now();
+        while child.try_wait().expect("try_wait").is_none() {
+            assert!(
+                started.elapsed() < Duration::from_secs(15),
+                "the process the shell started is still running"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if let Some(pid) = grandchild {
+            while crate::daemon::pid_alive(pid) == Some(true) {
+                assert!(
+                    started.elapsed() < Duration::from_secs(15),
+                    "the daemon under it (pid {pid}) is still running"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+
+    /// U-062: Quit during the first start (the splash: no `daemon.json` yet, so no client)
+    /// ended nothing and left the daemon running. The process the shell started is ended with
+    /// everything under it.
+    #[tokio::test]
+    async fn quit_during_the_splash_ends_the_process_the_shell_started() {
+        let dir = temp_dir("quit-splash");
+        let (mut child, grandchild) = spawn_tree(&dir);
+        let pid = child.id();
+        assert_eq!(
+            stop_for_quit(None, None, Some(pid)).await,
+            QuitOutcome::Forced(vec![pid])
+        );
+        assert_tree_gone(&mut child, grandchild);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// U-062: a daemon that accepts connections but never answers (hung) was "not running" to
+    /// Quit, which left it behind. The shell's own child is ended; the pid `daemon.json` names
+    /// is not touched without an answer (it may be stale).
+    #[tokio::test]
+    async fn quit_ends_a_hung_daemon_the_shell_started_but_never_a_pid_it_cannot_verify() {
+        use crate::test_http::{Route, TestServer};
+        let server = TestServer::start(vec![Route::json("GET", "/health", 200, "{}").hanging()]);
+        let client =
+            DaemonClient::new(&server.url, crate::secret::Secret::new("t")).expect("client");
+        let dir = temp_dir("quit-hung");
+        let (mut child, grandchild) = spawn_tree(&dir);
+        let pid = child.id();
+        let outcome = stop_for_quit(Some(&client), Some(u32::MAX - 7), Some(pid)).await;
+        assert_eq!(outcome, QuitOutcome::Forced(vec![pid]));
+        assert_tree_gone(&mut child, grandchild);
+        assert_eq!(
+            server.seen(),
+            vec!["GET /health"],
+            "no /shutdown to a hung daemon"
+        );
+        // Nothing the shell started and nothing answering: nothing to do.
+        assert_eq!(
+            stop_for_quit(Some(&client), Some(u32::MAX - 7), None).await,
+            QuitOutcome::NotRunning
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The normal path: the daemon answers, takes `POST /shutdown` and goes; nothing is ended.
+    #[tokio::test]
+    async fn quit_asks_a_daemon_that_answers_to_shut_down() {
+        use crate::test_http::{Route, TestServer, health_body};
+        let server = TestServer::start(vec![
+            Route::json("GET", "/health", 200, &health_body(0)),
+            Route::json("POST", "/shutdown", 202, r#"{"stopping":true}"#).then_close(),
+        ]);
+        let client =
+            DaemonClient::new(&server.url, crate::secret::Secret::new("t")).expect("client");
+        assert_eq!(
+            stop_for_quit(Some(&client), Some(u32::MAX - 7), None).await,
+            QuitOutcome::Stopped
+        );
+        let seen = server.seen();
+        assert_eq!(seen[..2], ["GET /health", "POST /shutdown"]);
     }
 
     #[test]

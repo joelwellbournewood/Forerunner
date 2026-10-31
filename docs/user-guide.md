@@ -116,8 +116,11 @@ Closing the window keeps Forerunner running in the tray, so sessions, scheduled 
 app and email commands keep working. The first time, a notification says so.
 
 To stop it completely, right-click the tray icon and choose **Quit Forerunner**. It stops the
-background service and everything it started; while a session runs it asks first. After Quit
-nothing of Forerunner runs, so you can delete the install folder or install another version.
+background service and everything it started; while a session runs it asks first. This also
+works while Forerunner is still starting or when the background service no longer answers.
+After Quit nothing of Forerunner runs, so you can delete the install folder or install another
+version. If you open Forerunner again while it is quitting, it waits until everything has
+stopped and then starts afresh.
 
 ## Voice, phone and email
 

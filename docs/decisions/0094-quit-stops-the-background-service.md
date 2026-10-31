@@ -59,3 +59,23 @@ owner chose: the close button keeps the app in the tray, and Quit stops everythi
   deleted, and people would still not know it runs.
 - WiX `util:CloseApplication` by image name: it ends every `node.exe` on the machine, including
   the person's own Node programs.
+
+## Amendment (2026-10-31, U-062): Quit ends the process the shell started, whatever its state
+
+Quit ended nothing when no daemon answered: during the first start (the splash, before
+`daemon.json` exists) and while the daemon hung, the process the shell had started kept running,
+and a second launch, a deep link or the hotkey during Quit could show a window on the dying
+daemon or start a new one.
+
+- The process the shell started (`child_pid`) is ended with everything under it even when there
+  is no `daemon.json` or `/health` does not answer: `taskkill /T /F` on Windows, `kill -s TERM`
+  to its process group elsewhere (`KILL` after 5 s). That pid is the shell's own child, recorded
+  only while the shell holds its `Child` and cleared once it was reaped, so it cannot name an
+  unrelated process. A pid read from `daemon.json` is still ended only while the daemon answers.
+  After the daemon stopped, Quit waits up to 10 s for that child to end, then ends its tree.
+- While Quit runs nothing attaches, starts a daemon or shows a window (`ShellState.quitting` is
+  checked by `show_main`, `bootstrap` and `attached`); a start that raced Quit ends the child it
+  just spawned, and an error dialog of an interrupted start is only logged.
+- A second launch during Quit (a deep link included) is remembered: once the daemon has stopped
+  the app restarts (`request_restart`) instead of exiting. The link itself is not carried over;
+  the restarted app opens at its start page.

@@ -996,6 +996,8 @@ apps/desktop/src-tauri/
                       hotkey_status / hotkey_set commands, the press handler
     media.rs          the main window's permission answers: the microphone for the app's own
                       pages only (the conversation panel), the camera denied (pure, unit-tested)
+    test_http.rs      tests only: a std-only HTTP server on 127.0.0.1 (canned, delayed, hung
+                      answers; stops listening after a route) for the client and Quit tests
 ```
 
 **Directories.** `dirs::app_dirs(env, opts)` returns `config, data, cache, logs, worktrees,
@@ -1027,7 +1029,12 @@ disk before the spawn (else the last file attached to; any file when there was n
 the shell spawned is accepted too but never required: `node …/tsx/dist/cli.mjs` runs the CLI
 in a child node process and `fr.cmd` runs under `cmd.exe`, so the daemon records a grandchild
 pid. Failures end in a native dialog with the log path; the tray stays and "Open" tries
-again. The daemon is never killed by the shell, except an outdated one as above.
+again. The daemon is never killed by the shell, except an outdated one as above and on Quit.
+During Quit (`ShellState.quitting`) nothing attaches or starts and no window comes up
+(`state::open_action`, `begin_bootstrap`; U-062): a second launch or a deep link is remembered
+(`defer_launch_during_quit`), and a start that raced Quit ends the child it just spawned
+(`record_child` refuses it), so a spawn is either seen by Quit or ended by its spawner.
+`fail_dialog` only logs during Quit.
 
 **The bundled runtime (ADR 0092).** The installers carry `<resources>/runtime/`: Node
 (`node/node[.exe]`), the runtime's and its workspace packages' sources, `evals/registry`, a
@@ -1075,8 +1082,16 @@ ADR 0094: `actions::quit` asks first while `/health` reports active sessions
 (`quit_confirm_text`), sets `ShellState.quitting` so the daemon's exit triggers no restart or
 dialog, hides the windows, then `supervisor::stop_for_quit`: `POST /shutdown`, wait up to 15 s
 for `/health` to stop answering, else end `quit_targets` (the `daemon.json` pid and the spawned
-pid, each once; `taskkill /T /F` on Windows, `kill -TERM` elsewhere) while it still answers;
-then `app.exit(0)`). Closing the window hides it to the tray; the first close shows a
+pid, each once; `taskkill /T /F` on Windows, `kill -TERM` elsewhere) while it still answers.
+When nothing answers (no `daemon.json` yet during the splash, or a daemon that hangs) the
+process the shell started is still ended with everything under it (U-062,
+`supervisor::end_own_tree`: `taskkill /T /F`; on Unix `kill -s TERM -- -<pid>` to its process
+group, `KILL` after 5 s), while a `daemon.json` pid is never ended without an answer (it may be
+stale). That child pid is the shell's own: it is recorded only while the shell holds the
+`Child` and cleared once the exit watcher reaped it, and Quit waits up to
+`QUIT_CHILD_WAIT` (10 s) for that before ending its tree. Then `app.exit(0)`, or
+`app.request_restart()` when Forerunner was launched again during Quit). Closing the window
+hides it to the tray; the first close shows a
 notification (`windows::closed_to_tray`, marker `<config>/tray-hint-shown`). Below Open, desktop control (spec S.32, ADR 0067): an item `Desktop control:
 active (<app>)` while the daemon reports it on (enabled; it opens the window, where the banner
 names the session) and `Desktop control: off` (disabled) otherwise, and "Stop desktop control"
@@ -1223,7 +1238,7 @@ cd apps/desktop/src-tauri && cargo check           # Linux here; Windows in CI (
 
 Unit tests live next to the code (`#[cfg(test)]`): `dirs` (override on every platform,
 relative `FORERUNNER_HOME`, empty override ignored, the Windows/XDG cases of `paths.test.ts`,
-the full fixture table per platform, home fallback, app name); `daemon` (the file
+the full fixture table per platform, home fallback, app name); `daemon` (a zombie counts as ended, the file
 `startDaemon` writes, missing/bad JSON/bad shape, off-machine URL refused, stale pid, attach vs
 start, freshness as a changed file, a grandchild pid written after the spawn attaches, daemon
 error bodies, client `Debug` hides the token, an older daemon replaced and a newer one kept);
@@ -1250,8 +1265,9 @@ file round trip); `state` (tray view for unreachable, kill/resume, email availab
 toggle, busy, desktop control on (title, tooltip first line, item, stop enabled) and cleared
 on off, "the desktop" without an app and a new `on` replacing the names, the last report kept
 but not stoppable while unreachable, a status read never overwriting a newer frame (and the
-later of two reads winning), when a restart announcement starts the external watch, `Debug` hides the
-token); `supervisor` (log path, spawn failure logged, the stop argv per OS); `events` (reconnect backoff);
+later of two reads winning), when a restart announcement starts the external watch, nothing opening or starting during
+Quit, a launch during Quit remembered, a spawn that raced Quit not recorded (U-062), `Debug`
+hides the token); `supervisor` (log path, spawn failure logged, the stop argv per OS, the group argv for the shell's own child; Quit against real process trees: during the splash with no client, with a hung daemon (a local HTTP server that accepts and never answers; the `daemon.json` pid is left alone) and with a daemon that answers and goes after `POST /shutdown`, U-062); `events` (reconnect backoff);
 `secret`; `env`; `lib` (install id persisted, 0600); `hotkey` (O.1: the default chord is the
 shared one; every accepted and refused case of `apps/ui/test/hotkey-chords.json` with the
 same canonical form or reason as the UI; messages name the token; every canonical chord over

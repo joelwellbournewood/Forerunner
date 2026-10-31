@@ -24,6 +24,8 @@ mod selftest;
 mod sse;
 mod state;
 mod supervisor;
+#[cfg(test)]
+mod test_http;
 mod tray;
 mod version;
 mod window_state;
@@ -123,7 +125,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // A second launch (or a deep link while running) brings the window up; the
             // deep-link plugin receives the URL through the plugin's "deep-link" feature.
-            windows::show_main(app);
+            // During Quit it is remembered and the app starts again afterwards (U-062).
+            windows::second_launch(app);
         }))
         .plugin(log_plugin(&dirs))
         .plugin(tauri_plugin_notification::init())

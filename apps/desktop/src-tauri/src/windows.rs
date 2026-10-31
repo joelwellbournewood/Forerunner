@@ -11,7 +11,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::actions::shared;
 use crate::deeplink::{SPLASH_SCHEME, navigate_script, navigation_allowed, route_for_deep_link};
 use crate::inject::{Injection, app_origins, initialization_script};
-use crate::state::lock;
+use crate::state::{OpenAction, defer_launch_during_quit, lock, open_action};
 use crate::window_state::{
     self, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH, Rect, WindowState,
 };
@@ -145,18 +145,35 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
 }
 
 /// Show, un-minimise and focus the main window. Without one (not attached yet, or halted)
-/// this attaches to or starts the daemon.
+/// this attaches to or starts the daemon. During Quit it does neither (U-062).
 pub fn show_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(MAIN) {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+    let window = app.get_webview_window(MAIN);
+    let action = open_action(&lock(&shared(app)), window.is_some());
+    match (action, window) {
+        (OpenAction::Show, Some(w)) => {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+        (OpenAction::Bootstrap, _) => {
+            tauri::async_runtime::spawn(crate::actions::bootstrap(app.clone(), true));
+        }
+        (OpenAction::Quitting, _) => {
+            log::info!("not opening the window: Quit is stopping Forerunner");
+        }
+        _ => {}
+    }
+}
+
+/// Forerunner was launched again (the single-instance plugin forwards it, a deep link
+/// included). During Quit the launch is remembered and the app starts again once the daemon
+/// has stopped (U-062); otherwise the window comes up.
+pub fn second_launch(app: &AppHandle) {
+    if defer_launch_during_quit(&mut lock(&shared(app))) {
+        log::info!("Forerunner was opened again during Quit; it starts again once Quit is done");
         return;
     }
-    let busy = lock(&shared(app)).busy.is_some();
-    if !busy {
-        tauri::async_runtime::spawn(crate::actions::bootstrap(app.clone(), true));
-    }
+    show_main(app);
 }
 
 /// Hide every window (Quit, while the daemon is being stopped).

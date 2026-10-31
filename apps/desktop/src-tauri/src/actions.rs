@@ -21,10 +21,12 @@ use crate::restart::{
     remove_restart_request,
 };
 use crate::sse::parse_desktop_indicator;
-use crate::state::{Busy, EmailAction, SharedState, StreamMode, lock};
+use crate::state::{
+    Busy, EmailAction, SharedState, StreamMode, begin_bootstrap, lock, record_child,
+};
 use crate::supervisor::{
-    EXTERNAL_GRACE, QuitOutcome, daemon_log_path, spawn_daemon, stop_for_quit, stop_process,
-    wait_for_daemon, wait_for_external, watch_exit,
+    EXTERNAL_GRACE, POLL, QUIT_CHILD_WAIT, QuitOutcome, daemon_log_path, end_own_tree,
+    spawn_daemon, stop_for_quit, stop_process, wait_for_daemon, wait_for_external, watch_exit,
 };
 use crate::{events, tray, windows};
 
@@ -43,7 +45,8 @@ pub(crate) fn notify(app: &AppHandle, title: &str, body: &str) {
     }
 }
 
-/// An error the human must see; the tray stays so "Open" can try again.
+/// An error the human must see; the tray stays so "Open" can try again. During Quit it is only
+/// logged: the start Quit interrupted fails by design, and the app is about to end (U-062).
 pub fn fail_dialog(app: &AppHandle, title: &str, message: &str) {
     log::error!("{title}: {message}");
     windows::close_splash(app);
@@ -51,6 +54,9 @@ pub fn fail_dialog(app: &AppHandle, title: &str, message: &str) {
         let state = shared(app);
         let mut s = lock(&state);
         s.busy = None;
+        if s.quitting {
+            return;
+        }
     }
     tray::refresh(app);
     app.dialog()
@@ -62,16 +68,15 @@ pub fn fail_dialog(app: &AppHandle, title: &str, message: &str) {
 }
 
 /// Attach to the daemon named by `daemon.json` when it is healthy, else (when allowed) start
-/// one and wait for it. Runs once at a time; a second call while one is in flight returns.
+/// one and wait for it. Runs once at a time; a second call while one is in flight returns, and
+/// so does every call during Quit (U-062).
 pub async fn bootstrap(app: AppHandle, allow_start: bool) {
     let state = shared(&app);
     let (dirs, last_attached) = {
         let mut s = lock(&state);
-        if s.busy == Some(Busy::Starting) {
+        if !begin_bootstrap(&mut s) {
             return;
         }
-        s.busy = Some(Busy::Starting);
-        s.halted = false;
         (s.dirs.clone(), s.last_file.clone())
     };
     tray::refresh(&app);
@@ -179,9 +184,19 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
                     return;
                 }
             };
-            {
-                let mut s = lock(&state);
-                s.child_pid = Some(spawned.pid);
+            if !record_child(&mut lock(&state), spawned.pid) {
+                // Quit began while this daemon was being spawned and has already read what to
+                // stop: end it here, so nothing is left running (U-062).
+                log::info!(
+                    "Quit began during the start; ending the daemon just started (pid {})",
+                    spawned.pid
+                );
+                if let Err(e) = end_own_tree(spawned.pid).await {
+                    log::warn!("could not end pid {}: {e}", spawned.pid);
+                }
+                watch_exit(spawned.child, |_| {});
+                lock(&state).busy = None;
+                return;
             }
             windows::set_splash(&app, "Waiting for the daemon to listen…");
             let waited = wait_for_daemon(
@@ -197,12 +212,18 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
             if already_gone {
                 let mut s = lock(&state);
                 s.child_pid = None;
-                s.halted = true;
+                s.halted = !s.quitting;
             } else {
                 let app_for_exit = app.clone();
                 watch_exit(spawned.child, move |code| {
                     handle_daemon_exit(app_for_exit, code)
                 });
+            }
+            if lock(&state).quitting {
+                // Quit ends this daemon (or already did): no window, no dialog.
+                log::info!("the start was interrupted by Quit");
+                lock(&state).busy = None;
+                return;
             }
             match waited {
                 Ok((file, health, _client)) => {
@@ -232,6 +253,12 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
 /// token, start the event loops and learn whether the email routes exist.
 pub async fn attached(app: &AppHandle, file: DaemonFile, health: Health) {
     let state = shared(app);
+    if lock(&state).quitting {
+        // A start that finished during Quit: the daemon is going away, so no window (U-062).
+        log::info!("not attaching to {}: Quit is running", file.url);
+        lock(&state).busy = None;
+        return;
+    }
     let client = match DaemonClient::from_file(&file) {
         Ok(c) => c,
         Err(e) => {
@@ -274,15 +301,20 @@ pub async fn attached(app: &AppHandle, file: DaemonFile, health: Health) {
 pub fn handle_daemon_exit(app: AppHandle, code: Option<i32>) {
     tauri::async_runtime::spawn(async move {
         let state = shared(&app);
-        if lock(&state).quitting {
-            // Quit stopped it (U-018): expected, and the shell is about to end too.
-            log::info!("fr daemon exited during Quit");
-            return;
+        {
+            let mut s = lock(&state);
+            // The process is gone and reaped: its pid is no longer the shell's to end. Quit
+            // waits for this before it ends the shell (U-062).
+            s.child_pid = None;
+            if s.quitting {
+                // Quit stopped it (U-018): expected, and the shell is about to end too.
+                log::info!("fr daemon exited during Quit");
+                return;
+            }
         }
         let (dirs, consecutive, previous) = {
             let mut s = lock(&state);
             s.client = None;
-            s.child_pid = None;
             s.status.reachable = false;
             s.stream = StreamMode::Off;
             s.busy = None;
@@ -402,7 +434,7 @@ pub fn quit(app: AppHandle) {
 
 async fn finish_quit(app: AppHandle) {
     let state = shared(&app);
-    let (client, runtime_dir, child_pid, last_pid) = {
+    let (client, runtime_dir, last_pid) = {
         let mut s = lock(&state);
         if s.quitting {
             return;
@@ -411,7 +443,6 @@ async fn finish_quit(app: AppHandle) {
         (
             s.client.clone(),
             s.dirs.runtime.clone(),
-            s.child_pid,
             s.last_file.as_ref().and_then(|f| f.pid),
         )
     };
@@ -425,17 +456,44 @@ async fn finish_quit(app: AppHandle) {
         .and_then(|f| DaemonClient::from_file(f).ok())
         .or(client);
     let file_pid = file.as_ref().and_then(|f| f.pid).or(last_pid);
-    match client {
-        Some(client) => match stop_for_quit(&client, file_pid, child_pid).await {
-            QuitOutcome::StillRunning(why) => {
-                log::error!("Quit could not stop the daemon: {why}")
-            }
-            outcome => log::info!("Quit: daemon {outcome:?}"),
-        },
-        None => log::info!("Quit: no daemon recorded"),
+    // Read after `quitting` was set: a start racing Quit either recorded its child before (it
+    // is ended here) or sees `quitting` and ends its own (`state::record_child`).
+    let child_pid = lock(&state).child_pid;
+    match stop_for_quit(client.as_ref(), file_pid, child_pid).await {
+        QuitOutcome::StillRunning(why) => log::error!("Quit could not stop the daemon: {why}"),
+        outcome => log::info!("Quit: daemon {outcome:?}"),
     }
-    log::info!("quit from the tray; the shell ends");
-    app.exit(0);
+    // Whatever the daemon said, the process the shell started must be gone too (U-062).
+    end_child_if_left(&state).await;
+    if lock(&state).relaunch_after_quit {
+        log::info!("quit from the tray; Forerunner was opened again meanwhile, so it restarts");
+        app.request_restart();
+    } else {
+        log::info!("quit from the tray; the shell ends");
+        app.exit(0);
+    }
+}
+
+/// Wait up to `QUIT_CHILD_WAIT` for the process the shell started to end by itself (its exit
+/// watcher clears `child_pid` once it was reaped), then end its tree.
+async fn end_child_if_left(state: &SharedState) {
+    let started = Instant::now();
+    loop {
+        let Some(pid) = lock(state).child_pid else {
+            return;
+        };
+        if started.elapsed() > QUIT_CHILD_WAIT {
+            log::warn!(
+                "the daemon process the shell started (pid {pid}) still runs {} s into Quit; ending its tree",
+                QUIT_CHILD_WAIT.as_secs()
+            );
+            if let Err(e) = end_own_tree(pid).await {
+                log::warn!("could not end pid {pid}: {e}");
+            }
+            return;
+        }
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 fn current_client(app: &AppHandle) -> Option<DaemonClient> {

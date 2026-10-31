@@ -124,8 +124,12 @@ pub struct ShellState {
     /// The daemon stopped on purpose or gave up: do not attach again until the human asks.
     pub halted: bool,
     /// Quit is stopping the daemon and ending the shell (U-018, ADR 0094): its exit is
-    /// expected, so no restart and no "stopped unexpectedly" dialog.
+    /// expected, so no restart and no "stopped unexpectedly" dialog, and nothing shows a window
+    /// or starts a daemon any more (U-062).
     pub quitting: bool,
+    /// Forerunner was opened again while Quit ran: once the daemon has stopped, the app starts
+    /// again instead of only exiting (U-062).
+    pub relaunch_after_quit: bool,
 }
 
 /// Every `desktop.indicator` frame (or fresh answer) and every `GET /desktop/status` read
@@ -184,8 +188,68 @@ impl ShellState {
             window_saved_at: None,
             halted: false,
             quitting: false,
+            relaunch_after_quit: false,
         }
     }
+}
+
+/// What a request to bring the window up does: a second launch, a deep link, the tray's Open,
+/// a left click on the tray icon or the global hotkey (U-062).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenAction {
+    /// Show, un-minimise and focus the main window that exists.
+    Show,
+    /// No window yet: attach to or start the daemon, which builds it.
+    Bootstrap,
+    /// A start is in flight; it brings the window up when it is done.
+    Wait,
+    /// Quit is stopping the daemon: nothing is shown and nothing is started.
+    Quitting,
+}
+
+pub fn open_action(s: &ShellState, has_window: bool) -> OpenAction {
+    if s.quitting {
+        OpenAction::Quitting
+    } else if has_window {
+        OpenAction::Show
+    } else if s.busy.is_some() {
+        OpenAction::Wait
+    } else {
+        OpenAction::Bootstrap
+    }
+}
+
+/// A second launch of the app while Quit runs (the single-instance plugin forwards it, a
+/// deep link included) is remembered instead of acted on: the window would come up on a daemon
+/// that is going away. Once the daemon has stopped, the app starts again (U-062). Returns
+/// whether the launch was taken for later.
+pub fn defer_launch_during_quit(s: &mut ShellState) -> bool {
+    if s.quitting {
+        s.relaunch_after_quit = true;
+    }
+    s.quitting
+}
+
+/// Whether `bootstrap` may attach to or start a daemon now, and if so mark it as starting:
+/// never during Quit (U-062), and one start at a time.
+pub fn begin_bootstrap(s: &mut ShellState) -> bool {
+    if s.quitting || s.busy == Some(Busy::Starting) {
+        return false;
+    }
+    s.busy = Some(Busy::Starting);
+    s.halted = false;
+    true
+}
+
+/// Record the daemon process the shell just spawned, unless Quit began meanwhile: then the
+/// spawner ends it itself, because Quit has already read which process to stop (U-062).
+/// Returns whether it was recorded.
+pub fn record_child(s: &mut ShellState, pid: u32) -> bool {
+    if s.quitting {
+        return false;
+    }
+    s.child_pid = Some(pid);
+    true
 }
 
 pub type SharedState = Arc<Mutex<ShellState>>;
@@ -611,6 +675,62 @@ mod tests {
         assert!(s.apply_desktop_read(second, &indicator(true, Some("gimp"), None)));
         assert!(!s.apply_desktop_read(first, &indicator(false, None, None)));
         assert_eq!(s.desktop.app.as_deref(), Some("gimp"));
+    }
+
+    /// U-062: during Quit a second launch, a deep link, the tray's Open or the hotkey never
+    /// shows a window on the daemon that is going away and never starts one.
+    #[test]
+    fn nothing_opens_or_starts_while_quit_runs() {
+        let mut s = reachable();
+        assert_eq!(open_action(&s, true), OpenAction::Show);
+        assert_eq!(open_action(&s, false), OpenAction::Bootstrap);
+        s.busy = Some(Busy::Starting);
+        assert_eq!(open_action(&s, false), OpenAction::Wait);
+        s.busy = None;
+        s.quitting = true;
+        assert_eq!(open_action(&s, true), OpenAction::Quitting);
+        assert_eq!(open_action(&s, false), OpenAction::Quitting);
+        assert!(
+            !begin_bootstrap(&mut s),
+            "no attach and no start during Quit"
+        );
+        assert_eq!(s.busy, None);
+    }
+
+    #[test]
+    fn a_launch_during_quit_is_remembered_and_one_outside_quit_is_not() {
+        let mut s = reachable();
+        assert!(!defer_launch_during_quit(&mut s));
+        assert!(!s.relaunch_after_quit);
+        s.quitting = true;
+        assert!(defer_launch_during_quit(&mut s));
+        assert!(s.relaunch_after_quit);
+    }
+
+    #[test]
+    fn bootstrap_runs_once_at_a_time() {
+        let mut s = base();
+        s.halted = true;
+        assert!(begin_bootstrap(&mut s));
+        assert_eq!(s.busy, Some(Busy::Starting));
+        assert!(!s.halted);
+        assert!(
+            !begin_bootstrap(&mut s),
+            "a second start while one is in flight"
+        );
+    }
+
+    /// A spawn that races Quit: either Quit sees the pid (and ends it), or the spawner sees
+    /// `quitting` and ends its own process; never neither.
+    #[test]
+    fn a_child_spawned_after_quit_began_is_not_recorded() {
+        let mut s = base();
+        assert!(record_child(&mut s, 4242));
+        assert_eq!(s.child_pid, Some(4242));
+        let mut q = base();
+        q.quitting = true;
+        assert!(!record_child(&mut q, 4243));
+        assert_eq!(q.child_pid, None);
     }
 
     #[test]

@@ -116,14 +116,29 @@ pub fn read_daemon_file(path: &Path) -> Result<DaemonFile, DaemonFileError> {
     }
 }
 
-/// Whether a process id is alive, when the OS makes that cheap to know. Linux reads `/proc`;
-/// elsewhere the health probe is the only signal and this returns `None`.
+/// Whether a process id is alive, when the OS makes that cheap to know. Linux reads `/proc`
+/// (a zombie, ended but not yet reaped by its parent, counts as ended); elsewhere the health
+/// probe is the only signal and this returns `None`.
 pub fn pid_alive(pid: u32) -> Option<bool> {
-    if cfg!(target_os = "linux") {
-        Some(Path::new("/proc").join(pid.to_string()).exists())
-    } else {
-        None
+    if !cfg!(target_os = "linux") {
+        return None;
     }
+    let dir = Path::new("/proc").join(pid.to_string());
+    if !dir.exists() {
+        return Some(false);
+    }
+    match std::fs::read_to_string(dir.join("stat")) {
+        Ok(stat) => Some(!stat_says_ended(&stat)),
+        Err(_) => Some(true),
+    }
+}
+
+/// `/proc/<pid>/stat` gives the state right after the command name, which is in parentheses
+/// and may itself contain ") ": `Z` (zombie) and `X` (dead) mean the process has ended.
+pub fn stat_says_ended(stat: &str) -> bool {
+    stat.rfind(')')
+        .and_then(|i| stat[i + 1..].split_whitespace().next())
+        .is_some_and(|state| state == "Z" || state == "X")
 }
 
 /// `GET /health` as the shell reads it (`HealthView`, ADR 0011): the fields the tray needs.
@@ -457,6 +472,22 @@ mod tests {
             precheck(Err(DaemonFileError::Missing), None).unwrap_err(),
             "daemon.json not found"
         );
+    }
+
+    #[test]
+    fn a_zombie_counts_as_ended() {
+        assert!(stat_says_ended("8663 (sleep) Z 1 8661 8648 0 -1"));
+        assert!(stat_says_ended("8663 (sleep) X 1"));
+        assert!(!stat_says_ended("8663 (sleep) S 1 8661"));
+        // A command name with a parenthesis and a space in it.
+        assert!(!stat_says_ended("15436 (node (fr) Z) R 1 2"));
+        assert!(stat_says_ended("15436 (node (fr) R) Z 1 2"));
+        assert!(!stat_says_ended("garbage"));
+        if cfg!(target_os = "linux") {
+            assert_eq!(pid_alive(std::process::id()), Some(true));
+        } else {
+            assert_eq!(pid_alive(std::process::id()), None);
+        }
     }
 
     #[test]
