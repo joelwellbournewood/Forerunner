@@ -1,7 +1,13 @@
+import { ANSWER_CARD_KEYS } from "@forerunner/runtime/wiring/request-answers";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { intakeCardOf, sortMessages, sortRequests } from "../src/pages/InboxPage.tsx";
+import {
+  intakeCardOf,
+  PERSON_QUESTIONS_KEY_PREFIX,
+  sortMessages,
+  sortRequests,
+} from "../src/pages/InboxPage.tsx";
 import { MESSAGES, REQUESTS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
@@ -215,6 +221,98 @@ describe("Inbox", () => {
     expect(within(request).getByText("Change card")).toBeInTheDocument();
     // Other requests render no intake card.
     expect(screen.getAllByTestId("intake-card")).toHaveLength(1);
+  });
+
+  describe("questions only you can answer (U-022)", () => {
+    /** The card the daemon files for a planned person task, as `/inbox` serves it. */
+    const questionsCard = () => ({
+      id: "req_questions",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_1",
+      sessionId: null,
+      kind: "decision",
+      why: '"Choose the hosting" needs your answers. No specialist works on it: answer the questions below.',
+      steps: ["Which hosting provider should the site use?", "Which domain should it live on?"],
+      options: ["Cancel the task"],
+      blocking: true,
+      risk: "low" as const,
+      changeCard: {
+        key: `${ANSWER_CARD_KEYS.personQuestionsPrefix}task_1`,
+        task_id: "task_1",
+        task_title: "Choose the hosting",
+        questions: [
+          "Which hosting provider should the site use?",
+          "Which domain should it live on?",
+        ],
+        source: "planned",
+        on_answer: "done",
+        context: null,
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-31T09:00:00.000Z",
+      version: 1,
+    });
+
+    it("uses the runtime's card key", () => {
+      expect(PERSON_QUESTIONS_KEY_PREFIX).toBe(ANSWER_CARD_KEYS.personQuestionsPrefix);
+    });
+
+    it("shows one answer field per question and sends the answers the person typed", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(questionsCard());
+      renderApp("/inbox", harness);
+      const form = await screen.findByTestId("person-questions");
+      const request = form.closest('[data-testid="request"]') as HTMLElement;
+      expect(request).toHaveTextContent('"Choose the hosting" needs your answers');
+      const fields = within(form).getAllByTestId("person-answer");
+      expect(fields).toHaveLength(2);
+      expect(within(form).getByText("Which hosting provider should the site use?")).toBeVisible();
+      // Nothing typed, nothing to send; the generic one-line answer is not offered here.
+      expect(within(form).getByTestId("send-answers")).toBeDisabled();
+      expect(within(request).queryByTestId("free-text")).toBeNull();
+      await user.type(fields[0] as HTMLElement, "Cloudflare Pages");
+      await user.type(fields[1] as HTMLElement, "atlas.example");
+      await user.click(within(form).getByTestId("send-answers"));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_questions/answer")).toHaveLength(1),
+      );
+      expect(postedCalls(harness, "/requests/req_questions/answer")[0]?.body).toEqual({
+        version: 1,
+        answer: {
+          answers: [
+            { question: "Which hosting provider should the site use?", answer: "Cloudflare Pages" },
+            { question: "Which domain should it live on?", answer: "atlas.example" },
+          ],
+        },
+      });
+      await waitFor(() => expect(screen.queryByTestId("person-questions")).toBeNull());
+      expect(harness.daemon.state.tasks.find((t) => t.id === "task_1")?.status).toBe("done");
+    });
+
+    it('"Cancel the task" sends the option the card shows and cancels the task', async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(questionsCard());
+      renderApp("/inbox", harness);
+      const form = await screen.findByTestId("person-questions");
+      const request = form.closest('[data-testid="request"]') as HTMLElement;
+      const options = within(request).getAllByTestId("option");
+      expect(options.map((b) => b.textContent)).toEqual(["Cancel the task"]);
+      await user.click(options[0] as HTMLElement);
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_questions/answer")[0]?.body).toEqual({
+          version: 1,
+          answer: "Cancel the task",
+        }),
+      );
+      await waitFor(() =>
+        expect(harness.daemon.state.tasks.find((t) => t.id === "task_1")?.status).toBe("cancelled"),
+      );
+    });
   });
 
   it("intakeCardOf reads only intake cards that carry a proposal", () => {

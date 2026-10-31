@@ -160,6 +160,27 @@ the task.
 Each unread message has **Mark read**; **Mark all read** over the messages marks every unread
 one at once.
 
+## When Forerunner needs you
+
+Some work only you can do: choose the stack, the hosting, the repository or the domain, name an
+account, settle a preference. Forerunner never hands that to a specialist, which cannot ask you.
+It asks you in the Inbox instead, on a card that names the task and the project and lists the
+questions, each with its own answer field.
+
+- **A task planned for you** (the plan says it "asks you in the Inbox") is asked as soon as the
+  plan is approved, or when Forerunner starts. No specialist runs and nothing is spent.
+- **A specialist that needs your answer while working** asks you on the same kind of card and
+  stops; the task waits.
+- **A run that reports it needs your answers** is not retried: its questions are filed at once,
+  with the critic's note, instead of a sign-off.
+
+Type your answers and click **Send answers**; leave a question blank if you have no answer yet.
+Your answers are written to the project's decision record (`docs/decisions/0001-…` in the
+project's workspace folder) and the decision log. A task planned for you is then
+done; a task a specialist was working on goes back to ready, a session starts, and its next run
+gets your answers. **Cancel the task** cancels it instead. You can also answer in your own words
+from the phone; one text then answers all the questions.
+
 ## Autonomy and budgets
 
 Money is shown in CHF everywhere you read it: cards, the session log, summaries, notifications

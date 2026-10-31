@@ -525,6 +525,48 @@ describe("the UI client against the real daemon", () => {
     }
   });
 
+  it("a task only the person can do: its questions are in the Inbox and the form's answers close it (U-022)", async () => {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Confirm stack, hosting and repository with the human",
+      outcome: "decided",
+      status: "ready",
+      specialist: "ops",
+      reason: "a 1.0.3 plan",
+      author_agent: agentId,
+    });
+    await rt.syncApprovals();
+    const card = (await client.inbox(humanId)).requests.find(
+      (r) => r.taskId === task.id && r.status === "open",
+    );
+    expect(card).toMatchObject({
+      kind: "decision",
+      options: ["Cancel the task"],
+      steps: [
+        "Stack: what do you choose?",
+        "Hosting: what do you choose?",
+        "Repository: what do you choose?",
+      ],
+    });
+    // What the Inbox form sends: one answer per question, the blank ones left out.
+    const answered = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: {
+        answers: [
+          { question: "Stack: what do you choose?", answer: "TypeScript and Hono" },
+          { question: "Hosting: what do you choose?", answer: "Cloudflare" },
+        ],
+      },
+    });
+    expect(answered.status).toBe("answered");
+    expect((await client.tasks(projectId)).find((t) => t.id === task.id)?.status).toBe("done");
+    expect(
+      (await client.inbox(humanId)).requests.some(
+        (r) => r.taskId === task.id && r.status === "open",
+      ),
+    ).toBe(false);
+  });
+
   it("answering a request: an answer that is none of a card's options is refused with them, the card stays (U-034)", async () => {
     const card = await rt.store.humanRequest.insert({
       human_id: humanId,

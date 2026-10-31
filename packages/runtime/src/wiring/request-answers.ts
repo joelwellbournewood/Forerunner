@@ -70,6 +70,12 @@ export const ANSWER_CARD_KEYS = {
   /** The agent's proposal of a repository for a project without one (U-037, `loop/repo-create.ts`). */
   repoCreatePrefix: "repo:create:",
   /**
+   * Questions only the person can answer (U-022, `PERSON_QUESTIONS_KEY_PREFIX`,
+   * `session/person-questions.ts`): a `decision` whose answer is the person's own words, one
+   * per question or one text for all, or its one option, "Cancel the task".
+   */
+  personQuestionsPrefix: "person_questions:",
+  /**
    * Cards whose readers act only on their options and live outside this module: the rebase
    * conflict (`REBASE_CONFLICT_KEY`, `@forerunner/capabilities`) and the merge left open
    * (`MERGE_LEFT_OPEN_KEY`, `loop/merge.ts`), both `decision` cards read in
@@ -118,6 +124,64 @@ export function intakeAnswer(answer: JsonValue | null): "approve" | "reject" | n
   if (v === null) return null;
   if (/^(approve|approved|accept|accepted|yes|ok|apply|go)$/.test(v)) return "approve";
   if (/^(reject|rejected|no|decline|declined|deny|denied|drop|cancel)$/.test(v)) return "reject";
+  return null;
+}
+
+/** The one option of a person's questions card (U-022): the task is not needed after all. */
+export const CANCEL_TASK_OPTION = "Cancel the task";
+
+/** One answer of the person to one question; `question` null when one text answers them all. */
+export interface PersonAnswerItem {
+  question: string | null;
+  answer: string;
+}
+
+/** What a person's questions card (U-022) was answered with. */
+export type PersonQuestionsAnswer =
+  | { kind: "cancel" }
+  | { kind: "answers"; answers: PersonAnswerItem[] };
+
+/** The most characters of one answer that are kept (the decision doc, the next run's brief). */
+export const MAX_PERSON_ANSWER_CHARS = 4000;
+
+/**
+ * The answer of a person's questions card (`session/person-questions.ts`), or null when it
+ * says nothing. The Inbox's form sends `{ answers: [{ question, answer }] }`, one per
+ * question; any other place (the phone, the web approvals, a typed answer) sends one text,
+ * which answers every question at once. "Cancel the task", the card's one option, cancels the
+ * task. Blank answers are dropped; an answer with none left is unreadable, so the route
+ * refuses it and the card stays open.
+ */
+export function personQuestionsAnswer(answer: JsonValue | null): PersonQuestionsAnswer | null {
+  if (typeof answer === "string") {
+    const text = answer.trim();
+    if (!text) return null;
+    if (/^(cancel|cancel the task|cancelled|canceled|drop|drop the task)$/.test(normalAnswer(text)))
+      return { kind: "cancel" };
+    return {
+      kind: "answers",
+      answers: [{ question: null, answer: text.slice(0, MAX_PERSON_ANSWER_CHARS) }],
+    };
+  }
+  if (answer && typeof answer === "object" && !Array.isArray(answer)) {
+    const o = answer as JsonObject;
+    if (Array.isArray(o.answers)) {
+      const answers: PersonAnswerItem[] = [];
+      for (const item of o.answers) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const a = (item as JsonObject).answer;
+        const q = (item as JsonObject).question;
+        if (typeof a !== "string" || !a.trim()) continue;
+        answers.push({
+          question: typeof q === "string" && q.trim() ? q.trim() : null,
+          answer: a.trim().slice(0, MAX_PERSON_ANSWER_CHARS),
+        });
+      }
+      return answers.length ? { kind: "answers", answers } : null;
+    }
+    const word = o.choice ?? o.option ?? o.answer;
+    return typeof word === "string" ? personQuestionsAnswer(word) : null;
+  }
   return null;
 }
 
@@ -265,6 +329,10 @@ const READERS: ReadonlyArray<{
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.specialistPrefix), read: specialistAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.modelWatchPrefix), read: modelWatchAnswerOf },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.repoCreatePrefix), read: repoProposalAnswer },
+  {
+    matches: (k) => k.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix),
+    read: personQuestionsAnswer,
+  },
 ];
 
 /**
@@ -292,7 +360,7 @@ function answerText(answer: unknown): string | null {
  * `unrecognized_answer`: the task sat in review or `needs_human` with no card left to answer.
  *
  * - A card with its own reader (sign-off, blocked findings, session plan, intake, specialist
- *   proposal, model watch: `READERS`) takes what that reader takes.
+ *   proposal, model watch, a person's questions: `READERS`) takes what that reader takes.
  * - A card of `ANSWER_CARD_KEYS.optionOnly` (the U-028 pull-request cards, the U-033 session
  *   review) takes one of its options.
  * - Any other approval with options takes one of its options (case, surrounding spaces and

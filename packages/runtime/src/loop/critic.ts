@@ -35,6 +35,7 @@ import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelTier } from "../provider/types.ts";
 import { screenLessons } from "../session/lessons.ts";
+import { filePersonQuestions, reportedQuestions } from "../session/person-questions.ts";
 import {
   type CriticPort,
   type LessonCandidate,
@@ -65,6 +66,10 @@ import {
  *   escalate-> the runtime's retry policy from the attempt count: improve the brief, split or
  *              change the specialist, one rung up under the ceiling, then the human;
  *   human   -> needs_human with the sign-off request.
+ *
+ * A run whose report says it needs the person's answers (U-022, `reportedQuestions`) and that
+ * the critic does not accept goes to the person instead: its questions are filed in the Inbox
+ * (no sign-off), the task waits in needs_human, and no rung of the ladder runs.
  *
  * Repeat findings the critic turned into lesson proposals go to critic memory through the
  * memory port. Nothing here loosens a rule of the critic package; it only feeds it.
@@ -347,31 +352,51 @@ export class CriticLoop implements CriticPort {
     let decision: ReviewDecision;
     let followup: FollowupDecision | null = null;
     let blockedOpen = 0;
-    try {
-      followup = await applyVerdict(task.id, output, {
-        store,
-        criticAgentId: this.deps.criticAgentId,
-        currentTier,
-        humanId: owner,
-        ownerAgentId: req.agentId,
-        runId: result.runId ?? null,
+    // U-022: a run that reports it needs the person's answers and that the critic does not
+    // accept waits for the person. Its questions are filed, not a sign-off (which asks nothing
+    // the person can answer), and the retry ladder stops at this first verdict: a rerun by a
+    // specialist cannot answer them, it only spends again.
+    const reported =
+      output.verdict === "accept" ? null : reportedQuestions(result.finalReport ?? result.summary);
+    let askedPerson: string | undefined;
+    if (reported) {
+      askedPerson = await this.askPersonInstead({
+        task,
+        output,
+        result,
         sessionId: session.id,
+        humanId: owner,
+        agentId: req.agentId,
+        questions: reported.questions,
       });
-      decision = followup.action;
-    } catch (e) {
-      if (e instanceof ForerunnerError && e.code === "findings_open") {
-        // B.4: the verdict was accept but a finding of an earlier review is still open. The
-        // task stays in review; the runner surfaces it and the next attempt resolves it.
-        decision = "blocked_by_findings";
-        blockedOpen = (await store.finding.openFor(task.id)).length;
-      } else throw e;
+      decision = "human";
+    } else {
+      try {
+        followup = await applyVerdict(task.id, output, {
+          store,
+          criticAgentId: this.deps.criticAgentId,
+          currentTier,
+          humanId: owner,
+          ownerAgentId: req.agentId,
+          runId: result.runId ?? null,
+          sessionId: session.id,
+        });
+        decision = followup.action;
+      } catch (e) {
+        if (e instanceof ForerunnerError && e.code === "findings_open") {
+          // B.4: the verdict was accept but a finding of an earlier review is still open. The
+          // task stays in review; the runner surfaces it and the next attempt resolves it.
+          decision = "blocked_by_findings";
+          blockedOpen = (await store.finding.openFor(task.id)).length;
+        } else throw e;
+      }
     }
 
     // The retry ladder (D.2) also runs for a plain revise: after the last rung the human
     // decides instead of an endless loop of revisions.
     let retry: RetryRung | undefined;
     let nextTier: ModelTier | null | undefined;
-    let humanRequestId = output.humanRequestId;
+    let humanRequestId = askedPerson ?? output.humanRequestId;
     let attempt = followup ? followup.task.attempt : task.attempt;
     let current = followup?.task ?? (await store.task.mustGet(task.id));
     if (followup?.action === "retry") {
@@ -578,6 +603,50 @@ export class CriticLoop implements CriticPort {
       completed: output.outcome === "completed",
       costUsdMicro: output.costUsdMicro,
     };
+  }
+
+  /**
+   * U-022: the run's blocker is the person. The sign-off the critic filed for a `human`
+   * verdict is withdrawn, the task moves `in_review -> needs_human`, and the person's questions
+   * are filed (the report's own, else the task's); the critic's summary goes on the card as
+   * context. Returns the questions card's id.
+   */
+  private async askPersonInstead(args: {
+    task: TaskRow;
+    output: ReviewOutput;
+    result: TaskReviewRequest["result"];
+    sessionId: string;
+    humanId: string;
+    agentId: string;
+    questions: readonly string[];
+  }): Promise<string> {
+    const { store } = this.deps;
+    const { output } = args;
+    if (output.humanRequestId) {
+      const signoff = await store.humanRequest.get(output.humanRequestId);
+      if (signoff?.status === "open")
+        await store.humanRequest.withdraw(signoff.id, signoff.version);
+    }
+    let current = await store.task.mustGet(args.task.id);
+    if (current.status === "in_review" || current.status === "in_progress")
+      current = await store.task.transition(
+        current.id,
+        current.version,
+        "needs_human",
+        `waits for your answers: the work needs them (critic ${output.verdict}, grade ${output.grade}); not retried`,
+        { agentId: this.deps.criticAgentId },
+      );
+    const { request } = await filePersonQuestions(store, {
+      task: current,
+      humanId: args.humanId,
+      agentId: args.agentId,
+      sessionId: args.sessionId,
+      runId: args.result.runId ?? null,
+      source: "critic",
+      questions: args.questions,
+      context: `The critic: ${output.summary}`,
+    });
+    return request.id;
   }
 
   /**

@@ -26,6 +26,12 @@ export const SPECIALIST_ALIASES: Readonly<Record<string, string>> = {
   research: "researcher",
   review: "reviewer",
   design: "designer",
+  // U-022: a task only the person can do (answer questions) is planned for "person"; it is no
+  // registry entry and never runs a specialist (`session/person-questions.ts`).
+  human: "person",
+  owner: "person",
+  "the-person": "person",
+  "the-human": "person",
 };
 
 /** `"Data Analyst"` → `"data-analyst"`, then the alias table: `"ops"` → `"ops-deploy"`. */

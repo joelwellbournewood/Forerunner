@@ -140,6 +140,91 @@ export function intakeCardOf(card: unknown): IntakeCardView | null {
   };
 }
 
+/**
+ * The card key of questions only the person can answer (U-022): the runtime's
+ * `PERSON_QUESTIONS_KEY_PREFIX` (`session/person-questions.ts`), which `test/inbox.test.tsx`
+ * checks this equals; the runtime module itself needs Node and is not imported here.
+ */
+export const PERSON_QUESTIONS_KEY_PREFIX = "person_questions:";
+
+/** A person's questions card as the Inbox shows it: one answer field per question. */
+export interface PersonQuestionsView {
+  taskTitle: string;
+  questions: string[];
+  /** Where the questions came from: the plan, the specialist, or the critic's stop. */
+  source: "planned" | "specialist" | "critic";
+  /** The specialist's or the critic's own words about why it asks. */
+  context: string | null;
+}
+
+export function personQuestionsOf(card: unknown): PersonQuestionsView | null {
+  if (!isRecord(card) || !str(card.key)?.startsWith(PERSON_QUESTIONS_KEY_PREFIX)) return null;
+  const questions = strings(card.questions);
+  if (questions.length === 0) return null;
+  const source = str(card.source);
+  return {
+    taskTitle: str(card.task_title) ?? "",
+    questions,
+    source: source === "specialist" || source === "critic" ? source : "planned",
+    context: str(card.context),
+  };
+}
+
+/**
+ * The questions with one answer field each (U-022). The answer is sent as
+ * `{ answers: [{ question, answer }] }`, the blank ones left out; at least one must be given.
+ */
+function PersonQuestionsForm({
+  card,
+  busy,
+  onSend,
+}: {
+  card: PersonQuestionsView;
+  busy: boolean;
+  onSend: (value: unknown) => void;
+}) {
+  const [answers, setAnswers] = useState<string[]>(() => card.questions.map(() => ""));
+  const given = card.questions
+    .map((question, i) => ({ question, answer: (answers[i] ?? "").trim() }))
+    .filter((a) => a.answer.length > 0);
+  return (
+    <form
+      className="mt-2 space-y-2"
+      data-testid="person-questions"
+      aria-label="Your answers"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (given.length) onSend({ answers: given });
+      }}
+    >
+      {card.context ? (
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">{card.context}</p>
+      ) : null}
+      {card.questions.map((q, i) => (
+        <label key={q} className="block text-sm">
+          <span className="font-medium">{q}</span>
+          <textarea
+            className={`${INPUT_CLASS} mt-1 min-h-12`}
+            value={answers[i] ?? ""}
+            onChange={(e) =>
+              setAnswers((prev) => prev.map((a, j) => (j === i ? e.target.value : a)))
+            }
+            data-testid="person-answer"
+          />
+        </label>
+      ))}
+      <Button
+        type="submit"
+        variant="primary"
+        disabled={busy || given.length === 0}
+        data-testid="send-answers"
+      >
+        Send answers
+      </Button>
+    </form>
+  );
+}
+
 /** The intake card's estimates in CHF (U-074), at the default rate the card has no other for. */
 const usd = (micro: number): string => formatChf(usdMicroToChfMicro(micro));
 
@@ -152,7 +237,11 @@ function IntakeTaskList({ tasks }: { tasks: IntakeCardTask[] }) {
           <span className="text-neutral-500">
             {" "}
             · {reviewLevel(t.riskTier)}, priority {t.priority}
-            {t.specialist ? `, ${t.specialist}` : ""}
+            {t.specialist === "person"
+              ? ", asks you in the Inbox"
+              : t.specialist
+                ? `, ${t.specialist}`
+                : ""}
             {t.dependsOn.length
               ? `, after ${t.dependsOn
                   // The plan's keys name its own tasks: shown by title (U-040).
@@ -486,6 +575,7 @@ function RequestCard({
   const [error, setError] = useState<string | null>(null);
   const intake = intakeCardOf(request.changeCard);
   const challenge = unlockChallengeOf(request);
+  const questions = challenge ? null : personQuestionsOf(request.changeCard);
 
   const send = async (value: unknown) => {
     if (busy) return;
@@ -530,13 +620,14 @@ function RequestCard({
         <span className="ml-auto text-xs text-neutral-500">{relativeTime(request.createdAt)}</span>
       </div>
       <p className="mt-2 font-medium">{request.why}</p>
-      {request.steps.length > 0 ? (
+      {request.steps.length > 0 && !questions ? (
         <ol className="mt-1 list-decimal pl-5 text-sm text-neutral-700 dark:text-neutral-300">
           {request.steps.map((s) => (
             <li key={s}>{inAppText(s)}</li>
           ))}
         </ol>
       ) : null}
+      {questions ? <PersonQuestionsForm card={questions} busy={busy} onSend={send} /> : null}
       {intake ? <IntakeCard card={intake} /> : null}
       {challenge ? (
         <UnlockCard
@@ -548,7 +639,8 @@ function RequestCard({
           onSend={unlock.send}
         />
       ) : null}
-      {challenge ? null : request.changeCard !== null && request.changeCard !== undefined ? (
+      {challenge || questions ? null : request.changeCard !== null &&
+        request.changeCard !== undefined ? (
         <details className="mt-1 text-xs">
           <summary className="cursor-pointer text-neutral-500">Change card</summary>
           <pre className="overflow-auto rounded bg-neutral-100 p-2 dark:bg-neutral-900">
@@ -561,7 +653,8 @@ function RequestCard({
           {request.options.map((o) => (
             <Button
               key={o}
-              variant="primary"
+              // The questions card's one option ("Cancel the task") is not its main answer.
+              variant={questions ? "secondary" : "primary"}
               onClick={() => void send(o)}
               disabled={busy}
               data-testid="option"
@@ -571,7 +664,7 @@ function RequestCard({
           ))}
         </div>
       ) : null}
-      {challenge ? null : (
+      {challenge || questions ? null : (
         <form
           className="mt-2 flex gap-2"
           onSubmit={(e) => {

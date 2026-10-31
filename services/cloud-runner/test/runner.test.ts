@@ -212,7 +212,9 @@ describe("cloud runner", () => {
     const coderCalls = w.provider.calls.filter((c) => c.request.system === coder?.prompt);
     expect(coderCalls.length).toBeGreaterThan(0);
     for (const c of coderCalls) {
+      // And `ask_person`, which every specialist on the loop driver is given (U-022, ADR 0095).
       expect(c.request.tools?.map((t) => t.name).sort()).toEqual([
+        "ask_person",
         "list_dir",
         "read_file",
         "run_command",

@@ -93,6 +93,13 @@ import { screenLessons } from "./lessons.ts";
 import { renderHeardLines } from "./live-chat.ts";
 import { renderQueueNotes } from "./next-session.ts";
 import {
+  ASK_PERSON_TOOL,
+  answersBlockFor,
+  filePersonQuestions,
+  isPersonTask,
+  questionsAskedByRun,
+} from "./person-questions.ts";
+import {
   lessonsFromReport,
   type PlanItem,
   type TaskExecutionResult,
@@ -397,6 +404,23 @@ export class LoopTaskExecutor implements TaskExecutor {
   ): Promise<TaskExecutionResult> {
     const { store, clock } = this.deps;
     const { task, session, token, budget } = ctx;
+    // U-022: a task only the person can do (planned for "person", or a 1.0.3 plan's "Confirm …
+    // with the human") is never given to a specialist, which cannot ask: its questions go to
+    // the Inbox and the task waits for the answers. Nothing runs and nothing is spent.
+    if (isPersonTask(task, ctx.item.specialist)) {
+      const { request } = await filePersonQuestions(store, {
+        task,
+        humanId: token.claims.ownerHumanId,
+        agentId: session.agent_id,
+        sessionId: session.id,
+        source: "planned",
+      });
+      return {
+        outcome: "needs_human",
+        summary: `Waiting for your answers in the Inbox (${request.steps.length} question(s)); no specialist ran.`,
+        costUsdMicro: 0,
+      };
+    }
     // A plan's "ops" or "Data Analyst" is the registry's `ops-deploy` or `data-analyst` (U-014).
     const named = ctx.item.specialist;
     let item = this.deps.specialists(named)
@@ -527,6 +551,8 @@ export class LoopTaskExecutor implements TaskExecutor {
         "Stay inside the worktree and the allowed tools.",
         "Report evidence (commands and output), not claims.",
         "End the report with one line per lesson worth keeping, as 'Lesson: ...'.",
+        // U-022: the person is the one who can answer; a specialist never guesses for them.
+        `If the acceptance criteria need answers only the person can give (a choice of stack, hosting, repository, domain, an account), do not guess: call ${ASK_PERSON_TOOL} with the questions when it is offered, else end the report with "Questions for the person:" and one question per line.`,
         ...retryConstraints(task.attempt, openFindings),
       ],
       acceptanceCriteria: task.acceptance_criteria.length
@@ -590,6 +616,13 @@ export class LoopTaskExecutor implements TaskExecutor {
     // under the executor's work root, and that is the only path the token allows.
     const sdkCwd =
       choice.driver === "sdk" ? (worktree ?? join(this.sdkDeps().workRoot, runId)) : undefined;
+    // U-022: every specialist on the loop driver may ask the person (`ask_person`, when the
+    // composition registered it); the SDK path has no bridge for the runtime's own tools, so
+    // there the brief asks for a "Questions for the person:" list instead.
+    const asksPerson =
+      choice.driver !== "sdk" &&
+      !!(this.deps.toolsFor?.() ?? this.deps.tools).get(ASK_PERSON_TOOL) &&
+      !spec.allowedTools.includes(ASK_PERSON_TOOL);
     const allowedTools =
       choice.driver === "sdk"
         ? await this.sdkAllowedTools(
@@ -599,7 +632,9 @@ export class LoopTaskExecutor implements TaskExecutor {
             session.agent_id,
             token.claims.ownerHumanId,
           )
-        : spec.allowedTools;
+        : asksPerson
+          ? [...spec.allowedTools, ASK_PERSON_TOOL]
+          : spec.allowedTools;
     const child = this.deps.tokens.derive(token, {
       runId,
       taskId: task.id,
@@ -740,7 +775,9 @@ export class LoopTaskExecutor implements TaskExecutor {
         type: "warning",
         message: `a next-session queue item (${f.id}) contained instruction-like passages (${f.rules.join(", ")}); passed to the specialist as data`,
       });
-    const userText = [renderBrief(brief), lessonsBlock, heard.block, queued.block]
+    // U-022: the person's answers to questions asked on this task reach its next run.
+    const answers = await answersBlockFor(store, task.id);
+    const userText = [renderBrief(brief), lessonsBlock, answers, heard.block, queued.block]
       .filter((t) => t)
       .join("\n\n");
     const label = `${spec.name} on ${task.title}`;
@@ -875,8 +912,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       }
     }
 
-    const outcome: TaskExecutionResult["outcome"] =
-      result.outcome === "completed"
+    // U-022: a run that asked the person (`ask_person` filed a card and ended the run) waits
+    // for the answers; it is no work for the critic to review or the ladder to retry.
+    const askedPerson = await questionsAskedByRun(store, task.id, run.id);
+    const outcome: TaskExecutionResult["outcome"] = askedPerson
+      ? "needs_human"
+      : result.outcome === "completed"
         ? "done"
         : result.outcome === "needs_human"
           ? "needs_human"
@@ -936,10 +977,11 @@ export class LoopTaskExecutor implements TaskExecutor {
     }
     return {
       outcome,
-      summary:
-        finalText.slice(0, 2000) ||
-        (result.error ? redact(result.error.message) : "") ||
-        result.outcome,
+      summary: askedPerson
+        ? `Waiting for your answers in the Inbox (${askedPerson.steps.length} question(s) from ${spec.name}).`
+        : finalText.slice(0, 2000) ||
+          (result.error ? redact(result.error.message) : "") ||
+          result.outcome,
       costUsdMicro: result.costUsdMicro,
       // Checks are the critic's job from tier 1 up; tier 0 closes when the specialist finished cleanly.
       checksPassed: result.outcome === "completed",

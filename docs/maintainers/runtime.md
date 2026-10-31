@@ -1039,9 +1039,12 @@ makes one model call on the planning rung (the `planning` mode's tier, effort, t
 output cap from `resolveRunSettings`: the tables in force under the principal's
 `model_config.modes.planning` override, ADR 0072, the effort shifted by the project's
 speed-versus-quality slider, spec D.16; the registry's `project-manager` prompt plus an intake
-section, which lists the registry's specialist names exactly (U-014) and forbids tasks that ask
-the human something, such as confirming the stack: the choice goes in
-`docs/decisions/0001-<slug>.md` instead, which the human reads before approving (U-017); no tools, `maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or
+section, which lists the registry's specialist names exactly (U-014) and has the model decide
+what the brief points to (the stack, the hosting, the repository) in
+`docs/decisions/0001-<slug>.md`, which the human reads before approving (U-017); a decision only
+the human can make that the brief does not settle is planned as one task with `specialist:
+"person"` whose acceptance criteria are the questions, never given to another specialist
+(U-022, "Questions only the person can answer" below); no tools, `maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or
 `project.settings.intake_budget_usd_micro`) through the loop driver and the hooks on a
 session row of its own (`summary: "intake: <project>"`, `planned -> running -> completed |
 failed`, `plan.intake.deadline` the planning timeout plus `INTAKE_DEADLINE_MARGIN_MS`, which
@@ -1094,6 +1097,69 @@ proposal is drafted in the background, the card answers at once, a failure lands
 `summary_cache.intake`); the flag is off by default so nothing creates a model call unasked.
 Tests: `intake.test.ts`. Requirement: A.2. Reviewed 2026-10-25
 (`docs/status/reviews/w2-a2-intake.md`; the ADR 0055 amendment of that date).
+
+**Questions only the person can answer (U-022, [ADR 0095](../decisions/0095-questions-only-the-person-can-answer.md); `src/session/person-questions.ts`).**
+A task whose acceptance criteria need the person's answers (a choice of stack, hosting,
+repository, domain, an account) is never work for a specialist, which cannot ask. Before, a
+1.0.3 plan's "Confirm stack, hosting and repository with the human" went to `ops`, the run did
+nothing, the critic graded it "human", the retry ladder ran it four times and the Inbox showed
+a sign-off without the questions. One card, three ways in:
+
+- **Planned.** `isPersonTask(task, planned?)`: the explicit field (`specialist` of the row or
+  the plan item is `person`, `canonicalSpecialistName` maps `human` and `owner` to it; the
+  intake plans such a decision so), or, for rows from older plans, a title that asks the person
+  (`… with the human`, `ask the owner`, `the human's decision`; "user" is left out, a product's
+  user is not the person). `syncPersonQuestions` (run by `syncApprovals` after the intake's
+  sync: at compose, after every answer, at a session's end) files the questions of every such
+  task of this agent (owner, else author) in an active project that waits in `ready` or sits in
+  `needs_human` without a card (a 1.0.3 row a specialist failed: its open critic sign-off is
+  withdrawn), and moves a `ready` one to `needs_human`, in one transaction; the executor files
+  them the same way for one that reaches a session anyway and returns `needs_human` at once
+  with no Run row and no spend. The questions (`questionsForTask`): the acceptance criteria that
+  end in "?", else one per thing the title names ("Stack: what do you choose?"), else the
+  criteria, else the title.
+- **Asked by a specialist.** `askPersonTool` (`ask_person`, action class `read`: asking is free
+  at every level) is registered by the daemon beside the file tools; the executor adds it to
+  every loop-driver run's allowlist (the session grant carries every registered tool, so the
+  derived token keeps it). The tool files the card with the run's id and returns `endRun`, so
+  the loop makes no further call and never waits for the answer; the executor sees the open
+  card the run filed (`questionsAskedByRun`) and returns `needs_human` ("Waiting for your
+  answers in the Inbox …"), which the runner applies without a review. The SDK path has no
+  bridge for the runtime's tools: there the brief's constraint asks for a "Questions for the
+  person:" list at the end of the report, which the critic path below reads.
+- **Reported to the critic.** `CriticLoop.reviewTask` reads the run's report with
+  `reportedQuestions` (the items under a "Questions for the person:" heading, else, when a
+  sentence says the work needs the person's (or your) answers, decision, confirmation or
+  choice, the lines ending in "?"). A verdict other than accept on such a run withdraws the
+  sign-off the critic filed for a `human` verdict, moves the task `in_review -> needs_human`,
+  files the questions (the report's, else the task's; the critic's summary as context) and
+  returns decision `human`: `applyVerdict` and the ladder do not run, so there is one attempt
+  and one review. An accepting verdict stands.
+
+The card: kind `decision`, blocking, risk low, `steps` the questions, the one option
+`CANCEL_TASK_OPTION` ("Cancel the task"), `change_card` `{ key: "person_questions:<task>",
+task_id, task_title, questions, source: planned | specialist | critic, on_answer: done | ready,
+run_id, context, decision_doc, applied_at }`, `why` naming the task and saying where the answers
+go. One card per task at a time (`pendingPersonQuestions`: open, or answered and not applied).
+The Inbox shows one answer field per question (`InboxPage.tsx`, `PersonQuestionsForm`).
+`syncPersonQuestions` applies each answered card once (`markAnswer`): "Cancel the task" cancels
+the task; answers are appended to the project's decision doc in its workspace
+(`writeAnswersToDecisionDoc`: `<workspace>/docs/decisions/0001-*.md`, the first such file, else
+`0001-project-decisions.md` with a title; a section per request with a marker, so a re-run
+writes nothing twice; a failed write is `doc_error` on the card and does not hold the task),
+then, in one transaction with one `person.answers` audit row, a planned task's open findings
+are resolved and it closes along the graph (`needs_human -> ready -> claimed -> in_progress ->
+in_review -> done`), and a paused one goes `needs_human -> ready` and the scheduler is asked for
+a `message` start of its project (the daemon only, not a one-shot). The next run's first
+message carries "Answers from the person" (`answersBlockFor`: every answered card of the task,
+the questions with the person's words). The decision log records the answer as for any
+`decision` (the answer route). Tests: `person-questions.test.ts` (which tasks, what a report
+asks, the reader, the critic path with a `human` and a `revise` verdict: one attempt, the
+questions and no sign-off), `person-questions-daemon.test.ts` (the composed daemon: planned and
+1.0.3 tasks asked at once with no run and no model call, a restart files no second card, the
+form's answers in the decision doc and the task done, "Cancel the task", a blank answer
+refused, `ask_person` ending the run without a review and the next run's brief carrying the
+answer), `apps/ui/test/inbox.test.tsx` and `real-daemon.test.ts`. Requirement: J.3.
 
 **Reasons on plan and milestone changes (spec B.5).** Every change to a plan, task or
 milestone is versioned with author and reason, and the store enforces it: `TaskRepo.transition`
@@ -1361,8 +1427,11 @@ card left. The rules:
 
 - A card with its own reader takes exactly what that reader takes: the sign-off
   (`signoffAnswer`), blocked findings (`blockedFindingsAnswer`), session plan (`planAnswer`),
-  intake (`intakeAnswer`), specialist proposal (`specialistAnswer`) and model watch
-  (`modelWatchAnswerOf`), found by `change_card.key` (`ANSWER_CARD_KEYS`; a test asserts each
+  intake (`intakeAnswer`), specialist proposal (`specialistAnswer`), model watch
+  (`modelWatchAnswerOf`) and a person's questions (`personQuestionsAnswer`, U-022: the Inbox
+  form's `{ answers: [{ question, answer }] }` with at least one non-blank answer, one text from
+  anywhere else, or the option "Cancel the task"; a blank answer is refused), found by
+  `change_card.key` (`ANSWER_CARD_KEYS`; a test asserts each
   equals its producer's constant). These readers live in this module (it imports only types
   beyond `@forerunner/platform`, so the UI's stand-in daemon loads it in a browser
   environment) and are re-exported from `session/findings.ts`, `session/intake.ts`,

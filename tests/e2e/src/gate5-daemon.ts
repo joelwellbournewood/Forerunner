@@ -264,6 +264,8 @@ export function daemonFor(
     // No week task pauses on an always-human call, so no late hooks approval (ADR 0088).
     late: { started: 0, refused: 0, skipped: 0 },
     intake: { applied: 0, rejected: 0, skipped: 0 },
+    // No week task is the person's, and no specialist asks the person (U-022).
+    personQuestions: { filed: 0, answered: 0, cancelled: 0, skipped: 0 },
     specialists: { promoted: 0, failed: 0, rejected: 0, skipped: 0, running: 0 },
   });
   // The daemon's approvals poll (compose.ts): an answer given on the phone lands in the

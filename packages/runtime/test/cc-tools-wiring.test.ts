@@ -244,8 +244,10 @@ describe("cc:* tools on the daemon's loop path", () => {
       signal: new AbortController().signal,
     });
     expect(result.outcome).toBe("done");
-    // The driver was offered exactly the mapped names (the token sorts them).
+    // The driver was offered exactly the mapped names (the token sorts them), and `ask_person`,
+    // which every specialist on the loop driver is given (U-022, ADR 0095).
     expect(provider.calls[0]?.tools?.map((t) => t.name)).toEqual([
+      "ask_person",
       "list_dir",
       "read_file",
       "write_file",

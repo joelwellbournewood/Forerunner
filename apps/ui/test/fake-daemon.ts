@@ -72,7 +72,7 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
-import { acceptsAnswer } from "@forerunner/runtime/wiring/request-answers";
+import { acceptsAnswer, personQuestionsAnswer } from "@forerunner/runtime/wiring/request-answers";
 import {
   decodeStoredKey,
   parseUnlockChallenge,
@@ -1436,6 +1436,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     r.version += 1;
     for (const p of state.projects) {
       if (p.id === r.projectId && p.waitingOnYou > 0) p.waitingOnYou -= 1;
+    }
+    // U-022, as the daemon's `syncPersonQuestions`: answers close a planned person task (done)
+    // or send a paused one back to ready; "Cancel the task" cancels it.
+    const personCard = r.changeCard as { key?: unknown; on_answer?: unknown } | null;
+    if (typeof personCard?.key === "string" && personCard.key.startsWith("person_questions:")) {
+      const task = state.tasks.find((t) => t.id === r.taskId);
+      const read = personQuestionsAnswer(parsed.data.answer as never);
+      if (task && read?.kind === "cancel") task.status = "cancelled";
+      else if (task && read?.kind === "answers")
+        task.status = personCard.on_answer === "ready" ? "ready" : "done";
     }
     if (r.kind === "capability_grant") {
       const ext = state.extensions.find((e) => `req_${e.id}` === r.id);

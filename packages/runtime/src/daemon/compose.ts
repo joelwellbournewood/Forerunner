@@ -213,6 +213,11 @@ import {
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type LateApprovalSyncResult, syncLateApprovals } from "../session/late-approval.ts";
 import {
+  askPersonTool,
+  type PersonQuestionsSyncResult,
+  syncPersonQuestions,
+} from "../session/person-questions.ts";
+import {
   type PlanApprovalSyncResult,
   reportingPlanStartFailures,
   syncPlanApprovals,
@@ -919,6 +924,11 @@ export interface RuntimeApp {
      */
     late: LateApprovalSyncResult;
     intake: IntakeSyncResult;
+    /**
+     * Questions only the person can answer (U-022, ADR 0095): planned person tasks filed as
+     * Inbox questions, answers written to the decision doc and the task done or continued.
+     */
+    personQuestions: PersonQuestionsSyncResult;
     /** Answered specialist proposals (ADR 0071): the daemon runs them in the background; a one-shot applies none. */
     specialists: SpecialistSyncResult;
     /** Answered repository proposals (U-037, ADR 0097): created, declined, failed. */
@@ -1609,6 +1619,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // connectors bridge at that moment; the gate covers runs already in flight.
   const registryDir = opts.registryDir ?? env.FORERUNNER_REGISTRY_DIR ?? seededRegistryDir(env);
   const tools = fileTools();
+  // U-022 (ADR 0095): every specialist on the loop driver may ask the person; the questions go
+  // to the Inbox and the run ends (the executor adds the name to each run's allowlist).
+  tools.register(askPersonTool({ store }));
   // Cloudflare deploys (spec J.9, J.10, S.5, S.6, ADR 0035): the four tools go through the
   // same hooks and gate as every other tool; the deployer reads `project.settings.cloudflare`
   // per call, resolves the token by reference from the vault and asks the human through
@@ -2962,6 +2975,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             })
           : { started: 0, refused: 0, skipped: 0 },
       intake: await intake.syncAnswers(),
+      // U-022 (ADR 0095), after the intake so an approved plan's person tasks are asked at
+      // once: their questions are filed, and answers are written to the decision doc in the
+      // project's workspace; a task paused by a specialist's questions goes on in a session
+      // of its project (only while the services run, as the plans above).
+      personQuestions: await syncPersonQuestions({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        workspaceDir: (projectId) => intake.workspaceDir(projectId),
+        ...(opts.startServices !== false
+          ? { start: (req: StartRequest) => scheduler.requestStart(req) }
+          : {}),
+      }),
       // Proposed specialists (ADR 0071): the daemon claims an approved proposal's answer here
       // and runs its eval set (minutes, real spend) in the background, recovers evaluations
       // that ended without a result, and files requests for proposals that reached disk
