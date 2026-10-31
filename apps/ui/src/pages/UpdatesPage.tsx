@@ -5,9 +5,11 @@ import type { AppUpdateView, ModelWatchAnswerInput, UpdatesView } from "../api/c
 import { ExternalLink } from "../components/ExternalLink.tsx";
 import { Badge, Button, ErrorBanner, Loading, type Tone } from "../components/ui.tsx";
 import { formatBytes } from "../lib/format.ts";
+import { formatChf, usdMicroToChfMicro } from "../lib/money.ts";
 import { formatDateTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState } from "../store/context.tsx";
+import { ConfirmDialog, type PendingConfirm } from "./UpdateConfirm.tsx";
 
 export function appStateTone(state: AppUpdateView["state"]): Tone {
   switch (state) {
@@ -44,7 +46,7 @@ export function isInstallerArtifact(name: string | null): boolean {
  */
 export function UpdatesPage() {
   const client = useClient();
-  const { restart, connection, me } = useUiState((s) => s);
+  const { restart, connection, me, projects } = useUiState((s) => s);
   const loaded = useAsync<UpdatesView>((signal) => client.updates(signal), [client]);
   const [checked, setChecked] = useState<UpdatesView | null>(null);
   const [checking, setChecking] = useState(false);
@@ -85,6 +87,20 @@ export function UpdatesPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [adopt, setAdopt] = useState<Record<string, boolean>>({});
+  const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
+
+  // Ask first while sessions run (U-076): the restart ends them. The count is read when the
+  // button is pressed, so it is the daemon's at that moment.
+  const askWhileRunning = async (kind: "apply" | "rollback", run: () => void) => {
+    let running = 0;
+    try {
+      running = (await client.health()).activeSessions;
+    } catch {
+      running = 0;
+    }
+    if (running > 0) setConfirm({ kind, running, run });
+    else run();
+  };
 
   const act = async (key: string, action: () => Promise<string>) => {
     if (busy) return;
@@ -105,6 +121,15 @@ export function UpdatesPage() {
   const health = watch.data?.health ?? null;
   const recommendations = report?.recommendations ?? [];
   const chosen = recommendations.filter((r) => adopt[r.id] ?? true).map((r) => r.id);
+  // What "Run evaluations" may spend, before it runs (U-076): the report's eval budget, in CHF
+  // at the rate the project cards carry.
+  const evalBudget = report?.eval_budget_usd_micro;
+  const evalCost =
+    typeof evalBudget === "number" && evalBudget > 0
+      ? formatChf(
+          usdMicroToChfMicro(evalBudget, projects.find((p) => p.budget.usdMicro > 0)?.budget),
+        )
+      : null;
 
   const answer = (decision: ModelWatchAnswerInput["decision"]) => {
     if (!report) return;
@@ -220,10 +245,14 @@ export function UpdatesPage() {
                     disabled={busy !== null || restart !== null}
                     onClick={() => {
                       const version = app.available?.version;
-                      void act("apply", async () => {
-                        const r = await client.applyUpdate(version);
-                        return `Staged ${r.version} (${r.state}); ${r.restarting ? "restarting now" : "restart pending"}.`;
-                      });
+                      void askWhileRunning(
+                        "apply",
+                        () =>
+                          void act("apply", async () => {
+                            const r = await client.applyUpdate(version);
+                            return `Staged ${r.version} (${r.state}); ${r.restarting ? "restarting now" : "restart pending"}.`;
+                          }),
+                      );
                     }}
                     data-testid="update-and-restart"
                   >
@@ -272,11 +301,15 @@ export function UpdatesPage() {
                     variant="ghost"
                     disabled={busy !== null || restart !== null}
                     onClick={() =>
-                      void act("rollback", async () => {
-                        const r = await client.rollbackUpdate("from the updates screen");
-                        forgetCheck();
-                        return `Rolling back from ${r.from} to ${r.to ?? "the previous version"} (${r.state}).`;
-                      })
+                      void askWhileRunning(
+                        "rollback",
+                        () =>
+                          void act("rollback", async () => {
+                            const r = await client.rollbackUpdate("from the updates screen");
+                            forgetCheck();
+                            return `Rolling back from ${r.from} to ${r.to ?? "the previous version"} (${r.state}).`;
+                          }),
+                      )
                     }
                     data-testid="rollback"
                   >
@@ -494,9 +527,9 @@ export function UpdatesPage() {
             {report.evals_deferred ? (
               <p className="mt-2 text-xs text-neutral-500" data-testid="model-watch-deferred">
                 Evaluations not run: {report.evals_deferred.planned.length} eval set run(s) would
-                cost money and count against your caps. Only Run evaluations (or the model_watch
-                run_evals setting) runs them. Adopt applies the price rows only and runs no
-                evaluation.
+                cost money{evalCost ? ` (up to ${evalCost})` : ""} and count against your caps.
+                Only Run evaluations (or the model watch's paid-evaluations setting) runs them.
+                Adopt applies the price rows only and runs no evaluation.
               </p>
             ) : null}
             {health?.decision === "pending" ? (
@@ -512,10 +545,17 @@ export function UpdatesPage() {
                 {report.evals_deferred ? (
                   <Button
                     disabled={busy !== null}
-                    onClick={() => answer("evaluate")}
+                    onClick={() =>
+                      setConfirm({
+                        kind: "evaluate",
+                        evals: report.evals_deferred?.planned.length ?? 0,
+                        upTo: evalCost,
+                        run: () => answer("evaluate"),
+                      })
+                    }
                     data-testid="model-watch-evaluate"
                   >
-                    Run evaluations
+                    Run evaluations{evalCost ? ` (up to ${evalCost})` : ""}
                   </Button>
                 ) : null}
                 <Button
@@ -573,6 +613,7 @@ export function UpdatesPage() {
           </details>
         ) : null}
       </div>
+      <ConfirmDialog pending={confirm} onClose={() => setConfirm(null)} />
     </section>
   );
 }

@@ -291,6 +291,8 @@ export const ModelWatchReportDetail = z.looseObject({
   summary: z.string(),
   recommendations: z.array(z.looseObject({ id: z.string(), kind: z.string(), text: z.string() })),
   skipped: z.array(z.string()).default([]),
+  /** The most the run's evals may spend (USD micro); "Run evaluations" says it first (U-076). */
+  eval_budget_usd_micro: z.number().int().nonnegative().optional(),
   /** Paid evals the run withheld for want of the human's consent (ADR 0089). */
   evals_deferred: z
     .looseObject({ reason: z.string(), planned: z.array(z.unknown()) })

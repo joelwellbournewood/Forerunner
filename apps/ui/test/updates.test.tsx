@@ -172,6 +172,10 @@ describe("Updates screen", () => {
       "Adopt applies the price rows only and runs no evaluation",
     );
     await user.click(screen.getByTestId("model-watch-evaluate"));
+    // It says what it may cost first (U-076); the yes sends the answer.
+    await user.click(
+      within(await screen.findByTestId("updates-confirm")).getByTestId("updates-confirm-yes"),
+    );
     await waitFor(() =>
       expect(postedCalls(harness, "/model-watch/reports/mw_2/answer")).toHaveLength(1),
     );
@@ -216,5 +220,79 @@ describe("Updates screen", () => {
     expect(await screen.findByTestId("feed-error")).toHaveTextContent("feed down");
     expect(screen.getByTestId("no-update")).toHaveTextContent("has not been checked yet");
     expect(screen.getByTestId("app-version")).toHaveTextContent("running 0.1.0-fake");
+  });
+});
+
+/** Ask first (U-076): a restart ends the running sessions; evaluations cost money. */
+describe("Updates asks first (U-076)", () => {
+  const running = (harness: ReturnType<typeof createHarness>, n: number) => {
+    const base = harness.daemon.state.sessions[0];
+    if (!base) throw new Error("fixture changed");
+    for (let i = 0; i < n; i++) {
+      harness.daemon.state.sessions.push({ ...base, id: `sess_run_${i}`, status: "running" });
+    }
+  };
+
+  it("Update and restart while two sessions run says so and waits for a yes; Not now sends nothing", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    running(harness, 2);
+    renderApp("/updates", harness);
+    await user.click(await screen.findByTestId("updates-check"));
+    await screen.findByTestId("available-update");
+    await user.click(screen.getByTestId("update-and-restart"));
+    const dialog = await screen.findByTestId("updates-confirm");
+    expect(within(dialog).getByTestId("updates-confirm-text")).toHaveTextContent(
+      "2 sessions are running. Updating restarts Forerunner's background service, which stops them; start them again afterwards.",
+    );
+    await user.click(within(dialog).getByTestId("updates-confirm-no"));
+    expect(postedCalls(harness, "/updates/apply")).toHaveLength(0);
+    await user.click(screen.getByTestId("update-and-restart"));
+    const again = await screen.findByTestId("updates-confirm");
+    expect(within(again).getByTestId("updates-confirm-yes")).toHaveTextContent(
+      "Update and restart",
+    );
+    await user.click(within(again).getByTestId("updates-confirm-yes"));
+    await waitFor(() => expect(postedCalls(harness, "/updates/apply")).toHaveLength(1));
+  });
+
+  it("Roll back and restart while one session runs names it and asks", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    running(harness, 1);
+    renderApp("/updates", harness);
+    await screen.findByTestId("app-update");
+    await user.click(screen.getByTestId("rollback"));
+    const dialog = await screen.findByTestId("updates-confirm");
+    expect(within(dialog).getByTestId("updates-confirm-text")).toHaveTextContent(
+      "1 session is running. Rolling back restarts Forerunner's background service, which stops it",
+    );
+    expect(postedCalls(harness, "/updates/rollback")).toHaveLength(0);
+    await user.click(within(dialog).getByTestId("updates-confirm-yes"));
+    await waitFor(() => expect(postedCalls(harness, "/updates/rollback")).toHaveLength(1));
+  });
+
+  it("Run evaluations shows what it may cost and runs only after a yes", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/updates", harness);
+    const button = await screen.findByTestId("model-watch-evaluate");
+    // The report's eval budget, USD 2.50, in CHF at the cards' rate.
+    expect(button).toHaveTextContent("Run evaluations (up to CHF 2.00)");
+    expect(screen.getByTestId("model-watch-deferred")).toHaveTextContent("(up to CHF 2.00)");
+    await user.click(button);
+    const dialog = await screen.findByTestId("updates-confirm");
+    expect(within(dialog).getByTestId("updates-confirm-text")).toHaveTextContent(
+      "1 evaluation run will cost up to CHF 2.00 (an estimate: the most these runs may spend), counted against your caps.",
+    );
+    await user.click(within(dialog).getByTestId("updates-confirm-no"));
+    expect(postedCalls(harness, "/model-watch/reports/mw_2/answer")).toHaveLength(0);
+    await user.click(button);
+    await user.click(
+      within(await screen.findByTestId("updates-confirm")).getByTestId("updates-confirm-yes"),
+    );
+    await waitFor(() =>
+      expect(postedCalls(harness, "/model-watch/reports/mw_2/answer")).toHaveLength(1),
+    );
   });
 });

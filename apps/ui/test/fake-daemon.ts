@@ -2260,6 +2260,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           ].slice(0, r.recommendations)
         : [],
     skipped: [],
+    // The daemon's report carries the most its evals may spend (`eval_budget_usd_micro`).
+    eval_budget_usd_micro: 2_500_000,
     // A pending report withheld its paid evals (ADR 0089), as the daemon's default run does.
     evals_deferred:
       r.decision === "pending"

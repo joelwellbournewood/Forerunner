@@ -246,6 +246,13 @@ Configuration, the vault, memory and data stay in your user profile (`fr dirs` p
 paths). Updates never touch them. Secrets are stored by reference; their values never enter a
 model's context, a log or git.
 
+## Updates
+
+**Check for updates** on the Updates page asks the release feed; installing is its own click.
+While sessions run, **Update and restart** and **Roll back and restart** first say how many
+sessions the restart would stop and wait for your yes. **Run evaluations** (when the model watch
+held back paid evaluations) says what the runs may cost, in CHF, before it runs them.
+
 ## When something goes wrong
 
 `docs/maintainers/troubleshooting.md` lists the known failure modes and their fixes. `fr doctor`
