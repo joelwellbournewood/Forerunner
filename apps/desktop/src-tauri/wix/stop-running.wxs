@@ -1,15 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  U-018, ADR 0094: before Windows Installer checks for files in use (InstallValidate), end every
-  process that runs from the install folder: the app in the tray, the background service
-  (node.exe under runtime\), and what it started (voice, connectors). Without this an upgrade
-  or an uninstall meets open files it cannot replace, because closing the window only hides the
-  app and 1.0.4's Quit left the service running.
+  U-018, ADR 0094: before Windows Installer checks for files in use (InstallValidate), end what
+  runs from the install folder: the app in the tray, the background service (node.exe under
+  runtime\), and what the service started outside it (the voice venv's python in the data
+  folder, npx MCP servers, Chromium). Without this an upgrade or an uninstall meets open files
+  it cannot replace, because closing the window only hides the app and 1.0.4's Quit left the
+  service running.
 
-  Runs only when a version is already installed (upgrade, uninstall), as the user who runs the
-  installer (an immediate custom action), and never fails the install (Return="ignore").
-  tauri.conf.json links this fragment through componentRefs (the component below), which pulls
-  in the custom action and its place in the sequence.
+  How (U-066):
+  - WixQuietExec64 (WiX's util custom action; tauri-bundler always links the util extension)
+    runs 64-bit PowerShell without a console window, so nothing flashes. It reads the command
+    line from WixQuietExec64CmdLine and formats it once: [INSTALLDIR] and [LocalAppDataFolder]
+    are filled in there, and the script's own brackets and braces are written [\[] [\]] [\{] [\}].
+  - The two paths are passed as separate quoted arguments after the script, never inside it:
+    the script ends in a comment (#), so PowerShell ignores them, and reads them with
+    [Environment]::GetCommandLineArgs() instead. A folder named with an apostrophe or brackets
+    cannot break the command (a Windows path cannot contain a double quote; the appended "."
+    keeps the trailing backslash from escaping the closing quote).
+  - First the daemon's own tree: the pid daemon.json names (FORERUNNER_HOME if set, else
+    <LocalAppData>\forerunner\runtime) is ended with taskkill /T, only while that pid runs from
+    the install folder (a stale file's pid may belong to anything now). Then every process whose
+    executable path starts with the install folder (String.StartsWith, ordinal and ignoring
+    case: no wildcards) is stopped, and the step waits up to 10 s for them to go.
+  - A folder that is not a full path, or a drive's root, stops nothing.
+
+  Runs only when a version is already installed (upgrade, reinstall, uninstall), before
+  InstallValidate, as the person who runs the installer (an immediate custom action, so it can
+  end that person's processes and read their daemon.json), and never fails the install
+  (Return="ignore"). tauri.conf.json links this fragment through componentRefs (the component
+  below), which pulls in the custom action and its place in the sequence.
+  scripts/msi-stop-running.test.ts formats the property as Windows Installer does and checks
+  the result; on Windows it runs it against real processes.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Fragment>
@@ -18,11 +39,13 @@
         <RegistryValue Root="HKLM" Key="Software\Forerunner\Installer" Name="StopsRunningProcesses" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </DirectoryRef>
+    <Property Id="WixQuietExec64CmdLine" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$a = [\[]Environment[\]]::GetCommandLineArgs(); $dir = $a[\[]-2[\]]; $local = $a[\[]-1[\]]; if (-not [\[]IO.Path[\]]::IsPathRooted($dir)) [\{] exit 0 [\}]; $dir = [\[]IO.Path[\]]::GetFullPath($dir).TrimEnd('\') + '\'; if ([\[]IO.Path[\]]::GetPathRoot($dir) -eq $dir) [\{] exit 0 [\}]; $ci = [\[]StringComparison[\]]::OrdinalIgnoreCase; $files = @(); foreach ($h in @($env:FORERUNNER_HOME, [\[]Environment[\]]::GetEnvironmentVariable('FORERUNNER_HOME', 'User'))) [\{] if ($h) [\{] $files += [\[]IO.Path[\]]::Combine($h, 'runtime', 'daemon.json') [\}] [\}]; if ([\[]IO.Path[\]]::IsPathRooted($local)) [\{] $files += [\[]IO.Path[\]]::Combine([\[]IO.Path[\]]::GetFullPath($local), 'forerunner', 'runtime', 'daemon.json') [\}]; foreach ($f in $files) [\{] try [\{] $id = [\[]int[\]](Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).pid; $p = Get-Process -Id $id -ErrorAction Stop; if ($p.Path -and $p.Path.StartsWith($dir, $ci)) [\{] taskkill.exe /PID $id /T /F | Out-Null [\}] [\}] catch [\{] [\}] [\}]; $left = @(Get-Process | Where-Object [\{] $_.Path -and $_.Path.StartsWith($dir, $ci) [\}]); $left | Stop-Process -Force -ErrorAction SilentlyContinue; $left | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue; exit 0 #&quot; &quot;[INSTALLDIR].&quot; &quot;[LocalAppDataFolder].&quot;" />
     <CustomAction
         Id="StopRunningForerunner"
-        Directory="INSTALLDIR"
-        Return="ignore"
-        ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;Get-Process -ErrorAction SilentlyContinue | Where-Object Path -Like '[INSTALLDIR]*' | Stop-Process -Force -ErrorAction SilentlyContinue&quot;" />
+        BinaryKey="WixCA"
+        DllEntry="WixQuietExec64"
+        Execute="immediate"
+        Return="ignore" />
     <InstallExecuteSequence>
       <Custom Action="StopRunningForerunner" Before="InstallValidate">Installed OR WIX_UPGRADE_DETECTED</Custom>
     </InstallExecuteSequence>

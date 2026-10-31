@@ -88,3 +88,22 @@ their own installs still worked on them. The freeze now releases only the claims
 signed-in human's agents, for Quit and for the kill switch alike (Stop all, `fr kill`, a kill
 scoped to an agent): a stop ends this install's runs only, so nothing else is this install's to
 release.
+
+## Amendment (2026-10-31, U-066): the installer step compares paths and ends the daemon's tree
+
+The step matched `Path -Like '[INSTALLDIR]*'` inside a single-quoted PowerShell string: an
+apostrophe in the install folder broke the command, brackets were read as a wildcard class, a
+console window could flash, and processes the daemon started outside the install folder (the
+voice venv's python in the data folder, `npx` MCP servers, Chromium) were left running.
+
+- It runs through WiX's `WixQuietExec64` (no window). The folders are passed as separate quoted
+  arguments after a script that ends in a comment, and read with
+  `[Environment]::GetCommandLineArgs()`; paths are compared with `String.StartsWith` (ordinal,
+  ignoring case), never a wildcard.
+- Before the folder sweep it ends the daemon's own tree: `taskkill /T` on the pid the person's
+  `daemon.json` names, only while that pid runs from the install folder (a stale file's pid may
+  now belong to anything). It still runs as the person installing, before `InstallValidate`,
+  only when a version is installed, and never fails the install.
+- CI installs, starts, reinstalls (`REINSTALL=ALL`) and uninstalls with Forerunner running, and
+  requires exit 0, the step's log without an error, no process from the folder afterwards and no
+  installed file left after the uninstall (`scripts/installed-check.ps1`).

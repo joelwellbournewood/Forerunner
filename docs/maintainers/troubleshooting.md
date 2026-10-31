@@ -136,6 +136,25 @@ JDK's `cacerts`. Do not disable verification (`strict-ssl=false`, `GIT_SSL_NO_VE
 secret scan and the security suite treat that as a finding. The runtime forwards the same
 variables to sandboxes and the model provider client.
 
+### 11. Installed app check: `upgrade with Forerunner running: msiexec exit 3010` (or 1603, or "still running from the install folder")
+
+**Symptom.** The Windows installed-app check (`scripts/installed-check.ps1`, U-066) fails after
+the self-test passed: the reinstall or the uninstall with Forerunner running ends with exit
+3010 (files were in use; Windows wants a restart) or 1603, the step "the stop step failed", or
+a process from the install folder is still listed afterwards.
+**Cause.** The MSI's stop step (`apps/desktop/src-tauri/wix/stop-running.wxs`, run before
+`InstallValidate`) did not end what runs from the install folder: its PowerShell failed (the
+MSI log `upgrade-<n>.log` / `uninstall-<n>.log` under `RUNNER_TEMP\fr-installed-check` holds
+`WixQuietExec64:` lines with the command and its output), the step did not run at all (no
+`Doing action: StopRunningForerunner`), or a process holds a file it does not end.
+**Fix.** Read the `WixQuietExec64` lines of that log first. A change to the step's script is
+made in the `.wxs`, with every `[`, `]`, `{` and `}` of the PowerShell written `[\[]`, `[\]]`,
+`[\{]`, `[\}]` (Windows Installer formats the property once); `scripts/msi-stop-running.test.ts`
+formats it as Windows Installer does and fails on a reference it does not expect, and on Windows
+runs it against real processes. Locally: install the MSI, start Forerunner, then
+`msiexec /i <msi> REINSTALL=ALL REINSTALLMODE=amus /qn /l*v upgrade.log` and look for
+`StopRunningForerunner` in the log.
+
 ## How to change it
 
 Add entries at the end with the next number; keep the symptom line copyable from a terminal so

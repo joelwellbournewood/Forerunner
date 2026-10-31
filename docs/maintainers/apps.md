@@ -1153,6 +1153,28 @@ misses on their own. One missed probe alone never relaunches, so two daemons nev
 (`external_exit_code`; `None`, a crash, when the daemon left no request); `restart.json` is
 removed only when a relaunch is decided.
 
+**The installer's stop step (`wix/stop-running.wxs`; U-018, ADR 0094, U-066).** Linked through
+`bundle.windows.wix.fragmentPaths` and `componentRefs`. Before `InstallValidate` (the
+files-in-use check), only when a version is installed (`Installed OR WIX_UPGRADE_DETECTED`), as
+the person installing (immediate) and never failing the install (`Return="ignore"`), it runs
+64-bit PowerShell through WiX's `WixQuietExec64` (no console window; tauri-bundler always gives
+light the util extension and gives candle each `http://schemas.microsoft.com/wix/<Name>`
+namespace a fragment declares). The command line is the property `WixQuietExec64CmdLine`, which
+the custom action formats once: `[INSTALLDIR]` and `[LocalAppDataFolder]` are passed as separate
+quoted arguments (with a `.` appended, so the trailing backslash cannot escape the quote) after
+a script that ends in `#`, and the script reads them from
+`[Environment]::GetCommandLineArgs()`; an apostrophe, brackets or braces in a folder name
+cannot break it. It first ends the daemon's own tree (`taskkill /T` on the pid `daemon.json`
+names, under `FORERUNNER_HOME` or `<LocalAppData>\forerunner\runtime`, only while that pid runs
+from the install folder), which takes what the daemon started outside it (the voice venv's
+python, `npx` MCP servers, Chromium), then every process whose path starts with the install
+folder (`StartsWith`, ordinal, ignoring case), and waits up to 10 s. A folder that is not a full
+path, or a drive's root, stops nothing. `scripts/msi-stop-running.test.ts` formats the property
+as Windows Installer does with an install folder named `It's [x] {y} & 100%`, splits it as
+Windows does and checks the script; on Windows it runs it against real processes (a process
+from the folder, a "daemon" there with a child outside it, and a bystander that must survive).
+`scripts/installed-check.ps1` installs, starts, reinstalls and uninstalls with Forerunner running.
+
 **Deep links (`deeplink.rs`).** Scheme `fr`, registered by the bundler on Windows and Linux
 (`tauri.conf.json` → `plugins.deep-link.desktop.schemes`) and at start with `register_all()`
 (AppImage, dev); the single-instance plugin forwards a second launch to the running shell.
