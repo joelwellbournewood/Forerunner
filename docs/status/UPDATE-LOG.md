@@ -520,9 +520,11 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   - Found by Windows CI after U-065: Windows refuses a connection to a port where nothing
     listens only after about 2 s, beyond the probe's 1.5 s, so a service that had gone looked
     slow and the app would have waited a minute and then said it runs but does not answer,
-    instead of starting it. The probe now has 5 s to connect and 1.5 s for the answer
-    (`daemon.rs`, `HEALTH_CONNECT_TIMEOUT`). Tests: the refusal and the slow answer told apart,
-    on Windows in the Desktop app workflow.
+    instead of starting it. After a time-out the app now asks the port itself: refused means
+    the service has gone (`daemon.rs`, `port_refuses`). A first attempt (a longer connect limit
+    on the HTTP client) did not work, which a test that prints the time taken showed on Windows
+    CI. Tests: the refusal and the slow answer told apart, and a time-out from a port nobody
+    listens on any more (the Windows case as Linux can stage it).
   - U-066 (2295b82): the installer step compares paths without wildcards, ends the service's
     process tree, runs hidden; the CI check installs, upgrades and uninstalls with Forerunner
     running and checks exit codes and leftovers. U-067 (9c1abb4): uninstall removes
