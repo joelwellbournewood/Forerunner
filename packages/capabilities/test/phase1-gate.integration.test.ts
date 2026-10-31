@@ -14,6 +14,7 @@ import {
   LoopAgentDriver,
   LoopTaskExecutor,
   MemoryAudit,
+  type ModelRequest,
   SessionRunner,
   type SpecialistSpec,
   StaticPlanner,
@@ -295,51 +296,47 @@ describe("phase 1 gate", () => {
     await w.store.close();
   });
 
-  it("blocks a deliberate overspend in code and the session stops cleanly with a handoff", async () => {
-    const w = await world({
-      replies: [
-        // The specialist keeps calling tools forever; each call costs tokens until the run cap stops it.
-        {
-          when: { systemIncludes: "coder" },
-          reply: {
-            toolCalls: [{ name: "read_file", input: { path: "README.md" } }],
-            text: "x".repeat(4000),
-          },
-          times: Number.POSITIVE_INFINITY,
-        },
-      ],
-      sessionCapUsdMicro: 1_000_000,
-    });
-    await w.store.task.insert({
+  // The runaway task's run keeps calling tools forever; each call costs tokens until a cap in
+  // code stops it. Every other run answers at once.
+  const RUNAWAY = "keeps reading the readme forever";
+  const runaway = {
+    when: (req: ModelRequest) =>
+      (req.system ?? "").includes("coder") && JSON.stringify(req.messages).includes(RUNAWAY),
+    reply: {
+      toolCalls: [{ name: "read_file", input: { path: "README.md" } }],
+      text: "x".repeat(4000),
+    },
+    times: Number.POSITIVE_INFINITY,
+  };
+  const seedTask = (
+    w: Awaited<ReturnType<typeof world>>,
+    title: string,
+    budget: number,
+    priority: number,
+  ) =>
+    w.store.task.insert({
       project_id: w.project,
-      title: "Runaway",
-      outcome: "never",
+      title,
+      outcome:
+        title === "Runaway" ? `the task ${RUNAWAY}` : "the readme names the sample's purpose",
       acceptance_criteria: [],
       risk_tier: 1,
       status: "ready",
-      priority: 5,
+      priority,
       depends_on: [],
-      budget_usd_micro: 60_000,
+      budget_usd_micro: budget,
       est_cost_usd_micro: 60_000,
       actual_cost_usd_micro: 0,
       attempt: 0,
       reason: "seed",
     });
-    await w.store.task.insert({
-      project_id: w.project,
-      title: "After",
-      outcome: "o",
-      acceptance_criteria: [],
-      risk_tier: 1,
-      status: "ready",
-      priority: 1,
-      depends_on: [],
-      budget_usd_micro: 200_000,
-      est_cost_usd_micro: 100_000,
-      actual_cost_usd_micro: 0,
-      attempt: 0,
-      reason: "seed",
-    });
+
+  it("blocks a deliberate overspend in code and the session stops cleanly with a handoff", async () => {
+    // The task's budget is above the session's, so the session's budget is the cap that stops
+    // the run: that ends the session (a stop at the task's own budget does not; U-042, below).
+    const w = await world({ replies: [runaway], sessionCapUsdMicro: 150_000 });
+    await seedTask(w, "Runaway", 5_000_000, 5);
+    await seedTask(w, "After", 200_000, 1);
     const res = await w.runner.start({
       agentId: w.agent,
       projectId: w.project,
@@ -348,8 +345,9 @@ describe("phase 1 gate", () => {
       grant: w.grant,
     });
     const runs = await w.store.run.forSession(res.sessionId);
+    expect(runs).toHaveLength(1);
     expect(runs[0]?.outcome).toBe("budget_exceeded");
-    expect(runs[0]?.cost_usd_micro).toBeLessThanOrEqual(60_000);
+    expect(runs[0]?.cost_usd_micro).toBeLessThanOrEqual(w.sessionCap);
     expect(
       (await w.store.costLedger.sum({ sessionId: res.sessionId })).usd_micro,
     ).toBeLessThanOrEqual(w.sessionCap);
@@ -357,6 +355,37 @@ describe("phase 1 gate", () => {
     expect(res.stopReason).toBe("budget_exceeded");
     expect(res.handoff).toMatchObject({ stop_reason: "budget_exceeded" });
     expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(0);
+    await w.store.close();
+  });
+
+  it("a run that overspends its task's own budget is stopped there; the task waits and the session goes on (U-042)", async () => {
+    const w = await world({
+      replies: [runaway, { reply: { text: "done" }, times: Number.POSITIVE_INFINITY }],
+      sessionCapUsdMicro: 1_000_000,
+    });
+    const over = await seedTask(w, "Runaway", 60_000, 5);
+    await seedTask(w, "After", 200_000, 1);
+    const res = await w.runner.start({
+      agentId: w.agent,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: w.sessionCap,
+      grant: w.grant,
+    });
+    const runs = await w.store.run.forSession(res.sessionId);
+    const first = runs.find((r) => r.task_id === over.id);
+    expect(first?.outcome).toBe("budget_exceeded");
+    expect(first?.cost_usd_micro).toBeLessThanOrEqual(60_000);
+    // The person is asked about that task, with what to do; the session did not stop for it.
+    expect(res.needsHuman).toEqual([over.id]);
+    // What the person reads on the task: what stopped it and what to do.
+    const after = await w.store.task.mustGet(over.id);
+    expect(after.status).toBe("needs_human");
+    expect(after.reason).toContain("this task's budget of $0.06");
+    expect(after.reason).toContain("Raise the task's budget on the Tasks tab");
+    // The session went on: the next task ran to the end and the session completed.
+    expect(runs.filter((r) => r.task_id !== over.id).map((r) => r.outcome)).toEqual(["completed"]);
+    expect(res.stopReason).toBe("completed");
     await w.store.close();
   });
 
