@@ -144,10 +144,26 @@ A start while your agent is in another session waits its turn: waiting starts (y
 approved plan's, a CI or pull request trigger) run one after the other in the order they came,
 and none replaces another. **Start session** says how many wait before yours.
 
-A session plans the ready tasks that fit its budget, highest priority first; a task too large
-for the budget is left out and the smaller ones after it still run. **Start session** says
-before you start when no ready task can run (each one that waits on another task, and each
-one larger than the budget, by name) and what to do; the session's summary names the same.
+**One Start keeps going.** A session works until nothing it can run is left: after each task it
+looks again and takes the tasks that just became ready (what they waited for is done), a task
+the critic sent back (the next attempt runs in the same session, up to the retry limit; after
+the last one you get one card), and tasks you made ready meanwhile. So a chain of seven tasks
+is one Start. It stops when nothing more can run, the session's budget is used (a fifth is kept
+for reviews), you stop it, or its time runs out. A run that fails because Claude did not answer
+(the network, a rate limit) is tried again once at once; if it fails again the task reads
+"Failed:" with what went wrong, never the model's first sentence.
+
+The first session after you approve a plan follows the plan's order; later sessions take ready
+tasks by priority. A task too large for what is left of the budget is left for next time and
+the smaller ones still run. A session that finds nothing it can run uses nothing up: your notes
+for the next session and the approved first session stay for the next one, and nothing is
+graded. Notes are used up only by a task that finished.
+
+**The result** has at most three lines: what needs you first ("Style the page" needs your
+decision (Inbox); "Add script.js" failed: Claude did not answer), then what was done (Did 5
+tasks: ...), then how it ended and what is next ("Nothing left.", "Left for next time: ...",
+"2 tasks wait on it.") with the cost in CHF. The Inbox gets one line per session naming the
+project; the full result is on the project.
 
 **Full-review tasks wait for Docker.** A task at risk tier 2 or 3 runs its tests and builds in
 the Docker sandbox, isolated from your computer, so the critic sees real results. While the
@@ -160,10 +176,15 @@ to Linux containers, **Download the sandbox** with its size and progress), and *
 after each one. The task runs in the next session once the card says Ready. A task that an
 earlier version marked failed for want of a sandbox goes back to ready by itself then.
 
-When a session ends, its summary, the last line of its log and the notification count the same
-things: tasks done, failed, needing you, sent back by the critic for another attempt, waiting
-in review, and not started. A session where nothing was done because its tasks failed or were
-sent back gets a lower grade from the critic's session review.
+A session where nothing was done because its tasks failed or were sent back gets a lower grade
+from the critic's session review.
+
+**Stopping and crashes.** **Stop** on a session's page stops it now: the task it was working on
+goes back to Ready with "Stopped by you", and what it wrote so far stays in the project's folder.
+The session reads "Stopped by you", not an error. If Forerunner was closed or crashed while a
+session ran, the next start of Forerunner ends that session ("Interrupted: Forerunner closed"),
+puts its task back to Ready ("Forerunner closed while it ran") and posts one line in the Inbox;
+the next Start works at once. Stop on a session that nothing runs any more ends it the same way.
 
 ## Inbox
 

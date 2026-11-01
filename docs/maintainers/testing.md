@@ -2420,7 +2420,19 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 real UI dev server, and gives Playwright scripts a recorder (`recorder.cjs`: `openApp`, `step`
 screenshots and visible text, `api`, problems from the console and the network). Usage, the
 failure-injection variables and where everything lands are in `scripts/bench/README.md`; the
-smoke journey is `scripts/bench/journeys/smoke.cjs`.
+smoke journey is `scripts/bench/journeys/smoke.cjs`. `scripts/bench/journeys/session-engine.cjs
+<bench> <label>` walks the session engine's acceptance (core-experience design §4): a 7-task chain
+(`FORERUNNER_BENCH_PLAN=chain`) started once from the Start dialog, then a hard daemon restart
+while a task runs, the session page after it and the next Start; its checks and the session
+results land in `steps/<label>-session-engine.json`.
+
+Since a session reworks a sent-back task in the same session (design §4.3, ADR 0102), the e2e
+worlds see a task's whole retry ladder in one session: `RecordingPlanner` (`tests/e2e/src/world.ts`)
+keeps one brief per session (the runner plans again with the same brief as tasks become ready),
+the phase 3 gate climbs the ladder in one Start and repeats the finding in a second session for
+the H.5 pattern, the phase 4 gate reads the drop in the findings per review (with memory no
+finding repeats in a later session any more), and the week of the phase 5 gate finds the
+session's one-line Update by the project's name (`tests/e2e/src/gate5-week.ts`).
 
 The model is `fr daemon --provider bench`: the role-player in `testenv/src/bench/`
 (`role-player.ts`, plans and file contents in `plans.ts`, role detection in `roles.ts`). It

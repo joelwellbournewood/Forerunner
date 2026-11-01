@@ -283,7 +283,8 @@ describe("scenario 2: email task", () => {
     );
     expect(completion.parsed.inReplyTo).toBe(sent.messageId);
     expect(completion.parsed.subject).toBe(`Re: ${MARKER} ${TITLE} tonight`);
-    expect(completion.parsed.text).toContain("Done: Session completed.");
+    // The session's result in the design's words (§5): what was done, by name.
+    expect(completion.parsed.text).toContain('Done: Did 1 task: "Health endpoint".');
     expect(completion.parsed.text).toContain(`Pull requests:\n- ${task.pr_url}`);
     expect(completion.parsed.text).toContain(`Session log: forerunner://sessions/${session.id}`);
     expect(completion.parsed.text).toMatch(/Cost: CHF /);
@@ -300,8 +301,9 @@ describe("scenario 2: email task", () => {
     const summary = (await w.inbox(w.j)).find(
       (m) => m.type === "info" && m.from_agent_id === w.alice.agent.id,
     );
-    expect(summary?.body).toBe(session.summary);
-    expect(summary?.body).toMatch(/^Session completed\. Done: 1\./);
+    // One Update line (design §3.8): the project and what was done.
+    expect(summary?.body).toBe('Sample service: did 1 task: "Health endpoint".');
+    expect(session.summary).toMatch(/^Did 1 task: "Health endpoint"\./);
     expect(await w.humanRequests(w.j, { status: "open" })).toHaveLength(0);
     // Nothing left the machine: the mail server's outbox (mail for the internet) is empty.
     expect(w.mail.outbox).toHaveLength(0);

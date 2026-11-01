@@ -17,7 +17,9 @@ import {
  * The next-session queue through the runner (spec J.2): the notes a session's brief carries
  * are consumed by that session, exactly those, once, with an audit row; what the human
  * leaves after the brief was built waits for the next session. Without the consume step the
- * same notes would be fed into every later session.
+ * same notes would be fed into every later session. They are used up only by work that
+ * finished (design §4.7): each session here runs one task that is done, at whose end the notes
+ * its brief carried are consumed; a session that runs nothing leaves them queued.
  */
 interface World {
   store: StateStore;
@@ -70,10 +72,10 @@ async function world(): Promise<World> {
   return { store, clock, human, alice, project };
 }
 
-/** These sessions plan no tasks; the executor must never be reached. */
-const neverRuns: TaskExecutor = {
+/** Each session runs the one task `start` adds, and it is done. */
+const doesWork: TaskExecutor = {
   async execute() {
-    throw new Error("no task should run in a queue test");
+    return { outcome: "done", summary: "done", costUsdMicro: 0, checksPassed: true };
   },
 };
 
@@ -84,7 +86,7 @@ function runner(w: World, over: Partial<SessionRunnerDeps> = {}): SessionRunner 
     tokens: new TokenIssuer({ now: () => w.clock.now() }),
     kill: new KillSwitch(),
     planner: new StaticPlanner(),
-    executor: neverRuns,
+    executor: doesWork,
     ...over,
   });
 }
@@ -112,6 +114,16 @@ interface Captured {
 }
 
 async function start(w: World, r: SessionRunner, events: Captured[] = []) {
+  await w.store.task.insert({
+    project_id: w.project,
+    title: "Do the work",
+    outcome: "the work is done",
+    acceptance_criteria: ["done"],
+    risk_tier: 0,
+    status: "ready",
+    priority: 5,
+    reason: "seed",
+  });
   const res = await r.start({
     agentId: w.alice,
     projectId: w.project,
@@ -257,10 +269,11 @@ describe("session runner: next-session queue", () => {
       expect(audit[0]?.result_summary).not.toContain(text);
     }
 
-    // The event, after the brief and before the plan, live and in the session log.
+    // The event, once the work that used the notes finished (design §4.7), live and in the
+    // session log.
     const types = events.map((e) => e.type);
-    expect(types.indexOf("queue.consumed")).toBeGreaterThan(types.indexOf("session.brief"));
-    expect(types.indexOf("queue.consumed")).toBeLessThan(types.indexOf("session.planned"));
+    expect(types.indexOf("queue.consumed")).toBeGreaterThan(types.indexOf("task.finished"));
+    expect(types.indexOf("queue.consumed")).toBeLessThan(types.indexOf("session.ended"));
     expect(events.find((e) => e.type === "queue.consumed")?.payload).toMatchObject({
       ids: [fix.id, idea.id, task.id],
       count: 3,
@@ -381,6 +394,24 @@ describe("session runner: next-session queue", () => {
     const next = await start(w, runner(w), []);
     expect(next.brief.queue.items.map((i) => i.id)).toEqual([note.id]);
     expect((await w.store.queue.mustGet(note.id)).consumed_by_session).toBe(next.sessionId);
+  });
+
+  it("a session that runs nothing consumes nothing (design §4.7, §4.8)", async () => {
+    const note = await leave(w, "keep the greeting short", 5);
+    const res = await runner(w).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+    });
+    expect(res.stopReason).toBe("nothing_runnable");
+    expect(await w.store.queue.mustGet(note.id)).toMatchObject({
+      status: "queued",
+      consumed_by_session: null,
+      version: 1,
+    });
+    expect(await consumedAudit(w, res.sessionId)).toEqual([]);
   });
 
   it("a session without queue items writes no queue audit row and no event", async () => {

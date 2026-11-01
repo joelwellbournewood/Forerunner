@@ -110,9 +110,11 @@ describe("a session with tasks that cannot run says which and why (U-040)", () =
     expect(r.completed).toHaveLength(2);
     expect(r.plan?.leftOutForBudget?.map((i) => i.title)).toEqual(["Rewrite the engine"]);
     expect(r.summary).not.toContain("Nothing to plan");
+    // In CHF, with what to expect (design §5 "Budget"): left for next time.
     expect(r.summary).toContain(
-      'Left out for budget: "Rewrite the engine" (about $5.00); this session\'s work budget was $1.60.',
+      'Left for next time: "Rewrite the engine" (about CHF 4.00); this session\'s CHF 1.60 was used.',
     );
+    expect(r.summary).not.toContain("$");
     await store.close();
   });
 
@@ -124,13 +126,11 @@ describe("a session with tasks that cannot run says which and why (U-040)", () =
     const r = await start();
     expect(ran).toEqual([]);
     expect(r.summary).not.toContain("no task is ready");
-    expect(r.summary).toContain("Nothing to plan: no ready task can run in this session (below).");
-    expect(r.summary).toContain(
-      'Waiting on other tasks: "Build the API" waits on "Design the schema" (cancelled); "Write the report" waits on "Import the data" (failed).',
+    // One blocker named briefly (design §4.5): what waits on what, and why it never runs.
+    expect(r.summary.split("\n")[0]).toBe(
+      'Nothing could run: "Build the API" waits on "Design the schema", which was cancelled.',
     );
-    expect(r.summary).toContain(
-      "change the waiting task's dependencies on the Tasks tab, or mark the failed one ready again",
-    );
+    expect(r.summary).toContain("2 tasks wait on other tasks.");
     await store.close();
   });
 });

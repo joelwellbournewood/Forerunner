@@ -30,12 +30,29 @@ describe("session counts (U-072)", () => {
     });
     try {
       const task = await w.addTask("Add clamp");
-      const result = await w.start(w.runner(doneExecutor(w)));
+      // The rework would run in the same session (design §4.3); a stop sent while the task ran
+      // ends the session after it, so the task is left sent back and ready.
+      const done = doneExecutor(w);
+      const result = await w.start(
+        w.runner({
+          async execute(ctx) {
+            const r = await done.execute(ctx);
+            await w.store.message.send({
+              from_agent_id: ctx.session.agent_id,
+              to_agent_id: ctx.session.agent_id,
+              type: "request",
+              body: "stop after this task",
+              requires_ack: false,
+            });
+            return r;
+          },
+        }),
+      );
       expect(result.retried).toEqual([task.id]);
 
-      // The summary the person receives.
-      expect(result.summary).toContain(
-        "Done: 0. Failed: 0. Needs you: 0. Sent back by the critic: 1. In review: 0. Not started: 0 of 1 planned.",
+      // The result the person receives: what is left and why the session ended.
+      expect(result.summary).toMatch(
+        /^Stopped after the task, as asked\. "Add clamp" is ready to continue\. CHF \d+\.\d{2}\.$/,
       );
       // The session log's last line, as the live view shows it.
       const ended = (await w.store.event.list(result.sessionId)).find(
@@ -43,7 +60,7 @@ describe("session counts (U-072)", () => {
       );
       expect(
         describeEvent("session.ended", (ended?.payload ?? {}) as Record<string, unknown>),
-      ).toContain("0 done, 0 failed, 0 need you, 1 sent back, 0 in review, 0 not started");
+      ).toContain("0 done, 0 failed, 0 need you, 1 sent back, 0 in review, 1 not started");
       // The notification title, built from the run's lists as the daemon builds it.
       const note = sessionEnded("h-1", {
         sessionId: result.sessionId,
@@ -59,7 +76,9 @@ describe("session counts (U-072)", () => {
         skipped: result.skipped,
         agentName: "Alice",
       });
-      expect(note.title).toBe(`Alice's session ${result.status}: 0 done, 1 sent back`);
+      expect(note.title).toBe(
+        `Alice's session ${result.status}: 0 done, 1 sent back, 1 not started`,
+      );
       // The session review does not read it as fine.
       expect(result.sessionReview?.grade).toBeLessThan(100);
       expect(result.sessionReview?.findings.map((f) => f.description)).toContain(

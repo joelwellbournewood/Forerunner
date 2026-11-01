@@ -241,6 +241,8 @@ describe("session log lines in plain words (U-074)", () => {
             { severity: "major", what: "No test covers clamp", required_action: "Add a test" },
           ],
         }),
+        // The rework runs in the same session (design §4.3) and is accepted.
+        submitReply({ grade: 90, verdict: "accept", summary: "The clamp is tested now." }),
         closingReply(),
       ],
     });
@@ -253,7 +255,7 @@ describe("session log lines in plain words (U-074)", () => {
         const line = describeEvent(e.type, (e.payload ?? {}) as Record<string, unknown>, 0.8);
         expect(line, e.type).not.toMatch(JARGON);
       }
-      expect(result.summary).toMatch(/Spent CHF \d+\.\d{2}\./);
+      expect(result.summary).toMatch(/CHF \d+\.\d{2}\./);
       expect(result.summary).not.toMatch(/\$|USD/);
     } finally {
       await w.close();

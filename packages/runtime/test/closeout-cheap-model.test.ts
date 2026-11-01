@@ -224,7 +224,7 @@ describe("N.5: the session summary costs no model call", () => {
     });
     expect(res.status).toBe("completed");
     const session = await store.session.mustGet(res.sessionId);
-    expect(session.summary).toContain("Done: 2");
+    expect(session.summary).toContain("Did 2 tasks");
     const cached = (await store.project.mustGet(project)).summary_cache as {
       last_session?: { summary?: string };
     };

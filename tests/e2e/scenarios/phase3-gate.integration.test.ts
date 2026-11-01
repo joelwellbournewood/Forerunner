@@ -190,15 +190,19 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
     maxSessions = 6,
   ): Promise<{ decisions: string[]; sessions: number }> {
     const decisions: string[] = [];
+    let sessions = 0;
     for (let i = 0; i < maxSessions; i++) {
       await w.clock.advance(3_600_000);
       const result = await w.startSession({ agentId: w.alice, projectId });
-      const review = result.reviews.find((r) => r.taskId === task.id);
-      if (!review) break;
-      decisions.push(review.retry ? `${review.decision}:${review.retry}` : review.decision);
+      // The rework runs in the same session (design §4.3): every review of the task counts.
+      const reviews = result.reviews.filter((r) => r.taskId === task.id);
+      if (!reviews.length) break;
+      sessions++;
+      for (const review of reviews)
+        decisions.push(review.retry ? `${review.decision}:${review.retry}` : review.decision);
       if ((await w.store.task.mustGet(task.id)).status !== "ready") break;
     }
-    return { decisions, sessions: decisions.length };
+    return { decisions, sessions };
   }
 
   async function runsOf(w: GateWorld, taskId: string) {
@@ -228,7 +232,9 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
         acceptanceCriteria: [family.criterion],
         specialist: "coder",
       });
-      const { decisions } = await climb(w, project, task);
+      const { decisions, sessions } = await climb(w, project, task);
+      // One Start climbs the whole ladder (design §4.3).
+      expect(sessions).toBe(1);
       expect(decisions).toEqual([
         "revise:improve_brief",
         "revise:split_or_change_specialist",
@@ -248,10 +254,12 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
       // the coder again. Which one depends on the specialists' tools; this world gives every
       // specialist the same file tools, so the shipped registry's choice (the
       // migration-specialist) is checked in specialist-handover.test.ts instead.
+      // The runs of one session share the simulated clock's instant, so they are counted by
+      // specialist rather than read in order (the ladder now runs in one session, design §4.3).
       const workerRuns = runs.filter((r) => r.specialist !== "critic");
-      expect(workerRuns.map((r) => r.specialist).slice(0, 2)).toEqual(["coder", "coder"]);
       expect(workerRuns).toHaveLength(3);
-      expect(workerRuns[2]?.specialist).not.toBe("coder");
+      expect(workerRuns.filter((r) => r.specialist === "coder")).toHaveLength(2);
+      expect(workerRuns.filter((r) => r.specialist !== "coder")).toHaveLength(1);
       expect(runs.filter((r) => r.specialist === "critic")).toHaveLength(3);
       for (const r of runs)
         expect(tierRank(r.tier), r.model).toBeLessThanOrEqual(tierRank("sonnet"));
@@ -262,8 +270,7 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
       expect(verdicts.filter((v) => v.escalation === true).map((v) => v.decision)).toEqual([
         "human",
       ]);
-      // Persisted: one review per attempt, one finding each with the same fingerprint, and
-      // the repeat is a pattern the critic turned into critic memory (H.5).
+      // Persisted: one review per attempt, one finding each with the same fingerprint.
       const reviews = await w.store.review.forTask(task.id);
       expect(reviews).toHaveLength(3);
       expect(reviews.every((r) => r.verdict === "revise" && r.critic_model === "fake-sonnet")).toBe(
@@ -274,7 +281,19 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
       );
       expect(findings).toHaveLength(3);
       expect(new Set(findings.map((f) => f.fingerprint)).size).toBe(1);
-      const patterns = await w.store.finding.repeated(3);
+      // H.5: a repeat finding across sessions is a pattern the critic turns into critic memory.
+      // One task's attempts now run in one session (design §4.3), so they are no pattern by
+      // themselves; the same kind of work in a second session repeats the finding.
+      expect(await w.store.finding.repeated(2)).toEqual([]);
+      await w.addTask(project, {
+        title: `${family.title} (again)`,
+        outcome: family.outcome,
+        acceptanceCriteria: [family.criterion],
+        specialist: "coder",
+      });
+      await w.clock.advance(3_600_000);
+      await w.startSession({ agentId: w.alice, projectId: project });
+      const patterns = await w.store.finding.repeated(2);
       expect(patterns.map((p) => p.fingerprint)).toContain(findings[0]?.fingerprint);
       const critic = await w.store.lesson.list({ scope: "critic" });
       expect(critic.length).toBeGreaterThanOrEqual(1);
@@ -305,7 +324,9 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
         acceptanceCriteria: [family.criterion],
         specialist: "coder",
       });
-      const { decisions } = await climb(w, project, task);
+      const { decisions, sessions } = await climb(w, project, task);
+      // One Start climbs the whole ladder (design §4.3).
+      expect(sessions).toBe(1);
       expect(decisions).toEqual([
         "revise:improve_brief",
         "revise:split_or_change_specialist",
@@ -317,17 +338,14 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
       expect(verdicts[2]).toMatchObject({ retry: "escalate", nextTier: "opus" });
       const runs = await runsOf(w, task.id);
       // Rung 2 hands the task to a stand-in specialist (U-044); rung 3 escalates its model.
+      // Counted by specialist and model: one session's runs share the clock's instant.
       const workerRuns = runs.filter((r) => r.specialist !== "critic");
-      expect(workerRuns.map((r) => r.specialist).slice(0, 2)).toEqual(["coder", "coder"]);
-      const standIn = workerRuns[2]?.specialist;
-      expect(standIn).not.toBe("coder");
-      expect(workerRuns[3]?.specialist).toBe(standIn);
-      expect(workerRuns.map((r) => r.model)).toEqual([
-        "fake-sonnet",
-        "fake-sonnet",
-        "fake-sonnet",
-        "fake-opus",
-      ]);
+      expect(workerRuns).toHaveLength(4);
+      const coderRuns = workerRuns.filter((r) => r.specialist === "coder");
+      expect(coderRuns.map((r) => r.model)).toEqual(["fake-sonnet", "fake-sonnet"]);
+      const standInRuns = workerRuns.filter((r) => r.specialist !== "coder");
+      expect(new Set(standInRuns.map((r) => r.specialist)).size).toBe(1);
+      expect(standInRuns.map((r) => r.model).sort()).toEqual(["fake-opus", "fake-sonnet"]);
       for (const r of runs) expect(tierRank(r.tier), r.model).toBeLessThanOrEqual(tierRank("opus"));
       expect(runs.some((r) => r.model === "fake-fable")).toBe(false);
       expect(await w.store.review.forTask(task.id)).toHaveLength(4);

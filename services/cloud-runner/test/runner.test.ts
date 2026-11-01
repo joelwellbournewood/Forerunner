@@ -362,7 +362,7 @@ describe("cloud runner", () => {
     expect(marked.change_card).toMatchObject({
       plan_id: planId,
       outcome: "start_failed",
-      error: expect.stringContaining("already has an active session"),
+      error: expect.stringContaining("is already working in another session"),
     });
     const warnings = (
       await w.store.message.inbox({ humanId: w.seed.human.id }, { limit: 50 })

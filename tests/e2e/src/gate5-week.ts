@@ -510,12 +510,14 @@ async function runMorning(x: Phase5World, day: number): Promise<DayReport> {
   // 07:00: J reads the morning summary in the UI's inbox and marks it read.
   await w.advanceTo(atZurich(day, "07:00"));
   const inbox = await x.j.daemon.ui.inbox();
+  const projectName = (await w.store.project.mustGet(w.project.id)).name;
   const summary = inbox.messages.find(
     (msg) =>
       msg.fromAgentId === w.alice.agent.id &&
       msg.projectId === w.project.id &&
       (msg.createdAt ?? "") >= (aliceRow.started_at ?? "") &&
-      msg.body.startsWith("Session "),
+      // The session's one-line Update names the project (design §3.8).
+      msg.body.startsWith(`${projectName}: `),
   );
   must(summary, `no session summary of day ${n} in J's inbox`);
   await x.j.daemon.ui.markRead(summary.id);

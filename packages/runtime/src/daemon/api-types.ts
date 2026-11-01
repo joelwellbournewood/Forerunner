@@ -333,6 +333,17 @@ export const SessionView = z.object({
   summary: z.string(),
   handoff: z.unknown().nullable(),
   runner: z.string(),
+  /**
+   * Why the session ended (`handoff.stop_reason`): `completed`, `you` (Stop now), `stop_all`,
+   * `quit`, `interrupted` (a dead process, ended at the next start), `stopped_after_task`, ...;
+   * null while it runs. Optional: the shared state service's rows do not carry it.
+   */
+  stopReason: z.string().nullable().optional(),
+  /**
+   * The status in the person's words (design §3.7): "Working", "Done", "Stopped by you",
+   * "Interrupted: Forerunner closed", "Stopping after this task". Optional as `stopReason`.
+   */
+  statusText: z.string().optional(),
 });
 export type SessionView = z.infer<typeof SessionView>;
 

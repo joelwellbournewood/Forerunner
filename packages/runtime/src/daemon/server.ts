@@ -43,7 +43,14 @@ import {
   MILESTONE_AUDIT_TOOL,
   ProjectPlanBody,
 } from "../session/project-plan.ts";
+import { endDeadSession, isIntakeSession, namesOf } from "../session/recovery.ts";
 import { defaultPeers } from "../session/runner.ts";
+import {
+  QUIT_REASON,
+  STOP_ALL_REASON,
+  STOP_NOW_REASON,
+  taskReasonForStop,
+} from "../session/stop-words.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import { createPlanAllowanceRoutes } from "../setup/plan-allowance-routes.ts";
@@ -1238,20 +1245,42 @@ export function createDaemonApp(
   // with Stop all stays in force, here and after a restart (U-032: this was a stop followed by
   // `resume()`, which lifted it). The answer is the session, the shape the live view reads; it
   // was the kill report, which the view refused as a malformed answer.
+  // Stop now (design §3.7): the task in flight stops at once and goes back to ready with the
+  // reason "Stopped by you"; what it wrote stays in the folder (ADR 0102). A session nothing in
+  // this process runs (a ghost a dead daemon left, design §4.10) is ended here: before, Stop on
+  // it changed nothing and it held the agent's one session for good.
   app.post("/sessions/:id/stop", async (c) => {
     const s = await rt.store.session.mustGet(c.req.param("id"));
-    await rt.kill.stop({ sessionId: s.id }, "stopped from the app", { freeze: false });
+    const live = rt.kill.activeCount({ sessionId: s.id }) > 0;
+    if (live) await rt.kill.stop({ sessionId: s.id }, STOP_NOW_REASON, { freeze: false });
+    else if (["running", "paused", "planned"].includes(s.status) && !isIntakeSession(s)) {
+      await endDeadSession(rt, s, {
+        stopReason: "you",
+        taskReason: taskReasonForStop("you"),
+        summary: (titles) =>
+          titles.length
+            ? `Stopped by you. ${namesOf(titles)} ${titles.length === 1 ? "is" : "are"} ready again.`
+            : "Stopped by you.",
+      });
+      rt.events.emit("session", {
+        type: "session.ended",
+        payload: { sessionId: s.id, status: "stopped", stopReason: "you" },
+        agentId: s.agent_id,
+        projectId: s.project_id,
+      });
+      if (s.project_id) rt.events.emit("project", { id: s.project_id });
+    }
     return c.json(await liveSessionView(await rt.store.session.mustGet(s.id)));
   });
 
   app.post("/kill", async (c) => {
     const body = await parse(c, KillBody);
-    const report = await rt.kill.stop(body.scope, body.reason ?? "kill switch from the app");
+    const report = await rt.kill.stop(body.scope, body.reason ?? STOP_ALL_REASON);
     const killActive = rt.kill.isFrozen({ agentId: rt.agent.id });
     writeKillRequest(
       {
         scope: body.scope,
-        reason: body.reason ?? "kill switch from the app",
+        reason: body.reason ?? STOP_ALL_REASON,
         requestedAt: rt.clock.nowIso(),
         requestedBy: "daemon",
       },
@@ -1267,7 +1296,7 @@ export function createDaemonApp(
   app.post("/shutdown", async (c) => {
     if (!opts.onShutdown)
       return c.json({ code: "conflict", message: "this daemon cannot be stopped over HTTP" }, 409);
-    const report = await rt.kill.stop("all", "Forerunner quit");
+    const report = await rt.kill.stop("all", QUIT_REASON);
     logger.info("shutdown requested", { ...report });
     setTimeout(opts.onShutdown, SHUTDOWN_DELAY_MS);
     return c.json({ stopping: true, ...report }, 202);

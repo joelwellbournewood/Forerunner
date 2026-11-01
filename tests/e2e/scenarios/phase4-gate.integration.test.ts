@@ -59,14 +59,21 @@ describe("phase 4 gate: four simulated weeks on the eval projects (fake provider
     const rates = withMemory.repeatRates;
     expect(rates).toHaveLength(4);
     expect(withMemory.weeks.every((w) => w.sessions === 14 && w.reviews > 0)).toBe(true);
-    // The rate drops: week 1 has repeats (a kind of work recurs the day after its first
-    // finding, before the lesson lands), every later week is at or under the one before, and
-    // the last week is under the first.
-    expect(rates[0]).toBeGreaterThan(0);
+    // The rate never rises and ends at 0. Since a session reworks a sent-back task in the same
+    // session (design §4.3, ADR 0102), the resolved finding's lesson lands the day the kind of
+    // work first fails, so with memory a kind never repeats in a later session; before, the
+    // rework waited for the next day's session and week 1 repeated before the lesson landed.
+    // What memory buys shows in the findings per review, which drop week over week, and in the
+    // control below, which keeps repeating every week.
     for (let i = 1; i < rates.length; i++)
       expect(rates[i], `week ${i + 1} <= week ${i}`).toBeLessThanOrEqual(rates[i - 1] ?? 0);
-    expect(rates[3]).toBeLessThan(rates[0] ?? 0);
     expect(rates[3]).toBe(0);
+    const findingRates = withMemory.weeks.map((w) => w.findings / w.reviews);
+    expect(findingRates[0]).toBeGreaterThan(0);
+    for (let i = 1; i < findingRates.length; i++)
+      expect(findingRates[i], `findings week ${i + 1} < week ${i}`).toBeLessThan(
+        findingRates[i - 1] ?? 0,
+      );
     // Nothing escaped the ladder: every sent-back task was fixed on its retry.
     expect(withMemory.weeks.reduce((n, w) => n + w.needsHuman, 0)).toBe(0);
     expect(withMemory.totals.reviewFailures).toBe(0);
@@ -95,7 +102,10 @@ describe("phase 4 gate: four simulated weeks on the eval projects (fake provider
     // four weekly consolidation rounds answered from the inbox.
     const families = CODER_FAMILIES.length + RESEARCHER_FAMILIES.length;
     expect(withMemory.totals.privateLessons).toBeGreaterThanOrEqual(families);
-    expect(withMemory.totals.criticLessons).toBeGreaterThanOrEqual(1);
+    // No critic pattern: with memory no finding repeats in a later session (the rework runs in
+    // the session that found it, design §4.3), and a pattern is a repeat across sessions (H.5,
+    // exercised in the phase 3 gate and loop-critic.test.ts).
+    expect(withMemory.totals.criticLessons).toBe(0);
     expect(withMemory.consolidation).toHaveLength(4);
     expect(withMemory.consolidation.map((c) => c.week)).toEqual([1, 2, 3, 4]);
     expect(withMemory.weeks.reduce((n, w) => n + w.lessonsRecorded, 0)).toBeGreaterThanOrEqual(
@@ -109,7 +119,9 @@ describe("phase 4 gate: four simulated weeks on the eval projects (fake provider
     record("phase4-four-weeks-memory-off.txt", formatFourWeeks(control));
     const rates = control.repeatRates;
     expect(rates[3]).toBeGreaterThanOrEqual(rates[0] ?? 0);
-    expect(rates[0]).toBeGreaterThan(withMemory.repeatRates[0] ?? 0);
+    // Without memory every week repeats findings an earlier session produced; with memory none.
+    for (const [i, rate] of rates.entries())
+      expect(rate, `week ${i + 1}`).toBeGreaterThan(withMemory.repeatRates[i] ?? 0);
     expect(control.totals.repeats).toBeGreaterThan(withMemory.totals.repeats * 4);
     expect(control.memory.perSession).toHaveLength(0);
     expect(control.totals.privateLessons).toBe(0);

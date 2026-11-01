@@ -336,12 +336,14 @@ describe("scenario 1: the good day", () => {
         m.from_agent_id === w.alice.agent.id &&
         m.created_at >= ALICE_SCHEDULED,
     );
-    expect(summary?.body).toMatch(/^Session completed\./);
-    expect(summary?.body).toContain(
-      "Done: 1. Failed: 0. Needs you: 1. Sent back by the critic: 0. In review: 0.",
-    );
+    // One Update line in J's Inbox (design §3.8): the project and what needs J first; the
+    // session's result (at most three lines, §5) is on the session and the project.
+    expect(summary?.body).toBe('Sample service: "Billing export" needs your decision (Inbox).');
     expect((summary?.created_at ?? "") < MORNING).toBe(true);
-    expect(summary?.body).toBe(aliceSession.summary);
+    expect(aliceSession.summary.split("\n").slice(0, 2)).toEqual([
+      '"Billing export" needs your decision (Inbox).',
+      'Did 1 task: "Health endpoint".',
+    ]);
     const questions = await w.humanRequests(w.j, { status: "open" });
     expect(questions).toHaveLength(1);
     expect(questions[0]).toMatchObject({

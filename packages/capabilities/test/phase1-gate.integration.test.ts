@@ -292,7 +292,10 @@ describe("phase 1 gate", () => {
     ).toBe(true);
     expect(w.audit.entries.filter((a) => !a.allowed)).toHaveLength(0);
     const session = await w.store.session.mustGet(res.sessionId);
-    expect(session.summary).toContain("In review: 10");
+    // The result names what waits (design §5): up to three titles, then how many more.
+    expect(session.summary).toContain(
+      '"Feature 1", "Feature 2", "Feature 3" and 7 more wait for review.',
+    );
     await w.store.close();
   });
 

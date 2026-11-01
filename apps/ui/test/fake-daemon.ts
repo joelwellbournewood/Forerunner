@@ -1379,6 +1379,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       summary: "",
       handoff: null,
       runner: "desktop",
+      stopReason: null,
+      statusText: "Working",
     };
     state.sessions.push(session);
     emit("session.changed", clone(session));
@@ -1431,9 +1433,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const s = state.sessions.find((x) => x.id === c.req.param("id"));
     if (!s) return errorBody(c, 404, "not_found", "no such session");
     if (["running", "paused", "planned"].includes(s.status)) {
+      // As the real daemon: Stop now ends it, says who stopped it, and is no error.
       s.status = "stopped";
       s.endedAt = new Date().toISOString();
-      pushEvent(s, "session.stopped", "Session stopped by the human", "info");
+      s.stopReason = "you";
+      s.statusText = "Stopped by you";
+      pushEvent(s, "session.stopped", "Stopped by you.", "info");
       emit("session.changed", clone(s));
     }
     return c.json(s);

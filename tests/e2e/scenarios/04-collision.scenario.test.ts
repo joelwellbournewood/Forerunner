@@ -223,9 +223,10 @@ describe("scenario 4: collision", () => {
     const summaries = [await w.inbox(w.j), await w.inbox(w.m)].map((box) =>
       box.filter((m) => m.type === "info"),
     );
-    expect(summaries[0]?.[0]?.body).toMatch(/^Session completed\. Done: 1\./);
-    expect(summaries[1]?.[0]?.body).toMatch(/^Session completed\. Done: 1\./);
-    expect(summaries[0]?.[0]?.body).toContain("Not started: 1 of 2 planned");
-    expect(summaries[1]?.[0]?.body).toContain("Not started: 1 of 2 planned");
+    // One Update line per session (design §3.8), naming the project and the one task each did;
+    // the task the other agent took is done, so nothing is left to name.
+    expect(summaries[0]?.[0]?.body).toMatch(/^Sample service: did 1 task: "/);
+    expect(summaries[1]?.[0]?.body).toMatch(/^Sample service: did 1 task: "/);
+    expect(summaries[0]?.[0]?.body).not.toBe(summaries[1]?.[0]?.body);
   }, 90_000);
 });

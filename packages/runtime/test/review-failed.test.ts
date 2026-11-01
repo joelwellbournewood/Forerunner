@@ -117,9 +117,8 @@ describe("a failed critic review files a card instead of leaving the task in rev
       (q) => q.task_id === first.id,
     );
     expect(cards.map(keyOf)).toEqual([REVIEW_FAILED_KEY]);
-    expect(r.summary).toContain(
-      "Review failed: 1 (asked you in the Inbox: rework, accept or cancel).",
-    );
+    // What needs the person comes first in the result (design §5), by name.
+    expect(r.summary.split("\n")[0]).toBe('"Add the export" needs your decision (Inbox).');
     expect(r.reviewFailed).toEqual([first.id]);
     const card = cards[0] as HumanRequestRow;
     expect(card).toMatchObject({

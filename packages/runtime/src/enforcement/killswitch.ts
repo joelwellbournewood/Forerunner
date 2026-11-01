@@ -65,7 +65,10 @@ export class KillSwitch {
    */
   constructor(
     private readonly tokens?: TokenIssuer,
-    private readonly onFreezeClaims?: (scope: KillScope | "all") => Promise<void> | void,
+    private readonly onFreezeClaims?: (
+      scope: KillScope | "all",
+      reason: string,
+    ) => Promise<void> | void,
     private readonly onResume?: () => void,
   ) {}
 
@@ -144,7 +147,7 @@ export class KillSwitch {
     }
     if (opts.freeze !== false) this.freeze(scope);
     try {
-      await this.onFreezeClaims?.(scope);
+      await this.onFreezeClaims?.(scope, reason);
     } catch (e) {
       this.logger.error("freezing claims failed", { error: String(e) });
     }

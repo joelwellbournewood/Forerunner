@@ -12,7 +12,6 @@ import {
   type JsonObject,
   SESSION_TRANSITIONS,
   type SessionRow,
-  STUCK_DEPENDENCY_STATUSES,
   type StateStore,
   type TaskRow,
   type WaitingTask,
@@ -46,18 +45,12 @@ import type { SchemaSyncPort } from "../update/sync.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
-import { countsOf, countsSentence } from "./counts.ts";
 import { fileBlockedByFindingsRequest, fileReviewFailedRequest } from "./findings.ts";
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
-import {
-  describeHeard,
-  type HeardDelivery,
-  type HeardLine,
-  heardLineOf,
-  summarizeHeard,
-} from "./live-chat.ts";
+import { describeHeard, type HeardDelivery, type HeardLine, heardLineOf } from "./live-chat.ts";
 import {
   firstSessionPlan,
+  isFirstSessionItem,
   markFirstSessionRun,
   notesForTask,
   type QueueNote,
@@ -78,6 +71,15 @@ import {
   planIdOf,
   planKeyOf,
 } from "./plan-approval.ts";
+import { namesOf } from "./recovery.ts";
+import {
+  collectEndState,
+  type LastSessionOutcome,
+  type NamedTask,
+  sessionResultLines,
+  sessionUpdateLine,
+  waitingOf,
+} from "./result.ts";
 import {
   needsContainerSandbox,
   type SandboxGate,
@@ -85,6 +87,7 @@ import {
   type SandboxWaitingTask,
   summarizeSandboxWaiting,
 } from "./sandbox-gate.ts";
+import { type PersonStop, personStopOf, taskReasonForStop } from "./stop-words.ts";
 
 /**
  * One working period of a principal agent (spec E). Code owns the skeleton: checklist, plan
@@ -185,6 +188,11 @@ export interface TaskExecutionResult {
     | "usage_limit";
   summary: string;
   costUsdMicro: number;
+  /**
+   * The error's stable code when the run ended on one (the driver's `error.code`, or the code of
+   * the exception the executor threw): the runner tries a transient one again at once.
+   */
+  errorCode?: string;
   prUrl?: string;
   branch?: string;
   /** Files the task changed (relative to the worktree root), for peer overlap detection. */
@@ -423,6 +431,30 @@ export interface SessionRunnerDeps {
 /** Share of a session's cap kept for reviews; the plan is cut to the rest (`cutPlanToBudget`). */
 export const DEFAULT_RESERVE_SHARE = 0.2;
 
+/** Error codes of a run that may well pass when tried again at once (design §4.4). */
+const TRANSIENT_ERROR_CODES: ReadonlySet<string> = new Set([
+  "provider_error",
+  "network",
+  "rate_limited",
+  "overloaded",
+  "overloaded_error",
+]);
+
+/** Whether a run's error is transient (the model call failed, the network, a rate limit). */
+export function isTransientError(code: string | undefined): boolean {
+  return code !== undefined && TRANSIENT_ERROR_CODES.has(code);
+}
+
+/** The stop reason of a session that found nothing it could run (design §4.8). */
+export const NOTHING_RUNNABLE = "nothing_runnable";
+
+/**
+ * Runs of one task in one session at most (design §4.3: retries happen inside the session, up
+ * to the retry limit). The critic's ladder hands a task to the person after its fourth failed
+ * attempt; this only stops a task that keeps coming back for another reason.
+ */
+export const MAX_RUNS_PER_TASK_IN_SESSION = 6;
+
 /** The runner's re-read of a running task's row (U-039): a person's move stops the run within it. */
 export const DEFAULT_TASK_WATCH_MS = 5_000;
 
@@ -504,11 +536,14 @@ export class SessionRunner {
     }
     // Spec M: nothing syncs while the schema versions differ; a session is a sync.
     await this.deps.schemaSync?.assertCanSync("session.start");
+    // One session per agent (spec E). Said in words, never with the other session's id (design
+    // §4.10); a session a dead process left is ended at the next daemon start
+    // (`recoverInterruptedSessions`) and by Stop on its page, so this is a session that runs.
     const active = await store.session.active(agent.id);
     if (active.length > 0) {
       throw new ForerunnerError(
         "claim_conflict",
-        `agent ${agent.name} already has an active session ${active[0]?.id}`,
+        `${agent.name} is already working in another session, so this one did not start. It can start once that session ends.`,
         { details: { sessionId: active[0]?.id } },
       );
     }
@@ -635,6 +670,12 @@ export class SessionRunner {
     let brief: StateBrief | null = null;
     let stopReason = "completed";
     let status: SessionRow["status"] = "completed";
+    /** The queue items each task's brief carried (design §4.7: used up by finished work). */
+    const notesGiven = new Map<string, string[]>();
+    /** Who stopped the session from outside its run (Stop now, Stop all, Quit), if anyone. */
+    let personStop: PersonStop | null = null;
+    /** The task whose run is going now, for the stop line. */
+    let runningTask: { id: string; title: string } | null = null;
     const heldClaims = new Set<string>();
 
     // Some transitions (in_review, done) clear the claim themselves; release only what we still hold.
@@ -765,8 +806,8 @@ export class SessionRunner {
         ready: brief.tasks.readyCount,
         memoryTokens: memoryLoaded?.tokens ?? 0,
       });
-      // Next-session queue (spec J.2): the items the brief carried belong to this session now.
-      await this.consumeQueue(brief, session, agent, emit);
+      // Next-session queue (spec J.2): the items the brief carried go to the tasks' briefs; they
+      // are used up only by work that finished (design §4.7), at the session's end.
       await emit("peers.feed", {
         peers: feed.peers.map((p) => ({
           agentId: p.agentId,
@@ -828,6 +869,8 @@ export class SessionRunner {
         budget,
       });
       plan = cutPlanToBudget(plan, Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)));
+      /** Every task row the session planned, by id (the start's ready tasks, then each re-plan). */
+      const knownTasks = new Map<string, TaskRow>(readyTasks.map((t) => [t.id, t]));
       // What cannot run is named, never silent (U-040): the ready tasks that wait on a task not
       // done (a cancelled or failed one waits for good) and the items left out for budget.
       waiting = project ? await store.task.waitingTasks(project.id) : [];
@@ -975,12 +1018,135 @@ export class SessionRunner {
             items: plan.items.length,
           });
         }
-        // The approved first session is this one (U-038): later sessions plan as usual.
-        if (project) await markFirstSessionRun(store, project.id, session.id, plan.items);
-        // 3. Execute, claim-before-work, inbox re-check between tasks.
-        for (const item of plan.items) {
+        // Nothing runnable means nothing is consumed, reviewed or graded (design §4.8).
+        if (plan.items.length === 0) stopReason = NOTHING_RUNNABLE;
+        // 3. Execute, claim-before-work, inbox re-check between tasks. The session keeps going
+        // (design §4.2): once the plan is run it looks again and takes the tasks that became
+        // ready meanwhile (their dependencies finished), the ones the critic sent back (the next
+        // attempt, in this session) and the ones the person made ready. Before, it ran only the
+        // tasks ready when it started: a 7-task chain took 7 Starts and every rework waited for
+        // the next one. It stops when nothing it can run is left, the budget is used (the
+        // reserve kept for reviews), the person stops it or the wall clock runs out.
+        const queue: PlanItem[] = [...plan.items];
+        /** Runs per task in this session: a guard against a task that keeps coming back. */
+        const runsOf = new Map<string, number>();
+        /** Tasks not to take again in this session (a peer holds it, the sandbox, a limit). */
+        const notAgain = new Set<string>();
+        /** At levels 0 and 1 only what the person approved runs (its retries included). */
+        const onlyThese = autonomy < 2 ? new Set(plan.items.map((i) => i.taskId)) : null;
+        /** Tasks whose run failed with a transient error and were tried again at once. */
+        const transientRetried = new Set<string>();
+        const replan = async (): Promise<PlanItem[]> => {
+          if (!project || !brief) return [];
+          const queued = new Set(queue.map((i) => i.taskId));
+          let ready = (await store.task.readyTasks(project.id, { limit: 100 })).filter(
+            (t) =>
+              !notAgain.has(t.id) &&
+              !queued.has(t.id) &&
+              (runsOf.get(t.id) ?? 0) < MAX_RUNS_PER_TASK_IN_SESSION &&
+              (!onlyThese || onlyThese.has(t.id)),
+          );
+          if (ready.length && this.deps.sandboxGate && ready.some(needsContainerSandbox)) {
+            const answer = await this.deps.sandboxGate.check();
+            if (!answer.ready) {
+              sandboxAnswer ??= answer;
+              const newlyWaiting: SandboxWaitingTask[] = [];
+              for (const t of ready.filter(needsContainerSandbox)) {
+                notAgain.add(t.id);
+                if (waitingForSandbox.some((w) => w.id === t.id)) continue;
+                waitingForSandbox.push({ id: t.id, title: t.title });
+                newlyWaiting.push({ id: t.id, title: t.title });
+              }
+              ready = ready.filter((t) => !needsContainerSandbox(t));
+              if (newlyWaiting.length) {
+                await emit("session.sandbox_waiting", {
+                  state: answer.state,
+                  step: answer.step,
+                  tasks: newlyWaiting.map((t) => ({ taskId: t.id, title: t.title })),
+                  warning: summarizeSandboxWaiting(newlyWaiting, answer)[0],
+                });
+                await this.deps.sandboxGate
+                  .waiting?.({
+                    sessionId: session.id,
+                    projectId: project.id,
+                    tasks: [...waitingForSandbox],
+                    answer,
+                  })
+                  .catch((e: unknown) =>
+                    this.logger.warn("sandbox waiting hook failed", { error: errorMessage(e) }),
+                  );
+              }
+            }
+          }
+          if (ready.length === 0) return [];
+          for (const t of ready) knownTasks.set(t.id, t);
+          const next = await this.deps.planner.plan({
+            brief,
+            briefText,
+            readyTasks: ready,
+            budgetUsdMicro: opts.budgetCapUsdMicro,
+            reserveShare,
+            session,
+            token,
+            budget,
+          });
+          // What is left of the work budget now, not at the start.
+          const room = Math.max(
+            0,
+            Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)) -
+              budget.snapshot().sessionSpentUsdMicro,
+          );
+          const cut = cutPlanToBudget(next, room);
+          const current = plan as SessionPlan;
+          const leftOut = (cut.leftOutForBudget ?? []).filter(
+            (i) => !(current.leftOutForBudget ?? []).some((l) => l.taskId === i.taskId),
+          );
+          for (const i of cut.leftOutForBudget ?? []) notAgain.add(i.taskId);
+          if (cut.items.length === 0 && leftOut.length === 0) return [];
+          plan = {
+            ...current,
+            items: [...current.items, ...cut.items],
+            estimateUsdMicro: current.estimateUsdMicro + cut.estimateUsdMicro,
+            ...(leftOut.length || current.leftOutForBudget
+              ? {
+                  leftOutForBudget: [...(current.leftOutForBudget ?? []), ...leftOut],
+                  workBudgetUsdMicro: Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)),
+                }
+              : {}),
+          };
+          if (cut.items.length === 0) return [];
+          // The plan on the row grows with what the session took (spec B.5: a versioned change
+          // with its reason), so the session review checks what really ran.
+          const fresh = await store.session.mustGet(session.id);
+          session = await store.session.setPlan(
+            fresh.id,
+            fresh.version,
+            plan as never,
+            `took ${cut.items.length} more task${cut.items.length === 1 ? "" : "s"} as ${
+              cut.items.length === 1 ? "it" : "they"
+            } became ready`,
+            { agentId: agent.id },
+          );
+          await emit("session.replanned", {
+            items: cut.items.map((i) => ({ taskId: i.taskId, title: i.title })),
+            estimateUsdMicro: cut.estimateUsdMicro,
+            text: `Continuing with ${namesOf(cut.items.map((i) => i.title))}.`,
+          });
+          return cut.items;
+        };
+        for (;;) {
           if (controller.signal.aborted) throw new ForerunnerError("killed", "session stopped");
           budget.checkWallClock(clock.now());
+          if (queue.length === 0) {
+            // "Stop after this task" (the pause port marks the row `paused`): nothing more.
+            if (budget.noNewWork || (await store.session.get(session.id))?.status === "paused")
+              break;
+            const more = await replan();
+            if (more.length === 0) break;
+            queue.push(...more);
+            continue;
+          }
+          const item = queue.shift() as PlanItem;
           if (budget.noNewWork) {
             skipped.push(item.taskId);
             continue;
@@ -988,11 +1154,13 @@ export class SessionRunner {
           const recheck = await this.recheckInbox(agent.id, session.id, emit, heard);
           if (recheck.interrupt) {
             stopReason = "stopped_by_message";
-            skipped.push(...plan.items.slice(plan.items.indexOf(item)).map((i) => i.taskId));
+            skipped.push(item.taskId, ...queue.map((i) => i.taskId));
+            queue.length = 0;
             break;
           }
+          runsOf.set(item.taskId, (runsOf.get(item.taskId) ?? 0) + 1);
           // Overlap check against the peers' current activity before any work starts.
-          const planned = readyTasks.find((t) => t.id === item.taskId);
+          const planned = knownTasks.get(item.taskId);
           const work = {
             taskId: item.taskId,
             title: item.title,
@@ -1025,6 +1193,7 @@ export class SessionRunner {
           }
           if (blocked) {
             skipped.push(item.taskId);
+            notAgain.add(item.taskId);
             await emit("task.skipped", { taskId: item.taskId, reason: "peer_in_flight" });
             continue;
           }
@@ -1033,6 +1202,7 @@ export class SessionRunner {
           });
           if (!claim.ok) {
             skipped.push(item.taskId);
+            notAgain.add(item.taskId);
             await emit("task.skipped", {
               taskId: item.taskId,
               reason: claim.reason,
@@ -1068,6 +1238,7 @@ export class SessionRunner {
             specialist: item.specialist,
             estimateUsdMicro: item.estimateUsdMicro,
           });
+          runningTask = { id: task.id, title: task.title };
           // The claim is renewed every sixth of its TTL for as long as the task runs: a
           // one-shot timer would let a long task's claim lapse and a peer take the task.
           const renewEveryMs = Math.max(1000, Math.floor(claimTtlMs / 6));
@@ -1107,7 +1278,8 @@ export class SessionRunner {
           });
           const stopWatch = this.watchTask(task.id, taskController.signal);
           // The queue's notes for this task (U-038): those naming it, or naming no task.
-          const notes = notesForTask(brief.queue.items, task, readyTasks);
+          const notes = notesForTask(brief.queue.items, task, [...knownTasks.values()]);
+          for (const n of notes) notesGiven.set(n.id, [...(notesGiven.get(n.id) ?? []), task.id]);
           if (notes.length)
             await emit("task.notes", {
               taskId: task.id,
@@ -1142,6 +1314,7 @@ export class SessionRunner {
                 headline: details.headline ?? "The Docker sandbox is not ready.",
               };
               waitingForSandbox.push({ id: task.id, title: task.title });
+              notAgain.add(task.id);
               await releaseIfHeld(task.id, "waits for the Docker sandbox (U-079)");
               await emit("task.sandbox_waiting", {
                 taskId: task.id,
@@ -1163,6 +1336,7 @@ export class SessionRunner {
                       : "failed",
               summary: errorMessage(e),
               costUsdMicro: 0,
+              errorCode: code,
             };
           } finally {
             renew();
@@ -1212,6 +1386,7 @@ export class SessionRunner {
           // the kill switch still ends as killed.
           if (controller.signal.aborted && result.outcome === "killed")
             throw new ForerunnerError("killed", "session stopped during task");
+          runningTask = null;
           if (task.status !== "in_progress") {
             await recordMove(task, result.outcome, "run");
             continue;
@@ -1227,6 +1402,7 @@ export class SessionRunner {
               sentence: result.summary,
             });
             skipped.push(task.id);
+            notAgain.add(task.id);
             await releaseIfHeld(task.id, "usage limit: back to ready for the next credential");
             continue;
           }
@@ -1393,7 +1569,9 @@ export class SessionRunner {
                 }
                 case "revise":
                 case "retry":
-                  retried.push(task.id);
+                  // Sent back: the next attempt runs in this session (design §4.3); a task
+                  // sent back several times is counted once.
+                  if (!retried.includes(task.id)) retried.push(task.id);
                   break;
                 case "human":
                   needsHuman.push(task.id);
@@ -1424,6 +1602,22 @@ export class SessionRunner {
               { agentId: agent.id },
             );
             needsHuman.push(task.id);
+          } else if (
+            result.outcome === "failed" &&
+            isTransientError(result.errorCode) &&
+            !transientRetried.has(task.id)
+          ) {
+            // A transient error (the model call failed, the network, a rate limit) is tried
+            // again once, at once (design §4.4); the attempt count stays as it was.
+            transientRetried.add(task.id);
+            await releaseIfHeld(task.id, "trying again at once after a transient error");
+            await emit("task.retrying", {
+              taskId: task.id,
+              title: task.title,
+              text: `${result.summary} Trying "${task.title}" again.`,
+            });
+            queue.unshift(item);
+            continue;
           } else if (result.outcome === "failed" || result.outcome === "timeout") {
             await store.task.transition(
               task.id,
@@ -1444,7 +1638,8 @@ export class SessionRunner {
             needsHuman.push(task.id);
             stopReason = "budget_exceeded";
             await releaseIfHeld(task.id, "budget exhausted");
-            skipped.push(...plan.items.slice(plan.items.indexOf(item) + 1).map((i) => i.taskId));
+            skipped.push(...queue.map((i) => i.taskId));
+            queue.length = 0;
             break;
           } else if (result.outcome === "killed") {
             throw new ForerunnerError("killed", "session stopped during task");
@@ -1456,7 +1651,11 @@ export class SessionRunner {
       }
     } catch (e) {
       const code = e instanceof ForerunnerError ? e.code : "internal";
-      stopReason = code;
+      // Stop now, Stop all and Quit end the run through the kill switch; whose stop it was is
+      // the reason it was given (design §4.9). A person's stop is no error: the session says who
+      // stopped it and the task goes back to ready with that reason.
+      personStop = code === "killed" ? personStopOf(controller.signal.reason) : null;
+      stopReason = personStop ?? code;
       status =
         code === "killed"
           ? "killed"
@@ -1467,9 +1666,17 @@ export class SessionRunner {
               : "failed";
       if (status === "failed")
         this.logger.error("session failed", { sessionId: session.id, error: errorMessage(e) });
-      await emit("session.error", { code, message: errorMessage(e) });
+      if (personStop) {
+        await emit("session.stopped", {
+          by: personStop,
+          ...(runningTask ? { taskId: runningTask.id, title: runningTask.title } : {}),
+          text: `${taskReasonForStop(personStop)}${
+            runningTask ? ` during "${runningTask.title}". It is ready again.` : "."
+          }`,
+        });
+      } else await emit("session.error", { code, message: errorMessage(e) });
     } finally {
-      await releaseAll(`session ${stopReason}`);
+      await releaseAll(personStop ? taskReasonForStop(personStop) : `session ${stopReason}`);
       unregister();
     }
 
@@ -1526,32 +1733,106 @@ export class SessionRunner {
         await emit("inbox.carried_forward", { ids: carriedForward.map((m) => m.id) });
     }
     await this.ackAnswered(agent.id, emit);
+    // Notes and the approved first session are used up only by work that finished (design §4.7):
+    // a task done or in review. A session stopped, crashed or that ran nothing leaves them for
+    // the next one; before, the first session consumed them at its start, whatever happened.
+    // A task whose work the critic took (accepted, or handed to the person for sign-off) counts.
+    const finished = new Set([
+      ...completed,
+      ...inReview,
+      ...reviews
+        .filter((r) => r.decision !== "revise" && r.decision !== "retry")
+        .map((r) => r.taskId),
+    ]);
+    if (brief && finished.size > 0) {
+      try {
+        let firstRan = false;
+        if (project && plan)
+          firstRan = await markFirstSessionRun(
+            store,
+            project.id,
+            session.id,
+            plan.items.filter((i) => finished.has(i.taskId)),
+          );
+        const used = brief.queue.items.filter(
+          (q) =>
+            (notesGiven.get(q.id) ?? []).some((id) => finished.has(id)) ||
+            (firstRan && isFirstSessionItem(q)),
+        );
+        await this.consumeQueue(used, session, agent, emit);
+      } catch (e) {
+        this.logger.warn("queue items not marked used", {
+          sessionId: session.id,
+          error: errorMessage(e),
+        });
+      }
+    }
     const spentTotals = await store.costLedger.sum({ sessionId: session.id });
     const spent = spentTotals.usd_micro;
     // What the person reads is CHF, from the ledger's own conversion (U-074).
     const spentChf = spentTotals.chf_micro;
-    const summary = summarize({
-      completed,
-      inReview,
-      failed,
-      skipped,
-      needsHuman,
-      cancelled,
-      movedWhileRunning,
-      reviewFailed,
-      retried,
-      blockedByFindings,
-      merges,
-      spentChf,
-      stopReason,
-      plan,
-      waiting,
-      waitingForSandbox,
-      sandboxAnswer,
-      heard: heard.length,
-      endInbox,
-      stoppedAtEnd,
+    // The result (design §5): read from the tasks as they stand now, at most three lines.
+    const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+    const endState = await collectEndState(store, project?.id ?? null, [
+      ...completed,
+      ...inReview,
+      ...failed,
+      ...needsHuman,
+      ...reviewFailed,
+      ...blockedByFindings,
+      ...retried,
+      ...skipped,
+    ]);
+    const named = (id: string): NamedTask => ({
+      id,
+      title: endState.rows.get(id)?.title ?? plan?.items.find((i) => i.taskId === id)?.title ?? id,
     });
+    const uniq = (ids: readonly string[]) => [...new Set(ids)];
+    const doneNow = uniq(completed).filter((id) => endState.rows.get(id)?.status === "done");
+    const failedNow = uniq(failed).filter((id) => endState.rows.get(id)?.status === "failed");
+    const needsYouNow = uniq([...needsHuman, ...reviewFailed, ...blockedByFindings]).filter(
+      (id) => {
+        const st = endState.rows.get(id)?.status;
+        return st === "needs_human" || st === "in_review";
+      },
+    );
+    const inReviewNow = uniq(inReview).filter(
+      (id) => endState.rows.get(id)?.status === "in_review" && !needsYouNow.includes(id),
+    );
+    const leftOutIds = new Set((plan?.leftOutForBudget ?? []).map((i) => i.taskId));
+    const outcome: LastSessionOutcome = {
+      done: doneNow.map(named),
+      failed: failedNow.map((id) => ({
+        ...named(id),
+        reason: endState.rows.get(id)?.reason ?? "",
+      })),
+      needsYou: needsYouNow.map(named),
+      leftOver: endState.readyNow
+        .filter((t) => !leftOutIds.has(t.id))
+        .map((t) => ({ id: t.id, title: t.title })),
+      waiting: endState.waitingNow.map(waitingOf),
+      waitingForDocker: waitingForSandbox
+        .filter((t) => endState.readyNow.some((r) => r.id === t.id))
+        .map((t) => ({ id: t.id, title: t.title })),
+      stopReason,
+      spentChfMicro: spentChf,
+    };
+    const resultLines = sessionResultLines({
+      outcome,
+      inReview: inReviewNow.map(named),
+      leftOutForBudget: (plan?.leftOutForBudget ?? [])
+        .filter((i) => endState.readyNow.some((r) => r.id === i.taskId))
+        .map((i) => ({
+          id: i.taskId,
+          title: i.title,
+          estimateChfMicro: usdToChfMicro(Math.max(0, Math.round(i.estimateUsdMicro)), rate),
+        })),
+      sessionCapChfMicro: usdToChfMicro(opts.budgetCapUsdMicro, rate),
+      openTasks: endState.openTasks,
+      mergedPrs: merges.filter((m) => m.status === "merged").length,
+      openPrs: merges.filter((m) => m.status !== "merged").length,
+    });
+    const summary = resultLines.join("\n");
     // Project docs (spec G.5): the PM's status update into docs/status.md, carried by the
     // session's pull request or a small one of its own; a session that touched no task
     // writes nothing, and a failure is an event, never fatal.
@@ -1563,7 +1844,8 @@ export class SessionRunner {
       if (!touched) {
         await emit("docs.status_skipped", { reason: "no task changed state" });
       } else {
-        const titleOf = (id: string) => plan.items.find((i) => i.taskId === id)?.title ?? id;
+        const items = plan.items;
+        const titleOf = (id: string) => items.find((i) => i.taskId === id)?.title ?? id;
         try {
           docsOutcome = await this.deps.docs.writeSessionStatus({
             project,
@@ -1572,9 +1854,17 @@ export class SessionRunner {
               sessionId: session.id,
               endedAt: clock.nowIso(),
               done: completed.map(titleOf),
-              inFlight: [...inReview, ...retried].map(titleOf),
-              blocked: [...needsHuman, ...failed, ...blockedByFindings].map(titleOf),
-              next: skipped.map(titleOf),
+              inFlight: inReviewNow.map(titleOf),
+              // What is blocked now (design §4.13): the tasks that need the person, the failed
+              // ones, those waiting on another task and those waiting for Docker; before, a
+              // whole blocked chain read "Blocked: nothing".
+              blocked: [
+                ...needsYouNow.map((id) => `${titleOf(id)} (needs your decision)`),
+                ...failedNow.map((id) => `${titleOf(id)} (failed)`),
+                ...outcome.waiting.map((w) => `${w.title} (waits on ${w.waitsOn.join(" and ")})`),
+                ...outcome.waitingForDocker.map((t) => `${t.title} (waits for Docker)`),
+              ],
+              next: endState.readyNow.map((t) => t.title),
               note: `stop reason ${stopReason}; spent ${formatChf(spentChf)}`,
             },
             prBranch: prBranches.at(-1) ?? null,
@@ -1763,8 +2053,15 @@ export class SessionRunner {
             ended_at: clock.nowIso(),
             summary,
             stop_reason: stopReason,
+            outcome,
           },
-          next_steps: skipped.slice(0, 3),
+          // What is next, true now (titles, as the intake writes them): the ready tasks, then
+          // the ones that wait. Before, this was the planned tasks the session skipped, which
+          // is empty whenever the plan ran, so the project read "Nothing planned".
+          next_steps: [
+            ...endState.readyNow.map((t) => t.title),
+            ...endState.waitingNow.map((w) => w.task.title),
+          ].slice(0, 3),
           open_questions: needsHuman.length,
           spend_usd_micro: (await store.costLedger.sum({ projectId: project.id })).usd_micro,
         } as never,
@@ -1781,21 +2078,34 @@ export class SessionRunner {
         author_agent: agent.id,
       });
     }
+    // One line per session in the Inbox's Updates (design §3.8, §5.10): the result lives on
+    // the project; the line names the project and the gist. A session that only filed its plan
+    // has a card for that, and one that ran nothing has nothing to say.
+    // What the person said during the session and where each line went (spec O.9) follows it.
     const heardForHuman = describeHeard(
       heard,
       (taskId) => plan?.items.find((i) => i.taskId === taskId)?.title,
     );
-    await store.message.send({
-      from_agent_id: agent.id,
-      to_human_id: agent.owner_human_id,
-      project_id: project?.id ?? null,
-      type: "info",
-      body: heardForHuman ? `${summary}\n${heardForHuman}` : summary,
-      requires_ack: false,
-      author_agent: agent.id,
-    });
+    if (
+      (stopReason !== "plan_awaiting_approval" && stopReason !== NOTHING_RUNNABLE) ||
+      heardForHuman
+    ) {
+      const line = sessionUpdateLine(project?.name ?? null, resultLines);
+      await store.message.send({
+        from_agent_id: agent.id,
+        to_human_id: agent.owner_human_id,
+        project_id: project?.id ?? null,
+        type: "info",
+        body: heardForHuman ? `${line}\n${heardForHuman}` : line,
+        requires_ack: false,
+        author_agent: agent.id,
+      });
+    }
     const finalStatus: SessionRow["status"] =
-      status === "completed" && stopReason !== "completed" && stopReason !== "budget_finish_current"
+      status === "completed" &&
+      stopReason !== "completed" &&
+      stopReason !== "budget_finish_current" &&
+      stopReason !== NOTHING_RUNNABLE
         ? "stopped"
         : status;
     const current = await store.session.mustGet(session.id);
@@ -1831,7 +2141,11 @@ export class SessionRunner {
     // summary and the task states are written, since that is what it checks. A session that
     // only filed its plan did no work to review.
     let sessionReview: SessionReviewOutcome | null = null;
-    if (this.deps.critic && stopReason !== "plan_awaiting_approval") {
+    if (
+      this.deps.critic &&
+      stopReason !== "plan_awaiting_approval" &&
+      stopReason !== NOTHING_RUNNABLE
+    ) {
       try {
         sessionReview = await this.deps.critic.reviewSession({
           sessionId: session.id,
@@ -2113,12 +2427,11 @@ export class SessionRunner {
    * here, so it consumes nothing.
    */
   private async consumeQueue(
-    brief: StateBrief,
+    items: StateBrief["queue"]["items"],
     session: SessionRow,
     agent: AgentRow,
     emit: (type: string, payload?: Record<string, unknown>) => Promise<void>,
   ): Promise<void> {
-    const items = brief.queue.items;
     if (items.length === 0) return;
     const { store, clock } = this.deps;
     const outcome = await store.transaction(async (tx) => {
@@ -2392,194 +2705,6 @@ export function cutPlanToBudget(plan: SessionPlan, workBudgetUsdMicro: number): 
         : plan.summary,
     ...(leftOut.length > 0 ? { leftOutForBudget: leftOut, workBudgetUsdMicro } : {}),
   };
-}
-
-function summarize(x: {
-  completed: string[];
-  inReview: string[];
-  failed: string[];
-  skipped: string[];
-  needsHuman: string[];
-  /** Tasks a person cancelled while they ran (U-039). */
-  cancelled?: string[];
-  /** Tasks moved while their run was going (U-039), named in their own line. */
-  movedWhileRunning?: readonly MovedWhileRunning[];
-  /** Ready tasks waiting on a task not done (U-040), named with what they wait on. */
-  waiting?: readonly WaitingTask[];
-  /** Ready tasks at tier 2+ waiting for the container sandbox (U-079), with the step to take. */
-  waitingForSandbox?: readonly SandboxWaitingTask[];
-  sandboxAnswer?: SandboxGateAnswer | null;
-  /** Tasks whose critic review failed, each with a card (U-045). */
-  reviewFailed?: string[];
-  retried: string[];
-  blockedByFindings: string[];
-  merges?: readonly MergeOutcome[];
-  /** The session's spend in CHF micro-units, as the ledger converted it (U-074). */
-  spentChf: number;
-  stopReason: string;
-  plan: SessionPlan | null;
-  /** Lines the human said during the session (spec O.9); the count only, peers read this. */
-  heard?: number;
-  /** What the re-check before the session-end writes read (spec E.4). */
-  endInbox?: InboxRecheck;
-  /** The session ended on a stop or pause that re-check read. */
-  stoppedAtEnd?: boolean;
-}): string {
-  const parts = [
-    `Session ${x.stopReason === "completed" ? "completed" : `ended (${x.stopReason})`}.`,
-    ...(x.stopReason === "plan_awaiting_approval"
-      ? ["The plan awaits your approval in the inbox; nothing ran."]
-      : []),
-    // U-009: a session works only on ready tasks; say how to give it some. U-040: a ready task
-    // that waits on another, or that does not fit the budget, is not "no task is ready".
-    ...(x.plan && x.plan.items.length === 0
-      ? [
-          (x.waiting?.length ?? 0) +
-            (x.plan.leftOutForBudget?.length ?? 0) +
-            (x.waitingForSandbox?.length ?? 0) >
-          0
-            ? "Nothing to plan: no ready task can run in this session (below)."
-            : 'Nothing to plan: no task is ready. Give the agent work first: add a task (the Tasks tab, or "add a task: ..." in Chat), mark a draft task ready on the Tasks tab, or approve the plan waiting in the Inbox.',
-        ]
-      : []),
-    ...summarizeLeftOut(x.plan),
-    ...summarizeWaiting(x.waiting ?? []),
-    ...summarizeSandboxWaiting(x.waitingForSandbox ?? [], x.sandboxAnswer ?? null),
-    // One set of counts (U-072): the log's session.ended line and the notification count the same.
-    countsSentence(countsOf(x), x.plan?.items.length ?? 0),
-    ...(x.cancelled?.length ? [`Cancelled: ${x.cancelled.length}.`] : []),
-    ...summarizeMoved(x.movedWhileRunning ?? []),
-    ...(x.reviewFailed?.length
-      ? [
-          `Review failed: ${x.reviewFailed.length} (asked you in the Inbox: rework, accept or cancel).`,
-        ]
-      : []),
-    ...(x.blockedByFindings.length
-      ? [
-          `Blocked by open findings: ${x.blockedByFindings.length} (asked you: rework, accept or cancel).`,
-        ]
-      : []),
-    ...summarizeMerges(x.merges ?? []),
-    ...(x.heard ? [summarizeHeard(x.heard)] : []),
-    ...(x.endInbox?.read.length
-      ? [summarizeEndInbox(x.endInbox, x.stoppedAtEnd ?? false, x.skipped.length)]
-      : []),
-    `Spent ${formatChf(x.spentChf)}.`,
-  ];
-  return parts.join(" ");
-}
-
-/** The planned tasks left out to fit the work budget (U-040), by title and estimate. */
-function summarizeLeftOut(plan: SessionPlan | null): string[] {
-  const out = plan?.leftOutForBudget ?? [];
-  if (out.length === 0) return [];
-  const usd = (micro: number) => `$${(micro / 1e6).toFixed(2)}`;
-  const named = out.map((i) => `"${i.title}" (about ${usd(i.estimateUsdMicro)})`).join(", ");
-  return [
-    `Left out for budget: ${named}; this session's work budget was ${usd(
-      plan?.workBudgetUsdMicro ?? 0,
-    )}. Start a session with a larger budget, or give ${out.length === 1 ? "the task" : "each task"} a smaller one on the Tasks tab.`,
-  ];
-}
-
-/**
- * The ready tasks that wait on another (U-040), each with what it waits on and that task's
- * state. A cancelled, failed or missing one does not finish by itself, so the line says what
- * to do; one that is merely not done yet just waits.
- */
-function summarizeWaiting(waiting: readonly WaitingTask[]): string[] {
-  if (waiting.length === 0) return [];
-  const shown = waiting.slice(0, 10);
-  const named = shown
-    .map(
-      (w) =>
-        `"${w.task.title}" waits on ${w.waitsOn
-          .map((d) =>
-            d.title === null
-              ? `a task that does not exist (${d.id})`
-              : `"${d.title}" (${STATUS_WORDS[d.status ?? "ready"] ?? d.status})`,
-          )
-          .join(" and ")}`,
-    )
-    .join("; ");
-  const more = waiting.length > shown.length ? `; and ${waiting.length - shown.length} more` : "";
-  const stuck = waiting.some((w) =>
-    w.waitsOn.some(
-      (d) =>
-        d.status === null || (STUCK_DEPENDENCY_STATUSES as readonly string[]).includes(d.status),
-    ),
-  );
-  return [
-    `Waiting on other tasks: ${named}${more}.${
-      stuck
-        ? " A cancelled, failed or missing task is never done by itself: change the waiting task's dependencies on the Tasks tab, or mark the failed one ready again."
-        : ""
-    }`,
-  ];
-}
-
-/** What a status reads as in the summary (the Tasks tab's words). */
-const STATUS_WORDS: Partial<Record<TaskRow["status"], string>> = {
-  needs_human: "needs you",
-  in_review: "sent to review",
-};
-
-/**
- * The tasks moved while they ran (U-039), by title and the state they were moved to: a
- * person's moves first, then another agent's (a lapsed claim a peer's session took back).
- */
-function summarizeMoved(moved: readonly MovedWhileRunning[]): string[] {
-  const line = (list: readonly MovedWhileRunning[], who: string): string[] => {
-    if (list.length === 0) return [];
-    const named = list
-      .map((m) => `"${m.title}" (${STATUS_WORDS[m.status] ?? m.status})`)
-      .join(", ");
-    const one = list.length === 1;
-    return [
-      `Moved by ${who} while ${one ? "it" : "they"} ran: ${named}; ${
-        one ? "its run was" : "their runs were"
-      } stopped and the session went on.`,
-    ];
-  };
-  return [
-    ...line(
-      moved.filter((m) => m.byPerson),
-      "you",
-    ),
-    ...line(
-      moved.filter((m) => !m.byPerson),
-      "another agent",
-    ),
-  ];
-}
-
-/** The merge step's outcomes (spec J.9): how many reviewed PRs merged, how many wait on the human. */
-function summarizeMerges(merges: readonly MergeOutcome[]): string[] {
-  const merged = merges.filter((m) => m.status === "merged").length;
-  const open = merges.length - merged;
-  const asked = merges.filter((m) => m.humanRequestId).length;
-  return [
-    ...(merged ? [`Merged ${merged} reviewed pull request(s).`] : []),
-    ...(open
-      ? [
-          `Reviewed pull requests left open for you: ${open}${asked ? ` (${asked} with a request in your inbox)` : ""}.`,
-        ]
-      : []),
-  ];
-}
-
-/** The summary line for the messages read right before the session-end writes. */
-function summarizeEndInbox(end: InboxRecheck, stopped: boolean, skipped: number): string {
-  const n = end.read.length;
-  const head = `Read before the session-end writes: ${n} message${n === 1 ? "" : "s"}.`;
-  const by = stopped ? end.interrupt : null;
-  if (!by) return head;
-  const left = skipped
-    ? ` The ${skipped} task${skipped === 1 ? "" : "s"} not started stay${skipped === 1 ? "s" : ""} for the next session.`
-    : "";
-  return by.kind === "pause"
-    ? `${head} A pause (message ${by.id}) ended the session; ${skipped ? "nothing more was deferred." : "no task was left to defer."}${left}`
-    : `${head} A stop (message ${by.id}) ended the session: the task states above were written as each task ended, and nothing further was started.${left}`;
 }
 
 /**

@@ -308,7 +308,7 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     expect(task.status).toBe("done");
     expect(task.reason).toContain("merged");
     expect(task.reason).toContain(pr.htmlUrl);
-    expect(result.summary).toContain("Merged 1 reviewed pull request");
+    expect(result.summary).toContain("Merged 1 pull request.");
     expect(result.handoff.merges).toEqual([
       expect.objectContaining({ task_id: taskId, status: "merged" }),
     ]);
@@ -330,7 +330,7 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     expect(rows[0]?.deniedReason).toMatch(/^autonomy_insufficient: autonomy level 2/);
     expect(m.approvals.requests).toEqual([]);
     expect(result.merges[0]).toMatchObject({ taskId, status: "not_allowed" });
-    expect(result.summary).toContain("left open for you: 1");
+    expect(result.summary).toContain("1 reviewed pull request waits for you to merge.");
     expect((await m.w.store.task.mustGet(taskId)).reason).toContain("left open");
     expect(await requestsFor(m.w, taskId)).toEqual([]);
   });

@@ -216,7 +216,7 @@ describe("scenario 8: handover", () => {
       });
     }
     expect(session.summary).toBe(result.summary);
-    expect(result.summary).toMatch(/^Session completed\. Done: 1\./);
+    expect(result.summary).toMatch(/^Did 1 task: "Fix the clamp upper bound"\./);
     expect(session.handoff).toMatchObject({ done: [task.id], stop_reason: "completed" });
     expect(
       (session.handoff as { reviews?: { task_id: string; verdict: string }[] }).reviews,
@@ -226,7 +226,8 @@ describe("scenario 8: handover", () => {
     const summaryToJ = (await w.inbox(w.j)).find(
       (m) => m.type === "info" && m.from_agent_id === fresh.agent.id,
     );
-    expect(summaryToJ?.body).toBe(result.summary);
+    // One Update line (design §3.8): the project and what was done.
+    expect(summaryToJ?.body).toBe('clamp: did 1 task: "Fix the clamp upper bound".');
     expect(await w.humanRequests(w.j, { status: "open" })).toHaveLength(0);
 
     // --- Secrets: the fresh install's git token reached no row, event or brief -------------

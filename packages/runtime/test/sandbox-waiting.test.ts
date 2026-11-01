@@ -110,10 +110,8 @@ describe("full-review tasks wait for the Docker sandbox (U-079)", () => {
     // full-review task waits.
     const release = engine.holdPulls();
     const first = await session(project.id);
-    expect(first.summary).toContain(
-      'Waiting for Docker: "Payment flow" needs a full review, which runs in the Docker sandbox, and it is not ready',
-    );
-    expect(first.summary).toContain("nothing failed and no retry was used");
+    // The result names the wait in one line (design §5); the card says what to do.
+    expect(first.summary.split("\n")[0]).toBe('Waiting for Docker: "Payment flow".');
     const afterFirst = await rt.store.task.mustGet(full.id);
     expect(afterFirst).toMatchObject({ status: "ready", attempt: 0 });
     expect((await rt.store.task.mustGet(small.id)).status).not.toBe("ready");
@@ -146,18 +144,21 @@ describe("full-review tasks wait for the Docker sandbox (U-079)", () => {
       await new Promise((r) => setTimeout(r, 10));
     expect(await notices()).toEqual([]);
 
-    // Session 3 runs it, in the container: one run of the coder, then the critic's review (the
-    // scripted model's reply is no verdict, so the critic sends it back: that retry is the
-    // review's, the first attempt it counts).
+    // Session 3 runs it, in the container: the coder's run, then the critic's review (the
+    // scripted model's reply is no verdict, so the critic sends it back, and the rework runs
+    // in the same session, design §4.3), each run in a container of its own.
     expect(await rt.store.run.forTask(full.id)).toEqual([]);
     const third = await session(project.id);
     expect(third.summary).not.toContain("Waiting for Docker");
-    const runs = await rt.store.run.forTask(full.id);
-    expect(runs.filter((r) => r.specialist === "coder")).toHaveLength(1);
+    const runs = (await rt.store.run.forTask(full.id)).filter((r) => r.specialist !== "critic");
+    // The coder first; the ladder may hand a later attempt to another specialist.
+    expect(runs.map((r) => r.specialist)).toContain("coder");
     const started = engine.callsOf("run");
-    expect(started).toHaveLength(1);
-    expect(started[0]).toContain(IMAGE);
-    expect(started[0]?.join(" ")).toContain("dst=/work");
+    expect(started.length).toBe(runs.length);
+    for (const call of started) {
+      expect(call).toContain(IMAGE);
+      expect(call.join(" ")).toContain("dst=/work");
+    }
     expect(engine.containers.size).toBe(0);
   }, 120_000);
 
@@ -182,12 +183,10 @@ describe("full-review tasks wait for the Docker sandbox (U-079)", () => {
       reason: "seed",
     });
     const r = await session(project.id);
-    expect(r.summary).toContain('Waiting for Docker: "Migrate the database" needs a full review');
-    expect(r.summary).toContain(
-      "start Docker Desktop, then Check again in Settings → Sandbox (Docker)".replace(
-        "Docker Desktop",
-        process.platform === "linux" ? "Docker" : "Docker Desktop",
-      ),
+    expect(r.summary.split("\n")[0]).toBe('Waiting for Docker: "Migrate the database".');
+    // The step is on the one card per project, not repeated in the result.
+    expect((await notices())[0]?.steps.at(-1)).toBe(
+      "Click Check again in Settings → Sandbox (Docker).",
     );
     expect(await rt.store.task.mustGet(t.id)).toMatchObject({ status: "ready", attempt: 0 });
     // One notice, for the new state.

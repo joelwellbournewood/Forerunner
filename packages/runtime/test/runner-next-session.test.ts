@@ -241,9 +241,12 @@ describe("the approved first session decides the first session (U-038)", () => {
     const r = recorder();
     const first = await start(w, r.exec);
     expect(first.status).toBe("completed");
+    // The approved order first; then the session keeps going (design §4.2) with the other
+    // ready task, by priority.
     expect(r.calls.map((c) => c.title)).toEqual([
       "Scaffold the repository",
       "Set up continuous integration",
+      "Fix the urgent typo",
     ]);
     expect(first.plan?.summary).toContain("the first session you approved with the project plan");
     // Marked as run, and the session end's own summary write keeps the mark.
@@ -252,9 +255,11 @@ describe("the approved first session decides the first session (U-038)", () => {
     };
     expect(cache.first_session?.ran_in_session).toBe(first.sessionId);
     // The next session plans as usual.
+    await w.task("Later, low", 1);
+    await w.task("Later, high", 9);
     const next = await start(w, r.exec);
     expect(next.status).toBe("completed");
-    expect(r.calls.map((c) => c.title).slice(2)).toEqual(["Fix the urgent typo"]);
+    expect(r.calls.map((c) => c.title).slice(3)).toEqual(["Later, high", "Later, low"]);
   });
 
   it("the mark survives a restart: a reopened store plans by priority", async () => {
@@ -262,26 +267,34 @@ describe("the approved first session decides the first session (U-038)", () => {
     const url = `sqlite:${join(dir, "state.db")}`;
     const clock = new SimulatedClock("2026-03-02T07:00:00Z");
     const w = await world(url, clock);
-    const { urgent } = await approvedFirstSession(w);
+    await approvedFirstSession(w);
     // The first session runs the approved tasks and is marked as run in the database.
     const r = recorder();
-    await start(w, r.exec);
+    const first = await start(w, r.exec);
     await w.store.close();
     stores.splice(stores.indexOf(w.store), 1);
     const reopened = await openStore({ url, clock });
     stores.push(reopened);
     const again: World = { ...w, store: reopened };
-    await reopened.task.insert({
-      project_id: w.project,
-      title: "Another ready task",
-      outcome: "o",
-      status: "ready",
-      priority: 1,
-      risk_tier: 0,
-    });
+    const cache = (await reopened.project.mustGet(w.project)).summary_cache as {
+      first_session?: { ran_in_session?: string };
+    };
+    expect(cache.first_session?.ran_in_session).toBe(first.sessionId);
+    for (const [title, priority] of [
+      ["Another ready task", 1],
+      ["Fix the second typo", 9],
+    ] as const)
+      await reopened.task.insert({
+        project_id: w.project,
+        title,
+        outcome: "o",
+        status: "ready",
+        priority,
+        risk_tier: 0,
+      });
     const r2 = recorder();
     await start(again, r2.exec);
-    expect(r2.calls.map((c) => c.title)).toEqual([urgent.title, "Another ready task"]);
+    expect(r2.calls.map((c) => c.title)).toEqual(["Fix the second typo", "Another ready task"]);
   });
 
   it("without an approved first session the plan is the priority order", async () => {

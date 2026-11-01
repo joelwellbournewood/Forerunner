@@ -310,7 +310,8 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
       (await w.store.message.inbox({ humanId: w.human })).filter(
         (m) => m.to_human_id === w.human && m.from_agent_id === w.alice,
       );
-    const sessionSummaries = async () => (await inbox()).filter((m) => /^Session /.test(m.body));
+    // The session's one-line Update names the project (design §3.8).
+    const sessionSummaries = async () => (await inbox()).filter((m) => /^Game: /.test(m.body));
     expect((await inbox()).map((m) => m.body)).toEqual([
       'Created the draft task "Compare the three renderers" in Game. Undo.',
     ]);
@@ -351,8 +352,7 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     const answers = await sessionSummaries();
     expect(answers).toHaveLength(1);
     expect(answers[0]).toMatchObject({ project_id: w.game, type: "info" });
-    expect(answers[0]?.body).toContain("Session completed.");
-    expect(answers[0]?.body).toContain("Done: 1.");
+    expect(answers[0]?.body).toBe('Game: did 1 task: "Compare the three renderers".');
     // The next chat turn sees it among the unread messages in its small context.
     const unread = await w.store.message.inbox({ humanId: w.human }, { unreadOnly: true });
     expect(unread.map((m) => m.id)).toContain(answers[0]?.id);

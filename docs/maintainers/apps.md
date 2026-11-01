@@ -572,6 +572,10 @@ it does not run through the command registry.
 
 ### Fake daemon
 
+Sessions in the fake carry the real view's `stopReason` and `statusText` (design §3.7): a
+started one reads "Working", `POST /sessions/:id/stop` ends it `stopped` with the stop reason
+`you`, "Stopped by you" and a `session.stopped` line that is no error, as the daemon's Stop now.
+
 `test/fake-daemon.ts` exports `createFakeDaemon(options)` (a Hono app over `test/fixtures.ts`
 with mutable state: the agents (`POST /agents/:id/rename` as the daemon answers it, U-025: 404
 unknown, 403 `forbidden` for another human's agent before the body is read, 409 `conflict`

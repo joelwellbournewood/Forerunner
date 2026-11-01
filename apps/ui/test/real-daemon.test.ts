@@ -285,6 +285,51 @@ describe("the UI client against the real daemon", () => {
     expect((await client.health()).killActive).toBe(false);
   });
 
+  it("stop on a session nothing runs (a dead daemon's): it ends, its task is ready, the next Start works (design §4.10)", async () => {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Half built page",
+      outcome: "index.html exists",
+      acceptance_criteria: ["index.html exists"],
+      risk_tier: 0,
+      status: "ready",
+      priority: 5,
+    });
+    // What a crash leaves: a running row nobody runs, its task held under a lapsed-never claim.
+    let ghost = await rt.store.session.insert({
+      agent_id: agentId,
+      project_id: projectId,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1_000_000,
+      step_cap: 10,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "planned",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+      author_agent: agentId,
+    });
+    ghost = await rt.store.session.start(ghost.id, ghost.version);
+    const claim = await rt.store.task.claim(task.id, agentId, 3_600_000);
+    expect(claim.ok).toBe(true);
+    // The session page's Stop, as the client sends it: the view says who stopped it.
+    const stopped = await client.stopSession(ghost.id);
+    expect(stopped).toMatchObject({
+      id: ghost.id,
+      status: "stopped",
+      stopReason: "you",
+      statusText: "Stopped by you",
+    });
+    expect(stopped.summary).toBe('Stopped by you. "Half built page" is ready again.');
+    const after = (await client.tasks(projectId)).find((t) => t.id === task.id);
+    expect(after?.status).toBe("ready");
+    // The agent holds no session any more: a start is not refused as "already active".
+    const started = await client.startSession({ agentId, projectId, trigger: "manual" });
+    expect(["started", "queued"]).toContain(started.result);
+  });
+
   it("dependencies: refused when unknown, changed by title from the Tasks tab, named by the start check (U-040)", async () => {
     const deps = await client.createProject({ name: "Deps", goal: "Tasks that can run" });
     const newTask = (
@@ -1056,8 +1101,9 @@ describe("the UI client against the real daemon: a task a session is running", (
     );
     expect(await statusOf(first.id)).toBe("cancelled");
     expect(await statusOf(second.id)).toBe("done");
-    expect((await client.session(sessionId)).summary).toContain(
-      'Moved by you while it ran: "Long first task" (cancelled)',
+    // The result names the work done; the person's own Cancel is not echoed (design §5.11).
+    expect((await client.session(sessionId)).summary).toBe(
+      'Did 1 task: "Second task".\nNothing left. CHF 0.00.',
     );
   });
 

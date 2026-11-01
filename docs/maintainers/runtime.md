@@ -814,6 +814,75 @@ project summary cache, sends a handoff (requires ack) to the project's peers
 session summary, handoff and spend; with a docs port it also writes the session's status
 update into the project's `docs/status.md` (below, "Project docs").
 
+**A session keeps going until nothing it can run is left (core-experience design §4, ADR
+0102).** Until 2026-11-01 the runner planned once, from the tasks ready when it started, and
+ran that fixed list: a 7-task chain took 7 Starts and every task the critic sent back waited
+for the next Start. Now the execution loop in `runner.ts` works off a queue: when the plan is
+run, `replan()` reads `readyTasks` again (with the sandbox gate) and takes the tasks that became
+ready meanwhile (their dependencies finished), the ones the critic sent back (the next attempt,
+same session, up to the ladder; `MAX_RUNS_PER_TASK_IN_SESSION` = 6 is only a guard) and the ones
+the person made ready, through the same `Planner` (so the first-session order and the handover's
+seed-only plan still apply), cut to what is left of the work budget. The session row's plan grows
+with a versioned `setPlan` ("took N more tasks as they became ready") and a `session.replanned`
+event. A task skipped for a peer, a claim, the usage limit or the sandbox is not taken again in
+the same session (`notAgain`). At autonomy 0 and 1 only the approved plan's tasks (and their
+retries) run. The loop stops when nothing runnable is left, the budget is used (the reserve
+kept), the person stops it, or the wall clock runs out. A sent-back task is counted once in
+`retried`. A run that failed with a transient error (`isTransientError`: `provider_error`,
+network, rate limit, overloaded; `TaskExecutionResult.errorCode`) is tried again once at once,
+its claim released and its attempt count unchanged (`task.retrying`).
+
+**Nothing runnable means nothing is used up (§4.7, §4.8).** An empty plan ends the session with
+the stop reason `nothing_runnable` (status `completed`): no session review, no Update, no queue
+item consumed. The next-session queue's items and the approved first session are used up only by
+work that finished: at the session's end `consumeQueue` takes the brief's items that were given
+to a task now done or in review (`notesGiven`), and `markFirstSessionRun` marks the first
+session run only for first-session tasks that finished (before, both happened at the start, so a
+session stopped after 7 s, or one that planned nothing, threw the person's brief away).
+
+**The result (`session/result.ts`, design §5).** `sessionResultLines` writes at most three
+lines, from the tasks as they stand at the end (`collectEndState`): what needs the person ("X"
+needs your decision (Inbox); "X" failed: <reason>; Waiting for Docker: "X"), what happened (Did
+N tasks: names; "X" waits for review; Merged N pull requests; Nothing could run: "X" waits on
+"Y", which failed), then how it ended, what is next and the money (Stopped by you; Left for next
+time: "X" (about CHF 0.43); this session's CHF 0.90 was used; "X" is ready to continue; N tasks
+wait on it; Nothing left; CHF 0.80). Names in quotes, up to three then "and N more", CHF, no zero
+counts, no ids. `summary_cache.last_session.outcome` (`LastSessionOutcome`: done, failed with
+reason, needsYou, leftOver, waiting with what each waits on, waitingForDocker, stopReason,
+spentChfMicro) is what the Overview and Chat should read instead of parsing text;
+`summary_cache.next_steps` is the ready tasks then the waiting ones, by title (it was the skipped
+ids, empty whenever the plan ran). The Inbox gets one line per session (`sessionUpdateLine`:
+"Quote page: did 5 tasks: …"), none for a session that ran nothing or only filed its plan; the
+spec O.9 report of what the person said follows on the next lines. `docs/status.md` gets the
+blocked tasks as they stand (needs you, failed, waiting on another task, waiting for Docker) and
+the ready tasks as next.
+
+**Stops (`session/stop-words.ts`, design §3.7, §4.9).** The kill switch's reason says who
+stopped a session: `STOP_NOW_REASON` (the session page's Stop now, `POST /sessions/:id/stop`),
+`STOP_ALL_REASON` (Stop all, `POST /kill`), `QUIT_REASON` (`POST /shutdown`). The runner turns
+the abort reason into the stop reason `you`, `stop_all` or `quit` (`personStopOf`), emits
+`session.stopped` with "Stopped by you during "X". It is ready again." instead of a
+`session.error`, and releases the task with `taskReasonForStop` ("Stopped by you", "Stopped:
+Stop all", "Forerunner was closed"); the kill switch's claim freeze in `compose.ts` uses the same
+words (it wrote "kill switch" for every stop, Quit included). The session status stays `killed`
+for these (enforcement and the handover read it); `SessionView.stopReason` and
+`SessionView.statusText` ("Working", "Done", "Stopped by you", "Interrupted: Forerunner closed",
+"Stopping after this task") are what a screen shows.
+
+**Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
+left the row `running`, its run `running` and its task held under a claim nobody renews; the
+one-session rule then refused every later start ("agent Alice already has an active session
+<uuid>") for good. `recoverInterruptedSessions` runs at compose (`opts.recoverSessions`, default
+on with the services, never in a CLI one-shot that composes beside a live daemon), after
+`intake.closeExpired`: every running or paused work session of this human's agents (not an
+intake session, not a cloud runner's, not another device's) with no live kill-switch
+registration is ended `stopped` with the stop reason `interrupted` and the summary
+"Interrupted: Forerunner closed while this session ran. "X" is ready again.", its running runs
+are closed (`killed`), the tasks its agent holds go back to ready with the reason "Forerunner
+closed while it ran", and the person gets one Update. `POST /sessions/:id/stop` on a row nothing
+in this process runs ends it the same way (`endDeadSession`, stop reason `you`). The runner's
+refusal of a second session says it in words, never with the other session's id.
+
 **The inbox before the session-end writes (spec E.4).** Step 4 of `runner.ts` starts with one
 more `recheckInbox(..., { atEnd: true })`, so a message that landed during the last task is
 delivered and read (`read_at`) before the status doc, the summary cache, the peers' handoffs,

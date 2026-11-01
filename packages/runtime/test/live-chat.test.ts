@@ -342,17 +342,17 @@ describe("what you say during a live session (spec O.9)", () => {
     expect(taskHeard?.payload).toMatchObject({ taskId: second.id, ids: [posted[0]?.id] });
     // The summary lists it; the human's message quotes it and names the task; the handoff
     // and the project's cache carry the count and the task, never the words (peers read them).
-    expect(res.summary).toContain("Heard from you during the session: 1 line.");
+    // The result (design §5) does not echo the person; the Update below says where it went.
     expect(res.summary).not.toContain(text);
     expect(res.handoff).toMatchObject({
       heard: [{ id: posted[0]?.id, source: "voice", delivered_to: second.id }],
     });
     expect(JSON.stringify(res.handoff)).not.toContain(text);
     const toHuman = (await w.store.message.inbox({ humanId: w.human })).filter(
-      (m) => m.from_agent_id === w.alice && /^Session /.test(m.body),
+      (m) => m.from_agent_id === w.alice && /^Game: /.test(m.body),
     );
     expect(toHuman).toHaveLength(1);
-    expect(toHuman[0]?.body).toContain("Heard from you during the session: 1 line.");
+    expect(toHuman[0]?.body).toContain("You said during the session:");
     expect(toHuman[0]?.body).toContain(`- (voice) "${text}" -> given to "Second task"`);
     const cache = (await w.store.project.mustGet(w.game)).summary_cache as {
       last_session: { summary: string };
@@ -596,7 +596,7 @@ describe("what you say during a live session (spec O.9)", () => {
     expect(m.delivered_at).not.toBeNull();
     expect(m.read_at).toBeNull();
     const toHuman = (await w.store.message.inbox({ humanId: w.human })).filter(
-      (x) => x.from_agent_id === w.alice && /^Session /.test(x.body),
+      (x) => x.from_agent_id === w.alice && /^Game: /.test(x.body),
     );
     expect(toHuman[0]?.body).toContain(
       '- (text) "use the new renderer" -> after the last task; the next session reads it',
