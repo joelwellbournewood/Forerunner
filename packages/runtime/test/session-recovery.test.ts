@@ -154,7 +154,19 @@ describe("a session a dead daemon left running is ended at the next start (desig
 
     // A third start of the daemon finds nothing more to recover and posts nothing more (the
     // daemon lock keeps two daemons off one home, so the second ends before the third starts).
-    for (let i = 0; i < 200 && (await rt.store.session.active(rt.agent.id)).length > 0; i++)
+    // The person stops the new session first: left alone it works through its tasks and their
+    // retries, which took longer than 5 s on Windows CI. A session that already ended is left
+    // as it is.
+    const started = JSON.parse(body) as { session?: { id?: string } | null };
+    const newSessionId = started.session?.id;
+    if (newSessionId) {
+      const stop = await app.request(`/sessions/${newSessionId}/stop`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(stop.status).toBe(200);
+    }
+    for (let i = 0; i < 1200 && (await rt.store.session.active(rt.agent.id)).length > 0; i++)
       await new Promise((r) => setTimeout(r, 25));
     expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
     const again = await compose(home, clock, true);
