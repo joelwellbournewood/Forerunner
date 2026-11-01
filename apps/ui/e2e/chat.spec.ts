@@ -15,7 +15,8 @@ test("quick chat streams a reply, confirms an action with Yes and turns a messag
   const firstReply = page.getByTestId("chat-agent").first();
   await expect(firstReply).toHaveAttribute("data-streaming", "false");
   await expect(firstReply).toContainText('Atlas: you asked "what happened last session?"');
-  await expect(firstReply).toContainText("first token 420 ms");
+  // Design §3.9: no "first token" badge under a reply.
+  await expect(firstReply).not.toContainText("first token");
 
   await input.fill("please start a session");
   await page.getByTestId("chat-send").click();

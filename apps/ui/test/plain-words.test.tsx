@@ -42,8 +42,9 @@ describe("plain words (U-074)", () => {
       },
     ];
     renderApp("/projects/proj_atlas/chat", harness);
+    // Design §3.9: what the chat can be asked, and that a change to a task is read back once.
     expect(await screen.findByTestId("chat-intro")).toHaveTextContent(
-      "A small change you ask for (a task, a note for the next session) is made at once, with Undo; a bigger one is read back first and waits for your Yes.",
+      "Ask what is going on, what failed and why, or what is left. Tell me what to change: a change to a task is read back once and waits for your Yes.",
     );
     expect(screen.getByTestId("chat-intro")).not.toHaveTextContent("need your confirmation");
     const input = screen.getByTestId("chat-input");

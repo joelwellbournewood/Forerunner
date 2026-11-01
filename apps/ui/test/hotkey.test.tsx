@@ -344,7 +344,10 @@ describe("hotkey press: the conversation and a push-to-talk turn", () => {
 
     shell.press();
     const reason = await screen.findByTestId("voice-reason");
-    expect(reason.textContent).toContain("no speech-to-text provider is configured");
+    // In plain words (U-075): what to do, never the provider's reason with module names.
+    expect(reason.textContent).toBe(
+      "Voice is not installed. Install it in Settings → Voice, or type below.",
+    );
     expect(screen.getByTestId("voice-phase").textContent).toBe("Voice unavailable");
     await waitFor(() => expect(screen.getByTestId("conversation-input")).toHaveFocus());
     expect(mic.log).toEqual([]);
@@ -365,7 +368,9 @@ describe("hotkey press: the conversation and a push-to-talk turn", () => {
     renderDesktop("/", shell.bridge, () => null, harness);
     await waitFor(() => expect(shell.listeners()).toBe(1));
     shell.press();
-    expect((await screen.findByTestId("voice-reason")).textContent).toMatch(/cannot capture audio/);
+    expect((await screen.findByTestId("voice-reason")).textContent).toBe(
+      "This window cannot use the microphone. Type below.",
+    );
     await waitFor(() => expect(screen.getByTestId("conversation-input")).toHaveFocus());
     expect(postedCalls(harness, "/voice/sessions")).toHaveLength(0);
   });

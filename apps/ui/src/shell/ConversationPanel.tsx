@@ -1,15 +1,16 @@
-import { type FormEvent, Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { streamChat } from "../api/chat-stream.ts";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router";
 import {
   ApiError,
   describeError,
   type VoiceSessionView,
   type VoiceTurnView,
 } from "../api/client.ts";
+import { Conversation } from "../components/Conversation.tsx";
 import { Dialog } from "../components/Dialog.tsx";
-import { Badge, Button, INPUT_CLASS, SegmentedControl } from "../components/ui.tsx";
+import { Badge, Button, SegmentedControl } from "../components/ui.tsx";
 import type { AudioOutput } from "../lib/speech.ts";
-import { useClient, useIdentity, useRealtime, useUiState, useUiStore } from "../store/context.tsx";
+import { useClient, useRealtime, useUiState, useUiStore } from "../store/context.tsx";
 import type { VoiceReplyMode } from "../store/store.ts";
 import type { MicCapture } from "./voice-capture.ts";
 import { useCaptureFactory } from "./voice-capture.ts";
@@ -30,8 +31,13 @@ import {
  * audio output is created and resumed synchronously when a turn starts (the Talk click, or the
  * hotkey press's render), before any await, and handed to the player; the release (Send or
  * the next press) tells the player to measure what the human hears of the reply. When voice is
- * unavailable (no provider, no model credential, no microphone) the panel says why and focuses
- * the text input, which talks to the same agent through /chat/stream.
+ * unavailable (no provider, no model credential, no microphone) the panel says so in plain
+ * words (U-075: never the provider's module or secret names) and focuses the text input.
+ *
+ * Typing is the shared `Conversation` (design §3.9): the conversation of the project on screen
+ * (a project page's), or the one outside any project elsewhere, the same lines and Yes/No card
+ * the project's Chat tab shows. Before, Talk kept its own lines, lost them on a reload, showed
+ * read-backs as plain text and acted on the header's "active" project, not the one on screen.
  *
  * The text of a voice turn shows as it comes, from the frames of the same stream the player
  * follows (`onFrame`, each frame once whatever the reconnects): the human's words as the STT
@@ -60,6 +66,13 @@ import {
  * and the turn ends when it is complete. While a reply is generated or spoken Talk stays
  * available: the press is the barge-in (in text it stops the generation, as a typed stop does).
  */
+
+/** Why voice is not there, in plain words (U-075: never module or secret names). */
+export const VOICE_NOT_INSTALLED =
+  "Voice is not installed. Install it in Settings → Voice, or type below.";
+export const VOICE_NO_MIC_WINDOW = "This window cannot use the microphone. Type below.";
+export const VOICE_MIC_FAILED = "The microphone did not start. Type below.";
+export const VOICE_DID_NOT_START = "Voice did not start. Type below.";
 
 const REPLY_OPTIONS = [
   { value: "voice", label: "Voice" },
@@ -130,15 +143,23 @@ export function ConversationPanel({
   chordLabel: string | null;
 }) {
   const client = useClient();
-  const identity = useIdentity();
-  const activeProjectId = useUiState((s) => s.activeProjectId);
+  // The project on screen (design §3.1, §3.9): Talk is about it, never a hidden active project.
+  const location = useLocation();
+  const onScreen = /^\/projects\/([^/]+)/.exec(location.pathname)?.[1];
+  const projectOnScreen = onScreen ? decodeURIComponent(onScreen) : null;
+  const projectName = useUiState((s) =>
+    projectOnScreen ? (s.projects.find((p) => p.id === projectOnScreen)?.name ?? null) : null,
+  );
+  // Spoken turns from this opening on are shown by the voice lines below, not twice.
+  const [openedAt, setOpenedAt] = useState(() => new Date().toISOString());
+  useEffect(() => {
+    if (open) setOpenedAt(new Date().toISOString());
+  }, [open]);
   const captureFactory = useCaptureFactory();
   const realtime = useRealtime();
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [reason, setReason] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   // What the screen reader announces (finished sentences, final words, turn ends), newest last.
   const [announced, setAnnounced] = useState<Array<{ id: string; text: string }>>([]);
   const announce = useCallback((text: string) => {
@@ -460,7 +481,7 @@ export function ConversationPanel({
     setReason(null);
     const capture = captureFactory();
     if (!capture) {
-      unavailable("voice is unavailable: this window cannot capture audio. Type instead.");
+      unavailable(VOICE_NO_MIC_WINDOW);
       return;
     }
     /** The session and its player: the live one, or a new one after a status read. */
@@ -472,13 +493,13 @@ export function ConversationPanel({
         const status = await client.voiceStatus();
         if (closed()) return null;
         if (!status.available) {
-          unavailable(`voice is unavailable: ${status.reason}. Type instead.`);
+          unavailable(VOICE_NOT_INSTALLED);
           return null;
         }
         session = await client.startVoiceSession({
           mode: "push_to_talk",
           replyMode: replyRef.current,
-          ...(activeProjectId ? { projectId: activeProjectId } : {}),
+          ...(projectOnScreen ? { projectId: projectOnScreen } : {}),
         });
         if (closed()) {
           // The panel closed while the session started: nobody will use it.
@@ -564,10 +585,10 @@ export function ConversationPanel({
               () => {},
             );
         });
-      } catch (error) {
+      } catch (_error) {
         if (closed()) return;
         await client.voicePress(id, false).catch(() => {});
-        unavailable(`the microphone is unavailable (${describeError(error)}). Type instead.`);
+        unavailable(VOICE_MIC_FAILED);
         return;
       }
       if (closed()) {
@@ -577,12 +598,12 @@ export function ConversationPanel({
       }
       captureRef.current = capture;
       setPhaseBoth("listening");
-    } catch (error) {
+    } catch (_error) {
       if (closed()) return;
-      unavailable(`voice is unavailable: ${describeError(error)}. Type instead.`);
+      unavailable(VOICE_DID_NOT_START);
     }
   }, [
-    activeProjectId,
+    projectOnScreen,
     captureFactory,
     client,
     onFrame,
@@ -657,47 +678,6 @@ export function ConversationPanel({
   endVoiceRef.current = endVoice;
   useEffect(() => () => endVoiceRef.current(), []);
 
-  const send = async (text: string) => {
-    if (!identity || busy || !text.trim()) return;
-    const agentLine = nextId();
-    setLines((prev) => [
-      ...prev,
-      { id: nextId(), role: "human", text: text.trim(), via: "text" },
-      { id: agentLine, role: "agent", text: "", via: "text" },
-    ]);
-    setBusy(true);
-    try {
-      const reply = await streamChat(
-        client,
-        {
-          humanId: identity.humanId,
-          agentId: identity.agentId,
-          ...(activeProjectId ? { projectId: activeProjectId } : {}),
-          text: text.trim(),
-          source: "text",
-        },
-        {
-          onToken: (_token, soFar) =>
-            setLines((prev) => prev.map((l) => (l.id === agentLine ? { ...l, text: soFar } : l))),
-        },
-      );
-      setLines((prev) => prev.map((l) => (l.id === agentLine ? { ...l, text: reply.reply } : l)));
-      announce(`Agent: ${reply.reply}`);
-    } catch (error) {
-      const message = describeError(error);
-      setLines((prev) => prev.map((l) => (l.id === agentLine ? { ...l, error: message } : l)));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    const text = input;
-    setInput("");
-    void send(text);
-  };
-
   const phaseText: Record<VoicePhase, string> = {
     idle: chordLabel ? `Press ${chordLabel} or Talk to speak` : "Press Talk to speak",
     starting: "Starting voice…",
@@ -754,14 +734,13 @@ export function ConversationPanel({
           </output>
         ) : null}
         <div
-          className="max-h-80 min-h-[6rem] space-y-1 overflow-auto rounded border border-neutral-200 p-2 dark:border-neutral-800"
+          className={
+            lines.length > 0
+              ? "max-h-60 space-y-1 overflow-auto rounded border border-neutral-200 p-2 dark:border-neutral-800"
+              : "hidden"
+          }
           data-testid="conversation-lines"
         >
-          {lines.length === 0 ? (
-            <p className="text-xs text-neutral-500">
-              Speak or type: the same agent answers, with the same approval rules.
-            </p>
-          ) : null}
           {lines.map((l) => (
             <p
               key={l.id}
@@ -786,20 +765,19 @@ export function ConversationPanel({
             <p key={a.id}>{a.text}</p>
           ))}
         </div>
-        <form onSubmit={submit} className="flex gap-2">
-          <input
-            ref={inputRef}
-            className={INPUT_CLASS}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type to your agent"
-            aria-label="Message"
-            data-testid="conversation-input"
+        <p className="text-xs text-neutral-500" data-testid="conversation-about">
+          {projectOnScreen
+            ? `About ${projectName ?? "this project"}: the same conversation as its Chat tab.`
+            : "Not about one project. Open a project to talk about it."}
+        </p>
+        <div className="h-80">
+          <Conversation
+            projectId={projectOnScreen}
+            testIds="conversation"
+            inputRef={inputRef}
+            hideVoiceSince={openedAt}
           />
-          <Button type="submit" disabled={busy || !identity || !input.trim()}>
-            Send text
-          </Button>
-        </form>
+        </div>
       </div>
     </Dialog>
   );
