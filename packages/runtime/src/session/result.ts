@@ -1,5 +1,6 @@
 import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
+import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import { namesOf } from "./recovery.ts";
 
 /**
@@ -115,7 +116,9 @@ export function sessionResultLines(f: ResultFacts): string[] {
     );
   if (o.failed.length === 1 && o.failed[0]) {
     const f0 = o.failed[0];
-    asks.push(`"${f0.title}" failed: ${lowerFirst(noDot(f0.reason)) || "no reason given"}.`);
+    // The stored reason may carry a run id or "(s)" (writing rules §5: neither is shown).
+    const reason = plainPlurals(withoutIds(f0.reason)).replace(/\s*\(\s*\)/g, "");
+    asks.push(`"${f0.title}" failed: ${lowerFirst(noDot(reason)) || "no reason given"}.`);
   } else if (o.failed.length > 1) asks.push(`${namesOf(titlesOf(o.failed))} failed.`);
   if (o.waitingForDocker.length)
     asks.push(`Waiting for Docker: ${namesOf(titlesOf(o.waitingForDocker))}.`);

@@ -4250,6 +4250,18 @@ with plurals as the number says; the summary too. Before, the header read "17 op
 for three findings filed on four attempts, those of a task accepted since included, and the
 evidence listed the prompt hash and the run id.
 
+### The writing rules, checked (`test/writing-rules.test.ts`)
+
+Design §5's rules are checked mechanically on what the system writes from fixtures: the
+session log's person lines (`describeEvent`), a session's result (`sessionResultLines`), the
+Inbox's cards (`requestWords`: a title, at most two sentences, buttons of at most three words,
+consequences within 100) and the notifications (title within 60, body within 140). `violations`
+finds a UUID, a raw state, an event type name, "tier"/"ladder"/"verdict"/"ceiling"/"rung", USD
+or "$", a "(s)" plural, markdown, JSON, the stand-in tag and notification channels, and a text
+over its length; its last case plants each violation and expects it found. A new text a person
+reads gets a fixture here. It found the session result quoting a failed run's id
+(`sessionResultLines` now reads the reason through `withoutIds` and `plainPlurals`).
+
 ### Costs view (design §5 rule 3)
 
 `costView` (`GET /costs`) keeps the ledger's sums and adds what a person reads (`costFacts`): a
