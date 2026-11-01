@@ -166,6 +166,31 @@ describe("project status sentence (design §2)", () => {
     expect(c.progress).toEqual({ done: 1, total: 3 });
   });
 
+  it("the session that drafts the plan is not 'working': the project reads Drafting the plan… (bench walk)", async () => {
+    await store.session.insert({
+      agent_id: agent,
+      project_id: project,
+      trigger: "manual",
+      plan: { intake: { project_id: project, deadline: "2026-11-01T10:00:00Z" } },
+      budget_cap_usd_micro: 1_000_000,
+      step_cap: 4,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "running",
+      summary: "intake: Quote page",
+      reason: "intake of Quote page",
+      handoff: {},
+      runner: "pc",
+      author_agent: agent,
+    });
+    const c = await card({
+      sandboxReady: null,
+      plan: async () => ({ state: "drafting", error: null }),
+    });
+    expect(c.working).toBeNull();
+    expect(c.statusLine).toEqual({ kind: "planning", text: "Drafting the plan…", action: null });
+  });
+
   it("3. a failed task that others wait on: 'Stuck: \"X\" failed; 2 tasks wait on it'", async () => {
     const failed = await task("Style the page", "failed");
     await task("Check every file loads", "ready", { depends_on: [failed] });

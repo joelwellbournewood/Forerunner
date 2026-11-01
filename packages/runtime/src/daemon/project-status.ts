@@ -226,6 +226,12 @@ export function overviewNext(
   return lines;
 }
 
+/** The session row the intake drafts a plan in (`session/intake.ts`: `plan.intake`). */
+export function isIntakeSession(s: Pick<SessionRow, "plan">): boolean {
+  const plan = s.plan as unknown;
+  return !!plan && typeof plan === "object" && !Array.isArray(plan) && "intake" in plan;
+}
+
 /** Session states in which a session is working (or about to). */
 export const WORKING_SESSION = new Set(["planned", "running", "paused"]);
 
@@ -245,8 +251,11 @@ export async function workingOn(
         limit: 5,
       })),
     );
+  // The plan from the brief is drafted in a session row of its own (`plan.intake`): that is
+  // "Drafting the plan…", not work on the project's tasks (bench walk: the header said "Alice is
+  // working on Quote page" with Stop all while the plan was being drafted).
   const s = rows
-    .filter((r) => r.summary !== "conversation")
+    .filter((r) => r.summary !== "conversation" && !isIntakeSession(r))
     .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
   if (!s) return null;
   const agentName = (await store.agent.get(s.agent_id))?.name ?? null;
