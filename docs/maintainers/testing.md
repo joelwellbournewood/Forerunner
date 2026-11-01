@@ -2424,7 +2424,13 @@ screenshots and visible text, `api`, problems from the console and the network).
 failure-injection variables and where everything lands are in `scripts/bench/README.md`; the
 smoke journey is `scripts/bench/journeys/smoke.cjs` (after Start it clicks the dialog's "Open the
 session", since the Start dialog keeps the person on the project page; one Start runs the whole
-approved plan). `scripts/bench/journeys/session-engine.cjs
+approved plan). Its checks (`journeys/smoke-checks.cjs`, tested in `scripts/bench-scripts.test.ts`)
+look at structure and states, so the same journey runs on the real model: the live run of
+2026-11-01 passed 4 of 14 checks and every failure was the bench's (the stand-in's task titles,
+file names and "[stand-in model]" reply, no Try again after a failed plan, "every planned task
+is done" passed on 0 of 0, "plan card missing" said the plan waited in the Inbox when the page
+said planning failed). Now a failed plan is asked about in the chat and tried again up to twice,
+each failure a finding with what the project page said. `scripts/bench/journeys/session-engine.cjs
 <bench> <label>` walks the session engine's acceptance (core-experience design §4): a 7-task chain
 (`FORERUNNER_BENCH_PLAN=chain`) started once from the Start dialog, then a hard daemon restart
 while a task runs, the session page after it and the next Start; its checks and the session

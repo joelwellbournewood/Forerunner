@@ -1,10 +1,20 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
-// @ts-expect-error: a plain .mjs script without types
+import {
+  agentsDone,
+  allDone,
+  pageLinks,
+  planCardTasks,
+  replyNamesTask,
+  titlesMissing,
+  workFiles,
+  // @ts-expect-error plain JS module
+} from "./bench/journeys/smoke-checks.cjs";
+// @ts-expect-error plain JS module
 import { daemonEnv, liveKey } from "./bench/lib.mjs";
 
 /**
@@ -92,7 +102,10 @@ describe("bench: the daemon's environment and a live start", () => {
   });
 
   const withoutKeys = (): NodeJS.ProcessEnv => {
-    const env = { ...process.env, FRBENCH_ROOT: mkdtempSync(join(tmpdir(), "fr-bench-root-")) };
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      FRBENCH_ROOT: mkdtempSync(join(tmpdir(), "fr-bench-root-")),
+    };
     delete env.ANTHROPIC_API_KEY;
     delete env.FORERUNNER_ANTHROPIC_KEY;
     return env;
@@ -130,4 +143,121 @@ describe("bench: the daemon's environment and a live start", () => {
     expect(r.stderr).toContain("the daemon exited during its start");
     expect(r.stderr).toContain("needs ANTHROPIC_API_KEY");
   }, 120_000);
+});
+
+/**
+ * The smoke journey's checks hold for a real model (the live run of 2026-11-01: 4 of 14 checks
+ * passed, and the failures were the bench's: it looked for the stand-in's task titles, file
+ * names and "[stand-in model]" in the chat reply, and passed "every planned task is done" on 0
+ * of 0 tasks). These are what the live plan, files and reply looked like.
+ */
+describe("bench: the smoke journey's checks on structure and states", () => {
+  type T = {
+    id: string;
+    title: string;
+    status: string;
+    dependsOn?: string[];
+    display?: { key: string; label: string };
+  };
+  const done = { key: "done", label: "Done" };
+  const LIVE: T[] = [
+    { id: "a", title: "Build the quote page", status: "done", display: done },
+    {
+      id: "b",
+      title: "Test the pick logic and page rendering",
+      status: "done",
+      dependsOn: ["a"],
+      display: done,
+    },
+    {
+      id: "c",
+      title: "Human decisions: hosting, repository, quote source",
+      status: "needs_human",
+      display: { key: "answer", label: "Needs your answer" },
+    },
+    {
+      id: "d",
+      title: "Publish the page and write the runbook",
+      status: "ready",
+      dependsOn: ["c"],
+      display: { key: "waiting", label: 'Waiting for "Human decisions: hosting, repository,…"' },
+    },
+  ];
+
+  it("every planned task is done fails on 0 of 0 tasks, and says how many", () => {
+    expect(allDone([])).toEqual({ ok: false, detail: "0/0 done" });
+    expect(allDone(LIVE).ok).toBe(false);
+    expect(allDone(LIVE.slice(0, 2))).toEqual({ ok: true, detail: "2/2 done" });
+  });
+
+  it("the agents' work is done when the rest waits on the person, also through what it waits for", () => {
+    const r = agentsDone(LIVE);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("2/4 done; waiting on you or Docker:");
+    expect(r.detail).toContain('"Publish the page and write the runbook"');
+    expect(agentsDone([]).ok).toBe(false);
+    // A ready task nobody holds is not done work.
+    const ready = { key: "ready", label: "Ready" };
+    const left: T[] = [
+      ...LIVE.slice(0, 2),
+      { id: "e", title: "Write the README", status: "ready", display: ready },
+    ];
+    expect(agentsDone(left).ok).toBe(false);
+    expect(agentsDone(left).detail).toContain('not done: "Write the README": Ready');
+  });
+
+  it("the plan card's task count and titles, whatever the titles are", () => {
+    const card = [
+      'Plan for "Quote page": 4 tasks',
+      "Build the quote page · coder · about CHF 0.64",
+      "Test the pick logic and page rendering · tester",
+      "Human decisions: hosting, repository, quote source · you",
+      "Publish the page and write the runbook · ops-deploy · Needs Docker",
+    ].join("\n");
+    expect(planCardTasks(card, "Quote page")).toBe(4);
+    expect(planCardTasks('Plan for "Quote page": 1 task', "Quote page")).toBe(1);
+    expect(planCardTasks("Nothing waits on you.", "Quote page")).toBeNull();
+    expect(
+      titlesMissing(
+        card,
+        LIVE.map((t) => t.title),
+      ),
+    ).toEqual([]);
+    expect(titlesMissing(card, ["Write the FAQ"])).toEqual(["Write the FAQ"]);
+  });
+
+  it("a chat reply names a task by its title, as a real reply or the stand-in's does", () => {
+    const titles = LIVE.map((t) => t.title);
+    const real =
+      'The last session did "Build the quote page" and "Test the pick logic and page rendering"; "Human decisions" needs your answers.';
+    expect(replyNamesTask(real, titles)).toBe("Build the quote page");
+    expect(replyNamesTask("[stand-in model] I was given a task list.", titles)).toBeNull();
+    expect(replyNamesTask('First task: "Build the quote page": Done.', titles)).toBe(
+      "Build the quote page",
+    );
+  });
+
+  it("the files the work wrote and what the page links, whatever their names", () => {
+    const files = [
+      ".git/HEAD",
+      ".forerunner/project.json",
+      "docs/overview.md",
+      "index.html",
+      "style.css",
+      "quotes.js",
+      "app.js",
+      "test/pick.test.js",
+    ];
+    const written = workFiles(files);
+    expect(written).toEqual([
+      "index.html",
+      "style.css",
+      "quotes.js",
+      "app.js",
+      "test/pick.test.js",
+    ]);
+    const html =
+      '<link rel="stylesheet" href="style.css"><script src="quotes.js"></script><script src="app.js"></script>';
+    expect(pageLinks(html, written)).toEqual({ css: ["style.css"], js: ["quotes.js", "app.js"] });
+  });
 });
