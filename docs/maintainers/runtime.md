@@ -1554,7 +1554,14 @@ calibrate [--force]`, `fr jobs handover <project> [--force]`, `fr jobs reports` 
   forced second run on one day is the newest; none: "this run is the baseline"), writes a `critic.calibration` audit row and raises a `critic_calibration`
   notification naming both rates, the gate and the drift. A report that started in this local
   month makes the run a skip (`already_ran`) unless forced: the second line of the once-a-month rule
-  after the scheduler's fired keys.
+  after the scheduler's fired keys. The run's session row and token are the **critic agent's**
+  (`criticAgentId`), never the principal's (design §4.11, ADR 0102): a running calibration row
+  of the principal held its one-session rule, so every Start on the 1st of the month answered
+  "already has an active session". Without a model (`modelAvailable`, the daemon passes
+  `provider !== null`) the run is skipped (`no_model`) before anything is written; before, an
+  install with no key ran it and failed every month. A monthly schedule first seen on its due
+  day or after it (a fresh install, a job just switched on) waits for the next month
+  (`Scheduler.tick`), so nothing monthly runs on an install's first day.
 - Handover test (`handover.ts`, `handover-seed.ts`, P.15): off until a project's
   `settings.handover.enabled` is true (that flag is how the install names its own Forerunner
   project; any project can carry it); day 1 at 07:00 local, `budget_usd` default 5, `seed`

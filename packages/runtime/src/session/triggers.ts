@@ -315,18 +315,14 @@ export class Scheduler {
         const due = lp.day > day || (lp.day === day && timePassed);
         const last = this.fired.get(s.id);
         if (last === undefined) {
-          // First sight of the schedule (a new install, a job just switched on). After its day
-          // this month: wait for the next month rather than run (and spend) at once; `fr jobs`
-          // runs it by hand. Before its day, or on it: remember the sighting ("" is "seen,
-          // never fired"), so a daemon that is then down on the day catches up afterwards.
-          if (lp.day > day) {
-            this.fired.set(s.id, lp.monthKey);
-            continue;
-          }
-          if (!due) {
-            this.fired.set(s.id, "");
-            continue;
-          }
+          // First sight of the schedule (a new install, a job just switched on). On its day or
+          // after it this month: wait for the next month rather than run (and spend) at once,
+          // and never on the day an install first sees it (ADR 0102: the calibration on a fresh
+          // install's first day held the person's agent); `fr jobs` runs it by hand. Before its
+          // day: remember the sighting ("" is "seen, never fired"), so a daemon that is then
+          // down on the day catches up afterwards.
+          this.fired.set(s.id, lp.day >= day ? lp.monthKey : "");
+          continue;
         }
         if (due && last !== lp.monthKey) {
           this.fired.set(s.id, lp.monthKey);

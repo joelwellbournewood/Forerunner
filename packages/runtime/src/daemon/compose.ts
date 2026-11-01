@@ -2690,7 +2690,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     notifier,
     humanId: human.id,
     agentId: agent.id,
+    // It runs as the critic agent (CalibrationJob), and only with a model to run it (ADR 0102).
     criticAgentId: criticAgent.id,
+    modelAvailable: () => provider !== null,
     settings: async () => calibrationSettingsOf((await store.human.mustGet(human.id)).notify_prefs),
     // The once-a-month check is the human's local month, as the schedule's (ADR 0060).
     timezone: async () => (await store.human.mustGet(human.id)).timezone,

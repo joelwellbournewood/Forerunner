@@ -194,14 +194,16 @@ describe("monthly critic calibration job (H.7)", () => {
       expect(n1?.body).toContain("fake-sonnet");
       // The run has a session row (the budget the hooks enforced) and an audit row.
       const session = await w.store.session.mustGet(first.sessionId as string);
+      // The run is the critic agent's, never the person's agent (design §4.11, ADR 0102): a
+      // calibration row of the principal held its one-session rule and refused every Start.
       expect(session).toMatchObject({
-        agent_id: w.alice,
+        agent_id: w.criticAgent,
         trigger: "schedule",
         status: "completed",
         budget_cap_usd_micro: 2_000_000,
         // Created with its plan, so the row names the reason and the agent (B.5).
         reason: "critic calibration over 4 eval task(s)",
-        author_agent: w.alice,
+        author_agent: w.criticAgent,
         author_human: null,
       });
       expect(session.spent_usd_micro).toBeGreaterThan(0);
@@ -372,6 +374,40 @@ describe("monthly critic calibration job (H.7)", () => {
       });
       // A second run the same month is not blocked by the failure (nothing was written).
       expect((await job.run()).status).toBe("failed");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("without a working model it is skipped: no session row, no critic call, no failure notice (ADR 0102)", async () => {
+    const w = await loopWorld({ replies: [closingReply()] });
+    const outDir = tempDir();
+    const notifier = new FakeNotifier();
+    try {
+      const job = new CalibrationJob({
+        store: w.store,
+        clock: w.clock,
+        tokens: w.tokens,
+        critic: w.critic.service,
+        registry: REGISTRY,
+        evals: {
+          runEvalSet,
+          expectedOutputDriver,
+          loadEvalSet: () => [evalTask(1)],
+        },
+        outDir,
+        notifier,
+        humanId: w.human,
+        agentId: w.alice,
+        criticAgentId: w.criticAgent,
+        modelAvailable: () => false,
+      });
+      const r = await job.run();
+      expect(r).toMatchObject({ status: "skipped", reason: "no_model", sessionId: null });
+      expect(await w.store.session.list({ agent_id: w.criticAgent } as never)).toEqual([]);
+      expect(await w.store.session.active(w.alice)).toEqual([]);
+      expect(notifier.sent).toEqual([]);
+      expect(readdirSync(outDir)).toEqual([]);
     } finally {
       await w.close();
     }
