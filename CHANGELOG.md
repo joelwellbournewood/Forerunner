@@ -58,7 +58,8 @@ Problems and their status, released or not, are tracked in
   where git knows neither your name nor your address; they are made as "Forerunner" unless
   you set your own (U-037). Leaving the setup assistant through the sidebar no longer sends
   you back to its first step (U-049). A GitHub token you replace in the app is used by every
-  push and clone at once, not only after a restart (U-082).
+  push and clone at once, not only after a restart (U-082). Tasks no longer fail at their start
+  while another pull request (such as the project's docs one) is open on GitHub (U-083).
 - Inbox cards and buttons that did nothing or the wrong thing: Approve on a review from the
   phone (U-027), the rebase conflict and merge cards (U-028), a yes to a change from Chat on a
   normal install (U-029), cards left open after deciding in Extensions or on Updates (U-030,

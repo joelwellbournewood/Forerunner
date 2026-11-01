@@ -38,7 +38,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-082 are open; U-036 is won't fix.
+- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-084 are open; U-036 is won't fix.
 
 ## Open and fixed, not released
 
@@ -110,6 +110,8 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-080 | 2026-10-31, owner | A cancelled task cannot be brought back. The owner's 1.0.4 project held "Confirm stack, hosting and repository with the human", cancelled, with a critic review that "needs you": nowhere to answer its questions, and the tasks after it never start. | A **Reopen** button on every cancelled task in the Tasks tab; a reopened question task turns into an Inbox card with its questions. Until then: a new task with the same kind of title, and **Depends on…** on the tasks that waited. | open |
 | U-081 | 2026-10-31, owner | GitHub access is one fixed set: the assistant pre-fills one token, the guide says never to give admin rights and the check warns about them, yet creating a repository for you (U-037) needs exactly that; nothing says that CI files need the Workflows permission or that the Projects mirror cannot work with a fine-grained token on a personal account. | You choose how much access to give, from read-only to full, each level with what it allows and what it risks; every feature works with what the token allows and says which permission it lacks. | open |
 | U-082 | 2026-10-31, owner (test build) | After replacing the GitHub token in the setup assistant, **Create a repository** made the repository under the new token's account, then failed: "pushing the project's folder to it failed … Permission … denied to Afanc", the previous token's owner. Every push, clone and fetch kept using the old token until the app was restarted. | Every git step reads the token when it runs, as the GitHub API calls already did (U-049). Until the next build: delete the empty repository on GitHub, Quit from the tray, open the app, Create a repository again. | open (fix committed; fixed once CI is green and the owner has tried it) |
+| U-083 | 2026-11-01, owner (test build) | With the project's docs pull request open on GitHub, every task fails at once: "git checkout -B fr/… failed: 'origin/fr/…' is not a commit". | The lookup of a task's own pull request asks GitHub in the form it reads (`owner:branch`) and keeps only that branch's; the fake GitHub in the tests answers as GitHub does. Until the next build: merge or close the open pull request before a session. | open (fix committed; fixed once CI is green and the owner has tried it) |
+| U-084 | 2026-11-01, owner (test build) | Project Chat cannot see the project's tasks or change what a task depends on ("I don't have the task ID or title for the cancelled bottleneck task in my context"), and **Make this a task** under that reply made a task whose title is the reply; a session ran it and failed. | Chat gets the project's tasks (titles, statuses, what waits on what) and a command to change a task's dependencies, with the usual read-back; **Make this a task** is offered on your own messages only, or says it makes a task of the agent's text. | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -321,6 +323,53 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   registry, routes, UI, `real-daemon.test.ts`, Playwright.
 - **Check in the app:** Extensions → Add an entry → its permissions are shown; Confirm enables
   it and nothing appears in the Inbox; Cancel adds nothing.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
+
+### U-084 Project Chat cannot see or unblock the tasks
+
+- **Found:** 2026-11-01, by the owner: the project was stuck behind a cancelled task, Chat
+  answered "I don't have the task ID or title for the cancelled bottleneck task in my context",
+  and a task titled with that reply ("I don't have the task ID or title for the cancelled
+  bottleneck task in my conte…") was then made (most likely with **Make this a task** under the
+  reply, which opens the new task dialog with the message's text) and run by a coder, and failed.
+- **What happens:**
+  - The chat model gets the project's summary, a docs search and lessons, not its tasks, so it
+    cannot say what blocks the project or name the task to change.
+  - The command set has `task.create` and `task.transition`, no dependency change, so Chat
+    cannot do what the Tasks tab's **Depends on…** does.
+  - **Make this a task** is shown under the agent's replies too, and a reply is rarely a task.
+- **Action (proposal):** Chat gets the project's tasks (titles, statuses, what waits on what,
+  what is stuck); a `task.dependencies` command changes what a task waits on, read back first
+  like every bigger change; **Make this a task** is offered on the person's own messages, and on
+  a reply only as "Make a task from this reply" with the dialog open for editing.
+- **Check in the app:** in a stuck project's Chat ask "what is blocking this project?": the
+  answer names the cancelled task and the chain; "make Create the repository and static site
+  scaffold stop waiting on Confirm stack, hosting and repository with the human" is read back
+  and, after Yes, the task runs in the next session.
+- **Status:** open.
+
+### U-083 Every task fails at its start while another pull request is open
+
+- **Found:** 2026-11-01, by the owner's first session on the new repository: "Finished task:
+  failed … git checkout -B fr/01a19457-… failed: fatal: 'origin/fr/01a19457-…' is not a commit",
+  then the session updated the project's docs on pull request #1.
+- **Cause:** before a task branches, the PR executor (and the project docs and the intake's
+  docs push) looks for "the open pull request of this branch" with `GET /pulls?head=<branch>`.
+  GitHub reads `head` only as `owner:branch` and, for a bare branch, returned every open pull
+  request: the docs pull request was taken for the task's, and the task started from
+  `origin/<its branch>`, which did not exist. The fake GitHub host in the tests matched a bare
+  branch, and the PR executor's own tests use the in-memory host, so no test saw it.
+- **Fix:** `GitHubHost.listPullRequests` sends `owner:branch` and keeps only that branch's pull
+  requests; the fake host answers a bare branch as GitHub did (every open pull request), so a
+  caller that forgets the owner fails in the tests too (`docs/maintainers/testing.md`).
+- **Tests:** `capabilities/test/github-pulls-head.test.ts` (a branch without a pull request has
+  none while another is open; a branch with one gets only its own) and the daemon-level case in
+  `runtime/test/github-token-replaced.test.ts` (a task runs on its own new branch while the docs
+  pull request is open). Both failed before the fix.
+- **Check in the app:** with a pull request open on the project's repository (the docs one is
+  enough), start a session: its tasks run, each on its own branch, and open their own pull
+  requests.
+- **Until the next build:** merge or close the open pull request on GitHub before a session.
 - **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
 ### U-082 A replaced GitHub token was not used by git until a restart
