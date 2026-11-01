@@ -104,7 +104,10 @@ describe("steering by chat (design §3.9)", () => {
     expect((await rt.store.task.mustGet(faq.id)).depends_on).toEqual([readme.id]);
     // "make X wait for Y" adds to what X waits for; it never drops a dependency.
     const style = await task("Style the page");
-    await say("make the FAQ wait for the style task");
+    const also = await say("make the FAQ wait for the style task");
+    expect(also.pendingConfirmation?.readback).toBe(
+      'Make "Write the FAQ" also wait for "Style the page"?',
+    );
     await say("yes");
     const deps = (await rt.store.task.mustGet(faq.id)).depends_on;
     expect(await Promise.all(deps.map(titleOf))).toEqual(["Write the README", "Style the page"]);

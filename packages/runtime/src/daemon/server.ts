@@ -1801,6 +1801,26 @@ export function createDaemonApp(
     // The change still waiting for a yes: the newest read-back whose card the registry holds.
     const lastAsked = [...turns].reverse().find((t) => t.reply?.pendingId)?.reply?.pendingId;
     const live = lastAsked ? rt.commands.pendingCard(lastAsked) : null;
+    // What became of each read-back: its request row says whether it was answered and how.
+    const cardStates = new Map<string, "waiting" | "yes" | "no" | "expired">();
+    for (const t of turns) {
+      const id = t.reply?.pendingId;
+      if (!id || cardStates.has(id)) continue;
+      const row = await rt.store.humanRequest.get(id);
+      const verdict = (row?.answer as { verdict?: unknown } | null | undefined)?.verdict;
+      cardStates.set(
+        id,
+        live && id === lastAsked
+          ? "waiting"
+          : row?.status === "answered"
+            ? verdict === "declined"
+              ? "no"
+              : verdict === "refused"
+                ? "expired"
+                : "yes"
+            : "expired",
+      );
+    }
     const undoable = new Map<string, boolean>();
     for (const t of turns)
       for (const a of t.reply?.actions ?? [])
@@ -1833,6 +1853,7 @@ export function createDaemonApp(
                 notice: r.notice,
                 readback: r.readback ?? (r.pendingId ? text : null),
                 waiting: !!live && r.pendingId === lastAsked,
+                card: r.pendingId ? (cardStates.get(r.pendingId) ?? "expired") : null,
               }
             : null,
         };

@@ -1043,6 +1043,29 @@ function dependenciesSentence(title: string, titles: readonly string[]): string 
     : `${quote(title)} waits for no other task now.`;
 }
 
+/**
+ * The read-back of a change to what a task waits for (design §3.9): 'Make "Write the FAQ" wait
+ * for "Write the README"?', or with tasks added to some it waits for already, 'Make "X" also
+ * wait for "Y"?' (only the new ones named).
+ */
+async function dependenciesAsk(
+  ctx: CommandContext,
+  task: TaskRow,
+  params: Pick<TaskDependenciesParams, "depends_on" | "add">,
+  titles: readonly string[],
+): Promise<string> {
+  if (!params.depends_on && task.depends_on.length && params.add?.length) {
+    const added = (await resolveDependencies(ctx, task.project_id, params.add)).filter(
+      (id) => !task.depends_on.includes(id),
+    );
+    if (added.length)
+      return `Make ${quote(task.title)} also wait for ${namesList(await titlesOf(ctx, added))}?`;
+  }
+  return titles.length
+    ? `Make ${quote(task.title)} wait for ${namesList(titles)}?`
+    : `Let ${quote(task.title)} run without waiting for another task?`;
+}
+
 /** What the task should wait for: the whole list given, or what it waits for now plus `add`. */
 async function wantedDependencies(
   ctx: CommandContext,
@@ -1085,9 +1108,7 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-      ask: titles.length
-        ? `Make ${quote(task.title)} wait for ${namesList(titles)}?`
-        : `Let ${quote(task.title)} run without waiting for another task?`,
+      ask: await dependenciesAsk(ctx, task, params, titles),
     });
   },
   async run(params, ctx) {

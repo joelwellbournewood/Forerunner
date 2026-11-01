@@ -2290,8 +2290,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         notice: false,
         readback,
         waiting: !!reply.pendingConfirmation,
+        card: reply.pendingConfirmation ? "waiting" : null,
       },
     });
+    // A yes or a no answers the card read back before it.
+    const said = body.text.trim().toLowerCase();
+    if (said === "yes" || said === "no")
+      for (const t of turns.slice(0, -1)) if (t.reply?.card === "waiting") t.reply.card = said;
     // One card waits per conversation: an earlier one is no longer waiting.
     if (reply.pendingConfirmation)
       for (const t of turns.slice(0, -1)) if (t.reply) t.reply.waiting = false;
@@ -2308,6 +2313,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               t.reply.waiting &&
               !!state.pendingConfirmation &&
               t.reply.readback === state.pendingConfirmation.readback,
+            card:
+              t.reply.card === "waiting" &&
+              !(
+                state.pendingConfirmation && t.reply.readback === state.pendingConfirmation.readback
+              )
+                ? "expired"
+                : (t.reply.card ?? null),
             actions: t.reply.actions.map((a) => {
               const change = a.changeId ? state.changes.find((ch) => ch.id === a.changeId) : null;
               return { ...a, canUndo: change ? change.undoState === "undoable" : a.canUndo };

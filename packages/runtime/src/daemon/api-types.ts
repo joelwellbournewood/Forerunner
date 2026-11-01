@@ -633,6 +633,11 @@ export const ConversationTurnView = z.object({
       readback: z.string().nullable(),
       /** That change still waits for the yes (it is `ConversationView.waiting`). */
       waiting: z.boolean(),
+      /**
+       * What became of the read-back: still waiting, answered yes or no, or not answered in time
+       * (expired, or dropped for a newer change); null when the reply read back none.
+       */
+      card: z.enum(["waiting", "yes", "no", "expired"]).nullable().optional(),
     })
     .nullable(),
 });

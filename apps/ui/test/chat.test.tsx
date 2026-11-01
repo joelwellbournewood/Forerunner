@@ -61,6 +61,8 @@ describe("Quick chat", () => {
     expect(harness.daemon.state.tasks.find((t) => t.title === "write the README")?.status).toBe(
       "ready",
     );
+    // A command that acted is no line to make a task of (design §3.9).
+    expect(within(screen.getByTestId("chat-human")).queryByTestId("make-task")).toBeNull();
 
     await user.type(input, "What should we do first?");
     await user.click(screen.getByTestId("chat-send"));
@@ -102,6 +104,8 @@ describe("Quick chat", () => {
     expect(agents[1]).toHaveTextContent("Confirmed. Starting the session now.");
     // No raw command chip ("session_start: ...", "task.create: ...").
     expect(agents[1]).not.toHaveTextContent(/session_start|session\.start:/);
+    // The answered read-back says what became of it.
+    expect(screen.getByTestId("readback-closed")).toHaveTextContent("(you said yes)");
   });
 
   it("a question typed while a card waits does not drop the card (design §3.9)", async () => {

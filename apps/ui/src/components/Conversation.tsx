@@ -263,6 +263,16 @@ function Bubble({
   );
 }
 
+/**
+ * A line the person wrote as a request or a question (one a task can be made of): not a
+ * command that already acted, a read-back's yes or no, or an undo.
+ */
+function isOwnRequest(turn: ConversationTurnView): boolean {
+  const r = turn.reply;
+  if (r && (r.actions.length > 0 || r.readback)) return false;
+  return !/^\s*(?:yes|no|ok|undo|stop|cancel|resume)\b[.!]?\s*$/i.test(turn.said);
+}
+
 function Turn({
   turn,
   testIds,
@@ -292,7 +302,7 @@ function Turn({
     <>
       <Bubble who="human" testIds={testIds} via={via}>
         <span className="whitespace-pre-wrap">{turn.said}</span>
-        {onMakeTask ? (
+        {onMakeTask && isOwnRequest(turn) ? (
           <div className="mt-1">
             <button
               type="button"
@@ -377,7 +387,12 @@ function Turn({
               </div>
             ) : (
               <p className="mt-1 text-xs text-neutral-500" data-testid="readback-closed">
-                {inAppText(r.readback)} (no longer waiting for your yes)
+                {inAppText(r.readback)}{" "}
+                {r.card === "yes"
+                  ? "(you said yes)"
+                  : r.card === "no"
+                    ? "(you said no)"
+                    : "(not answered; ask again if you still want it)"}
               </p>
             )
           ) : null}

@@ -276,6 +276,45 @@ describe("the chat sees the project (design §3.9: tasks, the last session, open
     await w.store.close();
   });
 
+  it("a task the critic sent back says what the critic still asks for", async () => {
+    const w = await setup([textReply("ok", { ttftMs: 0 })]);
+    const style = await task(w, "Style the page", {
+      status: "needs_human",
+      reason:
+        "retry ladder exhausted after 4 failed attempt(s) at opus (ceiling opus): human decides",
+      attempt: 4,
+    } as never);
+    const review = await w.store.review.insert({
+      task_id: style.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 30,
+      confidence: 0.9,
+      verdict: "revise",
+      evidence: [],
+      summary: "The page has no styles.",
+      author_agent: w.alice,
+    });
+    await w.store.finding.insert({
+      review_id: review.id,
+      task_id: style.id,
+      severity: "high",
+      description: "styles.css is empty",
+      required_action: "Write the styles for the quote and its author in styles.css",
+      status: "open",
+      fingerprint: "fp-style",
+      author_agent: w.alice,
+    });
+    await w.chat("why is style stuck?");
+    const sent = w.last(0);
+    expect(sent).toContain(
+      '- "Style the page": Paused; reason: tried 4 times; critic: The critic sent it back for changes; still asked for: Write the styles for the quote and its author in styles.css',
+    );
+    // No ladder words reach the model (design §5).
+    expect(sent).not.toMatch(/ladder|ceiling|human decides/);
+    await w.store.close();
+  });
+
   it("the last session is sent by name from its outcome, not a 160-character cut of its summary", async () => {
     const w = await setup([textReply("ok", { ttftMs: 0 })]);
     const p = await w.store.project.mustGet(w.quote);

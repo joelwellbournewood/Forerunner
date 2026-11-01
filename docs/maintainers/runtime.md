@@ -2226,8 +2226,9 @@ in one project cancelled a task in another. Now:
   where their reply's `projectId` says, else outside any project). `GET
   /projects/:id/conversation` and `GET /conversation` serve them (`ConversationView`: each turn
   with the reply's text without its read-back, the changes with `canUndo` from the change log,
-  the read-back, and whether its card still waits; `waiting` is the card), so a reload, a
-  restart, the Chat tab and Talk show the same lines.
+  the read-back, whether its card still waits and what became of it (`card`: waiting, yes or
+  no from the request's answer, else expired); `waiting` is the card), so a reload, a restart,
+  the Chat tab and Talk show the same lines.
 - **History.** A model turn sends the last `HISTORY_TURNS` (12) turns of its conversation as
   alternating user and assistant messages within `historyMaxTokens` (default
   `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000, counted with the provider's counter; the oldest go
@@ -2236,8 +2237,8 @@ in one project cancelled a task in another. Now:
 - **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
-  who does it and the critic's last word; `sandboxReady` from the daemon for "Waiting for
-  Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
+  who does it, the critic's last word and the first thing it still asks for (an open finding's
+  required action); `sandboxReady` from the daemon for "Waiting for Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
   failed with the reason, needs you, not reached, waiting for Docker, why it ended, the spend,
   and `next_steps`; `# Next` before the first session), `# Working now` (the agent's running
   session: the task in flight and the specialist, minutes, steps, spend), `# Your files` (the

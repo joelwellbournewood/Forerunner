@@ -35,7 +35,7 @@ const quote = (s: string) => `"${s.replace(/\s+/g, " ").trim()}"`;
 
 /** One task's line: title, status in words, what it waits for, why it failed or stopped, the critic. */
 async function taskLine(
-  store: Pick<StateStore, "review">,
+  store: Pick<StateStore, "review" | "finding">,
   t: TaskRow,
   label: string,
   titleOf: (id: string) => string | undefined,
@@ -56,6 +56,12 @@ async function taskLine(
   if (t.attempt > 0 && !["draft", "ready"].includes(t.status)) {
     const review = await store.review.latestForTask(t.id);
     if (review) parts.push(`critic: ${reviewSentence(review.verdict).replace(/\.$/, "")}`);
+    // What the critic still asks for, in its words: the "why" behind a send-back or a failure.
+    if (t.status !== "done") {
+      const open = review ? await store.finding.openFor(t.id) : [];
+      const asked = open[0] ? plainReason(open[0].required_action || open[0].description, 200) : "";
+      if (asked) parts.push(`still asked for: ${asked}`);
+    }
   }
   return parts.join("; ");
 }

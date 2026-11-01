@@ -2291,7 +2291,10 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     expect((await client.tasks(quote.id)).find((t) => t.id === faq.id)?.dependsOn).toEqual([
       readme.id,
     ]);
-    expect((await client.conversation(quote.id)).waiting).toBeNull();
+    const after = await client.conversation(quote.id);
+    expect(after.waiting).toBeNull();
+    // The read-back says what became of it.
+    expect(after.turns[1]?.reply?.card).toBe("yes");
     await rt.close();
   }, 120_000);
 });
