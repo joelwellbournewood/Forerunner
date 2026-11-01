@@ -247,7 +247,10 @@ describe("phase 3 gate: escalation never exceeds the ceiling (fake provider)", (
         (r) => r.task_id === task.id && r.blocking,
       );
       expect(requests).toHaveLength(1);
-      expect(requests[0]?.why).toContain("ceiling sonnet");
+      // The card says how often it failed in words (design §3.8); the ceiling is shown by the
+      // runs below, none above sonnet.
+      expect(requests[0]?.why).toMatch(/^"[^"]+" failed 3 times\./);
+      expect(requests[0]?.options).toEqual(["Try again", "Mark done anyway", "Cancel task"]);
       // Every run of the task (specialist and critic) stayed at or under the ceiling.
       const runs = await runsOf(w, task.id);
       // Rung 2 (U-044): after two coder attempts the third goes to another specialist, never

@@ -2476,7 +2476,9 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
       version: card.version,
       answer: { choice: "Change the plan", text: "A single index.html only." },
     });
-    expect(changed.outcome).toBe("Drafting a new plan with your changes…");
+    expect(changed.outcome).toBe(
+      'You asked for changes ("A single index.html only."): a new plan is drafted and comes as its own card.',
+    );
     expect((await client.intakeStatus(project.id)).state).toBe("drafting");
     await rt.intake.inFlight(project.id);
     const status = await client.intakeStatus(project.id);

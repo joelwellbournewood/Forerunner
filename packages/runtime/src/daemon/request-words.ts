@@ -426,7 +426,9 @@ function intakeOutcome(card: JsonObject): string | null {
   }
   if (card.outcome === "rejected")
     return "You rejected the plan. Nothing was written; you can draft a new plan from the project page.";
-  if (card.outcome === "changed") return "Drafting a new plan with your changes…";
+  // True whenever it is read (design §5 rule 4): the new plan arrives as a card of its own.
+  if (card.outcome === "changed")
+    return `You asked for changes${str(card.change) ? ` ("${cutWords(str(card.change) as string, 80)}")` : ""}: a new plan is drafted and comes as its own card.`;
   if (card.outcome === "apply_failed")
     return "The plan could not be written; the project page says why.";
   return null;

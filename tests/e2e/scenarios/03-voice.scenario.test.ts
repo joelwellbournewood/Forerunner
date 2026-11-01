@@ -242,9 +242,9 @@ describe("scenario 3: voice", () => {
       project_id: w.project.id,
       [SESSION_OVERRIDE_KEY]: { cap_chf_micro: 20_000_000, expires_at: UNTIL },
     });
-    // Spelled out: the sentence went to J's inbox and to the conversation session's log.
-    const posted = (await w.inbox(w.j)).find((m) => m.body === SENTENCE);
-    expect(posted).toMatchObject({ from_agent_id: w.alice.agent.id, type: "info" });
+    // Spelled out in the conversation session's log (and the spoken read-back); J's own voice
+    // command is not echoed to J's Inbox (design §3.8 Updates, §5.11).
+    expect((await w.inbox(w.j)).find((m) => m.body === SENTENCE)).toBeUndefined();
     const events = await w.eventsOf(voice.sessionId);
     expect(events.find((e) => e.type === "change")?.payload).toMatchObject({
       changeLogId: log[0]?.id,

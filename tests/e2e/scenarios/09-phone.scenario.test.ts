@@ -404,10 +404,11 @@ describe("scenario 9: from the phone, by talking", () => {
     expect(
       (await commands.changeLog({ humanId: w.j.id, undoable: true })).map((r) => r.id),
     ).toContain(changeLogId);
-    // Spelled out: the sentence reached J's inbox and the conversation session's log.
+    // Spelled out in the conversation session's log; J's own command is not echoed to J's
+    // Inbox (design §3.8 Updates, §5.11).
     expect(
       (await w.inbox(w.j)).some((m) => m.body === change?.sentence && m.project_id === game.id),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       (await w.eventsOf(sessionId)).find(
         (e) =>
