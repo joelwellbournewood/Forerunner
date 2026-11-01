@@ -824,10 +824,14 @@ export function createDaemonApp(
       return null;
     }
   };
-  const projectCardOf = (id: string) =>
+  const projectCardOf = (
+    id: string,
+    plan?: { state: "drafting" | "pending" | null; error: string | null },
+  ) =>
     projectCard(rt.store, id, chf(), rt.human.id, {
       sandboxReady: sandboxNow(),
       plan: async (projectId) => {
+        if (plan) return plan;
         try {
           const s = await rt.intake.status(projectId);
           return { state: s.state, error: s.error };
@@ -851,8 +855,14 @@ export function createDaemonApp(
     const p = await createProjectRecord(rt, body);
     // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in
     // the inbox; the card answers now. A failure is recorded on the project (the status route).
+    // The card is read first, saying the plan is being drafted, so the draft starts as the
+    // answer goes out (as before the status sentence) and not after the card's reads.
+    const card = await projectCardOf(
+      p.id,
+      body.intake === true ? { state: "drafting", error: null } : undefined,
+    );
     if (body.intake === true) void rt.intake.enqueue(p.id).catch(() => undefined);
-    return c.json(await projectCardOf(p.id), 201);
+    return c.json(card, 201);
   });
 
   // PM intake (spec A.2, ADR 0055): one model call on the planning rung, one blocking approval

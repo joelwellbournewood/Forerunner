@@ -1120,8 +1120,11 @@ more; the path can go once no install holds one. Tests: `live-chat.test.ts`.
 minutes and monthly in the human's time zone; message, CI, PR comment, email, remote and manual
 requests; one active session per agent; quiet hours defer non-manual triggers). Starts that
 wait (queued behind the agent's running session, or deferred by quiet hours) are kept per
-agent in the order they came, each as its log entry with its id, and the tick starts the
-first one that may start now when the agent is free (a deferred one keeps its place while the
+agent in the order they came, each as its log entry with its id, and the first one that may
+start now starts as soon as the agent's run ends (`drain` from the run's `finally`, while the
+scheduler runs: a stopped one, as during Quit, starts nothing; before, it waited for the next
+tick, up to 30 s, after "Starts after the current session"), and on every tick when the agent
+is free (a deferred one keeps its place while the
 quiet hours last and holds up no person's start behind it) (U-043: up to 1.0.4 one slot per
 agent held only the newest request, so an approved plan's start or a CI trigger waiting there
 was replaced by the next request without a word, and the Start dialog's "This one starts when

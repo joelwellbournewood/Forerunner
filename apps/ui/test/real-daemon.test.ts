@@ -2000,6 +2000,70 @@ describe("the UI client against the real daemon: a task a session is running", (
   });
 });
 
+describe("the UI client against the real daemon: a start waiting behind a session runs when it ends (wave 1-2 handoff)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let provider: ScriptedProvider;
+
+  beforeAll(async () => {
+    ({ rt, client, provider } = await composeWithWaitingRun([WAITING_CALL]));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("'Starts after the current session' is true at once: the waiting start begins when the running one ends, with no scheduler tick", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Queued", goal: "One after the other" });
+    const task = await client.createTask(project.id, {
+      title: "Keeps the agent busy",
+      outcome: "it is done",
+      acceptanceCriteria: [],
+      riskTier: 0,
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    const running = await client.startSession({ agentId, projectId: project.id });
+    expect(running.result).toBe("started");
+    await eventually(
+      async () => provider.calls.length >= 1,
+      "the running task's model call",
+      async () => `${provider.calls.length} model call(s)`,
+      10_000,
+    );
+    // The Start dialog's call while it runs: it waits its turn.
+    const waiting = await client.startSession({ agentId, projectId: project.id });
+    expect(waiting).toMatchObject({ result: "queued", ahead: 0, session: null });
+    const sessionsOf = async () => (await client.sessions({ projectId: project.id })).length;
+    expect(await sessionsOf()).toBe(1);
+    // The person cancels the running task: the session ends. The simulated clock does not move,
+    // so no scheduler tick runs; the waiting start begins all the same.
+    const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
+    await client.transitionTask(task.id, {
+      version: row?.version ?? 0,
+      to: "cancelled",
+      reason: "Cancelled in the app",
+    });
+    await eventually(
+      async () => (await sessionsOf()) === 2 && rt.scheduler.pendingStarts(agentId).length === 0,
+      "the waiting start to begin its session",
+      async () =>
+        `${await sessionsOf()} session(s), ${rt.scheduler.pendingStarts(agentId).length} waiting, active ${rt.scheduler.isActive(agentId)}`,
+      10_000,
+    );
+    // Nothing is left running or waiting for the next test: the second session finds nothing
+    // to run and ends.
+    await eventually(
+      async () => !rt.scheduler.isActive(agentId),
+      "the agent to be free",
+      async () => `active ${rt.scheduler.isActive(agentId)}`,
+      10_000,
+    );
+  });
+});
+
 describe("the UI client against the real daemon: the Tasks tab's Stop while a session goes on", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;

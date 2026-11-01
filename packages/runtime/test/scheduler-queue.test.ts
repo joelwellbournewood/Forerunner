@@ -30,7 +30,9 @@ function world(opts: { quiet?: () => boolean } = {}) {
     await new Promise((r) => setImmediate(r));
     await scheduler.tick();
   };
-  return { clock, scheduler, started, end };
+  /** End the named run without a tick. */
+  const finishRun = (reason: string) => finish.get(reason)?.();
+  return { clock, scheduler, started, end, finish: finishRun };
 }
 
 const req = (reason: string, over: Partial<StartRequest> = {}): StartRequest => ({
@@ -39,6 +41,52 @@ const req = (reason: string, over: Partial<StartRequest> = {}): StartRequest => 
   trigger: "manual",
   reason,
   ...over,
+});
+
+describe("a waiting start runs when the session before it ends, not on the next tick (wave 1-2 handoff)", () => {
+  it("drains the agent's line as soon as its run ends, in order, while the scheduler runs", async () => {
+    const w = world();
+    w.scheduler.start();
+    try {
+      await w.scheduler.request(req("running"));
+      expect(await w.scheduler.request(req("first waiting"))).toBe("queued");
+      expect(await w.scheduler.request(req("second waiting"))).toBe("queued");
+      // The run ends; no tick: the clock does not move.
+      w.finish("running");
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(w.started).toEqual(["running", "first waiting"]);
+      expect(w.scheduler.pendingStarts("alice").map((e) => e.req.reason)).toEqual([
+        "second waiting",
+      ]);
+      w.finish("first waiting");
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(w.started).toEqual(["running", "first waiting", "second waiting"]);
+      w.finish("second waiting");
+    } finally {
+      w.scheduler.stop();
+    }
+  });
+
+  it("keeps a start deferred by quiet hours waiting, and a stopped scheduler (Quit) starts nothing", async () => {
+    let quiet = true;
+    const w = world({ quiet: () => quiet });
+    w.scheduler.start();
+    await w.scheduler.request(req("running"));
+    expect(await w.scheduler.request(req("ci", { trigger: "ci" }))).toBe("deferred");
+    w.finish("running");
+    await new Promise((r) => setImmediate(r));
+    expect(w.started).toEqual(["running"]);
+    quiet = false;
+    await w.scheduler.request(req("again"));
+    expect(w.started).toEqual(["running", "again"]);
+    await w.scheduler.request(req("after quit"));
+    w.scheduler.stop();
+    w.finish("again");
+    await new Promise((r) => setImmediate(r));
+    expect(w.started).toEqual(["running", "again"]);
+  });
 });
 
 describe("starts waiting behind a running session are kept in order (U-043)", () => {
