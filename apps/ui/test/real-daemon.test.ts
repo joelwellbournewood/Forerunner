@@ -2618,6 +2618,32 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     return { project, card, me };
   };
 
+  it("before the approval, 'start a session' in the project's Chat says what the Start dialog says, with no Yes/No card", async () => {
+    // First in this block: no session of the agent runs yet (a running one makes a start wait
+    // for it rather than refuse, in the dialog and the chat alike).
+    const { project, me } = await planned("Quote chat");
+    const before = (await client.sessions({ projectId: project.id })).length; // the planning call
+    // The chat's start refuses with the Start dialog's sentence (design §3.6, §3.9); the Start
+    // dialog names the plan card here (§3.3), so the chat does too, not "no task is ready".
+    const reply = await client.chat({
+      humanId: me.id,
+      agentId: rt.agent.id,
+      projectId: project.id,
+      projectTab: true,
+      text: "start a session",
+      source: "text",
+    });
+    expect(reply.reply).toBe(
+      "Nothing can run yet: the plan from your brief waits for your approval. Review it in the Inbox.",
+    );
+    expect((await client.startCheck(project.id)).blocked?.sentence).toBe(
+      "Nothing can run yet: the plan from your brief waits for your approval.",
+    );
+    expect(reply.pendingConfirmation).toBeNull();
+    expect(reply.actions).toEqual([]);
+    expect(await client.sessions({ projectId: project.id })).toHaveLength(before);
+  }, 60_000);
+
   it("Approve and start writes the plan and starts working on it; the card says so", async () => {
     const { project, card } = await planned("Quote page");
     // Before the approval the Start dialog's button is the plan card, not the Tasks tab.

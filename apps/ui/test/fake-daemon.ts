@@ -2372,6 +2372,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       state.nextChatActions = null;
       return { ...base, reply, actions };
     }
+    // As the daemon's session.start (`startBlocked` with the plan): while the plan from the
+    // brief waits and no task is written, the chat says so at once, with no Yes/No card.
+    if (
+      lower.includes("start a session") &&
+      turnProject &&
+      state.intake[turnProject]?.state === "pending" &&
+      !state.tasks.some((t) => t.projectId === turnProject)
+    ) {
+      return {
+        ...base,
+        reply:
+          "Nothing can run yet: the plan from your brief waits for your approval. Review it in the Inbox.",
+      };
+    }
     if (lower.includes("start a session")) {
       const id = nextId("confirm");
       const readback = "You want to start a session with a budget of CHF 4.00.";

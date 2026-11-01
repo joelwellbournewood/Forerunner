@@ -12,6 +12,12 @@ export interface StartBlockedFacts {
   busy: boolean;
   projectId: string;
   chfPerUsd: number;
+  /**
+   * The plan from the project's brief while no task is written yet: it waits for the person's
+   * approval in the Inbox (`pending`) or is being drafted (`drafting`); null or absent otherwise
+   * (`IntakeService.status`).
+   */
+  plan?: "pending" | "drafting" | null;
 }
 
 /**
@@ -19,9 +25,29 @@ export interface StartBlockedFacts {
  * Claude credential, nothing can run (the first blocker, named with the button that unblocks
  * it). Null when a session would work. The Start dialog (`GET /projects/:id/start-check`) and
  * the chat's "start a session" (`session.start` through `CommandPorts.startBlocked`) say the
- * same sentence.
+ * same sentence. With no task written yet because the plan from the brief waits for approval
+ * or is being drafted, the sentence names the plan and its button is the plan card (design
+ * §3.3), not the Tasks tab.
  */
 export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckView["blocked"] {
+  const blocked = firstBlocker(r, f);
+  if (blocked?.kind !== "nothing_runnable" || r.ready !== 0) return blocked;
+  if (f.plan === "pending")
+    return {
+      kind: "nothing_runnable",
+      sentence: "Nothing can run yet: the plan from your brief waits for your approval.",
+      action: { kind: "link", label: "Review the plan", to: "/inbox" },
+    };
+  if (f.plan === "drafting")
+    return {
+      kind: "nothing_runnable",
+      sentence: "Nothing can run yet: the plan from your brief is being drafted.",
+      action: null,
+    };
+  return blocked;
+}
+
+function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["blocked"] {
   if (f.stopped)
     return {
       kind: "stopped",

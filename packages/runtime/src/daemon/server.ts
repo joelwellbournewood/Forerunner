@@ -1198,18 +1198,23 @@ export function createDaemonApp(
     return Math.max(0, cap - spent);
   };
   /** Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same). */
-  const startBlocked = (
+  const startBlocked = async (
     r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
     projectId: string,
     busy: boolean,
-  ): StartCheckView["blocked"] =>
-    startBlockedReason(r, {
+  ): Promise<StartCheckView["blocked"]> => {
+    // No task yet because the plan from the brief waits for approval (or is being drafted):
+    // the button is the plan card, not the Tasks tab (design §3.3, §3.6).
+    const intake = r.ready === 0 ? await rt.intake.status(projectId).catch(() => null) : null;
+    return startBlockedReason(r, {
       stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
       hasModel: !!rt.provider,
       busy,
       projectId,
       chfPerUsd: chf(),
+      plan: intake?.state === "pending" || intake?.state === "drafting" ? intake.state : null,
     });
+  };
 
   app.get("/projects/:id/start-check", async (c) => {
     const budget = intQuery(c, "budgetUsdMicro", 0, Number.MAX_SAFE_INTEGER);
@@ -1223,24 +1228,7 @@ export function createDaemonApp(
     const projectId = c.req.param("id");
     const monthLeftUsd = await monthLeftUsdMicro();
     const busy = rt.scheduler.isActive(rt.agent.id);
-    let blocked = startBlocked(r, projectId, busy);
-    // No task yet because the plan from the brief waits for approval (or is being drafted):
-    // the button is the plan card, not the Tasks tab (design §3.3, §3.6).
-    if (blocked?.kind === "nothing_runnable" && r.ready === 0) {
-      const intake = await rt.intake.status(projectId).catch(() => null);
-      if (intake?.state === "pending")
-        blocked = {
-          kind: "nothing_runnable",
-          sentence: "Nothing can run yet: the plan from your brief waits for your approval.",
-          action: { kind: "link", label: "Review the plan", to: "/inbox" },
-        };
-      else if (intake?.state === "drafting")
-        blocked = {
-          kind: "nothing_runnable",
-          sentence: "Nothing can run yet: the plan from your brief is being drafted.",
-          action: null,
-        };
-    }
+    const blocked = await startBlocked(r, projectId, busy);
     const view: StartCheckView = {
       projectId: r.projectId,
       sessionBudget: money(r.sessionBudgetUsdMicro, rate),

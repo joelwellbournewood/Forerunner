@@ -77,6 +77,33 @@ describe("Quick chat", () => {
     expect(within(told).queryByText(/HTTP 503|provider_auth/)).toBeNull();
   });
 
+  it("while the plan from the brief waits, 'start a session' says so at once, as the Start dialog does, with no Yes/No card", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const { state } = harness.daemon;
+    state.tasks = state.tasks.filter((t) => t.projectId !== "proj_atlas");
+    state.intake.proj_atlas = {
+      projectId: "proj_atlas",
+      state: "pending",
+      requestId: null,
+      outcome: null,
+      appliedAt: null,
+      docs: null,
+      error: null,
+    };
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "start a session");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-agent")).toHaveTextContent(
+        "Nothing can run yet: the plan from your brief waits for your approval. Review it in the Inbox.",
+      ),
+    );
+    expect(screen.queryByTestId("pending-confirmation")).toBeNull();
+  });
+
   it("shows the read-back once on a Yes/No card and sends the word yes; the change reads as a sentence", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

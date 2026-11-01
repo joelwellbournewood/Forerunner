@@ -2906,12 +2906,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           project.id,
           budgetUsdMicro,
         );
+        // The plan from the brief, while no task is written yet (the dialog names it too).
+        const plan =
+          check.ready === 0 ? (await intake.status(project.id).catch(() => null))?.state : null;
         const blocked = startBlockedReason(check, {
           stopped: kill.isFrozen({ agentId: agent.id }),
           hasModel: !!provider,
           busy: scheduler.isActive(agent.id),
           projectId: project.id,
           chfPerUsd: chfPerUsd(),
+          plan: plan === "pending" || plan === "drafting" ? plan : null,
         });
         if (!blocked) return null;
         // The dialog's button, said in words for the chat.
@@ -2922,7 +2926,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               ? " Connect Claude in Settings."
               : blocked.action?.label === "Open it"
                 ? " Answer it in the Inbox."
-                : "";
+                : blocked.action?.label === "Review the plan"
+                  ? " Review it in the Inbox."
+                  : "";
         return `${blocked.sentence}${next}`;
       },
       // An answer by chat, voice, the palette or the phone applies at once, as the inbox

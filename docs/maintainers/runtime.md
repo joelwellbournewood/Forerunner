@@ -1985,7 +1985,10 @@ waits on you" while 4 tasks waited on it).
 - **The Start dialog before the plan is approved**: with no ready task and the plan from the
   brief pending, start-check's `blocked` reads "Nothing can run yet: the plan from your brief
   waits for your approval." with **Review the plan** (to the Inbox); while it is drafted, "…
-  is being drafted." with no button.
+  is being drafted." with no button. The plan is a fact of `startBlocked`
+  (`daemon/start-blocked.ts`, `plan` read from `IntakeService.status`), so the chat's "start a
+  session" says the same sentence, with "Review it in the Inbox." for the button and no Yes/No
+  card.
 - **Chat answering a high-risk card**: `request.answer` whose card needs a device confirmation
   is refused with a pointer to the card ("Answer it on its card in the Inbox …"), no second card
   (commands.md).
@@ -2174,8 +2177,9 @@ pause, stop or cancel of a running task stops its run at once through `KillSwitc
 the Tasks tab's route does, U-039), `allowSessions` (`session.resume`: `KillSwitch.resume()` and
 the `kill.resumed` event the header follows, as `POST /kill/resume`), `startBlocked`
 (`session.start` refuses a start that would do nothing with the Start dialog's sentence from
-`daemon/start-blocked.ts`, `startBlocked`, which `GET /projects/:id/start-check` uses too, and
-the dialog's button in words: 'Say "resume" to allow sessions again.'; asked when the start is
+`daemon/start-blocked.ts`, `startBlocked`, which `GET /projects/:id/start-check` uses too, the
+plan from the brief included, and the dialog's button in words: 'Say "resume" to allow sessions
+again.', "Review it in the Inbox."; asked when the start is
 planned, so the chat says it at once with no Yes/No card, and again when it runs),
 `requestAnswered`
 (`syncApprovals`), `memory` (`memoryCommandPort`), `speak`, `modelSettings`, `emailMode`
