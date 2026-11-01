@@ -80,6 +80,8 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
     let script = initialization_script(injection, &origins);
     let nav_app = app.clone();
     let nav_origins = origins.clone();
+    let new_window_app = app.clone();
+    let new_window_origins = origins.clone();
     let media_origins = origins.clone();
     let page = crate::media::CurrentPage::default();
     let loaded = page.clone();
@@ -103,14 +105,19 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
             if navigation_allowed(url, &nav_origins) {
                 return true;
             }
-            if url.scheme() == "http" || url.scheme() == "https" {
-                if let Err(e) = nav_app.opener().open_url(url.as_str(), None::<&str>) {
-                    log::warn!("could not open {} in the browser: {e}", url);
-                }
-            } else {
-                log::warn!("navigation to {} refused", url.scheme());
-            }
+            leave(&nav_app, url, leave_action(url));
             false
+        })
+        // A `target="_blank"` link or `window.open` (the Tasks tab's PR link was one): without
+        // this handler the webview dropped the request and the click did nothing. A web page
+        // opens in the system browser; the app's own pages stay in this one window.
+        .on_new_window(move |url, _features| {
+            leave(
+                &new_window_app,
+                &url,
+                new_window_action(&url, &new_window_origins),
+            );
+            tauri::webview::NewWindowResponse::Deny
         })
         .build()?;
 
@@ -140,6 +147,46 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
     window.show()?;
     window.set_focus()?;
     Ok(())
+}
+
+/// What the main window does with a link that leaves the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaveAction {
+    /// An http(s) page: the system browser opens it.
+    OpenInBrowser,
+    /// Anything else (`file:`, `javascript:`, `data:`, an app page asked for in a new window):
+    /// nothing opens, and the log says why.
+    Refuse,
+}
+
+/// A navigation the app origins do not cover: a web page goes to the system browser.
+pub fn leave_action(url: &url::Url) -> LeaveAction {
+    if url.scheme() == "http" || url.scheme() == "https" {
+        LeaveAction::OpenInBrowser
+    } else {
+        LeaveAction::Refuse
+    }
+}
+
+/// A new-window request (`target="_blank"`, `window.open`): a web page goes to the system
+/// browser as a navigation does; one of the app's own pages is not opened a second time (a
+/// second window would have no daemon token), so it is refused.
+pub fn new_window_action(url: &url::Url, app_origins: &[String]) -> LeaveAction {
+    if navigation_allowed(url, app_origins) {
+        return LeaveAction::Refuse;
+    }
+    leave_action(url)
+}
+
+fn leave(app: &AppHandle, url: &url::Url, action: LeaveAction) {
+    match action {
+        LeaveAction::OpenInBrowser => {
+            if let Err(e) = app.opener().open_url(url.as_str(), None::<&str>) {
+                log::warn!("could not open {} in the browser: {e}", url);
+            }
+        }
+        LeaveAction::Refuse => log::warn!("opening {} from the window refused", url.scheme()),
+    }
 }
 
 /// Show, un-minimise and focus the main window. Without one (not attached yet, or halted)
@@ -385,6 +432,47 @@ mod tests {
     fn the_first_close_notice_says_how_to_stop_forerunner() {
         assert!(FIRST_CLOSE_BODY.contains("Quit Forerunner"));
         assert!(FIRST_CLOSE_TITLE.contains("still running"));
+    }
+
+    /// The Tasks tab's PR link (`target="_blank"` before) did nothing in the window: a
+    /// new-window request had no handler. A web page now opens in the system browser, from a
+    /// navigation and from a new-window request alike; nothing else leaves the app.
+    #[test]
+    fn links_that_leave_the_app_open_web_pages_in_the_browser_only() {
+        let origins = vec![
+            "http://localhost:1420".to_string(),
+            "tauri://localhost".to_string(),
+        ];
+        let url = |s: &str| url::Url::parse(s).unwrap();
+        let pr = url("https://github.com/example/hand-tasks/pull/1");
+        assert_eq!(leave_action(&pr), LeaveAction::OpenInBrowser);
+        assert_eq!(new_window_action(&pr, &origins), LeaveAction::OpenInBrowser);
+        assert_eq!(
+            new_window_action(&url("http://example.org/docs"), &origins),
+            LeaveAction::OpenInBrowser
+        );
+        for refused in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "fr://inbox",
+        ] {
+            assert_eq!(
+                leave_action(&url(refused)),
+                LeaveAction::Refuse,
+                "{refused}"
+            );
+            assert_eq!(
+                new_window_action(&url(refused), &origins),
+                LeaveAction::Refuse,
+                "{refused}"
+            );
+        }
+        // The app's own page in a second window would have no daemon token: refused.
+        assert_eq!(
+            new_window_action(&url("http://localhost:1420/projects/p1/tasks"), &origins),
+            LeaveAction::Refuse
+        );
     }
 
     #[test]

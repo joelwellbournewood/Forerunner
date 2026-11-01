@@ -3,6 +3,7 @@ import { type FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type RunView, type TaskView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
+import { ExternalLink } from "../../components/ExternalLink.tsx";
 import {
   Badge,
   Button,
@@ -329,15 +330,9 @@ export function TasksTab({
                     </td>
                     <td className="py-1.5 pr-2 whitespace-nowrap">
                       {prUrl ? (
-                        <a
-                          href={prUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-700 hover:underline dark:text-blue-300"
-                          data-testid="pr-link"
-                        >
+                        <ExternalLink href={prUrl} variant="inline" testId="pr-link">
                           PR
-                        </a>
+                        </ExternalLink>
                       ) : null}
                       {run?.reviewId ? (
                         <>

@@ -1,3 +1,4 @@
+import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { Badge, Button, ErrorBanner, Loading, statusTone } from "../../components/ui.tsx";
 import { formatDateTime, relativeTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
@@ -72,15 +73,9 @@ export function PeersSection({ projectId }: { projectId: string }) {
                   <ul className="space-y-0.5">
                     {p.openPullRequests.map((pr) => (
                       <li key={pr.url}>
-                        <a
-                          href={pr.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-700 hover:underline dark:text-blue-300"
-                          data-testid="peer-pr"
-                        >
+                        <ExternalLink href={pr.url} variant="inline" testId="peer-pr">
                           {pr.title}
-                        </a>
+                        </ExternalLink>
                       </li>
                     ))}
                   </ul>

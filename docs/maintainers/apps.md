@@ -1205,7 +1205,14 @@ with an initialization script that defines a frozen, non-configurable
 `window.__FORERUNNER__ = { daemonUrl, daemonToken, installId, platform, shellVersion }` only
 when the page origin is one of `tauri://localhost`, `http(s)://tauri.localhost` or the dev
 server. The window's navigation policy (`deeplink::navigation_allowed`) refuses every other
-origin and opens `http(s)` targets in the OS browser (opener plugin). `installId` is the UUID
+origin and opens `http(s)` targets in the OS browser (opener plugin; `windows::leave_action`).
+A new-window request (`target="_blank"`, `window.open`) goes through `on_new_window`
+(`windows::new_window_action`): an `http(s)` page opens in the OS browser, the app's own pages
+and other schemes are refused, and no second window is ever created. Before, nothing handled
+it and the webview dropped the click (the Tasks tab's PR link did nothing). The UI opens every
+external link through `ExternalLink` (no target in the shell; `variant="inline"` for a text
+link), and `apps/ui/test/external-links.test.tsx` fails on `_blank` anywhere else in the
+desktop screens. `installId` is the UUID
 in `<config>/install-id` (created on first run, mode 0600). A restarted daemon has a new token,
 so `windows::ensure_main` rebuilds the window when the url or token changed.
 
