@@ -38,7 +38,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-087 are open; U-036 is won't fix.
+- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-088 are open; U-036 is won't fix.
 
 ## Open and fixed, not released
 
@@ -115,6 +115,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-085 | 2026-11-01, owner (test build) | "Create the repository and static site scaffold" ran 29 s, read the project, ran `node --version`, then wrote nothing and reported nothing: "Finished task: failed … completed (no changes were made in the worktree)". | A reply cut off at the output limit inside a tool call (a whole file in one write) is asked again with a larger limit, never taken as the end; after two tries the task says it was cut off and that the work must be written in smaller parts. | open (fix committed; fixed once CI is green and the owner has tried it) |
 | U-086 | 2026-11-01, owner (test build) | A failed run cannot be looked into in the app: the session's Raw output has only the session's own events, and a run that ended with an empty reply reads "completed". The owner had to export the audit log to see what the coder did. | Each run keeps its steps (model calls with their stop reason, tool calls with allowed or refused, the final reply) under its task; a run that ends with no report and no change says so in words. | open |
 | U-087 | 2026-11-01, owner (test build) | Every session opens a new docs status pull request (#1, #2, #3 after three sessions), so they pile up. | One standing status pull request that each session updates until it is merged. | open |
+| U-088 | 2026-11-01, owner (test build) | Firefox blocks the test build's download: "contains malware". | The installer's stop-Forerunner step no longer runs a hidden PowerShell command with `-ExecutionPolicy Bypass` that force-ends processes (a pattern scanners take for malware); the installers are code-signed (the owner's decision: a certificate or a signing service costs money). Until then: check the download's SHA-256 against the artifact's digest on the run page before allowing it. | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -327,6 +328,33 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 - **Check in the app:** Extensions → Add an entry → its permissions are shown; Confirm enables
   it and nothing appears in the Inbox; Cancel adds nothing.
 - **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
+
+### U-088 Browsers flag the test installer as malware
+
+- **Found:** 2026-11-01: Firefox refused the download of Desktop app run 41258871653's
+  `desktop-windows-latest` with "contains malware".
+- **Likely causes (not confirmed: the verdict comes from Google Safe Browsing, which gives no
+  reason):**
+  - The MSI's step that stops a running Forerunner before files are replaced (U-018, U-066,
+    `wix/stop-running.wxs`) runs `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy
+    Bypass -Command …` through `WixQuietExec64`, with no window, and ends processes with
+    `taskkill /F` and `Stop-Process -Force`. Hidden PowerShell that bypasses the execution
+    policy and kills processes is a pattern malware uses, and scanners score it so.
+  - The installers are not code-signed (`TAURI_SIGNING_PRIVATE_KEY` signs updates, not the MSI
+    for Windows), and each test build is a new file nobody has downloaded before, so it has no
+    reputation; SmartScreen warns about the same.
+- **Action (proposal):**
+  1. Replace the PowerShell step: WiX's own `util:CloseApplication` (Restart Manager) for the
+     shell, and the daemon ended by the app itself (`POST /shutdown` from a small step in the
+     shell's own executable, `forerunner-desktop.exe --stop-running`), so no script runs.
+  2. Code-sign the MSI and the executables in the release and Desktop app workflows (owner's
+     decision: an OV certificate or a signing service such as Azure Trusted Signing costs
+     money).
+  3. Until then the setup guide says how to check a download: the SHA-256 of the ZIP against the
+     digest GitHub shows for the artifact, and Windows Security's scan.
+- **Check in the app:** download a test build in Firefox and Edge: no malware block; installing
+  over a running Forerunner still leaves nothing running.
+- **Status:** open.
 
 ### U-087 Every session opens a new docs status pull request
 
