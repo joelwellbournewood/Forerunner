@@ -119,11 +119,14 @@ describe("full-review tasks wait for the Docker sandbox (U-079)", () => {
     expect(engine.callsOf("pull")).toEqual([["docker", "pull", IMAGE]]);
     const [notice, ...more] = await notices();
     expect(more).toEqual([]);
-    expect(notice?.why).toContain(
-      "Full-review tasks wait for the Docker sandbox: Downloading the sandbox.",
-    );
-    expect(notice?.why).toContain('Waiting: "Payment flow".');
-    expect(notice?.blocking).toBe(false);
+    // Design §3.8: one card per project, naming its task, with Cancel task and the steps.
+    expect(notice?.why).toContain('"Payment flow" waits for Docker: Downloading the sandbox.');
+    expect(notice).toMatchObject({
+      project_id: project.id,
+      task_id: full.id,
+      blocking: false,
+      options: ["Cancel task"],
+    });
     // Settings → Sandbox (Docker) shows the download and the waiting task.
     const status = await get("/sandbox");
     expect(status).toMatchObject({ state: "pulling", waiting: 1, image: IMAGE });
@@ -193,6 +196,19 @@ describe("full-review tasks wait for the Docker sandbox (U-079)", () => {
     const open = await notices();
     expect(open).toHaveLength(1);
     expect(open[0]?.why).toContain("Docker is installed but not running.");
+    expect(open[0]?.project_id).toBe(project.id);
+    // Cancel task on the card (design §3.8): the task is cancelled, the card answered.
+    const card = open[0];
+    if (!card) throw new Error("no card");
+    await rt.store.humanRequest.answer(
+      card.id,
+      card.version,
+      card.options[0] as string,
+      rt.human.id,
+    );
+    expect((await rt.syncApprovals()).sandbox).toEqual({ cancelled: 1 });
+    expect((await rt.store.task.mustGet(t.id)).status).toBe("cancelled");
+    expect(await notices()).toEqual([]);
     engine.set({ running: true });
   }, 120_000);
 

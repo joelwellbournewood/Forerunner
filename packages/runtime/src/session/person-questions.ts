@@ -17,7 +17,15 @@ import {
   personQuestionsAnswer,
 } from "../wiring/request-answers.ts";
 import { answerApplied, markAnswer } from "./answer-mark.ts";
+import { noteAboutTask, recordStart, resumeWork } from "./resume-work.ts";
 import type { StartRequest } from "./triggers.ts";
+
+/**
+ * What the person chose when they went on without answering (the commands' `WITHOUT_ANSWERS_NOTE`,
+ * the Tasks tab's Go ahead without): it reaches the task's next brief as a note.
+ */
+export const WITHOUT_ANSWERS_NOTE =
+  "The person chose to go ahead without answering the questions asked about this task: decide yourself and say in the report what you assumed.";
 
 /**
  * Questions only the person can answer (U-022, ADR 0095). A task whose acceptance criteria need
@@ -82,7 +90,8 @@ export function isPersonQuestionsRequest(row: Pick<HumanRequestRow, "change_card
 // ---------------------------------------------------------------------------------------
 // Which task is the person's
 
-const PERSON = String.raw`(?:the\s+)?(?:human|person|owner|project\s+owner)`;
+// "me": a title the person wrote for themself ("Confirm the hosting choice with me", "Ask me …").
+const PERSON = String.raw`(?:(?:the\s+)?(?:human|person|owner|project\s+owner)|me)`;
 /** 1.0.3 plans: "Confirm stack, hosting and repository with the human". */
 const LEGACY_TITLE = new RegExp(
   String.raw`\b(?:confirm|decide|agree|clarify|choose|settle|discuss|check|align|ask)\b[^.?!]{0,120}?\b(?:with|by|from)\s+${PERSON}\b`,
@@ -626,6 +635,53 @@ async function applyAnswers(
       continue;
     }
     try {
+      if (answer.kind === "without") {
+        // Design §3.8 "Go ahead without": the specialist decides and says what it assumed. The
+        // task goes back to ready with that note for its next brief, and work resumes.
+        let follow = false;
+        await store.transaction(async (tx) => {
+          const claimed = await markAnswer(tx, clock, row, "without");
+          if (!claimed) return;
+          const current = task ? await tx.task.get(task.id) : undefined;
+          let status: string | null = current?.status ?? null;
+          const actor = { agentId: deps.agentId, humanId: deps.humanId };
+          const reason = "you chose to go ahead without answering its questions";
+          if (current && card.on_answer === "done" && current.status === "needs_human") {
+            let t = current;
+            for (const to of CLOSE_PATH)
+              t = await tx.task.transition(t.id, t.version, to, reason, actor);
+            status = t.status;
+            // Closed: what waits on it may run now (resumeWork starts only when a task can).
+            follow = true;
+          } else if (current && current.status === "needs_human") {
+            const t = await tx.task.transition(current.id, current.version, "ready", reason, actor);
+            await tx.queue.enqueue({
+              project_id: t.project_id,
+              human_id: deps.humanId,
+              kind: "note",
+              text: noteAboutTask(t, WITHOUT_ANSWERS_NOTE),
+              priority: 8,
+              status: "queued",
+              author_agent: deps.agentId,
+            });
+            status = t.status;
+            follow = true;
+          }
+          await audit(tx, "without", status);
+          out.answered++;
+        });
+        if (follow && task)
+          await recordStart(
+            store,
+            row.id,
+            await resumeWork(store, deps.start, {
+              agentId: deps.agentId,
+              projectId: task.project_id,
+              reason: `you chose to go ahead without answering "${task.title}"`,
+            }),
+          );
+        continue;
+      }
       if (answer.kind === "cancel") {
         await store.transaction(async (tx) => {
           const claimed = await markAnswer(tx, clock, row, "cancelled");
@@ -705,6 +761,8 @@ async function applyAnswers(
           const path =
             t.status === "needs_human" ? CLOSE_PATH : from >= 0 ? CLOSE_PATH.slice(from + 1) : [];
           for (const to of path) t = await tx.task.transition(t.id, t.version, to, reason, actor);
+          // The person's task is done: the tasks that wait on it may run now.
+          follow = t.status === "done";
         } else if (t.status === "needs_human") {
           t = await tx.task.transition(t.id, t.version, "ready", reason, actor);
           follow = true;
@@ -714,21 +772,20 @@ async function applyAnswers(
         await audit(tx, "answered", t.status);
         out.answered++;
       });
-      if (follow && deps.start && task) {
-        await deps
-          .start({
+      // Answering resumes work (design §3.8): the task goes on in a session of its project, or,
+      // the person's own task now done, what waits on it does. resumeWork starts only when a
+      // task of the project can run; the card records what became of the start for its "Done"
+      // line.
+      if (follow && task)
+        await recordStart(
+          store,
+          row.id,
+          await resumeWork(store, deps.start, {
             agentId: deps.agentId,
             projectId: task.project_id,
-            trigger: "message",
-            reason: `your answers to "${task.title}" (request ${row.id})`,
-          })
-          .catch((e: unknown) =>
-            logger.warn("session after the answers not started", {
-              requestId: row.id,
-              error: errorMessage(e),
-            }),
-          );
-      }
+            reason: `your answers to "${task.title}"`,
+          }),
+        );
     } catch (e) {
       logger.warn("person answers not applied", { requestId: row.id, error: errorMessage(e) });
     }

@@ -102,29 +102,63 @@ export function answerWord(answer: JsonValue | null): string | null {
 export function signoffAnswer(answer: JsonValue | null): SignoffAnswer | null {
   const v = answerWord(answer);
   if (v === null) return null;
-  if (/^(accept|accepted|approve|approved|sign off|signed off|signoff)$/.test(v)) return "accept";
-  if (/^(revise|revised|rework|retry|redo|changes)$/.test(v)) return "revise";
-  if (/^(cancel|cancelled|canceled|drop)$/.test(v)) return "cancel";
+  // The options in words (design §3.8: "Accept the work", "Mark done anyway"; "Send it back",
+  // "Try again"; "Cancel task"), and the words of cards filed before them.
+  if (
+    /^(accept|accepted|accept the work|mark done anyway|mark done|approve|approved|sign off|signed off|signoff)$/.test(
+      v,
+    )
+  )
+    return "accept";
+  if (/^(revise|revised|rework|retry|redo|changes|try again|send it back|send back)$/.test(v))
+    return "revise";
+  if (/^(cancel|cancelled|canceled|drop|cancel task|cancel the task)$/.test(v)) return "cancel";
   return null;
+}
+
+/**
+ * The person's note sent with a card's option (`{ choice: "Try again", note: "…" }`): what to
+ * change on the next attempt. Null when there is none.
+ */
+export function answerNote(answer: JsonValue | null): string | null {
+  if (!answer || typeof answer !== "object" || Array.isArray(answer)) return null;
+  const note = (answer as JsonObject).note;
+  return typeof note === "string" && note.trim() ? note.trim().slice(0, 2000) : null;
 }
 
 /** The answer of a blocked-findings request (`session/findings.ts`) as one of its options, or null. */
 export function blockedFindingsAnswer(answer: JsonValue | null): BlockedFindingsAnswer | null {
   const v = answerWord(answer);
   if (v === null) return null;
-  if (/^(rework|revise|retry|redo)$/.test(v)) return "rework";
-  if (/^(accept|accepted|resolve|resolved|close)$/.test(v)) return "accept";
-  if (/^(cancel|cancelled|canceled|drop)$/.test(v)) return "cancel";
+  if (/^(rework|revise|retry|redo|try again|send it back)$/.test(v)) return "rework";
+  if (/^(accept|accepted|resolve|resolved|close|mark done anyway|mark done)$/.test(v))
+    return "accept";
+  if (/^(cancel|cancelled|canceled|drop|cancel task|cancel the task)$/.test(v)) return "cancel";
   return null;
 }
 
-/** The answer of an intake request (`session/intake.ts`) as one of its options, or null. */
-export function intakeAnswer(answer: JsonValue | null): "approve" | "reject" | null {
+/**
+ * The answer of an intake request (`session/intake.ts`) as one of its options, or null. Design
+ * §3.3: "Approve and start", "Change the plan" (with the person's words: `{ choice, text }`),
+ * "Reject"; the words of cards filed before ("approve", "reject") read the same.
+ */
+export function intakeAnswer(answer: JsonValue | null): "approve" | "reject" | "change" | null {
   const v = answerWord(answer);
   if (v === null) return null;
-  if (/^(approve|approved|accept|accepted|yes|ok|apply|go)$/.test(v)) return "approve";
+  if (/^(approve|approved|approve and start|accept|accepted|yes|ok|apply|go)$/.test(v))
+    return "approve";
   if (/^(reject|rejected|no|decline|declined|deny|denied|drop|cancel)$/.test(v)) return "reject";
+  if (/^(change the plan|change|change it)$/.test(v))
+    return intakeChangeText(answer) ? "change" : null;
   return null;
+}
+
+/** What the person asked to change in the plan (`{ choice: "Change the plan", text }`), or null. */
+export function intakeChangeText(answer: JsonValue | null): string | null {
+  if (!answer || typeof answer !== "object" || Array.isArray(answer)) return null;
+  const o = answer as JsonObject;
+  const text = o.text ?? o.note;
+  return typeof text === "string" && text.trim() ? text.trim().slice(0, 4000) : null;
 }
 
 /** The one option of a person's questions card (U-022): the task is not needed after all. */
@@ -136,9 +170,16 @@ export interface PersonAnswerItem {
   answer: string;
 }
 
+/**
+ * The questions card's "Go ahead without" (design §3.8): the specialist decides and says what
+ * it assumed.
+ */
+export const GO_AHEAD_WITHOUT_OPTION = "Go ahead without";
+
 /** What a person's questions card (U-022) was answered with. */
 export type PersonQuestionsAnswer =
   | { kind: "cancel" }
+  | { kind: "without" }
   | { kind: "answers"; answers: PersonAnswerItem[] };
 
 /** The most characters of one answer that are kept (the decision doc, the next run's brief). */
@@ -156,8 +197,14 @@ export function personQuestionsAnswer(answer: JsonValue | null): PersonQuestions
   if (typeof answer === "string") {
     const text = answer.trim();
     if (!text) return null;
-    if (/^(cancel|cancel the task|cancelled|canceled|drop|drop the task)$/.test(normalAnswer(text)))
+    if (
+      /^(cancel|cancel the task|cancel task|cancelled|canceled|drop|drop the task)$/.test(
+        normalAnswer(text),
+      )
+    )
       return { kind: "cancel" };
+    if (/^(go ahead without|go ahead without answering|go ahead)$/.test(normalAnswer(text)))
+      return { kind: "without" };
     return {
       kind: "answers",
       answers: [{ question: null, answer: text.slice(0, MAX_PERSON_ANSWER_CHARS) }],
@@ -265,7 +312,8 @@ export function modelWatchAnswerOf(raw: JsonValue | null): Omit<ModelWatchAnswer
 // A review verdict from the phone (U-027)
 
 /** Options that approve what a review approves: the task's work stands. */
-const APPROVING = /^(approve|approved|accept|accepted|yes|ok|confirm|confirmed|apply|sign off)$/;
+const APPROVING =
+  /^(approve|approved|accept|accepted|accept the work|mark done anyway|yes|ok|confirm|confirmed|apply|sign off)$/;
 
 /**
  * Options that reject what a review rejects, best first. Sending the work back (the sign-off's
@@ -273,7 +321,7 @@ const APPROVING = /^(approve|approved|accept|accepted|yes|ok|confirm|confirmed|a
  * what a rejected review means; "cancel" ends the task and is never a review's reject.
  */
 const REJECTING: readonly RegExp[] = [
-  /^(revise|rework|redo|retry)$/,
+  /^(revise|rework|redo|retry|send it back|try again)$/,
   /^(reject|rejected)$/,
   /^(deny|denied|no|decline|declined)$/,
 ];

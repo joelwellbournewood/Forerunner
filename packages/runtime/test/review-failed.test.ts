@@ -127,9 +127,15 @@ describe("a failed critic review files a card instead of leaving the task in rev
       blocking: true,
       session_id: r.sessionId,
     });
-    expect(card.why).toContain('The critic could not review "Add the export"');
-    expect(card.why).toContain("critic provider unavailable (503)");
-    expect(requestView(card, null).options).toEqual(["rework", "accept", "cancel"]);
+    // Design §3.8: what and why in two sentences; options that say what they do.
+    expect(card.why).toBe(
+      '"Add the export" could not be reviewed. The critic failed (critic provider unavailable (503)), so nobody checked the work.',
+    );
+    expect(requestView(card, null).options).toEqual([
+      "Try again",
+      "Mark done anyway",
+      "Cancel task",
+    ]);
     expect(events.find((e) => e.type === "critic.review_failed")?.payload).toMatchObject({
       taskId: first.id,
       humanRequestId: card.id,
@@ -253,13 +259,13 @@ describe("the review-failed card's options act, answered as the Inbox shows them
 
   it("its key has a reader the answer route checks, and its options are the reader's words", () => {
     expect(ANSWER_CARD_KEYS.reviewFailed).toBe(REVIEW_FAILED_KEY);
-    expect([...REVIEW_FAILED_OPTIONS]).toEqual(["rework", "accept", "cancel"]);
+    expect([...REVIEW_FAILED_OPTIONS]).toEqual(["Try again", "Mark done anyway", "Cancel task"]);
   });
 
   it("rework: the task goes back to ready (its attempt counted), so the next session runs it and the critic reviews it again", async () => {
     const { task, card } = await stuck("Rework me");
     const option = requestView(card, null).options[0] as string;
-    expect(option).toBe("rework");
+    expect(option).toBe("Try again");
     expect((await click(card, option)).status).toBe(200);
     const after = await rt.store.task.mustGet(task.id);
     expect(after.status).toBe("ready");
@@ -273,7 +279,10 @@ describe("the review-failed card's options act, answered as the Inbox shows them
   it("accept: the work stands without a review and the task is done", async () => {
     const { task, card } = await stuck("Accept me");
     expect((await click(card, requestView(card, null).options[1] as string)).status).toBe(200);
-    expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
+    const done = await rt.store.task.mustGet(task.id);
+    expect(done.status).toBe("done");
+    // Nothing reviewed it: the Tasks tab reads "Done: accepted without review" (design §2).
+    expect(done.reason).toContain("accepted without review");
   });
 
   it("cancel: the task is cancelled", async () => {
@@ -287,7 +296,7 @@ describe("the review-failed card's options act, answered as the Inbox shows them
     const res = await click(card, "maybe later");
     expect(res.status).toBe(400);
     expect(((await res.json()) as { message: string }).message).toContain(
-      "Choose one of: rework, accept, cancel",
+      "Choose one of: Try again, Mark done anyway, Cancel task",
     );
     expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("open");
     expect((await rt.store.task.mustGet(task.id)).status).toBe("in_review");

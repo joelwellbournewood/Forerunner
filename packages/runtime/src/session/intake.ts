@@ -54,7 +54,7 @@ import {
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { SETUP_ASSISTANT_PATH } from "../setup/no-model.ts";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
-import { intakeAnswer } from "../wiring/request-answers.ts";
+import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { markAnswer } from "./answer-mark.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import {
@@ -64,6 +64,8 @@ import {
   type ShapedPlan,
   shapeProjectPlan,
 } from "./project-plan.ts";
+import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
+import { failureWords } from "./task-context.ts";
 
 /**
  * PM intake (spec A.2; ADR 0055): one model call on the planning rung turns the brief into a
@@ -87,7 +89,12 @@ export const isIntakeKey = (key: string): boolean => key.startsWith(INTAKE_KEY_P
 export const INTAKE_AUDIT_TOOL = "project.intake";
 /** Why an intake cannot run on this install: no Claude key or subscription (`unavailable`). */
 export const INTAKE_NEEDS_A_MODEL = `Planning from the brief needs a Claude key or subscription. Add one in the app: ${SETUP_ASSISTANT_PATH}, then retry.`;
-export const INTAKE_OPTIONS = ["approve", "reject"] as const;
+/**
+ * The plan card's options (design §3.3): Approve and start writes the plan and starts a
+ * session; Change the plan (with the person's words) drafts a new plan; Reject writes nothing.
+ * `intakeAnswer` also reads the words of cards filed before ("approve", "reject").
+ */
+export const INTAKE_OPTIONS = ["Approve and start", "Change the plan", "Reject"] as const;
 /** The one model call's hard cap unless `project.settings.intake_budget_usd_micro` says otherwise. */
 export const DEFAULT_INTAKE_BUDGET_USD_MICRO = 2_000_000;
 /**
@@ -264,6 +271,14 @@ export type IntakeState =
   | "skipped"
   | "failed";
 
+/** What a draft is asked with (`propose`, `enqueue`). */
+export interface IntakeDraftOptions {
+  /** Plan from this brief instead of the project's (`summary_cache.brief`). */
+  brief?: string;
+  /** The person's changes ("Change the plan", design §3.3), in order: they follow the brief. */
+  changes?: readonly string[];
+}
+
 /** The latest intake of a project, as `GET /projects/:id/intake` serves it. */
 export interface IntakeStatus {
   projectId: string;
@@ -334,6 +349,11 @@ export interface IntakeDeps {
    * rule: plan no task that needs the web. Absent: no rule (the executor still routes or asks).
    */
   webSpecialists?: () => boolean;
+  /**
+   * "Approve and start" (design §3.3): the approved plan's first session starts (or queues)
+   * through the daemon's scheduler. Absent in a one-shot: the plan is written, nothing starts.
+   */
+  start?: StartPort;
 }
 
 /** The planning rule when no specialist reaches the web on this install (U-044). */
@@ -408,6 +428,71 @@ export { intakeAnswer };
 function keyOf(r: HumanRequestRow): string | undefined {
   const key = (r.change_card as JsonObject | null)?.key;
   return typeof key === "string" ? key : undefined;
+}
+
+/**
+ * Design §3.3 "Change the plan": the changes a plan card was drafted with (`changes` on its
+ * change card), in the order the person asked for them. A plan from the brief alone has none.
+ */
+function changesOf(card: JsonObject | null | undefined): string[] {
+  const list = card?.changes;
+  return Array.isArray(list)
+    ? list.filter((c): c is string => typeof c === "string" && c.trim() !== "")
+    : [];
+}
+
+/**
+ * The changes the next draft is asked with after "Change the plan" on `card`: the ones its plan
+ * was drafted with, then the one asked on it (`change`, written with the answer). They live on
+ * the answered card, so a draft that fails or is lost to a restart is drafted again with them
+ * (`retry`), and a second change keeps the first.
+ */
+function changesAskedOn(card: JsonObject | null | undefined): string[] {
+  const asked = typeof card?.change === "string" ? card.change.trim() : "";
+  return asked ? [...changesOf(card), asked] : changesOf(card);
+}
+
+/**
+ * Why planning failed, in words (design §3.3 "Planning failed: <reason in words>", §5): the
+ * project page shows it under "Planning failed. Nothing was written." Before, it showed the
+ * planning call's error text ("intake: the planning call ended error: model call failed").
+ */
+export function intakeFailureWords(e: unknown): string {
+  const message = errorMessage(e).replace(/^intake:\s*/, "");
+  if (!(e instanceof ForerunnerError)) return failureWords({ code: "", message });
+  switch (e.code) {
+    case "provider_error": {
+      const provider = e.details.providerCode;
+      return failureWords({
+        code: typeof provider === "string" ? provider : "provider_error",
+        message,
+      });
+    }
+    case "timeout":
+      return "Planning took longer than its time limit.";
+    case "budget_exceeded":
+      return "Planning used up the budget it was given.";
+    case "killed":
+      return "Planning was stopped before it finished.";
+    case "validation":
+      if (/not a JSON object/.test(message))
+        return "Claude's answer was not the JSON plan Forerunner asks for.";
+      if (/proposal is malformed/.test(message))
+        return "Claude's plan was missing parts Forerunner needs.";
+      return failureWords({ code: "", message }).replace(/^The run failed: /, "");
+    default:
+      return failureWords({ code: e.code, message }).replace(/^The run failed: /, "");
+  }
+}
+
+/** The brief a plan is drafted from, with the person's changes after it, in order. */
+function briefWithChanges(brief: string, changes: readonly string[]): string {
+  if (changes.length === 0) return brief;
+  if (changes.length === 1)
+    return `${brief}\n\nThe person read the first plan and asked for this change: ${changes[0]}`;
+  return `${brief}\n\nThe person read the earlier plans and asked for these changes, in order; the later one wins where they differ:\n${changes
+    .map((c, i) => `${i + 1}. ${c}`)
+    .join("\n")}`;
 }
 
 interface PlanTaskNamed {
@@ -510,6 +595,10 @@ export class IntakeService {
         error: String(failure?.error ?? ""),
       };
     }
+    // "Change the plan" answered with no new draft running and none filed after it: the draft
+    // did not finish (the daemon closed meanwhile); Retry drafts it again with the changes,
+    // which the answered card keeps (`retry`).
+    const changeLost = outcome === "changed";
     const state: IntakeState =
       row.status === "open"
         ? "pending"
@@ -517,7 +606,7 @@ export class IntakeService {
           ? "approved"
           : outcome === "rejected"
             ? "rejected"
-            : outcome === "apply_failed"
+            : outcome === "apply_failed" || changeLost
               ? "failed"
               : appliedAt
                 ? "skipped"
@@ -529,7 +618,12 @@ export class IntakeService {
       outcome,
       appliedAt,
       docs: (card.docs as IntakeDocsOutcome | undefined) ?? null,
-      error: outcome === "apply_failed" && typeof card.error === "string" ? card.error : null,
+      error:
+        outcome === "apply_failed" && typeof card.error === "string"
+          ? card.error
+          : changeLost
+            ? "The new plan with your changes was not drafted: Forerunner closed before it was done. Try again drafts it with your changes."
+            : null,
     };
   }
 
@@ -579,13 +673,13 @@ export class IntakeService {
    * time; a failure is logged and recorded on the project's summary cache (`intake.failed_at`,
    * `intake.error`) so the status route reports it.
    */
-  enqueue(projectId: string): Promise<IntakeProposalOutcome> {
+  enqueue(projectId: string, opts: IntakeDraftOptions = {}): Promise<IntakeProposalOutcome> {
     const running = this.jobs.get(projectId);
     if (running) return running;
-    const job = this.propose(projectId)
+    const job = this.propose(projectId, opts)
       .catch(async (e: unknown) => {
         this.logger.warn("automatic intake failed", { projectId, error: errorMessage(e) });
-        await this.recordFailure(projectId, errorMessage(e));
+        await this.recordFailure(projectId, intakeFailureWords(e));
         throw e;
       })
       .finally(() => {
@@ -604,13 +698,25 @@ export class IntakeService {
    * again: a plan waiting in the Inbox, a draft running, or an intake answered already is
    * answered as it stands and nothing is called. Without a model provider the retry is refused
    * (`unavailable`) before anything starts, so the page says why.
+   *
+   * A draft that "Change the plan" asked for and that failed, or was lost to a restart (the
+   * latest card answered `changed`), is drafted again with the person's changes, which that
+   * card keeps: Try again never drops them. After a Reject ("Draft a new plan") the new plan is
+   * drafted from the brief.
    */
   async retry(projectId: string): Promise<IntakeStatus> {
     const current = await this.status(projectId);
-    if (current.state !== "failed" && current.state !== "none") return current;
+    // Design §3.3: after a Reject the project page offers "Draft a new plan", which is this.
+    if (current.state !== "failed" && current.state !== "none" && current.state !== "rejected")
+      return current;
     if (!this.deps.provider || !this.deps.pricing)
       throw new ForerunnerError("unavailable", INTAKE_NEEDS_A_MODEL);
-    void this.enqueue(projectId).catch(() => undefined);
+    const changed =
+      current.state === "failed" && current.outcome === "changed" && current.requestId
+        ? await this.deps.store.humanRequest.get(current.requestId)
+        : undefined;
+    const changes = changesAskedOn(changed?.change_card as JsonObject | undefined);
+    void this.enqueue(projectId, changes.length ? { changes } : {}).catch(() => undefined);
     return this.status(projectId);
   }
 
@@ -638,14 +744,16 @@ export class IntakeService {
    * a new `brief` while one is open is refused with `claim_conflict` (the human would take the
    * open proposal for the new brief's), so the open request is answered first. `brief`
    * overrides the brief on the project's summary cache (`POST /projects` keeps it in
-   * `summary_cache.brief`); with neither, the goal alone is planned from.
+   * `summary_cache.brief`); with neither, the goal alone is planned from. `changes` ("Change
+   * the plan", design §3.3) follow the brief in the call, and the card keeps them.
    */
-  async propose(projectId: string, opts: { brief?: string } = {}): Promise<IntakeProposalOutcome> {
+  async propose(projectId: string, opts: IntakeDraftOptions = {}): Promise<IntakeProposalOutcome> {
     const { store } = this.deps;
     const project = await store.project.mustGet(projectId);
     const open = await this.pendingFor(project.id);
+    const changes = (opts.changes ?? []).map((c) => c.trim()).filter(Boolean);
     if (open) {
-      if (opts.brief !== undefined) {
+      if (opts.brief !== undefined || changes.length > 0) {
         throw new ForerunnerError(
           "claim_conflict",
           `an intake proposal is open for this project (request ${open.id}); answer it in the inbox before planning from a new brief`,
@@ -674,9 +782,13 @@ export class IntakeService {
     // A session a dead daemon left running past its deadline is closed before the new call.
     await this.closeExpired();
     const cached = (project.summary_cache as { brief?: unknown }).brief;
-    const briefText = (opts.brief ?? (typeof cached === "string" ? cached : "")).trim();
-    const truncated = briefText.length > MAX_BRIEF_CHARS;
-    const brief = truncated ? briefText.slice(0, MAX_BRIEF_CHARS) : briefText;
+    const given = (opts.brief ?? (typeof cached === "string" ? cached : "")).trim();
+    const truncated = given.length > MAX_BRIEF_CHARS;
+    // The brief is cut, never the person's changes after it; a change without a brief changes
+    // the plan drafted from the goal.
+    const cutBrief = truncated ? given.slice(0, MAX_BRIEF_CHARS) : given;
+    const brief = changes.length ? briefWithChanges(cutBrief || project.goal, changes) : cutBrief;
+    const briefText = changes.length ? briefWithChanges(given || project.goal, changes) : given;
     const repo = repoRefOf(project.repos[0]);
     const called = await this.callModel(project, brief, truncated);
     const proposal = called.proposal;
@@ -733,6 +845,8 @@ export class IntakeService {
         session_id: called.sessionId,
         brief_chars: briefText.length,
         brief_truncated: truncated,
+        // The person's changes this plan was drafted with, in order ("Change the plan").
+        ...(changes.length ? { changes } : {}),
         docs_target: repo ? "repository" : "workspace",
         applied_at: null,
       },
@@ -912,7 +1026,14 @@ export class IntakeService {
           `intake: the planning call ended ${result.outcome}${
             result.error ? `: ${result.error.message}` : ""
           }`,
-          { details: { outcome: result.outcome, runId } },
+          {
+            details: {
+              outcome: result.outcome,
+              runId,
+              // The provider's own code ("overloaded_error", "rate_limited"), for the words.
+              ...(result.error ? { providerCode: result.error.code } : {}),
+            },
+          },
         );
       }
       if (ttft !== null && planning.targetMs > 0 && ttft > planning.targetMs)
@@ -1092,6 +1213,30 @@ export class IntakeService {
         await skip("project_missing");
         continue;
       }
+      if (answer === "change") {
+        // Design §3.3 "Change the plan": the person's words go with the brief, after the
+        // changes this plan was drafted with, into a new draft, which lands in the Inbox as a
+        // new plan card; nothing of this one is written. The card keeps the words (`change`),
+        // so a draft that fails or is lost to a restart is drafted again with them (`retry`).
+        const text = (intakeChangeText(row.answer) ?? "").trim();
+        const changed = await store.transaction(async (tx) =>
+          markAnswer(tx, clock, row, "changed", { change: text }),
+        );
+        if (changed) {
+          const changes = changesAskedOn({ ...card, change: text });
+          await store.auditLog.append({
+            tool: INTAKE_AUDIT_TOOL,
+            allowed: true,
+            human_id: this.deps.human.id,
+            agent_id: this.deps.agent.id,
+            input_summary: cut(`intake request ${row.id}: the person asked for changes`),
+            result_summary: cut("nothing from the proposal written; a new plan is drafted"),
+          });
+          void this.enqueue(project.id, { changes }).catch(() => undefined);
+          out.rejected++;
+        }
+        continue;
+      }
       if (answer === "reject") {
         // The mark is one conditional write (`markAnswer`): a row another producer marked
         // meanwhile is left to it, with no second note and no second scaffold. Then the drafts
@@ -1103,11 +1248,12 @@ export class IntakeService {
         );
         if (rejected) {
           const scaffolded = await this.scaffoldAfterRejection(project);
+          // In words (design §5): no request id, no ISO time.
           await store.queue.enqueue({
             project_id: project.id,
             human_id: this.deps.human.id,
             kind: "note",
-            text: `Intake proposal ${row.id} was rejected on ${clock.nowIso()}: nothing from the proposal was written${scaffolded}. The brief stays queued; run the intake again with a revised brief or plan by hand.`,
+            text: `The person rejected the plan drafted from the brief: nothing from it was written${scaffolded}. A new plan can be drafted from the project page, or tasks added by hand.`,
             priority: 7,
             status: "queued",
             author_agent: this.deps.agent.id,
@@ -1138,6 +1284,17 @@ export class IntakeService {
           projectId: project.id,
           ...written,
         });
+        // "Approve and start" (design §3.3): the first session of the approved plan starts now
+        // (or after the session that runs); the card records it for its Done line.
+        await recordStart(
+          store,
+          row.id,
+          await resumeWork(store, this.deps.start, {
+            agentId: this.deps.agent.id,
+            projectId: project.id,
+            reason: "you approved the plan",
+          }),
+        );
       } catch (e) {
         if (e instanceof ForerunnerError && e.details.reason === "applied_elsewhere") {
           // Another producer (the other install's sync) marked the row first; its transaction
@@ -1274,7 +1431,7 @@ export class IntakeService {
     try {
       const out = await this.deps.docs.scaffoldProject(project);
       if (!out.created.length) return "; the standard doc set was already in place";
-      return `; the standard doc set was scaffolded from the templates (${out.created.length} file(s)${
+      return `; the standard doc set was scaffolded from the templates (${out.created.length === 1 ? "1 file" : `${out.created.length} files`}${
         out.prUrl ? `, pull request ${out.prUrl}` : ""
       })`;
     } catch (e) {

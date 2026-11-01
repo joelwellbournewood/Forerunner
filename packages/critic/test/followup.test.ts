@@ -209,9 +209,12 @@ describe("applyVerdict (B.4, D.2)", () => {
         kind: "approval",
         change_card: { key: SIGNOFF_KEY, reason: "retry_ladder_exhausted", applied_at: null },
       });
-      expect(req.why).toContain("Retry ladder exhausted");
-      // U-073: the card names the task it asks about.
-      expect(req.why).toContain('"Add clamp"');
+      // Design §3.8: the title names the task (U-073) and how often it failed, in plain words;
+      // no ladder, ceiling or "attempt(s)".
+      expect(req.why).toMatch(/^"Add clamp" failed 4 times\. The critic said: "/);
+      expect(req.why).not.toMatch(/ladder|ceiling|attempt\(s\)/i);
+      expect(req.options).toEqual(["Try again", "Mark done anyway", "Cancel task"]);
+      expect(req.change_card).toMatchObject({ title: '"Add clamp" failed 4 times' });
     } finally {
       await w.close();
     }
@@ -248,7 +251,8 @@ describe("applyVerdict (B.4, D.2)", () => {
       const req = await w.store.humanRequest.mustGet(
         (d as { humanRequestId: string }).humanRequestId,
       );
-      expect(req.why).toContain("ceiling sonnet");
+      // The ceiling decided the card; the card says how often it failed, not the rung.
+      expect(req.why).toMatch(/^"Add clamp" failed 3 times\./);
 
       // A caller cannot raise the ceiling above the project's.
       const task2 = await w.newTask({ attempt: 2 });

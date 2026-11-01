@@ -39,7 +39,7 @@ export interface RestartRequested {
 
 export type DaemonEvent =
   | { event: "session.event"; data: EventView }
-  | { event: "inbox.changed"; data: { blockingCount: number } }
+  | { event: "inbox.changed"; data: { blockingCount: number; needsYouCount?: number } }
   | { event: "session.changed"; data: SessionView }
   | { event: "project.changed"; data: { id: string } }
   /** An agent was renamed (U-025): `/me` and `/agents` are read again. */
@@ -52,7 +52,11 @@ export type DaemonEvent =
   | { event: "speak.started"; data: SpeakStartedView }
   | { event: "heartbeat"; data: { at: string } };
 
-const InboxChanged = z.object({ blockingCount: z.number().int() });
+/** `needsYouCount` (design §3.8: every open card) is absent from an older daemon. */
+const InboxChanged = z.object({
+  blockingCount: z.number().int(),
+  needsYouCount: z.number().int().optional(),
+});
 const ProjectChanged = z.object({ id: z.string() });
 const AgentChanged = z.object({ id: z.string(), name: z.string() });
 const ExtensionChangedSchema = z.object({ type: z.string(), id: z.string(), name: z.string() });
@@ -349,7 +353,13 @@ export function subscribeDaemonEvents(
   const poller: Poller = {
     async tick() {
       const inbox = await client.inbox(humanId);
-      handlers.onEvent({ event: "inbox.changed", data: { blockingCount: inbox.blockingCount } });
+      handlers.onEvent({
+        event: "inbox.changed",
+        data: {
+          blockingCount: inbox.blockingCount,
+          ...(inbox.needsYouCount !== undefined ? { needsYouCount: inbox.needsYouCount } : {}),
+        },
+      });
       const running = await client.sessions({ status: "running" });
       for (const s of running) handlers.onEvent({ event: "session.changed", data: s });
       try {

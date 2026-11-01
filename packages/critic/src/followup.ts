@@ -20,10 +20,36 @@ import type { ReviewOutput } from "./types.ts";
  * every answer is applied once.
  */
 export const SIGNOFF_KEY = "critic:signoff";
-export const SIGNOFF_OPTIONS = ["accept", "revise", "cancel"] as const;
-export type SignoffAnswer = (typeof SIGNOFF_OPTIONS)[number];
-/** Why the sign-off was filed: the verdict itself (tier 3, `human`) or an exhausted ladder. */
-export type SignoffReason = "verdict" | "retry_ladder_exhausted";
+/**
+ * The critic's sign-off (a tier 3 review, a `human` verdict), in the person's words (design
+ * §3.8): each option says what it does; `signoffAnswer` reads them as accept, revise, cancel,
+ * and still reads the words of cards filed before ("accept", "revise", "cancel").
+ */
+export const SIGNOFF_OPTIONS = ["Accept the work", "Send it back", "Cancel task"] as const;
+/**
+ * A task that failed after its retries (the retry ladder's last rung, or a run that failed),
+ * design §3.8 "Failed task": Try again (a session tries again), Mark done anyway (closed although
+ * nothing passed review), Cancel task. Read as revise, accept, cancel.
+ */
+export const RETRY_CARD_OPTIONS = ["Try again", "Mark done anyway", "Cancel task"] as const;
+/** What an answer does, whatever words the card used. */
+export type SignoffAnswer = "accept" | "revise" | "cancel";
+/**
+ * Why the card was filed: the verdict itself (tier 3, `human`), an exhausted ladder, or a run
+ * that failed (the session's failed-task card, the task in `failed`).
+ */
+export type SignoffReason = "verdict" | "retry_ladder_exhausted" | "failed";
+
+/** The options a card of this reason offers. */
+export function signoffOptionsFor(reason: SignoffReason): readonly string[] {
+  return reason === "verdict" ? SIGNOFF_OPTIONS : RETRY_CARD_OPTIONS;
+}
+
+/**
+ * The reason an accepted retry card records on the task: the Tasks tab then reads "Done:
+ * accepted without review" (design §2, ADR 0102 decision 2).
+ */
+export const ACCEPTED_WITHOUT_REVIEW = "accepted without review: you marked it done in the Inbox";
 
 export interface SignoffCardInput {
   taskId: string;
@@ -33,6 +59,12 @@ export interface SignoffCardInput {
   /** The findings of the review the sign-off is about (open until the answer). */
   findingIds: readonly string[];
   reason: SignoffReason;
+  /** The card's title, naming the task: '"Style the page" failed 4 times'. */
+  title?: string;
+  /** The specialist's (or the critic's) own words about it, one or two sentences. */
+  said?: string | null;
+  /** Who said it: the specialist's name ("designer"), or "critic". */
+  saidBy?: string | null;
 }
 
 export function signoffCard(input: SignoffCardInput): JsonObject {
@@ -43,7 +75,105 @@ export function signoffCard(input: SignoffCardInput): JsonObject {
     run_id: input.runId,
     finding_ids: [...input.findingIds],
     reason: input.reason,
+    ...(input.title ? { title: input.title } : {}),
+    ...(input.said ? { said: input.said } : {}),
+    ...(input.saidBy ? { said_by: input.saidBy } : {}),
     applied_at: null,
+  };
+}
+
+/**
+ * One or two sentences of a report or a summary as the card quotes them (design §3.8, §5): no
+ * markdown, no stand-in tag, no heading words, at most `max` characters, cut at a word.
+ */
+export function quotedWords(text: string | null | undefined, max = 160): string | null {
+  if (!text) return null;
+  let t = text
+    .replace(/\*\*(?:summary|criteria|report)\*\*/gi, " ")
+    .split(/\n\s*(?:\*\*criteria\*\*|#+\s|criteria:)/i)[0] as string;
+  t = t
+    .replace(/\[stand-in model\]\s*/gi, "")
+    .replace(/[*`#>]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return null;
+  const sentences = t.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g) ?? [t];
+  let out = "";
+  for (const s of sentences.slice(0, 2)) {
+    const next = `${out}${out ? " " : ""}${s.trim()}`;
+    if (out && next.length > max) break;
+    out = next;
+  }
+  if (out.length <= max) return out;
+  const cut = out.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/** A specialist as the card names it: "writer-marketing" is "the writer". */
+export function saidByName(specialist: string | null | undefined): string | null {
+  if (!specialist) return null;
+  const head = specialist.split(/[-_]/)[0]?.trim();
+  return head ? head.toLowerCase() : null;
+}
+
+/** A task title as a card's title names it: whole when short, else cut at a word. */
+function titleOf(title: string, max = 60): string {
+  const t = title.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/**
+ * The words of a retry card (design §3.8, "Retry card" before and after): the title names the
+ * task and how often it failed; the body is what the specialist said, in its own words. What
+ * waits on the task is said by the Inbox when it shows the card (true now, not when filed).
+ */
+export function retryCardWords(input: {
+  title: string;
+  attempts: number;
+  said: string | null;
+  saidBy: string | null;
+}): { title: string; why: string } {
+  const title = `"${titleOf(input.title)}" failed ${
+    input.attempts <= 1 ? "" : input.attempts === 2 ? "twice" : `${input.attempts} times`
+  }`.trimEnd();
+  const who = input.saidBy ? `The ${input.saidBy}` : "The specialist";
+  const why = input.said
+    ? `${title}. ${who} said: "${input.said.replace(/"/g, "'")}"`
+    : `${title}. Nothing it tried passed review.`;
+  return { title, why };
+}
+
+/**
+ * How often a task was tried, for a retry card's "failed N times" (design §1, true now): the
+ * specialists' own runs of the task (not the critic's reviews, not sub-runs), as the Tasks tab
+ * lists them. The task's retry counter (`attempt`) also moves on the way back from a card ("Try
+ * again" goes needs_human -> ready, and a failed task -> ready again), so it overstates the
+ * tries. `fallback` when the task has no run rows (a card filed without one).
+ */
+export async function triedTimes(
+  store: Pick<StateStore, "run">,
+  taskId: string,
+  fallback: number,
+): Promise<number> {
+  const runs = await store.run.forTask(taskId, { limit: 1000 });
+  const work = runs.filter((r) => r.specialist !== "critic" && !r.parent_run_id).length;
+  return work > 0 ? work : fallback;
+}
+
+/** The words of the critic's sign-off card: the title names the task, the body the critic. */
+export function signoffCardWords(input: { title: string; summary: string | null }): {
+  title: string;
+  why: string;
+} {
+  const title = `"${titleOf(input.title)}" needs your sign-off`;
+  const said = quotedWords(input.summary);
+  return {
+    title,
+    why: said ? `${title}. The critic said: "${said.replace(/"/g, "'")}"` : `${title}.`,
   };
 }
 
@@ -81,6 +211,13 @@ export interface FollowupContext {
   /** Run that produced the work under review; recorded on resolved findings. */
   runId?: string | null;
   sessionId?: string | null;
+  /**
+   * What the specialist reported about the work (its final report): the retry card quotes it
+   * in its own words (design §3.8), not the critic's summary.
+   */
+  workReport?: string | null;
+  /** The specialist that did the work ("designer"), for "The designer said: …". */
+  specialist?: string | null;
 }
 
 export type FollowupDecision =
@@ -179,8 +316,8 @@ async function signoffRequest(
   ctx: FollowupContext,
   task: TaskRow,
   review: ReviewOutput,
-  why: string,
   reason: SignoffReason,
+  attempts: number,
 ): Promise<string> {
   if (review.humanRequestId) {
     const existing = await ctx.store.humanRequest.get(review.humanRequestId);
@@ -189,6 +326,18 @@ async function signoffRequest(
   const findingIds = review.reviewId
     ? (await ctx.store.finding.forReview(review.reviewId)).map((f) => f.id)
     : [];
+  // Design §3.8: the title names the task; the body is the specialist's own words about its
+  // work (a retry card) or the critic's (a sign-off), never the ladder's jargon.
+  const said =
+    reason === "verdict"
+      ? quotedWords(review.summary)
+      : (quotedWords(ctx.workReport) ?? quotedWords(review.summary));
+  const saidBy =
+    reason === "verdict" || !quotedWords(ctx.workReport) ? "critic" : saidByName(ctx.specialist);
+  const words =
+    reason === "verdict"
+      ? signoffCardWords({ title: task.title, summary: review.summary })
+      : retryCardWords({ title: task.title, attempts, said, saidBy });
   const req = await ctx.store.humanRequest.insert({
     human_id: ctx.humanId ?? null,
     project_id: task.project_id,
@@ -196,9 +345,9 @@ async function signoffRequest(
     session_id: ctx.sessionId ?? null,
     kind: "approval",
     // U-073: the card names its task; the Inbox shows the project beside it.
-    why: `${why} for "${task.title}": ${review.summary}`.slice(0, 4000),
+    why: words.why.slice(0, 4000),
     steps: requiredActionsOf(review),
-    options: [...SIGNOFF_OPTIONS],
+    options: [...signoffOptionsFor(reason)],
     blocking: true,
     risk: review.findings.some((f) => f.severity === "critical" || f.severity === "high")
       ? "high"
@@ -209,6 +358,9 @@ async function signoffRequest(
       runId: ctx.runId ?? review.runId ?? null,
       findingIds,
       reason,
+      title: words.title,
+      said,
+      saidBy,
     }),
     author_agent: ctx.criticAgentId,
   });
@@ -288,8 +440,8 @@ export async function applyVerdict(
           ctx,
           needs,
           review,
-          `Retry ladder exhausted after ${task.attempt + 1} failed attempt(s) at ${current} (ceiling ${ceiling})`,
           "retry_ladder_exhausted",
+          await triedTimes(store, task.id, task.attempt + 1),
         );
         return { action: "human", task: needs, humanRequestId, reason: "retry_ladder_exhausted" };
       }
@@ -320,13 +472,7 @@ export async function applyVerdict(
         "critic: human sign-off required",
         { agentId: criticAgentId },
       );
-      const humanRequestId = await signoffRequest(
-        ctx,
-        needs,
-        review,
-        "Critic sign-off needed",
-        "verdict",
-      );
+      const humanRequestId = await signoffRequest(ctx, needs, review, "verdict", task.attempt);
       return { action: "human", task: needs, humanRequestId, reason: "verdict" };
     }
     default: {

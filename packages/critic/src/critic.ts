@@ -37,7 +37,7 @@ import type {
 import { docDriftFor } from "./docs-drift.ts";
 import { type RenderOptions, renderEvidence, subjectLabel } from "./evidence.ts";
 import { fingerprintOf } from "./fingerprint.ts";
-import { SIGNOFF_OPTIONS, signoffCard } from "./followup.ts";
+import { quotedWords, SIGNOFF_OPTIONS, signoffCard, signoffCardWords } from "./followup.ts";
 import {
   type CriticModelPick,
   type CriticSettings,
@@ -896,16 +896,16 @@ export class CriticService {
       const worst = maxSeverity(out.findings);
       // U-073: the card names the task it asks about (the Inbox shows the project beside it).
       const title = taskId ? (await store.task.get(taskId))?.title : undefined;
+      // Design §3.8: the title names the task, the body is the critic's own words; no tier,
+      // grade or confidence on the card (the Reviews tab has them).
+      const words = signoffCardWords({ title: title ?? "The work", summary: out.summary });
       const req = await store.humanRequest.insert({
         human_id: ctx.humanId === undefined ? claims.ownerHumanId : ctx.humanId,
         project_id: claims.projectId ?? null,
         task_id: taskId,
         session_id: sessionId,
         kind: "approval",
-        why: `Critic sign-off needed${title ? ` for "${title}"` : ""} (tier ${out.tier}, grade ${out.grade}, confidence ${out.confidence.toFixed(2)}): ${out.summary}`.slice(
-          0,
-          4000,
-        ),
+        why: words.why.slice(0, 4000),
         steps: out.findings.map((f) => `[${f.severity}] ${f.description}: ${f.requiredAction}`),
         options: [...SIGNOFF_OPTIONS],
         blocking: true,
@@ -918,6 +918,9 @@ export class CriticService {
               runId: input.evidence.runId ?? null,
               findingIds,
               reason: "verdict",
+              title: words.title,
+              said: quotedWords(out.summary),
+              saidBy: "critic",
             })
           : null,
         author_agent: this.deps.criticAgentId,

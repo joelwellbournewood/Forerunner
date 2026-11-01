@@ -33,7 +33,13 @@ describe("task actions over the daemon, across a restart (design §3.5)", () => 
   let app: ReturnType<typeof createDaemonApp>["app"];
   let token: string;
 
+  let provider: FakeProvider;
   const compose = async () => {
+    provider = new FakeProvider({
+      replies: [textReply("Noted.", { times: Number.POSITIVE_INFINITY })],
+      clock,
+      latency: "none",
+    });
     rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
@@ -41,11 +47,7 @@ describe("task actions over the daemon, across a restart (design §3.5)", () => 
       clock,
       stateUrl: `sqlite:${join(home, "state.sqlite")}`,
       vault: new MemoryVault(),
-      provider: new FakeProvider({
-        replies: [textReply("Noted.", { times: Number.POSITIVE_INFINITY })],
-        clock,
-        latency: "none",
-      }),
+      provider,
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
@@ -109,6 +111,56 @@ describe("task actions over the daemon, across a restart (design §3.5)", () => 
       sentence: 'Undone: the task "Create notes/todo.md" is ready again.',
     });
     expect((await rt.store.task.mustGet(created.id)).status).toBe("ready");
+  });
+
+  it("Go ahead without: the next run's brief says the person chose to go ahead without answering (design §3.8, §4.6)", async () => {
+    const project = ProjectCard.parse(
+      await post("/projects", { name: "Hosting", goal: "Host it" }),
+    );
+    const created = TaskTransitionView.parse(
+      await post(`/projects/${project.id}/tasks`, {
+        title: "Write the deploy config",
+        outcome: "deploy.yml exists",
+        riskTier: 0,
+      }),
+    );
+    const t = await rt.store.task.mustGet(created.id);
+    await rt.store.task.transition(t.id, t.version, "needs_human", "asks the person", {
+      agentId: rt.agent.id,
+    });
+    await rt.store.humanRequest.insert({
+      human_id: rt.human.id,
+      project_id: project.id,
+      task_id: t.id,
+      kind: "decision",
+      why: "Where is it hosted?",
+      options: ["Cancel the task"],
+      blocking: true,
+      risk: "low",
+    });
+    const row = TaskView.array()
+      .parse(await get(`/projects/${project.id}/tasks`))
+      .find((x) => x.id === t.id);
+    await post(`/tasks/${t.id}/action`, { version: row?.version, action: "go_ahead" });
+    const before = provider.calls.length;
+    await rt.runner.start({
+      agentId: rt.agent.id,
+      projectId: project.id,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant: {
+        allowedTools: rt.toolsForRun().names(),
+        allowedPaths: [],
+        allowedDomains: [],
+        grantedSecrets: [],
+      },
+    });
+    const briefs = provider.calls
+      .slice(before)
+      .map((c) => JSON.stringify(c.request.messages))
+      .filter((m) => m.includes("Write the deploy config"));
+    expect(briefs.length).toBeGreaterThan(0);
+    expect(briefs[0]).toContain(WITHOUT_ANSWERS_NOTE);
   });
 
   it("Stop on a task that is not running is refused in words; nothing changes", async () => {

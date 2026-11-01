@@ -7,11 +7,15 @@ import {
   DEFAULT_WORK_TIER,
   escalationCeiling,
   type FollowupDecision,
+  quotedWords,
+  RETRY_CARD_OPTIONS,
   type ReviewEvidence,
   type ReviewOutput,
   type ReviewTier,
-  SIGNOFF_OPTIONS,
+  retryCardWords,
+  saidByName,
   signoffCard,
+  triedTimes,
 } from "@forerunner/critic";
 import { checkDocDrift, STATUS_DOC } from "@forerunner/memory";
 import {
@@ -380,6 +384,9 @@ export class CriticLoop implements CriticPort {
           ownerAgentId: req.agentId,
           runId: result.runId ?? null,
           sessionId: session.id,
+          // A retry card quotes the specialist's own report (design §3.8).
+          workReport: result.finalReport ?? result.summary,
+          specialist: req.item.specialist,
         });
         decision = followup.action;
       } catch (e) {
@@ -408,27 +415,35 @@ export class CriticLoop implements CriticPort {
     } else if (followup?.action === "revise") {
       const rung = retryAction(followup.attempt, currentTier, ceiling);
       if (rung === "human") {
+        // How often it was tried (its runs), not the retry counter (design §1, true now), which
+        // Try again's way back to ready also moves: the card and the Tasks tab's "tried N
+        // times" (read from this reason) say the same number.
+        const tried = await triedTimes(store, task.id, followup.attempt);
         current = await store.task.transition(
           current.id,
           current.version,
           "needs_human",
-          `retry ladder exhausted after ${followup.attempt} failed attempt(s) at ${currentTier} (ceiling ${ceiling}): human decides`,
+          `retry ladder exhausted after ${tried} failed attempt(s) at ${currentTier} (ceiling ${ceiling}): human decides`,
           { agentId: this.deps.criticAgentId },
         );
+        // Design §3.8: one card after the last retry. Its title names the task and how often
+        // it failed; its body is what the specialist said about its work, in its own words (the
+        // critic's summary only when the run reported nothing); the options say what they do.
+        const reported = quotedWords(result.finalReport ?? result.summary);
+        const said = reported ?? quotedWords(output.summary);
+        const saidBy = reported ? saidByName(req.item.specialist) : "critic";
+        const words = retryCardWords({ title: task.title, attempts: tried, said, saidBy });
         const request = await store.humanRequest.insert({
           human_id: owner,
           project_id: task.project_id,
           task_id: task.id,
           session_id: session.id,
           kind: "approval",
-          why: `Retry ladder exhausted for "${task.title}" after ${followup.attempt} failed attempt(s) (ceiling ${ceiling}): ${output.summary}`.slice(
-            0,
-            4000,
-          ),
+          why: words.why.slice(0, 4000),
           steps: output.findings.map(
             (f) => `[${f.severity}] ${f.description}: ${f.requiredAction}`,
           ),
-          options: [...SIGNOFF_OPTIONS],
+          options: [...RETRY_CARD_OPTIONS],
           blocking: true,
           risk: output.findings.some((f) => f.severity === "critical" || f.severity === "high")
             ? "high"
@@ -442,6 +457,9 @@ export class CriticLoop implements CriticPort {
               ? (await store.finding.forReview(output.reviewId)).map((f) => f.id)
               : [],
             reason: "retry_ladder_exhausted",
+            title: words.title,
+            said,
+            saidBy,
           }),
           author_agent: this.deps.criticAgentId,
         });

@@ -46,9 +46,13 @@ import type { SchemaSyncPort } from "../update/sync.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
-import { fileBlockedByFindingsRequest, fileReviewFailedRequest } from "./findings.ts";
+import {
+  fileBlockedByFindingsRequest,
+  fileFailedTaskCard,
+  fileReviewFailedRequest,
+} from "./findings.ts";
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
-import { describeHeard, type HeardDelivery, type HeardLine, heardLineOf } from "./live-chat.ts";
+import { type HeardDelivery, type HeardLine, heardLineOf } from "./live-chat.ts";
 import {
   firstSessionPlan,
   isFirstSessionItem,
@@ -1702,7 +1706,7 @@ export class SessionRunner {
             queue.unshift(item);
             continue;
           } else if (result.outcome === "failed" || result.outcome === "timeout") {
-            await store.task.transition(
+            const failedTask = await store.task.transition(
               task.id,
               task.version,
               "failed",
@@ -1710,6 +1714,24 @@ export class SessionRunner {
               { agentId: agent.id },
             );
             failed.push(task.id);
+            // Design §3.8, §4.4: a failed task gets one card (Try again, Mark done anyway,
+            // Cancel task), so it is never stuck silently behind "Nothing waits on you".
+            try {
+              await fileFailedTaskCard({
+                store,
+                task: failedTask,
+                session,
+                humanId: agent.owner_human_id,
+                agentId: agent.id,
+                runId: result.runId ?? null,
+                reason: result.summary,
+              });
+            } catch (e) {
+              this.logger.warn("failed-task card not filed", {
+                taskId: task.id,
+                error: errorMessage(e),
+              });
+            }
           } else if (result.outcome === "budget_exceeded") {
             await store.task.transition(
               task.id,
@@ -2193,12 +2215,9 @@ export class SessionRunner {
     }
     // One line per session in the Inbox's Updates (design §3.8, §5.10): the result lives on
     // the project; the line names the project and the gist. A session that only filed its plan
-    // has a card for that, and one that ran nothing has nothing to say.
-    // What the person said during the session and where each line went (spec O.9) follows it.
-    const heardForHuman = describeHeard(
-      heard,
-      (taskId) => plan?.items.find((i) => i.taskId === taskId)?.title,
-    );
+    // has a card for that, and one that ran nothing has nothing to say. What the person said
+    // during the session is not quoted back (design §5.11: do not echo the person); the session
+    // log names the task each line went to (`inbox.heard`, `task.heard`).
     // A session the person stopped (Stop now, Stop all, Quit) before anything finished is
     // their own click, not news (design §3.8, §5.11): the session page says who stopped it.
     const onlyTheirStop =
@@ -2208,18 +2227,16 @@ export class SessionRunner {
       !outcome.needsYou.length &&
       !inReviewNow.length;
     if (
-      (stopReason !== "plan_awaiting_approval" &&
-        stopReason !== NOTHING_RUNNABLE &&
-        !onlyTheirStop) ||
-      heardForHuman
+      stopReason !== "plan_awaiting_approval" &&
+      stopReason !== NOTHING_RUNNABLE &&
+      !onlyTheirStop
     ) {
-      const line = sessionUpdateLine(project?.name ?? null, resultLines);
       await store.message.send({
         from_agent_id: agent.id,
         to_human_id: agent.owner_human_id,
         project_id: project?.id ?? null,
         type: "info",
-        body: heardForHuman ? `${line}\n${heardForHuman}` : line,
+        body: sessionUpdateLine(project?.name ?? null, resultLines),
         requires_ack: false,
         author_agent: agent.id,
       });

@@ -339,7 +339,10 @@ describe("daemon wiring", () => {
     const reportId = str((latest.report as Json).id);
     const cards = async () =>
       ((await json(await req("/inbox"))).requests as Json[]).filter(
-        (r) => (r.changeCard as { key?: string } | null)?.key === `model_watch:${reportId}`,
+        // The cards that need you; an answered one moves to the Answered list (design §3.8).
+        (r) =>
+          r.status === "open" &&
+          (r.changeCard as { key?: string } | null)?.key === `model_watch:${reportId}`,
       );
     const [card] = await cards();
     expect(card?.options).toEqual(["adopt", "ignore", "remind"]);

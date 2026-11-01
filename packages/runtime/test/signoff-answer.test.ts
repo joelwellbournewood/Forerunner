@@ -107,12 +107,13 @@ describe("critic sign-off answers", () => {
       summary: "One gap.",
       findings: [{ severity: "major", what: "No retry", required_action: "Add a retry" }],
     });
-    expect(await answer(s, "accept")).toEqual({ ...NONE, accepted: 1 });
+    expect(await answer(s, SIGNOFF_OPTIONS[0])).toEqual({ ...NONE, accepted: 1 });
     const after = await s.w.store.task.mustGet(s.task.id);
     expect(after.status).toBe("done");
     expect(after.attempt).toBe(0);
     expect(after.author_human).toBe(s.w.human);
-    expect(after.reason).toContain(s.request.id);
+    // The reason is in words, no request id (design §5 rule 3); the audit row ties them.
+    expect(after.reason).toBe("you accepted the work at sign-off");
     expect(await s.w.store.finding.openFor(s.task.id)).toEqual([]);
     const resolved = await s.w.store.finding.forReview(card(s.request).review_id as string);
     expect(resolved.map((f) => [f.status, f.resolved_by_run])).toEqual([["resolved", s.runId]]);
@@ -168,7 +169,7 @@ describe("critic sign-off answers", () => {
       summary: "One gap.",
       findings: [{ severity: "major", what: "No retry", required_action: "Add a retry" }],
     });
-    expect(await answer(s, "revise")).toEqual({ ...NONE, revised: 1 });
+    expect(await answer(s, SIGNOFF_OPTIONS[1])).toEqual({ ...NONE, revised: 1 });
     const after = await s.w.store.task.mustGet(s.task.id);
     expect(after.status).toBe("ready");
     expect(after.attempt).toBe(1);
@@ -191,7 +192,7 @@ describe("critic sign-off answers", () => {
 
   it("cancel: the task is cancelled", async () => {
     const s = await signoff({ grade: 97 });
-    expect(await answer(s, "cancel")).toEqual({ ...NONE, cancelled: 1 });
+    expect(await answer(s, SIGNOFF_OPTIONS[2])).toEqual({ ...NONE, cancelled: 1 });
     expect((await s.w.store.task.mustGet(s.task.id)).status).toBe("cancelled");
     expect(card(await s.w.store.humanRequest.mustGet(s.request.id)).outcome).toBe("cancel");
     await s.w.close();
@@ -222,7 +223,10 @@ describe("critic sign-off answers", () => {
       run_id: `run-${task.id}-2`,
     });
     expect((card(request).finding_ids as string[]).length).toBeGreaterThan(0);
-    await w.store.humanRequest.answer(request.id, request.version, "accept", w.human);
+    // Design §3.8: the card after the last retry offers what each answer does.
+    expect(request.options).toEqual(["Try again", "Mark done anyway", "Cancel task"]);
+    expect(request.why).toMatch(/^"Stubborn task" failed \d+ times\./);
+    await w.store.humanRequest.answer(request.id, request.version, "Mark done anyway", w.human);
     expect(
       await syncSignoffAnswers({
         store: w.store,
@@ -231,7 +235,10 @@ describe("critic sign-off answers", () => {
         agentId: w.alice,
       }),
     ).toEqual({ ...NONE, accepted: 1 });
-    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    const done = await w.store.task.mustGet(task.id);
+    expect(done.status).toBe("done");
+    // Closed although nothing passed review: the task says so (ADR 0102 decision 2).
+    expect(done.reason).toContain("accepted without review");
     // Every finding of the task's reviews is resolved against the last run.
     const open = await w.store.finding.openFor(task.id);
     expect(open).toEqual([]);
@@ -460,7 +467,62 @@ describe("critic sign-off answers", () => {
     await s.w.close();
   });
 
+  it("Try again on the retry card: back to ready, the person's note queued for its brief, and a session of the project started (design §3.8)", async () => {
+    const revise = () =>
+      submitReply({
+        grade: 40,
+        verdict: "revise",
+        summary: "Still wrong.",
+        findings: [{ severity: "major", what: "Still wrong", required_action: "Fix it" }],
+      });
+    const w = await loopWorld({
+      replies: [revise(), revise(), revise(), revise(), closingReply()],
+      projectSettings: { critic_ceiling: "sonnet" },
+    });
+    const task = await w.addTask("Stubborn task");
+    await w.start(w.runner(doneExecutor(w)));
+    const request = await signoffRequestOf(w, task.id);
+    await w.store.humanRequest.answer(
+      request.id,
+      request.version,
+      { choice: request.options[0] as string, note: "Use plain CSS." },
+      w.human,
+    );
+    const starts: unknown[] = [];
+    expect(
+      await syncSignoffAnswers({
+        store: w.store,
+        clock: w.clock,
+        humanId: w.human,
+        agentId: w.alice,
+        start: async (req) => {
+          starts.push(req);
+          return { result: "started" };
+        },
+      }),
+    ).toEqual({ ...NONE, revised: 1 });
+    expect((await w.store.task.mustGet(task.id)).status).toBe("ready");
+    expect(starts).toEqual([
+      expect.objectContaining({ agentId: w.alice, projectId: task.project_id, trigger: "message" }),
+    ]);
+    const queued = await w.store.queue.list({ project_id: task.project_id } as never);
+    expect(queued.map((q) => q.text)).toContain('About "Stubborn task": Use plain CSS.');
+    expect(card(await w.store.humanRequest.mustGet(request.id))).toMatchObject({
+      outcome: "revise",
+      start: "started",
+    });
+    await w.close();
+  });
+
   it("the answer words: the options, their synonyms and the choice object the phone sends", () => {
+    // The words the cards show (design §3.8).
+    expect(signoffAnswer("Accept the work")).toBe("accept");
+    expect(signoffAnswer("Mark done anyway")).toBe("accept");
+    expect(signoffAnswer("Send it back")).toBe("revise");
+    expect(signoffAnswer("Try again")).toBe("revise");
+    expect(signoffAnswer({ choice: "Try again", note: "Use plain CSS." })).toBe("revise");
+    expect(signoffAnswer("Cancel task")).toBe("cancel");
+    // And the words of cards filed before them.
     expect(signoffAnswer("accept")).toBe("accept");
     expect(signoffAnswer(" Approved ")).toBe("accept");
     expect(signoffAnswer("sign off")).toBe("accept");

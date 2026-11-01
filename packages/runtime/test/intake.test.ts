@@ -172,6 +172,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
+      // No scheduler: "Approve and start" (design §3.3) writes the plan and starts nothing
+      // here, so the cases below read the approved tasks as they were written. The start is
+      // tested on the composed daemon in apps/ui/test/real-daemon.test.ts ("the plan card").
+      startServices: false,
     });
     ({ app, token } = createDaemonApp(rt));
   }, 120_000);
@@ -217,7 +221,8 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         human_id: rt.human.id,
         project_id: projectId,
         author_agent: rt.agent.id,
-        options: ["approve", "reject"],
+        // Design §3.3: each option says what it does.
+        options: ["Approve and start", "Change the plan", "Reject"],
       });
       const c = row.change_card as JsonObject;
       expect(c.key).toBe(intakeKey(projectId));
@@ -449,7 +454,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const queued = await rt.store.queue.pending(projectId);
     const note = queued.find((q) => q.text.includes("rejected"));
     expect(note).toMatchObject({ kind: "note", author_agent: rt.agent.id });
-    expect(note?.text).toContain(requestId);
+    // In words (design §5): no request id, no time stamp; the audit row ties them.
+    expect(note?.text).toContain("The person rejected the plan");
+    expect(note?.text).not.toContain(requestId);
+    expect(note?.text).not.toMatch(/T\d\d:\d\d:\d\d/);
     // The note says what the rejection did about the docs: since the G.5 review a rejection
     // scaffolds the standard set when the creation deferred it, so the note names the doc set's
     // outcome (scaffolded now, or already in place) rather than a missing one.
@@ -1230,6 +1238,106 @@ describe("PM intake: a restart closes the session a dead daemon left running", (
       expect(after.agent.id).toBe(before.agent.id);
       expect((await after.store.session.mustGet(left.id)).status).toBe("failed");
       expect(await after.store.session.active(after.agent.id)).toHaveLength(0);
+    } finally {
+      await after.close();
+    }
+  }, 60_000);
+});
+
+describe("PM intake: Change the plan keeps the person's words until the new plan is drafted (design §3.3)", () => {
+  /** The user message of an intake call: the brief, and the changes the person asked for. */
+  const told = (req: { messages: { role: string; content: unknown }[] } | undefined) =>
+    JSON.stringify(req?.messages.find((m) => m.role === "user")?.content ?? "");
+
+  it("a change answered just before the daemon closed: after the restart the page says the plan was not drafted, and Try again drafts it with the person's words", async () => {
+    const installHome = mkdtempSync(join(tmpdir(), "fr-intake-change-restart-"));
+    const stateUrl = `sqlite:${join(installHome, "state.sqlite")}`;
+    const compose = (clock: SimulatedClock, provider: ScriptedProvider) =>
+      composeRuntime({
+        env: { FORERUNNER_HOME: installHome },
+        dirs: appDirs({ env: { FORERUNNER_HOME: installHome } }),
+        config: null,
+        clock,
+        stateUrl,
+        vault: new MemoryVault(),
+        provider,
+        gitHost: new MemoryGitHost("alice"),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.1.0-test",
+        startServices: false,
+      });
+    const call = (runtime: RuntimeApp) => {
+      const { app, token } = createDaemonApp(runtime);
+      return async (path: string, init: RequestInit = {}): Promise<Json> => {
+        const res = await app.request(path, {
+          ...init,
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        });
+        expect(res.status).toBeLessThan(300);
+        return json(res);
+      };
+    };
+    const asked = "Only a README and one page, no build step.";
+
+    // The first daemon: the plan card, then Change the plan. Its new draft never finishes (the
+    // planning call hangs) before the daemon closes.
+    const firstClock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const first = new ScriptedProvider(
+      [{ text: JSON.stringify(proposal()) }, { ttftMs: 3_600_000, text: "" }],
+      firstClock,
+    );
+    const before = await compose(firstClock, first);
+    const req1 = call(before);
+    const created = await req1("/projects", {
+      method: "POST",
+      body: JSON.stringify({ name: "Lambda", goal: "A small site", brief: "A page for the club." }),
+    });
+    const projectId = String(created.id);
+    const filed = await req1(`/projects/${projectId}/intake`, { method: "POST", body: "{}" });
+    const requestId = String(filed.requestId);
+    const row = await before.store.humanRequest.mustGet(requestId);
+    await req1(`/requests/${requestId}/answer`, {
+      method: "POST",
+      body: JSON.stringify({
+        version: row.version,
+        answer: { choice: "Change the plan", text: asked },
+      }),
+    });
+    expect(before.intake.inFlight(projectId)).not.toBeNull();
+    // The draft's planning call is under way, with the words, when the daemon closes.
+    for (let i = 0; i < 200 && first.calls.length < 2; i++)
+      await new Promise((r) => setTimeout(r, 5));
+    expect(first.calls).toHaveLength(2);
+    expect(told(first.calls[1])).toContain(asked);
+    await before.close();
+
+    // The second daemon, on the same home.
+    const secondClock = new SimulatedClock("2026-03-05T08:05:00Z");
+    const second = new ScriptedProvider([{ text: JSON.stringify(proposal()) }], secondClock);
+    const after = await compose(secondClock, second);
+    try {
+      const req2 = call(after);
+      const lost = await req2(`/projects/${projectId}/intake`);
+      expect(lost).toMatchObject({ state: "failed", requestId, outcome: "changed" });
+      expect(String(lost.error)).toBe(
+        "The new plan with your changes was not drafted: Forerunner closed before it was done. Try again drafts it with your changes.",
+      );
+      // Try again: one planning call, and it carries the person's words.
+      const retried = await req2(`/projects/${projectId}/intake/retry`, {
+        method: "POST",
+        body: "{}",
+      });
+      expect(retried).toMatchObject({ state: "drafting" });
+      await after.intake.inFlight(projectId);
+      expect(second.calls).toHaveLength(1);
+      expect(told(second.calls[0])).toContain(asked);
+      const pending = await req2(`/projects/${projectId}/intake`);
+      expect(pending).toMatchObject({ state: "pending", error: null });
+      expect(pending.requestId).not.toBe(requestId);
+      // The new card keeps the change, so a further change adds to it rather than replacing it.
+      const next = await after.store.humanRequest.mustGet(String(pending.requestId));
+      expect((next.change_card as JsonObject).changes).toEqual([asked]);
     } finally {
       await after.close();
     }

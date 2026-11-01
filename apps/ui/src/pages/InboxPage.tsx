@@ -15,14 +15,14 @@ import { UnlockCard, useUnlockWindow } from "../components/UnlockCard.tsx";
 import {
   Badge,
   Button,
+  buttonClassName,
   EmptyState,
   ErrorBanner,
   INPUT_CLASS,
   Loading,
-  statusTone,
 } from "../components/ui.tsx";
 import { formatChf, usdMicroToChfMicro } from "../lib/money.ts";
-import { inAppText, reviewLevel, withoutUndoWord } from "../lib/plain-words.ts";
+import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
 import {
   daemonRunnerKeys,
   desktopUnlockWindowStore,
@@ -186,10 +186,13 @@ function PersonQuestionsForm({
   card,
   busy,
   onSend,
+  showContext = true,
 }: {
   card: PersonQuestionsView;
   busy: boolean;
   onSend: (value: unknown) => void;
+  /** The card body says the specialist's words already (design §3.8): not twice. */
+  showContext?: boolean;
 }) {
   const [answers, setAnswers] = useState<string[]>(() => card.questions.map(() => ""));
   const given = card.questions
@@ -205,7 +208,7 @@ function PersonQuestionsForm({
         if (given.length) onSend({ answers: given });
       }}
     >
-      {card.context ? (
+      {showContext && card.context ? (
         <p className="text-xs text-neutral-600 dark:text-neutral-400">{card.context}</p>
       ) : null}
       {card.questions.map((q, i) => (
@@ -234,103 +237,96 @@ function PersonQuestionsForm({
 }
 
 /** The intake card's estimates in CHF (U-074), at the default rate the card has no other for. */
-const usd = (micro: number): string => formatChf(usdMicroToChfMicro(micro));
+const chf = (micro: number): string => formatChf(usdMicroToChfMicro(micro));
 
-function IntakeTaskList({ tasks }: { tasks: IntakeCardTask[] }) {
-  return (
-    <ol className="list-decimal pl-5">
-      {tasks.map((t) => (
-        <li key={t.key ?? t.title}>
-          {t.title}
-          <span className="text-neutral-500">
-            {" "}
-            · {reviewLevel(t.riskTier)}, priority {t.priority}
-            {t.specialist === "person"
-              ? ", asks you in the Inbox"
-              : t.specialist
-                ? `, ${t.specialist}`
-                : ""}
-            {t.dependsOn.length
-              ? `, after ${t.dependsOn
-                  // The plan's keys name its own tasks: shown by title (U-040).
-                  .map((k) => {
-                    const dep = tasks.find((x) => x.key === k);
-                    return dep ? `"${dep.title}"` : k;
-                  })
-                  .join(", ")}`
-              : ""}
-          </span>
-        </li>
-      ))}
-    </ol>
-  );
+/**
+ * A drafted decision doc as text (design §3.3: "rendered as text, never raw markdown"): the
+ * heading marks, bullets and emphasis become plain lines.
+ */
+export function markdownAsText(md: string): string[] {
+  return md
+    .split(/\n{2,}/)
+    .map((block) =>
+      block
+        .split("\n")
+        .map((line) =>
+          line
+            .replace(/^#+\s*/, "")
+            .replace(/^\s*[-*]\s+/, "• ")
+            .replace(/\*\*|__|`/g, "")
+            .trim(),
+        )
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .filter(Boolean);
 }
 
-/** The intake proposal, readable: phases and tasks, the docs, the first session, the cost. */
-function IntakeCard({ card }: { card: IntakeCardView }) {
+/**
+ * The plan from the brief, shown once (design §3.3): the tasks in order with who does each and
+ * what it costs, "Needs Docker" beside a full-review task while Docker is not ready, the total,
+ * and the decision record as text. The other docs are scaffolded without being listed.
+ */
+function IntakeCard({ card, dockerReady }: { card: IntakeCardView; dockerReady: boolean | null }) {
+  const tasks = [...card.milestones.flatMap((m) => m.tasks), ...card.looseTasks];
+  const estimate = new Map(card.firstSession.items.map((i) => [i.key, i.estimateUsdMicro]));
   const total = card.firstSession.items.reduce((s, i) => s + i.estimateUsdMicro, 0);
+  const decision = card.docs.find((d) => isDecisionDoc(d.path));
+  const titleOf = (key: string) => tasks.find((t) => t.key === key)?.title ?? null;
   return (
     <section
       className="mt-2 space-y-2 rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800"
       data-testid="intake-card"
-      aria-label="Intake proposal"
+      aria-label="The plan"
     >
-      <h3 className="font-medium">Proposed plan</h3>
-      <ul className="space-y-1" data-testid="intake-milestones">
-        {card.milestones.map((m) => (
-          <li key={m.name}>
-            <span className="font-medium">{m.name}</span>
-            {m.targetDate ? <span className="text-neutral-500"> · by {m.targetDate}</span> : null}
-            <IntakeTaskList tasks={m.tasks} />
-          </li>
-        ))}
-        {card.looseTasks.length > 0 ? (
-          <li>
-            <span className="font-medium">Under no milestone</span>
-            <IntakeTaskList tasks={card.looseTasks} />
-          </li>
-        ) : null}
-      </ul>
-      <p data-testid="intake-docs">
-        <span className="font-medium">Docs ({card.docs.length}):</span>{" "}
-        {card.docs.map((d) => d.path).join(", ")}
-        {card.docsTarget === "repository"
-          ? " — as a pull request on the project's repository"
-          : card.docsTarget === "workspace"
-            ? " — into the project's workspace"
-            : ""}
-      </p>
-      {/* U-073: what you approve, readable before you approve it; the decision doc open. */}
-      <div className="space-y-1" data-testid="intake-doc-texts">
-        {card.docs.map((d) => (
-          <details
-            key={d.path}
-            open={isDecisionDoc(d.path)}
-            className="rounded border border-neutral-200 p-1 dark:border-neutral-800"
-            data-testid="intake-doc"
-          >
-            <summary className="cursor-pointer font-medium">
-              {isDecisionDoc(d.path) ? `Decision: ${d.path}` : d.path}
-            </summary>
-            <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap text-xs">{d.text}</pre>
-          </details>
-        ))}
-      </div>
-      <div data-testid="intake-first-session">
-        <span className="font-medium">First session ({usd(total)}):</span>{" "}
-        {card.firstSession.summary}
-        <ol className="list-decimal pl-5">
-          {card.firstSession.items.map((i) => (
-            <li key={i.key || i.title}>
-              {i.title} <span className="text-neutral-500">(~{usd(i.estimateUsdMicro)})</span>
+      <ol className="list-decimal space-y-0.5 pl-5" data-testid="intake-tasks">
+        {tasks.map((t) => {
+          const cost = t.key ? estimate.get(t.key) : undefined;
+          const after = t.dependsOn.map(titleOf).filter((x): x is string => x !== null);
+          return (
+            <li key={t.key ?? t.title} data-testid="intake-task">
+              {t.title}
+              <span className="text-neutral-600 dark:text-neutral-400">
+                {" "}
+                ·{" "}
+                {t.specialist === "person"
+                  ? "you: answer its questions"
+                  : (t.specialist ?? "the agent chooses who")}
+                {cost !== undefined ? ` · about ${chf(cost)}` : ""}
+                {after.length ? ` · after ${after.map((a) => `"${a}"`).join(", ")}` : ""}
+              </span>
+              {(t.riskTier ?? 0) >= 2 && dockerReady === false ? (
+                <span className="ml-1 rounded bg-amber-100 px-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                  Needs Docker
+                </span>
+              ) : null}
             </li>
-          ))}
-        </ol>
-      </div>
-      {card.costUsdMicro !== null ? (
-        <p className="text-xs text-neutral-500">
-          Planning call: {usd(card.costUsdMicro)}. Nothing is written until you approve.
+          );
+        })}
+      </ol>
+      {total > 0 ? (
+        <p data-testid="intake-total">
+          About {chf(total)} for these tasks
+          {card.docsTarget === "repository"
+            ? "; the docs go to the project's repository as a pull request."
+            : "."}
         </p>
+      ) : null}
+      {decision ? (
+        <details
+          open
+          className="rounded border border-neutral-200 p-1 dark:border-neutral-800"
+          data-testid="intake-decision"
+        >
+          <summary className="cursor-pointer font-medium">The decision it records</summary>
+          <div className="mt-1 max-h-80 space-y-1 overflow-auto text-xs">
+            {markdownAsText(decision.text).map((p) => (
+              <p key={p} className="whitespace-pre-wrap">
+                {p}
+              </p>
+            ))}
+          </div>
+        </details>
       ) : null}
     </section>
   );
@@ -344,7 +340,16 @@ export interface InboxPageProps {
   now?: () => number;
 }
 
-/** Inbox (spec K.4, J.3): human requests and agent messages, blocking first. */
+/** The count of cards that need the person (design §3.8); `blockingCount` from an older daemon. */
+export function needsYouCountOf(inbox: Pick<InboxView, "needsYouCount" | "blockingCount">): number {
+  return inbox.needsYouCount ?? inbox.blockingCount;
+}
+
+/**
+ * Inbox (design §3.8): everything that waits on the person, and short news. Two lists:
+ * **Needs you** (the cards) and **Updates** (one line each); **Answered** (collapsed) says what
+ * was answered and what came of it. After an answer the card is replaced by its "Done" line.
+ */
 export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPageProps = {}) {
   const client = useClient();
   const store = useUiStore();
@@ -354,6 +359,9 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
     (signal) => (humanId ? client.inbox(humanId, signal) : Promise.resolve(null)),
     [client, humanId],
   );
+  // "Needs Docker" beside a full-review task of a plan (design §3.3); unknown until it answers.
+  const sandbox = useAsync((signal) => client.sandboxStatus(signal), [client]);
+  const dockerReady = sandbox.data ? sandbox.data.state === "ready" : null;
 
   // Cloud runner unlock (spec S.12, ADR 0068): the key bridge and this device's window record.
   // The auto-answer inside that window runs app-wide (`RunnerAutoUnlock` in the Shell), which
@@ -368,13 +376,13 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
   // The page keeps the header badge in step with what it loaded, and reloads when the
   // install stream (`inbox.changed` on /events, or the poll) reports a count it has not seen,
   // so an answer given elsewhere (phone, chat, another device) shows up without Refresh.
-  const blockingCount = inbox.data?.blockingCount ?? null;
+  const count = inbox.data ? needsYouCountOf(inbox.data) : null;
   const loadedCount = useRef<number | null>(null);
   useEffect(() => {
-    if (blockingCount === null) return;
-    loadedCount.current = blockingCount;
-    store.dispatch({ type: "blockingCount", count: blockingCount });
-  }, [blockingCount, store]);
+    if (count === null) return;
+    loadedCount.current = count;
+    store.dispatch({ type: "blockingCount", count });
+  }, [count, store]);
   const streamedCount = useUiState((s) => s.blockingCount);
   const reload = inbox.reload;
   useEffect(() => {
@@ -382,8 +390,25 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
     reload();
   }, [streamedCount, reload]);
 
+  // Design §3.8: after an answer the card is replaced by "Done: <what happens next>" for as
+  // long as the page is open; the Answered list keeps it after that.
+  const [done, setDone] = useState<
+    { id: string; line: string; title: string; request: HumanRequestView }[]
+  >([]);
   const answer = async (request: HumanRequestView, value: unknown) => {
-    await client.answerRequest(request.id, { version: request.version, answer: value });
+    const answered = await client.answerRequest(request.id, {
+      version: request.version,
+      answer: value,
+    });
+    setDone((prev) => [
+      {
+        id: request.id,
+        title: request.title ?? request.why,
+        line: doneLine(answered, value),
+        request: answered,
+      },
+      ...prev.filter((d) => d.id !== request.id),
+    ]);
     inbox.reload();
   };
 
@@ -432,9 +457,14 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
   if (!data) return null;
 
   const requests = sortRequests(data.requests.filter((r) => r.status === "open"));
-  const answered = sortRequests(data.requests.filter((r) => r.status !== "open"));
+  const answered = [...data.requests.filter((r) => r.status !== "open")].sort((a, b) =>
+    (b.answeredAt ?? b.createdAt).localeCompare(a.answeredAt ?? a.createdAt),
+  );
   const messages = sortMessages(data.messages);
   const unreadMessages = messages.filter((m) => m.readAt === null);
+  const needsYou = needsYouCountOf(data);
+  const openIds = new Set(requests.map((r) => r.id));
+  const doneLines = done.filter((d) => !openIds.has(d.id));
 
   return (
     <section aria-labelledby="inbox-title" className="space-y-4">
@@ -442,24 +472,40 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
         <h1 id="inbox-title" className="text-xl font-semibold">
           Inbox
         </h1>
-        <Badge tone={data.blockingCount > 0 ? "bad" : "neutral"} testId="blocking-count">
-          {data.blockingCount} blocking
-        </Badge>
         <Button variant="ghost" onClick={inbox.reload} className="ml-auto">
           Refresh
         </Button>
       </div>
       {inbox.error ? <ErrorBanner message={inbox.error} onRetry={inbox.reload} /> : null}
 
-      <h2 className="font-semibold">Requests</h2>
+      <h2 className="font-semibold" data-testid="needs-you-heading">
+        Needs you{needsYou > 0 ? ` (${needsYou})` : ""}
+      </h2>
+      {doneLines.length ? (
+        <ul className="space-y-1" data-testid="done-lines">
+          {doneLines.map((d) => (
+            <li
+              key={d.id}
+              className="rounded border border-green-300 bg-green-50 p-2 text-sm text-green-900 dark:border-green-800 dark:bg-green-950/40 dark:text-green-200"
+              data-testid="done-line"
+              data-request-id={d.id}
+              role="status"
+            >
+              {d.line}
+              <FollowUp request={d.request} onDone={inbox.reload} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {requests.length === 0 ? (
-        <EmptyState testId="no-requests">Nothing waits on you.</EmptyState>
+        <EmptyState testId="no-requests">Nothing needs you.</EmptyState>
       ) : null}
       <ol className="space-y-3" data-testid="request-list">
         {requests.map((r) => (
           <RequestCard
             key={r.id}
             request={r}
+            dockerReady={dockerReady}
             onAnswer={(value) => answer(r, value)}
             unlock={{
               bridge,
@@ -472,7 +518,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
       </ol>
 
       <div className="flex items-center gap-3">
-        <h2 className="font-semibold">Messages</h2>
+        <h2 className="font-semibold">Updates</h2>
         {unreadMessages.length > 0 ? (
           <Button
             variant="ghost"
@@ -486,12 +532,12 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
         ) : null}
       </div>
       {markAllError ? <ErrorBanner message={markAllError} /> : null}
-      {messages.length === 0 ? <EmptyState>No messages.</EmptyState> : null}
-      <ol className="space-y-2" data-testid="message-list">
+      {messages.length === 0 ? <EmptyState>No updates.</EmptyState> : null}
+      <ol className="space-y-1" data-testid="message-list">
         {messages.map((m) => (
           <li
             key={m.id}
-            className={`rounded border p-3 text-sm ${
+            className={`flex flex-wrap items-baseline gap-2 rounded border px-3 py-2 text-sm ${
               m.readAt
                 ? "border-neutral-200 text-neutral-600 dark:border-neutral-800 dark:text-neutral-400"
                 : "border-blue-300 dark:border-blue-800"
@@ -499,42 +545,42 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
             data-testid="message"
             data-read={m.readAt ? "true" : "false"}
           >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{m.fromAgentName}</span>
-              <Badge>{m.type}</Badge>
-              {m.requiresAck ? <Badge tone="warn">needs acknowledgement</Badge> : null}
-              <span className="text-xs text-neutral-500">{relativeTime(m.createdAt)}</span>
-              {m.readAt ? null : (
-                <Button
-                  variant="ghost"
-                  className="ml-auto"
-                  onClick={() => void markRead(m)}
-                  data-testid="mark-read"
-                >
-                  Mark read
-                </Button>
-              )}
-            </div>
             <MessageBody body={m.body} />
+            {m.type === "warning" ? <Badge tone="warn">warning</Badge> : null}
+            {m.requiresAck ? <Badge tone="warn">needs acknowledgement</Badge> : null}
+            <span className="ml-auto text-xs text-neutral-500">
+              {m.fromAgentName} · {relativeTime(m.createdAt)}
+            </span>
+            {m.readAt ? null : (
+              <Button variant="ghost" onClick={() => void markRead(m)} data-testid="mark-read">
+                Mark read
+              </Button>
+            )}
           </li>
         ))}
       </ol>
 
       {answered.length > 0 ? (
-        <details>
+        <details data-testid="answered">
           <summary className="cursor-pointer text-sm text-neutral-600 dark:text-neutral-400">
-            {answered.length} answered or closed
+            Answered ({answered.length})
           </summary>
           <ol className="mt-2 space-y-2">
             {answered.map((r) => (
               <li
                 key={r.id}
                 className="rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800"
+                data-testid="answered-request"
+                data-request-id={r.id}
               >
-                <Badge tone={statusTone(r.status)}>{r.status}</Badge> {r.why}
-                {r.answer !== null ? (
-                  <span className="text-neutral-500"> → {answerText(r.answer)}</span>
+                <span className="font-medium">{r.title ?? r.why}</span>
+                {r.projectName ? (
+                  <span className="text-neutral-500"> · {r.projectName}</span>
                 ) : null}
+                <p className="text-neutral-700 dark:text-neutral-300">
+                  {r.outcome ?? (r.answer !== null ? `You answered: ${answerText(r.answer)}.` : "")}
+                  <FollowUp request={r} onDone={inbox.reload} />
+                </p>
               </li>
             ))}
           </ol>
@@ -545,13 +591,68 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
 }
 
 /**
- * A message as the person reads it (U-074): a change sentence's spoken "Undo." becomes a link to
+ * What can still be done about an answered card (design §3.8): answers that came after their
+ * task had finished offer "Redo with these answers", the task's own Redo (or Reopen, Try
+ * again), so its next attempt reads them.
+ */
+function FollowUp({ request, onDone }: { request: HumanRequestView; onDone: () => void }) {
+  const client = useClient();
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const follow = request.followUp;
+  // Once done, the line stays (the reloaded card offers nothing more: its task moved again).
+  if (said)
+    return (
+      <span className="ml-2 text-xs" data-testid="follow-up-done">
+        {said}
+      </span>
+    );
+  if (!follow || !request.taskId) return null;
+  const taskId = request.taskId;
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { task } = await client.task(taskId);
+      const moved = await client.taskAction(taskId, {
+        version: task.version,
+        action: follow.action,
+        note: "Use the answers the person gave in the Inbox.",
+      });
+      setSaid(moved.change?.sentence ?? "Done.");
+      onDone();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="ml-2 inline-flex flex-wrap items-center gap-2">
+      <Button onClick={() => void run()} disabled={busy} data-testid="follow-up">
+        {follow.label}
+      </Button>
+      <span className="text-xs text-neutral-600 dark:text-neutral-400">{follow.explain}</span>
+      {error ? <span role="alert">{error}</span> : null}
+    </span>
+  );
+}
+
+/** The "Done" line that replaces a card after its answer (design §3.8). */
+function doneLine(answered: HumanRequestView, value: unknown): string {
+  if (answered.outcome) return `Done: ${answered.outcome}`;
+  return `Done: you answered "${answerText(value)}".`;
+}
+
+/**
+ * An update as the person reads it (U-074): a change sentence's spoken "Undo." becomes a link to
  * Changes, where the change can be undone.
  */
 function MessageBody({ body }: { body: string }) {
   const { text, undo } = withoutUndoWord(body);
   return (
-    <p className="mt-1 whitespace-pre-wrap">
+    <p className="whitespace-pre-wrap">
       {text}
       {undo ? (
         <>
@@ -577,16 +678,38 @@ function answerText(answer: unknown): string {
     for (const k of ["choice", "answer", "decision", "text"]) {
       if (typeof o[k] === "string") return o[k] as string;
     }
+    if (Array.isArray(o.answers)) return "your answers";
   }
   return "answered";
 }
 
+type Choice = NonNullable<HumanRequestView["choices"]>[number];
+
+/** A card's buttons: the daemon's words (design §3.8), or its options from an older daemon. */
+function choicesOf(request: HumanRequestView): Choice[] {
+  if (request.choices) return request.choices;
+  return request.options.map((label, i) => ({
+    label,
+    explain: null,
+    tone: i === 0 ? ("primary" as const) : ("secondary" as const),
+    confirm: null,
+    input: null,
+  }));
+}
+
+/** Whether a card takes an answer in the person's own words (an older daemon: every card did). */
+function takesText(request: HumanRequestView): boolean {
+  return request.reply ? request.reply === "text" : true;
+}
+
 function RequestCard({
   request,
+  dockerReady,
   onAnswer,
   unlock,
 }: {
   request: HumanRequestView;
+  dockerReady: boolean | null;
   onAnswer: (value: unknown) => Promise<void>;
   unlock: {
     bridge: RunnerKeyBridge;
@@ -596,11 +719,17 @@ function RequestCard({
   };
 }) {
   const [text, setText] = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The choice asked to be confirmed, or whose words are being typed (`input: "text"`). */
+  const [pending, setPending] = useState<Choice | null>(null);
+  const [words, setWords] = useState("");
   const intake = intakeCardOf(request.changeCard);
   const challenge = unlockChallengeOf(request);
   const questions = challenge ? null : personQuestionsOf(request.changeCard);
+  const choices = challenge ? [] : choicesOf(request);
+  const withNote = choices.some((c) => c.input === "note");
 
   const send = async (value: unknown) => {
     if (busy) return;
@@ -608,32 +737,42 @@ function RequestCard({
     setError(null);
     try {
       await onAnswer(value);
+      setPending(null);
     } catch (err) {
       setError(describeError(err));
     } finally {
       setBusy(false);
     }
   };
+  /** A click on a choice: asked once first when it says so; its note or words go with it. */
+  const choose = (c: Choice, confirmed = false) => {
+    if (c.input === "text") {
+      setPending(c);
+      return;
+    }
+    if (c.confirm && !confirmed) {
+      setPending(c);
+      return;
+    }
+    const n = note.trim();
+    void send(c.input === "note" && n ? { choice: c.label, note: n } : c.label);
+  };
+  const title = request.title ?? request.why;
+  const body = request.title ? request.body : null;
+  const details = request.details ?? (questions ? [] : request.steps.map(inAppText));
 
   return (
     <li
       className={`rounded border p-3 ${
         request.blocking
-          ? "border-red-300 bg-red-50/40 dark:border-red-800 dark:bg-red-950/20"
+          ? "border-amber-300 bg-amber-50/40 dark:border-amber-800 dark:bg-amber-950/20"
           : "border-neutral-200 dark:border-neutral-800"
       }`}
       data-testid="request"
       data-blocking={request.blocking ? "true" : "false"}
       data-request-id={request.id}
     >
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        {request.blocking ? <Badge tone="bad">blocking</Badge> : <Badge>not blocking</Badge>}
-        <Badge
-          tone={request.risk === "high" ? "bad" : request.risk === "medium" ? "warn" : "neutral"}
-        >
-          {request.risk} risk
-        </Badge>
-        <Badge>{request.kind}</Badge>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
         {request.projectId ? (
           <Link
             to={`/projects/${encodeURIComponent(request.projectId)}`}
@@ -644,11 +783,13 @@ function RequestCard({
         ) : null}
         {/* U-073: every card names its task beside its project. */}
         {request.taskTitle ? (
-          <span data-testid="request-task" className="text-neutral-700 dark:text-neutral-300">
+          <span data-testid="request-task">
             Task:{" "}
             {request.projectId ? (
               <Link
-                to={`/projects/${encodeURIComponent(request.projectId)}/tasks`}
+                to={`/projects/${encodeURIComponent(request.projectId)}/tasks${
+                  request.taskId ? `?task=${encodeURIComponent(request.taskId)}` : ""
+                }`}
                 className="text-blue-700 hover:underline dark:text-blue-300"
               >
                 {request.taskTitle}
@@ -658,18 +799,28 @@ function RequestCard({
             )}
           </span>
         ) : null}
-        <span className="ml-auto text-xs text-neutral-500">{relativeTime(request.createdAt)}</span>
+        <span className="ml-auto">{relativeTime(request.createdAt)}</span>
       </div>
-      <p className="mt-2 font-medium">{request.why}</p>
-      {request.steps.length > 0 && !questions ? (
-        <ol className="mt-1 list-decimal pl-5 text-sm text-neutral-700 dark:text-neutral-300">
-          {request.steps.map((s) => (
-            <li key={s}>{inAppText(s)}</li>
-          ))}
-        </ol>
+      <p className="mt-1 font-medium" data-testid="request-title">
+        {title}
+      </p>
+      {body ? (
+        <p
+          className="mt-1 text-sm text-neutral-700 dark:text-neutral-300"
+          data-testid="request-body"
+        >
+          {body}
+        </p>
       ) : null}
-      {questions ? <PersonQuestionsForm card={questions} busy={busy} onSend={send} /> : null}
-      {intake ? <IntakeCard card={intake} /> : null}
+      {questions ? (
+        <PersonQuestionsForm
+          card={questions}
+          busy={busy}
+          onSend={send}
+          showContext={!request.body}
+        />
+      ) : null}
+      {intake ? <IntakeCard card={intake} dockerReady={dockerReady} /> : null}
       {challenge ? (
         <UnlockCard
           request={request}
@@ -680,32 +831,127 @@ function RequestCard({
           onSend={unlock.send}
         />
       ) : null}
-      {challenge || questions ? null : request.changeCard !== null &&
-        request.changeCard !== undefined ? (
-        <details className="mt-1 text-xs">
-          <summary className="cursor-pointer text-neutral-500">Change card</summary>
-          <pre className="overflow-auto rounded bg-neutral-100 p-2 dark:bg-neutral-900">
-            {JSON.stringify(request.changeCard, null, 2)}
-          </pre>
+      {details.length > 0 ? (
+        <details className="mt-1 text-sm" data-testid="request-details">
+          <summary className="cursor-pointer text-neutral-600 dark:text-neutral-400">
+            Details
+          </summary>
+          <ul className="mt-1 list-disc pl-5 text-neutral-700 dark:text-neutral-300">
+            {details.map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ul>
         </details>
       ) : null}
-      {!challenge && request.options.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-2" data-testid="options">
-          {request.options.map((o) => (
-            <Button
-              key={o}
-              // The questions card's one option ("Cancel the task") is not its main answer.
-              variant={questions ? "secondary" : "primary"}
-              onClick={() => void send(o)}
-              disabled={busy}
-              data-testid="option"
+      {withNote && !pending ? (
+        <label className="mt-2 block text-sm">
+          <span className="text-neutral-600 dark:text-neutral-400">
+            Note for the agent (optional): goes into the next attempt
+          </span>
+          <input
+            className={`${INPUT_CLASS} mt-1`}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            data-testid="choice-note"
+          />
+        </label>
+      ) : null}
+      {pending ? (
+        <div
+          className="mt-2 space-y-2 rounded border border-neutral-300 p-2 text-sm dark:border-neutral-700"
+          data-testid="choice-pending"
+        >
+          {pending.input === "text" ? (
+            <form
+              className="space-y-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (words.trim()) void send({ choice: pending.label, text: words.trim() });
+              }}
             >
-              {o}
-            </Button>
-          ))}
+              <label className="block">
+                <span>{pending.explain ?? pending.label}</span>
+                <textarea
+                  className={`${INPUT_CLASS} mt-1 min-h-16`}
+                  value={words}
+                  onChange={(e) => setWords(e.target.value)}
+                  data-testid="choice-text"
+                />
+              </label>
+              <div className="flex gap-2">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={busy || !words.trim()}
+                  data-testid="choice-send"
+                >
+                  Send
+                </Button>
+                <Button onClick={() => setPending(null)} disabled={busy}>
+                  Back
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <p data-testid="choice-confirm">{pending.confirm}</p>
+              <div className="flex gap-2">
+                <Button
+                  variant={pending.tone === "danger" ? "danger" : "primary"}
+                  onClick={() => choose(pending, true)}
+                  disabled={busy}
+                  data-testid="choice-confirm-yes"
+                >
+                  {`Yes, ${pending.label.charAt(0).toLowerCase()}${pending.label.slice(1)}`}
+                </Button>
+                <Button onClick={() => setPending(null)} disabled={busy}>
+                  Back
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
-      {challenge || questions ? null : (
+      {!pending && (choices.length > 0 || (request.links ?? []).length > 0) ? (
+        <ul className="mt-2 space-y-1.5" data-testid="options">
+          {/* A link that unblocks (Set up Docker) is the main way on; then the answers. */}
+          {(request.links ?? []).map((l) => (
+            <li key={l.label} className="flex flex-wrap items-center gap-2">
+              <Link to={l.to} className={buttonClassName("primary")} data-testid="option-link">
+                {l.label}
+              </Link>
+              {l.explain ? (
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">{l.explain}</span>
+              ) : null}
+            </li>
+          ))}
+          {choices.map((c) => (
+            <li key={c.label} className="flex flex-wrap items-center gap-2">
+              <Button
+                // Design §3.8: the safe or likely option primary; a destructive one secondary
+                // (outlined, its words in red) and asked once.
+                variant={c.tone === "primary" ? "primary" : "secondary"}
+                className={c.tone === "danger" ? "text-red-700 dark:text-red-300" : ""}
+                onClick={() => choose(c)}
+                disabled={busy}
+                data-testid="option"
+                data-tone={c.tone}
+              >
+                {c.label}
+              </Button>
+              {c.explain ? (
+                <span
+                  className="text-xs text-neutral-600 dark:text-neutral-400"
+                  data-testid="option-explain"
+                >
+                  {c.explain}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {!challenge && !questions && !pending && takesText(request) ? (
         <form
           className="mt-2 flex gap-2"
           onSubmit={(e) => {
@@ -717,15 +963,15 @@ function RequestCard({
             className={INPUT_CLASS}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Or answer in your own words…"
-            aria-label="Free-text answer"
+            placeholder="Answer in your own words…"
+            aria-label="Your answer"
             data-testid="free-text"
           />
           <Button type="submit" disabled={busy || !text.trim()} data-testid="send-free-text">
             Send
           </Button>
         </form>
-      )}
+      ) : null}
       {error ? (
         <div className="mt-2">
           <ErrorBanner message={error} />

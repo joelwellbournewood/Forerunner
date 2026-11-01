@@ -210,7 +210,7 @@ describe("the daemon refuses an answer a structured card cannot act on (U-034)",
       turn,
     );
     expect(refused).toMatchObject({ status: "refused", code: "validation" });
-    expect(refused.reason).toContain("Choose one of: rework, accept, cancel");
+    expect(refused.reason).toContain("Choose one of: Try again, Mark done anyway, Cancel task");
     expect((await rt.store.humanRequest.mustGet(row.id)).status).toBe("open");
     const accepted = await rt.commands.execute(
       { name: "request.answer", params: { request: row.id, answer: "Rework" } },

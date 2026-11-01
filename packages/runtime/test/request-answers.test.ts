@@ -112,9 +112,9 @@ describe("acceptsAnswer: what a card can act on (U-034)", () => {
     expect(acceptsAnswer(signoff, { choice: "revise" })).toEqual({ ok: true });
     expect(acceptsAnswer(signoff, "looks fine")).toEqual({
       ok: false,
-      options: ["accept", "revise", "cancel"],
+      options: ["Accept the work", "Send it back", "Cancel task"],
       message:
-        '"looks fine" is not an answer this request can act on. Choose one of: accept, revise, cancel.',
+        '"looks fine" is not an answer this request can act on. Choose one of: Accept the work, Send it back, Cancel task.',
     });
     expect(acceptsAnswer(signoff, { decision: "approve" }).ok).toBe(false);
   });
@@ -152,10 +152,10 @@ describe("acceptsAnswer: what a card can act on (U-034)", () => {
 
 describe("reviewVerdictOption: the phone's Approve / Reject as the card's own button (U-027)", () => {
   it("picks the option that accepts the work and the one that sends it back", () => {
-    expect(reviewVerdictOption(card(SIGNOFF_OPTIONS), "approve")).toBe("accept");
-    expect(reviewVerdictOption(card(SIGNOFF_OPTIONS), "reject")).toBe("revise");
-    expect(reviewVerdictOption(card(BLOCKED_FINDINGS_OPTIONS), "approve")).toBe("accept");
-    expect(reviewVerdictOption(card(BLOCKED_FINDINGS_OPTIONS), "reject")).toBe("rework");
+    expect(reviewVerdictOption(card(SIGNOFF_OPTIONS), "approve")).toBe("Accept the work");
+    expect(reviewVerdictOption(card(SIGNOFF_OPTIONS), "reject")).toBe("Send it back");
+    expect(reviewVerdictOption(card(BLOCKED_FINDINGS_OPTIONS), "approve")).toBe("Mark done anyway");
+    expect(reviewVerdictOption(card(BLOCKED_FINDINGS_OPTIONS), "reject")).toBe("Try again");
     expect(reviewVerdictOption(card(["yes", "no"]), "approve")).toBe("yes");
     expect(reviewVerdictOption(card(["yes", "no"]), "reject")).toBe("no");
     expect(reviewVerdictOption(card(EXTENSION_APPROVAL_OPTIONS), "approve")).toBe("Approve");

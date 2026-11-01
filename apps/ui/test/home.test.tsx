@@ -56,10 +56,11 @@ describe("Home", () => {
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Beacon");
   });
 
-  it("shows the active project in the header and the blocking count in the inbox badge", async () => {
+  it("shows the active project in the header and every card that needs you in the inbox badge (design §3.8)", async () => {
     renderApp("/");
     await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Atlas"));
-    await waitFor(() => expect(screen.getByTestId("inbox-badge")).toHaveTextContent("1"));
+    // Both open cards wait on the person, the non-blocking one too: the Inbox lists both.
+    await waitFor(() => expect(screen.getByTestId("inbox-badge")).toHaveTextContent("2"));
     expect(screen.getByTestId("connection-status")).toHaveTextContent(/connected/);
   });
 

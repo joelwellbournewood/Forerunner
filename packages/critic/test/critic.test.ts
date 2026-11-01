@@ -419,11 +419,14 @@ describe("CriticService: rules in code", () => {
         task_id: w.ids.task,
         project_id: w.ids.project,
       });
-      expect(req.why).toContain("Flawless migration.");
-      expect(req.why).toContain("tier 3");
-      // U-073: the card names the task it asks about (the phone shows the text alone).
-      expect(req.why).toContain('"Add clamp"');
-      expect(req.options).toEqual(["accept", "revise", "cancel"]);
+      // Design §3.8: the title names the task (U-073), the body is the critic's own words;
+      // no tier, grade or confidence on the card.
+      expect(req.why).toBe(
+        '"Add clamp" needs your sign-off. The critic said: "Flawless migration."',
+      );
+      expect(req.why).not.toMatch(/tier|grade|confidence/);
+      // Each option says what it does (design §3.8).
+      expect(req.options).toEqual(["Accept the work", "Send it back", "Cancel task"]);
       // The card the runtime's sign-off sync applies the answer through (RT-P5-1).
       expect(req.change_card).toEqual({
         key: SIGNOFF_KEY,
@@ -432,6 +435,9 @@ describe("CriticService: rules in code", () => {
         run_id: null,
         finding_ids: [],
         reason: "verdict",
+        title: '"Add clamp" needs your sign-off',
+        said: "Flawless migration.",
+        said_by: "critic",
         applied_at: null,
       });
       const run = (await w.store.run.forTask(w.ids.task))[0];

@@ -142,10 +142,18 @@ The session runner's `SandboxGate` (`session/sandbox-gate.ts`, wired in `sandbox
 `check()` re-probes and answers `{ ready, state, step, headline }`; while not ready the runner
 leaves the ready tasks at tier 2+ out of the plan (`waitingForSandbox` on `session.planned`, a
 `session.sandbox_waiting` event, a "Waiting for Docker: ..." summary line) and calls
-`waiting()`, which starts the download when the image is all that is missing and keeps the one
-Inbox notice: `kind: "info"`, not blocking, author `sandbox-gate`, `change_card` `{ key:
-"sandbox.not_ready", state, tasks }`; not filed again for a state whose last notice is open or
-answered, replaced when the state changes, withdrawn once ready. A lease refused after the plan
+`waiting({ projectId, tasks })`, which starts the download when the image is all that is missing
+and keeps **one Inbox card per project** (design §3.8, §4.12; ADR 0101, 0102; before
+2026-11-01 one global notice with no project, a reply box and nothing to choose): not blocking,
+author `sandbox-gate`, the project's id, the task's id when one task waits, `why` '"X" waits for
+Docker: <headline> …' (or "N tasks wait"), the steps for this computer, the option Cancel task
+(`SANDBOX_CANCEL_OPTION`) for one task (`kind: "approval"`; with several, `info` and no option:
+each is cancelled on the Tasks tab), `change_card` `{ key: "sandbox.not_ready", state, headline,
+tasks, task_titles, task_ids, applied_at }`. The Inbox shows Set up Docker (a link to Settings →
+Sandbox) beside it and no light-review shortcut. The card is kept while it says the same (state
+and tasks), filed again when either changed, not repeated after an answer for the same tasks,
+and withdrawn once ready; `syncAnswers()` (from `syncApprovals`) cancels the task of a card
+answered with Cancel task. A lease refused after the plan
 (`isSandboxNotReady`) gives the claim back (`releaseClaim`: in_progress -> ready, no attempt).
 On the change to `ready` the wiring moves tier 2+ tasks an older version failed with the old
 sandbox messages (`OLD_SANDBOX_FAILURE`) back to ready and restores their attempt count.

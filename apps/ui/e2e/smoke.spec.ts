@@ -10,7 +10,8 @@ test("home renders the shell, connects to the daemon and shows two projects", as
   await expect(page.getByTestId("connection-status")).toHaveText(/connected/);
   await expect(page.getByTestId("project-card")).toHaveCount(2);
   await expect(page.getByTestId("active-project")).toContainText("Atlas");
-  await expect(page.getByTestId("inbox-badge")).toHaveText("1");
+  // Design §3.8: the badge counts every card that needs you (the fixtures have two open).
+  await expect(page.getByTestId("inbox-badge")).toHaveText("2");
   const atlas = page.getByTestId("project-card").first();
   await expect(atlas.getByTestId("spend-bar")).toContainText("CHF 25.00 of CHF 100.00");
   await expect(atlas.getByTestId("critic-grade")).toHaveText("82 / 100");

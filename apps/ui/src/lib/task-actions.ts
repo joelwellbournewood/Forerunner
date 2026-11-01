@@ -51,12 +51,15 @@ export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: s
 /**
  * The actions a status offers, the main one first (design §3.5's table). A task only the
  * person can do ("Me: ask me in the Inbox") has no specialist to go ahead without its answers:
- * it offers Answer and Cancel.
+ * it offers Answer and Cancel. A task waiting on its retry card ("Needs your decision: tried 4
+ * times", design §2) has no questions to go without: Answer, Try again, Cancel.
  */
 export function actionsFor(
   key: TaskDisplayKey,
-  task?: Pick<TaskView, "specialist">,
+  task?: Pick<TaskView, "specialist"> & Partial<Pick<TaskView, "display">>,
 ): readonly TaskActionKey[] {
+  if (key === "answer" && task?.display?.blocker?.cardKind === "retry")
+    return ["answer", "try_again", "cancel"];
   if (key === "answer" && task?.specialist === WHO_PERSON) return ["answer", "cancel"];
   switch (key) {
     case "draft":

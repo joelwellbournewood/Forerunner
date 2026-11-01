@@ -114,7 +114,11 @@ export function AppProvider({
             if (event.event === "speak.started") {
               announcer?.started(event.data);
             } else if (event.event === "inbox.changed") {
-              store.dispatch({ type: "blockingCount", count: event.data.blockingCount });
+              // The header counts every card that needs you (design §3.8).
+              store.dispatch({
+                type: "blockingCount",
+                count: event.data.needsYouCount ?? event.data.blockingCount,
+              });
             } else if (event.event === "project.changed") {
               void client
                 .project(event.data.id)
@@ -272,7 +276,7 @@ export async function bootstrapStore(
   if (humanId) {
     try {
       const inbox = await client.inbox(humanId, signal);
-      store.dispatch({ type: "blockingCount", count: inbox.blockingCount });
+      store.dispatch({ type: "blockingCount", count: inbox.needsYouCount ?? inbox.blockingCount });
     } catch {
       // the /events stream or the next poll will bring the count
     }

@@ -164,7 +164,7 @@ describe("a review verdict from the phone acts like the matching Inbox option (U
   it("sign-off card: Approve accepts the work and the task is done", async () => {
     const s = await signoff();
     const answered = await verdict(s.review.id, "approve", s.request);
-    expect(answered.answer).toBe("accept");
+    expect(answered.answer).toBe("Accept the work");
     expect(await sync.signoffs()).toMatchObject({ accepted: 1, skipped: 0 });
     expect((await h.store.task.mustGet(s.task.id)).status).toBe("done");
     expect(await h.store.finding.openFor(s.task.id)).toEqual([]);
@@ -173,7 +173,7 @@ describe("a review verdict from the phone acts like the matching Inbox option (U
   it("sign-off card: Reject sends the work back and the task is ready for a rework", async () => {
     const s = await signoff();
     const answered = await verdict(s.review.id, "reject", s.request);
-    expect(answered.answer).toBe("revise");
+    expect(answered.answer).toBe("Send it back");
     expect(await sync.signoffs()).toMatchObject({ revised: 1, skipped: 0 });
     expect((await h.store.task.mustGet(s.task.id)).status).toBe("ready");
   });
@@ -181,7 +181,7 @@ describe("a review verdict from the phone acts like the matching Inbox option (U
   it("findings card: Approve accepts the findings as resolved and the task is done", async () => {
     const b = await blocked();
     const answered = await verdict(b.review.id, "approve", b.request);
-    expect(answered.answer).toBe("accept");
+    expect(answered.answer).toBe("Mark done anyway");
     expect(await sync.findings()).toMatchObject({ accepted: 1, skipped: 0 });
     expect((await h.store.task.mustGet(b.task.id)).status).toBe("done");
     expect(await h.store.finding.openFor(b.task.id)).toEqual([]);
@@ -190,7 +190,7 @@ describe("a review verdict from the phone acts like the matching Inbox option (U
   it("findings card: Reject reworks the task", async () => {
     const b = await blocked();
     const answered = await verdict(b.review.id, "reject", b.request);
-    expect(answered.answer).toBe("rework");
+    expect(answered.answer).toBe("Try again");
     expect(await sync.findings()).toMatchObject({ reworked: 1, skipped: 0 });
     expect((await h.store.task.mustGet(b.task.id)).status).toBe("ready");
   });

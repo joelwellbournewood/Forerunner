@@ -348,12 +348,15 @@ describe("what you say during a live session (spec O.9)", () => {
       heard: [{ id: posted[0]?.id, source: "voice", delivered_to: second.id }],
     });
     expect(JSON.stringify(res.handoff)).not.toContain(text);
+    // The Inbox's one-line Update does not quote the person back (design §3.8, §5.11); the
+    // session log above names the task the line went to.
     const toHuman = (await w.store.message.inbox({ humanId: w.human })).filter(
       (m) => m.from_agent_id === w.alice && /^Game: /.test(m.body),
     );
     expect(toHuman).toHaveLength(1);
-    expect(toHuman[0]?.body).toContain("You said during the session:");
-    expect(toHuman[0]?.body).toContain(`- (voice) "${text}" -> given to "Second task"`);
+    expect(toHuman[0]?.body).not.toContain("You said during the session");
+    expect(toHuman[0]?.body).not.toContain(text);
+    expect(toHuman[0]?.body.split("\n")).toHaveLength(1);
     const cache = (await w.store.project.mustGet(w.game)).summary_cache as {
       last_session: { summary: string };
     };
@@ -598,9 +601,9 @@ describe("what you say during a live session (spec O.9)", () => {
     const toHuman = (await w.store.message.inbox({ humanId: w.human })).filter(
       (x) => x.from_agent_id === w.alice && /^Game: /.test(x.body),
     );
-    expect(toHuman[0]?.body).toContain(
-      '- (text) "use the new renderer" -> after the last task; the next session reads it',
-    );
+    // The Update does not quote the person back (design §3.8, §5.11); the line stays unread
+    // above, so the next session reads it.
+    expect(toHuman[0]?.body).not.toContain("use the new renderer");
     const plain: TaskExecutor = {
       async execute({ task, budget }) {
         budget.record(`run-${task.id}`, 1);

@@ -236,6 +236,12 @@ export const TaskDisplay = z.object({
       taskId: z.string().nullable(),
       requestId: z.string().nullable(),
       title: z.string().nullable(),
+      /**
+       * A card's kind (design §3.8): `retry`, the decision after failed tries (Try again, Mark
+       * done anyway, Cancel task); `questions`, a card that asks (answer, or go ahead without).
+       * Absent from an older service.
+       */
+      cardKind: z.enum(["retry", "questions"]).optional(),
     })
     .nullable(),
 });
@@ -527,13 +533,56 @@ export const HumanRequestView = z.object({
   answer: z.unknown().nullable(),
   createdAt: z.string(),
   version: z.number().int(),
+  /**
+   * Design §3.8: the card as the Inbox shows it (`daemon/request-words.ts`): a title naming its
+   * task, one or two sentences of what and why, each option with its consequence line, a text
+   * box only where free text is accepted, the longer detail apart, and once answered the line
+   * of what happens next. Absent from a service older than the fields: the Inbox then words
+   * the card from `why` and `options`.
+   */
+  title: z.string().nullable().optional(),
+  body: z.string().nullable().optional(),
+  choices: z
+    .array(
+      z.object({
+        label: z.string(),
+        explain: z.string().nullable(),
+        tone: z.enum(["primary", "secondary", "danger"]),
+        confirm: z.string().nullable(),
+        input: z.enum(["note", "text"]).nullable(),
+      }),
+    )
+    .optional(),
+  links: z
+    .array(z.object({ label: z.string(), to: z.string(), explain: z.string().nullable() }))
+    .optional(),
+  reply: z.enum(["none", "text", "form"]).optional(),
+  details: z.array(z.string()).optional(),
+  outcome: z.string().nullable().optional(),
+  answeredAt: z.string().nullable().optional(),
+  /** Answers that came after their task moved on: "Redo with these answers" (design §3.8). */
+  followUp: z
+    .object({
+      label: z.string(),
+      explain: z.string(),
+      action: z.enum(["redo", "reopen", "try_again"]),
+    })
+    .nullable()
+    .optional(),
 });
 export type HumanRequestView = z.infer<typeof HumanRequestView>;
 
 export const InboxView = z.object({
+  /** The open requests, then (design §3.8 "Answered") the ones answered or withdrawn lately. */
   requests: z.array(HumanRequestView),
   messages: z.array(MessageView),
   blockingCount: z.number().int(),
+  /**
+   * Every open card that waits on the person (design §3.8: nothing else counts as "needs you"):
+   * the Inbox's count, the header's badge and the sum of Home's per-project counts plus the
+   * cards of no project. Absent from an older service (the screens then use `blockingCount`).
+   */
+  needsYouCount: z.number().int().optional(),
 });
 export type InboxView = z.infer<typeof InboxView>;
 
@@ -2119,7 +2168,7 @@ export const ErrorBody = z.object({
 /** Server-sent event names on GET /events and GET /sessions/:id/events. */
 export type DaemonSseEvent =
   | { event: "session.event"; data: EventView }
-  | { event: "inbox.changed"; data: { blockingCount: number } }
+  | { event: "inbox.changed"; data: { blockingCount: number; needsYouCount?: number } }
   | { event: "session.changed"; data: SessionView }
   | { event: "project.changed"; data: { id: string } }
   | { event: "extension.changed"; data: { type: string; id: string; name: string } }

@@ -229,7 +229,12 @@ export function TasksTab({
     if (!identity) return;
     void client
       .inbox(identity.humanId)
-      .then((inbox) => uiStore.dispatch({ type: "blockingCount", count: inbox.blockingCount }))
+      .then((inbox) =>
+        uiStore.dispatch({
+          type: "blockingCount",
+          count: inbox.needsYouCount ?? inbox.blockingCount,
+        }),
+      )
       .catch(() => {
         // the /events stream or the next poll brings the count
       });

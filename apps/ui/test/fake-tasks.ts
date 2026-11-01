@@ -77,9 +77,11 @@ export function projectTaskViews(
 ): TaskView[] {
   const mine = all.filter((t) => t.projectId === projectId);
   const rows = mine.map((t) => rowOf(t, meta));
-  const cards = new Map<string, { id: string }>();
+  // As the daemon: the card's kind (questions, or a retry decision) comes from its change card.
+  const cards = new Map<string, { id: string; change_card: never }>();
   for (const r of requests)
-    if (r.status === "open" && r.taskId && !cards.has(r.taskId)) cards.set(r.taskId, { id: r.id });
+    if (r.status === "open" && r.taskId && !cards.has(r.taskId))
+      cards.set(r.taskId, { id: r.id, change_card: (r.changeCard ?? null) as never });
   const ctx = {
     tasks: new Map(all.map((t) => [t.id, rowOf(t, meta)])),
     cards,

@@ -294,6 +294,18 @@ export class CommandExecutor {
       }
       return g.perform();
     }
+    // Design §3.8: an Inbox card answered from chat or voice that needs a device confirmation
+    // (a high-risk card) is not filed again as a second card about the first, which no chat
+    // yes could confirm: the reply points to the card, which is where it is answered.
+    if (g.card.command === "request.answer" && g.decision === "needs_device")
+      return refusal(
+        new ForerunnerError(
+          "approval_required",
+          `Answer it on its card in the Inbox (${g.card.what.replace(/^the request /, "")}): it is open there, and nothing else was filed.`,
+          { details: { reason: "answer_on_card" } },
+        ),
+        g.card,
+      );
     return this.createPending(g.decision, g.card, g.ctx, g.perform, g.redecide);
   }
 
@@ -499,15 +511,22 @@ export class CommandExecutor {
         author_human: ctx.actor.kind === "human" ? ctx.actor.id : null,
         author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : null,
       };
-      await this.store.message.send({
-        from_agent_id: ctx.agentId,
-        to_human_id: ctx.humanId,
-        project_id: meta.projectId,
-        type: "info",
-        body: sentence,
-        requires_ack: false,
-        ...author,
-      });
+      // Design §3.8, §5.11: the Inbox never echoes the person's own clicks, chat or voice
+      // commands, or project switches; they are in Changes (and the reply, where they asked).
+      // A change the agent made, or one the app made by itself (a temporary change reverting
+      // when its window ends), is news and goes to the person's Inbox.
+      const theirOwn =
+        ctx.actor.kind === "human" && ctx.actor.id === ctx.humanId && meta.kind !== "revert";
+      if (!theirOwn)
+        await this.store.message.send({
+          from_agent_id: ctx.agentId,
+          to_human_id: ctx.humanId,
+          project_id: meta.projectId,
+          type: "info",
+          body: sentence,
+          requires_ack: false,
+          ...author,
+        });
       if (!meta.projectId) return;
       const others = await this.sharedWith(ctx, meta.projectId);
       if (others.length === 0) return;
