@@ -201,7 +201,14 @@ export function sessionUpdateLine(
   const head = lines
     .map((l) => l.replace(CARD_SAYS_IT, "").trim())
     .find((l) => l.length > 0 && !NOT_NEWS.test(l));
-  if (!head) return null;
+  if (!head) {
+    // A session whose only news is a card still has its one line (design §3.8), worded so it
+    // stays true once the card is answered.
+    const cardOnly = lines.some((l) => /\bneeds? your decision \(Inbox\)\./.test(l));
+    if (!cardOnly) return null;
+    const line = "the session ended without finishing a task.";
+    return projectName ? `${projectName}: ${line}` : `The ${line.slice(4)}`;
+  }
   const gist = head.length > 160 ? `${head.slice(0, 157).replace(/\s+\S*$/, "")}…` : head;
   return projectName ? `${projectName}: ${lowerFirstIfDid(gist)}` : gist;
 }

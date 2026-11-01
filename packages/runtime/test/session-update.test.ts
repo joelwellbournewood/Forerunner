@@ -24,13 +24,13 @@ describe("a session's Update", () => {
     ).toBe('Quote page: "A" failed: Claude did not answer.');
   });
 
-  it("posts nothing when the only news is a card's or the person's own stop", () => {
+  it("a session whose only news is a card says so in words that stay true; the person's own stop posts nothing", () => {
     expect(
       sessionUpdateLine("Quote page", [
         '"Style the page" needs your decision (Inbox).',
         "CHF 0.01.",
       ]),
-    ).toBeNull();
+    ).toBe("Quote page: the session ended without finishing a task.");
     expect(sessionUpdateLine("Quote page", ["CHF 0.00."])).toBeNull();
     expect(sessionUpdateLine("Quote page", ["Stopped by you. CHF 0.00."])).toBeNull();
   });

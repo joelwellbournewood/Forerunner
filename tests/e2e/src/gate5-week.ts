@@ -519,7 +519,10 @@ async function runMorning(x: Phase5World, day: number): Promise<DayReport> {
       // The session's one-line Update names the project (design §3.8).
       msg.body.startsWith(`${projectName}: `),
   );
-  must(summary, `no session summary of day ${n} in J's inbox`);
+  must(
+    summary,
+    `no session summary of day ${n} in J's inbox; Alice's session: ${JSON.stringify(aliceRow.summary)}; messages: ${JSON.stringify(inbox.messages.map((m) => m.body))}`,
+  );
   await x.j.daemon.ui.markRead(summary.id);
   return {
     day,

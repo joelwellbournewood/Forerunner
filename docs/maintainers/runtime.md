@@ -4258,9 +4258,11 @@ evidence listed the prompt hash and the run id.
 `sessionUpdateLine` (`session/result.ts`) gives the Inbox one line of news per session, or
 null: a decision waiting in the Inbox is the card's to say (its sentence is left out, so the
 Update neither repeats the card beside it nor goes stale once it is answered), and a line that
-is only money, how the session ended or what waits is no news. A session whose only task the
-person stopped, or whose only result is a card, posts no Update (before: "<Project>: CHF
-0.00." and '"X" needs your decision (Inbox).' beside the card).
+is only money, how the session ended or what waits is no news. A session whose only news is a
+card still has its line, worded to stay true once the card is answered ("Quote page: the
+session ended without finishing a task."); one whose only task the person stopped posts no
+Update (before: "<Project>: CHF 0.00." and '"X" needs your decision (Inbox).' beside the
+card).
 
 ### The writing rules, checked (`test/writing-rules.test.ts`)
 

@@ -336,9 +336,10 @@ describe("scenario 1: the good day", () => {
         m.from_agent_id === w.alice.agent.id &&
         m.created_at >= ALICE_SCHEDULED,
     );
-    // One Update line in J's Inbox (design §3.8): the project and what needs J first; the
-    // session's result (at most three lines, §5) is on the session and the project.
-    expect(summary?.body).toBe('Sample service: "Billing export" needs your decision (Inbox).');
+    // One Update line in J's Inbox (design §3.8): the project and the news; the decision that
+    // waits is its card's to say, beside it (§5.10); the session's result (at most three lines,
+    // §5) is on the session and the project.
+    expect(summary?.body).toBe('Sample service: did 1 task: "Health endpoint".');
     expect((summary?.created_at ?? "") < MORNING).toBe(true);
     expect(aliceSession.summary.split("\n").slice(0, 2)).toEqual([
       '"Billing export" needs your decision (Inbox).',
