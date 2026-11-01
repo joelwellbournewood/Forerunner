@@ -2413,3 +2413,30 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 - Phase 8 decisions the spec leaves open (the hold mechanism in place of sleeps, the per-install
   composition on one store, the session-cap reading in scenario 5) are recorded here; no ADR
   number was reserved for this work.
+
+## Bench: the real daemon and the real UI with a stand-in model
+
+`scripts/bench/` starts the real daemon (`fr daemon` on an isolated `FORERUNNER_HOME`) and the
+real UI dev server, and gives Playwright scripts a recorder (`recorder.cjs`: `openApp`, `step`
+screenshots and visible text, `api`, problems from the console and the network). Usage, the
+failure-injection variables and where everything lands are in `scripts/bench/README.md`; the
+smoke journey is `scripts/bench/journeys/smoke.cjs`.
+
+The model is `fr daemon --provider bench`: the role-player in `testenv/src/bench/`
+(`role-player.ts`, plans and file contents in `plans.ts`, role detection in `roles.ts`). It
+reads the run label the loop driver puts on every call (`ModelRequest.origin.label`:
+`intake <id>`, `<specialist> on <title>`, `critic tier <n> on ...`, `conversation`) and answers
+so the real flow goes on: an intake proposal `parseIntakeReply` accepts, specialist runs through
+the app's own tools, a `submit_review` verdict, a chat reply that says what context it got.
+Every request is a line of `<home>/bench/model-calls.jsonl` (`call-log.ts`), which is how a
+tester sees what the app sends a model. `--provider bench-live` wraps the Messages API in the
+same log (`withModelCallLog`, the key replaced and every string redacted); it is unproven
+against the real API until a session with a key runs it. Tests:
+`testenv/test/bench-role-player.test.ts` (the stand-in against the runtime's own intake parser,
+plan writer and critic schema; the live wrapper over a stubbed provider).
+
+Known limits: the stand-in proves mechanics, never model quality; the setup assistant and
+Settings still say no Claude key is connected while it serves; the daemon gets a new token on
+every start, so a page open across `restart-daemon.mjs` needs `reconnect(page, name)` (what the
+desktop shell does after its own daemon restarts is not covered); injection counters live in
+the daemon process and start again with it.

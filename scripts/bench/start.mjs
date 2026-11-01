@@ -1,0 +1,124 @@
+#!/usr/bin/env node
+// Start a test bench: the real daemon on an isolated home plus the real UI dev server.
+//   node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u>
+//        [--provider bench|fake|bench-live|none] [--home <dir>] [--fresh] [--env KEY=VAL ...]
+// Writes <bench root>/<n>/bench.json { daemonUrl, uiUrl, home, token, pids, ... } and prints it.
+// See README.md. Stop with stop.mjs, restart only the daemon with restart-daemon.mjs.
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import {
+  benchDir,
+  benchFile,
+  envPairs,
+  fail,
+  isAlive,
+  killTree,
+  parseArgs,
+  portFree,
+  REPO,
+  readBench,
+  spawnLogged,
+  startDaemon,
+  waitFor,
+  writeBench,
+} from "./lib.mjs";
+
+const args = parseArgs(process.argv.slice(2));
+const name = args.name;
+const daemonPort = Number(args["daemon-port"]);
+const uiPort = Number(args["ui-port"]);
+const provider = typeof args.provider === "string" ? args.provider : "bench";
+if (!name || name === true) fail("--name <n> is required");
+if (!Number.isInteger(daemonPort) || !Number.isInteger(uiPort))
+  fail("--daemon-port <p> and --ui-port <u> are required");
+if (!["bench", "fake", "bench-live", "none"].includes(provider))
+  fail(`--provider must be bench, fake, bench-live or none (got ${provider})`);
+
+const dir = benchDir(name);
+if (existsSync(benchFile(name))) {
+  const old = readBench(name);
+  const alive = Object.values(old.pids ?? {}).filter((p) => isAlive(p));
+  if (alive.length)
+    fail(
+      `bench ${name} is already running (pids ${alive.join(", ")}); stop it first: node scripts/bench/stop.mjs --name ${name}`,
+    );
+}
+const home = path.resolve(typeof args.home === "string" ? args.home : path.join(dir, "home"));
+if (args.fresh) {
+  for (const sub of ["home", "steps", "daemon.log", "ui.log"])
+    rmSync(path.join(dir, sub), { recursive: true, force: true });
+  if (typeof args.home === "string") rmSync(home, { recursive: true, force: true });
+}
+mkdirSync(home, { recursive: true });
+mkdirSync(path.join(dir, "steps"), { recursive: true });
+
+for (const [label, port] of [
+  ["daemon", daemonPort],
+  ["ui", uiPort],
+])
+  if (!(await portFree(port))) fail(`port ${port} (${label}) is in use; pick another`);
+
+const extra = envPairs(args.env);
+console.log(`bench ${name}: starting the daemon (provider ${provider}) on port ${daemonPort} ...`);
+const daemon = await startDaemon({ dir, home, provider, port: daemonPort, extra });
+
+console.log(`bench ${name}: starting the UI dev server on port ${uiPort} ...`);
+const uiDir = path.join(REPO, "apps", "ui");
+const viteBin = path.join(uiDir, "node_modules", "vite", "bin", "vite.js");
+if (!existsSync(viteBin)) {
+  await killTree(daemon.pid);
+  fail(`vite not found at ${viteBin}; run pnpm install`);
+}
+const uiLog = path.join(dir, "ui.log");
+const uiPid = spawnLogged(
+  [process.execPath, viteBin, "--port", String(uiPort), "--strictPort", "--host", "127.0.0.1"],
+  {
+    cwd: uiDir,
+    env: {
+      ...process.env,
+      VITE_DAEMON_URL: daemon.url,
+      VITE_DAEMON_TOKEN: daemon.token,
+      BROWSER: "none",
+    },
+    logFile: uiLog,
+  },
+);
+const uiUrl = `http://127.0.0.1:${uiPort}`;
+const uiUp = await waitFor(async () => {
+  if (!isAlive(uiPid)) throw new Error("exited");
+  const res = await fetch(`${uiUrl}/`, { signal: AbortSignal.timeout(3000) });
+  return res.ok;
+}, 90_000);
+if (!uiUp) {
+  await killTree(uiPid);
+  await killTree(daemon.pid);
+  fail(`the UI dev server did not answer on ${uiUrl} within 90 s; see ${uiLog}`);
+}
+
+const bench = {
+  name,
+  daemonUrl: daemon.url,
+  uiUrl,
+  home,
+  token: daemon.token,
+  provider,
+  env: extra,
+  daemonPort,
+  uiPort,
+  pids: { daemon: daemon.pid, ui: uiPid },
+  daemonNodePid: daemon.nodePid,
+  projectsRoot: path.join(home, "data", "projects"),
+  modelCallLog: path.join(home, "bench", "model-calls.jsonl"),
+  logs: { daemon: path.join(dir, "daemon.log"), ui: uiLog },
+  steps: path.join(dir, "steps"),
+  startedAt: new Date().toISOString(),
+};
+writeBench(name, bench);
+writeFileSync(
+  path.join(dir, "README.txt"),
+  "A Forerunner test bench. See scripts/bench/README.md in the repository.\n",
+);
+console.log(JSON.stringify(bench, null, 2));
+console.log(
+  `bench ${name}: ready. Open ${uiUrl} (the token is already in the page). Stop: node scripts/bench/stop.mjs --name ${name}`,
+);

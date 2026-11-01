@@ -2848,7 +2848,13 @@ and `{killActive}` from the kill routes.
 `tools.ts` holds the file and shell tools a session gets (`read_file`, `write_file`,
 `list_dir`, `run_command`), each declaring its action class and path fields so the hooks can
 enforce containment. `fr daemon [--provider fake] [--port N]` starts the server; `fr status`
-reads `daemon.json` and reports health.
+reads `daemon.json` and reports health. `--provider` is picked by `daemonProvider()` in
+`cli/main.ts` before anything is composed: none or `anthropic` injects nothing (the vault's
+credentials decide), `fake` is the echoing shim, an unknown name is refused, and the test
+bench's `bench` (the role-playing stand-in model) and `bench-live` (the Messages API with every
+call logged) load `testenv/src/bench/` from a repository checkout by a computed import and
+refuse with the reason where it is absent, so an installed app never runs them
+(`scripts/bench/README.md`; test: `packages/runtime/test/cli-daemon-provider.test.ts`).
 
 **Starting a session from the app (`POST /sessions`; U-003 in `docs/status/UPDATE-LOG.md`).**
 The route calls `Scheduler.requestStart` and answers `202 StartSessionView`: `result`

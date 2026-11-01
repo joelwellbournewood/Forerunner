@@ -1,9 +1,17 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
 import { createInterface, type Interface } from "node:readline/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { registerMirrorCli } from "@forerunner/capabilities";
-import { appDirs, errorMessage, log, osFacts, run, which } from "@forerunner/platform";
+import {
+  appDirs,
+  errorMessage,
+  ForerunnerError,
+  log,
+  osFacts,
+  run,
+  which,
+} from "@forerunner/platform";
 import { openStore, parseStoreUrl } from "@forerunner/state";
 import { openVault } from "@forerunner/vault";
 import { Command, Option } from "commander";
@@ -18,6 +26,7 @@ import type { RunningDaemon } from "../daemon/server.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { registerJobsCli } from "../jobs/cli.ts";
 import { registerModelWatchCli } from "../models/watch-cli.ts";
+import type { ModelProvider } from "../provider/types.ts";
 import { registerRunnerKeyCli } from "../secrets/runner-key-cli.ts";
 import { describePlanAllowance } from "../setup/plan-allowance.ts";
 import {
@@ -311,8 +320,14 @@ export function buildProgram(deps: CliDeps = {}): Command {
     .command("daemon")
     .description("Run the local runtime daemon (the desktop shell starts this as a sidecar)")
     .option("--port <n>", "port on 127.0.0.1 (default: random free port)")
-    .option("--provider <name>", "fake | anthropic (default: anthropic when a credential exists)")
+    .option(
+      "--provider <name>",
+      "fake | anthropic (default: anthropic when a credential exists); in a repository checkout also bench | bench-live (scripts/bench/README.md)",
+    )
     .action(async (opts) => {
+      // Picked before the lock and the runtime: a provider that cannot load (bench without
+      // testenv/, bench-live without a key) ends the start with its reason, nothing composed.
+      const injected = await daemonProvider(opts.provider, env);
       // One daemon per data folder (U-065): refused before anything is composed when another
       // runs. The lock is held until the process ends; the operating system releases it.
       const { acquireDaemonLock } = await import("../daemon/instance-lock.ts");
@@ -330,12 +345,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
           await (keep ?? runtime)?.close();
         }, EXIT_DEADLINE_MS).then(() => process.exit(code));
       };
-      const rt = await openRuntime({
-        exit,
-        ...(opts.provider === "fake"
-          ? { provider: (await import("../daemon/fake-provider-shim.ts")).fakeProvider() }
-          : {}),
-      });
+      const rt = await openRuntime({ exit, ...(injected ? { provider: injected } : {}) });
       // Quit in the desktop shell (U-018, ADR 0094) asks over HTTP, which works the same on
       // Windows, where a process started without a console gets no SIGTERM.
       let shutdown: () => Promise<void> = async () => exit(0);
@@ -514,6 +524,61 @@ async function identityCheck(
     const reason = errorMessage(e).replace(/\/\/[^@\s]*@/g, "//[REDACTED]@");
     return { name, ok: false, detail: `state store not reachable: ${reason}` };
   }
+}
+
+/** Where the bench's stand-in lives in a repository checkout; an installed app has no testenv/. */
+const BENCH_ENTRY = new URL("../../../../testenv/src/bench/index.ts", import.meta.url);
+
+interface BenchModule {
+  benchProvider(opts: { env: NodeJS.ProcessEnv }): ModelProvider;
+  benchLiveProvider(
+    inner: ModelProvider,
+    opts: { env: NodeJS.ProcessEnv; secrets: readonly string[] },
+  ): ModelProvider;
+}
+
+/**
+ * The provider `fr daemon --provider <name>` injects, or undefined for the install's own
+ * (anthropic, or no flag: the routed provider over the vault's credentials). `fake` echoes
+ * (demos, the fresh-install check). `bench` and `bench-live` are development options of the
+ * test bench (scripts/bench/README.md): the role-playing stand-in model, or the real Messages
+ * API with every call logged; both load testenv/ from a repository checkout and refuse with
+ * the reason when it is not there, so an installed app never runs them.
+ */
+export async function daemonProvider(
+  name: string | undefined,
+  env: NodeJS.ProcessEnv,
+  benchEntry: URL = BENCH_ENTRY,
+): Promise<ModelProvider | undefined> {
+  if (name === undefined || name === "anthropic") return undefined;
+  if (name === "fake") return (await import("../daemon/fake-provider-shim.ts")).fakeProvider();
+  if (name !== "bench" && name !== "bench-live")
+    throw new ForerunnerError(
+      "validation",
+      `unknown provider "${name}": use fake or anthropic (bench and bench-live in a repository checkout)`,
+    );
+  const entry = fileURLToPath(benchEntry);
+  if (!existsSync(entry))
+    throw new ForerunnerError(
+      "unavailable",
+      `--provider ${name} is a development option of the test bench and needs the repository checkout's testenv/ (not found: ${entry})`,
+    );
+  const bench = (await import(benchEntry.href)) as BenchModule;
+  if (name === "bench") return bench.benchProvider({ env });
+  const key = env.ANTHROPIC_API_KEY?.trim() || env.FORERUNNER_ANTHROPIC_KEY?.trim();
+  if (!key)
+    throw new ForerunnerError(
+      "provider_auth",
+      "--provider bench-live needs ANTHROPIC_API_KEY (or FORERUNNER_ANTHROPIC_KEY) in the environment",
+    );
+  const { AnthropicMessagesProvider } = await import("../provider/anthropic.ts");
+  // The base URL is explicit: the SDK would otherwise take ANTHROPIC_BASE_URL from the
+  // environment, which on a development machine may point at a proxy meant for something else.
+  const inner = new AnthropicMessagesProvider({
+    apiKey: key,
+    baseURL: env.FORERUNNER_BENCH_LIVE_API?.trim() || "https://api.anthropic.com",
+  });
+  return bench.benchLiveProvider(inner, { env, secrets: [key] });
 }
 
 export function billingSourcesLine(sources: SetupReport["sources"]): string {
