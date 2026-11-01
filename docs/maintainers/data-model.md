@@ -115,7 +115,8 @@ ready tasks that wait on a task not done, with each such dependency's title and 
 ### Findings block close
 
 `task.transition(..., "done")` is refused with `ForerunnerError("findings_open")` while the task
-has findings in status `open`.
+has findings in status `open`. Its message is words a person may read (an Undo's "Not
+undone: …"): the task's title, never its id, and the count as a plural (`openFindingsWords`).
 
 ### Decisions stay in their project
 

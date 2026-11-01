@@ -552,6 +552,10 @@ export function defineStateSuite(target: SuiteTarget): void {
           "findings_open",
         );
         expect(err.details).toMatchObject({ taskId: t.id, findings: [f.id] });
+        // The refusal a person may read (an Undo's "Not undone: …"): the title, not the id.
+        expect(err.message).toBe(
+          '"reviewed" still has 1 open finding from the critic, so it cannot be closed',
+        );
         expect((await store.task.mustGet(t.id)).status).toBe("in_review");
         const run = await store.run.insert({
           session_id: s.session.id,

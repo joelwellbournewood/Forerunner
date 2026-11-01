@@ -52,6 +52,8 @@ export const autonomySet: CommandDef<AutonomySetParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: usedActive,
+      // The read-back in one line (design §3.9, §5), the level by its name (§2).
+      ask: `Set the autonomy of ${project.name} to ${AUTONOMY_NAMES[p.level as AutonomyLevel] ?? "level"} (level ${p.level})?`,
     });
   },
   async run(p, ctx) {

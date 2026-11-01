@@ -1979,6 +1979,9 @@ waits on you" while 4 tasks waited on it).
   project, task, task status and the open tasks waiting on it (`requestContexts`). A change
   asked for in Chat or Talk (the executor's yes/no card) is titled by the question the chat read
   back (`change_card.ask`: 'Pause "X"?', the rest as its body), not by the change card's object.
+  Its buttons read **Yes** (with the question's consequence as its line) and **No** ("Nothing
+  changes."); a click sends "Yes" or "No", which `isYes` and `acceptsAnswer` read in either
+  case (before: the stored "yes" and "no" with no line).
 - **GET /inbox** returns the open cards, then the last `INBOX_ANSWERED_KEPT` (20) answered or
   withdrawn ones for the Inbox's Answered list, and `needsYouCount` (every open card: the
   Inbox's heading, the header badge, and the sum of the projects' `waitingOnYou` plus the cards of

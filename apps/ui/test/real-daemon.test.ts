@@ -3255,7 +3255,16 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     // §3.8, §3.9), not the change card's object ('the task "Write the FAQ"').
     expect(card?.title).toBe('Resume "Write the FAQ"?');
     expect(card?.body).toBe("It is ready again; the next session can run it.");
-    await client.answerRequest(id, { version: card?.version ?? 0, answer: card?.options[1] ?? "" });
+    // Its buttons say Yes and No with what each does (wave 2: "yes"/"no" with no line).
+    expect(card?.choices?.map((c) => [c.label, c.explain])).toEqual([
+      ["Yes", "It is ready again; the next session can run it."],
+      ["No", "Nothing changes."],
+    ]);
+    // The answer is what the No button sends.
+    await client.answerRequest(id, {
+      version: card?.version ?? 0,
+      answer: card?.choices?.[1]?.label ?? "",
+    });
     expect(await status()).toBe("Paused by you");
     expect((await say("yes")).reply).toBe(
       "You already answered the change I asked about in the Inbox: you said no. Nothing else is waiting for your yes.",

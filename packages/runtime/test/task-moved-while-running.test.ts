@@ -6,6 +6,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { describeEvent } from "../src/daemon/views.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
 import {
@@ -248,6 +249,58 @@ describe("the session runner after a person's move on a running task (U-039)", (
     // it a decision waiting in the Inbox, where there is no card, nor echo the click (§5.11).
     expect(r.summary.split("\n")[0]).toBe('Did 1 task: "Then this".');
     expect(r.summary).not.toMatch(/needs your decision/);
+    await store.close();
+  });
+
+  it("a task the person paused while the project's Docker card was open is theirs: no 'needs you' in the result or the log (wave 2)", async () => {
+    const { clock, store, w, add } = await world();
+    const first = await add("Ask me first", 9);
+    const second = await add("Then this", 1);
+    // The project's Docker card names a task for its Cancel task; it asks nothing of it.
+    await store.humanRequest.insert({
+      human_id: w.human,
+      project_id: w.project,
+      task_id: first.id,
+      kind: "info",
+      why: "Docker is not running.",
+      steps: [],
+      options: ["Cancel task"],
+      blocking: false,
+      risk: "low",
+      change_card: { key: "sandbox.not_ready" },
+    } as never);
+    const executor: TaskExecutor = {
+      async execute({ task }) {
+        if (task.id === first.id) {
+          const now = await store.task.mustGet(first.id);
+          await store.task.transition(now.id, now.version, "needs_human", "Paused by you", {
+            humanId: w.human,
+          });
+        }
+        return { outcome: "done", summary: "done", costUsdMicro: 0, checksPassed: true };
+      },
+    };
+    const runner = new SessionRunner({
+      store,
+      clock,
+      tokens: new TokenIssuer({ now: () => clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor,
+    });
+    const r = await runner.start({
+      agentId: w.agent,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+    });
+    expect(r.completed).toEqual([second.id]);
+    expect(r.summary).not.toMatch(/needs your decision/);
+    const ended = (await store.event.list(r.sessionId)).find((e) => e.type === "session.ended");
+    const line = describeEvent("session.ended", (ended?.payload ?? {}) as Record<string, unknown>);
+    expect(line).toMatch(/^Session over: 1 done\. CHF/);
+    expect(line).not.toMatch(/needs you/);
     await store.close();
   });
 

@@ -519,6 +519,35 @@ function genericCard(
   // change card's object ('the task "X"').
   const ask = isRecord(r.change_card) ? str(r.change_card.ask) : null;
   const said = ask ?? r.why;
+  // Its Yes and No as buttons say them, each with what it does (wave 2: the stored "yes" and
+  // "no" showed in lower case with no line). A click sends "Yes" or "No"; every reader of a
+  // yes/no answer reads either case (`isYes`, `acceptsAnswer`).
+  if (
+    ask &&
+    labels.length === 2 &&
+    /^yes$/i.test(labels[0] ?? "") &&
+    /^no$/i.test(labels[1] ?? "")
+  ) {
+    const consequence = afterFirstSentence(ask);
+    choices.splice(
+      0,
+      2,
+      {
+        label: "Yes",
+        explain: consequence ? cutWords(consequence, 100) : "Makes the change now.",
+        tone: "primary",
+        confirm: null,
+        input: null,
+      },
+      {
+        label: "No",
+        explain: "Nothing changes.",
+        tone: "secondary",
+        confirm: null,
+        input: null,
+      },
+    );
+  }
   return {
     title: firstSentence(said),
     body: afterFirstSentence(said),

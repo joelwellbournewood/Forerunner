@@ -17,7 +17,7 @@ import {
   type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
-import { isPausedByPerson } from "../daemon/task-words.ts";
+import { holdsTask, isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -1910,6 +1910,9 @@ export class SessionRunner {
               limit: 1000,
             })
           )
+            // A card that asks nothing of its task (the project's Docker card) does not hold
+            // it: a task the person paused while one was open is "Paused by you" (wave 2).
+            .filter((r) => holdsTask(r))
             .map((r) => r.task_id)
             .filter((id): id is string => Boolean(id))
         : [],
@@ -2351,7 +2354,9 @@ export class SessionRunner {
       completed: completed.length,
       inReview: inReview.length,
       failed: failed.length,
-      needsHuman: needsHuman.length,
+      // What needs the person now, as the result says it: a task the person paused is theirs,
+      // not "needs you" (design §2).
+      needsHuman: needsYouNow.length,
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
       skipped: notStarted.length,

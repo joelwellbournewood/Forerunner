@@ -5,6 +5,21 @@ import { Button, buttonClassName } from "../../components/ui.tsx";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 
+/** Names that keep their capital after the colon ("Planning failed: Claude did not answer."). */
+const NAME_FIRST = /^(Claude|Forerunner|Docker|GitHub|Anthropic)\b/;
+
+/** "Planning failed: <reason in words>." in one line (design §3.3, §5). */
+export function planningFailedLine(reason: string | null | undefined): string {
+  const r = (reason ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.\s]+$/, "");
+  if (!r) return "Planning failed.";
+  const lowered =
+    NAME_FIRST.test(r) || /^[A-Z]{2}/.test(r) ? r : r.charAt(0).toLowerCase() + r.slice(1);
+  return `Planning failed: ${lowered}.`;
+}
+
 /** How often the page looks again while the plan is being drafted. */
 export const INTAKE_POLL_MS = 3000;
 
@@ -126,12 +141,10 @@ export function IntakeBanner({ projectId, pollMs }: { projectId: string; pollMs?
         data-testid="intake-banner"
         data-state="failed"
       >
-        <p className="font-medium">Planning failed. Nothing was written.</p>
-        {view.error ? (
-          <p className="mt-1 whitespace-pre-wrap" data-testid="intake-error">
-            {view.error}
-          </p>
-        ) : null}
+        {/* Design §3.3: one line, "Planning failed: <reason in words>. [Try again]". */}
+        <p className="font-medium" data-testid="intake-error">
+          {planningFailedLine(view.error)}
+        </p>
         {error ? (
           <p className="mt-1" data-testid="intake-retry-error">
             {error}

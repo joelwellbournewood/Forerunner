@@ -54,6 +54,40 @@ describe("change cards in words", () => {
     await w.store.close();
   });
 
+  it("a project's autonomy reads back in one line by its name (wave 2: the whole card with its risk)", async () => {
+    const w = await world();
+    const r = await w.executor.execute({
+      name: "autonomy.set",
+      params: { level: 3 },
+      ctx: w.ctx({ source: "chat" }),
+    });
+    expect(r.status).toBe("pending");
+    if (r.status === "pending")
+      expect(r.readback).toBe("Set the autonomy of PharmaWatch to Trusted (level 3)?");
+    await w.store.close();
+  });
+
+  it("a task named by words that match several says which and what to say (design §5 rule 8)", async () => {
+    const w = await world();
+    for (const title of [
+      "Style the page in styles.css",
+      "Style the print view",
+      "Write the README",
+    ])
+      await w.store.task.insert({ project_id: w.pharma.id, title, status: "ready" } as never);
+    const r = refused(
+      await w.executor.execute({
+        name: "task.pause",
+        params: { task: "style" },
+        ctx: w.ctx({ source: "chat" }),
+      }),
+    );
+    expect(r.reason).toBe(
+      '2 tasks match "style": "Style the page in styles.css" and "Style the print view". Say more of the title, for example "Style the page in styles.css"',
+    );
+    await w.store.close();
+  });
+
   it("a project's per-session cap is for every session of the project; the read-back is one line", async () => {
     const w = await world();
     const r = await w.executor.execute({

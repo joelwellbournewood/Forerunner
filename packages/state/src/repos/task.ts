@@ -25,6 +25,14 @@ export const AGENT_ONLY_STATUSES: readonly TaskStatus[] = ["claimed", "in_progre
 export const REOPEN_STATUSES: readonly TaskStatus[] = ["draft", "ready", "needs_human", "failed"];
 /** Statuses an undo restores as `ready`: only an agent's session puts a task there. */
 const RESTORED_AS_READY: readonly TaskStatus[] = ["claimed", "in_progress", "in_review"];
+
+/**
+ * Why a task cannot be closed, in words a person reads (an Undo's "Not undone: …" line): its
+ * title, never its id, and the number as a plural (design §5).
+ */
+export function openFindingsWords(title: string, count: number): string {
+  return `"${title}" still has ${count === 1 ? "1 open finding" : `${count} open findings`} from the critic, so it cannot be closed`;
+}
 /** Statuses in which a person may edit a task (design §3.5: Draft/Ready/Waiting/Failed/Paused). */
 export const EDITABLE_STATUSES: readonly TaskStatus[] = ["draft", "ready", "needs_human", "failed"];
 
@@ -233,13 +241,9 @@ export class TaskRepo extends Repository<TaskRow> {
     if (to === "done") {
       const open = await this.findings.openFor(id);
       if (open.length > 0) {
-        throw new ForerunnerError(
-          "findings_open",
-          `task ${id} has ${open.length} open finding(s)`,
-          {
-            details: { taskId: id, findings: open.map((f) => f.id) },
-          },
-        );
+        throw new ForerunnerError("findings_open", openFindingsWords(current.title, open.length), {
+          details: { taskId: id, findings: open.map((f) => f.id) },
+        });
       }
     }
     const patch: Partial<TaskRow> = {
@@ -310,11 +314,9 @@ export class TaskRepo extends Repository<TaskRow> {
     if (to === "done") {
       const open = await this.findings.openFor(id);
       if (open.length > 0) {
-        throw new ForerunnerError(
-          "findings_open",
-          `task ${id} has ${open.length} open finding(s)`,
-          { details: { taskId: id, findings: open.map((f) => f.id) } },
-        );
+        throw new ForerunnerError("findings_open", openFindingsWords(current.title, open.length), {
+          details: { taskId: id, findings: open.map((f) => f.id) },
+        });
       }
     }
     return this.update(id, expectedVersion, {
