@@ -9,6 +9,7 @@ import {
   EMPTY_CONVERSATION,
   loadConversation,
 } from "../store/conversation.ts";
+import { RichText } from "./RichText.tsx";
 import { Button, INPUT_CLASS, Money } from "./ui.tsx";
 
 /** The chat's commands that may switch Stop all on or off. */
@@ -197,7 +198,7 @@ export function Conversation({
               {state.live.text.length === 0 && state.live.error === null ? (
                 <output className="text-neutral-500">Thinking…</output>
               ) : (
-                <span className="whitespace-pre-wrap">{withoutUndoWord(state.live.text).text}</span>
+                <RichText text={withoutUndoWord(state.live.text).text} />
               )}
               {state.live.error ? (
                 <div className="mt-1 text-xs text-red-700 dark:text-red-300">
@@ -329,7 +330,7 @@ function Turn({
       </Bubble>
       {r ? (
         <Bubble who="agent" testIds={testIds} via={via}>
-          {showText ? <span className="whitespace-pre-wrap">{inAppText(text)}</span> : null}
+          {showText ? <RichText text={inAppText(text)} /> : null}
           {r.actions.map((a) => (
             <div
               key={`${a.changeId ?? a.kind}-${a.sentence}`}

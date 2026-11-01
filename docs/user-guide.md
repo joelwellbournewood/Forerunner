@@ -126,7 +126,11 @@ again as soon as the service answers.
   answered in the Inbox or expired, says so). Under each read-back the conversation says what
   became of it: you said yes, you said no, or not answered. "start a session" when nothing can
   start (Stop all is on, Claude is not connected, no task can run, the plan from your brief still
-  waits for your approval) says why at once, as the Start dialog does. During a session a question is
+  waits for your approval) says why at once, as the Start dialog does. Asked about a project
+  whose plan from the brief is still being drafted, waits in the Inbox, or failed, Chat says so
+  (after a failure: the reason and **Try again** on the project page) instead of "no tasks yet".
+  Replies show bold, lists and code as formatting, never as asterisks; the session page's lines
+  do the same. During a session a question is
   answered from what runs now; nothing you type is handed silently to the specialist. "Make
   this a task" under one of your own lines turns it into a ready task. Each project has its own
   conversation, kept by Forerunner: a reload or a restart keeps it, and **Talk** on this

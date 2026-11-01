@@ -355,6 +355,18 @@ lands in the store. Nothing is kept in the browser: a reload or a restart reads 
 turns. Before, the Chat tab kept its lines in `localStorage` (`store/chat-history.ts`, removed)
 and Talk in its own memory, so the two disagreed and a restart of the app lost Talk's.
 
+**Model text** (`components/RichText.tsx`; design §3.7, §3.9, §5 rule 6). A chat reply (the
+streamed one too) and a session log line (`SessionPage`'s event rows) are rendered through
+`RichText`: a safe markdown subset (**bold** and __bold__, *italic* and _italic_ but not inside
+a word, `code`, "- " and "1. " lists, a "#" heading as a bold line, a rule dropped, line breaks
+kept with `whitespace-pre-wrap`); a link shows its text and its address in brackets and is not
+clickable. Nothing is ever rendered as HTML (only text nodes and fixed elements), and text
+without markers comes out unchanged. No lookbehind in its pattern (WebKitGTK before 2.40). The
+chat model is also told to write plain sentences (`CHAT_PLAN_RULES`, runtime.md). Before (the
+live run of 2026-11-01) both showed raw `**…**` and "**Summary**:". The mobile screens still
+show plain text. Tests: `test/rich-text.test.tsx` (a reply through the fake daemon's
+`nextChatReply`, a session line, plain text unchanged, raw HTML as text).
+
 ### Money
 
 `lib/money.ts` formats `chfMicro` as "CHF 12.34" (half-up, ties away from zero, Swiss `'`
