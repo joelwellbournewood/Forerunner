@@ -97,6 +97,9 @@ single walk, including the owner's complaints 1 and 2).
   anyway without the ADR 0102 confirmation; Reviews links use `target=_blank`.
 
 Owner decisions of 2026-11-01, late evening:
+- **Limits for the rest of the round:** up to 90% of the weekly Claude usage in total, and at most
+  USD 40 of Anthropic API spend for live checks (about USD 1.40 spent by then). Near either
+  limit, stop at a clean point and write where things stand here.
 - **Verification of code tasks (to record as an ADR in phase C; the owner may still change it):**
   proportional, set by the planner and enforced by the runner. (1) The project's build, lint and
   tests always run for a code task and are never shown as a "level"; a task that adds behaviour to
