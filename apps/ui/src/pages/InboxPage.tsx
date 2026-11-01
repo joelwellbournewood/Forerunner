@@ -23,6 +23,7 @@ import {
 } from "../components/ui.tsx";
 import { formatChf, usdMicroToChfMicro } from "../lib/money.ts";
 import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
+import { decisionLine, planTotalWords } from "../lib/plan-card.ts";
 import {
   daemonRunnerKeys,
   desktopUnlockWindowStore,
@@ -254,6 +255,8 @@ export function markdownAsText(md: string): string[] {
             .replace(/^#+\s*/, "")
             .replace(/^\s*[-*]\s+/, "• ")
             .replace(/\*\*|__|`/g, "")
+            // Single emphasis ("_pending_", "*draft*") as plain words.
+            .replace(/(^|[\s(])[_*]([^_*\n]+)[_*](?=[\s).,;:!?]|$)/g, "$1$2")
             .trim(),
         )
         .filter(Boolean)
@@ -264,14 +267,29 @@ export function markdownAsText(md: string): string[] {
 
 /**
  * The plan from the brief, shown once (design §3.3): the tasks in order with who does each and
- * what it costs, "Needs Docker" beside a full-review task while Docker is not ready, the total,
- * and the decision record as text. The other docs are scaffolded without being listed.
+ * what it costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a
+ * full-review task while Docker is not ready, the total and what it covers, and the decision in
+ * one or two sentences with the full record, as text, one click away. The other docs are
+ * scaffolded without being listed. Live (2026-11-01) the card ran a title into "Needs Docker",
+ * left a task without an estimate out of the total without saying so, and pasted the whole
+ * decision record, status line and answer placeholder included.
  */
 function IntakeCard({ card, dockerReady }: { card: IntakeCardView; dockerReady: boolean | null }) {
   const tasks = [...card.milestones.flatMap((m) => m.tasks), ...card.looseTasks];
+  const isPerson = (t: IntakeCardTask) => t.specialist === "person";
   const estimate = new Map(card.firstSession.items.map((i) => [i.key, i.estimateUsdMicro]));
-  const total = card.firstSession.items.reduce((s, i) => s + i.estimateUsdMicro, 0);
+  const costOf = (t: IntakeCardTask) => (t.key !== null ? estimate.get(t.key) : undefined);
+  const agentTasks = tasks.filter((t) => !isPerson(t));
+  const estimated = agentTasks.filter((t) => costOf(t) !== undefined);
+  const total = estimated.reduce((s, t) => s + (costOf(t) ?? 0), 0);
+  const totalWords = planTotalWords({
+    agentTasks: agentTasks.length,
+    estimated: estimated.length,
+    total: chf(total),
+    personTasks: agentTasks.length < tasks.length,
+  });
   const decision = card.docs.find((d) => isDecisionDoc(d.path));
+  const decided = decision ? decisionLine(decision.text) : null;
   const titleOf = (key: string) => tasks.find((t) => t.key === key)?.title ?? null;
   return (
     <section
@@ -281,7 +299,7 @@ function IntakeCard({ card, dockerReady }: { card: IntakeCardView; dockerReady: 
     >
       <ol className="list-decimal space-y-0.5 pl-5" data-testid="intake-tasks">
         {tasks.map((t) => {
-          const cost = t.key ? estimate.get(t.key) : undefined;
+          const cost = costOf(t);
           const after = t.dependsOn.map(titleOf).filter((x): x is string => x !== null);
           return (
             <li key={t.key ?? t.title} data-testid="intake-task">
@@ -289,14 +307,19 @@ function IntakeCard({ card, dockerReady }: { card: IntakeCardView; dockerReady: 
               <span className="text-neutral-600 dark:text-neutral-400">
                 {" "}
                 ·{" "}
-                {t.specialist === "person"
+                {isPerson(t)
                   ? "you: answer its questions"
                   : (t.specialist ?? "the agent chooses who")}
-                {cost !== undefined ? ` · about ${chf(cost)}` : ""}
+                {isPerson(t)
+                  ? ""
+                  : cost !== undefined
+                    ? ` · about ${chf(cost)}`
+                    : " · cost not known"}
                 {after.length ? ` · after ${after.map((a) => `"${a}"`).join(", ")}` : ""}
+                {(t.riskTier ?? 0) >= 2 && dockerReady === false ? " · " : ""}
               </span>
               {(t.riskTier ?? 0) >= 2 && dockerReady === false ? (
-                <span className="ml-1 rounded bg-amber-100 px-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                <span className="rounded bg-amber-100 px-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
                   Needs Docker
                 </span>
               ) : null}
@@ -304,21 +327,20 @@ function IntakeCard({ card, dockerReady }: { card: IntakeCardView; dockerReady: 
           );
         })}
       </ol>
-      {total > 0 ? (
+      {totalWords ? (
         <p data-testid="intake-total">
-          About {chf(total)} for these tasks
           {card.docsTarget === "repository"
-            ? "; the docs go to the project's repository as a pull request."
-            : "."}
+            ? `${totalWords.replace(/\.$/, "")}; the docs go to the project's repository as a pull request.`
+            : totalWords}
         </p>
       ) : null}
+      {decided ? <p data-testid="intake-decision-line">Decision: {decided}</p> : null}
       {decision ? (
         <details
-          open
           className="rounded border border-neutral-200 p-1 dark:border-neutral-800"
           data-testid="intake-decision"
         >
-          <summary className="cursor-pointer font-medium">The decision it records</summary>
+          <summary className="cursor-pointer font-medium">The full decision record</summary>
           <div className="mt-1 max-h-80 space-y-1 overflow-auto text-xs">
             {markdownAsText(decision.text).map((p) => (
               <p key={p} className="whitespace-pre-wrap">

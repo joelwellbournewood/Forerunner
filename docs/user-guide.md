@@ -157,10 +157,14 @@ When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox
 approval (see "Inbox" below: Approve and start, Change the plan, Reject). Above the project's
 tabs you see where it stands: "Drafting the plan from your brief…", "Waiting for you: approve
 the plan" with **Open**, "Planning failed" with what went wrong in words ("Claude did not
-answer (model call failed).") and **Try again**, or "You
+answer (model call failed).", "Claude's plan could not be read. Forerunner asked Claude twice.",
+"Your Claude usage limit is reached. Try again once it resets.") and **Try again**, or "You
 rejected the plan. Nothing was written." with **Draft a new plan**. Without a Claude key the
 failure says so; add one in Settings → Accounts and keys → Open the setup assistant, then Try
-again.
+again. When Claude's first answer cannot be used (not a plan, cut off, a part missing),
+Forerunner tells Claude what was wrong and asks once more before it says planning failed; both
+calls count in the project's spend. A long explanation in the plan is shortened, never a reason
+to lose the plan.
 
 With the GitHub Projects mirror turned on in a project's settings, Forerunner asks once in the
 Inbox before it creates the board. **Do not mirror this project** turns the mirror off for that
@@ -262,8 +266,10 @@ these answers**: the task opens again and its next attempt reads them.
 The cards you meet most:
 
 - **The plan** from a new project's brief: the tasks in order, who does each, about what each
-  costs, "Needs Docker" beside a task that needs a full review while Docker is not running, and
-  the decision it records as text. **Approve and start** writes the tasks and starts working on
+  costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a task that
+  needs a full review while Docker is not running, the total and what it covers ("About CHF 1.04
+  for 2 of the 3 tasks the agent does; the other one has no estimate yet."), and the decision it
+  records in one or two sentences, with **The full decision record** one click away. **Approve and start** writes the tasks and starts working on
   them now. **Change the plan** opens a box: say what to change and the agent drafts a new plan
   for you to approve. Your words are kept: if that draft fails, or Forerunner closes before it
   is done, **Try again** on the project page drafts it with them, and a second change on the

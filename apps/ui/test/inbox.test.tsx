@@ -251,10 +251,10 @@ describe("Inbox", () => {
     const tasks = within(card).getAllByTestId("intake-task");
     expect(tasks.map((t) => t.textContent)).toEqual([
       "Scaffold the repository · coder · about CHF 0.32",
-      'Set up CI · the agent chooses who · about CHF 0.20 · after "Scaffold the repository"Needs Docker',
+      'Set up CI · the agent chooses who · about CHF 0.20 · after "Scaffold the repository" · Needs Docker',
     ]);
     expect(within(card).getByTestId("intake-total")).toHaveTextContent(
-      "About CHF 0.52 for these tasks; the docs go to the project's repository as a pull request.",
+      "About CHF 0.52 for the 2 tasks; the docs go to the project's repository as a pull request.",
     );
     // Not three times (the steps, the milestones, the first session), no doc list, no JSON.
     expect(request).not.toHaveTextContent("Milestone:");
@@ -320,18 +320,157 @@ describe("Inbox", () => {
       createdAt: "2026-10-19T23:00:00.000Z",
       version: 1,
     });
+    const user = userEvent.setup();
     renderApp("/inbox", harness);
     const card = await screen.findByTestId("intake-card");
-    // The decision is open and readable without a click, as text.
-    const text = within(card).getByTestId("intake-decision");
-    expect(text).toHaveAttribute("open");
-    expect(within(text).getByText(/hosted on Cloudflare Workers/)).toBeVisible();
-    expect(text).toHaveTextContent("0001: Stack and hosting");
-    expect(text).toHaveTextContent("• Small");
-    expect(text).not.toHaveTextContent("#");
-    expect(text).not.toHaveTextContent("**");
+    // The decision is readable without a click, in one or two sentences, as text.
+    expect(within(card).getByTestId("intake-decision-line")).toHaveTextContent(
+      "Decision: We use TypeScript with Hono, hosted on Cloudflare Workers, because the brief asks for a small API close to its users.",
+    );
+    // The full record is one click away, as text, never raw markdown.
+    const record = within(card).getByTestId("intake-decision");
+    expect(record).not.toHaveAttribute("open");
+    await user.click(within(record).getByText("The full decision record"));
+    expect(record).toHaveAttribute("open");
+    expect(within(record).getByText(/hosted on Cloudflare Workers/)).toBeVisible();
+    expect(record).toHaveTextContent("0001: Stack and hosting");
+    expect(record).toHaveTextContent("• Small");
+    expect(record).not.toHaveTextContent("#");
+    expect(record).not.toHaveTextContent("**");
     // The other drafted docs are scaffolded without being listed.
     expect(card).not.toHaveTextContent("A search for the docs.");
+  });
+
+  it("the live plan card: every task has its cost or says it is not known, the total says what it covers, the decision in a line (live check of 2026-11-01)", async () => {
+    // The plan the real model drafted for "Quote page" (live line 3): the publish task waits on
+    // the person's answers and has no estimate; the decision record opens with a status line
+    // and ends with an answers placeholder.
+    const user = userEvent.setup();
+    const harness = createHarness({ sandbox: { state: "not_running" } });
+    const record = [
+      "# 0001: Static page stack, quote source and hosting",
+      "",
+      "Status: proposed. The human reads this before approving.",
+      "",
+      "## Settled by the brief",
+      "",
+      "- Plain HTML, CSS and JavaScript.",
+      "- One page, no build step.",
+      "",
+      "## Choices made in the plan",
+      "",
+      "1. **Quotes are bundled in `quotes.js` as a global array.**",
+      "   - Why: it works from `file://`, offline, and with no API key or network.",
+      "2. **Random pick avoids repeating the last quote**, using `localStorage`.",
+      "",
+      "## Needs the human's answer (task `decide-hosting`)",
+      "",
+      "- Where should the page be hosted?",
+      "",
+      "Answers: _pending_. They will be recorded here.",
+    ].join("\n");
+    const task = (key: string, title: string, specialist: string, extra = {}) => ({
+      key,
+      title,
+      outcome: "o",
+      acceptanceCriteria: [],
+      priority: "medium",
+      dependsOn: [],
+      specialist,
+      ...extra,
+    });
+    harness.daemon.state.requests.unshift({
+      id: "req_live",
+      projectId: "proj_atlas",
+      projectName: "Quote page",
+      taskId: null,
+      taskTitle: null,
+      sessionId: null,
+      kind: "approval",
+      why: 'Intake for "Quote page".',
+      steps: [],
+      options: ["Approve and start", "Change the plan", "Reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        docs_target: "workspace",
+        applied_at: null,
+        proposal: {
+          plan: {
+            milestones: [
+              {
+                name: "Page works locally",
+                tasks: [
+                  task("build-page", "Build the quote page", "coder", { riskTier: 1 }),
+                  task("test-page", "Test the pick logic and page rendering", "tester", {
+                    riskTier: 1,
+                    dependsOn: ["build-page"],
+                  }),
+                ],
+              },
+              {
+                name: "Published",
+                tasks: [
+                  task(
+                    "decide-hosting",
+                    "Human decisions: hosting, repository, quote source",
+                    "person",
+                  ),
+                  task("publish-page", "Publish the page and write the runbook", "ops-deploy", {
+                    riskTier: 2,
+                    dependsOn: ["decide-hosting", "test-page"],
+                  }),
+                ],
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Quote page", "docs/decisions/0001-static-page-stack.md": record },
+          firstSession: {
+            summary: "Build, then test.",
+            items: [
+              { key: "decide-hosting", estimateUsdMicro: 0 },
+              { key: "build-page", estimateUsdMicro: 800_000 },
+              { key: "test-page", estimateUsdMicro: 500_000 },
+            ],
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-01T22:35:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const card = await screen.findByTestId("intake-card");
+    expect(
+      within(card)
+        .getAllByTestId("intake-task")
+        .map((t) => t.textContent),
+    ).toEqual([
+      "Build the quote page · coder · about CHF 0.64",
+      'Test the pick logic and page rendering · tester · about CHF 0.40 · after "Build the quote page"',
+      "Human decisions: hosting, repository, quote source · you: answer its questions",
+      'Publish the page and write the runbook · ops-deploy · cost not known · after "Human decisions: hosting, repository, quote source", "Test the pick logic and page rendering" · Needs Docker',
+    ]);
+    expect(within(card).getByTestId("intake-total")).toHaveTextContent(
+      "About CHF 1.04 for 2 of the 3 tasks the agent does; the other one has no estimate yet.",
+    );
+    // The decision in a line; no status line, no answers placeholder, no markdown on the card.
+    expect(within(card).getByTestId("intake-decision-line")).toHaveTextContent(
+      "Decision: Quotes are bundled in quotes.js as a global array.",
+    );
+    expect(within(card).getByText(/^Status: proposed/)).not.toBeVisible();
+    expect(within(card).getByText(/^Answers: /)).not.toBeVisible();
+    expect(card).not.toHaveTextContent("_pending_");
+    // The full record one click away, as text.
+    await user.click(within(card).getByText("The full decision record"));
+    expect(within(card).getByText(/^Status: proposed/)).toBeVisible();
+    expect(within(card).getByTestId("intake-decision")).toHaveTextContent(
+      "Answers: pending. They will be recorded here.",
+    );
+    expect(within(card).getByTestId("intake-decision")).not.toHaveTextContent("_pending_");
   });
 
   describe("questions only you can answer (U-022)", () => {
