@@ -467,6 +467,44 @@ describe("notifications wired into the daemon", () => {
     expect(str((entry as Json).text)).not.toContain("{");
   });
 
+  it("Stop now on a session is your own click: no 'Kill switch' notification echoes it (design §5.11)", async () => {
+    const kinds: string[] = [];
+    const off = rt.notifier.emitter.on("record", (r) => kinds.push(r.notification.kind));
+    const row = await rt.store.session.insert({
+      agent_id: rt.agent.id,
+      project_id: projectId,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1_000_000,
+      step_cap: 10,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "planned",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+      author_agent: rt.agent.id,
+    });
+    const sessionId = row.id;
+    const controller = new AbortController();
+    const unregister = rt.kill.register({
+      agentId: rt.agent.id,
+      sessionId,
+      controller,
+      label: "a live run",
+    });
+    try {
+      // The session page's Stop now, the route the person uses.
+      expect((await post(`/sessions/${sessionId}/stop`)).status).toBe(200);
+      expect(controller.signal.aborted).toBe(true);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(kinds).not.toContain("kill_switch");
+    } finally {
+      off();
+      unregister();
+    }
+  });
+
   it("the kill switch is urgent, names what stopped and why, and links home", async () => {
     const pending = nextRecord("kill_switch");
     const killed = await post("/kill", { scope: "all", reason: "pull the plug" });

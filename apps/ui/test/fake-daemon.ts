@@ -534,11 +534,15 @@ const FAKE_SESSION_CAP_USD_MICRO = 6_250_000;
  * dependencies are all done priced by their estimate (else budget, else the planner's
  * 500 000), cut to the cap less the 20% review reserve by skipping what does not fit.
  */
+/** What is left of the fixture human's monthly cap (CHF 120 at the fake's rate of 0.8). */
+const FAKE_MONTH_LEFT_USD_MICRO = 150_000_000;
+
 function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
   budgetUsdMicro: number | null,
   sandbox: SandboxStatusView | null = null,
+  opts: { killActive?: boolean; busy?: boolean } = {},
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   // High first, as the daemon's stored numbers order them (U-041).
@@ -575,6 +579,66 @@ function fakeStartCheck(
       total += estimate;
     }
   }
+  // As the daemon (design §3.6): what follows as it becomes ready, and why nothing would run.
+  const comes = new Set(runnable.map((r) => r.taskId));
+  const later: StartCheckView["later"] = [];
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const w of waiting) {
+      if (comes.has(w.taskId) || !w.waitsOn.every((d) => comes.has(d.taskId))) continue;
+      comes.add(w.taskId);
+      const t = byId.get(w.taskId);
+      later.push({
+        taskId: w.taskId,
+        title: w.title,
+        estimate: money(t?.estimate.usdMicro || t?.budget.usdMicro || 500_000),
+      });
+      changed = true;
+    }
+  }
+  const stuckOn = waiting
+    .flatMap((w) => w.waitsOn.map((d) => ({ w, d })))
+    .find(({ d }) => ["failed", "cancelled", "needs_human", null].includes(d.status));
+  const blocked: StartCheckView["blocked"] = opts.killActive
+    ? {
+        kind: "stopped",
+        sentence: "Sessions are stopped (Stop all), so nothing can start.",
+        action: { kind: "resume", label: "Allow sessions again", to: null },
+      }
+    : runnable.length > 0 || opts.busy
+      ? null
+      : stuckOn
+        ? stuckOn.d.status === "needs_human"
+          ? {
+              kind: "nothing_runnable",
+              sentence: `Nothing can run: "${stuckOn.d.title}" needs your answer.`,
+              action: { kind: "link", label: "Open it", to: "/inbox" },
+            }
+          : {
+              kind: "nothing_runnable",
+              sentence: `Nothing can run: "${stuckOn.w.title}" waits on ${stuckOn.d.title ? `"${stuckOn.d.title}"` : "a task that does not exist"}, which ${stuckOn.d.status === "cancelled" ? "was cancelled" : stuckOn.d.status === "failed" ? "failed" : "does not exist"}.`,
+              action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
+            }
+        : sandboxTasks[0]
+          ? {
+              kind: "nothing_runnable",
+              sentence: `Nothing can run: "${sandboxTasks[0].title}" is waiting for Docker.`,
+              action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
+            }
+          : overBudget[0]
+            ? {
+                kind: "nothing_runnable",
+                sentence: `Nothing can run within this budget: "${overBudget[0].title}" needs about CHF ${(overBudget[0].estimate.chfMicro / 1e6).toFixed(2)}.`,
+                action: null,
+              }
+            : {
+                kind: "nothing_runnable",
+                sentence:
+                  ready.length === 0
+                    ? "Nothing can run: no task is ready."
+                    : "Nothing can run: every ready task waits on another one.",
+                action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
+              };
   return {
     projectId,
     sessionBudget: money(cap),
@@ -583,6 +647,10 @@ function fakeStartCheck(
     runnable,
     overBudget,
     waiting,
+    later,
+    blocked,
+    monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
+    busy: opts.busy ?? false,
     waitingForSandbox:
       sandbox && !sandbox.ready && sandboxTasks.length > 0
         ? {
@@ -1305,7 +1373,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const raw = Number(c.req.query("budgetUsdMicro") ?? "");
     return c.json(
-      fakeStartCheck(state.tasks, id, Number.isInteger(raw) && raw > 0 ? raw : null, state.sandbox),
+      fakeStartCheck(
+        state.tasks,
+        id,
+        Number.isInteger(raw) && raw > 0 ? raw : null,
+        state.sandbox,
+        {
+          killActive: state.killActive,
+          busy: (options.startOutcome ?? "started") === "queued",
+        },
+      ),
     );
   });
   app.get("/projects/:id/runs", (c) => {
@@ -1377,8 +1454,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       steps: 0,
       currentTask: null,
       summary: "",
-      handoff: null,
+      // As the daemon: the note for the session is kept on its handoff.
+      handoff: parsed.data.note?.trim() ? { note: parsed.data.note.trim() } : null,
       runner: "desktop",
+      stopReason: null,
+      statusText: "Working",
     };
     state.sessions.push(session);
     emit("session.changed", clone(session));
@@ -1431,9 +1511,27 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const s = state.sessions.find((x) => x.id === c.req.param("id"));
     if (!s) return errorBody(c, 404, "not_found", "no such session");
     if (["running", "paused", "planned"].includes(s.status)) {
+      // As the real daemon: Stop now ends it, says who stopped it, and is no error; an ended
+      // session has no current task.
       s.status = "stopped";
       s.endedAt = new Date().toISOString();
-      pushEvent(s, "session.stopped", "Session stopped by the human", "info");
+      s.stopReason = "you";
+      s.statusText = "Stopped by you";
+      s.currentTask = null;
+      pushEvent(s, "session.stopped", "Stopped by you.", "info");
+      emit("session.changed", clone(s));
+    }
+    return c.json(s);
+  });
+
+  app.post("/sessions/:id/pause", (c) => {
+    const s = state.sessions.find((x) => x.id === c.req.param("id"));
+    if (!s) return errorBody(c, 404, "not_found", "no such session");
+    // As the real daemon: the row is paused and reads "Stopping after this task"; the scripted
+    // run ends it after its task with "Stopped after the task, as asked".
+    if (s.status === "running") {
+      s.status = "paused";
+      s.statusText = "Stopping after this task";
       emit("session.changed", clone(s));
     }
     return c.json(s);
@@ -1446,8 +1544,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     let stopped = 0;
     for (const s of state.sessions) {
       if (s.status === "running" || s.status === "paused" || s.status === "planned") {
+        // As the real daemon: whatever words the header sends, this is the person's Stop all
+        // (design §4.9), never an error line.
         s.status = "killed";
         s.endedAt = new Date().toISOString();
+        s.stopReason = "stop_all";
+        s.statusText = "Stopped: Stop all";
+        s.currentTask = null;
+        pushEvent(s, "session.stopped", "Stopped: Stop all.", "info");
         stopped += 1;
         emit("session.changed", clone(s));
       }
@@ -5036,7 +5140,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     script.forEach(([type, text, level, cost], i) => {
       later(
         () => {
-          if (session.status !== "running") return;
+          // Stop after this task (the real daemon's pause): the task in flight finishes, then
+          // the session ends.
+          if (session.status === "paused" && type === "run.finished") {
+            session.status = "stopped";
+            session.endedAt = new Date().toISOString();
+            session.currentTask = null;
+            session.stopReason = "stopped_after_task";
+            session.statusText = "Stopped after the task, as asked";
+            pushEvent(session, type, text, level, { step: session.steps }, cost);
+            emit("session.changed", clone(session));
+            return;
+          }
+          if (session.status !== "running" && session.status !== "paused") return;
           session.steps += 1;
           session.spent = money(session.spent.usdMicro + cost);
           if (type === "task.claimed") {
@@ -5050,6 +5166,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           emit("session.changed", clone(session));
           if (i === script.length - 1) {
             session.status = "completed";
+            session.statusText = "Done";
+            session.stopReason = "completed";
             session.endedAt = new Date().toISOString();
             session.currentTask = null;
             session.summary = "Decided the versioning scheme and wrote the ADR.";

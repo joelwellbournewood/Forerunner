@@ -29,6 +29,12 @@ export interface StartCheck {
   overBudget: StartCheckTask[];
   waiting: { taskId: string; title: string; waitsOn: WaitsOn[] }[];
   /**
+   * The waiting tasks a session started now would take as they become ready (design §3.6):
+   * those whose every unfinished dependency is ready, running or itself one of these, never one
+   * that waits on a failed, cancelled, missing or person-held task. In plan order, priced.
+   */
+  later: StartCheckTask[];
+  /**
    * U-079: the ready tasks at tier 2+ a session would leave out because the container sandbox
    * is not ready, with what is wrong and the step to take; null when none waits for it.
    */
@@ -100,6 +106,27 @@ export async function startCheck(
     title: i.title,
     estimateUsdMicro: i.estimateUsdMicro,
   });
+  const waiting = await store.task.waitingTasks(projectId);
+  // A chain: a waiting task follows once what it waits on runs or follows (fixed point).
+  const comes = new Set(cut.items.map((i) => i.taskId));
+  for (const t of await store.task.forProject(
+    projectId,
+    { status: ["claimed", "in_progress", "in_review"] },
+    { limit: 10_000 },
+  ))
+    comes.add(t.id);
+  const later: StartCheckTask[] = [];
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const w of waiting) {
+      if (comes.has(w.task.id) || needsContainerSandbox(w.task)) continue;
+      if (w.waitsOn.every((d) => comes.has(d.id))) {
+        comes.add(w.task.id);
+        later.push({ taskId: w.task.id, title: w.task.title, estimateUsdMicro: price(w.task) });
+        changed = true;
+      }
+    }
+  }
   return {
     projectId,
     sessionBudgetUsdMicro,
@@ -107,11 +134,12 @@ export async function startCheck(
     ready: ready.length,
     runnable: cut.items.map(named),
     overBudget: (cut.leftOutForBudget ?? []).map(named),
-    waiting: (await store.task.waitingTasks(projectId)).map((w) => ({
+    waiting: waiting.map((w) => ({
       taskId: w.task.id,
       title: w.task.title,
       waitsOn: w.waitsOn,
     })),
+    later,
     waitingForSandbox: sandboxWait,
   };
 }

@@ -168,10 +168,8 @@ describe("a person's move on a running task stops that task's run; the session g
     expect(provider.calls).toHaveLength(2);
     // The counts and the summary the person reads include the move.
     expect(r.cancelled).toEqual([first.id]);
-    expect(r.summary).toContain("Cancelled: 1.");
-    expect(r.summary).toContain(
-      'Moved by you while it ran: "Long first task" (cancelled); its run was stopped and the session went on.',
-    );
+    // The result names the work; the person's own Cancel is not echoed back (design §5.11).
+    expect(r.summary).toBe('Did 1 task: "Second task".\nNothing left. CHF 0.00.');
     expect(events.find((e) => e.type === "task.moved_while_running")?.payload).toMatchObject({
       taskId: first.id,
       status: "cancelled",
@@ -245,8 +243,7 @@ describe("the session runner after a person's move on a running task (U-039)", (
     expect(asked.reason).toBe("I want to look");
     expect(r.needsHuman).toEqual([first.id]);
     expect(r.completed).toEqual([second.id]);
-    expect(r.summary).toContain("Needs you: 1.");
-    expect(r.summary).toContain('"Ask me first" (needs you)');
+    expect(r.summary.split("\n")[0]).toBe('"Ask me first" needs your decision (Inbox).');
     await store.close();
   });
 
@@ -298,7 +295,7 @@ describe("the session runner after a person's move on a running task (U-039)", (
     expect((await store.task.mustGet(first.id)).status).toBe("failed");
     expect(r.failed).toEqual([first.id]);
     expect(r.completed).toEqual([second.id]);
-    expect(r.summary).toContain("Failed: 1.");
+    expect(r.summary.split("\n")[0]).toBe('"Long one" failed: wrong approach.');
     await store.close();
   });
 });

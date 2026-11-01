@@ -184,12 +184,15 @@ export class RecordingPlanner implements Planner {
   private readonly inner = new StaticPlanner();
   constructor(private readonly sink: CapturedBrief[]) {}
   plan(ctx: PlannerContext): Promise<SessionPlan> {
-    this.sink.push({
-      sessionId: ctx.session.id,
-      agentId: ctx.session.agent_id,
-      projectId: ctx.session.project_id,
-      text: ctx.briefText,
-    });
+    // One brief per session: a session plans again as tasks become ready (design §4.2) with
+    // the same brief, which is recorded once.
+    if (!this.sink.some((b) => b.sessionId === ctx.session.id))
+      this.sink.push({
+        sessionId: ctx.session.id,
+        agentId: ctx.session.agent_id,
+        projectId: ctx.session.project_id,
+        text: ctx.briefText,
+      });
     return this.inner.plan(ctx);
   }
 }

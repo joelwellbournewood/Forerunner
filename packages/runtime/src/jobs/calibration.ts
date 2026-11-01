@@ -159,10 +159,20 @@ export interface CalibrationJobDeps {
   outDir: string;
   notifier?: NotifierLike;
   humanId: string;
-  /** The principal agent: the session row and token the reviews run under. */
+  /**
+   * The person's principal agent. Never the agent the calibration runs as (design §4.11, ADR
+   * 0102): a running calibration row of the principal held its one-session rule, so every Start
+   * on the 1st of the month answered "already has an active session".
+   */
   agentId: string;
-  /** The critic agent: author of the audit row. */
+  /** The critic agent: the session row and token the reviews run under, the audit row's author. */
   criticAgentId: string;
+  /**
+   * Whether a model can run the reviews now (the daemon: a provider is configured). False skips
+   * the month's run before anything is written (`skipped`, reason `no_model`): before, an
+   * install with no key ran it and failed. Default: available.
+   */
+  modelAvailable?: () => boolean;
   /** Default: the dynamic import of @forerunner/evals (tests inject the port). */
   evals?: CalibrationEvalsPort;
   /** Budget, tier and specialists at run time; default: the built-in defaults. */
@@ -245,6 +255,19 @@ export class CalibrationJob {
         notificationId: null,
       };
     }
+    if (this.deps.modelAvailable && !this.deps.modelAvailable()) {
+      this.logger.info("calibration skipped: no model is configured");
+      return {
+        status: "skipped",
+        reason: "no_model",
+        monthKey,
+        report: null,
+        previous,
+        drift: null,
+        sessionId: null,
+        notificationId: null,
+      };
+    }
     const settings = (await this.deps.settings?.()) ?? { ...DEFAULT_CALIBRATION_SETTINGS };
     const evals = this.deps.evals ?? (await loadCalibrationEvals());
     const specialists = this.deps.registry
@@ -260,8 +283,9 @@ export class CalibrationJob {
     // The run's session row and token: the budget the hooks enforce before every review. The
     // row is created with its plan, so it carries the reason and the author (spec B.5).
     const planSummary = `critic calibration over ${evalSet.length} eval task(s)`;
+    const runAs = this.deps.criticAgentId;
     const session = await store.session.insert({
-      agent_id: this.deps.agentId,
+      agent_id: runAs,
       project_id: null,
       trigger: "schedule",
       plan: { items: [], estimateUsdMicro: 0, summary: planSummary },
@@ -275,12 +299,12 @@ export class CalibrationJob {
       summary: "",
       handoff: {},
       runner: "pc",
-      author_agent: this.deps.agentId,
+      author_agent: runAs,
     });
     const sessionToken = tokens.issue({
       runId: `calibration-${session.id}`,
       sessionId: session.id,
-      agentId: this.deps.agentId,
+      agentId: runAs,
       ownerHumanId: this.deps.humanId,
       allowedTools: [],
       allowedPaths: [],

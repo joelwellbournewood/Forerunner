@@ -700,11 +700,12 @@ export class RemoteCommandWatcher {
     const scope = this.scopeOf(params, verb);
     const reason = `remote ${verb} from device ${row.device_id}${params.reason ? `: ${params.reason}` : ""}`;
     // A stop ends the runs and freezes nothing, so new work may start; a kill freezes. A stop
-    // never lifts a kill already in force (U-032: it was a kill followed by `resume()`).
+    // never lifts a kill already in force (U-032: it was a kill followed by `resume()`). The
+    // phone's stop is the person's Stop now, its kill is Stop all (design §4.9).
     const report = await this.deps.kill.stop(
       scope,
       reason,
-      verb === "stop" ? { freeze: false } : {},
+      verb === "stop" ? { freeze: false, by: "you" } : { by: "stop_all" },
     );
     this.lastKill = report;
     return {

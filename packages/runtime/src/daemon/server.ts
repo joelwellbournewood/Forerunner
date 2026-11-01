@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { formatChf, monthWindow, usdToChfMicro } from "@forerunner/billing";
 import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
 import {
   type ErrorCode,
@@ -43,7 +44,15 @@ import {
   MILESTONE_AUDIT_TOOL,
   ProjectPlanBody,
 } from "../session/project-plan.ts";
+import { endDeadSession, isIntakeSession, namesOf } from "../session/recovery.ts";
 import { defaultPeers } from "../session/runner.ts";
+import {
+  QUIT_REASON,
+  STOP_ALL_REASON,
+  STOP_NOW_REASON,
+  STOPPED_AFTER_TASK,
+  taskReasonForStop,
+} from "../session/stop-words.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import { createPlanAllowanceRoutes } from "../setup/plan-allowance-routes.ts";
@@ -67,6 +76,7 @@ import {
 } from "../voice/views.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { assertAnswerAccepted, NOT_AN_OPTION } from "../wiring/request-answers.ts";
+import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
@@ -1019,6 +1029,89 @@ export function createDaemonApp(
 
   // What a session started now would plan (U-040): the Start dialog names the tasks that would
   // run, those left out for budget and those waiting on another task.
+  /** What is left of the human's monthly cap this calendar month (UTC, as the caps count it). */
+  const monthLeftUsdMicro = async (): Promise<number | null> => {
+    const human = await rt.store.human.get(rt.human.id);
+    const cap = human?.monthly_cap_usd_micro ?? 0;
+    if (!(cap > 0)) return null;
+    const spent = (
+      await rt.store.costLedger.sum({ humanId: rt.human.id, ...monthWindow(rt.clock.now()) })
+    ).usd_micro;
+    return Math.max(0, cap - spent);
+  };
+  /**
+   * Why a Start now would do nothing (design §3.6), first match wins: sessions are stopped, no
+   * Claude credential, nothing can run (the first blocker, named with the button that unblocks
+   * it). Null when a session would work.
+   */
+  const startBlocked = (
+    r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
+    projectId: string,
+    busy: boolean,
+  ): StartCheckView["blocked"] => {
+    if (rt.kill.isFrozen({ agentId: rt.agent.id }))
+      return {
+        kind: "stopped",
+        sentence: "Sessions are stopped (Stop all), so nothing can start.",
+        action: { kind: "resume", label: "Allow sessions again", to: null },
+      };
+    if (!rt.provider)
+      return {
+        kind: "no_model",
+        sentence: "Claude is not connected: planning and tasks need it.",
+        action: { kind: "link", label: "Connect Claude", to: "/settings" },
+      };
+    // A session runs now: the start waits for it, and its work makes more tasks ready.
+    if (r.runnable.length > 0 || busy) return null;
+    const tasksTab = `/projects/${encodeURIComponent(projectId)}/tasks`;
+    const stuck = r.waiting.find((w) =>
+      w.waitsOn.some(
+        (d) =>
+          d.status === "needs_human" ||
+          d.status === "failed" ||
+          d.status === "cancelled" ||
+          d.status === null,
+      ),
+    );
+    if (stuck) {
+      const dep = stuck.waitsOn.find((d) => d.status !== "done") ?? stuck.waitsOn[0];
+      const name = dep?.title ? `"${dep.title}"` : "a task that does not exist";
+      if (dep?.status === "needs_human")
+        return {
+          kind: "nothing_runnable",
+          sentence: `Nothing can run: ${name} needs your answer.`,
+          action: { kind: "link", label: "Open it", to: "/inbox" },
+        };
+      return {
+        kind: "nothing_runnable",
+        sentence: `Nothing can run: "${stuck.title}" waits on ${name}, which ${dep?.status === "cancelled" ? "was cancelled" : dep?.status === "failed" ? "failed" : "does not exist"}.`,
+        action: { kind: "link", label: "Open Tasks", to: tasksTab },
+      };
+    }
+    const docker = r.waitingForSandbox?.tasks[0];
+    if (docker)
+      return {
+        kind: "nothing_runnable",
+        sentence: `Nothing can run: "${docker.title}" is waiting for Docker.`,
+        action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
+      };
+    const big = r.overBudget[0];
+    if (big)
+      return {
+        kind: "nothing_runnable",
+        sentence: `Nothing can run within this budget: "${big.title}" needs about ${formatChf(usdToChfMicro(big.estimateUsdMicro, chf()))}.`,
+        action: null,
+      };
+    return {
+      kind: "nothing_runnable",
+      sentence:
+        r.ready === 0
+          ? "Nothing can run: no task is ready."
+          : "Nothing can run: every ready task waits on another one.",
+      action: { kind: "link", label: "Open Tasks", to: tasksTab },
+    };
+  };
+
   app.get("/projects/:id/start-check", async (c) => {
     const budget = intQuery(c, "budgetUsdMicro", 0, Number.MAX_SAFE_INTEGER);
     const r = await rt.startCheck(c.req.param("id"), budget > 0 ? budget : undefined);
@@ -1028,6 +1121,9 @@ export function createDaemonApp(
       title: t.title,
       estimate: money(t.estimateUsdMicro, rate),
     });
+    const projectId = c.req.param("id");
+    const monthLeftUsd = await monthLeftUsdMicro();
+    const busy = rt.scheduler.isActive(rt.agent.id);
     const view: StartCheckView = {
       projectId: r.projectId,
       sessionBudget: money(r.sessionBudgetUsdMicro, rate),
@@ -1035,6 +1131,10 @@ export function createDaemonApp(
       ready: r.ready,
       runnable: r.runnable.map(named),
       overBudget: r.overBudget.map(named),
+      later: r.later.map(named),
+      blocked: startBlocked(r, projectId, busy),
+      busy,
+      monthLeft: monthLeftUsd === null ? null : money(monthLeftUsd, rate),
       waiting: r.waiting.map((w) => ({
         taskId: w.taskId,
         title: w.title,
@@ -1109,6 +1209,17 @@ export function createDaemonApp(
   // before its session begins (the kill switch, no model credential) answers that error.
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
+    // A budget above what is left this month is refused in words (design §3.6); 0 and negative
+    // amounts never pass the body's schema.
+    if (body.budgetUsdMicro !== undefined) {
+      const left = await monthLeftUsdMicro();
+      if (left !== null && body.budgetUsdMicro > left)
+        throw new ForerunnerError(
+          "validation",
+          `That is more than what is left of your monthly cap (${formatChf(usdToChfMicro(left, chf()))}). Give the session less, or raise the cap in Settings.`,
+          { details: { cause: "budget_over_month", leftUsdMicro: left } },
+        );
+    }
     let begun: () => void = () => undefined;
     const sessionBegun = new Promise<"begun">((resolve) => {
       begun = () => resolve("begun");
@@ -1125,6 +1236,7 @@ export function createDaemonApp(
         projectId: body.projectId,
         trigger: body.trigger,
         reason: body.reason ?? "started from the app",
+        ...(body.note?.trim() ? { note: body.note.trim() } : {}),
         ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
       } as StartRequest);
       let session: StartSessionView["session"] = null;
@@ -1176,7 +1288,8 @@ export function createDaemonApp(
       .filter((e) => e.type === "task.started" || e.type === "task.finished")
       .at(-1);
     const current =
-      last?.type === "task.started"
+      last?.type === "task.started" &&
+      !["completed", "stopped", "failed", "killed"].includes(s.status)
         ? {
             id: String((last.payload as { taskId: string }).taskId),
             title: String((last.payload as { title: string }).title),
@@ -1196,6 +1309,9 @@ export function createDaemonApp(
     }
     return streamSSE(c, async (stream) => {
       let seq = afterSeq;
+      // The row's steps, spend and status as last sent: a change is one `session.changed` frame
+      // (design §4.14), so the page's steps and spend move while a task runs.
+      let shown = "";
       const flush = async () => {
         const rows = await rt.store.event.list(id, seq, 500);
         for (const e of rows) {
@@ -1205,6 +1321,17 @@ export function createDaemonApp(
             data: JSON.stringify(eventView(e, chf())),
             id: String(e.seq),
           });
+        }
+        const row = await rt.store.session.get(id);
+        const key = row ? `${row.status}:${row.steps}:${row.spent_usd_micro}` : "";
+        if (row && key !== shown) {
+          const first = shown === "";
+          shown = key;
+          if (!first)
+            await stream.writeSSE({
+              event: "session.changed",
+              data: JSON.stringify(await liveSessionView(row)),
+            });
         }
       };
       await flush();
@@ -1238,20 +1365,85 @@ export function createDaemonApp(
   // with Stop all stays in force, here and after a restart (U-032: this was a stop followed by
   // `resume()`, which lifted it). The answer is the session, the shape the live view reads; it
   // was the kill report, which the view refused as a malformed answer.
+  // Stop now (design §3.7): the task in flight stops at once and goes back to ready with the
+  // reason "Stopped by you"; what it wrote stays in the folder (ADR 0102). A session nothing in
+  // this process runs (a ghost a dead daemon left, design §4.10) is ended here: before, Stop on
+  // it changed nothing and it held the agent's one session for good.
   app.post("/sessions/:id/stop", async (c) => {
     const s = await rt.store.session.mustGet(c.req.param("id"));
-    await rt.kill.stop({ sessionId: s.id }, "stopped from the app", { freeze: false });
+    const live = rt.kill.activeCount({ sessionId: s.id }) > 0;
+    if (live)
+      await rt.kill.stop({ sessionId: s.id }, STOP_NOW_REASON, { freeze: false, by: "you" });
+    else if (["running", "paused", "planned"].includes(s.status) && !isIntakeSession(s)) {
+      await endDeadSession(rt, s, {
+        stopReason: "you",
+        taskReason: taskReasonForStop("you"),
+        summary: (titles) =>
+          titles.length
+            ? `Stopped by you. ${namesOf(titles)} ${titles.length === 1 ? "is" : "are"} ready again.`
+            : "Stopped by you.",
+      });
+      rt.events.emit("session", {
+        type: "session.ended",
+        payload: { sessionId: s.id, status: "stopped", stopReason: "you" },
+        agentId: s.agent_id,
+        projectId: s.project_id,
+      });
+      if (s.project_id) rt.events.emit("project", { id: s.project_id });
+    }
     return c.json(await liveSessionView(await rt.store.session.mustGet(s.id)));
   });
 
+  // Stop after this task (design §3.7, the default stop): the pause port marks the row paused
+  // and tells the runner, which finishes the task in flight and starts no other. A session
+  // nothing in this process runs is ended at once (it has no task in flight to finish).
+  app.post("/sessions/:id/pause", async (c) => {
+    const s = await rt.store.session.mustGet(c.req.param("id"));
+    const live = rt.kill.activeCount({ sessionId: s.id }) > 0;
+    if (live && s.status === "running") {
+      await sessionPausePorts({
+        store: rt.store,
+        kill: rt.kill,
+        agentId: s.agent_id,
+        humanId: rt.human.id,
+      }).pauseSession?.(s.id, "stop after this task, asked in the app");
+      rt.events.emit("session", {
+        type: "session.pausing",
+        payload: { sessionId: s.id },
+        agentId: s.agent_id,
+        projectId: s.project_id,
+      });
+    } else if (
+      !live &&
+      ["running", "paused", "planned"].includes(s.status) &&
+      !isIntakeSession(s)
+    ) {
+      await endDeadSession(rt, s, {
+        stopReason: STOPPED_AFTER_TASK,
+        taskReason: taskReasonForStop("you"),
+        summary: (titles) =>
+          titles.length
+            ? `Stopped by you. ${namesOf(titles)} ${titles.length === 1 ? "is" : "are"} ready again.`
+            : "Stopped by you.",
+      });
+      if (s.project_id) rt.events.emit("project", { id: s.project_id });
+    }
+    return c.json(await liveSessionView(await rt.store.session.mustGet(s.id)));
+  });
+
+  // Stop all (the header, the tray, the palette): whatever words the caller sends (the header
+  // sends "stop all from the UI", the tray "kill switch from the tray"), this route is the
+  // person's Stop all, and the sessions it ends say so (design §4.9), never "killed".
   app.post("/kill", async (c) => {
     const body = await parse(c, KillBody);
-    const report = await rt.kill.stop(body.scope, body.reason ?? "kill switch from the app");
+    const report = await rt.kill.stop(body.scope, body.reason ?? STOP_ALL_REASON, {
+      by: "stop_all",
+    });
     const killActive = rt.kill.isFrozen({ agentId: rt.agent.id });
     writeKillRequest(
       {
         scope: body.scope,
-        reason: body.reason ?? "kill switch from the app",
+        reason: body.reason ?? STOP_ALL_REASON,
         requestedAt: rt.clock.nowIso(),
         requestedBy: "daemon",
       },
@@ -1267,7 +1459,7 @@ export function createDaemonApp(
   app.post("/shutdown", async (c) => {
     if (!opts.onShutdown)
       return c.json({ code: "conflict", message: "this daemon cannot be stopped over HTTP" }, 409);
-    const report = await rt.kill.stop("all", "Forerunner quit");
+    const report = await rt.kill.stop("all", QUIT_REASON, { by: "quit" });
     logger.info("shutdown requested", { ...report });
     setTimeout(opts.onShutdown, SHUTDOWN_DELAY_MS);
     return c.json({ stopping: true, ...report }, 202);

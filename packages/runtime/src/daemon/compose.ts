@@ -224,6 +224,7 @@ import {
   syncPlanApprovals,
 } from "../session/plan-approval.ts";
 import { syncPrAnswers } from "../session/pr-answers.ts";
+import { recoverInterruptedSessions } from "../session/recovery.ts";
 import {
   SessionRunner,
   type SessionRunnerDeps,
@@ -233,6 +234,7 @@ import {
 } from "../session/runner.ts";
 import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
 import { type StartCheck, startCheck } from "../session/start-check.ts";
+import { taskReasonForStop } from "../session/stop-words.ts";
 import { fileFiredKeys, Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
@@ -405,6 +407,13 @@ export interface ComposeOptions {
    * composed objects.
    */
   startServices?: boolean;
+  /**
+   * End the sessions a dead process left running (design §4.10, `session/recovery.ts`): at
+   * start nothing of this install runs, so every running or paused work session of its agents
+   * is a ghost. Default: `startServices` (the daemon; a CLI one-shot composes beside a running
+   * daemon whose sessions are live and must not end them).
+   */
+  recoverSessions?: boolean;
   /**
    * Notification channel seams (tests): the OS tools the desktop and Signal channels run, the
    * fetch the Telegram channel uses, the platform, and the agent mailbox the email channel
@@ -1533,8 +1542,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const tokens = new TokenIssuer({ now: () => clock.now() });
   const kill = new KillSwitch(
     tokens,
-    async (scope) => {
+    async (scope, _reason, by) => {
       // Freeze claims: release every claim held by the stopped agent(s) so peers can continue.
+      // The task's reason says whose stop it was (design §4.9): "Forerunner was closed" for
+      // Quit, "Stopped: Stop all" for the kill switch, never "kill switch".
       // Only the signed-in human's agents (U-063): this switch ends this install's runs only,
       // so on a shared store another person's claims are theirs, held by runs this daemon
       // neither stopped nor can stop. That holds for Quit (`POST /shutdown`), Stop all and a
@@ -1544,7 +1555,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         scope === "all" ? own : scope.agentId && own.includes(scope.agentId) ? [scope.agentId] : [];
       for (const id of agents)
         for (const t of await store.task.claimedBy(id))
-          await store.task.releaseClaim(t.id, id, "kill switch").catch(() => undefined);
+          await store.task
+            .releaseClaim(t.id, id, taskReasonForStop(by ?? "stop_all"))
+            .catch(() => undefined);
     },
     // Whatever lifts the kill (Resume in the header or the tray, a start from the phone, a
     // plan that starts a session) also removes `kill.json`, so the next start does not apply
@@ -2533,9 +2546,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   emailPorts.settings.onCommandsSwitchedOff((e) =>
     notifyLater(notifications.emailCommandsOff(human.id, e), "email commands off"),
   );
-  kill.onStop((report, reason) =>
-    notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch"),
-  );
+  kill.onStop((report, reason, by) => {
+    // A person's own Stop now on one session is their click, not news (design §5.11): the
+    // session says "Stopped by you"; Stop all and Quit are still told.
+    if (by === "you") return;
+    notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch");
+  });
   events.on("restart", (r: RestartRequestFile) => {
     // A restart after the setup assistant stored a credential is no update (ADR 0092).
     if (r.reason === "setup") return;
@@ -2677,7 +2693,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     notifier,
     humanId: human.id,
     agentId: agent.id,
+    // It runs as the critic agent (CalibrationJob), and only with a model to run it (ADR 0102).
     criticAgentId: criticAgent.id,
+    modelAvailable: () => provider !== null,
     settings: async () => calibrationSettingsOf((await store.human.mustGet(human.id)).notify_prefs),
     // The once-a-month check is the human's local month, as the schedule's (ADR 0060).
     timezone: async () => (await store.human.mustGet(human.id)).timezone,
@@ -2775,6 +2793,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         budgetCapUsdMicro: budgetUsdMicro,
         // The approved plan's id from the inbox answer (`syncPlanApprovals`); never a bare true.
         ...(req.planApproved ? { planApproved: req.planApproved } : {}),
+        // The person's note for this session reaches every task's brief (design §4.6).
+        ...(req.note ? { note: req.note } : {}),
         appVersion,
         grant: sessionGrant(project, await sharedSecretNamesFor(store, req.agentId)),
         onEvent: (type, payload) =>
@@ -3389,6 +3409,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     await intake.closeExpired().catch((e: unknown) => {
       logger.warn("expired intake sessions not closed", { error: errorMessage(e) });
     });
+    // A work session a dead daemon left running (design §4.10): ended as interrupted, its
+    // tasks back to ready, one Update; before, it held the one-session rule for good.
+    if (opts.recoverSessions ?? services) {
+      await recoverInterruptedSessions({
+        store,
+        clock,
+        agentIds: (await store.agent.forOwner(human.id, { limit: 100 })).map((a) => a.id),
+        humanId: human.id,
+        principalId: agent.id,
+        isLive: (sessionId) => kill.activeCount({ sessionId }) > 0,
+      }).catch((e: unknown) => {
+        logger.warn("interrupted sessions not ended", { error: errorMessage(e) });
+      });
+    }
     // Change cards a stopped daemon showed have no closure behind them any more (U-029): they
     // leave the Inbox and the human hears once that the change was not made. Only the daemon
     // does this; a one-shot composes beside a running daemon whose cards are live.

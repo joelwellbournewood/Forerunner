@@ -828,7 +828,8 @@ describe("monthly handover test job (P.15)", () => {
   });
 
   it("every flagged project has its own scheduler agent: three due the same day all start", async () => {
-    const clock = new SimulatedClock("2026-11-01T07:00:00Z");
+    // Seen the day before (ADR 0102: a schedule never runs on the day it is first seen).
+    const clock = new SimulatedClock("2026-10-31T07:00:00Z");
     const started: string[] = [];
     const scheduler = new Scheduler({
       clock,
@@ -840,6 +841,9 @@ describe("monthly handover test job (P.15)", () => {
     });
     const project = (id: string) => ({ id, settings: { handover: { enabled: true } } }) as never;
     syncHandoverSchedules(scheduler, [project("p1"), project("p2"), project("p3")], "UTC");
+    await scheduler.tick();
+    expect(started).toEqual([]);
+    await clock.set(new Date("2026-11-01T07:00:00Z").getTime());
     await scheduler.tick();
     await scheduler.tick();
     expect(started).toEqual(["p1", "p2", "p3"]);

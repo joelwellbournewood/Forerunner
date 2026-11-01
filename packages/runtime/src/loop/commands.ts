@@ -28,7 +28,7 @@ import type {
   StateStore,
 } from "@forerunner/state";
 import type { ToolSpec } from "../agent/tools.ts";
-import type { KillScope } from "../enforcement/killswitch.ts";
+import type { KillScope, StopOptions } from "../enforcement/killswitch.ts";
 import type {
   Scheduler,
   SchedulerLogEntry,
@@ -590,7 +590,9 @@ export async function sessionOfStart(
  * whose row names no start matches nothing running. A start made from a phone is a remote
  * row the PC's `RemoteCommandWatcher` runs through this same scheduler; the id it records in
  * the row's result is what `session.start`'s undo passes here for such a row. `session.stop`
- * reaches the kill switch unchanged.
+ * reaches the kill switch with its scope and words, and with whose stop it is (design §4.9):
+ * everything or the agent (both freeze) is Stop all, one session is the person's Stop now, as
+ * is the undo of their own start. The words ("human <id> via chat") are never read for that.
  */
 export function sessionCommandPorts(deps: {
   scheduler: Pick<Scheduler, "requestStart" | "cancelPending" | "waitingAhead" | "activeStart">;
@@ -598,6 +600,7 @@ export function sessionCommandPorts(deps: {
     stop(
       scope: KillScope | "all",
       reason: string,
+      opts?: StopOptions,
     ): Promise<{ stoppedRuns: number; killedProcesses: number }>;
   };
   /** The sessions of the store: the row of the running session an undo stops. */
@@ -654,12 +657,12 @@ export function sessionCommandPorts(deps: {
           });
           return nothingStopped();
         }
-        return deps.kill.stop({ agentId, sessionId: session.id }, reason);
+        return deps.kill.stop({ agentId, sessionId: session.id }, reason, { by: "you" });
       }
-      if (scope === "all") return deps.kill.stop(scope, reason);
+      if (scope === "all") return deps.kill.stop(scope, reason, { by: "stop_all" });
       // The kill switch's scope is the agent and the session; a start id is the port's.
       const { startId: _startId, ...killScope } = scope;
-      return deps.kill.stop(killScope, reason);
+      return deps.kill.stop(killScope, reason, { by: killScope.sessionId ? "you" : "stop_all" });
     },
     startUndoState,
   };

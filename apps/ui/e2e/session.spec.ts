@@ -11,10 +11,14 @@ test("start a session from the project page and watch the live view fill over SS
   await page.getByTestId("start-session").click();
   const dialog = page.getByTestId("start-session-dialog");
   await expect(dialog.getByTestId("confirm-start-session")).toBeEnabled();
+  await expect(dialog.getByTestId("start-session-plan")).toContainText("This session runs");
   await dialog.getByLabel(/Session budget/).fill("4");
-  await dialog.getByLabel(/Reason/).fill("browser test");
+  await dialog.getByLabel(/Note for this session/).fill("browser test");
   await dialog.getByTestId("confirm-start-session").click();
 
+  // The person stays where they were (design §3.6); the session opens from the notice.
+  await expect(dialog.getByTestId("start-session-notice")).toContainText("Started:");
+  await dialog.getByTestId("start-session-open").click();
   await expect(page).toHaveURL(/\/sessions\/sess_\d+$/);
   const calls = await recordedCalls(request);
   const started = calls.find((c) => c.path === "/sessions");
@@ -22,7 +26,7 @@ test("start a session from the project page and watch the live view fill over SS
     agentId: "agent_alice",
     projectId: "proj_atlas",
     budgetUsdMicro: 5_000_000,
-    reason: "browser test",
+    note: "browser test",
   });
 
   // Real EventSource in the browser: the view must report "live", not the polling fallback.
@@ -39,7 +43,7 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(escalation.getByTestId("level-badge")).toHaveText("escalation");
   await expect(page.getByTestId("steps")).toContainText("6 / 200");
   await expect(page.getByTestId("session-spend")).toContainText("CHF 3.60");
-  await expect(page.getByTestId("session-status")).toHaveText("completed");
+  await expect(page.getByTestId("session-status")).toHaveText("Done");
 
   await page.getByTestId("filter-info").click();
   await expect(page.getByTestId("event-row")).toHaveCount(2);
@@ -47,7 +51,7 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(page.getByTestId("event-raw")).toHaveCount(2);
 });
 
-test("the stop button posts to /sessions/:id/stop", async ({ page, request }) => {
+test("Stop now asks once, then posts to /sessions/:id/stop", async ({ page, request }) => {
   const res = await request.post(
     `http://127.0.0.1:${process.env.FORERUNNER_UI_FAKE_PORT}/sessions`,
     {
@@ -59,13 +63,14 @@ test("the stop button posts to /sessions/:id/stop", async ({ page, request }) =>
   const { session } = (await res.json()) as { session: { id: string } };
   await page.goto(`/sessions/${session.id}`);
   await expect(page.getByTestId("session-header")).toContainText(`Session ${session.id}`);
-  const stop = page.getByTestId("stop-session");
+  const stop = page.getByTestId("stop-now");
   if (await stop.isEnabled()) {
     await stop.click();
-    await expect(page.getByTestId("session-status")).toHaveText("stopped");
+    await page.getByTestId("stop-session").click();
+    await expect(page.getByTestId("session-status")).toHaveText("Stopped by you");
     const calls = await recordedCalls(request);
     expect(calls.some((c) => c.path === `/sessions/${session.id}/stop`)).toBe(true);
   } else {
-    await expect(page.getByTestId("session-status")).toHaveText("completed");
+    await expect(page.getByTestId("session-status")).toHaveText("Done");
   }
 });

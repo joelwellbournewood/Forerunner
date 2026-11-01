@@ -174,7 +174,7 @@ describe("J.7 Assisted (autonomy 1): the session runner acts only after the plan
     expect((session.handoff as { stop_reason?: string }).stop_reason).toBe(
       "plan_awaiting_approval",
     );
-    expect(session.summary).toContain("awaits your approval");
+    expect(session.summary).toContain("The plan waits for your approval in the Inbox");
     expect(await w.store.session.active(w.alice)).toEqual([]);
   });
 
@@ -443,8 +443,9 @@ describe("J.7 Assisted (autonomy 1): acting after the approval of each plan (ADR
       grant,
     });
     expect(second.status).toBe("completed");
-    expect(second.stopReason).toBe("completed");
-    expect(second.summary).toContain("Nothing to plan");
+    // A session that ran nothing says so (design §4.8): nothing consumed, reviewed or graded.
+    expect(second.stopReason).toBe("nothing_runnable");
+    expect(second.summary).toContain("Nothing could run: no task is ready.");
     expect(exec.executed).toEqual([t1.id]);
     expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
     const types = (await w.store.event.list(second.sessionId)).map((e) => e.type);
@@ -463,7 +464,7 @@ describe("J.7 Assisted (autonomy 1): acting after the approval of each plan (ADR
       grant,
     });
     expect(res.status).toBe("completed");
-    expect(res.stopReason).toBe("completed");
+    expect(res.stopReason).toBe("nothing_runnable");
     expect(exec.executed).toEqual([]);
     expect(await w.store.humanRequest.list({ session_id: res.sessionId })).toEqual([]);
   });

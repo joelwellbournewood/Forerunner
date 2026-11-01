@@ -379,7 +379,7 @@ describe("session runner", () => {
     expect(res.spentUsdMicro).toBe(900_000);
     const session = await w.store.session.mustGet(res.sessionId);
     expect(session.status).toBe("completed");
-    expect(session.summary).toContain("Done: 2");
+    expect(session.summary).toContain('Did 2 tasks: "First" and "Second".');
     const handoffs = await w.store.message.list({ to_agent_id: w.bob, type: "handoff" } as never);
     expect(handoffs).toHaveLength(1);
     expect(handoffs[0]?.requires_ack).toBe(true);

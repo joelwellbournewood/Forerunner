@@ -333,6 +333,17 @@ export const SessionView = z.object({
   summary: z.string(),
   handoff: z.unknown().nullable(),
   runner: z.string(),
+  /**
+   * Why the session ended (`handoff.stop_reason`): `completed`, `you` (Stop now), `stop_all`,
+   * `quit`, `interrupted` (a dead process, ended at the next start), `stopped_after_task`, ...;
+   * null while it runs. Optional: the shared state service's rows do not carry it.
+   */
+  stopReason: z.string().nullable().optional(),
+  /**
+   * The status in the person's words (design §3.7): "Working", "Done", "Stopped by you",
+   * "Interrupted: Forerunner closed", "Stopping after this task". Optional as `stopReason`.
+   */
+  statusText: z.string().optional(),
 });
 export type SessionView = z.infer<typeof SessionView>;
 
@@ -491,6 +502,11 @@ export const StartSessionBody = z.object({
   budgetUsdMicro: z.number().int().positive().optional(),
   trigger: z.enum(["manual", "remote"]).default("manual"),
   reason: z.string().optional(),
+  /**
+   * The Start dialog's "Note for this session" (design §4.6): it reaches every task's brief of
+   * the session it starts and is kept on its handoff. Up to 2,000 characters.
+   */
+  note: z.string().max(2_000).optional(),
 });
 export type StartSessionBody = z.infer<typeof StartSessionBody>;
 
@@ -714,6 +730,38 @@ export const StartCheckView = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * Design §3.6: the waiting tasks a session started now would take as they become ready (what
+   * they wait on runs in it), in plan order. Empty from an older daemon.
+   */
+  later: z.array(StartCheckTaskView).default([]),
+  /**
+   * Why a Start now would do nothing (design §3.6), in one sentence with the button that
+   * unblocks it: sessions are stopped (Stop all), no Claude credential, or nothing can run.
+   * Null when a session would work. `action.kind` says what the button does: `resume` (Allow
+   * sessions again), `link` (open `action.to`).
+   */
+  blocked: z
+    .object({
+      kind: z.enum(["stopped", "no_model", "nothing_runnable"]),
+      sentence: z.string(),
+      action: z
+        .object({
+          kind: z.enum(["resume", "link"]),
+          label: z.string(),
+          to: z.string().nullable(),
+        })
+        .nullable(),
+    })
+    .nullable()
+    .default(null),
+  /** What is left of the person's monthly cap this month; a larger session budget is refused. */
+  monthLeft: Money.nullable().default(null),
+  /**
+   * The agent is in a session now: a Start waits for it ("Starts after the current session"),
+   * and what that session finishes makes more tasks ready, so it is never "nothing can run".
+   */
+  busy: z.boolean().default(false),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 
@@ -2111,7 +2159,9 @@ export const DAEMON_ROUTES = {
   session: "GET /sessions/:id",
   sessionEvents: "GET /sessions/:id/events?afterSeq= (JSON) | Accept: text/event-stream (SSE)",
   stopSession:
-    "POST /sessions/:id/stop (SessionView; ends the session's runs and freezes nothing, a kill in force stays)",
+    "POST /sessions/:id/stop (SessionView; Stop now: ends the session's runs and freezes nothing, a kill in force stays; the task goes back to ready with 'Stopped by you'; a session nothing in this process runs is ended there, design §4.10)",
+  pauseSession:
+    "POST /sessions/:id/pause (SessionView; Stop after this task: the task in flight finishes, no new one starts, the session ends 'Stopped after the task'; statusText 'Stopping after this task' meanwhile; a session nothing runs is ended at once, design §3.7)",
   kill: "POST /kill",
   resume: "POST /kill/resume",
   shutdown:

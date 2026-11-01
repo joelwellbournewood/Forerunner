@@ -229,7 +229,9 @@ describe("closeout: the project summary is refreshed at session end and readable
     expect(cache).toMatchObject({
       goal: "Ship a sample service",
       stage: "build",
-      next_steps: rest.slice(0, 3).map((t) => t.id),
+      // What is next, true now (design §3.4): the ready tasks by title; before, the ids of the
+      // planned tasks the session skipped, which read "Nothing planned" whenever the plan ran.
+      next_steps: ["Four", "Five", "Six"],
       open_questions: 1,
       spend_usd_micro: 3 * COST_PER_TASK,
     });
@@ -238,13 +240,16 @@ describe("closeout: the project summary is refreshed at session end and readable
       ended_at: w.clock.nowIso(),
       stop_reason: "stopped_by_message",
     });
-    expect(cache.last_session.summary).toContain("Done: 1");
+    // The result in at most three lines (design §5): what needs you, what happened, what next.
+    expect(cache.last_session.summary).toBe(
+      `"Ask" needs your decision (Inbox).\nDid 1 task: "Done". "Review" waits for review.\nStopped after the task, as asked. "Four", "Five", "Six" and 1 more are ready to continue. CHF 0.72.`,
+    );
 
     const view = await projectSummary(w.store, w.project, CHF_PER_USD);
     expect(view).toMatchObject({
       goal: "Ship a sample service",
       stage: "build",
-      nextSteps: rest.slice(0, 3).map((t) => t.id),
+      nextSteps: ["Four", "Five", "Six"],
       openQuestions: 1,
       spend: { usdMicro: 3 * COST_PER_TASK, chfMicro: Math.round(3 * COST_PER_TASK * CHF_PER_USD) },
     });
@@ -254,13 +259,8 @@ describe("closeout: the project summary is refreshed at session end and readable
     expect(view.spoken).toContain("Sample.");
     expect(view.spoken).toContain("Goal: Ship a sample service.");
     expect(view.spoken).toContain("Stage: build.");
-    expect(view.spoken).toContain("Last session: Session ended (stopped_by_message).");
-    expect(view.spoken).toContain(
-      `Next: ${rest
-        .slice(0, 3)
-        .map((t) => t.id)
-        .join("; ")}.`,
-    );
+    expect(view.spoken).toContain('Last session: "Ask" needs your decision (Inbox).');
+    expect(view.spoken).toContain("Next: Four; Five; Six.");
     expect(view.spoken).toContain("1 open question.");
     expect(view.spoken).toContain("Spent 0.72 francs.");
   });
@@ -287,10 +287,11 @@ describe("closeout: the handoff note at session end (F.7)", () => {
     const handoffs = await w.store.message.list({ to_agent_id: w.bob, type: "handoff" } as never);
     expect(handoffs).toHaveLength(1);
     expect(handoffs[0]?.requires_ack).toBe(true);
-    expect(handoffs[0]?.body).toContain("Done: 1.");
-    expect(handoffs[0]?.body).toContain("In review: 1.");
-    expect(handoffs[0]?.body).toContain("Needs you: 1.");
-    expect(handoffs[0]?.body).toContain("Not started: 4 of 7 planned.");
+    // The peer reads the session's result (design §5): what needs the person, what was done,
+    // what is in review and what is left, by name.
+    expect(handoffs[0]?.body).toBe(
+      `"Ask" needs your decision (Inbox).\nDid 1 task: "Done". "Review" waits for review.\nStopped after the task, as asked. "Four", "Five", "Six" and 1 more are ready to continue. CHF 0.72.`,
+    );
   });
 });
 
@@ -414,7 +415,9 @@ describe("closeout: a run that times out (D.17)", () => {
     expect(task.reason).toBe(partial);
     expect(task.claimed_by).toBeNull();
     expect(res.handoff.blocked).toEqual([slow.id]);
-    expect(res.summary).toContain("Failed: 1.");
+    expect(res.summary.split("\n")[0]).toBe(
+      `"Slow" failed: ${partial.charAt(0).toLowerCase()}${partial.slice(1).replace(/[.\s]+$/, "")}.`,
+    );
     // The retry policy (D.2) takes it from here: a failed task goes back to ready as the next attempt.
     const retried = await w.store.task.transition(task.id, task.version, "ready", "retry", {
       agentId: w.alice,
@@ -594,10 +597,9 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
     });
     expect(JSON.stringify(res.handoff)).not.toContain("hotfix");
     expect((await w.store.session.mustGet(res.sessionId)).handoff).toEqual(res.handoff);
-    expect(res.summary).toContain("Session ended (stopped_by_message).");
-    expect(res.summary).toContain(
-      `Read before the session-end writes: 1 message. A stop (message ${stopId}) ended the session: the task states above were written as each task ended, and nothing further was started.`,
-    );
+    // The result says how it ended in words; which message stopped it is in the handoff.
+    expect(res.summary).toContain("Stopped after the task, as asked.");
+    expect(res.summary).not.toContain(stopId);
     const cache = (await w.store.project.mustGet(w.project)).summary_cache as {
       last_session: { stop_reason: string; summary: string };
     };
@@ -605,7 +607,9 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
     expect(cache.last_session.summary).toBe(res.summary);
     const handoffs = await w.store.message.list({ to_agent_id: w.bob, type: "handoff" } as never);
     expect(handoffs).toHaveLength(1);
-    expect(handoffs[0]?.body).toContain(`A stop (message ${stopId}) ended the session`);
+    // The peer reads the result; the stop's message id is in the handoff's `end_inbox`.
+    expect(handoffs[0]?.body).toBe(res.summary);
+    expect(handoffs[0]?.body).toContain("Stopped after the task, as asked.");
     const log = await w.store.event.list(res.sessionId);
     const end = log.find((e) => e.type === "session.end_inbox");
     expect(end?.payload).toMatchObject({
@@ -655,10 +659,10 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
     expect((res.handoff as { end_inbox: object }).end_inbox).not.toHaveProperty("after_stop");
     // The peers' handoff message is the summary: the message is summarised there.
     const handoffs = await w.store.message.list({ to_agent_id: w.bob, type: "handoff" } as never);
-    expect(handoffs[0]?.body).toContain("Read before the session-end writes: 1 message.");
-    expect(res.summary).toContain("Session completed.");
-    expect(res.summary).toContain("Read before the session-end writes: 1 message.");
-    expect(res.summary).not.toContain("ended the session");
+    // The result names the work, not the messages read (they are in the handoff above).
+    expect(handoffs[0]?.body).toBe(res.summary);
+    expect(res.summary).toBe('Did 1 task: "Only".\nNothing left. CHF 0.24.');
+    expect(res.summary).not.toContain("Stopped");
 
     // The next session's brief carries the message once (read, so not in the unread count) and
     // its startup acts on it, as an ack-required info message taken into the plan.
@@ -704,9 +708,8 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
       next: [],
       end_inbox: { stopped_by: { id: pause?.id, from: w.alice, kind: "pause" } },
     });
-    expect(res.summary).toContain(
-      `A pause (message ${pause?.id}) ended the session; no task was left to defer.`,
-    );
+    expect(res.summary).toContain("Stopped after the task, as asked.");
+    expect(res.summary).not.toContain(String(pause?.id));
   });
 
   it("a session already stopped for another reason keeps its reason; the stop read at the end is named but not its cause", async () => {
@@ -724,8 +727,9 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
       stop_reason: "budget_exceeded",
       end_inbox: { read: [{ id: stopId, kind: "stop" }], stopped_by: null },
     });
-    expect(res.summary).toContain("Read before the session-end writes: 1 message.");
-    expect(res.summary).not.toContain("ended the session");
+    // It keeps its own reason in words; the stop read at the end does not replace it.
+    expect(res.summary).toContain("The session's budget is used.");
+    expect(res.summary).not.toContain("Stopped after the task");
   });
 
   it("a stop read at the end names the memory write that followed it in after_stop", async () => {

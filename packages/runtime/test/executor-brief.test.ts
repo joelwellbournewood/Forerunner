@@ -1,0 +1,356 @@
+import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
+import { afterEach, describe, expect, it } from "vitest";
+import { LoopAgentDriver } from "../src/agent/loop.ts";
+import { SessionBudget } from "../src/enforcement/budget.ts";
+import {
+  LoopTaskExecutor,
+  retryConstraints,
+  type SpecialistSpec,
+} from "../src/session/executor.ts";
+import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
+
+/**
+ * What a specialist is told, and how a failed run is named (core-experience design §4.4,
+ * §4.6). The walks' model-call log showed every brief after the first one without the project's
+ * goal or the person's brief ("greeting" and "date" appeared in no later brief), a chain step
+ * told it "builds on the step before" without naming it, a retry after an error promised "the
+ * critic's findings below" with none below, the person's notes on a task in no brief, and a run
+ * that errored reported as the model's first remark ("I'll look at what is already in the
+ * folder first.") while "model call failed" stayed in the daemon log.
+ */
+const coder: SpecialistSpec = {
+  name: "coder",
+  prompt: "You are the coder.",
+  promptVersion: "coder@1",
+  defaultTier: "sonnet",
+  defaultEffort: "medium",
+  allowedTools: ["echo", "read_file"],
+  allowedDomains: [],
+  maxBudgetUsdMicro: 2_000_000,
+  maxTurns: 10,
+  timeoutMs: 60_000,
+};
+
+interface World {
+  h: ReturnType<typeof harness>;
+  store: StateStore;
+  human: string;
+  agent: string;
+  project: string;
+  session: string;
+}
+
+async function world(): Promise<World> {
+  const h = harness();
+  const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
+  const human = (
+    await store.human.insert({
+      name: "Robin",
+      email: "r@x.test",
+      timezone: "UTC",
+      notify_prefs: {},
+      default_autonomy: 2,
+      monthly_cap_usd_micro: 100_000_000,
+      locale: "en",
+    })
+  ).id;
+  const agent = (
+    await store.agent.insert({
+      name: "Alice",
+      owner_human_id: human,
+      model_config: {},
+      memory_location: "l",
+      status: "active",
+      kind: "principal",
+    })
+  ).id;
+  const project = (
+    await store.project.insert({
+      name: "Greeting page",
+      goal: "A one-page website that greets the visitor",
+      repos: [],
+      stage: "build",
+      status: "active",
+      budget_usd_micro: 50_000_000,
+      autonomy_level: 2,
+      summary_cache: {
+        brief: "A one-page website that shows today's date and a greeting; plain HTML",
+      },
+      data_assets: [],
+      settings: {},
+      small_project_mode: false,
+      active: true,
+    })
+  ).id;
+  const session = (
+    await store.session.insert({
+      agent_id: agent,
+      project_id: project,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 5_000_000,
+      step_cap: 100,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "running",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+    })
+  ).id;
+  return { h, store, human, agent, project, session };
+}
+
+async function run(
+  w: World,
+  task: TaskRow,
+  provider: ScriptedProvider,
+  extra: { sessionNote?: string } = {},
+) {
+  const exec = new LoopTaskExecutor({
+    store: w.store,
+    clock: w.h.clock,
+    tokens: w.h.tokens,
+    driver: new LoopAgentDriver({ hooks: w.h.hooks, kill: w.h.kill, clock: w.h.clock }),
+    provider,
+    pricing: flatPricing,
+    tools: registry(),
+    billingSourceId: "bs",
+    specialists: (n) => (n === "coder" ? coder : undefined),
+  });
+  const session = await w.store.session.mustGet(w.session);
+  return exec.execute({
+    task,
+    session,
+    token: issue(w.h, {
+      agentId: w.agent,
+      ownerHumanId: w.human,
+      projectId: w.project,
+      allowedTools: ["echo", "read_file"],
+      budgetUsdMicro: 5_000_000,
+      sessionId: w.session,
+    }),
+    budget: new SessionBudget({
+      sessionId: w.session,
+      budgetUsdMicro: 5_000_000,
+      stepCap: 100,
+      deadlineMs: w.h.clock.now() + 3_600_000,
+      reserveShare: 0.2,
+    }),
+    item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 100_000 },
+    signal: new AbortController().signal,
+    ...extra,
+  });
+}
+
+const add = (w: World, title: string, over: Record<string, unknown> = {}) =>
+  w.store.task.insert({
+    project_id: w.project,
+    title,
+    outcome: `${title} is done`,
+    acceptance_criteria: ["it works"],
+    risk_tier: 1,
+    status: "in_progress",
+    priority: 5,
+    reason: "seed",
+    ...over,
+  });
+
+describe("what a specialist is told (design §4.6)", () => {
+  let w: World;
+  afterEach(async () => {
+    await w.store.close();
+  });
+
+  it("every brief carries the project's goal, the person's brief, the docs and what the task waited on", async () => {
+    w = await world();
+    const dep = await add(w, "Create the page skeleton in index.html", { status: "done" });
+    // The step before ran in an earlier session: its run, its report and the files it changed.
+    const earlier = await w.store.session.insert({
+      agent_id: w.agent,
+      project_id: w.project,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1,
+      step_cap: 1,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "completed",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+    });
+    await w.store.run.insert({
+      task_id: dep.id,
+      session_id: earlier.id,
+      specialist: "coder",
+      model: "fake-sonnet",
+      provider: "fake",
+      effort: "low",
+      prompt_version: "v1",
+      billing_source_id: null,
+      outcome: "completed",
+      artifacts: [{ report: "Wrote index.html with a heading, the date and the greeting." }],
+    });
+    await w.store.event.append(earlier.id, "task.files", {
+      taskId: dep.id,
+      files: ["index.html"],
+    } as never);
+    const task = await add(w, "Add the page behaviour in script.js", { depends_on: [dep.id] });
+    const provider = new ScriptedProvider([{ text: "Done." }], w.h.clock);
+    await run(w, task, provider, { sessionNote: "Keep everything in plain HTML." });
+    const brief = provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).toContain("## Project");
+    expect(brief).toContain("Greeting page: A one-page website that greets the visitor");
+    expect(brief).toContain("today's date and a greeting");
+    expect(brief).toContain("docs/overview.md");
+    expect(brief).toContain("## Done before this task");
+    expect(brief).toContain(
+      '- "Create the page skeleton in index.html": Wrote index.html with a heading, the date and the greeting. Files: index.html',
+    );
+    expect(brief).toContain("## Note for this session (from the person)");
+    expect(brief).toContain("Keep everything in plain HTML.");
+    // A first attempt has no retry line and no promise of findings.
+    expect(brief).not.toContain("findings below");
+  });
+
+  it("a retry carries the previous attempt's error, and no 'findings below' line when none follow", async () => {
+    w = await world();
+    const task = await add(w, "Style the page in styles.css", { attempt: 1 });
+    await w.store.run.insert({
+      task_id: task.id,
+      session_id: w.session,
+      specialist: "coder",
+      model: "fake-sonnet",
+      provider: "fake",
+      effort: "low",
+      prompt_version: "v1",
+      billing_source_id: null,
+      outcome: "error",
+      artifacts: [{ error: "Claude did not answer (model call failed)." }],
+    });
+    // The person's note on the task, given with Try again in the app.
+    await w.store.changeLog.record({
+      human_id: w.human,
+      agent_id: w.agent,
+      words_used: "Use the colours of the logo",
+      commands: [
+        {
+          name: "task.transition",
+          params: { task: task.id, to: "ready", reason: "Use the colours of the logo" },
+        },
+      ],
+      project_id: w.project,
+      source: "ui",
+    } as never);
+    const provider = new ScriptedProvider([{ text: "Styled it." }], w.h.clock);
+    await run(w, task, provider);
+    const brief = provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).toContain("## The previous attempt");
+    expect(brief).toContain("It failed: Claude did not answer (model call failed).");
+    expect(brief).toContain("## The person's note on this task");
+    expect(brief).toContain("Use the colours of the logo");
+    expect(brief).not.toContain("findings below");
+    expect(retryConstraints(1, [])).toEqual([
+      "Attempt 2: the previous attempt did not pass; what it said is under The previous attempt.",
+    ]);
+    expect(
+      retryConstraints(1, [
+        { severity: "major", description: "No test", required_action: "Add one" },
+      ])[0],
+    ).toContain("the critic's findings below");
+  });
+});
+
+describe("a run that errors is named by its error (design §4.4)", () => {
+  let w: World;
+  afterEach(async () => {
+    await w.store.close();
+  });
+
+  it("the model's first remark is not the reason; the error in words is, with its code", async () => {
+    w = await world();
+    const task = await add(w, "Create the page skeleton");
+    const provider = new ScriptedProvider(
+      [
+        {
+          text: "I'll look at what is already in the folder first.",
+          tools: [{ name: "echo", input: { text: "ls" } }],
+        },
+        { error: "overloaded_error" },
+      ],
+      w.h.clock,
+    );
+    const r = await run(w, task, provider);
+    expect(r.outcome).toBe("failed");
+    expect(r.summary).toBe("Claude did not answer (model call failed).");
+    expect(r.errorCode).toBe("provider_error");
+    // The run row keeps the error for the next attempt's brief.
+    const runs = await w.store.run.forTask(task.id);
+    expect(runs[0]?.artifacts).toEqual(
+      expect.arrayContaining([{ error: "Claude did not answer (model call failed)." }]),
+    );
+  });
+});
+
+describe("live steps (design §4.14)", () => {
+  let w: World;
+  afterEach(async () => {
+    await w.store.close();
+  });
+
+  it("the executor reports every model call and tool result to the runner while the run goes", async () => {
+    w = await world();
+    const task = await add(w, "Read the readme");
+    const provider = new ScriptedProvider(
+      [{ tools: [{ name: "read_file", input: { path: "README.md" } }] }, { text: "Read it." }],
+      w.h.clock,
+    );
+    const steps: unknown[] = [];
+    const exec = new LoopTaskExecutor({
+      store: w.store,
+      clock: w.h.clock,
+      tokens: w.h.tokens,
+      driver: new LoopAgentDriver({ hooks: w.h.hooks, kill: w.h.kill, clock: w.h.clock }),
+      provider,
+      pricing: flatPricing,
+      tools: registry(),
+      billingSourceId: "bs",
+      specialists: (n) => (n === "coder" ? coder : undefined),
+    });
+    await exec.execute({
+      task,
+      session: await w.store.session.mustGet(w.session),
+      token: issue(w.h, {
+        agentId: w.agent,
+        ownerHumanId: w.human,
+        projectId: w.project,
+        allowedTools: ["echo", "read_file"],
+        budgetUsdMicro: 5_000_000,
+        sessionId: w.session,
+      }),
+      budget: new SessionBudget({
+        sessionId: w.session,
+        budgetUsdMicro: 5_000_000,
+        stepCap: 100,
+        deadlineMs: w.h.clock.now() + 3_600_000,
+        reserveShare: 0.2,
+      }),
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+      onStep: (s) => steps.push(s),
+    });
+    expect(steps).toEqual([
+      { kind: "model", costUsdMicro: expect.any(Number) },
+      {
+        kind: "tool",
+        name: "read_file",
+        input: { path: "README.md" },
+        // This harness's token allows no path, so the read is refused: a step all the same.
+        isError: true,
+        denied: true,
+      },
+      { kind: "model", costUsdMicro: expect.any(Number) },
+    ]);
+  });
+});

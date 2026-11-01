@@ -38,6 +38,7 @@ import type { Registry } from "../registry/types.ts";
 import { countsList } from "../session/counts.ts";
 import { runCapOf } from "../session/executor.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
+import { sessionStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { optionLabel } from "../wiring/request-answers.ts";
 import type {
@@ -302,6 +303,9 @@ export function sessionView(
     summary: s.summary,
     handoff: s.handoff,
     runner: s.runner,
+    // How it ended, in words (session-engine, design §3.7).
+    stopReason: stopReasonOfHandoff(s.handoff),
+    statusText: sessionStatusText(s.status, stopReasonOfHandoff(s.handoff)),
   };
 }
 

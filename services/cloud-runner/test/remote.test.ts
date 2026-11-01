@@ -1,5 +1,5 @@
 import { SimulatedClock } from "@forerunner/platform";
-import { KillSwitch, type StartRequest, TokenIssuer } from "@forerunner/runtime";
+import { KillSwitch, type StartRequest, stopByOf, TokenIssuer } from "@forerunner/runtime";
 import { openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REMOTE_AUDIT_TOOL, RemoteCommandWatcher } from "../src/remote.ts";
@@ -85,6 +85,8 @@ describe("remote commands from the shared state", () => {
     expect(Date.now() - t0).toBeLessThan(2_000);
     expect(controller.signal.aborted).toBe(true);
     expect(kill.isFrozen({ agentId: seed.agent.id })).toBe(true);
+    // The session reads whose stop it was from the abort, not the row's words (design §4.9).
+    expect(stopByOf(controller.signal.reason)).toBe("stop_all");
     const done = await store.remoteCommand.mustGet(row.id);
     expect(done.status).toBe("done");
     expect(done.result).toMatchObject({ stoppedRuns: 1 });
@@ -108,6 +110,7 @@ describe("remote commands from the shared state", () => {
     expect(await w.drain()).toBe(1);
     expect(controller.signal.aborted).toBe(true);
     expect(kill.isFrozen({ agentId: seed.agent.id })).toBe(false);
+    expect(stopByOf(controller.signal.reason)).toBe("you");
 
     await kill.stop("all");
     expect(kill.isFrozen({ agentId: seed.agent.id })).toBe(true);

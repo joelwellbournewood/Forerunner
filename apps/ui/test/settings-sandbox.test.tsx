@@ -118,8 +118,12 @@ describe("Start dialog: full-review tasks wait for Docker (U-079)", () => {
     await screen.findByTestId("summary");
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
-    const leftOut = await within(dialog).findByTestId("start-session-left-out");
-    const line = within(leftOut).getByTestId("start-session-sandbox");
+    // What runs first (design §3.6), then the one blocker line for Docker.
+    expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
+      'This session runs "Decide the versioning scheme"',
+    );
+    const blockers = within(dialog).getByTestId("start-session-blockers");
+    const line = within(blockers).getByTestId("start-session-sandbox");
     expect(line).toHaveTextContent(
       '"Rework the payment flow" needs a full review, which runs in the Docker sandbox, and it is not ready: Docker is installed but not running. Next: start Docker Desktop, then Check again in Settings → Sandbox (Docker). It waits; nothing fails and no retry is used.',
     );

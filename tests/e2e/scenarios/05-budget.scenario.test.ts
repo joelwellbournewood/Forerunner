@@ -156,12 +156,18 @@ describe("scenario 5: budget", () => {
       requires_ack: true,
     });
     expect(handoff?.body).toBe(session.summary);
-    expect(session.summary).toMatch(
-      /^Session ended \(budget_exceeded\)\. Done: 1\. Failed: 0\. Needs you: 1\. Sent back by the critic: 0\. In review: 0\./,
-    );
-    expect(session.summary).toContain("Not started: 1 of 3 planned");
+    // The result (design §5): what needs J, what was done, how it ended and what is left.
+    expect(session.summary.split("\n")).toEqual([
+      '"Metrics exporter" needs your decision (Inbox).',
+      'Did 1 task: "Config loader".',
+      expect.stringMatching(
+        /^The session's budget is used\. "Docs page" is ready to continue\. CHF \d+\.\d{2}\.$/,
+      ),
+    ]);
+    // J's Inbox gets one line for the session, naming the project (design §3.8).
     const summary = (await w.inbox(w.j)).find((m) => m.type === "info");
-    expect(summary?.body).toBe(session.summary);
+    const projectName = (await w.store.project.mustGet(w.project.id)).name;
+    expect(summary?.body).toBe(`${projectName}: "Metrics exporter" needs your decision (Inbox).`);
     expect(await w.store.task.claimedBy(w.alice.agent.id)).toEqual([]);
     expect(await w.store.session.active(w.alice.agent.id)).toEqual([]);
     const prs = await w.pullRequests({ state: "all" });

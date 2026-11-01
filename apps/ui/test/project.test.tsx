@@ -102,9 +102,15 @@ describe("Project page", () => {
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
     const warning = await within(dialog).findByTestId("start-session-no-work");
-    expect(warning).toHaveTextContent(/No task in this project is ready/);
+    // Design §3.6: the reason in one sentence, the button that unblocks it, and Start refused.
+    expect(warning).toHaveTextContent("Nothing can run: no task is ready.");
+    expect(within(warning).getByTestId("start-session-unblock")).toHaveAttribute(
+      "href",
+      "/projects/proj_beacon/tasks",
+    );
     expect(warning).toHaveTextContent(/Tasks tab/);
     expect(warning).toHaveTextContent(/add a task: write the README/);
+    expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
     // U-046: no plan from a brief was asked for, so the dialog does not send the person to
     // the Inbox for one (it did, for every project).
     expect(warning).not.toHaveTextContent(/Inbox/);
@@ -206,23 +212,44 @@ describe("Project page", () => {
     const dialog = await screen.findByTestId("start-session-dialog");
     const warning = await within(dialog).findByTestId("start-session-cannot-run");
     expect(within(dialog).queryByTestId("start-session-no-work")).toBeNull();
-    expect(warning).toHaveTextContent("None of the 2 ready tasks can run in this session.");
+    expect(within(warning).getByTestId("start-session-blocked")).toHaveTextContent(
+      'Nothing can run: "Write the migration guide" waits on "Try the old approach", which was cancelled.',
+    );
+    expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
     expect(within(warning).getByTestId("start-session-waiting")).toHaveTextContent(
-      '"Write the migration guide" waits on "Try the old approach" (cancelled): that will not be done by itself. Change what it depends on (Tasks tab, Depends on…) or mark the failed task ready again.',
+      '"Write the migration guide" waits on "Try the old approach" (cancelled): that will not be done by itself. Change what it waits for on the Tasks tab, or try the failed task again.',
     );
     expect(within(warning).getByTestId("start-session-over-budget")).toHaveTextContent(
       '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00',
     );
-    // A larger budget lets the large task in; the waiting one is still named.
-    await user.type(within(dialog).getByLabelText(/Session budget/), "20");
+    // The real default is filled in (design §3.6), not hidden behind "leave empty".
+    const budget = within(dialog).getByLabelText(/Session budget/);
+    expect(budget).toHaveValue("5.00");
+    // A larger budget lets the large task in: the dialog says what runs; the stuck one is named.
+    await user.clear(budget);
+    await user.type(budget, "20");
     await waitFor(() =>
       expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull(),
     );
-    const leftOut = await within(dialog).findByTestId("start-session-left-out");
-    expect(leftOut).toHaveTextContent(
+    expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
+      'This session runs "Decide the versioning scheme" (about CHF 8.00).',
+    );
+    const blockers = within(dialog).getByTestId("start-session-blockers");
+    expect(blockers).toHaveTextContent(
       '"Write the migration guide" waits on "Try the old approach"',
     );
-    expect(within(leftOut).queryByTestId("start-session-over-budget")).toBeNull();
+    expect(within(blockers).queryByTestId("start-session-over-budget")).toBeNull();
+    // 0, a negative amount and more than is left this month are refused in words.
+    for (const [typed, said] of [
+      ["0", "The budget must be more than CHF 0."],
+      ["-5", "The budget must be more than CHF 0."],
+      ["1000000", "That is more than what is left of your monthly cap (CHF 120.00)."],
+    ] as const) {
+      await user.clear(budget);
+      await user.type(budget, typed);
+      expect(within(dialog).getByTestId("start-session-budget-error")).toHaveTextContent(said);
+      expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
+    }
   });
 
   it("says a start is queued instead of opening a session that does not exist yet (U-003)", async () => {
@@ -262,7 +289,7 @@ describe("Project page", () => {
     expect(postedCalls(harness, "/sessions")).toHaveLength(2);
   });
 
-  it("starts a session from the dialog and opens the live view", async () => {
+  it("starts a session from the dialog, stays where it was, and the session can be opened from there (design §3.6)", async () => {
     const user = userEvent.setup();
     const harness = createHarness({ eventDelayMs: 10 });
     renderApp("/projects/proj_atlas", harness);
@@ -272,17 +299,30 @@ describe("Project page", () => {
     await waitFor(() => expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled());
     // proj_atlas has a ready task: no warning.
     expect(within(dialog).queryByTestId("start-session-no-work")).not.toBeInTheDocument();
-    await user.type(within(dialog).getByLabelText(/Session budget/), "4");
-    await user.type(within(dialog).getByLabelText(/Reason/), "try the plan");
+    // It says what will run before anything starts.
+    expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
+      /^This session runs "Decide the versioning scheme"/,
+    );
+    const budget = within(dialog).getByLabelText(/Session budget/);
+    await user.clear(budget);
+    await user.type(budget, "4");
+    await user.type(within(dialog).getByLabelText(/Note for this session/), "try the plan");
     await user.click(within(dialog).getByTestId("confirm-start-session"));
     await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
+    // The note travels as the session's note (it reaches every brief), the budget in USD.
     expect(postedCalls(harness, "/sessions")[0]?.body).toEqual({
       agentId: "agent_alice",
       projectId: "proj_atlas",
       trigger: "manual",
       budgetUsdMicro: 5_000_000,
-      reason: "try the plan",
+      note: "try the plan",
     });
+    // The person stays on the project page; the dialog says it started and links the session.
+    expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
+      "Started: the session works until nothing more can run, the budget is used, or you stop it.",
+    );
+    expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByTestId("start-session-open"));
     const header = await screen.findByTestId("session-header");
     expect(header).toHaveTextContent(/Session sess_/);
     // The first event arrives over SSE after the session page mounts; CI runners have needed more than 4 s.

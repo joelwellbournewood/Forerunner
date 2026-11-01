@@ -49,7 +49,22 @@ describe("small fixes (U-077)", () => {
     renderApp("/projects/proj_atlas/summary", harness);
     await user.click(await screen.findByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
-    await user.click(within(dialog).getByRole("button", { name: /^Start/ }));
+    // Design §3.6: Start is refused before it is pressed, with the reason and the button that
+    // unblocks it; nothing is sent.
+    expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
+      "Sessions are stopped (Stop all), so nothing can start.",
+    );
+    expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
+    // No "This session runs ..." above a Start that cannot run: the two would contradict.
+    expect(within(dialog).queryByTestId("start-session-plan")).not.toBeInTheDocument();
+    expect(postedCalls(harness, "/sessions")).toHaveLength(0);
+    await user.click(within(dialog).getByTestId("start-session-unblock"));
+    await waitFor(() => expect(postedCalls(harness, "/kill/resume")).toHaveLength(1));
+    await waitFor(() => expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled());
+    expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent("This session runs");
+    // The daemon's own refusal still reads as such if Stop all lands in between.
+    harness.daemon.state.killActive = true;
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
     expect(await within(dialog).findByText(KILL_ACTIVE_START_MESSAGE)).toBeInTheDocument();
   });
 

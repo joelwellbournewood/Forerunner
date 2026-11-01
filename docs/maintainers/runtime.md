@@ -814,6 +814,128 @@ project summary cache, sends a handoff (requires ack) to the project's peers
 session summary, handoff and spend; with a docs port it also writes the session's status
 update into the project's `docs/status.md` (below, "Project docs").
 
+**A session keeps going until nothing it can run is left (core-experience design §4, ADR
+0102).** Until 2026-11-01 the runner planned once, from the tasks ready when it started, and
+ran that fixed list: a 7-task chain took 7 Starts and every task the critic sent back waited
+for the next Start. Now the execution loop in `runner.ts` works off a queue: when the plan is
+run, `replan()` reads `readyTasks` again (with the sandbox gate) and takes the tasks that became
+ready meanwhile (their dependencies finished), the ones the critic sent back (the next attempt,
+same session, up to the ladder; `MAX_RUNS_PER_TASK_IN_SESSION` = 6 is only a guard) and the ones
+the person made ready, through the same `Planner` (so the first-session order and the handover's
+seed-only plan still apply), cut to what is left of the work budget. The session row's plan grows
+with a versioned `setPlan` ("took N more tasks as they became ready") and a `session.replanned`
+event. A task skipped for a peer, a claim, the usage limit or the sandbox is not taken again in
+the same session (`notAgain`). At autonomy 0 and 1 only the approved plan's tasks (and their
+retries) run. The loop stops when nothing runnable is left, the budget is used (the reserve
+kept), the person stops it, or the wall clock runs out. A sent-back task is counted once in
+`retried`. A run that failed with a transient error (`isTransientError`: `provider_error`,
+network, rate limit, overloaded; `TaskExecutionResult.errorCode`) is tried again once at once,
+its claim released and its attempt count unchanged (`task.retrying`).
+
+**Nothing runnable means nothing is used up (§4.7, §4.8).** An empty plan ends the session with
+the stop reason `nothing_runnable` (status `completed`): no session review, no Update, no queue
+item consumed. The next-session queue's items and the approved first session are used up only by
+work that finished: at the session's end `consumeQueue` takes the brief's items that were given
+to a task now done or in review (`notesGiven`), and `markFirstSessionRun` marks the first
+session run only for first-session tasks that finished (before, both happened at the start, so a
+session stopped after 7 s, or one that planned nothing, threw the person's brief away).
+
+**The result (`session/result.ts`, design §5).** `sessionResultLines` writes at most three
+lines, from the tasks as they stand at the end (`collectEndState`): what needs the person ("X"
+needs your decision (Inbox); "X" failed: <reason>; Waiting for Docker: "X"), what happened (Did
+N tasks: names; "X" waits for review; Merged N pull requests; Nothing could run: "X" waits on
+"Y", which failed), then how it ended, what is next and the money (Stopped by you; Left for next
+time: "X" (about CHF 0.43); this session's CHF 0.90 was used; "X" is ready to continue; N tasks
+wait on it; Nothing left; CHF 0.80). Names in quotes, up to three then "and N more", CHF, no zero
+counts, no ids. `summary_cache.last_session.outcome` (`LastSessionOutcome`: done, failed with
+reason, needsYou, leftOver, waiting with what each waits on, waitingForDocker, stopReason,
+spentChfMicro) is what the Overview and Chat should read instead of parsing text;
+`summary_cache.next_steps` is the ready tasks then the waiting ones, by title (it was the skipped
+ids, empty whenever the plan ran). The Inbox gets one line per session (`sessionUpdateLine`:
+"Quote page: did 5 tasks: …"), none for a session that ran nothing or only filed its plan; the
+spec O.9 report of what the person said follows on the next lines. `docs/status.md` gets the
+blocked tasks as they stand (needs you, failed, waiting on another task, waiting for Docker) and
+the ready tasks as next.
+
+**Stops (`session/stop-words.ts`, design §3.7, §4.9).** Whose stop it was is named where the
+stop is asked for, never read from the reason's words: `KillSwitch.stop(scope, reason, { by })`
+with `by` one of `you`, `stop_all`, `quit` (`StopBy`), carried to every run it stops in the
+abort reason (`KillSwitchStop.stopBy`, read with `stopByOf`; `personStopOf` is the same).
+`POST /sessions/:id/stop` (Stop now) is `you`; `POST /kill` (the header's Stop all, the tray,
+the palette) is `stop_all` whatever `reason` it carries; `POST /shutdown` (Quit) is `quit`; the
+kill file (`fr kill`, a Stop all that survives a restart) is `stop_all`; the registry's
+`session.stop` (`sessionCommandPorts.kill`: the chat, voice) is `stop_all` for everything or
+the agent (both freeze) and `you` for one session or the undo of the person's own start; the
+phone's `kill` is `stop_all` and its `stop` is `you` (`remote/watcher.ts`, and the cloud runner's
+`remote.ts` alike); a run that registers while a scope is frozen is aborted as `stop_all`.
+Before, the runner matched the reason against three fixed strings, so the header's Stop all
+("stop all from the UI"), the chat's ("human <id> via chat") and the phone's stops ended the
+session as an error ("error  Error: killed session stopped during task", stop reason
+`killed`, badge "Stopped"); a stop with no `by` still does (`stop-by.test.ts`). The runner turns
+`by` into the stop reason `you`, `stop_all` or `quit`, emits `session.stopped` with "Stopped by
+you during "X". It is ready again." instead of a `session.error`, and releases the task with
+`taskReasonForStop` ("Stopped by you", "Stopped: Stop all", "Forerunner was closed"); the kill
+switch's claim freeze in `compose.ts` gets the same `by` (it wrote "kill switch" for every
+stop, Quit included). A Stop now raises no "Kill switch" notification (the `kill.onStop`
+listener in `compose.ts` gets `by` and skips `you`; Stop all and Quit are still told). A session
+the person stopped before anything finished (nothing done, failed, needing them or in review)
+posts no Inbox Update: the click is theirs, not news (design §3.8, §5.11); the session page
+says it. The session status stays `killed` for these (enforcement and the handover read it);
+`SessionView.stopReason` and `SessionView.statusText` ("Working", "Done", "Stopped by you",
+"Stopped: Stop all", "Interrupted: Forerunner closed", "Stopping after this task") are what a
+screen shows.
+
+**Stop after this task (`POST /sessions/:id/pause`, design §3.7).** The default stop: the
+route runs the pause port (`sessionPausePorts.pauseSession`: the row goes `paused`, statusText
+"Stopping after this task", and the runner gets the pause message), so the task in flight
+finishes; the runner does not re-plan while its row is `paused` and the end-of-session inbox
+re-check ends it `stopped` with "Stopped after the task, as asked". A session nothing in this
+process runs is ended at once (`endDeadSession`, stop reason `stopped_after_task`).
+
+**Live steps (design §4.14, U-086).** The executor reports every `model_call_end` and every
+`tool_result`/`tool_denied` of the task's run through `ctx.onStep` (`TaskStep`); the runner
+records each, in order, before the task ends: a model call adds its cost and one step to the
+session row (`SessionRepo.recordSpend`), a tool result adds one step and a `task.step` event
+with a short line (`stepLine`: "read index.html", "wrote styles.css", "ran node --check
+script.js: failed", "asked you a question (Inbox)"). The stream of `GET /sessions/:id/events`
+sends the row as a `session.changed` frame whenever its steps, spend or status change, so the
+session page's steps and spend move during a run (before: "Steps 0 / 200" and "CHF 0.00" until
+the end). The end of the session still writes the ledger's total.
+
+**Done means done (`closeFinishedWork` in `session/result.ts`, design §4.13).** At the end, a
+milestone whose tasks are all done or cancelled (one done at least) is moved to `done` with a
+reason, and the project's stage follows its tasks: `done` when every task is done or
+cancelled, `build` once work was done on a project at `planning` or `idea` (no code wrote the
+stage after `create-project.ts`, so a finished project read "planning" for ever).
+
+**The Start dialog's check (`GET /projects/:id/start-check`, design §3.6).** Besides what runs
+now (`runnable`), the check names what follows as it becomes ready (`later`: the waiting tasks
+whose every unfinished dependency runs now, is running, or itself follows; never one behind a
+failed, cancelled, missing or person-held task, nor a full-review task while Docker is not
+ready), why a Start would do nothing (`blocked`: `stopped` while Stop all is on, `no_model`
+without a provider, `nothing_runnable` with the first blocker in one sentence and the button
+that unblocks it; none while the agent is in a session, `busy`, since that session makes more
+tasks ready), and what is left of the monthly cap this month (`monthLeft`, the ledger's UTC
+month as the caps count it). `POST /sessions` refuses a budget above `monthLeft` with that
+sentence (`validation`); 0 and negative budgets never pass its schema.
+
+**Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
+left the row `running`, its run `running` and its task held under a claim nobody renews; the
+one-session rule then refused every later start ("agent Alice already has an active session
+<uuid>") for good. `recoverInterruptedSessions` runs at compose (`opts.recoverSessions`, default
+on with the services, never in a CLI one-shot that composes beside a live daemon), after
+`intake.closeExpired`: every running or paused work session of this human's agents (not an
+intake session, not a cloud runner's, not another device's) with no live kill-switch
+registration is ended `stopped` with the stop reason `interrupted` and the summary
+"Interrupted: Forerunner closed while this session ran. "X" is ready again.", its running runs
+are closed (`killed`), the tasks its agent holds go back to ready with the reason "Forerunner
+closed while it ran", and the person gets one Update about their own work (rows on a project);
+a background job's row on no project (the critic's monthly calibration) is ended without one,
+so a crash during it never reads "Your last session was interrupted". `POST /sessions/:id/stop`
+on a row nothing in this process runs ends it the same way (`endDeadSession`, stop reason
+`you`). The runner's refusal of a second session says it in words, never with the other
+session's id.
+
 **The inbox before the session-end writes (spec E.4).** Step 4 of `runner.ts` starts with one
 more `recheckInbox(..., { atEnd: true })`, so a message that landed during the last task is
 delivered and read (`read_at`) before the status doc, the summary cache, the peers' handoffs,
@@ -1485,7 +1607,14 @@ calibrate [--force]`, `fr jobs handover <project> [--force]`, `fr jobs reports` 
   forced second run on one day is the newest; none: "this run is the baseline"), writes a `critic.calibration` audit row and raises a `critic_calibration`
   notification naming both rates, the gate and the drift. A report that started in this local
   month makes the run a skip (`already_ran`) unless forced: the second line of the once-a-month rule
-  after the scheduler's fired keys.
+  after the scheduler's fired keys. The run's session row and token are the **critic agent's**
+  (`criticAgentId`), never the principal's (design §4.11, ADR 0102): a running calibration row
+  of the principal held its one-session rule, so every Start on the 1st of the month answered
+  "already has an active session". Without a model (`modelAvailable`, the daemon passes
+  `provider !== null`) the run is skipped (`no_model`) before anything is written; before, an
+  install with no key ran it and failed every month. A monthly schedule first seen on its due
+  day or after it (a fresh install, a job just switched on) waits for the next month
+  (`Scheduler.tick`), so nothing monthly runs on an install's first day.
 - Handover test (`handover.ts`, `handover-seed.ts`, P.15): off until a project's
   `settings.handover.enabled` is true (that flag is how the install names its own Forerunner
   project; any project can carry it); day 1 at 07:00 local, `budget_usd` default 5, `seed`
@@ -3750,6 +3879,24 @@ model (`critic_ceiling`, opus unless set), which Settings shows per project as "
 
 `validateBrief` rejects any delegation missing goal, context links, constraints, acceptance
 criteria, budget, risk tier or specialist with `brief_incomplete` and the list of issues.
+
+**What else a task's brief carries (`src/session/task-context.ts`, design §4.6).** After the
+delegation brief, `LoopTaskExecutor` adds `taskContextBlock`, read from the store when the run
+starts: `## Project` (name, goal, the person's brief from `summary_cache.brief` as a quoted
+string, and where `docs/overview.md` and the decision record are), `## Done before this task`
+(each dependency's title, the first line of its last worker run's report, or its outcome, and
+the files that run changed from its session's `task.files` event), `## The previous attempt`
+(the last worker run's report, or "It failed: <the error in words>"), `## The person's note on
+this task` (the words of the person's newest change-log row naming the task) and `## Note for
+this session (from the person)` (`SessionStartOptions.note`, from the Start dialog through
+`POST /sessions` `note` and `StartRequest.note`; also on the session's handoff). Everything quoted
+is data. The run row's `artifacts` keep `{ report }` (the redacted final text, cut to 1,500
+characters) or `{ error }` (the error in words) for that. `retryConstraints` writes "the brief
+was improved with the critic's findings below" only when findings follow; a first retry
+without findings points to the previous attempt instead. A run that ended on an error is
+named by `failureWords` ("Claude did not answer (model call failed).", the redacted message
+otherwise), never by the text the model wrote before the error, and carries
+`TaskExecutionResult.errorCode`; a timeout keeps its partial output (D.17).
 
 ### Injection (`src/injection/scan.ts`)
 

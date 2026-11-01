@@ -23,6 +23,17 @@ afterEach(() => {
   for (const t of temps.splice(0)) rmSync(t, { recursive: true, force: true });
 });
 
+/**
+ * A fired-keys store that saw the monthly schedule "m" before its day (a sighting, "" is "seen,
+ * never fired"): since ADR 0102 a schedule first seen on its due day waits for the next month,
+ * so a test of the day's run starts from an install that saw it earlier.
+ */
+function seenBefore() {
+  const keys = memoryFiredKeys();
+  keys.set("m", "");
+  return keys;
+}
+
 function monthly(over: Partial<Schedule> = {}): Schedule {
   return {
     id: "m",
@@ -53,7 +64,11 @@ describe("scheduler: monthly kind", () => {
   it("fires once per month at the local day and time, across month boundaries", async () => {
     const clock = new SimulatedClock("2026-10-31T23:00:00Z"); // 2026-11-01 00:00 CET
     const started: StartRequest[] = [];
-    const s = new Scheduler({ clock, start: async (req) => void started.push(req) });
+    const s = new Scheduler({
+      clock,
+      start: async (req) => void started.push(req),
+      fired: seenBefore(),
+    });
     s.add(monthly());
     await s.tick();
     expect(started).toHaveLength(0);
@@ -141,12 +156,34 @@ describe("scheduler: monthly kind", () => {
     expect(caught).toEqual([`monthly on day 12 at 06:00 ${TZ}`]);
   });
 
+  it("a schedule first seen on its due day does not run that day, before or after its time (ADR 0102)", async () => {
+    // The 1st, 05:00 Zurich: before the time. Then 06:30: after it. Neither runs on the day the
+    // install first sees the schedule; the next month's due day does.
+    for (const firstSeen of ["2026-11-01T04:00:00Z", "2026-11-01T05:30:00Z"]) {
+      const clock = new SimulatedClock(firstSeen);
+      const started: string[] = [];
+      const s = new Scheduler({ clock, start: async (req) => void started.push(req.reason) });
+      s.add(monthly());
+      await s.tick();
+      await clock.set(new Date("2026-11-01T06:00:00Z").getTime());
+      await s.tick();
+      await clock.set(new Date("2026-11-20T06:00:00Z").getTime());
+      await s.tick();
+      expect(started, firstSeen).toHaveLength(0);
+      await clock.set(new Date("2026-12-01T05:01:00Z").getTime());
+      await s.tick();
+      expect(started, firstSeen).toHaveLength(1);
+    }
+  });
+
   it("the fired keys survive a restart: a new scheduler on the same store does not fire again this month", async () => {
     const dir = mkdtempSync(join(os.tmpdir(), "fr-sched-"));
     temps.push(dir);
     const file = join(dir, "scheduler-fired.json");
     const clock = new SimulatedClock("2026-11-01T07:00:00Z");
     const started: string[] = [];
+    // The install saw the monthly schedule before its day (ADR 0102: not on the first day).
+    fileFiredKeys(file).set("m", "");
     const first = new Scheduler({
       clock,
       start: async (req) => void started.push(req.reason),
@@ -203,6 +240,7 @@ describe("scheduler: monthly kind", () => {
       clock,
       start: async (req) => void started.push(req.reason),
       isQuietHours: () => quiet,
+      fired: seenBefore(),
     });
     s.add(monthly());
     await s.tick();
@@ -228,6 +266,7 @@ describe("scheduler: monthly kind", () => {
     const s = new Scheduler({
       clock,
       start: async (req) => void started.push(req.reason),
+      fired: seenBefore(),
       refresh: async (scheduler) => {
         refreshes++;
         if (enabled) scheduler.add(monthly());

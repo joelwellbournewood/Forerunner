@@ -211,10 +211,9 @@ describe("critic sign-off answers", () => {
     });
     const task = await w.addTask("Stubborn task");
     const runner = w.runner(doneExecutor(w));
-    await w.start(runner);
-    await w.start(runner);
-    const r3 = await w.start(runner);
-    expect(r3.reviews[0]?.decision).toBe("human");
+    // The whole ladder runs in one session (design §4.3).
+    const r1 = await w.start(runner);
+    expect(r1.reviews.at(-1)?.decision).toBe("human");
     const request = await signoffRequestOf(w, task.id);
     expect(card(request)).toMatchObject({
       key: SIGNOFF_KEY,

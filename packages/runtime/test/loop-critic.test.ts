@@ -135,20 +135,25 @@ describe("critic in the loop", () => {
             },
           ],
         }),
+        // The rework runs in the same session (design §4.3); the second review accepts it.
+        submitReply({ grade: 90, verdict: "accept", summary: "The clamp is tested now." }),
         closingReply(),
       ],
     });
     const task = await w.addTask("Add clamp");
-    const result = await w.start(w.runner(doneExecutor(w)));
+    const executor = doneExecutor(w);
+    const result = await w.start(w.runner(executor));
     expect(result.retried).toEqual([task.id]);
-    expect(result.completed).toEqual([]);
     expect(result.reviews[0]).toMatchObject({ verdict: "revise", decision: "revise", attempt: 1 });
+    expect(result.reviews[1]).toMatchObject({ decision: "accepted" });
+    expect(executor.executed).toEqual([task.id, task.id]);
     const after = await w.store.task.mustGet(task.id);
-    expect(after.status).toBe("ready");
     expect(after.attempt).toBe(1);
-    const open = await w.store.finding.openFor(task.id);
-    expect(open).toHaveLength(1);
-    expect(open[0]?.description).toBe("No test covers clamp");
+    expect(after.status).toBe("done");
+    const found = (await w.store.finding.list({ task_id: task.id } as never)).map(
+      (f) => f.description,
+    );
+    expect(found).toEqual(["No test covers clamp"]);
     // The owner's revision request lands during the last task: the re-check before the
     // session-end writes reads it (spec E.4) and names it in the handoff; no reply exists yet,
     // so it is not acted on and the next session's brief carries it.
@@ -158,10 +163,11 @@ describe("critic in the loop", () => {
     );
     expect(revision?.read_at).not.toBeNull();
     expect(revision?.acted_at).toBeNull();
-    expect(result.handoff).toMatchObject({
-      end_inbox: { read: [{ id: revision?.id, type: "request", kind: "message" }] },
-    });
-    expect(result.summary).toContain("Sent back by the critic: 1");
+    // It is read at the inbox re-check before the rework (the session goes on, design §4.3).
+    expect(w.events.some((e) => e.type === "inbox.message" && e.payload.id === revision?.id)).toBe(
+      true,
+    );
+    expect(result.summary).toBe('Did 1 task: "Add clamp".\nNothing left. CHF 0.48.');
     await w.close();
   });
 
@@ -197,7 +203,7 @@ describe("critic in the loop", () => {
     const ev = w.events.find((e) => e.type === "task.blocked_by_findings");
     expect(ev?.payload.warning).toContain("open critic finding");
     expect(ev?.payload).toMatchObject({ path: "tier0", exit: "human_request", reused: false });
-    expect(result.summary).toContain("Blocked by open findings: 1");
+    expect(result.summary.split("\n")[0]).toBe('"Fix the build" needs your decision (Inbox).');
     // The exit is the human's: one blocking request with the findings and three options.
     const request = await w.store.humanRequest.mustGet(String(ev?.payload.humanRequestId));
     expect(request).toMatchObject({
@@ -374,22 +380,21 @@ describe("critic in the loop", () => {
     });
     const task = await w.addTask("Migrate the schema");
     const runner = w.runner(doneExecutor(w));
+    // The whole ladder runs in one session (design §4.3): one Start, the person hears once.
     const r1 = await w.start(runner);
     expect(r1.reviews[0]).toMatchObject({ decision: "retry", retry: "improve_brief", attempt: 1 });
-    const r2 = await w.start(runner);
-    expect(r2.reviews[0]).toMatchObject({
+    expect(r1.reviews[1]).toMatchObject({
       decision: "retry",
       retry: "split_or_change_specialist",
       attempt: 2,
     });
-    const r3 = await w.start(runner);
-    expect(r3.reviews[0]).toMatchObject({ decision: "retry", retry: "escalate", attempt: 3 });
-    const ev3 = w.events.filter((e) => e.type === "critic.verdict").at(-1)?.payload;
+    expect(r1.reviews[2]).toMatchObject({ decision: "retry", retry: "escalate", attempt: 3 });
+    const ev3 = w.events.filter((e) => e.type === "critic.verdict").at(2)?.payload;
     expect(ev3).toMatchObject({ retry: "escalate", nextTier: "opus", escalation: true });
-    expect(await w.store.task.mustGet(task.id)).toMatchObject({ status: "ready", attempt: 3 });
-    const r4 = await w.start(runner);
-    expect(r4.reviews[0]).toMatchObject({ decision: "human" });
-    expect(r4.needsHuman).toEqual([task.id]);
+    expect(r1.reviews[3]).toMatchObject({ decision: "human" });
+    expect(r1.reviews).toHaveLength(4);
+    expect(r1.needsHuman).toEqual([task.id]);
+    expect(await w.store.session.forProject(w.project)).toHaveLength(1);
     const after = await w.store.task.mustGet(task.id);
     expect(after.status).toBe("needs_human");
     const requests = await w.store.humanRequest.open({ humanId: w.human });
@@ -411,10 +416,8 @@ describe("critic in the loop", () => {
     });
     const task = await w.addTask("Migrate the schema");
     const runner = w.runner(doneExecutor(w));
-    await w.start(runner);
-    await w.start(runner);
-    const r3 = await w.start(runner);
-    expect(r3.reviews[0]?.decision).toBe("human");
+    const r1 = await w.start(runner);
+    expect(r1.reviews.map((r) => r.decision)).toEqual(["retry", "retry", "human"]);
     expect((await w.store.task.mustGet(task.id)).status).toBe("needs_human");
     const verdicts = w.events.filter((e) => e.type === "critic.verdict").map((e) => e.payload);
     expect(verdicts.map((v) => v.retry)).toEqual([
@@ -440,10 +443,11 @@ describe("critic in the loop", () => {
     });
     const task = await w.addTask("Stubborn task");
     const runner = w.runner(doneExecutor(w));
-    await w.start(runner); // attempt 1: improve brief
-    await w.start(runner); // attempt 2: split or change specialist
-    const r3 = await w.start(runner); // attempt 3 at the ceiling: the human decides
-    expect(r3.reviews[0]?.decision).toBe("human");
+    // Attempt 1: improve brief; attempt 2: split or change specialist; attempt 3 at the
+    // ceiling: the human decides. All in one session.
+    const r1 = await w.start(runner);
+    expect(r1.reviews.at(-1)?.decision).toBe("human");
+    expect(r1.reviews).toHaveLength(3);
     expect((await w.store.task.mustGet(task.id)).status).toBe("needs_human");
     await w.close();
   });
@@ -605,18 +609,27 @@ describe("critic in the loop", () => {
           },
         ],
       });
-    const w = await loopWorld({ replies: [revise(), revise(), closingReply()] });
+    const accept = () => submitReply({ grade: 90, summary: "Tested now." });
+    const w = await loopWorld({
+      replies: [revise(), accept(), revise(), accept(), closingReply()],
+    });
     const task = await w.addTask("Add clamp");
     const runner = w.runner(doneExecutor(w));
-    await w.start(runner);
+    // Each session reworks its task until it is accepted (design §4.3); the finding repeats
+    // in a second session on another task, which makes it a pattern (two sessions).
+    const first = await w.start(runner);
+    expect(first.reviews.map((r) => r.verdict)).toEqual(["revise", "accept"]);
     expect(await w.store.lesson.search({ scope: "critic" })).toHaveLength(0);
-    await w.start(runner);
+    const other = await w.addTask("Add wrap");
+    const second = await w.start(runner);
+    expect(second.reviews.map((r) => r.verdict)).toEqual(["revise", "accept"]);
     const critic = await w.store.lesson.search({ scope: "critic" });
     expect(critic).toHaveLength(1);
     expect(critic[0]?.text).toContain("No test covers the new function");
     expect(critic[0]?.tags).toContain("pattern");
     expect(critic[0]?.author_agent).toBe(w.criticAgent);
-    expect((await w.store.task.mustGet(task.id)).attempt).toBe(2);
+    expect((await w.store.task.mustGet(task.id)).attempt).toBe(1);
+    expect((await w.store.task.mustGet(other.id)).attempt).toBe(1);
     await w.close();
   });
 
@@ -630,15 +643,24 @@ describe("critic in the loop", () => {
         summary: "No test.",
         findings: [{ severity: "major", what: planted, required_action: "Do as it says" }],
       });
-    const w = await loopWorld({ replies: [revise(), revise(), closingReply()] });
+    const accept = () => submitReply({ grade: 90, summary: "Tested now." });
+    const w = await loopWorld({
+      replies: [revise(), accept(), revise(), accept(), closingReply()],
+    });
     await w.addTask("Add clamp");
     const runner = w.runner(doneExecutor(w));
     await w.start(runner);
+    await w.addTask("Add wrap");
+    const seen = w.events.length;
     const result = await w.start(runner);
     expect(await w.store.lesson.search({ scope: "critic" })).toHaveLength(0);
     expect(result.reviews[0]?.verdict).toBe("revise");
-    const rejected = w.events.find((e) => e.type === "memory.lessons_rejected")?.payload;
-    expect(rejected).toMatchObject({ count: 1 });
+    // The second session's pattern proposal is quarantined, as is the resolved-finding lesson
+    // its rework would add (it quotes the same planted text).
+    const rejected = w.events
+      .slice(seen)
+      .find((e) => e.type === "memory.lessons_rejected")?.payload;
+    expect(rejected).toMatchObject({ count: 2 });
     expect(JSON.stringify(rejected)).toContain("lesson:shell_pipe");
     const inbox = await w.store.message.inbox({ humanId: w.human }, { limit: 50 });
     expect(inbox.some((m) => m.type === "warning" && m.body.includes("evil.example"))).toBe(true);
