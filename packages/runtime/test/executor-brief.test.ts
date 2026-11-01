@@ -292,3 +292,65 @@ describe("a run that errors is named by its error (design §4.4)", () => {
     );
   });
 });
+
+describe("live steps (design §4.14)", () => {
+  let w: World;
+  afterEach(async () => {
+    await w.store.close();
+  });
+
+  it("the executor reports every model call and tool result to the runner while the run goes", async () => {
+    w = await world();
+    const task = await add(w, "Read the readme");
+    const provider = new ScriptedProvider(
+      [{ tools: [{ name: "read_file", input: { path: "README.md" } }] }, { text: "Read it." }],
+      w.h.clock,
+    );
+    const steps: unknown[] = [];
+    const exec = new LoopTaskExecutor({
+      store: w.store,
+      clock: w.h.clock,
+      tokens: w.h.tokens,
+      driver: new LoopAgentDriver({ hooks: w.h.hooks, kill: w.h.kill, clock: w.h.clock }),
+      provider,
+      pricing: flatPricing,
+      tools: registry(),
+      billingSourceId: "bs",
+      specialists: (n) => (n === "coder" ? coder : undefined),
+    });
+    await exec.execute({
+      task,
+      session: await w.store.session.mustGet(w.session),
+      token: issue(w.h, {
+        agentId: w.agent,
+        ownerHumanId: w.human,
+        projectId: w.project,
+        allowedTools: ["echo", "read_file"],
+        budgetUsdMicro: 5_000_000,
+        sessionId: w.session,
+      }),
+      budget: new SessionBudget({
+        sessionId: w.session,
+        budgetUsdMicro: 5_000_000,
+        stepCap: 100,
+        deadlineMs: w.h.clock.now() + 3_600_000,
+        reserveShare: 0.2,
+      }),
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+      onStep: (s) => steps.push(s),
+    });
+    expect(steps).toEqual([
+      { kind: "model", costUsdMicro: expect.any(Number) },
+      {
+        kind: "tool",
+        name: "read_file",
+        input: { path: "README.md" },
+        // This harness's token allows no path, so the read is refused: a step all the same.
+        isError: true,
+        denied: true,
+      },
+      { kind: "model", costUsdMicro: expect.any(Number) },
+    ]);
+  });
+});

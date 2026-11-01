@@ -807,7 +807,27 @@ export class LoopTaskExecutor implements TaskExecutor {
       .filter((t) => t)
       .join("\n\n");
     const label = `${spec.name} on ${task.title}`;
-    const onEvent = (ev: RunEvent) => this.deps.onEvent?.(task.id, ev);
+    // Live progress (design §4.14, U-086): every model call and tool result is a step the runner
+    // counts and logs while the task runs; the tool call's input names what it touched.
+    const calls = new Map<string, { name: string; input: unknown }>();
+    const onEvent = (ev: RunEvent) => {
+      this.deps.onEvent?.(task.id, ev);
+      if (!ctx.onStep) return;
+      if (ev.type === "model_call_end")
+        ctx.onStep({ kind: "model", costUsdMicro: ev.costUsdMicro });
+      else if (ev.type === "tool_call") calls.set(ev.id, { name: ev.name, input: ev.input });
+      else if (ev.type === "tool_result" || ev.type === "tool_denied") {
+        const call = calls.get(ev.id);
+        calls.delete(ev.id);
+        ctx.onStep({
+          kind: "tool",
+          name: ev.name,
+          input: call?.input,
+          isError: ev.type === "tool_denied" || ev.isError,
+          denied: ev.type === "tool_denied",
+        });
+      }
+    };
     // Tools for this run; with a worktree and a sandbox port, commands run inside the sandbox
     // with only the worktree mounted and the token's domains as the egress allowlist. A lease
     // the port refuses (a tier 2+ task with no engine) or a driver that throws still ends the

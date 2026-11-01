@@ -2127,7 +2127,9 @@ export const DAEMON_ROUTES = {
   session: "GET /sessions/:id",
   sessionEvents: "GET /sessions/:id/events?afterSeq= (JSON) | Accept: text/event-stream (SSE)",
   stopSession:
-    "POST /sessions/:id/stop (SessionView; ends the session's runs and freezes nothing, a kill in force stays)",
+    "POST /sessions/:id/stop (SessionView; Stop now: ends the session's runs and freezes nothing, a kill in force stays; the task goes back to ready with 'Stopped by you'; a session nothing in this process runs is ended there, design §4.10)",
+  pauseSession:
+    "POST /sessions/:id/pause (SessionView; Stop after this task: the task in flight finishes, no new one starts, the session ends 'Stopped after the task'; statusText 'Stopping after this task' meanwhile; a session nothing runs is ended at once, design §3.7)",
   kill: "POST /kill",
   resume: "POST /kill/resume",
   shutdown:

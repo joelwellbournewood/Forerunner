@@ -44,6 +44,8 @@ export function SessionPage() {
   const [raw, setRaw] = useState(false);
   const [follow, setFollow] = useState(true);
   const [stopBusy, setStopBusy] = useState(false);
+  /** Stop now asks once (design §3.7). */
+  const [confirmStopNow, setConfirmStopNow] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const seenSeq = useRef(new Set<number>());
 
@@ -166,12 +168,17 @@ export function SessionPage() {
       return next;
     });
 
-  const stop = async () => {
+  // Stop after this task (the default) and Stop now (design §3.7, §4.9).
+  const stop = async (how: "after_task" | "now") => {
     if (stopBusy) return;
     setStopBusy(true);
     try {
-      const s = await client.stopSession(id, "stopped from the live view");
+      const s =
+        how === "now"
+          ? await client.stopSession(id, "stopped from the live view")
+          : await client.pauseSession(id);
       setSession(s);
+      setConfirmStopNow(false);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -194,7 +201,7 @@ export function SessionPage() {
             Session {session.id}
           </h1>
           <Badge tone={statusTone(session.status)} testId="session-status">
-            {session.status}
+            {session.statusText ?? session.status}
           </Badge>
           <span className="text-sm text-neutral-600 dark:text-neutral-400">
             {session.agentName} · {session.trigger} · {session.runner}
@@ -220,14 +227,43 @@ export function SessionPage() {
                     ? "polling every 5 s"
                     : mode}
             </Badge>
-            <Button
-              variant="danger"
-              onClick={() => void stop()}
-              disabled={stopBusy || !ACTIVE.has(session.status)}
-              data-testid="stop-session"
-            >
-              {stopBusy ? "Stopping…" : "Stop"}
-            </Button>
+            {session.status === "running" ? (
+              <Button
+                onClick={() => void stop("after_task")}
+                disabled={stopBusy}
+                data-testid="stop-after-task"
+                title="Finishes the current task, then ends."
+              >
+                Stop after this task
+              </Button>
+            ) : null}
+            {confirmStopNow ? (
+              <span className="flex items-center gap-1" data-testid="stop-now-confirm">
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">
+                  Stops the current task at once. It goes back to Ready; what it wrote so far stays
+                  in the folder.
+                </span>
+                <Button
+                  variant="danger"
+                  onClick={() => void stop("now")}
+                  disabled={stopBusy}
+                  data-testid="stop-session"
+                >
+                  {stopBusy ? "Stopping…" : "Stop now"}
+                </Button>
+                <Button onClick={() => setConfirmStopNow(false)}>Keep going</Button>
+              </span>
+            ) : (
+              <Button
+                variant="danger"
+                onClick={() => setConfirmStopNow(true)}
+                disabled={stopBusy || !ACTIVE.has(session.status)}
+                data-testid="stop-now"
+                title="Stops the current task at once. It goes back to Ready; what it wrote so far stays in the folder."
+              >
+                Stop now
+              </Button>
+            )}
           </div>
         </div>
         {notice ? (

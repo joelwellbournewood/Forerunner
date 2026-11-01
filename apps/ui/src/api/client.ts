@@ -542,6 +542,8 @@ export interface DaemonClient {
   session(id: string, signal?: AbortSignal): Promise<SessionView>;
   sessionEvents(id: string, afterSeq?: number, signal?: AbortSignal): Promise<EventView[]>;
   stopSession(id: string, reason?: string): Promise<SessionView>;
+  /** `POST /sessions/:id/pause`: Stop after this task (design §3.7). */
+  pauseSession(id: string): Promise<SessionView>;
   kill(body: KillBody): Promise<KillResult>;
   resume(): Promise<KillResult>;
   /** `GET /desktop/status`: desktop control's state, with what the indicator shows (S.32). */
@@ -955,6 +957,7 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("sessionEvents", { id }), EventList, { afterSeq }, signal),
     stopSession: (id, reason) =>
       post(routePath("stopSession", { id }), SessionViewSchema, reason ? { reason } : {}),
+    pauseSession: (id) => post(routePath("pauseSession", { id }), SessionViewSchema, {}),
     kill: (body) => post(routePath("kill"), KillResult, body),
     resume: () => post(routePath("resume"), KillResult, {}),
     desktopStatus: (signal) =>

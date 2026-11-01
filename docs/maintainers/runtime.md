@@ -869,6 +869,29 @@ for these (enforcement and the handover read it); `SessionView.stopReason` and
 `SessionView.statusText` ("Working", "Done", "Stopped by you", "Interrupted: Forerunner closed",
 "Stopping after this task") are what a screen shows.
 
+**Stop after this task (`POST /sessions/:id/pause`, design §3.7).** The default stop: the
+route runs the pause port (`sessionPausePorts.pauseSession`: the row goes `paused`, statusText
+"Stopping after this task", and the runner gets the pause message), so the task in flight
+finishes; the runner does not re-plan while its row is `paused` and the end-of-session inbox
+re-check ends it `stopped` with "Stopped after the task, as asked". A session nothing in this
+process runs is ended at once (`endDeadSession`, stop reason `stopped_after_task`).
+
+**Live steps (design §4.14, U-086).** The executor reports every `model_call_end` and every
+`tool_result`/`tool_denied` of the task's run through `ctx.onStep` (`TaskStep`); the runner
+records each, in order, before the task ends: a model call adds its cost and one step to the
+session row (`SessionRepo.recordSpend`), a tool result adds one step and a `task.step` event
+with a short line (`stepLine`: "read index.html", "wrote styles.css", "ran node --check
+script.js: failed", "asked you a question (Inbox)"). The stream of `GET /sessions/:id/events`
+sends the row as a `session.changed` frame whenever its steps, spend or status change, so the
+session page's steps and spend move during a run (before: "Steps 0 / 200" and "CHF 0.00" until
+the end). The end of the session still writes the ledger's total.
+
+**Done means done (`closeFinishedWork` in `session/result.ts`, design §4.13).** At the end, a
+milestone whose tasks are all done or cancelled (one done at least) is moved to `done` with a
+reason, and the project's stage follows its tasks: `done` when every task is done or
+cancelled, `build` once work was done on a project at `planning` or `idea` (no code wrote the
+stage after `create-project.ts`, so a finished project read "planning" for ever).
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

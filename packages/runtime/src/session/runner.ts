@@ -73,6 +73,7 @@ import {
 } from "./plan-approval.ts";
 import { namesOf } from "./recovery.ts";
 import {
+  closeFinishedWork,
   collectEndState,
   type LastSessionOutcome,
   type NamedTask,
@@ -231,8 +232,18 @@ export interface TaskExecutor {
     notes?: readonly QueueNote[];
     /** The person's note for this session (the Start dialog's), for every task's brief. */
     sessionNote?: string;
+    /**
+     * Called for every model call and tool result of the task's run (design §4.14): the runner
+     * counts the step and the spend on the session row and logs a step line while it runs.
+     */
+    onStep?: (step: TaskStep) => void;
   }): Promise<TaskExecutionResult>;
 }
+
+/** One step of a task's run, as the executor reports it to the runner (`onStep`). */
+export type TaskStep =
+  | { kind: "model"; costUsdMicro: number }
+  | { kind: "tool"; name: string; input?: unknown; isError: boolean; denied?: boolean };
 
 export interface SessionStartOptions {
   agentId: string;
@@ -438,6 +449,39 @@ export interface SessionRunnerDeps {
 
 /** Share of a session's cap kept for reviews; the plan is cut to the rest (`cutPlanToBudget`). */
 export const DEFAULT_RESERVE_SHARE = 0.2;
+
+/** A string field of a tool call's input, when it has one. */
+function inputField(input: unknown, ...keys: string[]): string {
+  if (!input || typeof input !== "object") return "";
+  for (const k of keys) {
+    const v = (input as Record<string, unknown>)[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v.join(" ");
+  }
+  return "";
+}
+
+/**
+ * One tool step in the person's words (design §3.7: "read index.html", "wrote styles.css",
+ * "ran node --check: ok"); one short line, never the tool's output.
+ */
+export function stepLine(step: Extract<TaskStep, { kind: "tool" }>): string {
+  const name = step.name.replace(/^cc:/, "").toLowerCase();
+  const path = inputField(step.input, "path", "file_path", "file");
+  const cut = (s: string) => (s.length > 80 ? `${s.slice(0, 79)}…` : s);
+  if (step.denied) return `was not allowed to use ${name.replace(/_/g, " ")}`;
+  const failed = step.isError ? " (failed)" : "";
+  if (/^(read_file|read)$/.test(name)) return `read ${cut(path || "a file")}${failed}`;
+  if (/^(write_file|write|edit|multiedit)$/.test(name))
+    return `wrote ${cut(path || "a file")}${failed}`;
+  if (/^(list_dir|ls|glob)$/.test(name)) return `looked at ${cut(path || "the folder")}${failed}`;
+  if (/^(run_command|bash)$/.test(name)) {
+    const cmd = inputField(step.input, "command", "argv", "cmd");
+    return `ran ${cut(cmd || "a command")}: ${step.isError ? "failed" : "ok"}`;
+  }
+  if (name === "ask_person") return "asked you a question (Inbox)";
+  return `used ${name.replace(/_/g, " ")}${failed}`;
+}
 
 /** Error codes of a run that may well pass when tried again at once (design §4.4). */
 const TRANSIENT_ERROR_CODES: ReadonlySet<string> = new Set([
@@ -1297,6 +1341,22 @@ export class SessionRunner {
             });
           let result: TaskExecutionResult;
           const execStarted = clock.monotonic();
+          // Steps are recorded in order, one after the other, and all before the task ends.
+          let steps: Promise<void> = Promise.resolve();
+          const recordStep = async (t: TaskRow, step: TaskStep) => {
+            if (step.kind === "model") {
+              await store.session.recordSpend(session.id, Math.max(0, step.costUsdMicro), 1);
+              return;
+            }
+            await store.session.recordSpend(session.id, 0, 1);
+            await emit("task.step", {
+              taskId: t.id,
+              title: t.title,
+              tool: step.name,
+              ok: !step.isError,
+              text: stepLine(step),
+            });
+          };
           try {
             result = await this.deps.executor.execute({
               task,
@@ -1308,6 +1368,13 @@ export class SessionRunner {
               heard: said.map(({ deliveredTo: _to, ...line }) => line),
               ...(notes.length ? { notes } : {}),
               ...(opts.note?.trim() ? { sessionNote: opts.note.trim() } : {}),
+              onStep: (step) => {
+                steps = steps
+                  .then(() => recordStep(task, step))
+                  .catch((e: unknown) =>
+                    this.logger.warn("step not recorded", { error: errorMessage(e) }),
+                  );
+              },
             });
           } catch (e) {
             if (isSandboxNotReady(e)) {
@@ -1348,6 +1415,7 @@ export class SessionRunner {
               errorCode: code,
             };
           } finally {
+            await steps;
             renew();
             stopWatch();
             unregisterTask();
@@ -2053,11 +2121,22 @@ export class SessionRunner {
       // Read fresh: what changed on the row during the session (an intake approved meanwhile,
       // the first session marked as run, U-038) is kept, not overwritten by the start's copy.
       const current = (await store.project.get(project.id)) ?? project;
+      // Done means done (design §4.13): finished milestones close and the stage follows.
+      let stage = current.stage;
+      try {
+        stage = await closeFinishedWork(store, current, endState.all, agent.id);
+      } catch (e) {
+        this.logger.warn("milestones and stage not updated", {
+          projectId: project.id,
+          error: errorMessage(e),
+        });
+      }
       await store.project.patch(project.id, {
+        ...(stage !== current.stage ? { stage } : {}),
         summary_cache: {
           ...(current.summary_cache as Record<string, never>),
           goal: project.goal,
-          stage: project.stage,
+          stage,
           last_session: {
             id: session.id,
             ended_at: clock.nowIso(),

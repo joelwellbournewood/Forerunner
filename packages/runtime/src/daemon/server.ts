@@ -49,6 +49,7 @@ import {
   QUIT_REASON,
   STOP_ALL_REASON,
   STOP_NOW_REASON,
+  STOPPED_AFTER_TASK,
   taskReasonForStop,
 } from "../session/stop-words.ts";
 import type { StartRequest } from "../session/triggers.ts";
@@ -74,6 +75,7 @@ import {
 } from "../voice/views.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { assertAnswerAccepted, NOT_AN_OPTION } from "../wiring/request-answers.ts";
+import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
@@ -1204,6 +1206,9 @@ export function createDaemonApp(
     }
     return streamSSE(c, async (stream) => {
       let seq = afterSeq;
+      // The row's steps, spend and status as last sent: a change is one `session.changed` frame
+      // (design §4.14), so the page's steps and spend move while a task runs.
+      let shown = "";
       const flush = async () => {
         const rows = await rt.store.event.list(id, seq, 500);
         for (const e of rows) {
@@ -1213,6 +1218,17 @@ export function createDaemonApp(
             data: JSON.stringify(eventView(e, chf())),
             id: String(e.seq),
           });
+        }
+        const row = await rt.store.session.get(id);
+        const key = row ? `${row.status}:${row.steps}:${row.spent_usd_micro}` : "";
+        if (row && key !== shown) {
+          const first = shown === "";
+          shown = key;
+          if (!first)
+            await stream.writeSSE({
+              event: "session.changed",
+              data: JSON.stringify(await liveSessionView(row)),
+            });
         }
       };
       await flush();
@@ -1268,6 +1284,43 @@ export function createDaemonApp(
         payload: { sessionId: s.id, status: "stopped", stopReason: "you" },
         agentId: s.agent_id,
         projectId: s.project_id,
+      });
+      if (s.project_id) rt.events.emit("project", { id: s.project_id });
+    }
+    return c.json(await liveSessionView(await rt.store.session.mustGet(s.id)));
+  });
+
+  // Stop after this task (design §3.7, the default stop): the pause port marks the row paused
+  // and tells the runner, which finishes the task in flight and starts no other. A session
+  // nothing in this process runs is ended at once (it has no task in flight to finish).
+  app.post("/sessions/:id/pause", async (c) => {
+    const s = await rt.store.session.mustGet(c.req.param("id"));
+    const live = rt.kill.activeCount({ sessionId: s.id }) > 0;
+    if (live && s.status === "running") {
+      await sessionPausePorts({
+        store: rt.store,
+        kill: rt.kill,
+        agentId: s.agent_id,
+        humanId: rt.human.id,
+      }).pauseSession?.(s.id, "stop after this task, asked in the app");
+      rt.events.emit("session", {
+        type: "session.pausing",
+        payload: { sessionId: s.id },
+        agentId: s.agent_id,
+        projectId: s.project_id,
+      });
+    } else if (
+      !live &&
+      ["running", "paused", "planned"].includes(s.status) &&
+      !isIntakeSession(s)
+    ) {
+      await endDeadSession(rt, s, {
+        stopReason: STOPPED_AFTER_TASK,
+        taskReason: taskReasonForStop("you"),
+        summary: (titles) =>
+          titles.length
+            ? `Stopped by you. ${namesOf(titles)} ${titles.length === 1 ? "is" : "are"} ready again.`
+            : "Stopped by you.",
       });
       if (s.project_id) rt.events.emit("project", { id: s.project_id });
     }

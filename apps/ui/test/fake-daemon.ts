@@ -1445,6 +1445,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json(s);
   });
 
+  app.post("/sessions/:id/pause", (c) => {
+    const s = state.sessions.find((x) => x.id === c.req.param("id"));
+    if (!s) return errorBody(c, 404, "not_found", "no such session");
+    // As the real daemon: the row is paused and reads "Stopping after this task"; the scripted
+    // run ends it after its task with "Stopped after the task, as asked".
+    if (s.status === "running") {
+      s.status = "paused";
+      s.statusText = "Stopping after this task";
+      emit("session.changed", clone(s));
+    }
+    return c.json(s);
+  });
+
   app.post("/kill", async (c) => {
     const parsed = KillBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
@@ -5042,7 +5055,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     script.forEach(([type, text, level, cost], i) => {
       later(
         () => {
-          if (session.status !== "running") return;
+          // Stop after this task (the real daemon's pause): the task in flight finishes, then
+          // the session ends.
+          if (session.status === "paused" && type === "run.finished") {
+            session.status = "stopped";
+            session.endedAt = new Date().toISOString();
+            session.currentTask = null;
+            session.stopReason = "stopped_after_task";
+            session.statusText = "Stopped after the task, as asked";
+            pushEvent(session, type, text, level, { step: session.steps }, cost);
+            emit("session.changed", clone(session));
+            return;
+          }
+          if (session.status !== "running" && session.status !== "paused") return;
           session.steps += 1;
           session.spent = money(session.spent.usdMicro + cost);
           if (type === "task.claimed") {
@@ -5056,6 +5081,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           emit("session.changed", clone(session));
           if (i === script.length - 1) {
             session.status = "completed";
+            session.statusText = "Done";
+            session.stopReason = "completed";
             session.endedAt = new Date().toISOString();
             session.currentTask = null;
             session.summary = "Decided the versioning scheme and wrote the ADR.";

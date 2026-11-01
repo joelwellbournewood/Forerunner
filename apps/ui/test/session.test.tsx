@@ -73,18 +73,58 @@ describe("Live session view", () => {
     if (!session) throw new Error("the fake daemon started no session");
     renderApp(`/sessions/${session.id}`, harness);
     const header = await screen.findByTestId("session-header");
-    expect(within(header).getByTestId("session-status")).toHaveTextContent("running");
+    // The status in words (design §3.7), not the raw "running".
+    expect(within(header).getByTestId("session-status")).toHaveTextContent("Working");
     // jsdom has no EventSource: the helper must say so and poll instead of spinning silently.
     await waitFor(() =>
       expect(screen.getByTestId("stream-mode")).toHaveTextContent("polling every 5 s"),
     );
     expect(screen.getByTestId("stream-notice")).toHaveTextContent(/polling every 5 s/);
+    // Stop now asks once, with what it does, before anything is sent.
+    await user.click(screen.getByTestId("stop-now"));
+    expect(screen.getByTestId("stop-now-confirm")).toHaveTextContent(
+      "Stops the current task at once. It goes back to Ready; what it wrote so far stays in the folder.",
+    );
+    expect(postedCalls(harness, `/sessions/${session.id}/stop`)).toHaveLength(0);
     await user.click(screen.getByTestId("stop-session"));
     await waitFor(() =>
       expect(postedCalls(harness, `/sessions/${session.id}/stop`)).toHaveLength(1),
     );
     await waitFor(() =>
-      expect(within(header).getByTestId("session-status")).toHaveTextContent("stopped"),
+      expect(within(header).getByTestId("session-status")).toHaveTextContent("Stopped by you"),
+    );
+  });
+
+  it("Stop after this task: the task in flight finishes, then the session ends (design §3.7)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ eventDelayMs: 300 });
+    const { session } = await harness.client.startSession({
+      agentId: "agent_alice",
+      projectId: "proj_atlas",
+    });
+    if (!session) throw new Error("the fake daemon started no session");
+    renderApp(`/sessions/${session.id}`, harness);
+    const header = await screen.findByTestId("session-header");
+    expect(screen.getByTestId("stop-after-task")).toHaveAttribute(
+      "title",
+      "Finishes the current task, then ends.",
+    );
+    await user.click(screen.getByTestId("stop-after-task"));
+    await waitFor(() =>
+      expect(postedCalls(harness, `/sessions/${session.id}/pause`)).toHaveLength(1),
+    );
+    expect(postedCalls(harness, `/sessions/${session.id}/stop`)).toHaveLength(0);
+    await waitFor(() =>
+      expect(within(header).getByTestId("session-status")).toHaveTextContent(
+        "Stopping after this task",
+      ),
+    );
+    await waitFor(
+      () =>
+        expect(within(header).getByTestId("session-status")).toHaveTextContent(
+          "Stopped after the task, as asked",
+        ),
+      { timeout: 5_000 },
     );
   });
 });
@@ -150,10 +190,8 @@ describe("a finished session's page (U-071)", () => {
         </MemoryRouter>
       </AppProvider>,
     );
-    await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("running"));
-    await waitFor(() =>
-      expect(screen.getByTestId("session-status")).toHaveTextContent("completed"),
-    );
+    await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("Working"));
+    await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("Done"));
     await waitFor(() => expect(screen.getByTestId("stream-mode")).toHaveTextContent("finished"));
     expect(screen.getAllByTestId("event-row").length).toBeGreaterThanOrEqual(6);
     const polled = h.gets.filter((p) => p === `/sessions/${session.id}/events`).length;

@@ -354,6 +354,32 @@ describe("the UI client against the real daemon", () => {
     expect(["started", "queued"]).toContain(started.result);
   });
 
+  it("stop after this task on a session nothing runs: it ends at once, as asked (design §3.7)", async () => {
+    let ghost = await rt.store.session.insert({
+      agent_id: agentId,
+      project_id: projectId,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1_000_000,
+      step_cap: 10,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "planned",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+      author_agent: agentId,
+    });
+    ghost = await rt.store.session.start(ghost.id, ghost.version);
+    const stopped = await client.pauseSession(ghost.id);
+    expect(stopped).toMatchObject({
+      id: ghost.id,
+      status: "stopped",
+      stopReason: "stopped_after_task",
+      statusText: "Stopped after the task, as asked",
+    });
+  });
+
   it("dependencies: refused when unknown, changed by title from the Tasks tab, named by the start check (U-040)", async () => {
     const deps = await client.createProject({ name: "Deps", goal: "Tasks that can run" });
     const newTask = (

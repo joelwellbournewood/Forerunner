@@ -12,6 +12,7 @@ import {
   type TaskExecutor,
 } from "../src/session/runner.ts";
 import { STOP_NOW_REASON } from "../src/session/stop-words.ts";
+import { sessionPausePorts } from "../src/wiring/session-ports.ts";
 import { seedWorld } from "./context-helpers.ts";
 
 /**
@@ -311,6 +312,110 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
       "The greeting says good evening after 6 pm",
     ]);
     expect((await w.store.queue.mustGet(note.id)).status).toBe("consumed");
+  });
+
+  it("live: each model call and tool result moves the session's steps and spend and logs a step line while the task runs (design §4.14)", async () => {
+    await add("Create index.html");
+    let midRun: { steps: number; spent: number; lines: string[] } | null = null;
+    const executor: TaskExecutor = {
+      async execute({ session, onStep }) {
+        onStep?.({ kind: "model", costUsdMicro: 1_200 });
+        onStep?.({ kind: "tool", name: "read_file", input: { path: "README.md" }, isError: false });
+        onStep?.({ kind: "model", costUsdMicro: 800 });
+        onStep?.({
+          kind: "tool",
+          name: "write_file",
+          input: { path: "index.html" },
+          isError: false,
+        });
+        onStep?.({
+          kind: "tool",
+          name: "run_command",
+          input: { command: "node --check script.js" },
+          isError: true,
+        });
+        // Read back while the task still runs, as the session page does.
+        await new Promise((r) => setTimeout(r, 20));
+        const row = await w.store.session.mustGet(session.id);
+        const lines = (await w.store.event.list(session.id))
+          .filter((e) => e.type === "task.step")
+          .map((e) => String((e.payload as { text?: string }).text));
+        midRun = { steps: row.steps, spent: row.spent_usd_micro, lines };
+        return { outcome: "done", summary: "ok", costUsdMicro: 2_000, checksPassed: true };
+      },
+    };
+    await start(runner({ executor }));
+    expect(midRun).toEqual({
+      steps: 5,
+      spent: 2_000,
+      lines: ["read README.md", "wrote index.html", "ran node --check script.js: failed"],
+    });
+  });
+
+  it("Stop after this task: the task in flight finishes, no other starts, nothing is an error (design §4.9)", async () => {
+    const a = await add("Create index.html", { priority: 9 });
+    const b = await add("Write the README", { priority: 1 });
+    const kill = new KillSwitch();
+    const executor: TaskExecutor = {
+      async execute({ task, session }) {
+        ran.push(task.title);
+        // What POST /sessions/:id/pause does while the task runs (the pause port).
+        await sessionPausePorts({
+          store: w.store,
+          kill,
+          agentId: w.agent,
+          humanId: w.human,
+        }).pauseSession?.(session.id, "stop after this task");
+        return { outcome: "done", summary: "ok", costUsdMicro: 0, checksPassed: true };
+      },
+    };
+    const events: string[] = [];
+    const r = await start(runner({ kill, executor }), (type) => events.push(type));
+    expect(ran).toEqual(["Create index.html"]);
+    expect(r.completed).toEqual([a.id]);
+    expect((await w.store.task.mustGet(b.id)).status).toBe("ready");
+    expect(r.status).toBe("stopped");
+    expect(events).not.toContain("session.error");
+    expect(r.summary.split("\n").at(-1)).toMatch(
+      /^Stopped after the task, as asked\. "Write the README" is ready to continue\./,
+    );
+    const row = await w.store.session.mustGet(r.sessionId);
+    expect(row.status).toBe("stopped");
+  });
+
+  it("done means done: a milestone whose tasks are all done closes, and the project's stage reads done (design §4.13)", async () => {
+    const milestone = await w.store.milestone.insert({
+      project_id: w.project,
+      name: "First version",
+      status: "active",
+      reason: "the plan",
+      author_agent: w.agent,
+    });
+    const other = await w.store.milestone.insert({
+      project_id: w.project,
+      name: "Later",
+      status: "planned",
+      reason: "the plan",
+      author_agent: w.agent,
+    });
+    const a = await add("Create index.html", { milestone_id: milestone.id });
+    await add("Write the README", { milestone_id: milestone.id, depends_on: [a.id] });
+    const later = await add("Add a share button", { milestone_id: other.id, status: "draft" });
+    await start(runner());
+    expect((await w.store.milestone.mustGet(milestone.id)).status).toBe("done");
+    expect((await w.store.milestone.mustGet(other.id)).status).toBe("planned");
+    // A draft is left: the project is not done yet.
+    expect((await w.store.project.mustGet(w.project)).stage).toBe("build");
+    await w.store.task.transition(later.id, later.version, "cancelled", "not needed", {
+      agentId: w.agent,
+    });
+    const last = await add("Check the page", { milestone_id: other.id });
+    const r = await start(runner());
+    expect(r.completed).toEqual([last.id]);
+    expect((await w.store.milestone.mustGet(other.id)).status).toBe("done");
+    const project = await w.store.project.mustGet(w.project);
+    expect(project.stage).toBe("done");
+    expect((project.summary_cache as { stage?: string }).stage).toBe("done");
   });
 
   it("the Overview's last result is true now: a structured outcome and next steps from the tasks left", async () => {

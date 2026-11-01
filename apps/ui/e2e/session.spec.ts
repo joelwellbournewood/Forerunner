@@ -39,7 +39,7 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(escalation.getByTestId("level-badge")).toHaveText("escalation");
   await expect(page.getByTestId("steps")).toContainText("6 / 200");
   await expect(page.getByTestId("session-spend")).toContainText("CHF 3.60");
-  await expect(page.getByTestId("session-status")).toHaveText("completed");
+  await expect(page.getByTestId("session-status")).toHaveText("Done");
 
   await page.getByTestId("filter-info").click();
   await expect(page.getByTestId("event-row")).toHaveCount(2);
@@ -47,7 +47,7 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(page.getByTestId("event-raw")).toHaveCount(2);
 });
 
-test("the stop button posts to /sessions/:id/stop", async ({ page, request }) => {
+test("Stop now asks once, then posts to /sessions/:id/stop", async ({ page, request }) => {
   const res = await request.post(
     `http://127.0.0.1:${process.env.FORERUNNER_UI_FAKE_PORT}/sessions`,
     {
@@ -59,13 +59,14 @@ test("the stop button posts to /sessions/:id/stop", async ({ page, request }) =>
   const { session } = (await res.json()) as { session: { id: string } };
   await page.goto(`/sessions/${session.id}`);
   await expect(page.getByTestId("session-header")).toContainText(`Session ${session.id}`);
-  const stop = page.getByTestId("stop-session");
+  const stop = page.getByTestId("stop-now");
   if (await stop.isEnabled()) {
     await stop.click();
-    await expect(page.getByTestId("session-status")).toHaveText("stopped");
+    await page.getByTestId("stop-session").click();
+    await expect(page.getByTestId("session-status")).toHaveText("Stopped by you");
     const calls = await recordedCalls(request);
     expect(calls.some((c) => c.path === `/sessions/${session.id}/stop`)).toBe(true);
   } else {
-    await expect(page.getByTestId("session-status")).toHaveText("completed");
+    await expect(page.getByTestId("session-status")).toHaveText("Done");
   }
 });

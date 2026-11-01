@@ -299,7 +299,15 @@ completed, stopped, failed, killed; the daemon ends that stream, so an EventSour
 reconnect and the fallback poll for good) and shows **finished**; a session that ends while
 the page is open (a `session.ended` event on the stream, or a `session.changed` with an ended
 status from the poll) closes the stream after one last read of the header and the log. The page
-reuses the provider's `streamOptions` (`useStreamOptions`), so tests poll fast. Chat uses `streamChat()` over
+reuses the provider's `streamOptions` (`useStreamOptions`), so tests poll fast. Its badge shows
+the session's `statusText` ("Working", "Done", "Stopped by you", "Interrupted: Forerunner
+closed", "Stopping after this task"), the raw status only for a row that has none (the state
+service's). Its stops follow design §3.7: **Stop after this task** (`client.pauseSession`,
+`POST /sessions/:id/pause`, "Finishes the current task, then ends.") while it runs, and **Stop
+now**, which asks once ("Stops the current task at once. It goes back to Ready; what it wrote so
+far stays in the folder.") before `POST /sessions/:id/stop`. The real daemon's session stream
+now carries `session.changed` frames when the row's steps, spend or status change, so the steps
+and spend move during a run. Chat uses `streamChat()` over
 `POST /chat/stream`: `token` frames build the reply as they arrive, the `reply` frame finishes
 it, `error` frames become `ApiError`; a plain JSON `ChatReplyView` is accepted as well.
 

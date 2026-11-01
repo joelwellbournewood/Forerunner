@@ -209,6 +209,38 @@ export async function collectEndState(
   };
 }
 
+/**
+ * Done means done (design §4.13): a milestone whose tasks are all done or cancelled (one done
+ * at least) is closed, and the project's stage follows its tasks: "done" when every task is done
+ * or cancelled, "build" once work was done on a project still at "planning" or "idea". Before,
+ * nothing in the runtime moved a milestone or the stage, so a finished project read "planning"
+ * for ever. Returns the stage now.
+ */
+export async function closeFinishedWork(
+  store: StateStore,
+  project: { id: string; stage: string },
+  all: readonly TaskRow[],
+  agentId: string,
+): Promise<string> {
+  const finished = (ts: readonly TaskRow[]) =>
+    ts.length > 0 &&
+    ts.every((t) => t.status === "done" || t.status === "cancelled") &&
+    ts.some((t) => t.status === "done");
+  for (const m of await store.milestone.forProject(project.id)) {
+    if (m.status === "done" || m.status === "cancelled") continue;
+    if (!finished(all.filter((t) => t.milestone_id === m.id))) continue;
+    await store.milestone.change(m.id, m.version, { status: "done" }, "all its tasks are done", {
+      agentId,
+    });
+  }
+  const stage = finished(all)
+    ? "done"
+    : ["idea", "planning"].includes(project.stage) && all.some((t) => t.status === "done")
+      ? "build"
+      : project.stage;
+  return stage;
+}
+
 /** A waiting task as the outcome names it: its dependencies in words. */
 export function waitingOf(w: WaitingTask): NamedTask & { waitsOn: string[] } {
   return {
