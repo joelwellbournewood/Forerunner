@@ -33,6 +33,7 @@ import {
   STATUS_FILTERS,
   stuckLine,
   type TaskActionKey,
+  WHO_PERSON,
   whoName,
 } from "../../lib/task-actions.ts";
 import { useAsync } from "../../lib/use-async.ts";
@@ -82,7 +83,7 @@ function TaskCap({ task, specialist }: { task: TaskView; specialist: string | nu
         data-testid="task-cap"
         title="The task has no budget: each run stops at its specialist's limit. Set a budget to change it."
       >
-        each run stops at <Money value={task.cap} /> ({whoName(specialist)} limit)
+        each run stops at <Money value={task.cap} /> ({specialist ?? "coder"} limit)
       </div>
     );
   return null;
@@ -402,7 +403,9 @@ export function TasksTab({
                     <td className="py-1.5 pr-2">{whoName(who)}</td>
                     <td className="py-1.5 pr-2 whitespace-nowrap">
                       <Money value={t.actual} />
-                      {isFinished(t) ? null : <TaskCap task={t} specialist={who} />}
+                      {isFinished(t) || who === WHO_PERSON ? null : (
+                        <TaskCap task={t} specialist={who} />
+                      )}
                     </td>
                     <td className="py-1.5 pr-2">
                       {run?.verdict ? (
@@ -578,7 +581,7 @@ export function ActionDialog({
         {error ? <ErrorBanner message={error} /> : null}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} data-testid="dismiss-action">
-            {action === "cancel" ? "Keep task" : "Close"}
+            {action === "cancel" ? "Keep task" : "Not now"}
           </Button>
           {offered ? (
             <Button
@@ -670,7 +673,7 @@ function DependenciesDialog({
         </Field>
         {error ? <ErrorBanner message={error} /> : null}
         <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>Close</Button>
+          <Button onClick={onClose}>Back</Button>
           <Button variant="primary" type="submit" disabled={busy} data-testid="save-dependencies">
             {busy ? "Saving…" : "Save"}
           </Button>

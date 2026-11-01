@@ -144,12 +144,27 @@ describe("Tasks tab (design §3.5)", () => {
 
   it("a task waiting for another or for Docker says so, never 'ready' (design §2, U-079)", async () => {
     const harness = createHarness({ sandbox: { state: "not_running" } });
-    addTask(harness, "task_wait", "Create notes/todo.md", { dependsOn: ["task_3"] });
+    addTask(harness, "task_wait", "Create notes/todo.md", {
+      dependsOn: ["task_3"],
+      specialist: null,
+      cap: { usdMicro: 3_000_000, chfMicro: 2_400_000 },
+    });
     addTask(harness, "task_full", "Add a LICENSE file (MIT)", { riskTier: 2 });
+    addTask(harness, "task_me", "Confirm the hosting with me", { specialist: "person" });
     renderApp("/projects/proj_atlas/tasks", harness);
-    expect(within(await rowOf("task_wait")).getByTestId("task-status")).toHaveTextContent(
+    const waiting = await rowOf("task_wait");
+    expect(within(waiting).getByTestId("task-status")).toHaveTextContent(
       'Waiting for "Decide the versioning scheme"',
     );
+    // No specialist chosen yet: the agent's choice, and the cap is the coder's (the planner's).
+    expect(waiting).toHaveTextContent("Agent's choice");
+    expect(within(waiting).getByTestId("task-cap")).toHaveTextContent(
+      "each run stops at CHF 2.40 (coder limit)",
+    );
+    // A task for the person: "You", and no run limit (no specialist runs it).
+    const mine = await rowOf("task_me");
+    expect(mine).toHaveTextContent("You");
+    expect(within(mine).queryByTestId("task-cap")).toBeNull();
     expect(within(await rowOf("task_full")).getByTestId("task-status")).toHaveTextContent(
       "Waiting for Docker",
     );

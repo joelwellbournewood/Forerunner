@@ -301,7 +301,7 @@ export function NewTaskDialog({
         ) : null}
         {error ? <ErrorBanner message={error} /> : null}
         <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>Close</Button>
+          <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" type="submit" disabled={busy} data-testid="create-task">
             {busy ? "Adding…" : "Add task"}
           </Button>
