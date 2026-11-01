@@ -477,7 +477,14 @@ describe("syncLateApprovals: a hooks approval answered after its session ended",
       grant,
     });
     expect(res.failed).toEqual([task.id]);
-    expect(await w.store.humanRequest.list({ kind: "approval" })).toHaveLength(1);
+    // No new question about the call; the failed task gets its one card (design §3.8).
+    const approvals = await w.store.humanRequest.list({ kind: "approval" });
+    const signoffKey = (r: (typeof approvals)[number]) =>
+      (r.change_card as { key?: unknown } | null)?.key === "critic:signoff";
+    expect(approvals.filter((r) => !signoffKey(r))).toHaveLength(1);
+    expect(approvals.filter(signoffKey).map((r) => r.options)).toEqual([
+      ["Try again", "Mark done anyway", "Cancel task"],
+    ]);
   });
 
   it("an answer the session used itself is not acted on; a row whose session still runs waits for it to end", async () => {

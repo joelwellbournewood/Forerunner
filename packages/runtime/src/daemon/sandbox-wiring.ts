@@ -57,6 +57,8 @@ export interface ComposedSandbox {
   view(): Promise<SandboxStatusView>;
   /** Ready tasks at tier 2+ of the human's projects (they wait while the sandbox is not ready). */
   waitingCount(): Promise<number>;
+  /** Applies the answered Docker cards (Cancel task), from `syncApprovals`. */
+  syncAnswers(): Promise<{ cancelled: number }>;
   /** Stops a running download (the daemon's stop). */
   close(): Promise<void>;
 }
@@ -64,6 +66,8 @@ export interface ComposedSandbox {
 /** `author_agent` and `change_card.key` of the one Inbox notice. */
 export const SANDBOX_NOTICE_AUTHOR = "sandbox-gate";
 export const SANDBOX_NOTICE_KEY = "sandbox.not_ready";
+/** The one option of a project's Docker card that waits for one task (design §3.8). */
+export const SANDBOX_CANCEL_OPTION = "Cancel task";
 
 /**
  * Failure reasons an older version wrote for a full-review task with no usable sandbox (the
@@ -112,32 +116,50 @@ export async function composeSandbox(deps: SandboxWiringDeps): Promise<ComposedS
     ...(deps.which ? { which: deps.which } : {}),
   });
 
-  // --- The one Inbox notice ------------------------------------------------------------------
+  // --- One Inbox card per project ------------------------------------------------------------
+  // Design §3.8, §4.12 (ADR 0101, 0102): a full-review task without Docker waits, with one card
+  // per project that names its tasks, the steps for this computer (Set up Docker opens them in
+  // Settings) and, for one task, Cancel task. No light-review shortcut.
   const notices = async (): Promise<HumanRequestRow[]> =>
     (
       await store.humanRequest.list(
         { author_agent: SANDBOX_NOTICE_AUTHOR },
-        { orderBy: [{ column: "created_at", direction: "desc" }], limit: 20 },
+        { orderBy: [{ column: "created_at", direction: "desc" }], limit: 200 },
       )
     ).filter((r) => (r.change_card as { key?: unknown } | null)?.key === SANDBOX_NOTICE_KEY);
-  const withdrawOpen = async () => {
+  const withdrawOpen = async (projectId?: string | null) => {
     let changed = false;
     for (const r of await notices()) {
       if (r.status !== "open") continue;
+      if (projectId !== undefined && r.project_id !== projectId) continue;
       await store.humanRequest.withdraw(r.id, r.version);
       changed = true;
     }
     if (changed) deps.onInbox?.();
   };
-  let lastTasks: string[] = [];
-  /** One notice per state: kept while open, not repeated after the person answered it. */
-  const ensureNotice = async (r: SandboxReadiness, tasks: string[]) => {
+  type Waiting = { id: string; title: string };
+  const lastTasks = new Map<string | null, Waiting[]>();
+  const stateOf = (row: HumanRequestRow) => (row.change_card as { state?: unknown } | null)?.state;
+  const idsOf = (row: HumanRequestRow) => {
+    const ids = (row.change_card as { task_ids?: unknown } | null)?.task_ids;
+    return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
+  };
+  /**
+   * The project's card, kept while open and while it says the same (the state, the tasks);
+   * filed again when either changed. A card the person answered (Cancel task) is not repeated
+   * for the same tasks.
+   */
+  const ensureNotice = async (r: SandboxReadiness, projectId: string | null, tasks: Waiting[]) => {
     if (r.state === "ready") return withdrawOpen();
-    const latest = (await notices())[0];
-    const stateOf = (row: HumanRequestRow) =>
-      (row.change_card as { state?: unknown } | null)?.state;
-    if (latest && latest.status !== "withdrawn" && stateOf(latest) === r.state) return;
-    await withdrawOpen();
+    const mine = (await notices()).filter((row) => row.project_id === projectId);
+    const ids = tasks.map((t) => t.id).sort();
+    const same = (row: HumanRequestRow) =>
+      stateOf(row) === r.state && idsOf(row).sort().join() === ids.join();
+    const open = mine.find((row) => row.status === "open");
+    if (open && same(open)) return;
+    if (!open && mine[0]?.status === "answered" && same(mine[0])) return;
+    await withdrawOpen(projectId);
+    if (tasks.length === 0) return;
     const words = sandboxWords({
       state: r.state,
       platform,
@@ -145,26 +167,70 @@ export async function composeSandbox(deps: SandboxWiringDeps): Promise<ComposedS
       pullable: r.choice.pullable,
       downloadBytes: r.downloadBytes,
     });
-    const named = tasks
-      .slice(0, 5)
-      .map((t) => `"${t}"`)
-      .join(", ");
+    const one = tasks.length === 1 ? tasks[0] : undefined;
+    const named = one ? `"${one.title}" waits` : `${tasks.length} tasks wait`;
     await store.humanRequest.insert({
       human_id: humanId,
-      project_id: null,
+      project_id: projectId,
+      task_id: one?.id ?? null,
       session_id: null,
-      kind: "info",
-      why: `Full-review tasks wait for the Docker sandbox: ${words.headline}${
-        named ? ` Waiting: ${named}${tasks.length > 5 ? ` and ${tasks.length - 5} more` : ""}.` : ""
-      } They run their tests and builds in it, isolated from your computer, so the critic sees real results. Nothing failed and no retry is used.`,
+      kind: one ? "approval" : "info",
+      why: `${named} for Docker: ${words.headline} A full review runs the work in Docker, isolated from your computer; the rest of the plan goes on.`,
       steps: words.steps.length ? words.steps : [`Open ${SANDBOX_SETTINGS_PLACE}.`],
-      options: [],
+      // Cancel task for one task; with several, each is cancelled on the Tasks tab.
+      options: one ? [SANDBOX_CANCEL_OPTION] : [],
       blocking: false,
       risk: "low",
-      change_card: { key: SANDBOX_NOTICE_KEY, state: r.state, tasks: tasks.slice(0, 20) },
+      change_card: {
+        key: SANDBOX_NOTICE_KEY,
+        state: r.state,
+        headline: words.headline,
+        tasks: tasks.slice(0, 20).map((t) => t.title),
+        task_titles: tasks.slice(0, 20).map((t) => t.title),
+        task_ids: tasks.slice(0, 20).map((t) => t.id),
+        applied_at: null,
+      },
       author_agent: SANDBOX_NOTICE_AUTHOR,
     });
     deps.onInbox?.();
+  };
+  /** Cancel task on a project's card: the task is cancelled (its card is answered). */
+  const syncAnswers = async (): Promise<{ cancelled: number }> => {
+    let cancelled = 0;
+    for (const row of await notices()) {
+      const card = (row.change_card ?? {}) as Record<string, unknown>;
+      if (row.status !== "answered" || card.applied_at) continue;
+      const word =
+        typeof row.answer === "string"
+          ? row.answer
+          : ((row.answer as { choice?: unknown } | null)?.choice ?? "");
+      const cancel = typeof word === "string" && /^cancel( the)? task$/i.test(word.trim());
+      let outcome = "unrecognized_answer";
+      const taskId = idsOf(row)[0];
+      const task = cancel && taskId ? await store.task.get(taskId) : undefined;
+      if (cancel && task && task.status !== "done" && task.status !== "cancelled") {
+        try {
+          await store.task.transition(
+            task.id,
+            task.version,
+            "cancelled",
+            "you cancelled it in the Inbox",
+            {
+              humanId,
+            },
+          );
+          cancelled++;
+          outcome = "cancel";
+        } catch (e) {
+          logger.warn("task not cancelled from the Docker card", { error: errorMessage(e) });
+          outcome = "task_moved_on";
+        }
+      } else if (cancel) outcome = "task_moved_on";
+      await store.humanRequest.patch(row.id, {
+        change_card: { ...card, applied_at: clock.nowIso(), outcome } as never,
+      });
+    }
+    return { cancelled };
   };
 
   // --- Old failures back to ready --------------------------------------------------------------
@@ -196,9 +262,10 @@ export async function composeSandbox(deps: SandboxWiringDeps): Promise<ComposedS
           if (!next.pinned) await requeueOldFailures();
           return;
         }
-        // An open notice follows the state (Docker started, the download began or failed).
-        const open = (await notices()).find((r) => r.status === "open");
-        if (open && prev && prev.state !== next.state) await ensureNotice(next, lastTasks);
+        // An open card follows the state (Docker started, the download began or failed).
+        if (!prev || prev.state === next.state) return;
+        for (const open of (await notices()).filter((r) => r.status === "open"))
+          await ensureNotice(next, open.project_id, lastTasks.get(open.project_id) ?? []);
       } catch (e) {
         logger.warn("sandbox notice bookkeeping failed", { error: errorMessage(e) });
       }
@@ -207,8 +274,9 @@ export async function composeSandbox(deps: SandboxWiringDeps): Promise<ComposedS
 
   const gate: SandboxGate = {
     check: async () => answerOf(await readiness.check({ force: true }), platform),
-    waiting: async ({ tasks }) => {
-      lastTasks = tasks.map((t) => t.title);
+    waiting: async ({ tasks, projectId }) => {
+      const waiting = tasks.map((t) => ({ id: t.id, title: t.title }));
+      lastTasks.set(projectId, waiting);
       let r = readiness.current() ?? (await readiness.check());
       // The image is all that is missing: the download starts by itself (progress in Settings).
       if (r.state === "image_missing" && r.choice.pullable && r.engine !== "none") {
@@ -219,7 +287,7 @@ export async function composeSandbox(deps: SandboxWiringDeps): Promise<ComposedS
         }
         r = readiness.current() ?? r;
       }
-      await ensureNotice(r, lastTasks);
+      await ensureNotice(r, projectId, waiting);
     },
   };
 
@@ -232,6 +300,7 @@ export async function composeSandbox(deps: SandboxWiringDeps): Promise<ComposedS
     readiness,
     port,
     gate,
+    syncAnswers,
     waitingCount,
     view: async () => {
       const r = await readiness.withSize();

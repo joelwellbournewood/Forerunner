@@ -1,4 +1,9 @@
-import { SIGNOFF_KEY, type SignoffAnswer } from "@forerunner/critic";
+import {
+  ACCEPTED_WITHOUT_REVIEW,
+  SIGNOFF_KEY,
+  type SignoffAnswer,
+  signoffCard,
+} from "@forerunner/critic";
 import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import type {
   FindingRow,
@@ -9,7 +14,8 @@ import type {
   TaskRow,
   TaskStatus,
 } from "@forerunner/state";
-import { blockedFindingsAnswer, signoffAnswer } from "../wiring/request-answers.ts";
+import { answerNote, blockedFindingsAnswer, signoffAnswer } from "../wiring/request-answers.ts";
+import { noteAboutTask, recordStart, resumeWork, type StartPort } from "./resume-work.ts";
 
 /**
  * A close blocked by open findings (spec B.4). The store refuses `in_review -> done` while a
@@ -22,8 +28,13 @@ import { blockedFindingsAnswer, signoffAnswer } from "../wiring/request-answers.
  * cancel. `syncBlockedByFindings` applies the answer from the inbox (`syncApprovals`).
  */
 export const BLOCKED_FINDINGS_KEY = "findings:blocked";
-export const BLOCKED_FINDINGS_OPTIONS = ["rework", "accept", "cancel"] as const;
-export type BlockedFindingsAnswer = (typeof BLOCKED_FINDINGS_OPTIONS)[number];
+/**
+ * The options in the person's words (design §3.8, the failed-task card's): Try again is the
+ * rework, Mark done anyway the accept, Cancel task the cancel (`blockedFindingsAnswer` reads
+ * both these and the words of cards filed before, "rework" / "accept" / "cancel").
+ */
+export const BLOCKED_FINDINGS_OPTIONS = ["Try again", "Mark done anyway", "Cancel task"] as const;
+export type BlockedFindingsAnswer = "rework" | "accept" | "cancel";
 
 export interface BlockedRequestInput {
   store: StateStore;
@@ -56,14 +67,16 @@ export async function fileBlockedByFindingsRequest(
     task_id: task.id,
     session_id: input.session?.id ?? null,
     kind: "approval",
-    why: `"${task.title}" cannot close: ${findings.length} critic finding(s) from an earlier review are still open and ${
+    // Design §3.8 and §5: what and why in two sentences; the findings are the card's details.
+    why: `"${task.title}" cannot be closed. ${
+      findings.length === 1
+        ? "A problem the critic found earlier is still open"
+        : `${findings.length} problems the critic found earlier are still open`
+    }, and ${
       input.path === "tier0"
-        ? "a tier 0 task closes on automated checks alone, so nobody verified the rework against them"
-        : "the critic's accept did not cover them"
-    }. Rework it with the findings as constraints, accept the findings as resolved by this work, or cancel the task.`.slice(
-      0,
-      4000,
-    ),
+        ? "nobody checked the new work against them"
+        : "the latest review did not cover them"
+    }.`.slice(0, 4000),
     steps: findings.map((f) => `[${f.severity}] ${f.description} -> ${f.required_action}`),
     options: [...BLOCKED_FINDINGS_OPTIONS],
     blocking: true,
@@ -105,6 +118,8 @@ interface InReviewSyncDeps {
   humanId: string;
   /** Actor of the transitions (the principal agent); the human's id is recorded with it. */
   agentId?: string | null;
+  /** Answering resumes work (design §3.8): the daemon's scheduler; absent in a one-shot. */
+  start?: StartPort;
 }
 
 /** The reasons an in-review card's answer records on the task (spec B.5). */
@@ -174,7 +189,24 @@ async function syncInReviewCards(
           reasons.rework(row.id),
           actor,
         );
-        await store.task.transition(failed.id, failed.version, "ready", reasons.reworkReady, actor);
+        const ready = await store.task.transition(
+          failed.id,
+          failed.version,
+          "ready",
+          reasons.reworkReady,
+          actor,
+        );
+        const note = answerNote(row.answer);
+        if (note)
+          await store.queue.enqueue({
+            project_id: ready.project_id,
+            human_id: deps.humanId,
+            kind: "note",
+            text: noteAboutTask(ready, note),
+            priority: 8,
+            status: "queued",
+            author_agent: deps.agentId ?? null,
+          });
         out.reworked++;
       } else {
         await store.task.transition(
@@ -187,6 +219,20 @@ async function syncInReviewCards(
         out.cancelled++;
       }
       await finish(answer);
+      // Answering resumes work (design §3.8).
+      if (answer !== "cancel" && deps.agentId)
+        await recordStart(
+          store,
+          row.id,
+          await resumeWork(store, deps.start, {
+            agentId: deps.agentId,
+            projectId: task.project_id,
+            reason:
+              answer === "rework"
+                ? `you asked to try "${task.title}" again`
+                : `you marked "${task.title}" done`,
+          }),
+        );
     } catch (e) {
       logger.warn(`${what} answer not applied`, {
         requestId: row.id,
@@ -210,7 +256,8 @@ async function syncInReviewCards(
  * (open findings of an earlier review resolved against the run), cancel cancels it.
  */
 export const REVIEW_FAILED_KEY = "critic:review_failed";
-export const REVIEW_FAILED_OPTIONS = ["rework", "accept", "cancel"] as const;
+/** The failed-task card's options (design §3.8), read as rework, accept, cancel. */
+export const REVIEW_FAILED_OPTIONS = BLOCKED_FINDINGS_OPTIONS;
 
 export interface ReviewFailedRequestInput {
   store: StateStore;
@@ -243,11 +290,11 @@ export async function fileReviewFailedRequest(
     task_id: task.id,
     session_id: input.session?.id ?? null,
     kind: "approval",
-    why: `The critic could not review "${task.title}" (${error}), so the work is not checked and the task waits in review for you. rework: the task runs again in the next session and the critic reviews the new run. accept: take the work as it is, without a review${
-      findings.length
-        ? `; its ${findings.length} open finding(s) from an earlier review are marked resolved`
-        : ""
-    }. cancel: cancel the task.`.slice(0, 4000),
+    // Design §3.8: what and why in two sentences; the options say what they do.
+    why: `"${task.title}" could not be reviewed. The critic failed (${error.replace(/\.$/, "")}), so nobody checked the work.`.slice(
+      0,
+      4000,
+    ),
     steps: [
       `Review error: ${error}`,
       ...findings.map((f) => `[${f.severity}] ${f.description} -> ${f.required_action}`),
@@ -271,11 +318,73 @@ export async function fileReviewFailedRequest(
 /** Apply the answered review-failed cards (U-045); run from `RuntimeApp.syncApprovals`. */
 export async function syncReviewFailedAnswers(deps: InReviewSyncDeps): Promise<BlockedSyncResult> {
   return syncInReviewCards(deps, REVIEW_FAILED_KEY, "review-failed", {
-    accept: (id) => `human accepted the work without a critic review (request ${id})`,
+    // "Done: accepted without review" on the Tasks tab (design §2).
+    accept: () => ACCEPTED_WITHOUT_REVIEW,
     rework: (id) => `human asked for a rework after the critic review failed (request ${id})`,
     reworkReady: "rework: the next session runs the task again and the critic reviews it",
     cancel: (id) => `human cancelled the task after the critic review failed (request ${id})`,
   });
+}
+
+// ---------------------------------------------------------------------------------------
+// A task whose run failed (design §3.8, §4.4)
+
+export interface FailedTaskCardInput {
+  store: StateStore;
+  /** The task, now `failed`. */
+  task: TaskRow;
+  session: Pick<SessionRow, "id"> | null;
+  humanId: string;
+  /** The principal agent that ran the task (author of the card). */
+  agentId: string;
+  runId: string | null;
+  /** What failed, in words ("Claude did not answer (model call failed)."). */
+  reason: string;
+}
+
+/**
+ * A task whose run failed (an error after the engine's retry, a timeout) waited in `failed`
+ * with nothing in the Inbox: "Nothing waits on you" while the tasks after it waited on it for
+ * good (design §1 "nothing is stuck silently"). The session now files one card for it, the
+ * failed-task card of design §3.8: its title names the task, its body says what failed, and its
+ * options are Try again (a session tries again), Mark done anyway and Cancel task. It is a
+ * sign-off card (`SIGNOFF_KEY`, reason `failed`), so `syncSignoffAnswers` applies the answer.
+ * A task with an open card already (a sign-off, a retry card) gets no second one.
+ */
+export async function fileFailedTaskCard(
+  input: FailedTaskCardInput,
+): Promise<{ request: HumanRequestRow; reused: boolean }> {
+  const { store, task } = input;
+  const open = (
+    await store.humanRequest.list({ task_id: task.id, status: "open" } as never, { limit: 50 })
+  ).find((r) => keyOf(r) === SIGNOFF_KEY);
+  if (open) return { request: open, reused: true };
+  const title = `"${task.title.replace(/\s+/g, " ").trim()}" failed`;
+  const said = input.reason.replace(/\s+/g, " ").trim().slice(0, 300) || null;
+  const request = await store.humanRequest.insert({
+    human_id: input.humanId,
+    project_id: task.project_id,
+    task_id: task.id,
+    session_id: input.session?.id ?? null,
+    kind: "approval",
+    why: (said ? `${title}: ${said}` : `${title}.`).slice(0, 4000),
+    steps: [],
+    options: [...BLOCKED_FINDINGS_OPTIONS],
+    blocking: true,
+    risk: "medium",
+    change_card: signoffCard({
+      taskId: task.id,
+      reviewId: null,
+      runId: input.runId,
+      findingIds: [],
+      reason: "failed",
+      title,
+      said,
+      saidBy: null,
+    }),
+    author_agent: input.agentId,
+  });
+  return { request, reused: false };
 }
 
 function keyOf(r: HumanRequestRow): string | undefined {
@@ -429,6 +538,12 @@ export async function syncSignoffAnswers(deps: {
   humanId: string;
   /** Actor of the transitions (the principal agent); the human's id is recorded with it. */
   agentId?: string | null;
+  /**
+   * Answering resumes work (design §3.8): Try again, Send it back and Mark done anyway start a
+   * session of the project (or queue one) when a task of it can run. The daemon's scheduler;
+   * absent in a one-shot.
+   */
+  start?: StartPort;
 }): Promise<SignoffSyncResult> {
   const logger = log("findings");
   const { store, clock } = deps;
@@ -450,7 +565,10 @@ export async function syncSignoffAnswers(deps: {
       await skip("unrecognized_answer");
       continue;
     }
-    if (!task || task.status !== "needs_human") {
+    // A sign-off or a retry card is about a task waiting for the person; a failed-task card
+    // (the session's, design §3.8) about a task that failed.
+    const failedCard = card.reason === "failed";
+    if (!task || task.status !== (failedCard ? "failed" : "needs_human")) {
       await skip("task_moved_on");
       continue;
     }
@@ -468,6 +586,9 @@ export async function syncSignoffAnswers(deps: {
         ? card.finding_ids.filter((id): id is string => typeof id === "string")
         : [],
     );
+    // What the person typed with their choice ("Try again" with a note): it reaches the task's
+    // next brief as a note naming the task (design §3.8 "add a note if you know what to change").
+    const note = answerNote(row.answer);
     try {
       await store.transaction(async (tx) => {
         let final: TaskRow;
@@ -480,41 +601,61 @@ export async function syncSignoffAnswers(deps: {
             await tx.finding.resolve(f.id, f.version, runId);
             resolvedFindings++;
           }
+          // A retry or failed-task card's "Mark done anyway" closes work nothing passed: the
+          // task says so ("Done: accepted without review", ADR 0102 decision 2). A sign-off's
+          // "Accept the work" is the person's own review.
           final = await closeFromNeedsHuman(
             tx,
             task,
-            `human accepted the critic's sign-off (request ${row.id})`,
+            card.reason === "verdict"
+              ? "you accepted the work at sign-off"
+              : ACCEPTED_WITHOUT_REVIEW,
             actor,
           );
         } else if (answer === "revise") {
-          const ready = await tx.task.transition(
-            task.id,
-            task.version,
-            "ready",
-            `human asked for a revision at sign-off (request ${row.id})`,
-            actor,
-          );
-          const failed = await tx.task.transition(
-            ready.id,
-            ready.version,
-            "failed",
-            `revision requested at sign-off (request ${row.id})`,
-            actor,
-          );
+          let current = task;
+          if (current.status === "needs_human") {
+            // needs_human -> ready -> failed -> ready: the attempt is counted (the ladder's
+            // next rung), as a failed run's would be.
+            const ready = await tx.task.transition(
+              current.id,
+              current.version,
+              "ready",
+              "you asked to try again in the Inbox",
+              actor,
+            );
+            current = await tx.task.transition(
+              ready.id,
+              ready.version,
+              "failed",
+              "you asked to try again in the Inbox",
+              actor,
+            );
+          }
           final = await tx.task.transition(
-            failed.id,
-            failed.version,
+            current.id,
+            current.version,
             "ready",
-            "retry after the sign-off's revision request: the open findings are constraints of the next brief",
+            "you asked to try again in the Inbox: the open findings are constraints of the next brief",
             actor,
           );
           await tellOwner(tx, row, final);
+          if (note)
+            await tx.queue.enqueue({
+              project_id: final.project_id,
+              human_id: deps.humanId,
+              kind: "note",
+              text: noteAboutTask(final, note),
+              priority: 8,
+              status: "queued",
+              author_agent: deps.agentId ?? null,
+            });
         } else {
           final = await tx.task.transition(
             task.id,
             task.version,
             "cancelled",
-            `human cancelled the task at sign-off (request ${row.id})`,
+            "you cancelled it in the Inbox",
             actor,
           );
         }
@@ -540,6 +681,21 @@ export async function syncSignoffAnswers(deps: {
       if (answer === "accept") out.accepted++;
       else if (answer === "revise") out.revised++;
       else out.cancelled++;
+      // Answering resumes work (design §3.8): the task tried again, or the tasks after one
+      // marked done, run in a session of the project now (or after the one that runs).
+      if (answer !== "cancel" && deps.agentId)
+        await recordStart(
+          store,
+          row.id,
+          await resumeWork(store, deps.start, {
+            agentId: deps.agentId,
+            projectId: task.project_id,
+            reason:
+              answer === "revise"
+                ? `you asked to try "${task.title}" again`
+                : `you marked "${task.title}" done`,
+          }),
+        );
     } catch (e) {
       if (e instanceof ForerunnerError && e.code === "findings_open") {
         logger.warn("sign-off accept refused: a finding of a later review is open", {

@@ -174,6 +174,7 @@ import {
   projectCard,
   projectSummary,
   requestView,
+  requestViews,
   reviewsView,
   runView,
   sessionView,
@@ -199,6 +200,9 @@ export interface DaemonServerOptions {
 
 /** How long `POST /shutdown` waits after answering before it ends the process. */
 export const SHUTDOWN_DELAY_MS = 100;
+
+/** How many answered or withdrawn cards `GET /inbox` lists under Answered (design §3.8). */
+export const INBOX_ANSWERED_KEPT = 20;
 
 /** `tool` of the audit row `POST /agents/:id/rename` writes (U-025): the old and new name. */
 export const AGENT_RENAME_AUDIT_TOOL = "agent.rename";
@@ -1622,31 +1626,19 @@ export function createDaemonApp(
     if (asked !== undefined && asked !== "" && asked !== humanId)
       return c.json({ ...NOT_YOURS, message: "not your inbox" }, 403);
     const requests = await rt.store.humanRequest.open({ humanId }, { limit: 200 });
+    // Design §3.8 "Answered": what was answered or withdrawn lately, newest first, so the
+    // person sees what they answered and what came of it.
+    const answered = await rt.store.humanRequest.list(
+      { human_id: humanId, status: ["answered", "withdrawn"] } as never,
+      { orderBy: [{ column: "updated_at", direction: "desc" }], limit: INBOX_ANSWERED_KEPT },
+    );
     const messages = await rt.store.message.inbox(
       { humanId },
       { limit: 200, orderBy: [{ column: "created_at", direction: "desc" }] },
     );
     const names = new Map<string, string>();
-    const projects = new Map<string, string>();
-    // U-073: every card names its task beside its project.
-    const tasks = new Map<string, string | null>();
-    const reqViews = [];
-    for (const r of requests) {
-      if (r.project_id && !projects.has(r.project_id))
-        projects.set(
-          r.project_id,
-          (await rt.store.project.get(r.project_id))?.name ?? r.project_id,
-        );
-      if (r.task_id && !tasks.has(r.task_id))
-        tasks.set(r.task_id, (await rt.store.task.get(r.task_id))?.title ?? null);
-      reqViews.push(
-        requestView(
-          r,
-          r.project_id ? (projects.get(r.project_id) ?? null) : null,
-          r.task_id ? (tasks.get(r.task_id) ?? null) : null,
-        ),
-      );
-    }
+    // U-073: every card names its task beside its project; design §3.8: what waits on it now.
+    const reqViews = await requestViews(rt.store, [...requests, ...answered]);
     const msgViews = [];
     for (const m of messages) {
       if (!names.has(m.from_agent_id))
@@ -1660,6 +1652,7 @@ export function createDaemonApp(
       requests: reqViews,
       messages: msgViews,
       blockingCount: requests.filter((r) => r.blocking).length,
+      needsYouCount: requests.length,
     });
   });
 
@@ -1692,7 +1685,10 @@ export function createDaemonApp(
     // An answered extension grant or model watch decision is applied at once.
     await rt.syncApprovals();
     rt.events.emit("inbox", {});
-    return c.json(requestView(r, null));
+    // Design §3.8: the answer comes back as the card now, with the line of what happens next
+    // (the sync above applied it), which the Inbox shows in the card's place.
+    const [view] = await requestViews(rt.store, [await rt.store.humanRequest.mustGet(r.id)]);
+    return c.json(view ?? requestView(r, null));
   });
 
   // Project settings (mirror, sandbox and other switches); the mirror schedule follows the
@@ -2428,7 +2424,11 @@ export function createDaemonApp(
         const open = await rt.store.humanRequest.open({ humanId: rt.human.id }, { limit: 500 });
         void stream.writeSSE({
           event: "inbox.changed",
-          data: JSON.stringify({ blockingCount: open.filter((r) => r.blocking).length }),
+          data: JSON.stringify({
+            blockingCount: open.filter((r) => r.blocking).length,
+            // Design §3.8: every open card counts; the header's badge shows this.
+            needsYouCount: open.length,
+          }),
         });
       };
       const onProject = (p: { id: string }) =>

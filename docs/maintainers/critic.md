@@ -252,13 +252,21 @@ ADR 0059 amendment of 2026-10-25), and leaves it pending when the run did not co
 
 Every sign-off request (the one `CriticService.review` files for a `human` verdict on a task or
 session subject, the one `applyVerdict` files when the ladder ends, and the runtime loop's own
-after a last-rung revise) names its task in the `why` (`Critic sign-off needed for "<title>"
-(tier …)`, `Retry ladder exhausted after … for "<title>"`; U-073: the phone shows the text
-alone, and the desktop's Inbox shows the task's title and project beside it) and has the
-options `SIGNOFF_OPTIONS` (`accept`, `revise`, `cancel`) and a `change_card`
-built by `signoffCard` and keyed `SIGNOFF_KEY` (`critic:signoff`): the task, the review, the
-run that produced the work, the review's finding ids, the reason (`verdict` or
-`retry_ladder_exhausted`) and `applied_at: null`. The answer is applied by the runtime
+after a last-rung revise) names its task in the `why`, in the person's words (design §3.8,
+2026-11-01; U-073: the phone shows the text alone, and the desktop's Inbox shows the task's
+title and project beside it): a sign-off reads `"<title>" needs your sign-off. The critic said:
+"<summary>"` (`signoffCardWords`; no tier, grade or confidence) with the options
+`SIGNOFF_OPTIONS` (Accept the work, Send it back, Cancel task); the card after the last retry
+reads `"<title>" failed 4 times. The <specialist> said: "<its report>"` (`retryCardWords`,
+`quotedWords` of the run's final report passed in `FollowupContext.workReport`, the critic's
+summary only when the run reported nothing; no ladder, ceiling or "attempt(s)") with
+`RETRY_CARD_OPTIONS` (Try again, Mark done anyway, Cancel task; `signoffOptionsFor(reason)`).
+Before, the options were `accept`, `revise`, `cancel`, which the runtime's reader still reads.
+The `change_card` is built by `signoffCard` and keyed `SIGNOFF_KEY` (`critic:signoff`): the
+task, the review, the run that produced the work, the review's finding ids, the reason
+(`verdict`, `retry_ladder_exhausted`, or `failed` for the runtime's failed-task card), the
+card's `title`, `said` and `said_by`, and `applied_at: null`. Mark done anyway records
+`ACCEPTED_WITHOUT_REVIEW` on the task. The answer is applied by the runtime
 (`syncSignoffAnswers` in `packages/runtime/src/session/findings.ts`, from
 `RuntimeApp.syncApprovals`; runtime.md, "The core loop"; ADR 0049): accept closes the task
 with the card's findings and the task's other open findings up to the card's review

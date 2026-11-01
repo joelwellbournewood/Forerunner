@@ -141,8 +141,13 @@ describe("rows of catalog entries another screen owns are retired at the next st
       expect(listed.map((e) => e.id)).not.toContain(anthropic.id);
       // The card nobody can act on any more left the Inbox.
       expect((await rt.store.humanRequest.get(requestId))?.status).toBe("withdrawn");
-      const inbox = (await (await call("/inbox")).json()) as { requests: { id: string }[] };
-      expect(inbox.requests.map((r) => r.id)).not.toContain(requestId);
+      const inbox = (await (await call("/inbox")).json()) as {
+        requests: { id: string; status: string }[];
+      };
+      // Not among the cards that need you (an Answered entry says it was closed, design §3.8).
+      expect(inbox.requests.filter((r) => r.status === "open").map((r) => r.id)).not.toContain(
+        requestId,
+      );
       // Each retirement is an audit row with the reason the person can read.
       const audit = await rt.store.auditLog.list({ tool: "extensions.retire" });
       expect(audit.map((a) => JSON.parse(a.input_summary).extensionId).sort()).toEqual(

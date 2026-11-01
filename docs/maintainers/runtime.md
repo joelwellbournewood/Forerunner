@@ -853,7 +853,9 @@ spentChfMicro) is what the Overview and Chat should read instead of parsing text
 `summary_cache.next_steps` is the ready tasks then the waiting ones, by title (it was the skipped
 ids, empty whenever the plan ran). The Inbox gets one line per session (`sessionUpdateLine`:
 "Quote page: did 5 tasks: …"), none for a session that ran nothing or only filed its plan; the
-spec O.9 report of what the person said follows on the next lines. `docs/status.md` gets the
+line never quotes what the person said during the session (design §5.11; the spec O.9 report
+was dropped on 2026-11-01: the session log's `inbox.heard` and `task.heard` name where each line
+went). `docs/status.md` gets the
 blocked tasks as they stand (needs you, failed, waiting on another task, waiting for Docker) and
 the ready tasks as next. A task the person paused or stopped during the session (the Tasks tab's
 Pause and Stop store `needs_human` authored by them with no card, `isPausedByPerson` in
@@ -1890,6 +1892,85 @@ as an escalation. Lesson proposals (repeat findings) are recorded in critic memo
 memory port. Events: `critic.review_started`, `critic.verdict`, `critic.review_failed`
 (the task stays in review with a card for the person, U-045), `critic.session_review`,
 `task.blocked_by_findings`.
+
+**The needs-me loop: cards in words, one card per failed task, answers resume work (design
+§3.8, ADR 0102; core-experience round, wave 2).** What these cards say and offer changed with the
+design; the stored mechanics above stay. Before, the card after the last retry read "Retry
+ladder exhausted for "X" after 4 failed attempt(s) (ceiling opus): …" with the critic's summary
+and the buttons accept / revise / cancel; `accept` closed a task that wrote nothing, `revise`
+reset it and started nothing, and a task whose run errored reached no card at all ("Nothing
+waits on you" while 4 tasks waited on it).
+
+- **The retry card** (the loop's ladder branch in `loop/critic.ts` and `applyVerdict`'s escalate
+  branch, `@forerunner/critic` `retryCardWords`): the title names the task and how often it
+  failed (`"Style the page" failed 4 times`), the body is what the specialist said about its
+  work in its own words (`quotedWords` of the run's final report; the critic's summary only
+  when the run reported nothing), and the options are `RETRY_CARD_OPTIONS` = Try again, Mark
+  done anyway, Cancel task. The card keeps `title`, `said` and `said_by` on its change card.
+  The critic's own sign-off (tier 3, a `human` verdict; `signoffCardWords`) reads `"X" needs your
+  sign-off. The critic said: "…"` with `SIGNOFF_OPTIONS` = Accept the work, Send it back, Cancel
+  task. The blocked-findings and failed-review cards offer the retry card's three words too.
+  Every reader (`signoffAnswer`, `blockedFindingsAnswer`) still reads the old words, so a card
+  filed before answers the same way.
+- **A failed task gets a card** (`fileFailedTaskCard`, `session/findings.ts`, called by the
+  runner right after it moves a task to `failed`; the one hook needs-me adds to `runner.ts`): a
+  sign-off card with reason `failed`, title `"X" failed`, body the failure in words (`What
+  failed: Claude did not answer (model call failed).`), the retry card's options. A task with an
+  open sign-off already gets no second one. `syncSignoffAnswers` applies a `failed` card's answer
+  to a task in `failed` (any other card's to a task in `needs_human`).
+- **Mark done anyway** closes the task with the reason `ACCEPTED_WITHOUT_REVIEW`
+  ("accepted without review: you marked it done in the Inbox"), so the Tasks tab reads "Done:
+  accepted without review" (ADR 0102 decision 2); the sign-off's Accept the work records "you
+  accepted the work at sign-off". Reasons no longer carry the request id (design §5 rule 3; the
+  `critic.signoff` audit row ties them).
+- **Answering resumes work** (`session/resume-work.ts`): Try again (with the person's optional
+  note, `{ choice, note }`, queued as a note naming the task for its next brief), Send it back and
+  Mark done anyway start a session of the project through the scheduler, or queue one behind the
+  running session, when a task of the project can run (`readyTasks`); nothing runnable starts
+  nothing. The same for the blocked-findings and failed-review cards, the person's answers (the
+  existing start, now through `resumeWork`) and the questions card's new **Go ahead without**
+  (`personQuestionsAnswer` reads it as `without`: the task goes back to ready with
+  `WITHOUT_ANSWERS_NOTE` queued for its brief). The card records `change_card.start`
+  (`started`, `queued`, `deferred`, `failed`, `nothing_to_run`) for its Done line. compose.ts
+  passes the scheduler's `requestStart` to these syncs while the services run.
+- **The card in words** (`daemon/request-words.ts`, pure, also used by the UI's fake daemon):
+  `requestView` now carries `title`, `body` (one or two sentences: the specialist's words, then
+  what waits on the task, read now), `choices` (`label` sent as the answer, `explain` the
+  consequence line, `tone` primary/secondary/danger, `confirm` asked once, `input` note/text),
+  `links` (Set up Docker), `reply` (`text` only where free text is accepted: a decision without a
+  reader; `form` for the questions; `none` for approvals), `details` (the critic's findings in
+  plain words) and, once answered or withdrawn, `outcome`: the line of what happened next
+  ("Trying "X" again: a session started.", '"X" is done: accepted without review.', "Withdrawn:
+  you moved the task, so this card was closed."). `requestViews(store, rows)` reads each card's
+  project, task, task status and the open tasks waiting on it (`requestContexts`).
+- **GET /inbox** returns the open cards, then the last `INBOX_ANSWERED_KEPT` (20) answered or
+  withdrawn ones for the Inbox's Answered list, and `needsYouCount` (every open card: the
+  Inbox's heading, the header badge, and the sum of the projects' `waitingOnYou` plus the cards of
+  no project); `inbox.changed` on `/events` carries it too. **POST /requests/:id/answer** answers
+  the card as it is after the sync, with its `outcome`.
+- **One "waits on you" model** (`daemon/project-health.ts`): a project's `needsYou` names the
+  task of its oldest open card only, so "needs you: X" never stands beside "Waiting on you 0"
+  (`waitingOnYou` counts the same open cards); a task an agent left in `needs_human` without a
+  card (a budget stop) makes the project "attention", not "needs you"; the person's own pause
+  counts for nothing. The Docker wait is a card of its project (sandbox.md), so a project with a
+  task waiting for Docker is no longer "good".
+- **No echoes** (`@forerunner/commands` executor `post`, commands.md): a change the person made
+  (Tasks tab, chat, voice, a project switch) is no Inbox Update; the session's Update no longer
+  quotes what the person said (`describeHeard` removed).
+- **The Tasks tab** reads which card holds a task (`cardKindOf`, `TaskDisplay.blocker.cardKind`):
+  a task waiting on its retry card is "Needs your decision: tried 4 times" and offers Answer, Try
+  again (now offered from `needs_human` too; it withdraws the card) and Cancel, never Go ahead
+  without.
+
+Tests: `apps/ui/test/real-daemon.test.ts` ("a task that fails gets one card, and answering it
+resumes work": one card after the in-session retries, its title, the specialist's words, what
+waits, each option's consequence line; Try again with a note starts a session; Mark done anyway
+is Done: accepted without review and the task after it runs; the Answered list; "a run that
+errors fails its task, which gets a card": the failed-task card, the counts, Cancel task and the
+stuck task after it), `signoff-answer.test.ts` (the new words, Mark done anyway's reason, Try
+again's note and start), `critic.test.ts` and `followup.test.ts` (the card's words),
+`review-failed.test.ts`, `late-approval.test.ts` (a refused call's failed task gets its one
+card, no new question).
 
 **Merge of a reviewed PR (`ReviewedPrMerge`, `src/loop/merge.ts`, spec J.9,
 [ADR 0062](../decisions/0062-merge-after-review-checks-rule.md)).** When the verdict closes a

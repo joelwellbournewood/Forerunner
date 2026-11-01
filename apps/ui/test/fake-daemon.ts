@@ -76,6 +76,7 @@ import {
   csvLine,
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
+import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
@@ -88,7 +89,11 @@ import {
   sandboxWords,
 } from "@forerunner/runtime/sandbox/readiness-types";
 import { NO_MODEL_CHAT_REPLY } from "@forerunner/runtime/setup/no-model";
-import { acceptsAnswer, personQuestionsAnswer } from "@forerunner/runtime/wiring/request-answers";
+import {
+  acceptsAnswer,
+  personQuestionsAnswer,
+  signoffAnswer,
+} from "@forerunner/runtime/wiring/request-answers";
 import {
   decodeStoredKey,
   parseUnlockChallenge,
@@ -773,7 +778,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   };
 
   const emit = (event: string, data: unknown) => {
-    for (const l of state.listeners) l(event, data);
+    // As the daemon: `inbox.changed` also carries every open card (design §3.8).
+    const sent =
+      event === "inbox.changed" && data && typeof data === "object"
+        ? { ...(data as object), needsYouCount: needsYouCount() }
+        : data;
+    for (const l of state.listeners) l(event, sent);
   };
   const later = (fn: () => void, ms: number) => {
     const t = setTimeout(() => {
@@ -785,6 +795,43 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   };
   const blockingCount = () =>
     state.requests.filter((r) => r.status === "open" && r.blocking).length;
+  /** Every open card waits on the person (design §3.8): the Inbox's and the header's count. */
+  const needsYouCount = () => state.requests.filter((r) => r.status === "open").length;
+  /**
+   * A request as the daemon's `requestView` words it (design §3.8, `daemon/request-words.ts`):
+   * the card's title, body, choices with their consequence lines, the reply it takes, and once
+   * answered what came of it. What waits on its task is read from the tasks now.
+   */
+  const worded = (r: HumanRequestView): HumanRequestView => {
+    const task = r.taskId ? state.tasks.find((t) => t.id === r.taskId) : undefined;
+    const waiting = task
+      ? state.tasks
+          .filter(
+            (t) => t.dependsOn.includes(task.id) && t.status !== "done" && t.status !== "cancelled",
+          )
+          .map((t) => t.title)
+      : [];
+    const words = requestWords(
+      {
+        kind: r.kind as never,
+        why: r.why,
+        steps: r.steps,
+        options: r.options,
+        change_card: (r.changeCard ?? null) as never,
+        status: r.status as never,
+        answer: (r.answer ?? null) as never,
+      },
+      {
+        projectName: r.projectName,
+        taskTitle: task?.title ?? r.taskTitle ?? null,
+        taskStatus: task?.status ?? null,
+        // The fake withdraws a card only on a person's task move.
+        movedByYou: r.status === "withdrawn" && !!task,
+        waiting,
+      },
+    );
+    return { ...r, ...words };
+  };
 
   const app = new Hono();
   app.use(
@@ -1188,8 +1235,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id))
       return errorBody(c, 404, "not_found", "no such project");
     const current = intakeOf(id);
-    // As the daemon: only a failed (or never run) intake is drafted again.
-    if (current.state !== "failed" && current.state !== "none") return c.json(current, 202);
+    // As the daemon: a failed, rejected (Draft a new plan) or never run intake is drafted again.
+    if (current.state !== "failed" && current.state !== "none" && current.state !== "rejected")
+      return c.json(current, 202);
     state.intake[id] = { ...current, state: "drafting", requestId: null, error: null };
     return c.json(state.intake[id], 202);
   });
@@ -1940,7 +1988,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   });
 
   app.get("/inbox", (c) =>
-    c.json({ requests: state.requests, messages: state.messages, blockingCount: blockingCount() }),
+    c.json({
+      requests: state.requests.map(worded),
+      messages: state.messages,
+      blockingCount: blockingCount(),
+      needsYouCount: needsYouCount(),
+    }),
   );
   // Cloud runner unlock (spec S.12, ADR 0068): the daemon's keyring answers whether it holds
   // the runner's key and wraps it to the challenge; the key never leaves this handler.
@@ -2001,14 +2054,51 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (p.id === r.projectId && p.waitingOnYou > 0) p.waitingOnYou -= 1;
     }
     // U-022, as the daemon's `syncPersonQuestions`: answers close a planned person task (done)
-    // or send a paused one back to ready; "Cancel the task" cancels it.
+    // or send a paused one back to ready; "Cancel task" cancels it; "Go ahead without" sends it
+    // back to ready without the answers (design §3.8). The card records the outcome.
     const personCard = r.changeCard as { key?: unknown; on_answer?: unknown } | null;
     if (typeof personCard?.key === "string" && personCard.key.startsWith("person_questions:")) {
       const task = state.tasks.find((t) => t.id === r.taskId);
       const read = personQuestionsAnswer(parsed.data.answer as never);
       if (task && read?.kind === "cancel") task.status = "cancelled";
+      else if (task && read?.kind === "without")
+        task.status = personCard.on_answer === "done" ? "done" : "ready";
       else if (task && read?.kind === "answers")
         task.status = personCard.on_answer === "ready" ? "ready" : "done";
+      r.changeCard = {
+        ...personCard,
+        applied_at: new Date().toISOString(),
+        outcome:
+          read?.kind === "cancel" ? "cancelled" : read?.kind === "without" ? "without" : "answered",
+        ...(read?.kind !== "cancel" && personCard.on_answer !== "done" ? { start: "started" } : {}),
+      };
+    }
+    // As the daemon's `syncSignoffAnswers` (design §3.8): Try again / Send it back sends the task
+    // back to ready and a session starts; Mark done anyway closes it "accepted without review";
+    // Cancel task cancels it.
+    const signCard = r.changeCard as { key?: unknown; reason?: unknown } | null;
+    if (signCard?.key === "critic:signoff") {
+      const task = state.tasks.find((t) => t.id === r.taskId);
+      const read = signoffAnswer(parsed.data.answer as never);
+      if (task && read === "revise") {
+        task.status = "ready";
+        task.reason = "you asked to try again in the Inbox";
+      } else if (task && read === "accept") {
+        task.status = "done";
+        task.reason =
+          signCard.reason === "verdict"
+            ? "you accepted the work at sign-off"
+            : "accepted without review: you marked it done in the Inbox";
+      } else if (task && read === "cancel") {
+        task.status = "cancelled";
+        task.reason = "you cancelled it in the Inbox";
+      }
+      r.changeCard = {
+        ...signCard,
+        applied_at: new Date().toISOString(),
+        outcome: read,
+        ...(read !== "cancel" ? { start: "started" } : {}),
+      };
     }
     if (r.kind === "capability_grant") {
       const ext = state.extensions.find((e) => `req_${e.id}` === r.id);
@@ -2019,7 +2109,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       }
     }
     emit("inbox.changed", { blockingCount: blockingCount() });
-    return c.json(r);
+    return c.json(worded(r));
   });
   app.post("/messages/:id/read", (c) => {
     const m = state.messages.find((x) => x.id === c.req.param("id"));

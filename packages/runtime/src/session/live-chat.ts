@@ -105,22 +105,3 @@ export function renderHeardLines(lines: readonly HeardLine[]): {
 export function summarizeHeard(count: number): string {
   return count ? `Heard from you during the session: ${count} line${count === 1 ? "" : "s"}.` : "";
 }
-
-/**
- * The lines for the human's own session message: each quoted with its source and the task
- * whose brief carried it, or the note that none followed (the line stays unread for the next
- * session's brief).
- */
-export function describeHeard(
-  lines: readonly HeardDelivery[],
-  titleOf: (taskId: string) => string | undefined,
-): string {
-  if (!lines.length) return "";
-  const rows = lines.map((l) => {
-    const where = l.deliveredTo
-      ? `given to ${JSON.stringify(titleOf(l.deliveredTo) ?? l.deliveredTo)}`
-      : "after the last task; the next session reads it";
-    return `- (${l.source}) ${JSON.stringify(l.text)} -> ${where}`;
-  });
-  return `You said during the session:\n${rows.join("\n")}`;
-}

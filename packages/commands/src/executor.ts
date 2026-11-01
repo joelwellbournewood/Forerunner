@@ -499,15 +499,22 @@ export class CommandExecutor {
         author_human: ctx.actor.kind === "human" ? ctx.actor.id : null,
         author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : null,
       };
-      await this.store.message.send({
-        from_agent_id: ctx.agentId,
-        to_human_id: ctx.humanId,
-        project_id: meta.projectId,
-        type: "info",
-        body: sentence,
-        requires_ack: false,
-        ...author,
-      });
+      // Design §3.8, §5.11: the Inbox never echoes the person's own clicks, chat or voice
+      // commands, or project switches; they are in Changes (and the reply, where they asked).
+      // A change the agent made, or one the app made by itself (a temporary change reverting
+      // when its window ends), is news and goes to the person's Inbox.
+      const theirOwn =
+        ctx.actor.kind === "human" && ctx.actor.id === ctx.humanId && meta.kind !== "revert";
+      if (!theirOwn)
+        await this.store.message.send({
+          from_agent_id: ctx.agentId,
+          to_human_id: ctx.humanId,
+          project_id: meta.projectId,
+          type: "info",
+          body: sentence,
+          requires_ack: false,
+          ...author,
+        });
       if (!meta.projectId) return;
       const others = await this.sharedWith(ctx, meta.projectId);
       if (others.length === 0) return;

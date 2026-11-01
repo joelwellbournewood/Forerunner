@@ -6,7 +6,9 @@ import { projectCard } from "../src/daemon/views.ts";
 /**
  * The project card's state (U-071): "blocked" was shown whenever a task needed the human or any
  * request was open, although nothing waited in the Inbox. Now "blocked" means an open blocking
- * request or a needs-human task with its card; a needs-human task without a card is named.
+ * request or a needs-human task with its card, and "needs you" names the task of an open card
+ * only (design §3.8), so it agrees with "Waiting on you"; a task left without a card wants
+ * attention.
  */
 describe("project card state (U-071)", () => {
   let store: StateStore;
@@ -89,20 +91,23 @@ describe("project card state (U-071)", () => {
     });
   const card = () => projectCard(store, project, 0.8, human);
 
-  it("a task that needs you without an Inbox card is named, and the project is not blocked", async () => {
+  it("a task an agent left needing you without an Inbox card wants attention; only a card is 'needs you' (design §3.8)", async () => {
     await task("Write the README", "ready");
-    const id = await task("Confirm the stack", "needs_human");
+    await task("Confirm the stack", "needs_human");
     const c = await card();
     expect(c.health).toBe("attention");
-    expect(c.needsYou).toEqual({ taskId: id, title: "Confirm the stack" });
+    // Nothing in the Inbox: not "needs you", so it never stands beside "Waiting on you 0".
+    expect(c.needsYou).toBeNull();
+    expect(c.waitingOnYou).toBe(0);
   });
 
-  it("is blocked while the needs-you task has its card open", async () => {
+  it("is blocked while the needs-you task has its card open, and the card names it", async () => {
     const id = await task("Confirm the stack", "needs_human");
     await request(false, id);
     const c = await card();
     expect(c.health).toBe("blocked");
-    expect(c.needsYou).toBeNull();
+    expect(c.needsYou).toEqual({ taskId: id, title: "Confirm the stack" });
+    expect(c.waitingOnYou).toBe(1);
   });
 
   it("is blocked by an open blocking request, and only noted for a non-blocking one", async () => {

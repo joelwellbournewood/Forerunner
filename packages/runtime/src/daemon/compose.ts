@@ -956,6 +956,8 @@ export interface RuntimeApp {
     specialists: SpecialistSyncResult;
     /** Answered repository proposals (U-037, ADR 0097): created, declined, failed. */
     repos?: { created: number; declined: number; failed: number };
+    /** Docker cards answered with Cancel task (design §3.8): the task cancelled. */
+    sandbox?: { cancelled: number };
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -2243,6 +2245,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // U-044: specialists reach the web only on a subscription (the Agent SDK's WebFetch and
     // WebSearch); with an API key alone the intake plans no task that needs the web.
     webSpecialists: () => hasOauth,
+    // "Approve and start" (design §3.3): the approved plan starts through the scheduler, only
+    // while the services run (a one-shot writes the plan and starts nothing).
+    ...(opts.startServices !== false
+      ? { start: (req: StartRequest) => scheduler.requestStart(req) }
+      : {}),
   });
 
   // GitHub Projects mirror: the host comes from the vault by the secret reference in the
@@ -2990,6 +2997,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   const syncApprovalsOnce = async () => {
     await schemaSync.assertCanSync("approvals.sync");
+    const resumeStart =
+      opts.startServices !== false
+        ? { start: (req: StartRequest) => scheduler.requestStart(req) }
+        : {};
     const out = {
       // A change card from Chat, voice, the palette or the phone answered in the Inbox (U-029):
       // yes runs the change, no cancels it, on every install (the remote watcher, only built
@@ -3018,15 +3029,30 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       modelWatch: await modelWatch.syncPendingAnswers(),
       memory: await memory.syncApprovals(),
       memoryOffers: await memory.syncOffers(),
-      findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
+      // Answering resumes work (design §3.8): Try again and Mark done anyway start a session
+      // of the project when a task of it can run (only while the services run, as the plans).
+      findings: await syncBlockedByFindings({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        ...resumeStart,
+      }),
       // A critic review that failed (U-045): each option of its card does what it says.
       reviewFailed: await syncReviewFailedAnswers({
         store,
         clock,
         humanId: human.id,
         agentId: agent.id,
+        ...resumeStart,
       }),
-      signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
+      signoffs: await syncSignoffAnswers({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        ...resumeStart,
+      }),
       // A rebase conflict and a reviewed PR left open (U-028): each option does what it says.
       pullRequests: await syncPrAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
       // A session review that needed the human (U-033): acknowledge, or correct the summary.
@@ -3085,6 +3111,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // A repository proposal answered in the Inbox (U-037): created through `repo.create`
       // with the answer as the confirmation, or "Not now" remembered on the project.
       repos: repoProposals ? await repoProposals.sync() : { created: 0, declined: 0, failed: 0 },
+      // A project's Docker card answered with Cancel task (design §3.8): the task is cancelled.
+      sandbox: await sandbox.syncAnswers(),
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();

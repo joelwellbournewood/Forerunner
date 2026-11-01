@@ -1,0 +1,562 @@
+import type { HumanRequestRow, JsonObject } from "@forerunner/state";
+import {
+  ANSWER_CARD_KEYS,
+  blockedFindingsAnswer,
+  normalAnswer,
+  optionLabel,
+  signoffAnswer,
+} from "../wiring/request-answers.ts";
+
+/*
+ * What an Inbox card says and offers (design §3.8, core-experience.md), with no store and
+ * nothing that needs Node: the daemon's `requestView`, the UI's stand-in daemon
+ * (`apps/ui/test/fake-daemon.ts`) and the screens read the same words. A card has a title naming
+ * its task, one or two sentences of what and why, its options as buttons each with a
+ * consequence line (the safe or likely one primary, a destructive one secondary and confirmed),
+ * a text box only where free text is accepted, and, once answered, one line of what happens
+ * next. No change-card JSON, no risk or kind badges.
+ */
+
+/** One button of a card: the words it shows and sends, what it does, how it looks. */
+export interface RequestChoiceWords {
+  /** What the button says; a click sends exactly this as the answer (`choice`). */
+  label: string;
+  /** One line of what happens (design §5: at most 100 characters), or null. */
+  explain: string | null;
+  tone: "primary" | "secondary" | "danger";
+  /** Asked once before the answer is sent, for a destructive or surprising choice. */
+  confirm: string | null;
+  /**
+   * A text the choice carries: `note`, an optional note for the next attempt sent with it
+   * (`{ choice, note }`); `text`, words the choice needs (the plan's change); null, none.
+   */
+  input: "note" | "text" | null;
+}
+
+/** A link a card offers that is not an answer (Set up Docker opens Settings). */
+export interface RequestLinkWords {
+  label: string;
+  to: string;
+  explain: string | null;
+}
+
+export interface RequestWords {
+  /** The card's title, naming the task (or what it is about). */
+  title: string;
+  /** One or two sentences: what and why, in the specialist's own words where there are any. */
+  body: string | null;
+  choices: RequestChoiceWords[];
+  links: RequestLinkWords[];
+  /**
+   * `text`: the card takes an answer in the person's own words; `form`: the questions form;
+   * `none`: only its buttons.
+   */
+  reply: "none" | "text" | "form";
+  /** Longer detail, shown under Details (the critic's findings, the steps). */
+  details: string[];
+  /** Once answered or withdrawn: what happened and what is next, in one line; null while open. */
+  outcome: string | null;
+}
+
+/** What the card needs beyond its row, read when it is shown (true now, design §5 rule 4). */
+export interface RequestWordsContext {
+  projectName?: string | null;
+  taskTitle?: string | null;
+  /** The task's status now (an answered card's line says what became of it). */
+  taskStatus?: string | null;
+  /** Titles of the tasks not done that wait on the card's task. */
+  waiting?: readonly string[];
+  /** The person made the task's last change (a withdrawn card says "you moved the task"). */
+  movedByYou?: boolean;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+
+/** A title as a line names it: whole when short, else cut at a word. */
+export function cutWords(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+const q = (title: string) => `"${cutWords(title, 50)}"`;
+
+/** '"A" waits on it.' / '3 tasks wait on it: "A", "B" and 1 more.' (design §5 rule 5). */
+export function waitingSentence(titles: readonly string[]): string | null {
+  if (titles.length === 0) return null;
+  if (titles.length === 1) return `${q(titles[0] as string)} waits on it.`;
+  const named = titles.slice(0, 2).map(q);
+  const more = titles.length - named.length;
+  return `${titles.length} tasks wait on it: ${named.join(", ")}${more ? ` and ${more} more` : ""}.`;
+}
+
+/** What Cancel does to what waits (design §3.5, §3.8): "Drops it; the 2 tasks after it will be stuck." */
+function cancelExplain(waiting: readonly string[]): string {
+  if (waiting.length === 0) return "Drops it. Nothing waits on it.";
+  if (waiting.length === 1) return `Drops it; ${q(waiting[0] as string)} after it will be stuck.`;
+  return `Drops it; the ${waiting.length} tasks after it will be stuck.`;
+}
+
+/** 'Cancel "X"? "A" waits on it and will be stuck.' asked once before a Cancel task. */
+function cancelConfirm(task: string, waiting: readonly string[]): string {
+  const stuck =
+    waiting.length === 0
+      ? ""
+      : waiting.length === 1
+        ? ` ${q(waiting[0] as string)} waits on it and will be stuck.`
+        : ` The ${waiting.length} tasks after it will be stuck.`;
+  return `Cancel ${q(task)}?${stuck}`;
+}
+
+/** What "Mark done" does to what waits. */
+function afterDone(waiting: readonly string[]): string {
+  if (waiting.length === 0) return "";
+  if (waiting.length === 1) return ` ${q(waiting[0] as string)} after it will run.`;
+  return ` The ${waiting.length} tasks after it will run.`;
+}
+
+/** The first sentence of a text (the title of a card with no title of its own). */
+function firstSentence(text: string, max = 90): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  const m = /^(.+?[.!?:])(\s|$)/.exec(t);
+  return cutWords((m?.[1] ?? t).replace(/[.:]$/, ""), max);
+}
+
+/** The rest of a text after its first sentence (the body of a card titled by that sentence). */
+function afterFirstSentence(text: string): string | null {
+  const t = text.replace(/\s+/g, " ").trim();
+  const m = /^(.+?[.!?:])(\s|$)/.exec(t);
+  if (!m) return null;
+  const rest = t.slice(m[0].length).trim();
+  return rest || null;
+}
+
+/** A finding line as a person reads it: no "[high]" tag, no "Required:" machine words. */
+function plainFinding(step: string): string {
+  return step
+    .replace(/^\[(?:critical|high|medium|low|info)\]\s*/i, "")
+    .replace(/\[stand-in model\]\s*/gi, "")
+    .replace(/\s*(?:->|:)\s*/, ": ")
+    .trim();
+}
+
+function keyOf(card: unknown): string | null {
+  return isRecord(card) ? str(card.key) : null;
+}
+
+/**
+ * Withdrawn, expired: the line an Answered entry shows. A card is withdrawn when its task moved
+ * on (the person's move, which the task's last change says) or when it no longer applies.
+ */
+function closedLine(r: Pick<HumanRequestRow, "status">, ctx: RequestWordsContext): string | null {
+  if (r.status === "withdrawn")
+    return ctx.movedByYou
+      ? "Withdrawn: you moved the task, so this card was closed."
+      : "Closed: it no longer needs you.";
+  if (r.status === "expired") return "Expired: nobody answered it in time.";
+  return null;
+}
+
+/** The answer as the person gave it: the option's words, never JSON. */
+export function answerWords(answer: unknown): string | null {
+  if (typeof answer === "string") return answer.trim() || null;
+  if (isRecord(answer)) {
+    for (const k of ["choice", "option", "answer", "decision", "text"]) {
+      const v = str(answer[k]);
+      if (v) return v;
+    }
+    if (Array.isArray(answer.answers)) return "your answers";
+  }
+  return null;
+}
+
+/** "a session started" / "it runs after the current session" for a recorded start. */
+function startWords(start: unknown): string | null {
+  if (start === "started") return "a session started";
+  if (start === "queued") return "it runs after the current session";
+  if (start === "deferred") return "it runs after quiet hours";
+  if (start === "failed") return "the session did not start: press Start on the project";
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------
+// The cards
+
+/** A failed task, the retry ladder's last card and the critic's cards whose work did not pass. */
+function retryCard(
+  r: Pick<HumanRequestRow, "why" | "steps" | "options" | "change_card" | "status" | "answer">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+  read: (label: string) => "accept" | "revise" | "cancel" | null,
+): RequestWords {
+  const task = ctx.taskTitle ?? "the task";
+  const waiting = ctx.waiting ?? [];
+  const verdict = card.reason === "verdict";
+  const title = str(card.title) ?? firstSentence(r.why);
+  const said = str(card.said);
+  const saidBy = str(card.said_by);
+  const first = said
+    ? saidBy
+      ? `The ${saidBy} said: "${said.replace(/"/g, "'")}"`
+      : card.reason === "failed"
+        ? `What failed: ${said}`
+        : said
+    : (afterFirstSentence(r.why) ?? null);
+  const body = [first, waitingSentence(waiting)].filter(Boolean).join(" ") || null;
+  const choices: RequestChoiceWords[] = [];
+  for (const option of r.options.map(optionLabel)) {
+    const what = read(option);
+    if (what === "revise")
+      choices.push({
+        label: verdict ? "Send it back" : "Try again",
+        explain: verdict
+          ? "Starts a session that reworks it with the critic's findings."
+          : "Starts a session that tries again; add a note if you know what to change.",
+        tone: "primary",
+        confirm: null,
+        input: "note",
+      });
+    else if (what === "accept")
+      choices.push({
+        label: verdict ? "Accept the work" : "Mark done anyway",
+        explain: verdict
+          ? `Closes it as done.${afterDone(waiting)}`
+          : `Closes it although nothing passed review.${afterDone(waiting)}`,
+        tone: verdict ? "primary" : "secondary",
+        confirm: verdict ? null : `Mark ${q(task)} done although nothing passed review?`,
+        input: null,
+      });
+    else if (what === "cancel")
+      choices.push({
+        label: "Cancel task",
+        explain: cancelExplain(waiting),
+        tone: "danger",
+        confirm: cancelConfirm(task, waiting),
+        input: null,
+      });
+  }
+  // The sign-off's answer first ("Accept the work"), a retry card's "Try again" first.
+  choices.sort((a, b) => toneRank(a.tone) - toneRank(b.tone));
+  return {
+    title,
+    body,
+    choices,
+    links: [],
+    reply: "none",
+    details: r.steps.map(plainFinding).filter(Boolean),
+    outcome: null,
+  };
+}
+
+const toneRank = (t: RequestChoiceWords["tone"]) =>
+  t === "primary" ? 0 : t === "secondary" ? 1 : 2;
+
+function retryOutcome(card: JsonObject, ctx: RequestWordsContext, verdict: boolean): string | null {
+  const task = q(ctx.taskTitle ?? "the task");
+  const started = startWords(card.start);
+  switch (card.outcome) {
+    case "revise":
+    case "rework":
+      return `Trying ${task} again${started ? `: ${started}` : ": the next session runs it"}.`;
+    case "accept":
+      return verdict
+        ? `${task} is done.${started ? ` What comes after it runs now: ${started}.` : ""}`
+        : `${task} is done: accepted without review.${started ? ` What comes after it runs now: ${started}.` : ""}`;
+    case "cancel":
+      return `${task} was cancelled.`;
+    case "task_moved_on":
+    case "stale":
+      return `${task} had moved on already, so nothing changed.`;
+    case "findings_open":
+      return `${task} could not be closed: a newer review found problems.`;
+    default:
+      return null;
+  }
+}
+
+/** The questions only the person can answer (U-022): the form, Go ahead without, Cancel task. */
+function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords {
+  const task = ctx.taskTitle ?? str(card.task_title) ?? "the task";
+  const waiting = ctx.waiting ?? [];
+  const planned = card.source !== "specialist" && card.source !== "critic";
+  const context = str(card.context);
+  const body =
+    [
+      planned
+        ? "No specialist works on it: your answers are written to the project's decision record and the task is done."
+        : context
+          ? `The specialist said: "${cutWords(context.replace(/"/g, "'"), 160)}"`
+          : "The specialist needs your answers before it can go on.",
+      waitingSentence(waiting),
+    ]
+      .filter(Boolean)
+      .join(" ") || null;
+  const choices: RequestChoiceWords[] = [];
+  if (!planned)
+    choices.push({
+      label: "Go ahead without",
+      explain: "The specialist decides and says what it assumed.",
+      tone: "secondary",
+      confirm: null,
+      input: null,
+    });
+  choices.push({
+    label: "Cancel task",
+    explain: cancelExplain(waiting),
+    tone: "danger",
+    confirm: cancelConfirm(task, waiting),
+    input: null,
+  });
+  return {
+    title: planned ? `${q(task)} needs your answers` : `${q(task)}: the specialist asks you`,
+    body,
+    choices,
+    links: [],
+    reply: "form",
+    details: [],
+    outcome: null,
+  };
+}
+
+function questionsOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
+  const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
+  const started = startWords(card.start);
+  const outcome = str(card.outcome);
+  if (outcome === "cancelled") return `${task} was cancelled.`;
+  if (outcome === "task_moved_on")
+    return `Your answers came after ${task} had finished. They are kept in the decision record.`;
+  if (outcome === "without")
+    return `${task} goes on without your answers${started ? `: ${started}` : ""}.`;
+  if (outcome === "answered") {
+    if (ctx.taskStatus === "done") return `Answers saved in the decision record; ${task} is done.`;
+    return `Answers sent: ${task} goes on with them${started ? `; ${started}` : ""}.`;
+  }
+  return null;
+}
+
+/** The plan from the brief (design §3.3). */
+function intakeCard(
+  r: Pick<HumanRequestRow, "why" | "options">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const proposal = isRecord(card.proposal) ? card.proposal : {};
+  const plan = isRecord(proposal.plan) ? proposal.plan : {};
+  const tasks =
+    (Array.isArray(plan.tasks) ? plan.tasks.length : 0) +
+    (Array.isArray(plan.milestones)
+      ? plan.milestones.reduce(
+          (n: number, m: unknown) =>
+            n + (isRecord(m) && Array.isArray(m.tasks) ? m.tasks.length : 0),
+          0,
+        )
+      : 0);
+  const n = tasks === 1 ? "this task" : `these ${tasks} tasks`;
+  const choices: RequestChoiceWords[] = [];
+  for (const option of r.options.map(optionLabel)) {
+    const w = normalAnswer(option);
+    if (/^(approve and start|approve|approved|yes)$/.test(w))
+      choices.push({
+        label: option === "approve" ? "Approve and start" : option,
+        explain: `Writes ${n} and starts working on them now.`,
+        tone: "primary",
+        confirm: null,
+        input: null,
+      });
+    else if (/^(change the plan|change)$/.test(w))
+      choices.push({
+        label: "Change the plan",
+        explain: "Tell the agent what to change; it drafts a new plan for you to approve.",
+        tone: "secondary",
+        confirm: null,
+        input: "text",
+      });
+    else if (/^(reject|rejected|no)$/.test(w))
+      choices.push({
+        label: "Reject",
+        explain: "Nothing is written. You can draft a new plan later from the project page.",
+        tone: "danger",
+        confirm: null,
+        input: null,
+      });
+  }
+  // A card filed before "Change the plan" existed still gets it: its reader takes the words.
+  if (!choices.some((c) => c.input === "text"))
+    choices.splice(1, 0, {
+      label: "Change the plan",
+      explain: "Tell the agent what to change; it drafts a new plan for you to approve.",
+      tone: "secondary",
+      confirm: null,
+      input: "text",
+    });
+  return {
+    title: `Plan for ${ctx.projectName ? `"${ctx.projectName}"` : "the project"}: ${
+      tasks === 1 ? "1 task" : `${tasks} tasks`
+    }`,
+    body: "Nothing is written until you approve it.",
+    choices,
+    links: [],
+    reply: "none",
+    details: [],
+    outcome: null,
+  };
+}
+
+function intakeOutcome(card: JsonObject): string | null {
+  const started = startWords(card.start);
+  if (card.outcome === "approved") {
+    const n = Array.isArray(card.task_ids) ? card.task_ids.length : null;
+    return `Plan approved: ${n === null ? "its tasks" : n === 1 ? "1 task" : `${n} tasks`} written${
+      started === "a session started"
+        ? "; working on them"
+        : started
+          ? `; ${started}`
+          : "; press Start on the project to work on them"
+    }.`;
+  }
+  if (card.outcome === "rejected")
+    return "You rejected the plan. Nothing was written; you can draft a new plan from the project page.";
+  if (card.outcome === "changed") return "Drafting a new plan with your changes…";
+  if (card.outcome === "apply_failed")
+    return "The plan could not be written; the project page says why.";
+  return null;
+}
+
+/** The Docker wait (design §3.8, ADR 0101/0102): per project, Set up Docker, Cancel task. */
+function dockerCard(
+  r: Pick<HumanRequestRow, "why" | "steps" | "options">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const tasks = Array.isArray(card.task_titles)
+    ? card.task_titles.filter((t): t is string => typeof t === "string")
+    : Array.isArray(card.tasks)
+      ? card.tasks.filter((t): t is string => typeof t === "string")
+      : [];
+  const one = tasks.length === 1 ? (tasks[0] as string) : null;
+  const headline = str(card.headline);
+  const choices: RequestChoiceWords[] = r.options.map(optionLabel).map((label) => ({
+    label,
+    explain: cancelExplain(ctx.waiting ?? []),
+    tone: "danger" as const,
+    confirm: one ? cancelConfirm(one, ctx.waiting ?? []) : null,
+    input: null,
+  }));
+  return {
+    title: one
+      ? `${q(one)} waits for Docker`
+      : tasks.length > 1
+        ? `${tasks.length} tasks wait for Docker`
+        : "Full-review tasks wait for Docker",
+    body: `${headline ? `${headline.replace(/\.$/, "")}. ` : ""}A full review runs the work in Docker, isolated from your computer; the rest of the plan goes on.`,
+    choices,
+    links: [
+      {
+        label: "Set up Docker",
+        to: "/settings#sandbox",
+        explain: "Settings shows the steps for this computer.",
+      },
+    ],
+    reply: "none",
+    details: r.steps,
+    outcome: null,
+  };
+}
+
+/** Any other card: its own words, its options with the reject-like ones secondary. */
+function genericCard(
+  r: Pick<HumanRequestRow, "kind" | "why" | "steps" | "options" | "change_card">,
+): RequestWords {
+  const labels = r.options.map(optionLabel);
+  const choices: RequestChoiceWords[] = labels.map((label, i) => ({
+    label,
+    explain: null,
+    tone: /^(reject|rejected|deny|denied|no|not now|later|decline|cancel|dismiss|ignore)\b/i.test(
+      label,
+    )
+      ? "secondary"
+      : i === 0
+        ? "primary"
+        : "secondary",
+    confirm: null,
+    input: null,
+  }));
+  // A notice with nothing to choose closes with one button; nothing to answer in words.
+  if (labels.length === 0 && r.kind === "info")
+    choices.push({
+      label: "Got it",
+      explain: "Closes this card.",
+      tone: "secondary",
+      confirm: null,
+      input: null,
+    });
+  // Free text only where the card takes it: a question without options, or a decision whose
+  // answer may be the person's own words (`acceptsAnswer`, U-034).
+  const key = keyOf(r.change_card);
+  const optionOnly =
+    key !== null && (ANSWER_CARD_KEYS.optionOnly as readonly string[]).includes(key);
+  const reply: RequestWords["reply"] =
+    r.kind === "credential" || r.kind === "info" || r.kind === "approval" || optionOnly
+      ? "none"
+      : "text";
+  const title = firstSentence(r.why);
+  return {
+    title,
+    body: afterFirstSentence(r.why),
+    choices,
+    links: [],
+    reply,
+    details: r.steps,
+    outcome: null,
+  };
+}
+
+/**
+ * The words of a card as the Inbox shows it (design §3.8). Every answer is still sent as the
+ * option's words, and every reader reads them (`wiring/request-answers.ts`).
+ */
+export function requestWords(
+  r: Pick<
+    HumanRequestRow,
+    "kind" | "why" | "steps" | "options" | "change_card" | "status" | "answer"
+  >,
+  ctx: RequestWordsContext = {},
+): RequestWords {
+  const card = isRecord(r.change_card) ? (r.change_card as JsonObject) : {};
+  const key = keyOf(card);
+  let words: RequestWords;
+  let outcome: string | null = null;
+  if (key === ANSWER_CARD_KEYS.signoff) {
+    words = retryCard(r, card, ctx, (o) => signoffAnswer(o));
+    outcome = retryOutcome(card, ctx, card.reason === "verdict");
+  } else if (key === ANSWER_CARD_KEYS.blockedFindings || key === ANSWER_CARD_KEYS.reviewFailed) {
+    words = retryCard(r, card, ctx, (o) => {
+      const a = blockedFindingsAnswer(o);
+      return a === "rework" ? "revise" : a;
+    });
+    outcome = retryOutcome(card, ctx, false);
+  } else if (key?.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix)) {
+    words = questionsCard(card, ctx);
+    outcome = questionsOutcome(card, ctx);
+  } else if (key?.startsWith(ANSWER_CARD_KEYS.intakePrefix)) {
+    words = intakeCard(r, card, ctx);
+    outcome = intakeOutcome(card);
+  } else if (key === "sandbox.not_ready") {
+    words = dockerCard(r, card, ctx);
+    if (card.outcome === "cancel") outcome = `${q(ctx.taskTitle ?? "The task")} was cancelled.`;
+  } else {
+    words = genericCard(r);
+  }
+  if (r.status !== "open") {
+    const given = answerWords(r.answer);
+    words.outcome =
+      closedLine(r, ctx) ??
+      outcome ??
+      (given ? `You answered "${cutWords(given, 80)}".` : "Answered.");
+  }
+  return words;
+}

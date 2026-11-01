@@ -245,10 +245,11 @@ describe("core loop routes", () => {
     const inbox = await json(await req("/inbox"));
     const request = (inbox.requests as Json[]).find((r) => r.id === filed.request.id);
     if (!request) throw new Error("the blocked-findings request is not in the inbox");
-    expect(request.options).toEqual(["rework", "accept", "cancel"]);
+    // Design §3.8: the options say what they do; the person clicks "Try again".
+    expect(request.options).toEqual(["Try again", "Mark done anyway", "Cancel task"]);
     const answered = await req(`/requests/${filed.request.id}/answer`, {
       method: "POST",
-      body: JSON.stringify({ version: request.version, answer: "rework" }),
+      body: JSON.stringify({ version: request.version, answer: (request.options as string[])[0] }),
     });
     expect(answered.status).toBe(200);
     const after = await rt.store.task.mustGet(blocked.id);

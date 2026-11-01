@@ -78,6 +78,7 @@ import {
   verdictWords,
 } from "./event-lines.ts";
 import { projectHealth } from "./project-health.ts";
+import { type RequestWordsContext, requestWords } from "./request-words.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
 export function agentView(a: AgentRow): AgentView {
@@ -460,7 +461,10 @@ export function requestView(
   r: HumanRequestRow,
   projectName: string | null,
   taskTitle: string | null = null,
+  ctx: Omit<RequestWordsContext, "projectName" | "taskTitle"> = {},
 ): HumanRequestView {
+  // Design §3.8: the card in the person's words, read when it is shown.
+  const words = requestWords(r, { ...ctx, projectName, taskTitle });
   return {
     id: r.id,
     projectId: r.project_id,
@@ -479,7 +483,90 @@ export function requestView(
     answer: r.answer,
     createdAt: r.created_at,
     version: r.version,
+    title: words.title,
+    body: words.body,
+    choices: words.choices,
+    links: words.links,
+    reply: words.reply,
+    details: words.details,
+    outcome: words.outcome,
+    answeredAt: r.answered_at ?? null,
   };
+}
+
+/**
+ * What a card needs beyond its row, read now (design §5 rule 4): its project's and task's
+ * names, the task's status, and the tasks not done that wait on it.
+ */
+export async function requestContexts(
+  store: StateStore,
+  rows: readonly HumanRequestRow[],
+): Promise<
+  Map<
+    string,
+    { projectName: string | null; taskTitle: string | null } & Omit<
+      RequestWordsContext,
+      "projectName" | "taskTitle"
+    >
+  >
+> {
+  const projects = new Map<string, string>();
+  const projectTasks = new Map<string, TaskRow[]>();
+  const out = new Map<
+    string,
+    { projectName: string | null; taskTitle: string | null } & Omit<
+      RequestWordsContext,
+      "projectName" | "taskTitle"
+    >
+  >();
+  for (const r of rows) {
+    if (r.project_id && !projects.has(r.project_id))
+      projects.set(r.project_id, (await store.project.get(r.project_id))?.name ?? r.project_id);
+    let tasks: TaskRow[] = [];
+    if (r.task_id) {
+      const task = await store.task.get(r.task_id);
+      if (task && !projectTasks.has(task.project_id))
+        projectTasks.set(
+          task.project_id,
+          await store.task.list({ project_id: task.project_id } as never, { limit: 2000 }),
+        );
+      tasks = task ? (projectTasks.get(task.project_id) ?? []) : [];
+      const waiting = task
+        ? tasks
+            .filter(
+              (t) =>
+                t.depends_on.includes(task.id) && t.status !== "done" && t.status !== "cancelled",
+            )
+            .map((t) => t.title)
+        : [];
+      out.set(r.id, {
+        projectName: r.project_id ? (projects.get(r.project_id) ?? null) : null,
+        taskTitle: task?.title ?? null,
+        taskStatus: task?.status ?? null,
+        waiting,
+        movedByYou: !!task?.author_human && !task.author_agent,
+      });
+      continue;
+    }
+    out.set(r.id, {
+      projectName: r.project_id ? (projects.get(r.project_id) ?? null) : null,
+      taskTitle: null,
+    });
+  }
+  return out;
+}
+
+/** `requestView` of each row with what it needs read now (`requestContexts`). */
+export async function requestViews(
+  store: StateStore,
+  rows: readonly HumanRequestRow[],
+): Promise<HumanRequestView[]> {
+  const ctx = await requestContexts(store, rows);
+  return rows.map((r) => {
+    const c = ctx.get(r.id) ?? { projectName: null, taskTitle: null };
+    const { projectName, taskTitle, ...rest } = c;
+    return requestView(r, projectName, taskTitle, rest);
+  });
 }
 
 export async function costView(

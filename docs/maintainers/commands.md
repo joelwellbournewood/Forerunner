@@ -247,9 +247,13 @@ A run writes one `change_log` row: who (`human_id`, `agent_id`, author columns),
 used, the commands with their parameters, before and after, scope, project, `expires_at`,
 `undo_state` (`undoable` or `irreversible`), source and the sentence. Then the sentence is
 posted: an event of type `change` on `ctx.sessionId` (the conversation session), a message from
-the principal agent to the human (the project chat), and for a shared project a message to every
-other human (`ports.sharedWith(projectId, humanId)`, default `project.settings.shared_with`)
-prefixed with the asking human's name. A failed post never undoes the change.
+the principal agent to the human (an Update in the Inbox) only when the change is not the
+person's own (an agent's command, or a temporary change reverting by itself: design §3.8
+Updates, §5.11 "do not echo the person"; before 2026-11-01 every Tasks tab click, chat command
+and project switch landed in the Inbox as "from Alice"; the person's own changes are in Changes
+and in the chat's reply), and for a shared project a message to every other human
+(`ports.sharedWith(projectId, humanId)`, default `project.settings.shared_with`) prefixed with
+the asking human's name. A failed post never undoes the change.
 `request.answer` also calls `ports.requestAnswered(requestId)` once the answer is recorded: the
 daemon applies it at once (its `syncApprovals`), as its answer route does, so an approved plan
 said in chat or voice starts its follow-up without waiting for a poll (ADR 0053 amendment).

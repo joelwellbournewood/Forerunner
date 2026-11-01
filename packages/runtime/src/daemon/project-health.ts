@@ -1,13 +1,14 @@
 import type { StateStore, TaskRow } from "@forerunner/state";
 import type { ProjectCard } from "./api-types.ts";
-import { isPausedByPerson } from "./task-words.ts";
 
 /**
- * A project's state on its card (U-071). "blocked" only when something waits on the person in
- * the Inbox: an open blocking request, or a task that needs them with its card open. A task
- * marked as needing the person with no card (a person's "Needs me", a budget stop) is
- * `needsYou`: the card names it and links to it, since nothing in the Inbox would. Failed tasks
- * or a non-blocking request open are "attention"; no task is "idle".
+ * A project's state on its card (U-071), from its open Inbox cards (design §3.8: what becomes
+ * a card, and nothing else, counts as "needs you"). `needsYou` names the task of the project's
+ * oldest open card about a task, so "needs you: <task>" never stands beside "Waiting on you 0"
+ * (`waitingOnYou` counts the same open cards). "blocked" while a blocking card is open or a task
+ * waits on its card; failed tasks, an open card that blocks nothing, or a task an agent left
+ * waiting with no card (a budget stop: the Tasks tab reads "Paused" with Resume) are
+ * "attention"; a task the person paused waits on nobody; no task is "idle".
  */
 export async function projectHealth(
   store: StateStore,
@@ -18,20 +19,25 @@ export async function projectHealth(
 ): Promise<{ health: ProjectCard["health"]; needsYou: ProjectCard["needsYou"] }> {
   const open = await store.humanRequest.list(
     { status: "open", project_id: projectId, human_id: humanId } as never,
-    { limit: 1000 },
+    { orderBy: [{ column: "created_at" }, { column: "id" }], limit: 1000 },
   );
-  const carded = new Set(open.map((r) => r.task_id).filter((id): id is string => Boolean(id)));
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const carded = open
+    .map((r) => (r.task_id ? byId.get(r.task_id) : undefined))
+    .find((t): t is Pick<TaskRow, "id" | "title" | "status"> => t !== undefined);
+  const needsYou = carded ? { taskId: carded.id, title: carded.title } : null;
+  const cardedIds = new Set(open.map((r) => r.task_id).filter((id): id is string => !!id));
   const needsHuman = tasks.filter((t) => t.status === "needs_human");
-  const waitsInInbox = open.some((r) => r.blocking) || needsHuman.some((t) => carded.has(t.id));
-  // A task the person paused (Pause, Stop on the Tasks tab) waits on nobody: it is not "needs
-  // you" (design §2, "Paused by you").
-  const uncarded = needsHuman.find(
-    (t) => !carded.has(t.id) && !("author_human" in t && isPausedByPerson(t as TaskRow, false)),
+  const waitsInInbox = open.some((r) => r.blocking) || needsHuman.some((t) => cardedIds.has(t.id));
+  // A task an agent left needing the person with no card (not the person's own pause).
+  const agentLeft = needsHuman.some(
+    (t) =>
+      !cardedIds.has(t.id) &&
+      !("author_human" in t && (t as TaskRow).author_human && !(t as TaskRow).author_agent),
   );
-  const needsYou = uncarded ? { taskId: uncarded.id, title: uncarded.title } : null;
   const health: ProjectCard["health"] = waitsInInbox
     ? "blocked"
-    : needsYou || failed > 0 || open.length > 0
+    : agentLeft || failed > 0 || open.length > 0
       ? "attention"
       : tasks.length === 0
         ? "idle"

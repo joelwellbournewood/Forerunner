@@ -17,7 +17,9 @@ export const ACTION_FROM: Readonly<Record<TaskAction, readonly TaskStatus[]>> = 
   pause: ["ready"],
   resume: ["needs_human"],
   stop: ["claimed", "in_progress"],
-  try_again: ["failed"],
+  // A task waiting on its retry card (design §2 "Needs your decision") is tried again from the
+  // Tasks tab as from the card; the move withdraws the card.
+  try_again: ["failed", "needs_human"],
   go_ahead: ["needs_human"],
   cancel: ["draft", "ready", "claimed", "in_progress", "in_review", "needs_human", "failed"],
   reopen: ["cancelled"],
@@ -59,8 +61,14 @@ export const ACTION_WORDS: Readonly<Record<TaskAction, string>> = {
 export interface TaskDisplayContext {
   /** The project's tasks by id (the ones a task waits for are among them). */
   tasks: ReadonlyMap<string, Pick<TaskRow, "id" | "title" | "status" | "reason">>;
-  /** Open Inbox cards by the task they are about (the oldest first). */
-  cards: ReadonlyMap<string, Pick<HumanRequestRow, "id">>;
+  /**
+   * Open Inbox cards by the task they are about (the oldest first); the card's `change_card`
+   * says which kind it is (questions, or a decision after failed tries).
+   */
+  cards: ReadonlyMap<
+    string,
+    Pick<HumanRequestRow, "id"> & Partial<Pick<HumanRequestRow, "change_card">>
+  >;
   /** Whether the Docker sandbox is ready; null when it was not checked yet. */
   sandboxReady: boolean | null;
   /** The latest run of each task: when it began and who runs it. */
@@ -118,6 +126,21 @@ export function plainReason(reason: string, max = 100): string {
   return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
+/**
+ * Which kind of card holds a task (design §2, §3.8): `retry`, the decision after its tries
+ * (Try again, Mark done anyway, Cancel task: the critic's retry card, a sign-off, a failed run,
+ * a blocked or failed review); `questions`, anything that asks the person (answer it, or go
+ * ahead without).
+ */
+export function cardKindOf(card: { change_card?: unknown } | undefined): "retry" | "questions" {
+  const c = card?.change_card;
+  const key =
+    c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
+  return key === "critic:signoff" || key === "findings:blocked" || key === "critic:review_failed"
+    ? "retry"
+    : "questions";
+}
+
 /** True when a person paused the task (Pause or Stop) and no card asks anything about it. */
 export function isPausedByPerson(
   task: Pick<TaskRow, "status" | "author_human" | "author_agent">,
@@ -160,7 +183,16 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       const why = plainReason(task.reason);
       return display("failed", why ? `Failed: ${why}` : "Failed", "bad", {
         ...(card
-          ? { blocker: { kind: "card", taskId: null, requestId: card.id, title: null } }
+          ? {
+              detail: "Its card is in the Inbox.",
+              blocker: {
+                kind: "card",
+                taskId: null,
+                requestId: card.id,
+                title: null,
+                cardKind: cardKindOf(card),
+              },
+            }
           : {}),
       });
     }
@@ -179,10 +211,32 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       });
     }
     case "needs_human": {
+      if (card && cardKindOf(card) === "retry") {
+        // Design §5 "Task row": "Needs your decision: tried 4 times [Answer]".
+        const tried = /^tried \d+ times$/.test(plainReason(task.reason))
+          ? `: ${plainReason(task.reason)}`
+          : "";
+        return display("answer", `Needs your decision${tried}`, "warn", {
+          detail: "Its card is in the Inbox: try again, mark it done anyway, or cancel it.",
+          blocker: {
+            kind: "card",
+            taskId: null,
+            requestId: card.id,
+            title: null,
+            cardKind: "retry",
+          },
+        });
+      }
       if (card)
         return display("answer", "Needs your answer", "warn", {
           detail: "Its card is in the Inbox.",
-          blocker: { kind: "card", taskId: null, requestId: card.id, title: null },
+          blocker: {
+            kind: "card",
+            taskId: null,
+            requestId: card.id,
+            title: null,
+            cardKind: "questions",
+          },
         });
       if (isPausedByPerson(task, false))
         return display("paused", "Paused by you", "neutral", {

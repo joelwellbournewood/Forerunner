@@ -87,9 +87,10 @@ describe("plain words (U-074)", () => {
     expect(message).toHaveTextContent("Switched the active project to Beacon.");
     expect(message).not.toHaveTextContent("Undo.");
     expect(within(message).getByTestId("message-undo")).toHaveAttribute("href", "/changes");
-    await userEvent.setup().click(screen.getByText(/answered or closed/));
+    // Design §3.8: the Answered list says what was answered, in words.
+    await userEvent.setup().click(screen.getByText("Answered (1)"));
     const closed = screen.getByText(/Which versioning scheme/).closest("li") as HTMLElement;
-    expect(closed).toHaveTextContent("→ Semantic versions");
+    expect(closed).toHaveTextContent('You answered "Semantic versions".');
     expect(closed).not.toHaveTextContent("{");
   });
 

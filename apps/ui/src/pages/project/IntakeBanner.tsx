@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type IntakeStatusView } from "../../api/client.ts";
-import { Button } from "../../components/ui.tsx";
+import { Button, buttonClassName } from "../../components/ui.tsx";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 
@@ -71,21 +71,51 @@ export function IntakeBanner({ projectId, pollMs }: { projectId: string; pollMs?
         data-testid="intake-banner"
         data-state="drafting"
       >
-        Drafting the plan from your brief. It lands in your Inbox for approval when it is ready.
+        Drafting the plan from your brief… It lands in your Inbox for you to approve.
       </output>
     );
   if (view.state === "pending")
     return (
       <div
-        className={`${box} border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100`}
+        className={`${box} flex flex-wrap items-center gap-2 border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100`}
         data-testid="intake-banner"
         data-state="pending"
       >
-        The plan from your brief waits for your approval in the{" "}
-        <Link to="/inbox" className="underline">
-          Inbox
+        Waiting for you: approve the plan.
+        <Link to="/inbox" className={buttonClassName("primary")} data-testid="intake-open">
+          Open
         </Link>
-        .
+      </div>
+    );
+  // Design §3.3: a rejected plan says so, and a new one can be drafted from the brief.
+  const retryButton = (label: string, busyLabel: string) => (
+    <Button
+      className="mt-2"
+      variant="primary"
+      onClick={() => void retry()}
+      disabled={busy}
+      data-testid="intake-retry"
+    >
+      {busy ? busyLabel : label}
+    </Button>
+  );
+  if (view.state === "rejected")
+    return (
+      <div
+        className={`${box} border-neutral-300 bg-neutral-50 text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100`}
+        data-testid="intake-banner"
+        data-state="rejected"
+      >
+        <p>You rejected the plan. Nothing was written.</p>
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          Draft a new plan: the agent drafts one again from your brief for you to approve.
+        </p>
+        {error ? (
+          <p className="mt-1" data-testid="intake-retry-error">
+            {error}
+          </p>
+        ) : null}
+        {retryButton("Draft a new plan", "Drafting…")}
       </div>
     );
   if (view.state === "failed")
@@ -96,27 +126,18 @@ export function IntakeBanner({ projectId, pollMs }: { projectId: string; pollMs?
         data-testid="intake-banner"
         data-state="failed"
       >
-        <p className="font-medium">The plan from your brief could not be drafted.</p>
+        <p className="font-medium">Planning failed. Nothing was written.</p>
         {view.error ? (
           <p className="mt-1 whitespace-pre-wrap" data-testid="intake-error">
             {view.error}
           </p>
         ) : null}
-        <p className="mt-1">Nothing was written. Retry drafts it again from the same brief.</p>
         {error ? (
           <p className="mt-1" data-testid="intake-retry-error">
             {error}
           </p>
         ) : null}
-        <Button
-          className="mt-2"
-          variant="primary"
-          onClick={() => void retry()}
-          disabled={busy}
-          data-testid="intake-retry"
-        >
-          {busy ? "Retrying…" : "Retry"}
-        </Button>
+        {retryButton("Try again", "Trying again…")}
       </div>
     );
   return null;

@@ -757,7 +757,15 @@ describe("the UI client against the real daemon", () => {
       '"Decide where the page is published" is ready again. Its card in the Inbox was withdrawn.',
     );
     expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("withdrawn");
-    expect((await client.inbox(humanId)).requests.map((r) => r.id)).not.toContain(card.id);
+    // No longer a card that needs you; the Answered list says it was withdrawn (design §3.8).
+    const afterGo = await client.inbox(humanId);
+    expect(afterGo.requests.filter((r) => r.status === "open").map((r) => r.id)).not.toContain(
+      card.id,
+    );
+    expect(afterGo.requests.find((r) => r.id === card.id)).toMatchObject({
+      status: "withdrawn",
+      outcome: "Withdrawn: you moved the task, so this card was closed.",
+    });
     // The specialist is told the person went ahead without answering.
     expect((await client.queue(own.id)).map((q) => q.text).join("\n")).toContain(
       "The person chose to go ahead without answering",
@@ -775,7 +783,9 @@ describe("the UI client against the real daemon", () => {
       blocker: { kind: "card", requestId: card.id },
     });
     expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("open");
-    expect((await client.inbox(humanId)).requests.map((r) => r.id)).toContain(card.id);
+    expect(
+      (await client.inbox(humanId)).requests.filter((r) => r.status === "open").map((r) => r.id),
+    ).toContain(card.id);
     expect(
       (await client.queue(own.id)).filter(
         (q) => q.status === "queued" && q.text.includes("go ahead without answering"),
@@ -796,7 +806,9 @@ describe("the UI client against the real daemon", () => {
         blocking: true,
         risk: "low",
       });
-    const inboxIds = async () => (await client.inbox(humanId)).requests.map((r) => r.id);
+    // The cards that need you: a withdrawn one moves to the Answered list (design §3.8).
+    const inboxIds = async () =>
+      (await client.inbox(humanId)).requests.filter((r) => r.status === "open").map((r) => r.id);
     const rowOf = async (id: string) => (await client.tasks(own.id)).find((x) => x.id === id);
 
     // A task that waits for the person's answer, cancelled and then undone.
@@ -945,9 +957,12 @@ describe("the UI client against the real daemon", () => {
   });
 
   it("extensions: Approve or Deny in the panel takes the card out of the Inbox (U-030)", async () => {
+    // The cards that need you: an answered one moves to the Answered list (design §3.8).
     const cardsFor = async (extensionId: string) =>
       (await client.inbox(humanId)).requests.filter(
-        (r) => (r.changeCard as { extensionId?: string } | null)?.extensionId === extensionId,
+        (r) =>
+          r.status === "open" &&
+          (r.changeCard as { extensionId?: string } | null)?.extensionId === extensionId,
       );
     const approveMe = await client.addExtension({ catalogId: "browser" });
     expect(approveMe.status).toBe("pending_approval");
@@ -963,9 +978,12 @@ describe("the UI client against the real daemon", () => {
   });
 
   it("extensions: Add on a built-in entry is confirmed in the panel on this PC's device, with no Inbox card; Cancel adds nothing (U-026)", async () => {
+    // The cards that need you: an answered one moves to the Answered list (design §3.8).
     const cardsFor = async (extensionId: string) =>
       (await client.inbox(humanId)).requests.filter(
-        (r) => (r.changeCard as { extensionId?: string } | null)?.extensionId === extensionId,
+        (r) =>
+          r.status === "open" &&
+          (r.changeCard as { extensionId?: string } | null)?.extensionId === extensionId,
       );
     const me = await client.me();
     expect(me.desktopDeviceId).toEqual(expect.any(String));
@@ -1027,7 +1045,7 @@ describe("the UI client against the real daemon", () => {
     expect((await client.extensionCatalog()).entries.map((e) => e.id)).not.toContain("email");
   });
 
-  it("project card: a task an agent left needing the person without a card is named, not 'blocked'; its card makes it blocked; a person's Pause is neither (U-071, design §2)", async () => {
+  it("project card: only a card is 'needs you' (a task an agent left without one wants attention); its card makes it blocked and names it; a person's Pause is neither (U-071, design §2, §3.8)", async () => {
     const own = await client.createProject({ name: "Health", goal: "State follows reality" });
     const task = await client.createTask(own.id, {
       title: "Confirm the stack",
@@ -1039,15 +1057,15 @@ describe("the UI client against the real daemon", () => {
     expect(paused.display?.label).toBe("Paused by you");
     expect((await client.project(own.id)).needsYou).toBeNull();
     await client.taskAction(task.id, { version: paused.version, action: "resume" });
-    // A session left it needing the person (a budget stop) with no card: named on the card.
+    // A session left it needing the person (a budget stop) with no card: the project wants
+    // attention, but nothing is "needs you" without a card (design §3.8), so "needs you: X"
+    // never stands beside "Waiting on you 0".
     const t = await rt.store.task.mustGet(task.id);
     await rt.store.task.transition(t.id, t.version, "needs_human", "budget stop", { agentId });
     const named = await client.project(own.id);
     expect(named.health).toBe("attention");
-    expect(named.needsYou).toEqual({ taskId: task.id, title: "Confirm the stack" });
-    expect((await client.projects()).find((p) => p.id === own.id)?.needsYou?.title).toBe(
-      "Confirm the stack",
-    );
+    expect(named.needsYou).toBeNull();
+    expect(named.waitingOnYou).toBe(0);
     await rt.store.humanRequest.insert({
       human_id: humanId,
       project_id: own.id,
@@ -1060,9 +1078,40 @@ describe("the UI client against the real daemon", () => {
       risk: "low",
       change_card: null,
     });
+    // Its card: blocked, and the card names it, as the Inbox counts it.
     const blocked = await client.project(own.id);
     expect(blocked.health).toBe("blocked");
-    expect(blocked.needsYou).toBeNull();
+    expect(blocked.needsYou).toEqual({ taskId: task.id, title: "Confirm the stack" });
+    expect(blocked.waitingOnYou).toBe(1);
+    expect((await client.projects()).find((p) => p.id === own.id)?.needsYou?.title).toBe(
+      "Confirm the stack",
+    );
+  });
+
+  it("the Inbox does not echo the person: Tasks tab moves, chat commands and project switches add no Update (design §3.8, §5.11)", async () => {
+    const own = await client.createProject({ name: "Quiet", goal: "No echoes" });
+    const updates = async () =>
+      (await client.inbox(humanId)).messages.filter(
+        (m) => m.projectId === own.id || m.projectId === null,
+      ).length;
+    const before = await updates();
+    const task = await client.createTask(own.id, {
+      title: "Write notes.md",
+      outcome: "notes.md exists",
+    });
+    let v = task.version;
+    for (const action of ["pause", "resume", "pause", "resume"] as const)
+      v = (await client.taskAction(task.id, { version: v, action })).version;
+    for (const text of ["add a task: write the README", "add a task: write the FAQ"])
+      await client.chat({ humanId, agentId, projectId: own.id, text, source: "text" });
+    await client.executeCommands({
+      commands: [{ name: "project.switch", params: { project: own.id } }],
+      wordsUsed: `Switch project: ${own.name}`,
+      source: "ui",
+    });
+    expect(await updates()).toBe(before);
+    // They are in Changes, with their Undo.
+    expect((await client.changes({ projectId: own.id })).length).toBeGreaterThanOrEqual(6);
   });
 
   it("setup: a human the daemon named with its placeholder gets an empty name field, not 'me' (U-077)", async () => {
@@ -2097,6 +2146,334 @@ describe("the UI client against the real daemon: Settings → Sandbox (Docker) (
     expect((refused as ApiError).message).toContain("Docker is installed but not running.");
     engine.set({ running: true });
   });
+});
+
+/**
+ * The UI client against a real daemon whose model is the bench's role-playing stand-in, with
+ * its failure injection (`FORERUNNER_BENCH_*`), on a clock that moves as in the app.
+ */
+async function composeWithRolePlayer(env: Record<string, string>): Promise<{
+  rt: RuntimeApp;
+  client: DaemonClient;
+}> {
+  const home = mkdtempSync(join(tmpdir(), "fr-ui-real-needs-me-"));
+  const provider = createRolePlayer(
+    benchOptionsFromEnv(
+      { FORERUNNER_BENCH_DELAY_MS: "0", ...env },
+      new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+    ),
+  );
+  const rt = await composeRuntime({
+    env: { FORERUNNER_HOME: home },
+    dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+    config: null,
+    clock: new ShiftedClock("2026-03-05T08:00:00Z"),
+    stateUrl: "sqlite::memory:",
+    vault: new MemoryVault(),
+    provider,
+    registryDir: REGISTRY,
+    identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+    appVersion: "0.0.0-ui-contract",
+    sandboxDetection: NO_ENGINE,
+  });
+  const { app, token } = createDaemonApp(rt);
+  const client = createClient(
+    {
+      baseUrl: "http://daemon.test",
+      token,
+      source: "env",
+      installId: null,
+      platform: null,
+      shellVersion: null,
+    },
+    (input, init) => Promise.resolve(app.request(input, init)),
+  );
+  return { rt, client };
+}
+
+describe("the UI client against the real daemon: a task that fails gets one card, and answering it resumes work (design §3.8)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    // "Write the scope" never works: the specialist reports it could not do the work.
+    ({ rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_FAIL: "Write the scope" }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("after its retries: one card naming the task, the specialist's words and what waits; Try again starts a session; Mark done anyway is accepted without review", async () => {
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Packing list", goal: "A small CLI" });
+    const scope = await client.createTask(project.id, {
+      title: "Write the scope in docs/scope.md",
+      outcome: "docs/scope.md says what is in scope",
+      riskTier: 1,
+    });
+    const readme = await client.createTask(project.id, {
+      title: "Write the README",
+      outcome: "README.md says how to run it",
+      riskTier: 1,
+      dependsOn: [scope.id],
+    });
+    const sessionsOf = async () => client.sessions({ projectId: project.id });
+    const ended = async () =>
+      (await sessionsOf()).every((s) => !["running", "paused"].includes(s.status));
+    const first = await client.startSession({ agentId, projectId: project.id });
+    expect(first.session?.id).toBeTruthy();
+    await eventually(ended, "the session to end", async () => "", 60_000);
+
+    // Exactly one card, after the retries inside the session (design §4.3).
+    const cardsOf = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    const cards = await cardsOf();
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    expect(card?.title).toMatch(/^"Write the scope in docs\/scope\.md" failed (twice|\d+ times)$/);
+    // The specialist's own words, and what waits on the task (true now).
+    expect(card?.body).toContain('said: "I could not complete this task.');
+    expect(card?.body).toContain('"Write the README" waits on it.');
+    expect(card?.body).not.toMatch(/ladder|ceiling|attempt\(s\)|\[stand-in model\]/i);
+    expect(card?.choices?.map((c) => c.label)).toEqual([
+      "Try again",
+      "Mark done anyway",
+      "Cancel task",
+    ]);
+    const choice = (label: string) => card?.choices?.find((c) => c.label === label);
+    expect(choice("Try again")).toMatchObject({ tone: "primary", confirm: null, input: "note" });
+    expect(choice("Try again")?.explain).toMatch(/Starts a session that tries again/);
+    expect(choice("Mark done anyway")?.explain).toBe(
+      'Closes it although nothing passed review. "Write the README" after it will run.',
+    );
+    expect(choice("Mark done anyway")?.confirm).toMatch(/done although nothing passed review\?/);
+    expect(choice("Cancel task")?.explain).toBe(
+      'Drops it; "Write the README" after it will be stuck.',
+    );
+    expect(choice("Cancel task")?.tone).toBe("danger");
+    expect(card?.reply).toBe("none");
+
+    // Try again, with a note: a session starts by itself, and the note reaches the next brief.
+    const sessionsBefore = (await sessionsOf()).length;
+    const tried = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: { choice: "Try again", note: "Keep it to five lines." },
+    });
+    expect(tried.status).toBe("answered");
+    expect(tried.outcome).toMatch(
+      /^Trying "Write the scope in docs\/scope\.md" again: (a session started|it runs after the current session)\.$/,
+    );
+    await eventually(
+      async () => (await sessionsOf()).length > sessionsBefore && (await ended()),
+      "the session the answer started",
+      async () => `${(await sessionsOf()).length} sessions`,
+      60_000,
+    );
+    // It failed again: one card again, never one per attempt.
+    const again = await cardsOf();
+    expect(again).toHaveLength(1);
+    expect(again[0]?.id).not.toBe(card?.id);
+
+    // Mark done anyway: closed although nothing passed review, and the README runs.
+    const marked = await client.answerRequest(again[0]?.id ?? "", {
+      version: again[0]?.version ?? 0,
+      answer: "Mark done anyway",
+    });
+    expect(marked.outcome).toMatch(
+      /^"Write the scope in docs\/scope\.md" is done: accepted without review\./,
+    );
+    const scopeNow = (await client.tasks(project.id)).find((t) => t.id === scope.id);
+    expect(scopeNow?.display?.label).toBe("Done: accepted without review");
+    await eventually(
+      async () =>
+        (await client.tasks(project.id)).find((t) => t.id === readme.id)?.status === "done",
+      "the README to be done by the session the answer started",
+      async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
+      60_000,
+    );
+    // The Answered list keeps both answers with what came of them.
+    const answered = (await client.inbox(me.id)).requests.filter(
+      (r) => r.projectId === project.id && r.status === "answered",
+    );
+    expect(answered.map((r) => r.outcome)).toEqual(
+      expect.arrayContaining([marked.outcome, tried.outcome]),
+    );
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: the plan card (design §3.3)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    ({ rt, client } = await composeWithRolePlayer({}));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const BRIEF = "A one-page website that shows a random quote. Plain HTML, CSS and JavaScript.";
+  const planned = async (name: string) => {
+    const project = await client.createProject({
+      name,
+      goal: "A quote page",
+      brief: BRIEF,
+      intake: true,
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.projectId === project.id && r.status === "open",
+    );
+    if (!card) throw new Error("no plan card");
+    return { project, card, me };
+  };
+
+  it("Approve and start writes the plan and starts working on it; the card says so", async () => {
+    const { project, card } = await planned("Quote page");
+    expect(card.title).toMatch(/^Plan for "Quote page": \d+ tasks$/);
+    expect(card.choices?.map((c) => c.label)).toEqual([
+      "Approve and start",
+      "Change the plan",
+      "Reject",
+    ]);
+    expect(card.choices?.[0]?.explain).toMatch(
+      /^Writes these \d+ tasks and starts working on them now\.$/,
+    );
+    expect(card.choices?.find((c) => c.label === "Change the plan")?.input).toBe("text");
+    const approved = await client.answerRequest(card.id, {
+      version: card.version,
+      answer: "Approve and start",
+    });
+    const written = (await client.tasks(project.id)).length;
+    expect(written).toBeGreaterThan(0);
+    expect(approved.outcome).toBe(`Plan approved: ${written} tasks written; working on them.`);
+    // A session of the project started without a Start click.
+    await eventually(
+      async () => (await client.sessions({ projectId: project.id })).length > 0,
+      "the session the approval started",
+      async () => "",
+      10_000,
+    );
+  }, 60_000);
+
+  it("Change the plan drafts a new plan with the person's words, which lands as a new card", async () => {
+    const { project, card, me } = await planned("Quote two");
+    const changed = await client.answerRequest(card.id, {
+      version: card.version,
+      answer: { choice: "Change the plan", text: "A single index.html only." },
+    });
+    expect(changed.outcome).toBe("Drafting a new plan with your changes…");
+    expect((await client.intakeStatus(project.id)).state).toBe("drafting");
+    await rt.intake.inFlight(project.id);
+    const status = await client.intakeStatus(project.id);
+    expect(status.state).toBe("pending");
+    expect(status.requestId).not.toBe(card.id);
+    const next = (await client.inbox(me.id)).requests.find((r) => r.id === status.requestId);
+    expect(next?.title).toMatch(/^Plan for "Quote two"/);
+    // Nothing of the first plan was written.
+    expect(await client.tasks(project.id)).toEqual([]);
+    // The words without "Change the plan" are not an answer the card can act on.
+    await expect(
+      client.answerRequest(next?.id ?? "", {
+        version: next?.version ?? 0,
+        answer: "Change the plan",
+      }),
+    ).rejects.toThrow(/Choose one of/);
+  }, 60_000);
+
+  it("Reject writes nothing; the project page offers Draft a new plan, which drafts one again", async () => {
+    const { project, card } = await planned("Quote three");
+    const rejected = await client.answerRequest(card.id, {
+      version: card.version,
+      answer: "Reject",
+    });
+    expect(rejected.outcome).toBe(
+      "You rejected the plan. Nothing was written; you can draft a new plan from the project page.",
+    );
+    expect(await client.tasks(project.id)).toEqual([]);
+    expect((await client.intakeStatus(project.id)).state).toBe("rejected");
+    // The note left for the next session is in words: no request id, no time stamp.
+    const notes = (await client.queue(project.id)).map((q) => q.text).join("\n");
+    expect(notes).toContain("The person rejected the plan");
+    expect(notes).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-|T\d\d:\d\d:\d\d/);
+    const again = await client.retryIntake(project.id);
+    expect(again.state).toBe("drafting");
+    await rt.intake.inFlight(project.id);
+    expect((await client.intakeStatus(project.id)).state).toBe("pending");
+  }, 60_000);
+});
+
+describe("the UI client against the real daemon: a run that errors fails its task, which gets a card (design §3.8, §4.4)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    ({ rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_FAIL: "Write the scope",
+      FORERUNNER_BENCH_FAIL_MODE: "error",
+    }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("the failed task is a card, not 'Nothing waits on you'; Cancel task names what will be stuck", async () => {
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Error test", goal: "A small CLI" });
+    const scope = await client.createTask(project.id, {
+      title: "Write the scope in docs/scope.md",
+      outcome: "docs/scope.md says what is in scope",
+      riskTier: 1,
+    });
+    const after = await client.createTask(project.id, {
+      title: "Build the first version",
+      outcome: "src/main.js runs",
+      riskTier: 1,
+      dependsOn: [scope.id],
+    });
+    await client.startSession({ agentId, projectId: project.id });
+    await eventually(
+      async () =>
+        (await client.sessions({ projectId: project.id })).every(
+          (s) => !["running", "paused"].includes(s.status),
+        ),
+      "the session to end",
+      async () => "",
+      60_000,
+    );
+    expect((await client.tasks(project.id)).find((t) => t.id === scope.id)?.status).toBe("failed");
+    const inbox = await client.inbox(me.id);
+    const cards = inbox.requests.filter((r) => r.projectId === project.id && r.status === "open");
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    expect(card?.title).toBe('"Write the scope in docs/scope.md" failed');
+    expect(card?.body).toMatch(/^What failed: Claude did not answer/);
+    expect(card?.body).toContain('"Build the first version" waits on it.');
+    expect(card?.choices?.map((c) => c.label)).toEqual([
+      "Try again",
+      "Mark done anyway",
+      "Cancel task",
+    ]);
+    // The counts agree: the card counts as needing you.
+    expect(inbox.needsYouCount).toBe(inbox.requests.filter((r) => r.status === "open").length);
+    expect((await client.project(project.id)).waitingOnYou).toBe(1);
+    // The task row offers the card.
+    const row = (await client.tasks(project.id)).find((t) => t.id === scope.id);
+    expect(row?.display?.blocker).toMatchObject({ kind: "card", requestId: card?.id });
+
+    const cancelled = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Cancel task",
+    });
+    expect(cancelled.outcome).toBe('"Write the scope in docs/scope.md" was cancelled.');
+    const waiting = (await client.tasks(project.id)).find((t) => t.id === after.id);
+    expect(waiting?.display?.label).toBe('Stuck: "Write the scope in docs/scope.md" was cancelled');
+  }, 120_000);
 });
 
 describe("the UI client against the real daemon without a Claude key (U-047)", () => {

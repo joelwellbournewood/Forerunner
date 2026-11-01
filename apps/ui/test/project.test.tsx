@@ -135,8 +135,10 @@ describe("Project page", () => {
       renderApp("/projects/proj_beacon", harness);
       const banner = await screen.findByTestId("intake-banner");
       expect(banner).toHaveAttribute("data-state", "failed");
-      expect(banner).toHaveTextContent("The plan from your brief could not be drafted.");
+      // Design §3.3: "Planning failed: <reason in words>. [Try again]".
+      expect(banner).toHaveTextContent("Planning failed. Nothing was written.");
       expect(within(banner).getByTestId("intake-error")).toHaveTextContent(FAILURE);
+      expect(within(banner).getByTestId("intake-retry")).toHaveTextContent("Try again");
       await user.click(within(banner).getByTestId("intake-retry"));
       await waitFor(() =>
         expect(postedCalls(harness, "/projects/proj_beacon/intake/retry")).toHaveLength(1),
@@ -145,7 +147,7 @@ describe("Project page", () => {
         expect(screen.getByTestId("intake-banner")).toHaveAttribute("data-state", "drafting"),
       );
       expect(screen.getByTestId("intake-banner")).toHaveTextContent(
-        "Drafting the plan from your brief",
+        "Drafting the plan from your brief…",
       );
       // The daemon files the plan: the page follows without a reload.
       harness.daemon.state.intake.proj_beacon = intake("pending");
@@ -154,12 +156,35 @@ describe("Project page", () => {
         { timeout: 6000 },
       );
       expect(screen.getByTestId("intake-banner")).toHaveTextContent(
-        "The plan from your brief waits for your approval in the Inbox.",
+        "Waiting for you: approve the plan.",
       );
       expect(
-        within(screen.getByTestId("intake-banner")).getByRole("link", { name: "Inbox" }),
+        within(screen.getByTestId("intake-banner")).getByRole("link", { name: "Open" }),
       ).toHaveAttribute("href", "/inbox");
     }, 15_000);
+
+    it("a rejected plan says so, and Draft a new plan drafts one again from the brief (design §3.3)", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.intake.proj_beacon = {
+        ...intake("pending"),
+        state: "rejected" as never,
+        outcome: "rejected",
+      };
+      renderApp("/projects/proj_beacon", harness);
+      const banner = await screen.findByTestId("intake-banner");
+      expect(banner).toHaveAttribute("data-state", "rejected");
+      expect(banner).toHaveTextContent("You rejected the plan. Nothing was written.");
+      // No request id, no time stamp (design §5).
+      expect(banner).not.toHaveTextContent(/req_|T\d\d:\d\d/);
+      await user.click(within(banner).getByRole("button", { name: "Draft a new plan" }));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/projects/proj_beacon/intake/retry")).toHaveLength(1),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("intake-banner")).toHaveAttribute("data-state", "drafting"),
+      );
+    });
 
     it("a project without an intake shows no banner", async () => {
       renderApp("/projects/proj_atlas");

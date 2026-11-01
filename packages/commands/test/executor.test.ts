@@ -24,7 +24,7 @@ function refused(r: ExecuteResult): Extract<ExecuteResult, { status: "refused" }
 }
 
 describe("CommandExecutor", () => {
-  it("low risk acts at once, writes the change log and posts the sentence to the activity log and the chat", async () => {
+  it("low risk acts at once, writes the change log and posts the sentence to the activity log and the chat, never as an Inbox echo of the person's own words (design §5.11)", async () => {
     const w = await world();
     const r = done(
       await w.executor.execute({
@@ -54,9 +54,24 @@ describe("CommandExecutor", () => {
     const events = await w.store.event.list(w.conversation.id);
     expect(events.map((e) => e.type)).toEqual(["change"]);
     expect(events[0]?.payload).toMatchObject({ sentence: r.sentence, changeLogId: r.changeLogId });
+    // The person's own command (a project switch they said) is in Changes and the chat, not
+    // echoed to their Inbox (design §3.8 Updates, §5.11).
     const inbox = await w.store.message.inbox({ humanId: w.human.id });
-    expect(inbox.map((m) => m.body)).toEqual([r.sentence]);
-    expect(inbox[0]?.from_agent_id).toBe(w.agent.id);
+    expect(inbox).toEqual([]);
+    // A change the agent makes by itself is news: it goes to the person's Inbox.
+    const byAgent = done(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { project: "pharma" },
+        ctx: {
+          ...w.ctx({ wordsUsed: "switch back", source: "voice" }),
+          actor: { kind: "agent", id: w.agent.id },
+        },
+      }),
+    );
+    const after = await w.store.message.inbox({ humanId: w.human.id });
+    expect(after.map((m) => m.body)).toEqual([byAgent.sentence]);
+    expect(after[0]?.from_agent_id).toBe(w.agent.id);
     await w.store.close();
   });
 

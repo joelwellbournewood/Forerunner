@@ -121,7 +121,9 @@ describe("the state service refuses an answer a structured card cannot act on (U
       results: { status: string; code?: string; message?: string }[];
     }>(res);
     expect(results[0]).toMatchObject({ status: "rejected", code: "validation" });
-    expect(results[0]?.message).toContain("Choose one of: accept, revise, cancel");
+    expect(results[0]?.message).toContain(
+      "Choose one of: Accept the work, Send it back, Cancel task",
+    );
     expect((await h.store.humanRequest.mustGet(row.id)).status).toBe("open");
   });
 

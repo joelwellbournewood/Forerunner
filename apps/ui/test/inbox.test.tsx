@@ -2,6 +2,7 @@ import { ANSWER_CARD_KEYS } from "@forerunner/runtime/wiring/request-answers";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { actionsFor } from "../src/lib/task-actions.ts";
 import {
   intakeCardOf,
   PERSON_QUESTIONS_KEY_PREFIX,
@@ -17,7 +18,7 @@ describe("Inbox", () => {
     expect(sortMessages(MESSAGES).map((m) => m.id)).toEqual(["msg_1", "msg_2"]);
   });
 
-  it("renders requests blocking first with their options and context", async () => {
+  it("Needs you lists the cards blocking first, each with its options; no risk or kind badges, no change-card JSON (design §3.8)", async () => {
     renderApp("/inbox");
     const requests = await screen.findAllByTestId("request");
     expect(requests).toHaveLength(2);
@@ -25,14 +26,34 @@ describe("Inbox", () => {
     expect(requests[0]).toHaveAttribute("data-request-id", "req_1");
     expect(requests[1]).toHaveAttribute("data-blocking", "false");
     const first = within(requests[0] as HTMLElement);
-    expect(first.getByText(/Deploy the search preview/)).toBeInTheDocument();
+    // The card's title is its first sentence, the rest its body.
+    expect(first.getByTestId("request-title")).toHaveTextContent(
+      "Deploy the search preview to staging",
+    );
+    expect(first.getByTestId("request-body")).toHaveTextContent(
+      "This costs about CHF 0.40 of runner time.",
+    );
     expect(first.getAllByTestId("option").map((b) => b.textContent)).toEqual([
       "Approve",
       "Reject",
       "Ask me later",
     ]);
-    expect(first.getByText("medium risk")).toBeInTheDocument();
-    expect(screen.getByTestId("blocking-count")).toHaveTextContent("1 blocking");
+    // Risk and kind are not badges any more; the card JSON is never shown.
+    expect(first.queryByText("medium risk")).toBeNull();
+    expect(first.queryByText("approval")).toBeNull();
+    expect(screen.queryByText("Change card")).toBeNull();
+    expect(screen.queryByText(/"reversible"/)).toBeNull();
+    // Every open card needs you, and the heading counts them all.
+    expect(screen.getByTestId("needs-you-heading")).toHaveTextContent("Needs you (2)");
+  });
+
+  it("a text box only where free text is accepted: a question takes words, an approval only its options (design §3.8)", async () => {
+    renderApp("/inbox");
+    const requests = await screen.findAllByTestId("request");
+    const byId = (id: string) =>
+      requests.find((r) => r.getAttribute("data-request-id") === id) as HTMLElement;
+    expect(within(byId("req_1")).queryByTestId("free-text")).toBeNull();
+    expect(within(byId("req_2")).getByTestId("free-text")).toBeInTheDocument();
   });
 
   it("every card names its task and its project (U-073)", async () => {
@@ -51,15 +72,14 @@ describe("Inbox", () => {
         "href",
         "/projects/proj_atlas",
       );
-      // The task opens the project's Tasks tab.
-      expect(within(within(r).getByTestId("request-task")).getByRole("link")).toHaveAttribute(
-        "href",
-        "/projects/proj_atlas/tasks",
-      );
     }
+    // The task opens its drawer on the project's Tasks tab.
+    expect(
+      within(within(byId("req_1")).getByTestId("request-task")).getByRole("link"),
+    ).toHaveAttribute("href", "/projects/proj_atlas/tasks?task=task_2");
   });
 
-  it("posts the chosen option with the request version and drops the request from the list", async () => {
+  it("posts the chosen option with the request version; the card is replaced by its Done line and listed under Answered", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/inbox", harness);
@@ -71,8 +91,16 @@ describe("Inbox", () => {
       answer: "Approve",
     });
     await waitFor(() => expect(screen.getAllByTestId("request")).toHaveLength(1));
-    expect(screen.getByTestId("blocking-count")).toHaveTextContent("0 blocking");
-    expect(screen.queryByTestId("inbox-badge")).not.toBeInTheDocument();
+    expect(screen.getByTestId("done-line")).toHaveTextContent('Done: You answered "Approve".');
+    expect(screen.getByTestId("needs-you-heading")).toHaveTextContent("Needs you (1)");
+    expect(screen.getByTestId("inbox-badge")).toHaveTextContent("1");
+    // What was answered stays readable under Answered.
+    const answered = within(screen.getByTestId("answered"));
+    expect(answered.getByText("Answered (1)")).toBeInTheDocument();
+    expect(answered.getByTestId("answered-request")).toHaveTextContent(
+      "Deploy the search preview to staging",
+    );
+    expect(answered.getByTestId("answered-request")).toHaveTextContent('You answered "Approve".');
   });
 
   it("sends a free-text answer", async () => {
@@ -90,39 +118,34 @@ describe("Inbox", () => {
     });
   });
 
-  it("a typed answer that is none of a card's options shows the options under the card, which stays open (U-034)", async () => {
+  it("an answer the card cannot act on shows its options under the card, which stays open (U-034)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/inbox", harness);
     const requests = await screen.findAllByTestId("request");
     const card = requests[0] as HTMLElement;
     expect(card).toHaveAttribute("data-request-id", "req_1");
-    const shown = within(card)
-      .getAllByTestId("option")
-      .map((b) => b.textContent);
-    await user.type(within(card).getByTestId("free-text"), "maybe next week");
-    await user.click(within(card).getByTestId("send-free-text"));
+    // An approval takes only its options: there is no box to type something else into.
+    expect(within(card).queryByTestId("free-text")).toBeNull();
+    // The card changed behind the page (another device): the clicked option is none of its
+    // options now, and the daemon refuses it with the ones it has.
+    const stored = harness.daemon.state.requests.find((r) => r.id === "req_1");
+    if (stored) stored.options = ["Approve now", "Reject", "Later"];
+    await user.click(within(card).getByRole("button", { name: "Approve" }));
     // The person reads what happened and what to do, under the card they answered.
     expect(await within(card).findByRole("alert")).toHaveTextContent(
-      `Choose one of: ${shown.join(", ")}`,
+      "Choose one of: Approve now, Reject, Later",
     );
     expect(postedCalls(harness, "/requests/req_1/answer")[0]?.body).toEqual({
       version: 1,
-      answer: "maybe next week",
+      answer: "Approve",
     });
     expect(harness.daemon.state.requests.find((r) => r.id === "req_1")?.status).toBe("open");
     expect(screen.getAllByTestId("request")).toHaveLength(2);
-    expect(screen.getByTestId("blocking-count")).toHaveTextContent("1 blocking");
-
-    // The same card takes a typed option, whatever its case.
-    await user.clear(within(card).getByTestId("free-text"));
-    await user.type(within(card).getByTestId("free-text"), "approve");
-    await user.click(within(card).getByTestId("send-free-text"));
-    await waitFor(() => expect(screen.getAllByTestId("request")).toHaveLength(1));
-    expect(harness.daemon.state.requests.find((r) => r.id === "req_1")?.status).toBe("answered");
+    expect(screen.getByTestId("needs-you-heading")).toHaveTextContent("Needs you (2)");
   });
 
-  it("reloads when the install stream reports a new blocking count", async () => {
+  it("reloads when the install stream reports a new count", async () => {
     const harness = createHarness();
     renderApp("/inbox", harness);
     expect(await screen.findAllByTestId("request")).toHaveLength(2);
@@ -138,14 +161,15 @@ describe("Inbox", () => {
     expect(screen.getAllByTestId("request")).toHaveLength(2);
     // ... and the only signal the UI gets is `inbox.changed` on /events, which the provider
     // turns into this dispatch.
-    harness.store.dispatch({ type: "blockingCount", count: 0 });
+    harness.store.dispatch({ type: "blockingCount", count: 1 });
     await waitFor(() => expect(screen.getAllByTestId("request")).toHaveLength(1));
-    expect(screen.getByTestId("blocking-count")).toHaveTextContent("0 blocking");
+    expect(screen.getByTestId("needs-you-heading")).toHaveTextContent("Needs you (1)");
     expect(screen.getAllByTestId("request")[0]).toHaveAttribute("data-request-id", "req_2");
   });
 
-  it("renders an intake proposal (spec A.2) as a readable plan card with its options", async () => {
-    const harness = createHarness();
+  it("the plan card shows the plan once: the tasks in order, who does each, the cost, Needs Docker; options that say what they do (design §3.3)", async () => {
+    // Docker is not running on this computer: a full-review task says it needs it.
+    const harness = createHarness({ sandbox: { state: "not_running" } });
     harness.daemon.state.requests.unshift({
       id: "req_intake",
       projectId: "proj_atlas",
@@ -213,44 +237,55 @@ describe("Inbox", () => {
     });
     renderApp("/inbox", harness);
     const card = await screen.findByTestId("intake-card");
-    const milestones = within(card).getByTestId("intake-milestones");
-    expect(milestones).toHaveTextContent("Foundations");
-    expect(milestones).toHaveTextContent("by 2026-11-01");
-    expect(milestones).toHaveTextContent("Scaffold the repository");
-    expect(milestones).toHaveTextContent("project default review, priority high, coder");
-    expect(milestones).toHaveTextContent("Set up CI");
-    expect(milestones).toHaveTextContent(
-      'full review (tier 2), priority medium, after "Scaffold the repository"',
-    );
-    const docs = within(card).getByTestId("intake-docs");
-    expect(docs).toHaveTextContent("Docs (2): README.md, docs/overview.md");
-    expect(docs).toHaveTextContent("as a pull request");
-    const first = within(card).getByTestId("intake-first-session");
-    // Money in CHF (U-074).
-    expect(first).toHaveTextContent("First session (CHF 0.52): Scaffold first.");
-    expect(first).toHaveTextContent("Scaffold the repository (~CHF 0.32)");
-    expect(first).toHaveTextContent("Set up CI (~CHF 0.20)");
-    expect(card).toHaveTextContent(
-      "Planning call: CHF 0.01. Nothing is written until you approve.",
-    );
-    expect(card).not.toHaveTextContent("USD");
-    // The request keeps its ordinary controls: the options and the raw card behind details.
     const request = card.closest('[data-testid="request"]') as HTMLElement;
     expect(request).toHaveAttribute("data-request-id", "req_intake");
+    // Design §3.3: the card names the project and says nothing is written before approval.
+    expect(within(request).getByTestId("request-title")).toHaveTextContent(
+      'Plan for "Atlas": 2 tasks',
+    );
+    expect(within(request).getByTestId("request-body")).toHaveTextContent(
+      "Nothing is written until you approve it.",
+    );
+    // The plan once: the tasks in order, who does each, what each costs (CHF, U-074), what it
+    // comes after, and "Needs Docker" beside a full-review task while Docker is not ready.
+    const tasks = within(card).getAllByTestId("intake-task");
+    expect(tasks.map((t) => t.textContent)).toEqual([
+      "Scaffold the repository · coder · about CHF 0.32",
+      'Set up CI · the agent chooses who · about CHF 0.20 · after "Scaffold the repository"Needs Docker',
+    ]);
+    expect(within(card).getByTestId("intake-total")).toHaveTextContent(
+      "About CHF 0.52 for these tasks; the docs go to the project's repository as a pull request.",
+    );
+    // Not three times (the steps, the milestones, the first session), no doc list, no JSON.
+    expect(request).not.toHaveTextContent("Milestone:");
+    expect(request).not.toHaveTextContent("First session");
+    expect(request).not.toHaveTextContent("docs/overview.md");
+    expect(request).not.toHaveTextContent("USD");
+    expect(within(request).queryByText("Change card")).toBeNull();
+    // Each option says what it does (design §3.3).
+    const options = within(request).getAllByTestId("option");
+    expect(options.map((b) => b.textContent)).toEqual([
+      "Approve and start",
+      "Change the plan",
+      "Reject",
+    ]);
     expect(
       within(request)
-        .getAllByTestId("option")
-        .map((b) => b.textContent),
-    ).toEqual(["approve", "reject"]);
-    expect(within(request).getByText("Change card")).toBeInTheDocument();
+        .getAllByTestId("option-explain")
+        .map((e) => e.textContent),
+    ).toEqual([
+      "Writes these 2 tasks and starts working on them now.",
+      "Tell the agent what to change; it drafts a new plan for you to approve.",
+      "Nothing is written. You can draft a new plan later from the project page.",
+    ]);
     // Other requests render no intake card.
     expect(screen.getAllByTestId("intake-card")).toHaveLength(1);
   });
 
-  it("the plan card shows the drafted decision doc's text before you approve (U-073)", async () => {
+  it("the plan card shows the drafted decision as text, never raw markdown, before you approve (U-073, design §3.3)", async () => {
     const harness = createHarness();
     const decision =
-      "# 0001: Stack and hosting\n\nWe use TypeScript with Hono, hosted on Cloudflare Workers,\nbecause the brief asks for a small API close to its users.";
+      "# 0001: Stack and hosting\n\nWe use **TypeScript** with Hono, hosted on Cloudflare Workers,\nbecause the brief asks for a small API close to its users.\n\n## Why\n\n- Small\n- Close to users";
     harness.daemon.state.requests.unshift({
       id: "req_intake_doc",
       projectId: "proj_atlas",
@@ -287,15 +322,16 @@ describe("Inbox", () => {
     });
     renderApp("/inbox", harness);
     const card = await screen.findByTestId("intake-card");
-    const texts = within(card).getAllByTestId("intake-doc");
-    // The decision doc comes first and is open: its text is readable without a click.
-    expect(texts[0]).toHaveTextContent("Decision: docs/decisions/0001-stack.md");
-    expect(texts[0]).toHaveAttribute("open");
-    expect(within(texts[0] as HTMLElement).getByText(/hosted on Cloudflare Workers/)).toBeVisible();
-    // The other drafted docs are there too, collapsed.
-    expect(texts[1]).toHaveTextContent("README.md");
-    expect(texts[1]).not.toHaveAttribute("open");
-    expect(texts[1]).toHaveTextContent("A search for the docs.");
+    // The decision is open and readable without a click, as text.
+    const text = within(card).getByTestId("intake-decision");
+    expect(text).toHaveAttribute("open");
+    expect(within(text).getByText(/hosted on Cloudflare Workers/)).toBeVisible();
+    expect(text).toHaveTextContent("0001: Stack and hosting");
+    expect(text).toHaveTextContent("• Small");
+    expect(text).not.toHaveTextContent("#");
+    expect(text).not.toHaveTextContent("**");
+    // The other drafted docs are scaffolded without being listed.
+    expect(card).not.toHaveTextContent("A search for the docs.");
   });
 
   describe("questions only you can answer (U-022)", () => {
@@ -342,7 +378,8 @@ describe("Inbox", () => {
       renderApp("/inbox", harness);
       const form = await screen.findByTestId("person-questions");
       const request = form.closest('[data-testid="request"]') as HTMLElement;
-      expect(request).toHaveTextContent('"Choose the hosting" needs your answers');
+      // The card names the task as it is now (its title on the Tasks tab).
+      expect(request).toHaveTextContent('"Index the documentation pages" needs your answers');
       const fields = within(form).getAllByTestId("person-answer");
       expect(fields).toHaveLength(2);
       expect(within(form).getByText("Which hosting provider should the site use?")).toBeVisible();
@@ -368,25 +405,229 @@ describe("Inbox", () => {
       expect(harness.daemon.state.tasks.find((t) => t.id === "task_1")?.status).toBe("done");
     });
 
-    it('"Cancel the task" sends the option the card shows and cancels the task', async () => {
+    it("Cancel task asks once, names what waits on the task, then sends the option and cancels it (design §3.8)", async () => {
       const user = userEvent.setup();
       const harness = createHarness();
       harness.daemon.state.requests.unshift(questionsCard());
+      // "Add the search box to the header" waits on the task.
+      const after = harness.daemon.state.tasks.find((t) => t.id === "task_2");
+      if (after) after.dependsOn = ["task_1"];
+      const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+      if (t1) t1.status = "needs_human";
       renderApp("/inbox", harness);
       const form = await screen.findByTestId("person-questions");
       const request = form.closest('[data-testid="request"]') as HTMLElement;
+      // A planned question for you: no specialist to go ahead without the answers.
       const options = within(request).getAllByTestId("option");
-      expect(options.map((b) => b.textContent)).toEqual(["Cancel the task"]);
+      expect(options.map((b) => b.textContent)).toEqual(["Cancel task"]);
+      expect(within(request).getByTestId("option-explain")).toHaveTextContent(
+        'Drops it; "Add the search box to the header" after it will be stuck.',
+      );
       await user.click(options[0] as HTMLElement);
+      // Asked once, with what it does to what waits; nothing is sent yet.
+      expect(within(request).getByTestId("choice-confirm")).toHaveTextContent(
+        'Cancel "Index the documentation pages"? "Add the search box to the header" waits on it and will be stuck.',
+      );
+      expect(postedCalls(harness, "/requests/req_questions/answer")).toHaveLength(0);
+      await user.click(within(request).getByTestId("choice-confirm-yes"));
       await waitFor(() =>
         expect(postedCalls(harness, "/requests/req_questions/answer")[0]?.body).toEqual({
           version: 1,
-          answer: "Cancel the task",
+          answer: "Cancel task",
         }),
       );
       await waitFor(() =>
         expect(harness.daemon.state.tasks.find((t) => t.id === "task_1")?.status).toBe("cancelled"),
       );
+      expect(await screen.findByTestId("done-line")).toHaveTextContent(
+        'Done: "Index the documentation pages" was cancelled.',
+      );
+    });
+
+    it("a specialist's questions offer Go ahead without, which sends the option and the task goes on (design §3.8)", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      const card = questionsCard();
+      harness.daemon.state.requests.unshift({
+        ...card,
+        changeCard: {
+          ...card.changeCard,
+          source: "specialist",
+          on_answer: "ready",
+          context: "I need to know where the site will be hosted before I write the config.",
+        },
+      });
+      const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+      if (t1) t1.status = "needs_human";
+      renderApp("/inbox", harness);
+      const form = await screen.findByTestId("person-questions");
+      const request = form.closest('[data-testid="request"]') as HTMLElement;
+      // The specialist's own words, once.
+      expect(within(request).getByTestId("request-body")).toHaveTextContent(
+        'The specialist said: "I need to know where the site will be hosted before I write the config."',
+      );
+      expect(within(request).getAllByText(/where the site will be hosted before/).length).toBe(1);
+      const options = within(request).getAllByTestId("option");
+      expect(options.map((b) => b.textContent)).toEqual(["Go ahead without", "Cancel task"]);
+      expect(within(request).getAllByTestId("option-explain")[0]).toHaveTextContent(
+        "The specialist decides and says what it assumed.",
+      );
+      await user.click(options[0] as HTMLElement);
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_questions/answer")[0]?.body).toEqual({
+          version: 1,
+          answer: "Go ahead without",
+        }),
+      );
+      await waitFor(() =>
+        expect(harness.daemon.state.tasks.find((t) => t.id === "task_1")?.status).toBe("ready"),
+      );
+      expect(await screen.findByTestId("done-line")).toHaveTextContent(
+        'Done: "Index the documentation pages" goes on without your answers: a session started.',
+      );
+    });
+  });
+
+  describe("a task that failed after its tries (design §3.8)", () => {
+    /** The retry card the critic files after the last try, as `/inbox` serves it. */
+    const retryCard = () => ({
+      id: "req_retry",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_3",
+      taskTitle: "Decide the versioning scheme",
+      sessionId: "sess_1",
+      kind: "approval",
+      why: '"Decide the versioning scheme" failed 4 times. The writer said: "The work needs something I do not have here."',
+      steps: ["[high] The worker changed nothing: Do the work the brief asks for."],
+      options: ["Try again", "Mark done anyway", "Cancel task"],
+      blocking: true,
+      risk: "high" as const,
+      changeCard: {
+        key: "critic:signoff",
+        task_id: "task_3",
+        review_id: "rev_1",
+        run_id: "run_1",
+        finding_ids: ["f_1"],
+        reason: "retry_ladder_exhausted",
+        title: '"Decide the versioning scheme" failed 4 times',
+        said: "The work needs something I do not have here.",
+        said_by: "writer",
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-31T09:00:00.000Z",
+      version: 1,
+    });
+    const setUp = () => {
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(retryCard());
+      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+      if (t3) t3.status = "needs_human";
+      // "Add the search box to the header" waits on it.
+      const t2 = harness.daemon.state.tasks.find((t) => t.id === "task_2");
+      if (t2) {
+        t2.dependsOn = ["task_1", "task_3"];
+        t2.status = "ready";
+      }
+      return harness;
+    };
+    const cardOf = async () =>
+      (await screen.findAllByTestId("request")).find(
+        (r) => r.getAttribute("data-request-id") === "req_retry",
+      ) as HTMLElement;
+
+    it("names the task and how often it failed, quotes the specialist, says what waits; each option says what it does", async () => {
+      renderApp("/inbox", setUp());
+      const card = await cardOf();
+      expect(within(card).getByTestId("request-title")).toHaveTextContent(
+        '"Decide the versioning scheme" failed 4 times',
+      );
+      expect(within(card).getByTestId("request-body")).toHaveTextContent(
+        'The writer said: "The work needs something I do not have here." "Add the search box to the header" waits on it.',
+      );
+      expect(card).not.toHaveTextContent(/ladder|ceiling|attempt\(s\)|\[high\]|high risk/i);
+      expect(
+        within(card)
+          .getAllByTestId("option")
+          .map((b) => b.textContent),
+      ).toEqual(["Try again", "Mark done anyway", "Cancel task"]);
+      expect(
+        within(card)
+          .getAllByTestId("option-explain")
+          .map((e) => e.textContent),
+      ).toEqual([
+        "Starts a session that tries again; add a note if you know what to change.",
+        'Closes it although nothing passed review. "Add the search box to the header" after it will run.',
+        'Drops it; "Add the search box to the header" after it will be stuck.',
+      ]);
+      // The critic's findings are under Details, in plain words; no reply box.
+      expect(within(card).getByTestId("request-details")).toHaveTextContent(
+        "The worker changed nothing: Do the work the brief asks for.",
+      );
+      expect(within(card).queryByTestId("free-text")).toBeNull();
+    });
+
+    it("Try again sends the note with it; the card is replaced by its Done line and a session starts", async () => {
+      const user = userEvent.setup();
+      const harness = setUp();
+      renderApp("/inbox", harness);
+      const card = await cardOf();
+      await user.type(within(card).getByTestId("choice-note"), "Use dates.");
+      await user.click(within(card).getByRole("button", { name: "Try again" }));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_retry/answer")[0]?.body).toEqual({
+          version: 1,
+          answer: { choice: "Try again", note: "Use dates." },
+        }),
+      );
+      expect(await screen.findByTestId("done-line")).toHaveTextContent(
+        'Done: Trying "Decide the versioning scheme" again: a session started.',
+      );
+      expect(
+        screen.queryAllByTestId("request").map((r) => r.getAttribute("data-request-id")),
+      ).not.toContain("req_retry");
+      expect(harness.daemon.state.tasks.find((t) => t.id === "task_3")?.status).toBe("ready");
+    });
+
+    it("Mark done anyway asks once, then the task is Done: accepted without review", async () => {
+      const user = userEvent.setup();
+      const harness = setUp();
+      renderApp("/inbox", harness);
+      const card = await cardOf();
+      await user.click(within(card).getByRole("button", { name: "Mark done anyway" }));
+      expect(within(card).getByTestId("choice-confirm")).toHaveTextContent(
+        'Mark "Decide the versioning scheme" done although nothing passed review?',
+      );
+      expect(postedCalls(harness, "/requests/req_retry/answer")).toHaveLength(0);
+      await user.click(within(card).getByTestId("choice-confirm-yes"));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_retry/answer")[0]?.body).toEqual({
+          version: 1,
+          answer: "Mark done anyway",
+        }),
+      );
+      expect(await screen.findByTestId("done-line")).toHaveTextContent(
+        'Done: "Decide the versioning scheme" is done: accepted without review.',
+      );
+      // The Tasks tab says so too (design §2).
+      const tasks = await harness.client.tasks("proj_atlas");
+      expect(tasks.find((t) => t.id === "task_3")?.display?.label).toBe(
+        "Done: accepted without review",
+      );
+    });
+
+    it("on the Tasks tab the task reads Needs your decision and offers Answer, Try again and Cancel, never Go ahead without", async () => {
+      const harness = setUp();
+      const tasks = await harness.client.tasks("proj_atlas");
+      const row = tasks.find((t) => t.id === "task_3");
+      expect(row?.display).toMatchObject({
+        key: "answer",
+        label: "Needs your decision",
+        blocker: { kind: "card", requestId: "req_retry", cardKind: "retry" },
+      });
+      expect(actionsFor("answer", row)).toEqual(["answer", "try_again", "cancel"]);
     });
   });
 

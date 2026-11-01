@@ -375,9 +375,10 @@ describe("conversation agent over the command registry", () => {
       status: "done",
     });
     expect(events.some((e) => e.type === "change")).toBe(true);
-    // The sentence is posted to the project chat.
+    // The sentence is the chat's reply (above) and the conversation's event; the person's own
+    // command is not echoed to their Inbox (design §3.8 Updates, §5.11).
     const inbox = await w.store.message.inbox({ humanId: w.human });
-    expect(inbox.some((m) => m.body.includes("Raised tonight's session budget"))).toBe(true);
+    expect(inbox.some((m) => m.body.includes("Raised tonight's session budget"))).toBe(false);
     // "undo" undoes the latest change the human can still undo.
     const r3 = await w.chat("undo");
     expect(r3.reply).toContain("Undone");

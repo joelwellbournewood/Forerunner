@@ -54,7 +54,7 @@ import {
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { SETUP_ASSISTANT_PATH } from "../setup/no-model.ts";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
-import { intakeAnswer } from "../wiring/request-answers.ts";
+import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { markAnswer } from "./answer-mark.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import {
@@ -64,6 +64,7 @@ import {
   type ShapedPlan,
   shapeProjectPlan,
 } from "./project-plan.ts";
+import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
 
 /**
  * PM intake (spec A.2; ADR 0055): one model call on the planning rung turns the brief into a
@@ -87,7 +88,12 @@ export const isIntakeKey = (key: string): boolean => key.startsWith(INTAKE_KEY_P
 export const INTAKE_AUDIT_TOOL = "project.intake";
 /** Why an intake cannot run on this install: no Claude key or subscription (`unavailable`). */
 export const INTAKE_NEEDS_A_MODEL = `Planning from the brief needs a Claude key or subscription. Add one in the app: ${SETUP_ASSISTANT_PATH}, then retry.`;
-export const INTAKE_OPTIONS = ["approve", "reject"] as const;
+/**
+ * The plan card's options (design §3.3): Approve and start writes the plan and starts a
+ * session; Change the plan (with the person's words) drafts a new plan; Reject writes nothing.
+ * `intakeAnswer` also reads the words of cards filed before ("approve", "reject").
+ */
+export const INTAKE_OPTIONS = ["Approve and start", "Change the plan", "Reject"] as const;
 /** The one model call's hard cap unless `project.settings.intake_budget_usd_micro` says otherwise. */
 export const DEFAULT_INTAKE_BUDGET_USD_MICRO = 2_000_000;
 /**
@@ -334,6 +340,11 @@ export interface IntakeDeps {
    * rule: plan no task that needs the web. Absent: no rule (the executor still routes or asks).
    */
   webSpecialists?: () => boolean;
+  /**
+   * "Approve and start" (design §3.3): the approved plan's first session starts (or queues)
+   * through the daemon's scheduler. Absent in a one-shot: the plan is written, nothing starts.
+   */
+  start?: StartPort;
 }
 
 /** The planning rule when no specialist reaches the web on this install (U-044). */
@@ -510,6 +521,9 @@ export class IntakeService {
         error: String(failure?.error ?? ""),
       };
     }
+    // "Change the plan" answered with no new draft running and none filed after it: the draft
+    // did not finish (the daemon closed meanwhile); Retry drafts it again.
+    const changeLost = outcome === "changed";
     const state: IntakeState =
       row.status === "open"
         ? "pending"
@@ -517,7 +531,7 @@ export class IntakeService {
           ? "approved"
           : outcome === "rejected"
             ? "rejected"
-            : outcome === "apply_failed"
+            : outcome === "apply_failed" || changeLost
               ? "failed"
               : appliedAt
                 ? "skipped"
@@ -529,7 +543,12 @@ export class IntakeService {
       outcome,
       appliedAt,
       docs: (card.docs as IntakeDocsOutcome | undefined) ?? null,
-      error: outcome === "apply_failed" && typeof card.error === "string" ? card.error : null,
+      error:
+        outcome === "apply_failed" && typeof card.error === "string"
+          ? card.error
+          : changeLost
+            ? "The new plan with your changes was not drafted: Forerunner closed before it was done."
+            : null,
     };
   }
 
@@ -579,10 +598,10 @@ export class IntakeService {
    * time; a failure is logged and recorded on the project's summary cache (`intake.failed_at`,
    * `intake.error`) so the status route reports it.
    */
-  enqueue(projectId: string): Promise<IntakeProposalOutcome> {
+  enqueue(projectId: string, opts: { brief?: string } = {}): Promise<IntakeProposalOutcome> {
     const running = this.jobs.get(projectId);
     if (running) return running;
-    const job = this.propose(projectId)
+    const job = this.propose(projectId, opts)
       .catch(async (e: unknown) => {
         this.logger.warn("automatic intake failed", { projectId, error: errorMessage(e) });
         await this.recordFailure(projectId, errorMessage(e));
@@ -607,7 +626,9 @@ export class IntakeService {
    */
   async retry(projectId: string): Promise<IntakeStatus> {
     const current = await this.status(projectId);
-    if (current.state !== "failed" && current.state !== "none") return current;
+    // Design §3.3: after a Reject the project page offers "Draft a new plan", which is this.
+    if (current.state !== "failed" && current.state !== "none" && current.state !== "rejected")
+      return current;
     if (!this.deps.provider || !this.deps.pricing)
       throw new ForerunnerError("unavailable", INTAKE_NEEDS_A_MODEL);
     void this.enqueue(projectId).catch(() => undefined);
@@ -1092,6 +1113,31 @@ export class IntakeService {
         await skip("project_missing");
         continue;
       }
+      if (answer === "change") {
+        // Design §3.3 "Change the plan": the person's words go with the brief into a new
+        // draft, which lands in the Inbox as a new plan card; nothing of this one is written.
+        const text = intakeChangeText(row.answer) ?? "";
+        const changed = await store.transaction(async (tx) =>
+          markAnswer(tx, clock, row, "changed", { change: text }),
+        );
+        if (changed) {
+          const cached = (project.summary_cache as { brief?: unknown }).brief;
+          const brief = typeof cached === "string" && cached.trim() ? cached.trim() : project.goal;
+          await store.auditLog.append({
+            tool: INTAKE_AUDIT_TOOL,
+            allowed: true,
+            human_id: this.deps.human.id,
+            agent_id: this.deps.agent.id,
+            input_summary: cut(`intake request ${row.id}: the person asked for changes`),
+            result_summary: cut("nothing from the proposal written; a new plan is drafted"),
+          });
+          void this.enqueue(project.id, {
+            brief: `${brief}\n\nThe person read the first plan and asked for this change: ${text}`,
+          }).catch(() => undefined);
+          out.rejected++;
+        }
+        continue;
+      }
       if (answer === "reject") {
         // The mark is one conditional write (`markAnswer`): a row another producer marked
         // meanwhile is left to it, with no second note and no second scaffold. Then the drafts
@@ -1103,11 +1149,12 @@ export class IntakeService {
         );
         if (rejected) {
           const scaffolded = await this.scaffoldAfterRejection(project);
+          // In words (design §5): no request id, no ISO time.
           await store.queue.enqueue({
             project_id: project.id,
             human_id: this.deps.human.id,
             kind: "note",
-            text: `Intake proposal ${row.id} was rejected on ${clock.nowIso()}: nothing from the proposal was written${scaffolded}. The brief stays queued; run the intake again with a revised brief or plan by hand.`,
+            text: `The person rejected the plan drafted from the brief: nothing from it was written${scaffolded}. A new plan can be drafted from the project page, or tasks added by hand.`,
             priority: 7,
             status: "queued",
             author_agent: this.deps.agent.id,
@@ -1138,6 +1185,17 @@ export class IntakeService {
           projectId: project.id,
           ...written,
         });
+        // "Approve and start" (design §3.3): the first session of the approved plan starts now
+        // (or after the session that runs); the card records it for its Done line.
+        await recordStart(
+          store,
+          row.id,
+          await resumeWork(store, this.deps.start, {
+            agentId: this.deps.agent.id,
+            projectId: project.id,
+            reason: "you approved the plan",
+          }),
+        );
       } catch (e) {
         if (e instanceof ForerunnerError && e.details.reason === "applied_elsewhere") {
           // Another producer (the other install's sync) marked the row first; its transaction

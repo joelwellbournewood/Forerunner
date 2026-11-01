@@ -172,6 +172,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
+      // No scheduler: "Approve and start" (design §3.3) writes the plan and starts nothing
+      // here, so the cases below read the approved tasks as they were written. The start is
+      // tested on the composed daemon in apps/ui/test/real-daemon.test.ts ("the plan card").
+      startServices: false,
     });
     ({ app, token } = createDaemonApp(rt));
   }, 120_000);
@@ -217,7 +221,8 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         human_id: rt.human.id,
         project_id: projectId,
         author_agent: rt.agent.id,
-        options: ["approve", "reject"],
+        // Design §3.3: each option says what it does.
+        options: ["Approve and start", "Change the plan", "Reject"],
       });
       const c = row.change_card as JsonObject;
       expect(c.key).toBe(intakeKey(projectId));
@@ -449,7 +454,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const queued = await rt.store.queue.pending(projectId);
     const note = queued.find((q) => q.text.includes("rejected"));
     expect(note).toMatchObject({ kind: "note", author_agent: rt.agent.id });
-    expect(note?.text).toContain(requestId);
+    // In words (design §5): no request id, no time stamp; the audit row ties them.
+    expect(note?.text).toContain("The person rejected the plan");
+    expect(note?.text).not.toContain(requestId);
+    expect(note?.text).not.toMatch(/T\d\d:\d\d:\d\d/);
     // The note says what the rejection did about the docs: since the G.5 review a rejection
     // scaffolds the standard set when the creation deferred it, so the note names the doc set's
     // outcome (scaffolded now, or already in place) rather than a missing one.

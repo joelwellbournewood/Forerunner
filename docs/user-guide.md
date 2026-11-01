@@ -77,7 +77,9 @@ again as soon as the service answers.
   status says what is going on: **Ready**, **Waiting for "Write the README"**, **Stuck: "X"
   failed**, **Waiting for Docker** (a full review needs Docker, and it is not running), **Running
   (Alice, 2 min)**, **Being reviewed**, **Needs your answer** (its card is in the Inbox),
-  **Paused by you**, **Failed: why**, **Done**, **Cancelled**. The rows follow a running session
+  **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
+  and the row offers **Answer**, **Try again** and **Cancel**), **Paused by you**, **Failed:
+  why**, **Done** (or **Done: accepted without review**), **Cancelled**. The rows follow a running session
   by themselves. Each task offers what fits its status, each with a line saying what it does:
   **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
   and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
@@ -138,9 +140,12 @@ decides the first session: it runs those tasks, in that order, and later session
 priority.
 
 When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox for your
-approval. Above the project's tabs you see where it stands: being drafted, waiting in the Inbox,
-or, if drafting failed, what went wrong and a **Retry** button. Without a Claude key the failure
-says so; add one in Settings → Accounts and keys → Open the setup assistant, then Retry.
+approval (see "Inbox" below: Approve and start, Change the plan, Reject). Above the project's
+tabs you see where it stands: "Drafting the plan from your brief…", "Waiting for you: approve
+the plan" with **Open**, "Planning failed" with what went wrong and **Try again**, or "You
+rejected the plan. Nothing was written." with **Draft a new plan**. Without a Claude key the
+failure says so; add one in Settings → Accounts and keys → Open the setup assistant, then Try
+again.
 
 With the GitHub Projects mirror turned on in a project's settings, Forerunner asks once in the
 Inbox before it creates the board. **Do not mirror this project** turns the mirror off for that
@@ -220,23 +225,44 @@ ends it the same way.
 
 ## Inbox
 
-Human requests and agent messages across all projects, blocking ones first. A request shows the
-context, why it matters, the options (multiple choice when possible) and whether it blocks work.
-Every card names its project and, when it is about a task, the task (**Task:** with a link to
-the project's Tasks tab). The plan Forerunner drafts from a new project's brief shows the
-documents it would write, each behind its own heading: the decision document (why this stack,
-this hosting, this repository) is open, so you read it before you approve.
-Answered decisions go to the decision log and are not asked again unless something changes.
-On a card whose answer must be one of its options (a sign-off, a plan, an approval), a typed
-answer that is none of them is not taken: the card stays and says "Choose one of: …" with its
-options; type one of them or click its button. A question that asks for your own words takes
-any text.
-When the critic cannot review a task (its model is unreachable, for example), the task waits
-in review and a card asks you: **rework** runs it again in the next session and the critic
-reviews the new run, **accept** takes the work as it is without a review, **cancel** cancels
-the task.
-Each unread message has **Mark read**; **Mark all read** over the messages marks every unread
-one at once.
+Everything that waits on you, and short news. Two lists:
+
+- **Needs you (n)**: one card per thing only you can settle, blocking ones first. The number is
+  the same in the header's Inbox badge. Each card says which project and task it is about (the
+  task opens on the Tasks tab), what is going on in one or two sentences (in the specialist's own
+  words where there are any, and which tasks wait on it), and its buttons. Each button says what
+  it does on the line beside it. A button that drops work or closes it without a review asks once
+  before it acts. A text box appears only where your own words are taken (a question); other
+  cards take their buttons. Longer detail, such as what the critic found, is under **Details**.
+- **Updates**: one line per thing that happened (a session's result, something the app did by
+  itself), with **Mark read** and **Mark all read**.
+
+After you answer, the card is replaced by one line saying what happens next ("Done: Trying
+"Style the page" again: a session started."). **Answered** at the bottom lists what you answered
+lately and what came of it, and cards that were closed because you moved their task.
+
+The cards you meet most:
+
+- **The plan** from a new project's brief: the tasks in order, who does each, about what each
+  costs, "Needs Docker" beside a task that needs a full review while Docker is not running, and
+  the decision it records as text. **Approve and start** writes the tasks and starts working on
+  them now. **Change the plan** opens a box: say what to change and the agent drafts a new plan
+  for you to approve. **Reject** writes nothing; the project page then says "You rejected the
+  plan. Nothing was written." with **Draft a new plan**.
+- **A task that failed**: after its tries (the critic sent it back each time) or when its run
+  failed ("Claude did not answer"), one card, never one per try. **Try again** starts a session
+  that tries again; type a note first if you know what to change, and the next attempt reads it.
+  **Mark done anyway** closes it although nothing passed review (asked once; the task then reads
+  "Done: accepted without review") and the tasks after it can run. **Cancel task** drops it and
+  says which tasks after it will be stuck.
+- **The critic's sign-off** on a task that needs your review: **Accept the work**, **Send it
+  back** (a session reworks it with the critic's findings), **Cancel task**.
+- **Questions** for you or from a specialist: see "When Forerunner needs you" below.
+
+Answering resumes work: every answer that makes a task runnable starts a session of its project,
+or queues one behind the session that runs. Answered decisions go to the decision log and are not
+asked again unless something changes. If an answer cannot be taken (the card changed on another
+device), the card stays and says "Choose one of: …" with its options.
 
 ## When Forerunner needs you
 
@@ -256,7 +282,9 @@ Type your answers and click **Send answers**; leave a question blank if you have
 Your answers are written to the project's decision record (`docs/decisions/0001-…` in the
 project's workspace folder) and the decision log. A task planned for you is then
 done; a task a specialist was working on goes back to ready, a session starts, and its next run
-gets your answers. **Cancel the task** cancels it instead. You can also answer in your own words
+gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
+and say in its report what it assumed; the task goes on in a session. **Cancel task** cancels it
+instead (asked once, naming the tasks that wait on it). You can also answer in your own words
 from the phone; one text then answers all the questions.
 
 ## Autonomy and budgets
@@ -379,8 +407,9 @@ The setup guide says what to configure. Pairing a phone needs Forerunner's share
 first (a server of yours that the phone and the PC both reach); until it is set up, Settings →
 Devices shows the steps still missing and takes the service's admin token. See "What works and what doesn't yet" above for how
 far each was tested. On the phone's **Reviews** tab, **Approve** on a reviewed task does what
-the card's accept (or yes) button does in the Inbox, and **Reject** what its revise / rework
-(or no) button does: the work goes back for another attempt with the findings to address.
+the card's Accept the work / Mark done anyway (or yes) button does in the Inbox, and **Reject**
+what its Send it back / Try again (or no) button does: the work goes back for another attempt
+with the findings to address.
 Speech on this PC is
 chosen in Settings → Voice (or `fr setup` from a source checkout): none, CPU (any PC, slower replies)
 or GPU (NVIDIA, fastest), each with its disk size shown. A cloud voice provider (Deepgram, Without it, Talk says "install voice in
