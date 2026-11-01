@@ -1,4 +1,6 @@
 // Smoke journey: a person without keys gets a brief planned and worked on, through the UI.
+// The plan card's Approve and start writes the tasks and starts a session at once (design §3.3,
+// §3.8); the journey watches that session, then presses Start only while tasks are left.
 //   node scripts/bench/start.mjs --name smoke --daemon-port 47310 --ui-port 47311 --fresh
 //   node scripts/bench/journeys/smoke.cjs smoke
 //   node scripts/bench/stop.mjs --name smoke
@@ -100,7 +102,8 @@ async function createProject(page) {
   const waited = await until(
     async () => {
       const t = await body(page);
-      if (/waits for your approval in the Inbox/.test(t)) return "pending";
+      if (/Waiting for you: approve the plan|waits for your approval in the Inbox/.test(t))
+        return "pending";
       if (/plan(ning)? failed|could not plan|intake failed/i.test(t)) return "failed";
       const s = await api(NAME, "GET", `/projects/${encodeURIComponent(projectId)}/intake`);
       if (s.state === "failed") return "failed";
@@ -123,28 +126,33 @@ async function approve(page, projectId) {
   await page.getByRole("link", { name: "Inbox", exact: false }).first().click();
   await page.waitForTimeout(1500);
   let text = await step(page, "inbox with the plan");
-  const card = page.getByTestId("request").filter({ hasText: "Intake for" });
-  if (!check("the Inbox shows the intake card", (await card.count()) === 1)) {
+  const card = page.getByTestId("request").filter({ hasText: `Plan for "${PROJECT}"` });
+  if (!check("the Inbox shows the plan card", (await card.count()) === 1)) {
     finding(
-      "intake card missing from the Inbox",
-      "the project said the plan waits in the Inbox, but no intake card was found",
+      "plan card missing from the Inbox",
+      "the project said the plan waits in the Inbox, but no plan card was found",
       [lastStep()],
     );
-    return;
+    return null;
   }
   check(
-    "the intake card shows the plan's tasks by title",
-    /Create the page skeleton in index\.html/.test(text) && /Proposed plan/.test(text),
+    "the plan card shows the plan's tasks by title",
+    new RegExp(`Plan for "${PROJECT}": \\d+ tasks`).test(text) &&
+      /Create the page skeleton in index\.html/.test(text),
   );
-  if (/Change card/.test(text))
-    note('the intake card also has a "Change card" disclosure with the raw JSON of the proposal');
-  await card.getByRole("button", { name: "approve", exact: true }).click();
+  check(
+    "the plan card has no change-card JSON or risk badges",
+    !/Change card/.test(text) && !/high risk · approval/.test(text),
+  );
+  const sessionsBefore = new Set((await projectSessions(projectId)).map((x) => x.id));
+  await card.getByRole("button", { name: "Approve and start", exact: true }).click();
   await page.waitForTimeout(2500);
   text = await step(page, "inbox after approve");
-  if (!/approved|plan (is )?written|tasks? (were )?(added|written)/i.test(text))
+  const done = /Done: Plan approved: (\d+) tasks written; working on them\./.exec(text);
+  if (!check("approving says what happened", !!done, done ? done[0] : ""))
     finding(
       "approving the plan gives no confirmation",
-      `after "approve" the card disappears and the Inbox reads "${(/Nothing waits on you\./.exec(text) || ["(other text)"])[0]}"; nothing says the plan was written, how many tasks were added, or that the next step is "Start session" on the project`,
+      `after "Approve and start" the Inbox reads "${(/Nothing waits on you\./.exec(text) || ["(other text)"])[0]}"; nothing says the plan was written or that work started`,
       [lastStep()],
     );
   const tasks = await until(
@@ -158,6 +166,16 @@ async function approve(page, projectId) {
     "the approved plan's tasks",
   ).catch(() => []);
   check("approving writes the plan's tasks", tasks.length >= 3, `${tasks.length} task(s)`);
+  // Approve and start starts a session of the project without a Start click (design §3.3).
+  const started = await until(
+    async () =>
+      (await projectSessions(projectId)).find((x) => !sessionsBefore.has(x.id))?.id ?? null,
+    30_000,
+    1000,
+    "the session Approve and start started",
+  ).catch(() => null);
+  check("Approve and start starts a session", !!started, started ?? "no session in 30 s");
+  return started;
 }
 
 async function openProject(page, projectId, tab) {
@@ -195,6 +213,12 @@ async function runningSessions() {
   const s = await api(NAME, "GET", "/sessions");
   const list = Array.isArray(s) ? s : (s.sessions ?? []);
   return list.filter((x) => !ENDED.has(x.status));
+}
+
+async function projectSessions(projectId) {
+  const s = await api(NAME, "GET", `/sessions?projectId=${encodeURIComponent(projectId)}`);
+  const list = Array.isArray(s) ? s : (s.sessions ?? []);
+  return list.filter((x) => x.projectId === projectId);
 }
 
 /** Open the Start dialog and press Start; returns the session id, or null with the dialog's text. */
@@ -270,6 +294,22 @@ async function runSession(page, projectId, n) {
     ]);
     return { n, sessionId: null, status: "not started", changed: [] };
   }
+  return watchSession(page, n, sessionId, before, {
+    trigger: "Start",
+    notInThisSession: notIn ? notIn[1].trim().split("\n").filter(Boolean) : [],
+    shownAsRunning: willRun ? willRun[2].trim() : null,
+  });
+}
+
+/** Watch a session to its end on its page; returns what it changed. */
+async function watchSession(page, n, sessionId, before, extra) {
+  const projectId = result.projectId;
+  if (extra.trigger !== "Start") {
+    await page.goto(`${b.uiUrl}/sessions/${encodeURIComponent(sessionId)}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForTimeout(800);
+  }
   await step(page, `session ${n} started`, { waitMs: 1500 });
   const status = await until(
     async () => {
@@ -294,10 +334,9 @@ async function runSession(page, projectId, n) {
     sessionId,
     status,
     statusShown: shown,
-    notInThisSession: notIn ? notIn[1].trim().split("\n").filter(Boolean) : [],
-    shownAsRunning: willRun ? willRun[2].trim() : null,
+    ...extra,
     changed: changed.map(
-      (t) => `${t.title}: ${before.find((x) => x.id === t.id)?.status} -> ${t.status}`,
+      (t) => `${t.title}: ${before.find((x) => x.id === t.id)?.status ?? "new"} -> ${t.status}`,
     ),
     endedPageChars: endedText.length,
   };
@@ -373,15 +412,35 @@ async function chat(page, projectId) {
   try {
     await setup(page);
     const projectId = await createProject(page);
-    await approve(page, projectId);
+    const tasksBefore = await taskStates(projectId);
+    const approvedSession = await approve(page, projectId);
     await projectViaHome(page, projectId);
     await step(page, "project summary after approval");
     const planned = await tasksTab(page, projectId, "tasks after approval");
     result.tasksAfterApproval = await taskStates(projectId);
     result.taskButtonsAfterApproval = [...new Set(planned.buttons)];
 
-    // Sessions until nothing is left to run (at most six), as a person would keep pressing Start.
-    for (let i = 1; i <= 6; i++) {
+    // The session Approve and start started, then sessions until nothing is left to run (at
+    // most six in all), as a person would press Start while work is left.
+    let first = 1;
+    if (approvedSession) {
+      const rec = await watchSession(page, 1, approvedSession, tasksBefore, {
+        trigger: "Approve and start",
+      });
+      await tasksTab(page, projectId, "tasks after session 1");
+      await openProject(page, projectId, "summary");
+      const summary = await step(page, "summary after session 1");
+      const last = /Last session\n([\s\S]*?)\n(Next steps|Next session)/.exec(summary);
+      result.lastSessionText = last ? last[1].trim() : null;
+      if (rec.changed.length === 0)
+        finding(
+          "the session Approve and start started changed no task",
+          `the session ended ${rec.status} and no task changed state`,
+          [lastStep()],
+        );
+      first = 2;
+    }
+    for (let i = first; i <= 6; i++) {
       const states = await taskStates(projectId);
       if (!states.some((t) => ["ready", "in_progress", "draft"].includes(t.status))) break;
       const rec = await runSession(page, projectId, i);
@@ -410,9 +469,10 @@ async function chat(page, projectId) {
       doneCount === final.length,
       `${doneCount}/${final.length} done after ${sessionsUsed} session(s)`,
     );
-    if (sessionsUsed > 1)
+    const startClicks = result.sessions.filter((x) => x.trigger === "Start").length;
+    if (startClicks > 0)
       finding(
-        `${final.length} planned tasks needed ${sessionsUsed} separate "Start session" clicks`,
+        `${final.length} planned tasks needed ${sessionsUsed} sessions, ${startClicks} of them by a "Start session" click`,
         `each session ran only the tasks whose dependencies were done when it started (${result.sessions.map((s) => `session ${s.n}: ${s.changed.length} task(s) changed`).join("; ")}); a task unblocked during a session waited for the next manual start`,
         result.sessions.map((s) => s.sessionId),
       );
