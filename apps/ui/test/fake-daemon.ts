@@ -5616,7 +5616,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       });
       await stream.writeSSE({
         event: "inbox.changed",
-        data: JSON.stringify({ blockingCount: blockingCount() }),
+        data: JSON.stringify({ blockingCount: blockingCount(), needsYouCount: needsYouCount() }),
       });
       while (open) {
         await stream.sleep(heartbeatMs);
