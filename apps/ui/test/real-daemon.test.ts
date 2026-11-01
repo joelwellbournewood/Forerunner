@@ -112,6 +112,8 @@ describe("the UI client against the real daemon", () => {
       ["projects", () => client.projects()],
       ["project", () => client.project(projectId)],
       ["projectSummary", () => client.projectSummary(projectId)],
+      ["conversation", () => client.conversation(projectId)],
+      ["generalConversation", () => client.conversation(null)],
       ["tasks", () => client.tasks(projectId)],
       ["startCheck", () => client.startCheck(projectId)],
       ["runs", () => client.runs(projectId)],
@@ -2145,7 +2147,7 @@ describe("the UI client against the real daemon: Stop all and the chat's stop wh
     expect((await client.resume()).killActive).toBe(false);
   });
 
-  it("'stop' in the chat stops and freezes the agent: the session reads Stop all, not an error (design §4.9)", async () => {
+  it("'stop' in the chat is Stop now of the running session: 'Stopped by you', nothing frozen (design §3.9, §4.9)", async () => {
     const me = await client.me();
     const { agentId, project, one, sessionId, taskOf, ended } =
       await runningSession("Chat stop page");
@@ -2158,18 +2160,29 @@ describe("the UI client against the real daemon: Stop all and the chat's stop wh
       source: "text",
     });
     expect(reply.actions.map((a) => a.kind)).toEqual(["session.stop"]);
+    expect(reply.reply).toBe(
+      "Stopped the session on Chat stop page. What it wrote stays; the task it was on is ready again.",
+    );
     await ended();
     const view = await client.session(sessionId);
-    expect(view).toMatchObject({ stopReason: "stop_all", statusText: "Stopped: Stop all" });
-    expect(await taskOf(one.id)).toMatchObject({ status: "ready", reason: "Stopped: Stop all" });
+    expect(view).toMatchObject({ stopReason: "you", statusText: "Stopped by you" });
+    expect(await taskOf(one.id)).toMatchObject({ status: "ready", reason: "Stopped by you" });
     const events = await client.sessionEvents(sessionId);
     expect(events.map((e) => e.type)).not.toContain("session.error");
     expect(events.find((e) => e.type === "session.stopped")?.payload).toMatchObject({
-      by: "stop_all",
+      by: "you",
     });
-    // The chat's stop is the kill switch: the header shows it until Allow sessions again.
+    // Stop now, not Stop all: nothing is frozen, so the next start works (before, the chat's
+    // stop froze the agent until Allow sessions again). "stop everything" is Stop all, and
+    // "resume" lifts it, by chat as by the header.
+    expect((await client.health()).killActive).toBe(false);
+    const line = (text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId: project.id, text, source: "text" });
+    await line("stop everything");
     expect((await client.health()).killActive).toBe(true);
-    expect((await client.resume()).killActive).toBe(false);
+    const resumed = await line("resume");
+    expect(resumed.actions.map((a) => a.kind)).toEqual(["session.resume"]);
+    expect((await client.health()).killActive).toBe(false);
   });
 });
 
@@ -2869,6 +2882,14 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
     const told = await line("What should we do first?");
     expect(told.reply).toContain("Settings → Accounts and keys → Open the setup assistant");
     expect(told.reply).not.toMatch(/fr setup/);
+    // It does not promise a session start (review of fix/chat: it listed "start a session",
+    // which refuses without Claude); that one says why at once, with no Yes/No card.
+    expect(told.reply).not.toContain("start a session");
+    const start = await line("start a session");
+    expect(start.pendingConfirmation).toBeNull();
+    expect(start.reply).toBe(
+      "Claude is not connected: planning and tasks need it. Connect Claude in Settings.",
+    );
   });
 
   it("the Start dialog's check says Claude is not connected, with the button that fixes it (design §3.6)", async () => {
@@ -2892,4 +2913,248 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
       action: { kind: "link", label: "Connect Claude", to: "/settings" },
     });
   });
+});
+
+describe("one conversation per project, stored by the daemon (design §3.9)", () => {
+  it("the Chat tab and Talk read the same turns; a waiting card stays after another line; the turns and the card survive a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-conversation-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const compose = (replies: { text: string }[]) =>
+      composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        provider: new ScriptedProvider(replies, clock),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+      });
+    const clientOf = (rt: RuntimeApp) => {
+      const { app, token } = createDaemonApp(rt);
+      return createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+    };
+    let rt = await compose([
+      { text: "Nothing has run yet: two tasks are ready." },
+      { text: "About CHF 30 at most." },
+    ]);
+    let client = clientOf(rt);
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const quote = await client.createProject({ name: "Quote page", goal: "A quote a day" });
+    const notes = await client.createProject({ name: "Notes", goal: "A notes tool" });
+    const say = (projectId: string, text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, source: "text" });
+    const task = (title: string) =>
+      client.createTask(quote.id, {
+        title,
+        outcome: `${title}.`,
+        acceptanceCriteria: [],
+        riskTier: 1,
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+      });
+    const readme = await task("Write the README");
+    const faq = await task("Write the FAQ");
+    await say(quote.id, "what is going on?");
+    await say(notes.id, "add a task: write the changelog");
+    const card = await say(quote.id, "make the FAQ task depend on the README task");
+    expect(card.pendingConfirmation?.readback).toBe(
+      'Make "Write the FAQ" wait for "Write the README"?',
+    );
+    await say(quote.id, "how much will it cost?");
+
+    const seen = await client.conversation(quote.id);
+    expect(seen.projectId).toBe(quote.id);
+    expect(seen.turns.map((t) => t.said)).toEqual([
+      "what is going on?",
+      "make the FAQ task depend on the README task",
+      "how much will it cost?",
+    ]);
+    expect(seen.turns[0]?.reply?.text).toBe("Nothing has run yet: two tasks are ready.");
+    // The read-back is shown once, on the card: the turn's text does not repeat it.
+    const asked = seen.turns[1]?.reply;
+    expect(asked?.readback).toBe(card.pendingConfirmation?.readback);
+    expect(asked?.text).toBe("");
+    // The question typed after it did not drop the card: it still waits for the yes.
+    expect(asked?.waiting).toBe(true);
+    expect(seen.waiting?.id).toBe(card.pendingConfirmation?.id);
+    // Notes has its own conversation; the one outside any project is empty.
+    const other = await client.conversation(notes.id);
+    expect(other.turns.map((t) => t.said)).toEqual(["add a task: write the changelog"]);
+    expect(other.turns[0]?.reply?.actions).toEqual([
+      expect.objectContaining({ kind: "task.create", canUndo: true }),
+    ]);
+    expect((await client.conversation(null)).turns).toEqual([]);
+
+    // A restart: the daemon comes back on the same home and shows the same conversation.
+    await rt.close();
+    rt = await compose([]);
+    client = clientOf(rt);
+    const again = await client.conversation(quote.id);
+    expect(again.turns.map((t) => [t.said, t.reply?.text])).toEqual(
+      seen.turns.map((t) => [t.said, t.reply?.text]),
+    );
+    // The Yes/No card survived the restart (design §3.9): it still waits, and "yes" runs it.
+    expect(again.waiting?.id).toBe(card.pendingConfirmation?.id);
+    const yes = await say(quote.id, "yes");
+    expect(yes.reply).toBe('"Write the FAQ" now waits for "Write the README".');
+    expect((await client.tasks(quote.id)).find((t) => t.id === faq.id)?.dependsOn).toEqual([
+      readme.id,
+    ]);
+    const after = await client.conversation(quote.id);
+    expect(after.waiting).toBeNull();
+    // The read-back says what became of it.
+    expect(after.turns[1]?.reply?.card).toBe("yes");
+    await rt.close();
+  }, 120_000);
+
+  // Review of fix/chat (2026-11-01): a "yes" after a card answered in this same chat said "it
+  // expired or was answered in the Inbox"; and a card answered "no" in the Inbox was shown in
+  // the conversation as "(you said yes)" (the Inbox's answer carries no verdict).
+  it("'yes' with nothing waiting says what is true: 'Yes to what?' after a Yes or a No here, what you said after an answer in the Inbox", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-yes-to-what-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const quote = await client.createProject({ name: "Quote page", goal: "A quote a day" });
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: quote.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    const faq = await client.createTask(quote.id, {
+      title: "Write the FAQ",
+      outcome: "A FAQ.",
+      acceptanceCriteria: [],
+      riskTier: 1,
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    // What the Tasks tab shows for the FAQ.
+    const status = async () =>
+      (await client.tasks(quote.id)).find((t) => t.id === faq.id)?.display?.label;
+
+    // No: the card's No, then "yes".
+    const first = await say("skip the FAQ task");
+    expect(first.pendingConfirmation?.readback).toMatch(/^Pause "Write the FAQ"\?/);
+    expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
+    expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
+    expect(await status()).toBe("Ready");
+
+    // Yes: the card's Yes, then "yes".
+    await say("skip the FAQ task");
+    expect((await say("yes")).actions.map((a) => a.kind)).toEqual(["task.pause"]);
+    expect(await status()).toBe("Paused by you");
+    expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
+
+    // The Inbox: the card answered there with the option the Inbox shows for "no".
+    const asked = await say("resume the FAQ task");
+    const id = asked.pendingConfirmation?.id ?? "";
+    const card = (await client.inbox(me.id)).requests.find((r) => r.id === id);
+    expect(card?.options).toEqual(["yes", "no"]);
+    await client.answerRequest(id, { version: card?.version ?? 0, answer: card?.options[1] ?? "" });
+    expect(await status()).toBe("Paused by you");
+    expect((await say("yes")).reply).toBe(
+      "You already answered the change I asked about in the Inbox: you said no. Nothing else is waiting for your yes.",
+    );
+    expect(await status()).toBe("Paused by you");
+
+    // What the conversation shows under each read-back.
+    const seen = await client.conversation(quote.id);
+    const cards = seen.turns.filter((t) => t.reply?.readback).map((t) => t.reply?.card);
+    expect(cards).toEqual(["no", "yes", "no"]);
+    expect(seen.waiting).toBeNull();
+    await rt.close();
+  }, 120_000);
+});
+
+describe("a project name another project has (wave 1 handoff)", () => {
+  it("POST /projects answers a sentence with a stable code, not a 500, and writes nothing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-dup-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "ok" }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    await client.createProject({ name: "Quote page", goal: "A quote a day" });
+    const error = await client.createProject({ name: "Quote page", goal: "Again" }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(409);
+    expect((error as ApiError).message).toBe(
+      'There is already a project called "Quote page". Pick another name.',
+    );
+    expect((await client.projects()).map((p) => p.name)).toEqual(["Quote page"]);
+    await rt.close();
+  }, 120_000);
 });

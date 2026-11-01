@@ -664,7 +664,7 @@ describe("kill, stop, pause, start", () => {
     // Nothing left to pause: the plain verb fails with the registry's reason.
     const p = await store.remoteCommand.mustGet(plain.id);
     expect(p.status).toBe("failed");
-    expect(String((p.result as { error: string }).error)).toMatch(/no running session/);
+    expect(String((p.result as { error: string }).error)).toMatch(/Nothing is running/);
   });
 });
 

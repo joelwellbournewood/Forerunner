@@ -204,6 +204,32 @@ function namesList(titles: readonly string[]): string {
     : `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`;
 }
 
+/**
+ * A move as one question for the chat's read-back (design §3.9, §5 "Move dialog": 'Pause
+ * "Create notes/todo.md"? No session runs it until you press Resume.'), with the button's
+ * one-line consequence (design §3.5).
+ */
+export function moveAsk(
+  task: Pick<TaskRow, "title">,
+  from: TaskStatus,
+  to: TaskStatus,
+  stuck = 0,
+): string {
+  const t = quote(task.title);
+  if (to === "cancelled")
+    return `Cancel ${t}? It is dropped${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+  if (to === "needs_human")
+    return RUNNING.includes(from)
+      ? `Stop ${t}? Its run stops now and it is paused; the session goes on with the rest.`
+      : `Pause ${t}? No session runs it until you press Resume.`;
+  if (to === "ready" && from === "draft") return `Make ${t} ready? A session will pick it up.`;
+  if (to === "ready" && from === "failed") return `Try ${t} again? It is ready again.`;
+  if (to === "ready" && from === "cancelled") return `Reopen ${t}? It is ready again.`;
+  if (to === "ready" && from === "done") return `Redo ${t}? The next session works on it again.`;
+  if (to === "ready") return `Resume ${t}? It is ready again; the next session can run it.`;
+  return `Mark ${t} ${statusWords(to)}?`;
+}
+
 /** What a person's move did, in one line (design §5): the task by name, no raw state. */
 export function moveSentence(
   task: Pick<TaskRow, "title">,
@@ -590,6 +616,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   params: transitionParams,
   risk: (params) => (params.to === "cancelled" || params.to === "done" ? "medium" : "low"),
   maxRisk: "medium",
+  askFromChat: true,
   scope: "project",
   reversible: true,
   undoStrategy: "put the task back to the status it had",
@@ -617,6 +644,12 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
+      ask: moveAsk(
+        task,
+        task.status,
+        params.to,
+        params.to === "cancelled" ? (await waitingOn(ctx, task)).length : 0,
+      ),
     });
   },
   async run(params, ctx) {
@@ -647,6 +680,7 @@ export const taskPause: CommandDef<TaskPauseParams> = {
     "Pause a task: no session runs it until the person resumes it. A running task's run stops now (Stop); the session goes on with the other tasks.",
   params: pauseParams,
   risk: "low",
+  askFromChat: true,
   scope: "project",
   reversible: true,
   undoStrategy: "put the task back to ready",
@@ -683,6 +717,7 @@ export const taskResume: CommandDef<TaskResumeParams> = {
     "Resume a paused task, or let a task that waits for the person's answers go ahead without them: it is ready again and the next session can run it. Its open Inbox cards are withdrawn.",
   params: resumeParams,
   risk: "low",
+  askFromChat: true,
   scope: "project",
   reversible: true,
   undoStrategy: "pause the task again",
@@ -720,6 +755,7 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
     "Reopen a cancelled task (Reopen), or a done task to redo it (Redo): it is ready again and the next session runs it; the person's note says what to fix and goes into its brief.",
   params: reopenParams,
   risk: "low",
+  askFromChat: true,
   scope: "project",
   reversible: true,
   undoStrategy: "put the task back to cancelled or done",
@@ -804,6 +840,7 @@ async function moveCard(
     projectId: project.id,
     projectName: project.name,
     usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
+    ask: moveAsk(task, task.status, to),
   });
 }
 
@@ -892,6 +929,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
     "Edit a task that is not running, done or cancelled: its title, outcome, acceptance criteria, priority, review level (0 checks only, 1 light, 2 full: needs Docker, 3 full and sign-off), budget or specialist ('person' for the person).",
   params: updateParams,
   risk: "low",
+  askFromChat: true,
   scope: "project",
   reversible: true,
   undoStrategy: "put the fields back as they were",
@@ -911,6 +949,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
+      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?`,
     });
   },
   async run(params, ctx) {
@@ -974,13 +1013,22 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
 
 // --- task.dependencies -----------------------------------------------------------------------
 
-const dependenciesParams = z.object({
-  ...taskRef,
-  /** Every task it waits for (ids or titles); an empty list: it waits for nothing. */
-  depends_on: z.array(z.string()),
-  reason: z.string().default(""),
-  note: noteParam,
-});
+const dependenciesParams = z
+  .object({
+    ...taskRef,
+    /** Every task it waits for (ids or titles); an empty list: it waits for nothing. */
+    depends_on: z.array(z.string()).optional(),
+    /**
+     * Tasks (ids or titles) it should wait for besides what it waits for now ("make the FAQ
+     * wait for the README", design §3.9); used when `depends_on` is not given.
+     */
+    add: z.array(z.string()).optional(),
+    reason: z.string().default(""),
+    note: noteParam,
+  })
+  .refine((p) => p.depends_on !== undefined || (p.add?.length ?? 0) > 0, {
+    message: "name the tasks it waits for (depends_on) or the ones to add (add)",
+  });
 export type TaskDependenciesParams = z.infer<typeof dependenciesParams>;
 
 async function titlesOf(ctx: CommandContext, ids: readonly string[]): Promise<string[]> {
@@ -995,12 +1043,47 @@ function dependenciesSentence(title: string, titles: readonly string[]): string 
     : `${quote(title)} waits for no other task now.`;
 }
 
+/**
+ * The read-back of a change to what a task waits for (design §3.9): 'Make "Write the FAQ" wait
+ * for "Write the README"?', or with tasks added to some it waits for already, 'Make "X" also
+ * wait for "Y"?' (only the new ones named).
+ */
+async function dependenciesAsk(
+  ctx: CommandContext,
+  task: TaskRow,
+  params: Pick<TaskDependenciesParams, "depends_on" | "add">,
+  titles: readonly string[],
+): Promise<string> {
+  if (!params.depends_on && task.depends_on.length && params.add?.length) {
+    const added = (await resolveDependencies(ctx, task.project_id, params.add)).filter(
+      (id) => !task.depends_on.includes(id),
+    );
+    if (added.length)
+      return `Make ${quote(task.title)} also wait for ${namesList(await titlesOf(ctx, added))}?`;
+  }
+  return titles.length
+    ? `Make ${quote(task.title)} wait for ${namesList(titles)}?`
+    : `Let ${quote(task.title)} run without waiting for another task?`;
+}
+
+/** What the task should wait for: the whole list given, or what it waits for now plus `add`. */
+async function wantedDependencies(
+  ctx: CommandContext,
+  task: TaskRow,
+  params: Pick<TaskDependenciesParams, "depends_on" | "add">,
+): Promise<string[]> {
+  if (params.depends_on) return resolveDependencies(ctx, task.project_id, params.depends_on);
+  const added = await resolveDependencies(ctx, task.project_id, params.add ?? []);
+  return [...new Set([...task.depends_on, ...added])];
+}
+
 export const taskDependencies: CommandDef<TaskDependenciesParams> = {
   name: "task.dependencies",
   description:
-    "Change what a task waits for: the tasks (by title) that must be done before it runs; an empty list lets it run on its own. Refused for a cancelled task, the task itself or a cycle.",
+    "Change what a task waits for: the tasks (by title) that must be done before it runs (depends_on: the whole list; an empty list lets it run on its own), or add: tasks to wait for besides what it waits for now. Refused for a cancelled task, the task itself or a cycle.",
   params: dependenciesParams,
   risk: "low",
+  askFromChat: true,
   scope: "project",
   reversible: true,
   undoStrategy: "put back what it waited for",
@@ -1009,7 +1092,7 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
     const ids = await ctx.store.task.checkDependencies(
       task.project_id,
       task.id,
-      await resolveDependencies(ctx, task.project_id, params.depends_on),
+      await wantedDependencies(ctx, task, params),
     );
     const project = await ctx.store.project.mustGet(task.project_id);
     const titles = await titlesOf(ctx, ids);
@@ -1025,11 +1108,12 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
+      ask: await dependenciesAsk(ctx, task, params, titles),
     });
   },
   async run(params, ctx) {
     const task = await findTask(params, ctx);
-    const ids = await resolveDependencies(ctx, task.project_id, params.depends_on);
+    const ids = await wantedDependencies(ctx, task, params);
     const updated = await ctx.store.task.setDependencies(
       task.id,
       task.version,

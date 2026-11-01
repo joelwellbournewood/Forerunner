@@ -53,6 +53,53 @@ export function spokenProjectSummary(
 const params = z.object({ project: z.string().optional() });
 export type SummarySpeakParams = z.infer<typeof params>;
 
+/**
+ * The summary as the chat writes it (design §3.9, §5): how far the project is, the last
+ * session's result as the engine wrote it (at most three lines: what needs you, what happened,
+ * what is next and its one spend figure), and what runs next. Before, a typed "summary" tried
+ * to speak, printed the voice provider's install error with Python module and secret names,
+ * then the spoken text, whose project total and the session's spend disagreed.
+ */
+export async function chatProjectSummary(
+  ctx: Pick<CommandContext, "store">,
+  p: ProjectRow,
+): Promise<string> {
+  const tasks = (await ctx.store.task.forProject(p.id, {}, { limit: 10_000 })).filter(
+    (t) => t.status !== "cancelled",
+  );
+  const done = tasks.filter((t) => t.status === "done").length;
+  const s = (p.summary_cache ?? {}) as SummaryCache;
+  const last = s.last_session?.summary?.replace(/\s*\n\s*/g, " ").trim();
+  const next = Array.isArray(s.next_steps)
+    ? s.next_steps.filter((x): x is string => typeof x === "string")
+    : [];
+  const quoted = next.slice(0, 3).map((t) => `"${t}"`);
+  const more = next.length > 3 ? ` and ${next.length - 3} more` : "";
+  return [
+    tasks.length
+      ? `${p.name}: ${done === tasks.length ? `done, all ${tasks.length} tasks` : `${done} of ${tasks.length} tasks done`}.`
+      : `${p.name}: no tasks yet.`,
+    last ? `Last session: ${last}` : "No session yet.",
+    quoted.length && done < tasks.length
+      ? `Next: ${quoted.length > 1 ? `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}` : quoted[0]}${more}.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Whether the person asked to hear it: a button in the app, or "read", "speak", "aloud". */
+function wantsAloud(ctx: CommandContext): boolean {
+  if (ctx.source === "ui") return true;
+  return /\b(?:read|speak|say|aloud|out\s+loud|vorlesen|vor|lies|sprich)\b/i.test(ctx.wordsUsed);
+}
+
+/** Why it was not read aloud, in plain words (never the provider's module or secret names). */
+function notAloudWords(reason: string | undefined): string {
+  if (reason && /no app window/i.test(reason)) return "no app window is open to play it";
+  return "voice is not set up (Settings → Voice)";
+}
+
 async function textOf(ctx: Parameters<CommandDef<SummarySpeakParams>["run"]>[1], p: ProjectRow) {
   const spend = await ctx.store.costLedger.sum({ projectId: p.id });
   const chf = await ctx.ports.chfPerUsd(ctx.clock.nowIso());
@@ -101,6 +148,16 @@ export const summarySpeak: CommandDef<SummarySpeakParams> = {
   async run(p, ctx) {
     const { project } = await ownProject(ctx, p.project);
     const text = await textOf(ctx, project);
+    // Typed "summary" or "summarise the last session" (design §3.9): the summary in text,
+    // and no attempt to speak it.
+    if (ctx.source !== "voice" && !wantsAloud(ctx)) {
+      return {
+        before: { project_id: project.id },
+        after: { project_id: project.id, spoken: false, via: "text", speak_id: null },
+        sentence: await chatProjectSummary(ctx, project),
+        projectId: project.id,
+      };
+    }
     // A voice session speaks its reply itself: the text is the sentence, nothing else plays.
     let result: SpeakPortResult | null = null;
     if (ctx.source !== "voice" && ctx.ports.speak) {
@@ -117,7 +174,7 @@ export const summarySpeak: CommandDef<SummarySpeakParams> = {
         ? text
         : result?.spoken
           ? `Reading the summary of ${project.name} aloud. ${text}`
-          : `Voice is unavailable${result && !result.spoken && result.reason ? ` (${result.reason})` : ""}. Summary of ${project.name}: ${text}`;
+          : `I cannot read it aloud: ${notAloudWords(result && !result.spoken ? result.reason : undefined)}. Here it is:\n${await chatProjectSummary(ctx, project)}`;
     const after: JsonObject = {
       project_id: project.id,
       spoken: ctx.source === "voice" || result?.spoken === true,

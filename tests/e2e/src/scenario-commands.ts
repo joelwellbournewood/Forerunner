@@ -91,18 +91,25 @@ export function commandTurnFor(
   };
 }
 
-/** The human's words of a conversation turn: the first user message after the volatile preamble. */
+/**
+ * The human's words of a conversation turn: the turn's own user message (the volatile preamble
+ * and the line), which follows the conversation's earlier turns (design §3.9) and comes before
+ * any tool round of the turn: the last user message that carries text, not tool results.
+ */
 export function wordsOf(req: ModelRequest): string {
-  const first = req.messages[0];
-  if (first?.role !== "user") return "";
-  if (typeof first.content === "string") return first.content;
-  return first.content
-    .map((b) =>
-      (b as { type?: string; text?: string }).type === "text"
-        ? ((b as { text?: string }).text ?? "")
-        : "",
-    )
-    .join("");
+  for (const m of [...req.messages].reverse()) {
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") return m.content;
+    const text = m.content
+      .map((b) =>
+        (b as { type?: string; text?: string }).type === "text"
+          ? ((b as { text?: string }).text ?? "")
+          : "",
+      )
+      .join("");
+    if (text) return text;
+  }
+  return "";
 }
 
 /** The conversation agent's first model call of a turn whose words include `phrase`. */

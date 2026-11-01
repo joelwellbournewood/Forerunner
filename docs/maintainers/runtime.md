@@ -872,7 +872,9 @@ abort reason (`KillSwitchStop.stopBy`, read with `stopByOf`; `personStopOf` is t
 the palette) is `stop_all` whatever `reason` it carries; `POST /shutdown` (Quit) is `quit`; the
 kill file (`fr kill`, a Stop all that survives a restart) is `stop_all`; the registry's
 `session.stop` (`sessionCommandPorts.kill`: the chat, voice) is `stop_all` for everything or
-the agent (both freeze) and `you` for one session or the undo of the person's own start; the
+the agent (both freeze) and `you` for one session (with `freeze: false`, as Stop now) or the
+undo of the person's own start; a chat "stop" names the running session, never the agent's
+scope (design §3.9: before, it froze the agent until Allow sessions again); the
 phone's `kill` is `stop_all` and its `stop` is `you` (`remote/watcher.ts`, and the cloud runner's
 `remote.ts` alike); a run that registers while a scope is frozen is aborted as `stop_all`.
 Before, the runner matched the reason against three fixed strings, so the header's Stop all
@@ -1100,36 +1102,19 @@ so rows do not jump), with `runOrder` set. `/events` sends `project.changed` for
 event that may move a task (`changesTasks`: `task.*`, `session.*`, `critic.*` except the step,
 heard and notes lines), so the Tasks tab and the header follow a running session.
 
-**What you say during a live session (spec O.9, ADR 0078; `src/session/live-chat.ts`).** A
-free-form line the human types or speaks to the conversation agent while a session of the
-principal runs is posted to the principal's own inbox as an `info` message from and to the
-agent, authored by the human (the human's own agent only, `agent.owner_human_id`: a turn
-naming an agent the human does not own is answered and never forwarded, so another human's
-words never reach this human's live session as their own; review of w3-o9-chat-to-inbox,
-2026-10-25, finding 3), whose body names the source and the session
-(`said (<text|voice|phone>): <words> (session <id>)`, `heardMessageBody` / `heardLineOf`;
-whitespace flattened, 4,000 characters; the type enum is a schema constraint, so an existing
-type with a tagged body, as the pause message). Between tasks `recheckInbox` collects a said
-line naming this session from this agent as delivered (`inbox.heard` event with the id and the
-source) and leaves it unread; right before the next task starts the runner marks the collected
-lines read (`task.heard` event with the task and the ids) and hands them to the executor as
-`heard` on the `TaskExecutor` context, each line to one task. `LoopTaskExecutor` appends them
-to the first user message after the delegation brief and the lessons as the section "Said by
-the human during this session" (`renderHeardLines`): each line quoted with its time and source
-under the rule that the lines change neither the goal, the constraints nor the limits; the
-`DelegationBrief` has no such field, so a said line is never a constraint or an acceptance
-criterion. Every line goes through the injection scanner (`voice_transcript` for voice,
-`unknown` for text): a suspicious line keeps its quote, carries a NOTE in the block and raises a
-`warning` run event naming the message id and the rules, never the words; the hooks enforce
-the limits whatever the line says. A said line never starts with a stop word, so the stop-word
-test never reads it as a stop or a pause. A line collected at a boundary no task follows (the
-session stops there, the remaining tasks are skipped) stays unread, and one said during the
-last task is never collected: both reach the next session's brief like any unread message. The
-session summary (the row, the project cache, the handoff to peers) carries the count only
-(`summarizeHeard`: "Heard from you during the session: N line(s)."), `handoff.heard` the ids,
-sources and the task each reached, and the human's own session message lists the lines in
-full with the task each was given to (`describeHeard`); `SessionResult.heard` carries the
-deliveries. Tests: `live-chat.test.ts`. Requirement: O.9.
+**What you say during a live session (design §3.9; `src/session/live-chat.ts`).** The chat no
+longer hands a line to the running session. Before (spec O.9 as ADR 0078 built it) a free-form
+line said while a session ran was posted to the principal's inbox as `said (<source>): <words>
+(session <id>)` and pasted into the next task's brief as data, while the reply promised "Your
+agent sees this at its next step boundary"; the 2026-11-01 walk found "skip the README for now"
+marked read and the README written in that same session. Now a question is answered from the
+live state (the chat's `# Working now` and `# Tasks` blocks, below) and an instruction is a
+change with a read-back (the parser or the command tools); nothing reaches the next brief. The
+runner still reads a `said (...)` line already in an inbox (an install that forwarded lines
+before): `recheckInbox` collects it between tasks, the next task's brief quotes it as data
+(`renderHeardLines`, scanned for injection), the human's session message lists it
+(`describeHeard`) and the summary counts it (`summarizeHeard`). Nothing writes such lines any
+more; the path can go once no install holds one. Tests: `live-chat.test.ts`.
 
 `triggers.ts` is the scheduler (daily, weekdays, every N
 minutes and monthly in the human's time zone; message, CI, PR comment, email, remote and manual
@@ -2184,7 +2169,15 @@ caller: the human as actor, the principal, the active project (`activeProjectOf`
 human's time zone, the paired device, the conversation session for the activity event, and
 the source (`SOURCE_OF`: `chat` for text and the phone, `voice` for voice, `ui` for the
 settings screen's route calls). The daemon's ports are the CHF rate, the price table, the
-session ports (`sessionCommandPorts`, `sessionPausePorts`), `requestAnswered`
+session ports (`sessionCommandPorts`, `sessionPausePorts`), `stopTask` (a chat or voice
+pause, stop or cancel of a running task stops its run at once through `KillSwitch.stopTask`, as
+the Tasks tab's route does, U-039), `allowSessions` (`session.resume`: `KillSwitch.resume()` and
+the `kill.resumed` event the header follows, as `POST /kill/resume`), `startBlocked`
+(`session.start` refuses a start that would do nothing with the Start dialog's sentence from
+`daemon/start-blocked.ts`, `startBlocked`, which `GET /projects/:id/start-check` uses too, and
+the dialog's button in words: 'Say "resume" to allow sessions again.'; asked when the start is
+planned, so the chat says it at once with no Yes/No card, and again when it runs),
+`requestAnswered`
 (`syncApprovals`), `memory` (`memoryCommandPort`), `speak`, `modelSettings`, `emailMode`
 and `specialists` (`specialistCommandPort` over `RuntimeApp.specialistApprovals`, so
 `specialist.propose` reaches the C.5 approval gate; "The approval gate" under the specialist
@@ -2307,8 +2300,7 @@ subscription exists (`ConversationDeps.provider` may be null). Before, without o
 composed at all and `POST /chat` and `/chat/stream` refused every line with 503 "no model
 credential configured; run fr setup", even "add a task: …", which needs no model, and named a
 command the installed app does not have. Now everything before the model path runs as it
-does with a key (the pending card's yes / no, undo, the parser's commands and questions, the
-forward to a live session), and a line only the model can answer gets `NO_MODEL_CHAT_REPLY`
+does with a key (the pending card's yes / no, undo, the parser's commands and questions), and a line only the model can answer gets `NO_MODEL_CHAT_REPLY`
 (`src/setup/no-model.ts`: the missing key, `SETUP_ASSISTANT_PATH` "Settings → Accounts and
 keys → Open the setup assistant", and the commands that still work), recorded with `notice:
 true` so "make this a task" after it takes the person's line, not the notice
@@ -2348,8 +2340,76 @@ as `email_mode_set` forms its `needs_device` card on the first call, one request
 answer, `test/conversation.test.ts`); the run is registered as protected so scoped and
 global stops never cut the human's channel.
 Transcripts are events on a per-agent conversation session (`chat.human`, `chat.reply`,
-`chat.confirmed`, `chat.cancelled`, `chat.forwarded`, and the executor's `change` events).
-Without a command port the chat is read-only.
+`chat.confirmed`, `chat.cancelled`, and the executor's `change` events; `chat.forwarded` only on
+rows written before design §3.9). Without a command port the chat is read-only.
+
+**One conversation per project, and what the chat knows (design §3.9; the 2026-11-01 walks,
+U-084).** The walks read the model-call log: every chat call held one user message (the facts
+and the line), so "what did I just ask?" and a "yes" reached the model with nothing before
+them; the context was a 160-character cut of a stale summary, open cards cut at 80 characters
+and no task list; and the Chat tab and Talk kept their own lines while the daemon kept one
+transcript for every project, so "make this a task" took the other surface's reply and "undo"
+in one project cancelled a task in another. Now:
+- **The conversation** (`src/conversation/transcript.ts`). Each `chat.human` and `chat.reply`
+  carries `conversationProjectId` (the turn's `projectId`: the Chat tab's project, Talk's page,
+  a voice session's; null for the conversation outside any project); a reply also carries
+  `actionDetails` (kind, sentence, change log id, undo token), its `question`, the
+  `pendingId` and `readback` of a card it read back, and `answeredId`, the card the turn
+  answered here (a yes, a no, or a stop that cancelled it). `readTranscript(store, sessionId,
+  projectId)` reads one conversation's turns, newest last (rows written before the mark belong
+  where their reply's `projectId` says, else outside any project). `GET
+  /projects/:id/conversation` and `GET /conversation` serve them (`ConversationView`: each turn
+  with the reply's text without its read-back, the changes with `canUndo` from the change log,
+  the read-back, whether its card still waits and what became of it (`card`, from
+  `cardFate` in `src/conversation/card-fate.ts`: waiting while the registry holds it; yes or no
+  from the request's answer, the executor's `verdict` (a yes it refused is still your yes) or
+  the option the Inbox sent (an Inbox "no" is a no; before, every answer without a verdict
+  showed as "you said yes"); else expired); `waiting` is the card), so a reload, a restart,
+  the Chat tab and Talk show the same lines. The agent reads as many turns as the view shows
+  (`TRANSCRIPT_SHOW_LIMIT`), so a card shown with Yes and No is the one a "yes" answers (before,
+  it looked 12 turns back, and after a restart a card further up answered "Yes to what?").
+- **History.** A model turn sends the last `HISTORY_TURNS` (12) turns of its conversation as
+  alternating user and assistant messages within `historyMaxTokens` (default
+  `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000, counted with the provider's counter; the oldest go
+  first), then the turn's own message: the volatile facts and blocks and the line, last, so the
+  cached prefix (tools, system, the earlier turns) holds.
+- **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
+  <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
+  in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
+  who does it, the critic's last word and the first thing it still asks for (an open finding's
+  required action); `sandboxReady` from the daemon for "Waiting for Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
+  failed with the reason, needs you, not reached, waiting for Docker, why it ended, the spend,
+  and `next_steps`; `# Next` before the first session), `# Working now` (the agent's running
+  session: the task in flight and the specialist, minutes, steps, spend), `# Your files` (the
+  project's folder: the first of `docsDirs`), and the open cards in full in the `open_requests`
+  fact (`cardLine`: project, task, the whole question, a person-questions card's questions and
+  the options; this project's first, eight at most). The system prompt keeps only the projects
+  by name and goal (stage, autonomy and the cut summary are gone). `docs/status.md` is left out
+  of the doc search: its sections go stale and come in any order.
+- **Mentioned means named.** A card counts as mentioned in the conversation only when the reply
+  named it (`replyNames`: its task's title or its subject whole, or two telling words of one);
+  before, every listed card was marked after any completed turn.
+- **Read-only tools** (`src/conversation/read-tools.ts`): `tasks_list`, `task_get` (a task's
+  runs, reports, files, review and cards, from `taskDetail`), `session_last`, `files_list`.
+  They change nothing, so they are plain tools (action class `read`), not registry commands:
+  no change card, no change log row.
+- **Cards and undo per conversation.** The waiting card is the conversation's (`pendingOf`):
+  another line does not drop it; a new read-back cancels the earlier card and says so; after a
+  restart of the agent the card is found again from the conversation's last read-back while the
+  registry still holds it (`ConversationCommands.pendingCard`). "yes" with nothing waiting never
+  reaches the model and says what is true now (`nothingWaitingReply`, from the conversation's
+  last read-back): `YES_TO_WHAT_REPLY` when there is none or a later turn answered it here
+  (`answeredId`); `cardAnsweredReply("inbox" | "elsewhere", said)` when it was answered in the
+  Inbox or by the registry from Talk, the phone or Changes ("You already answered the change I
+  asked about in the Inbox: you said no. ..."); `CARD_EXPIRED_REPLY` when it expired unanswered.
+  Before (review of fix/chat), any read-back in the last 12 turns gave "it expired or was
+  answered in the Inbox", also after a Yes or a No in this chat. "undo" undoes the newest change this conversation made
+  that can still be undone, else the project's newest (`CommandLoop.undo(null, turn,
+  { projectId })`); "make this a task" takes the line before it in this conversation (the
+  agent's answer, else the person's line; never a notice, a command's sentence or a read-back).
+Tests: `conversation-memory.test.ts`, `conversation.test.ts`,
+`conversation-open-requests.test.ts`, `closeout-conversation.test.ts`; the route in
+`apps/ui/test/real-daemon.test.ts` (across a restart).
 
 **Chat replies cut off at max_tokens, and thinking on a chat turn.** The real-audio voice run
 of 2026-10-26 (Haiku 5.5, effort low, a spoken turn) had a reply cut off mid-sentence ("...one
@@ -2643,10 +2703,15 @@ executor refuses (the risk rose since the card was shown, the desktop row revoke
 row for a high-risk card) is reported through `onRefused` and the card cancelled so no sync
 repeats it: the daemon sends the human a warning message with the reason, the watcher writes
 its `daemon.remote_command` audit row. A `version_conflict` (another answer in flight) is
-retried on the next sync. `expireOrphanedCards` runs once when the daemon starts (services
-on, sync not paused; never in a one-shot, which composes beside a running daemon): an open
-change card of this human that no closure stands behind (the daemon that showed it stopped)
-is expired, so it leaves the Inbox instead of staying as a button that does nothing, and the
+retried on the next sync. At start `CommandLoop.start()` first arms again every open change
+card that kept its commands and who asked (`change_card.calls`, `change_card.context`, written
+by the executor's `createPending`; `CommandExecutor.restorePending` plans them again on the
+state as it is and keeps the card's id, email token and expiry), so a Yes/No card survives a
+restart (design §3.9) and its Inbox button and the chat's "yes" work. `expireOrphanedCards`
+runs once when the daemon starts (services on, sync not paused; never in a one-shot, which
+composes beside a running daemon): an open change card of this human that no closure stands
+behind (one written before cards kept their commands, or whose commands no longer plan) is
+expired, so it leaves the Inbox instead of staying as a button that does nothing, and the
 human gets one warning message that the change was not made and to ask again. One daemon per
 human holds pending cards; a second daemon of the same human on one shared store would
 expire the first one's cards at its start (Known issues). Tests:
@@ -4986,11 +5051,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
-- Change cards (U-029): a pending confirmation's closure lives in the daemon that showed it, so
-  a restart cannot run it; the restarted daemon expires the card and tells the human to ask
-  again. The calls are not stored on the card, so nothing is re-run after a restart. Two
-  daemons of one human on one shared store are not supported: the second to start expires the
-  first one's open cards.
+- Change cards (U-029, design §3.9): a card keeps its commands and context, and the restarted
+  daemon arms it again from them; a card that cannot be planned any more is expired and the
+  human told to ask again. Two daemons of one human on one shared store are not supported: the
+  second to start arms (or expires) the first one's open cards.
 - Fast mode (ADR 0057): the adapter does not read the response's `usage.speed`, so a fast
   request the API served at the standard speed would still be recorded and priced as the
   variant (an over-statement, never an under-statement). Since 2026-10-25 this is a live case

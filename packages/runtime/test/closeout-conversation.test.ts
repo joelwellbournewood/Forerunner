@@ -5,7 +5,6 @@ import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { ConversationAgent } from "../src/conversation/agent.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import { MODE_DEFAULTS, modelIdFor } from "../src/models/ladder.ts";
-import { FORWARDED_SENTENCE } from "../src/session/live-chat.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../src/session/runner.ts";
 import { pausedSessionOf, sessionPausePorts } from "../src/wiring/session-ports.ts";
 import { flatPricing, type Harness, harness } from "./helpers.ts";
@@ -154,12 +153,9 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
 
     const text = "is anything running?";
     const res = await w.chat(text);
-    // A session runs, so the line also reaches the principal at its next step boundary (spec
-    // O.9, ADR 0078; `live-chat.test.ts`): the reply says so after the model's answer.
-    expect(res.reply).toBe(`One session is running on Game. ${FORWARDED_SENTENCE}`);
-    expect(res.forwarded?.sessionId).toBe(
-      (await w.store.session.active(w.alice)).find((s) => s.status === "running")?.id,
-    );
+    // A question during a session is answered here from the live state (design §3.9); nothing
+    // is handed to the running session as data (before: ADR 0078's forwarded line).
+    expect(res.reply).toBe("One session is running on Game.");
     expect(w.provider.calls).toHaveLength(1);
     const call = w.provider.calls[0]?.request;
     // The fast model at low effort: the ladder's text_chat rung for this provider.
@@ -167,17 +163,22 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     expect(call?.model).toBe("fake-haiku");
     expect(call?.effort).toBe(MODE_DEFAULTS.text_chat.effort);
     expect(call?.effort).toBe("low");
-    // The cached layout: the stable project summaries in the system prompt (no timestamps,
-    // so the prefix is cacheable), the volatile facts in the turn itself.
+    // The cached layout: the stable projects by name and goal in the system prompt (no
+    // timestamps, so the prefix is cacheable), the volatile facts in the turn itself, with
+    // what the project stands at now (design §3.9: "Next" is computed, not a cut of a summary).
     expect(call?.system ?? "").toContain("# Projects");
     expect(call?.system ?? "").toContain("Game (active): Ship the game");
-    expect(call?.system ?? "").toContain("Next: polish menu");
     expect(call?.system ?? "").not.toMatch(/\d{4}-\d{2}-\d{2}T/);
-    const turn = String(call?.messages[0]?.content);
+    const turn = String(call?.messages.at(-1)?.content);
+    expect(turn).toContain('Next: "polish menu"');
+    expect(turn).toContain("# Working now");
     expect(turn).toContain("# Now");
-    expect(turn).toContain(`- active_project: ${w.game}`);
+    expect(turn).toContain("- active_project: Game");
     expect(turn).toContain("- unread_messages: 1");
-    expect(turn).toContain(`- open_requests: ${request.id.slice(0, 8)}: Pick a database`);
+    // The card in full, with its project (design §3.9).
+    expect(turn).toContain(
+      `- open_requests: ${request.id.slice(0, 8)}: [Game] Pick a database. Options: postgres / sqlite.`,
+    );
     expect(turn).toContain("- running_sessions: 1");
     expect(turn.endsWith(text)).toBe(true);
     // The same logs as the principal: the transcript is a session of Alice's, with the cost.
@@ -187,10 +188,11 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     );
     expect(sessions).toHaveLength(1);
     const events = await w.store.event.list(sessions[0]?.id ?? "");
-    expect(events.map((e) => e.type)).toEqual(["chat.human", "chat.forwarded", "chat.reply"]);
+    expect(events.map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
     expect(events[0]?.payload).toMatchObject({ text, source: "text" });
-    expect(events[1]?.payload).toMatchObject({ sessionId: res.forwarded?.sessionId });
-    const reply = events[2]?.payload as { text: string; costUsdMicro: number };
+    // Nothing reached the running session's inbox.
+    expect(await w.store.message.inbox({ agentId: w.alice }, { unreadOnly: true })).toEqual([]);
+    const reply = events[1]?.payload as { text: string; costUsdMicro: number };
     expect(reply.text).toBe(res.reply);
     expect(reply.costUsdMicro).toBe(res.costUsdMicro);
     expect(reply.costUsdMicro).toBeGreaterThan(0);
@@ -252,7 +254,8 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     expect(r.pendingConfirmation).toBeNull(); // low risk: acts at once
     expect(r.actions[0]).toMatchObject({ kind: "session.pause" });
     expect(r.actions[0]?.undoToken).toBeTruthy();
-    expect(r.reply).toBe("Paused the session on Game. Undo.");
+    // Stop after this task (design §3.7), in plain words; the Undo is the action's button.
+    expect(r.reply).toBe("The session on Game stops after the task it is on.");
     expect((await w.store.session.mustGet(s.id)).status).toBe("paused");
     // Graceful: the task in flight was not aborted; the runner ends at the next boundary.
     expect(controller.signal.aborted).toBe(false);
@@ -358,7 +361,7 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     expect(unread.map((m) => m.id)).toContain(answers[0]?.id);
     w.provider.pushReplies(textReply("Your agent recommends renderer B."));
     await w.chat("any news on the renderer?");
-    expect(String(w.provider.calls.at(-1)?.request.messages[0]?.content)).toContain(
+    expect(String(w.provider.calls.at(-1)?.request.messages.at(-1)?.content)).toContain(
       `- unread_messages: ${unread.length}`,
     );
     await w.store.close();

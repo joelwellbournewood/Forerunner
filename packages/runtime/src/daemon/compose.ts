@@ -325,6 +325,7 @@ import {
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
+import { startBlocked as startBlockedReason } from "./start-blocked.ts";
 import { fileTools } from "./tools.ts";
 
 /**
@@ -2884,6 +2885,46 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // running in this process ends at the next task boundary (the runner reads the pause
       // message between tasks); its undo withdraws the message (wiring/session-ports.ts).
       ...sessionPausePorts({ store, kill, agentId: agent.id, humanId: human.id }),
+      // A pause, stop or cancel of a RUNNING task by chat or voice stops its run at once, as
+      // the Tasks tab's route does (U-039); the session goes on with the rest.
+      stopTask: (taskId, reason) => {
+        kill.stopTask(taskId, reason);
+      },
+      // session.resume ("resume", "allow sessions again", design §3.1): Stop all lifted, as
+      // POST /kill/resume does (kill.json removed by `onResume`), the header told.
+      allowSessions: () => {
+        const wasStopped = kill.isFrozen({ agentId: agent.id });
+        kill.resume();
+        events.emit("session", { type: "kill.resumed", payload: {} });
+        return { wasStopped };
+      },
+      // session.start refuses in words what the Start dialog refuses (design §3.6, §3.9).
+      startBlocked: async (projectId, budgetUsdMicro) => {
+        const project = await store.project.mustGet(projectId);
+        const check = await startCheck(
+          { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+          project.id,
+          budgetUsdMicro,
+        );
+        const blocked = startBlockedReason(check, {
+          stopped: kill.isFrozen({ agentId: agent.id }),
+          hasModel: !!provider,
+          busy: scheduler.isActive(agent.id),
+          projectId: project.id,
+          chfPerUsd: chfPerUsd(),
+        });
+        if (!blocked) return null;
+        // The dialog's button, said in words for the chat.
+        const next =
+          blocked.kind === "stopped"
+            ? ' Say "resume" to allow sessions again.'
+            : blocked.kind === "no_model"
+              ? " Connect Claude in Settings."
+              : blocked.action?.label === "Open it"
+                ? " Answer it in the Inbox."
+                : "";
+        return `${blocked.sentence}${next}`;
+      },
       // An answer by chat, voice, the palette or the phone applies at once, as the inbox
       // route's does (an approved plan starts its follow-up, ADR 0053). The answer stands
       // when the sync fails: the next sync (an answer, the poll, a restart) applies it.
@@ -3119,7 +3160,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     return out;
   };
   // U-047: Chat exists without a model too. The commands its parser understands ("add a task:
-  // …", "make this a task", "start a session", "switch to …") need no model and run; a line
+  // …", "make this a task", "skip the … task", "switch to …") need no model and run (a session
+  // start says Claude is not connected, `startBlocked`); a line
   // only the model can answer is told the key is missing and where the setup assistant is.
   const conversation = new ConversationAgent({
     store,
@@ -3149,6 +3191,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const project = await store.project.get(projectId);
       return project ? docs.docsDirsFor(project) : [];
     },
+    // Design §3.9: the chat sees each task's status in the person's words ("Waiting for
+    // Docker" needs the sandbox's state) and the money in CHF at the day's rate.
+    sandboxReady: () => {
+      try {
+        const r = sandbox.readiness.current();
+        return r ? r.state === "ready" : null;
+      } catch {
+        return null;
+      }
+    },
+    chfPerUsd,
   });
   // Voice (spec O; ADR 0012, ADR 0048): the loop over the conversation agent, behind the
   // daemon's /voice routes. The providers are the local helpers and the cloud ones by secret

@@ -9,6 +9,8 @@ import type {
   CommandResultJson,
   ConsolidationProposalView,
   ConsolidationReportView,
+  ConversationTurnView,
+  ConversationView,
   DaemonDeviceView,
   DesktopAllowEntryView,
   DesktopControlView,
@@ -76,6 +78,7 @@ import {
   csvLine,
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
+import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
@@ -379,6 +382,12 @@ export interface FakeDaemonState {
   pendingConfirmation: { id: string; readback: string } | null;
   /** When set, the next `/chat/stream` reply has this text (tests script the agent). */
   nextChatReply: string | null;
+  /**
+   * The conversations as the daemon stores them (design §3.9): one per project (the key is
+   * the project id; "" for the one outside any project), each turn as
+   * `GET /projects/:id/conversation` shows it. `/chat` and `/chat/stream` append to them.
+   */
+  conversations: Map<string, ConversationTurnView[]>;
   /**
    * The actions of that scripted reply, e.g. a change with its `undoToken` (the change log id),
    * as the daemon answers a chat command that ran (U-074).
@@ -732,6 +741,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     calls: [],
     pendingConfirmation: null,
     nextChatReply: null,
+    conversations: new Map(),
     nextChatActions: null,
     listeners: new Set(),
     timers: new Set(),
@@ -1174,6 +1184,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    // As the daemon: a name another project has is refused in a sentence, nothing written.
+    const clash = state.projects.find((p) => p.name === parsed.data.name);
+    if (clash) return errorBody(c, 409, "validation", duplicateProjectSentence(clash.name));
     const project: ProjectCard = {
       id: nextId("proj"),
       name: parsed.data.name,
@@ -2324,6 +2337,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       state.pendingConfirmation = null;
       return { ...base, reply: "Cancelled. Nothing was started." };
     }
+    // A "yes" with nothing waiting never reaches the model (the daemon's `YES_TO_WHAT_REPLY`).
+    if (!state.pendingConfirmation && lower === "yes") {
+      return { ...base, reply: "Yes to what? Nothing is waiting for your yes." };
+    }
+    // "stop everything" is Stop all and "resume" lifts it, as the daemon's session.stop (scope
+    // all) and session.resume, with their sentences.
+    if (lower === "stop everything") {
+      state.killActive = true;
+      const sentence =
+        'Stopped every running session. No session starts until you say "resume" or press Allow sessions again.';
+      return {
+        ...base,
+        reply: sentence,
+        actions: [{ kind: "session.stop", summary: sentence, id: nextId("chg"), undoToken: null }],
+      };
+    }
+    if (lower === "resume") {
+      state.killActive = false;
+      const sentence =
+        'Sessions can start again. Say "start a session" to continue where it stopped.';
+      return {
+        ...base,
+        reply: sentence,
+        actions: [
+          { kind: "session.resume", summary: sentence, id: nextId("chg"), undoToken: null },
+        ],
+      };
+    }
     if (state.nextChatReply !== null) {
       const reply = state.nextChatReply;
       const actions = state.nextChatActions ?? [];
@@ -2397,15 +2438,113 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     };
   };
 
+  /** A turn kept in its conversation, as the daemon writes chat.human and chat.reply. */
+  const keepTurn = (body: ChatRequestBody, reply: ChatReplyView): ChatReplyView => {
+    const key = body.projectId ?? "";
+    const turns = state.conversations.get(key) ?? [];
+    const readback = reply.pendingConfirmation?.readback ?? null;
+    const text =
+      readback && reply.reply.startsWith(readback)
+        ? reply.reply
+            .slice(readback.length)
+            .replace(/^\s*Say yes to confirm\.\s*/, "")
+            .trim()
+        : reply.reply;
+    turns.push({
+      id: reply.transcriptId,
+      at: new Date().toISOString(),
+      said: body.text,
+      source: body.source ?? "text",
+      reply: {
+        text,
+        actions: reply.actions.map((a) => ({
+          kind: a.kind,
+          sentence: a.summary,
+          changeId: a.id ?? null,
+          canUndo: !!a.undoToken,
+        })),
+        question: reply.question,
+        notice: false,
+        readback,
+        waiting: !!reply.pendingConfirmation,
+        card: reply.pendingConfirmation ? "waiting" : null,
+      },
+    });
+    // A yes or a no answers the card read back before it.
+    const said = body.text.trim().toLowerCase();
+    if (said === "yes" || said === "no")
+      for (const t of turns.slice(0, -1)) if (t.reply?.card === "waiting") t.reply.card = said;
+    // One card waits per conversation: an earlier one is no longer waiting.
+    if (reply.pendingConfirmation)
+      for (const t of turns.slice(0, -1)) if (t.reply) t.reply.waiting = false;
+    state.conversations.set(key, turns);
+    return reply;
+  };
+  const conversationOf = (key: string): ConversationView => {
+    const turns = (state.conversations.get(key) ?? []).map((t) => ({
+      ...t,
+      reply: t.reply
+        ? {
+            ...t.reply,
+            waiting:
+              t.reply.waiting &&
+              !!state.pendingConfirmation &&
+              t.reply.readback === state.pendingConfirmation.readback,
+            card:
+              t.reply.card === "waiting" &&
+              !(
+                state.pendingConfirmation && t.reply.readback === state.pendingConfirmation.readback
+              )
+                ? "expired"
+                : (t.reply.card ?? null),
+            actions: t.reply.actions.map((a) => {
+              const change = a.changeId ? state.changes.find((ch) => ch.id === a.changeId) : null;
+              return { ...a, canUndo: change ? change.undoState === "undoable" : a.canUndo };
+            }),
+          }
+        : null,
+    }));
+    const waiting = turns.find((t) => t.reply?.waiting);
+    return {
+      projectId: key || null,
+      turns,
+      waiting:
+        waiting && state.pendingConfirmation
+          ? {
+              id: state.pendingConfirmation.id,
+              readback: state.pendingConfirmation.readback,
+              estimate: money(5_000_000),
+              commands: ["session.start"],
+              decision: "needs_yes",
+            }
+          : null,
+    };
+  };
+  app.get("/projects/:id/conversation", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id))
+      return errorBody(c, 404, "not_found", `project ${id} not found`);
+    return c.json(conversationOf(id));
+  });
+  app.get("/conversation", (c) => c.json(conversationOf("")));
+
   app.post("/chat", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    return c.json(chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab));
+    return c.json(
+      keepTurn(
+        parsed.data,
+        chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
+      ),
+    );
   });
   app.post("/chat/stream", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    const reply = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
+    const reply = keepTurn(
+      parsed.data,
+      chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
+    );
     return streamSSE(c, async (stream) => {
       const words = reply.reply.split(/(\s+)/).filter((w) => w.length > 0);
       for (const w of words) {

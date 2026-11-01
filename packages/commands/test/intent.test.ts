@@ -524,3 +524,91 @@ describe("IntentParser: a budget clause never loses its tail", () => {
     expect(parseWhen("for two hours", at)).toBeNull();
   });
 });
+
+/**
+ * Steering in plain words (design §3.9; the 2026-11-01 walk): one extra word sent a command to
+ * the model ("start working now", "summarise the last session"), and dependencies, skipping,
+ * resuming and "stop after this task" had no phrase at all.
+ */
+describe("IntentParser: steering phrases (design §3.9)", () => {
+  const one = async (text: string) => {
+    const r = await parser.parse(text, ctx());
+    expect(r.matched, text).toBe("pattern");
+    expect(r.commands, text).toHaveLength(1);
+    return r.commands[0];
+  };
+
+  it("start: 'start working now', 'start a session now', 'get started'", async () => {
+    for (const text of [
+      "start working now",
+      "start a session now",
+      "get started",
+      "start the work",
+    ])
+      expect(await one(text), text).toMatchObject({ name: "session.start" });
+  });
+
+  it("summary: 'summarise the last session', 'summarize it', 'recap'", async () => {
+    for (const text of ["summarise the last session", "summarize it", "recap"])
+      expect(await one(text), text).toMatchObject({ name: "summary.speak" });
+  });
+
+  it("dependencies: 'make the FAQ task depend on the README task', 'make X wait for Y', 'run X after Y'", async () => {
+    expect(await one("make the FAQ task depend on the README task")).toEqual({
+      name: "task.dependencies",
+      params: { task: "FAQ", add: ["README"] },
+    });
+    expect(await one("make the FAQ wait for the README")).toEqual({
+      name: "task.dependencies",
+      params: { task: "FAQ", add: ["README"] },
+    });
+    expect(await one("run the deploy task after the tests")).toEqual({
+      name: "task.dependencies",
+      params: { task: "deploy", add: ["tests"] },
+    });
+    // A question is no change.
+    expect((await parser.parse("what does the FAQ depend on?", ctx())).commands).toEqual([]);
+  });
+
+  it("one task by name: skip / postpone / pause / stop -> pause; cancel; resume; reopen; try again", async () => {
+    expect(await one("skip the LICENSE task for now")).toEqual({
+      name: "task.pause",
+      params: { task: "LICENSE" },
+    });
+    expect(await one("postpone the README")).toEqual({
+      name: "task.pause",
+      params: { task: "README" },
+    });
+    expect(await one("stop the CSS task")).toEqual({ name: "task.pause", params: { task: "CSS" } });
+    expect(await one("cancel the LICENSE task")).toEqual({
+      name: "task.transition",
+      params: { task: "LICENSE", to: "cancelled" },
+    });
+    expect(await one("resume the LICENSE task")).toEqual({
+      name: "task.resume",
+      params: { task: "LICENSE" },
+    });
+    expect(await one("reopen the FAQ")).toEqual({ name: "task.reopen", params: { task: "FAQ" } });
+    expect(await one("try the style task again")).toEqual({
+      name: "task.transition",
+      params: { task: "style", to: "ready" },
+    });
+  });
+
+  it("the session: 'stop' and 'stop now' stop it; 'stop after this task' lets it finish; 'resume' allows sessions again", async () => {
+    expect(await one("stop")).toEqual({ name: "session.stop", params: { scope: "agent" } });
+    expect(await one("stop now")).toEqual({ name: "session.stop", params: { scope: "agent" } });
+    expect(await one("stop everything")).toEqual({
+      name: "session.stop",
+      params: { scope: "all" },
+    });
+    for (const text of ["stop after this task", "finish this task and then stop"])
+      expect(await one(text), text).toEqual({ name: "session.pause", params: {} });
+    // "stop after this task" is no stop of the session now.
+    expect(isStopLine("stop after this task")).toBe(false);
+    for (const text of ["resume", "allow sessions again", "continue"])
+      expect(await one(text), text).toEqual({ name: "session.resume", params: {} });
+    // The work itself is never taken for a task's name.
+    expect(await one("pause the session")).toEqual({ name: "session.pause", params: {} });
+  });
+});

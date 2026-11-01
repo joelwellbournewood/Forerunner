@@ -1,4 +1,4 @@
-import { errorMessage, log } from "@forerunner/platform";
+import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import type { z } from "zod";
 import type { ProjectDocsPort } from "../loop/ports.ts";
@@ -30,10 +30,23 @@ export interface CreateProjectDeps {
   docs?: Pick<ProjectDocsPort, "scaffoldProject">;
 }
 
+/** What `POST /projects` answers for a name another project has (the handoff of wave 1). */
+export function duplicateProjectSentence(name: string): string {
+  return `There is already a project called "${name}". Pick another name.`;
+}
+
 export async function createProjectRecord(
   deps: CreateProjectDeps,
   body: z.infer<typeof CreateProjectBody>,
 ): Promise<ProjectRow> {
+  // A name another project has was the store's "UNIQUE constraint failed: project.name" as a
+  // 500 `internal`; it is a sentence with a stable code, before anything is written, as the
+  // chat's `project.create` says it.
+  const clash = await deps.store.project.byName(body.name);
+  if (clash)
+    throw new ForerunnerError("validation", duplicateProjectSentence(clash.name), {
+      details: { cause: "duplicate_name", projectId: clash.id },
+    });
   // U-058: a project that names no level starts at the person's default (Settings, "the
   // default autonomy for new projects"), as `project.create` by chat or voice does.
   const autonomy =

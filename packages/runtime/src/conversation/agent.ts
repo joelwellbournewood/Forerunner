@@ -9,7 +9,7 @@ import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
 import { LOCAL_BUDGET_SOURCE, SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
-import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN, wrapUntrusted } from "../injection/scan.ts";
+import { wrapUntrusted } from "../injection/scan.ts";
 import type {
   CommandResultView,
   CommandTurn,
@@ -34,11 +34,28 @@ import {
   type ModelProvider,
   providerCapabilities,
 } from "../provider/types.ts";
-import { FORWARDED_SENTENCE, type HeardSource, heardMessageBody } from "../session/live-chat.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CHAT_REPLY } from "../setup/no-model.ts";
 import { isYes } from "../wiring/state-ports.ts";
+import { cardFate } from "./card-fate.ts";
+import {
+  cardLine,
+  cardNames,
+  filesBlock,
+  lastSessionBlock,
+  replyNames,
+  tasksBlock,
+  workingNowBlock,
+} from "./project-facts.ts";
+import { readTools } from "./read-tools.ts";
 import { completeSentencesOf, SentenceGate } from "./sentences.ts";
+import {
+  DEFAULT_CHAT_HISTORY_TOKENS,
+  historyMessages,
+  readTranscript,
+  TRANSCRIPT_SHOW_LIMIT,
+  type TranscriptTurn,
+} from "./transcript.ts";
 
 /** A chat turn's budget when the composition names none: USD 0.05 (raised per turn, see below). */
 export const DEFAULT_TURN_BUDGET_USD_MICRO = 50_000;
@@ -144,6 +161,18 @@ export interface ConversationDeps {
    * `DEFAULT_CHAT_LESSONS_TOKENS`; 0 turns a part off.
    */
   retrieval?: { docsMaxTokens?: number; lessonsMaxTokens?: number };
+  /**
+   * Tokens of the conversation's earlier turns a model turn carries at most (design §3.9: the
+   * chat remembers). Default `DEFAULT_CHAT_HISTORY_TOKENS`; 0 sends none.
+   */
+  historyMaxTokens?: number;
+  /**
+   * Whether the Docker sandbox is ready, for the tasks' status words ("Waiting for Docker").
+   * Absent or null: not known, no task is said to wait for it.
+   */
+  sandboxReady?: () => boolean | null;
+  /** CHF per USD at the day's rate, for the money the context names. Default 1. */
+  chfPerUsd?: () => number;
 }
 
 /** Docs search results in one chat turn's context at most (tokens, envelope included). */
@@ -205,13 +234,6 @@ export interface ChatReply {
   costUsdMicro: number;
   transcriptId: string;
   activeProjectId: string | null;
-  /**
-   * Set when the line was also posted to the principal agent's inbox because one of its
-   * sessions runs (spec O.9): the session and the message the runner reads at its next task
-   * boundary. Null for a command, a yes or no, an undo, a parser question, refused data, or
-   * when no session runs.
-   */
-  forwarded?: { sessionId: string; messageId: string } | null;
   /** The doc sections and lessons retrieved into the model turn (spec J.1, O.2); model path only. */
   sources?: ChatSources;
 }
@@ -226,6 +248,81 @@ export interface PendingConfirmation {
   decision?: "needs_yes" | "needs_device";
   /** The card's cost impact, when it has one. */
   costUsdMicro?: number;
+  /** What the change is about ("a session on Quote Page"), for the line that drops it. */
+  what?: string;
+}
+
+/** A pending result of the registry as the chat's waiting card. */
+function cardOf(r: CommandResultView, commands: string[]): PendingConfirmation {
+  const what = (r.card as { what?: unknown } | null | undefined)?.what;
+  return {
+    id: r.pendingId ?? "",
+    readback: r.readback ?? "",
+    commands,
+    ...(r.decision ? { decision: r.decision } : {}),
+    ...(typeof r.costUsdMicro === "number" ? { costUsdMicro: r.costUsdMicro } : {}),
+    ...(typeof what === "string" && what ? { what } : {}),
+  };
+}
+
+/**
+ * The line before this one in this conversation, for "make this a task" (ADR 0093): the
+ * agent's answer when it was one, else the person's own line. A notice about the app, a
+ * command's sentence, a read-back, a yes, a no or an undo is no message to make a task of.
+ * Before, the line came from the agent's one transcript of every surface and project, so the
+ * Chat tab's "make this a task" took the Talk panel's last reply.
+ */
+function lastLine(turns: readonly TranscriptTurn[]): string | undefined {
+  for (const t of [...turns].reverse()) {
+    const reply = t.reply;
+    if (
+      reply?.text.trim() &&
+      !reply.notice &&
+      !reply.actions.length &&
+      !reply.pendingId &&
+      !reply.question
+    )
+      return reply.text.trim();
+    const text = t.human.text.trim();
+    if (!text || isYes(text) || NO_RE.test(text) || UNDO_RE.test(text)) continue;
+    if (/^(?:make|turn)\s+(?:this|that|it)\s+(?:into\s+)?(?:a\s+)?task$/i.test(text)) continue;
+    if (reply && (reply.actions.length || reply.pendingId || reply.question)) continue;
+    return text;
+  }
+  return undefined;
+}
+
+/** The changes this conversation made, newest first (their change log ids). */
+function changesOf(turns: readonly TranscriptTurn[]): string[] {
+  const out: string[] = [];
+  for (const t of [...turns].reverse())
+    for (const a of [...(t.reply?.actions ?? [])].reverse())
+      if (a.id && a.kind !== "undo" && !out.includes(a.id)) out.push(a.id);
+  return out;
+}
+
+/**
+ * Whether this yes or no answered the card: not when the registry no longer held it (it expired
+ * or was answered elsewhere a moment before) or another answer to it was in flight.
+ */
+function answeredBy(r: CommandResultView): boolean {
+  return !(r.status === "refused" && (r.code === "not_found" || r.code === "version_conflict"));
+}
+
+/**
+ * A "yes" when nothing waits for one (design §3.9): no card was read back in this conversation,
+ * or the last one was answered here (a yes, a no, a stop).
+ */
+export const YES_TO_WHAT_REPLY = "Yes to what? Nothing is waiting for your yes.";
+/** A "yes" after the card it meant expired unanswered (its ten minutes, a restart). */
+export const CARD_EXPIRED_REPLY =
+  "The change I asked about expired before your yes, so nothing was changed. Ask again if you still want it.";
+/**
+ * A "yes" after the card it meant was answered somewhere else: in the Inbox, or by the registry
+ * from Talk, the phone or Changes. It says what was answered there (true now, design §5 rule 4).
+ */
+export function cardAnsweredReply(where: "inbox" | "elsewhere", said: "yes" | "no"): string {
+  return `You already answered the change I asked about${where === "inbox" ? " in the Inbox" : ""}: you said ${said}. Nothing else is waiting for your yes.`;
 }
 
 const DEFAULT_PROMPT = `You are the conversation agent speaking for the human's principal agent in Forerunner.
@@ -289,46 +386,55 @@ interface ConversationState {
 
 type OpenRequest = Awaited<ReturnType<StateStore["humanRequest"]["open"]>>[number];
 
+/** An open request with its line in full and the names a reply mentions it by. */
+interface DescribedRequest {
+  row: OpenRequest;
+  line: string;
+  names: string[];
+}
+
 /**
  * The `open_requests` fact for one turn and the requests it lists in full: those the human
- * asked about, those that block work and those not yet listed in this conversation; the
- * others only as a count. The caller marks the listed ones as mentioned once the reply is
- * complete, so a failed turn mentions nothing.
+ * asked about, those that block work and those not yet mentioned in this conversation; the
+ * others only as a count. Each is listed whole (design §3.9: "the open cards in full": its
+ * project, its task, the question and its options; before, the first 80 characters). The
+ * caller marks a listed one as mentioned only when the reply names it.
  */
 function openRequestsFact(
-  requests: readonly OpenRequest[],
+  requests: readonly DescribedRequest[],
   conv: ConversationState,
   query: string,
-): { fact: string | number; shown: string[] } {
+  total: number = requests.length,
+): { fact: string | number; shown: { id: string; names: string[] }[] } {
   if (!requests.length) return { fact: 0, shown: [] };
   const asked = ASKS_PENDING_RE.test(query);
-  const shown = requests.filter((r) => asked || r.blocking || !conv.mentioned.has(r.id));
+  const shown = requests.filter((r) => asked || r.row.blocking || !conv.mentioned.has(r.row.id));
   const held = requests.length - shown.length;
+  const beyond = Math.max(0, total - requests.length);
   if (!shown.length)
     return {
-      fact: `${requests.length} (already mentioned in this conversation; bring up only if the human asks)`,
+      fact: `${total} (already mentioned in this conversation; bring up only if the human asks)`,
       shown: [],
     };
-  const unmentioned = shown.some((r) => !conv.mentioned.has(r.id));
+  const unmentioned = shown.some((r) => !conv.mentioned.has(r.row.id));
   const mark = (r: OpenRequest) => {
     if (!r.blocking) return "";
     return conv.mentioned.has(r.id) && !asked ? " [already mentioned; blocking]" : " [blocking]";
   };
-  const list = shown
-    .map(
-      (r) =>
-        `${r.id.slice(0, 8)}: ${r.why.slice(0, 80)} [${r.options.map(String).join("/")}]${mark(r)}`,
-    )
-    .join(" | ");
+  const list = shown.map((r) => `${r.row.id.slice(0, 8)}: ${r.line}${mark(r.row)}`).join(" | ");
   const notes = [
     asked ? "the human asked" : unmentioned ? "not yet mentioned in this conversation" : null,
-    held ? `+${held} already mentioned in this conversation` : null,
+    held > 0 ? `+${held} already mentioned in this conversation` : null,
+    beyond > 0 ? `+${beyond} more not listed` : null,
   ].filter((n): n is string => n !== null);
   return {
     fact: notes.length ? `${list} (${notes.join("; ")})` : list,
-    shown: shown.map((r) => r.id),
+    shown: shown.map((r) => ({ id: r.row.id, names: r.names })),
   };
 }
+
+/** The project's status doc, left out of the docs a chat turn retrieves. */
+const STATUS_DOC_RE = /^docs\/status\.md$/i;
 
 const UNDO_RE = /^\s*(undo|rückgängig|r[üu]ckg[äa]ngig machen)\s*[.!]?\s*$/i;
 const NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
@@ -371,8 +477,13 @@ export class ConversationAgent {
         : (this.getActiveProject(req.humanId) ?? req.projectId ?? null);
     // What the reply names as the active project: never the tab's project, which only won the turn.
     const activeFallback = req.projectTab ? null : projectId;
-    // The conversation this turn belongs to: the same one until a pause of CONVERSATION_IDLE_MS.
-    const convKey = `${req.humanId}|${agent.id}`;
+    // Design §3.9: one conversation per project, the same in the Chat tab and in Talk. The line
+    // belongs to the conversation of the project it was said about (the tab's, Talk's page, a
+    // voice session's), or to the one outside any project; its history, its waiting card and
+    // its undo stay in it.
+    const conversationProject = req.projectId ?? null;
+    // What this conversation has said so far: the same until a pause of CONVERSATION_IDLE_MS.
+    const convKey = `${req.humanId}|${agent.id}|${conversationProject ?? ""}`;
     let conv = this.conversations.get(convKey);
     if (!conv || clock.now() - conv.lastTurnAt > CONVERSATION_IDLE_MS) {
       conv = { mentioned: new Set(), lastTurnAt: clock.now() };
@@ -381,10 +492,18 @@ export class ConversationAgent {
     conv.lastTurnAt = clock.now();
     const sessionId = await this.conversationSession(agent.id, projectId);
     const transcriptId = newId(clock.now());
+    // The conversation so far (oldest first), read before this line is written: as many turns
+    // as the conversation shows (`GET /projects/:id/conversation`), so a card shown there
+    // with Yes and No is the one a "yes" here answers; a model turn carries the last
+    // `HISTORY_TURNS` of them (`historyMessages`).
+    const earlier = await readTranscript(store, sessionId, conversationProject, {
+      limit: TRANSCRIPT_SHOW_LIMIT,
+    });
     await store.event.append(sessionId, "chat.human", {
       transcriptId,
       text: req.text,
       source: req.source ?? "text",
+      conversationProjectId: conversationProject,
     } as never);
     const turn: CommandTurn = {
       humanId: req.humanId,
@@ -394,9 +513,13 @@ export class ConversationAgent {
       source: req.source ?? "text",
       wordsUsed: req.text,
       deviceId: req.deviceId ?? null,
+      // "make this a task": the person's own line before this one, in this conversation.
+      ...(lastLine(earlier) ? { lastMessage: lastLine(earlier) } : {}),
     };
     /** Set when a stop cancelled the pending card on its way to the registry (spec O.9). */
     let cancelledForStop = false;
+    /** The card this turn answered here (a yes, a no, a stop), kept on the reply. */
+    let answeredHere: string | null = null;
     const finish = async (
       text: string,
       actions: ChatAction[],
@@ -408,8 +531,18 @@ export class ConversationAgent {
       await store.event.append(sessionId, "chat.reply", {
         transcriptId,
         text: reply,
+        conversationProjectId: conversationProject,
         ...(meta.notice ? { notice: true } : {}),
+        ...(answeredHere ? { answeredId: answeredHere } : {}),
         actions: actions.map((a) => a.kind),
+        actionDetails: actions,
+        ...(extra.question ? { question: extra.question } : {}),
+        ...(extra.pendingConfirmation
+          ? {
+              pendingId: extra.pendingConfirmation.id,
+              readback: extra.pendingConfirmation.readback,
+            }
+          : {}),
         ...(extra.ttftMs !== undefined ? { ttftMs: extra.ttftMs } : {}),
         ...(extra.costUsdMicro ? { costUsdMicro: extra.costUsdMicro } : {}),
       } as never);
@@ -422,21 +555,23 @@ export class ConversationAgent {
         costUsdMicro: 0,
         transcriptId,
         activeProjectId: await this.currentProject(req.humanId, activeFallback),
-        forwarded: null,
+
         ...extra,
       };
     };
 
-    // A plain "yes"/"no" answers the pending change card without a model call (spec Q.7).
-    const pending = this.pending.get(req.humanId);
+    // A plain "yes"/"no" answers the pending change card without a model call (spec Q.7). The
+    // card is this conversation's (design §3.9): another line does not drop it, and after a
+    // restart it is found again from the conversation itself.
+    const pendingKey = `${req.humanId}|${conversationProject ?? ""}`;
+    const pending = await this.pendingOf(pendingKey, earlier);
     if (pending && this.deps.commands) {
       if (await this.stopsLiveSession(agent.id, req.text)) {
-        // Spec O.9, "stopping is immediate": a stop said while a work session runs is the kill
-        // switch whatever waits for a yes. The card is cancelled as a "no" (recorded on its
-        // request) and the line goes on to the registry below as the stop it is; the reply
-        // says both. With nothing running a "stop" stays the "no" to the card it has always
-        // been: the kill switch would only freeze the agent until its next start.
-        this.pending.delete(req.humanId);
+        // Spec O.9, "stopping is immediate": a stop said while a work session runs stops it
+        // whatever waits for a yes. The card is cancelled as a "no" (recorded on its request)
+        // and the line goes on to the registry below as the stop it is; the reply says both.
+        // With nothing running a "stop" stays the "no" to the card it has always been.
+        this.pending.delete(pendingKey);
         const r = await this.deps.commands.confirmByText(pending.id, "no", turn);
         await store.event.append(sessionId, "chat.cancelled", {
           confirmationId: pending.id,
@@ -447,8 +582,9 @@ export class ConversationAgent {
           stop: true,
         } as never);
         cancelledForStop = true;
+        if (answeredBy(r)) answeredHere = pending.id;
       } else if (isYes(req.text) || NO_RE.test(req.text)) {
-        this.pending.delete(req.humanId);
+        this.pending.delete(pendingKey);
         const r = await this.deps.commands.confirmByText(pending.id, req.text, turn);
         await store.event.append(sessionId, isYes(req.text) ? "chat.confirmed" : "chat.cancelled", {
           confirmationId: pending.id,
@@ -457,20 +593,32 @@ export class ConversationAgent {
           words: req.text,
           status: r.status,
         } as never);
+        if (answeredBy(r)) answeredHere = pending.id;
         const actions = this.actionsOf(r, pending.commands);
         return finish(this.sentenceOf(r, "Confirmed"), actions);
-      } else {
-        // Anything else drops the pending card; the human moved on (the request stays open in
-        // the inbox until it expires or is answered there).
-        this.pending.delete(req.humanId);
       }
+      // Anything else leaves the card waiting: the line is answered below, and the card's Yes
+      // and No stay until it is answered or another change read back replaces it.
+    } else if (this.deps.commands && isYes(req.text)) {
+      // A "yes" with nothing waiting (design §3.9) is never handed to the model as a bare word,
+      // and what it says is true now: "Yes to what?" unless the last card read back here was
+      // answered somewhere else or expired, which it then says.
+      return finish(await this.nothingWaitingReply(earlier), [], {}, { notice: true });
     }
 
-    // "undo" undoes the latest change the human can still undo (spec Q.11).
+    // "undo" undoes the latest change this conversation made that can still be undone (spec
+    // Q.11, design §3.9), else the latest of its project: never a change in another project
+    // (before, "undo" in one project's Chat tab cancelled a task of another).
     if (this.deps.commands && UNDO_RE.test(req.text)) {
-      const r = await this.deps.commands.undo(null, turn);
+      const own = await this.latestUndoable(changesOf(earlier));
+      const r = await this.deps.commands.undo(own, turn, {
+        ...(conversationProject ? { projectId: conversationProject } : {}),
+      });
       // An undo that raises a limit waits for its confirmation like any change (U-057).
-      return this.replyForResult(r, ["undo"], turn, finish);
+      return this.replyForResult(r, ["undo"], turn, finish, "", {
+        key: pendingKey,
+        earlier: pending,
+      });
     }
 
     // Understanding (spec Q.2): deterministic patterns first; a combined request is one card.
@@ -504,40 +652,51 @@ export class ConversationAgent {
           turn,
           finish,
           left,
+          { key: pendingKey, earlier: pending },
         );
       }
     }
 
-    // What you say during a live session (spec O.9, ADR 0078): a line that is not a command
-    // reaches the principal agent at its next step boundary while one of its sessions runs.
-    // It is posted to the agent's own inbox naming the session before the model answers; the
-    // runner collects it between tasks and the next task's brief carries it as quoted data.
-    const forwarded = await this.forwardToRunningSession(
-      agent,
-      human.id,
-      req.text,
-      turn.source === "ui" ? "text" : turn.source,
-      sessionId,
-      transcriptId,
-    );
+    // What you say during a live session (design §3.9): a question is answered here from the
+    // live state (the context's "Working now" and tasks), an instruction becomes a change with
+    // a read-back (the parser above, or the command tools below). Nothing is handed silently to
+    // whatever specialist runs next: before (ADR 0078) the line went to the next task's brief
+    // as data while the reply promised "Your agent sees this at its next step boundary".
 
     // U-047: without a model the line cannot be answered; the commands above ran without one.
     // The reply says what is missing and where the setup assistant is (never `fr setup`).
     const provider = this.deps.provider;
     if (!provider)
       return finish(
-        forwarded ? `${NO_MODEL_CHAT_REPLY} ${FORWARDED_SENTENCE}` : NO_MODEL_CHAT_REPLY,
+        NO_MODEL_CHAT_REPLY,
         [],
-        { ...(forwarded ? { forwarded } : {}) },
+        {},
         // Not content: "make this a task" after it takes the line before it.
         { notice: true },
       );
 
-    // The model path: a fast model with the registry's command tools and nothing else.
-    const context = await this.context(req.humanId, agent, projectId, req.text, conv, provider);
+    // The model path: a fast model with the registry's command tools, the read-only tools and
+    // nothing else.
+    const context = await this.context(
+      req.humanId,
+      agent,
+      projectId,
+      req.text,
+      conv,
+      provider,
+      conversationProject,
+    );
     const results: CommandResultView[] = [];
     const tools = new ToolRegistry();
     for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
+      tools.register(t);
+    for (const t of readTools({
+      store,
+      projectId,
+      ...(this.deps.sandboxReady ? { sandboxReady: this.deps.sandboxReady } : {}),
+      ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
+      folderOf: (id) => this.folderOf(id),
+    }))
       tools.register(t);
     // The chat mode's tier, effort and target from the tables in force (ADR 0039).
     const modelConfig = this.deps.modelConfig?.();
@@ -578,7 +737,14 @@ export class ConversationAgent {
       projectBrief: context.stable,
       instructions: `${CHAT_RETRIEVAL_RULES}\n\n${CHAT_OPEN_REQUEST_RULES}`,
     });
+    // The conversation so far (design §3.9: "what it knows on every turn: the recent
+    // conversation"), then this turn: the volatile facts stay in the last user message, so the
+    // cached prefix (system, tools, the earlier turns) holds from one turn to the next.
+    const historyBudget = this.deps.historyMaxTokens ?? DEFAULT_CHAT_HISTORY_TOKENS;
     const messages: ChatMessage[] = [
+      ...(historyBudget > 0
+        ? historyMessages(earlier, (t) => provider.countTokens(t), historyBudget)
+        : []),
       { role: "user", content: `${context.volatile}\n\n${req.text}` },
     ];
     const pricing = this.deps.pricingFor?.(model) ?? this.deps.pricing;
@@ -680,11 +846,13 @@ export class ConversationAgent {
     // A reply cut off at max_tokens ends at its last complete sentence, spoken or typed, and
     // the turn is recorded as truncated (never as a completed answer).
     const truncated = result.stopReason === "max_tokens";
-    // Only a turn that answered counts as having shown its open requests: an aborted or
-    // failed turn leaves them "not yet mentioned" for the next one.
-    if (result.outcome === "completed")
-      for (const id of context.shownRequests) conv.mentioned.add(id);
     let reply = truncated ? completeSentencesOf(result.finalText) : result.finalText.trim();
+    // A card counts as mentioned only when the reply names it (its task, or the start of its
+    // question): an answer about something else leaves it "not yet mentioned" for the next
+    // turn, and an aborted or failed turn mentions nothing.
+    if (result.outcome === "completed" || truncated)
+      for (const shown of context.shownRequests)
+        if (replyNames(reply, shown.names)) conv.mentioned.add(shown.id);
     if (truncated) {
       this.logger.warn("chat reply cut off at max_tokens; trimmed to its last full sentence", {
         transcriptId,
@@ -701,17 +869,12 @@ export class ConversationAgent {
     for (const r of results) {
       actions.push(...this.actionsOf(r, r.commands));
       if (r.status === "pending" && r.pendingId && !pendingCard)
-        pendingCard = {
-          id: r.pendingId,
-          readback: r.readback ?? "",
-          commands: r.commands,
-          ...(r.decision ? { decision: r.decision } : {}),
-          ...(typeof r.costUsdMicro === "number" ? { costUsdMicro: r.costUsdMicro } : {}),
-        };
+        pendingCard = cardOf(r, r.commands);
     }
+    let replaced = "";
     if (pendingCard) {
-      this.pending.set(req.humanId, pendingCard);
-      reply = `${reply ? `${reply} ` : ""}${pendingCard.readback}`.trim();
+      replaced = await this.replacePending(pendingKey, pending, pendingCard, turn);
+      reply = `${replaced}${reply ? `${reply} ` : ""}${pendingCard.readback}`.trim();
     }
     // A cut-off answer with nothing whole left says so, unless a card's read-back is the reply.
     if (!reply && truncated) reply = CUT_OFF_REPLY;
@@ -730,7 +893,6 @@ export class ConversationAgent {
         result.outcome === "completed"
           ? "Done."
           : `I could not answer (${result.error?.message ?? result.outcome}).`;
-    if (forwarded) reply = `${reply} ${FORWARDED_SENTENCE}`;
     if (ttft !== null && ttft > textChat.targetMs)
       this.logger.warn("chat first token over target", {
         ttftMs: ttft,
@@ -752,6 +914,10 @@ export class ConversationAgent {
         // The turn's active project: the conversation session is one per agent and keeps the
         // project of its first turn, so the Performance view scopes a turn by this field.
         projectId,
+        // The conversation the turn belongs to (design §3.9), read back by `readTranscript`.
+        conversationProjectId: conversationProject,
+        ...(pendingCard ? { pendingId: pendingCard.id, readback: pendingCard.readback } : {}),
+        ...(answeredHere ? { answeredId: answeredHere } : {}),
         costUsdMicro: result.costUsdMicro,
         // "truncated": the model stopped at max_tokens and the reply was trimmed to its last
         // full sentence; the stop reason of the turn's last model call says why it ended.
@@ -760,6 +926,7 @@ export class ConversationAgent {
         // What the turn was allowed to spend (ADR 0091).
         turnBudgetUsdMicro,
         actions: actions.map((a) => a.kind),
+        actionDetails: actions,
         sources: {
           docs: context.sources.docs.map((d) => (d.heading ? `${d.path} > ${d.heading}` : d.path)),
           lessons: context.sources.lessons,
@@ -777,57 +944,90 @@ export class ConversationAgent {
       costUsdMicro: result.costUsdMicro,
       transcriptId,
       activeProjectId: await this.currentProject(req.humanId, activeFallback),
-      forwarded,
       sources: context.sources,
     };
   }
 
+  /** The first of these change log rows that can still be undone. */
+  private async latestUndoable(ids: readonly string[]): Promise<string | null> {
+    for (const id of ids.slice(0, 50)) {
+      const row = await this.deps.store.changeLog.get(id);
+      if (row?.undo_state === "undoable") return id;
+    }
+    return null;
+  }
+
   /**
-   * Spec O.9: while a session of the principal runs (`running`, not the conversation session;
-   * a paused one is ending at its next boundary), the line is posted to the agent's own inbox
-   * as `said (<source>): <text> (session <id>)`, authored by the human, unread, so the runner
-   * reads it between tasks. Text carrying the data envelope is never forwarded (the parser
-   * refuses it on the command path; the read-only chat has no parser). The line reaches the
-   * human's own agent only (the rule ADR 0061 gives the memory): a turn naming an agent the
-   * human does not own is answered, never forwarded, so another human's words never reach this
-   * human's live session as their own. Nothing is posted when no session runs: the line is the
-   * model's alone, and a note is the `note.add` command.
+   * The card waiting for a yes in this conversation: the one this process read back, or after
+   * a restart the newest one the conversation read back that the registry still holds open.
    */
-  private async forwardToRunningSession(
-    agent: AgentRow,
-    humanId: string,
-    text: string,
-    source: HeardSource,
-    conversationSessionId: string,
-    transcriptId: string,
-  ): Promise<{ sessionId: string; messageId: string } | null> {
-    if (!text.trim()) return null;
-    if (text.includes(DATA_ENVELOPE_OPEN) || text.includes(DATA_ENVELOPE_CLOSE)) return null;
-    if (agent.owner_human_id !== humanId) return null;
-    const live = await this.runningWorkSession(agent.id);
-    if (!live) return null;
-    const row = await this.deps.store.message.send({
-      from_agent_id: agent.id,
-      to_agent_id: agent.id,
-      project_id: live.project_id,
-      type: "info",
-      body: heardMessageBody(live.id, source, text),
-      requires_ack: false,
-      author_agent: agent.id,
-      author_human: humanId,
-    });
-    await this.deps.store.event.append(conversationSessionId, "chat.forwarded", {
-      transcriptId,
-      sessionId: live.id,
-      messageId: row.id,
-      source,
-    } as never);
-    this.logger.info("chat line handed to the running session", {
-      sessionId: live.id,
-      messageId: row.id,
-      source,
-    });
-    return { sessionId: live.id, messageId: row.id };
+  private async pendingOf(
+    key: string,
+    earlier: readonly TranscriptTurn[],
+  ): Promise<PendingConfirmation | null> {
+    const known = this.pending.get(key);
+    const commands = this.deps.commands;
+    if (known && (!commands?.pendingCard || commands.pendingCard(known.id))) return known;
+    this.pending.delete(key);
+    if (!commands?.pendingCard) return null;
+    const last = [...earlier].reverse().find((t) => t.reply?.pendingId);
+    const id = last?.reply?.pendingId;
+    const live = id ? commands.pendingCard(id) : null;
+    if (!live || !id) return null;
+    const card: PendingConfirmation = {
+      id,
+      readback: live.readback,
+      commands: live.commands,
+      ...(live.decision ? { decision: live.decision } : {}),
+      ...(typeof live.costUsdMicro === "number" ? { costUsdMicro: live.costUsdMicro } : {}),
+      ...(live.what ? { what: live.what } : {}),
+    };
+    this.pending.set(key, card);
+    return card;
+  }
+
+  /**
+   * The reply to a "yes" with no card waiting (design §3.9, §5 rule 4). The last card this
+   * conversation read back decides it: none, or answered here (a later turn says it answered
+   * it: a yes, a no, a stop), is "Yes to what?"; answered in the Inbox or elsewhere says so and
+   * what was said there; anything else expired unanswered. Before (review of fix/chat), any
+   * read-back in the last 12 turns gave "it expired or was answered in the Inbox", also for a
+   * card answered with Yes or No in this chat a moment before.
+   */
+  private async nothingWaitingReply(earlier: readonly TranscriptTurn[]): Promise<string> {
+    let at = -1;
+    for (let i = earlier.length - 1; i >= 0; i--)
+      if (earlier[i]?.reply?.pendingId) {
+        at = i;
+        break;
+      }
+    const id = at >= 0 ? earlier[at]?.reply?.pendingId : null;
+    if (!id) return YES_TO_WHAT_REPLY;
+    if (earlier.slice(at + 1).some((t) => t.reply?.answered === id)) return YES_TO_WHAT_REPLY;
+    const row = await this.deps.store.humanRequest.get(id).catch(() => undefined);
+    const fate = cardFate(row, false);
+    if (fate.state === "yes" || fate.state === "no")
+      return cardAnsweredReply(fate.where === "inbox" ? "inbox" : "elsewhere", fate.state);
+    return CARD_EXPIRED_REPLY;
+  }
+
+  /**
+   * A new read-back in a conversation whose earlier card still waits: the earlier one is
+   * cancelled (one card waits per conversation) and the reply says so first.
+   */
+  private async replacePending(
+    key: string,
+    earlier: PendingConfirmation | null,
+    next: PendingConfirmation,
+    turn: CommandTurn,
+  ): Promise<string> {
+    const current = this.pending.get(key);
+    this.pending.set(key, next);
+    // Only a card still waiting here is dropped (a stop may have cancelled it this turn).
+    if (!earlier || current?.id !== earlier.id || earlier.id === next.id || !this.deps.commands)
+      return "";
+    await this.deps.commands.confirmByText(earlier.id, "no", turn).catch(() => undefined);
+    return `${earlier.what ? `I dropped the earlier change you had not confirmed (${earlier.what}). ` : "I dropped the earlier change you had not confirmed. "}`;
   }
 
   /**
@@ -865,18 +1065,13 @@ export class ConversationAgent {
       actions: ChatAction[],
       extra?: Partial<ChatReply>,
     ) => Promise<ChatReply>,
-    tail = "",
+    tail: string,
+    waiting: { key: string; earlier: PendingConfirmation | null },
   ): Promise<ChatReply> {
     if (r.status === "pending" && r.pendingId) {
-      const card: PendingConfirmation = {
-        id: r.pendingId,
-        readback: r.readback ?? "",
-        commands,
-        ...(r.decision ? { decision: r.decision } : {}),
-        ...(typeof r.costUsdMicro === "number" ? { costUsdMicro: r.costUsdMicro } : {}),
-      };
-      this.pending.set(turn.humanId, card);
-      return finish(`${card.readback}${tail}`, [], { pendingConfirmation: card });
+      const card = cardOf(r, commands);
+      const dropped = await this.replacePending(waiting.key, waiting.earlier, card, turn);
+      return finish(`${dropped}${card.readback}${tail}`, [], { pendingConfirmation: card });
     }
     return finish(`${this.sentenceOf(r, "Done")}${tail}`, this.actionsOf(r, commands));
   }
@@ -891,8 +1086,14 @@ export class ConversationAgent {
         return r.readback ?? "Needs confirmation.";
       case "cancelled":
         return "Cancelled; nothing was changed.";
-      default:
-        return `Not done: ${r.reason ?? "refused"}.`;
+      default: {
+        // A reason written as a sentence for the person ("Sessions are stopped (Stop all), so
+        // nothing can start. Say ...") stands as it is; a short one is said as not done.
+        const reason = (r.reason ?? "refused").trim();
+        return /^[A-Z"“]/.test(reason) && /[.!?]$/.test(reason)
+          ? reason
+          : `Not done: ${reason.replace(/[.\s]+$/, "")}.`;
+      }
     }
   }
 
@@ -952,9 +1153,11 @@ export class ConversationAgent {
   }
 
   /**
-   * Small cached context: project summaries (stable) and inbox/requests/sessions plus what
-   * was retrieved for this question (volatile: the lessons and the docs sections change with
-   * every question, so they never break the cached prefix).
+   * What the model is given on a turn (design §3.9). Stable (cached): the projects by name and
+   * goal. Volatile (the turn's last user message, so the cached prefix holds): the facts now;
+   * this project's tasks with their status in words, what each waits for and why it failed; the
+   * last session's result by name; what runs now; the open cards in full; where the files are;
+   * and what was retrieved for the question (the lessons and doc sections).
    */
   private async context(
     humanId: string,
@@ -963,43 +1166,109 @@ export class ConversationAgent {
     query: string,
     conv: ConversationState,
     provider: ModelProvider,
+    conversationProject: string | null,
   ): Promise<{
     stable: string;
     volatile: string;
-    /** Ids of the open requests listed in full in this turn's facts. */
-    shownRequests: string[];
+    /** The open requests listed in full in this turn's facts, with the names a reply uses. */
+    shownRequests: { id: string; names: string[] }[];
     sources: ChatSources;
     retrieval: { docs: RetrievalStats; lessons: RetrievalStats };
   }> {
     const agentId = agent.id;
-    const { store } = this.deps;
+    const { store, clock } = this.deps;
+    const chf = this.deps.chfPerUsd?.() ?? 1;
     const projects = await store.project.active({ limit: 20 });
+    // Projects by name and goal only: what each one stands at is in the volatile blocks below,
+    // computed now (before, a 160-character cut of a stale summary sat here).
     const stable = projects
-      .map((p) => {
-        const s = p.summary_cache as { last_session?: { summary?: string }; next_steps?: string[] };
-        return `- ${p.name}${p.id === projectId ? " (active)" : ""}: ${p.goal.slice(0, 160)}. Stage ${p.stage}, autonomy ${p.autonomy_level}.${s.last_session?.summary ? ` Last session: ${s.last_session.summary.slice(0, 160)}` : ""}${s.next_steps?.length ? ` Next: ${s.next_steps.slice(0, 3).join("; ")}` : ""} [id ${p.id}]`;
-      })
+      .map(
+        (p) =>
+          `- ${p.name}${p.id === projectId ? " (active)" : ""}: ${p.goal.replace(/\s+/g, " ").slice(0, 300)} [id ${p.id}]`,
+      )
       .join("\n");
     const unread = await store.message.inbox({ humanId }, { unreadOnly: true, limit: 5 });
-    const requests = await store.humanRequest.open({ humanId }, { limit: 5 });
+    const open = await store.humanRequest.open({ humanId }, { limit: 50 });
+    // This conversation's project first, then the cards about no project, then the others.
+    const rank = (r: OpenRequest) =>
+      r.project_id && r.project_id === projectId ? 0 : r.project_id ? 2 : 1;
+    const requests = [...open].sort((a, b) => rank(a) - rank(b)).slice(0, 8);
+    const described = await this.describeCards(requests);
     const sessions = await store.session.active(agentId);
-    const openRequests = openRequestsFact(requests, conv, query);
+    const openRequests = openRequestsFact(described, conv, query, open.length);
+    const project = projectId ? await store.project.get(projectId) : undefined;
     const volatile = volatilePreamble({
-      now: this.deps.clock.nowIso(),
-      active_project: projectId ?? "none",
+      now: clock.nowIso(),
+      active_project: project ? project.name : "none",
       unread_messages: unread.length,
       // In full once per conversation, when asked, or while blocking; else a count.
       open_requests: openRequests.fact,
       running_sessions: sessions.filter((s) => s.summary !== "conversation").length,
     });
+    const blocks: string[] = [];
+    if (project) {
+      try {
+        blocks.push(
+          await tasksBlock(store, project.id, {
+            sandboxReady: this.deps.sandboxReady?.() ?? null,
+            heading: `# Tasks of ${project.name}`,
+          }),
+        );
+        const last = lastSessionBlock(project, chf);
+        if (last) blocks.push(last);
+      } catch (e) {
+        this.logger.warn("chat tasks not read", { projectId, error: errorMessage(e) });
+      }
+    }
+    const working = await workingNowBlock(store, agentId, projectId, clock.now(), chf).catch(
+      () => "",
+    );
+    if (working) blocks.push(working);
+    if (project) {
+      const files = filesBlock(await this.folderOf(project.id));
+      if (files) blocks.push(files);
+    }
+    void conversationProject;
     const retrieved = await this.retrieve(humanId, agent, projectId, query, provider);
     return {
       stable: `# Projects\n${stable || "(none)"}`,
-      volatile: [volatile, ...retrieved.blocks].join("\n\n"),
+      volatile: [volatile, ...blocks, ...retrieved.blocks].join("\n\n"),
       sources: retrieved.sources,
       retrieval: retrieved.stats,
       shownRequests: openRequests.shown,
     };
+  }
+
+  /** The open cards in full: project, task, the question and its options (design §3.9). */
+  private async describeCards(requests: readonly OpenRequest[]): Promise<DescribedRequest[]> {
+    const { store } = this.deps;
+    const projects = new Map<string, string>();
+    const tasks = new Map<string, string>();
+    const out: DescribedRequest[] = [];
+    for (const r of requests) {
+      if (r.project_id && !projects.has(r.project_id))
+        projects.set(r.project_id, (await store.project.get(r.project_id))?.name ?? "");
+      if (r.task_id && !tasks.has(r.task_id))
+        tasks.set(r.task_id, (await store.task.get(r.task_id))?.title ?? "");
+      const projectName = r.project_id ? projects.get(r.project_id) || null : null;
+      const taskTitle = r.task_id ? tasks.get(r.task_id) || null : null;
+      out.push({
+        row: r,
+        line: cardLine(r, projectName, taskTitle),
+        names: cardNames(r, taskTitle),
+      });
+    }
+    return out;
+  }
+
+  /** The project's folder: a linked folder, its checkout, or the data-dir workspace. */
+  private async folderOf(projectId: string): Promise<string | null> {
+    if (!this.deps.docsDirs) return null;
+    try {
+      return (await this.deps.docsDirs(projectId))[0] ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1059,7 +1328,12 @@ export class ConversationAgent {
         // Read and chunk the doc set once per turn (review finding 6). The envelope costs
         // tokens too: select under the budget, measure the wrapped block, and select again
         // from the same chunks with the overshoot taken off until it fits (at most three tries).
-        const loaded = dirs.length ? await loadDocChunks(dirs, { countTokens: count }) : null;
+        const all = dirs.length ? await loadDocChunks(dirs, { countTokens: count }) : null;
+        // The status doc is no status (design §3.9): its session sections come in any order and
+        // go stale; the tasks and the last session in the context are computed now.
+        const loaded = all
+          ? { ...all, chunks: all.chunks.filter((c) => !STATUS_DOC_RE.test(c.path)) }
+          : null;
         let inner = docsBudget;
         for (let attempt = 0; loaded && attempt < 3 && inner > 0; attempt++) {
           const found = selectDocHits(loaded, query, { maxTokens: inner, countTokens: count });

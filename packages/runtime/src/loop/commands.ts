@@ -41,6 +41,7 @@ import type {
   CommandTurn,
   ConversationCommands,
   ParsedIntent,
+  PendingCardView,
 } from "./ports.ts";
 
 /**
@@ -96,11 +97,48 @@ export class CommandLoop implements ConversationCommands {
     this.parser = new IntentParser(this.registry, deps.model ? { model: deps.model } : {});
   }
 
-  /** Persist the command table and re-arm the reverts of temporary changes (after a start). */
-  async start(): Promise<{ commands: number; reverted: number; scheduled: number }> {
+  /**
+   * Persist the command table, re-arm the reverts of temporary changes, and arm again the
+   * change cards still waiting for a yes (design §3.9: a Yes/No card survives a restart; the
+   * daemon's `expireOrphanedCards` then expires only the ones that could not be armed).
+   */
+  async start(): Promise<{
+    commands: number;
+    reverted: number;
+    scheduled: number;
+    cards: number;
+  }> {
     const rows = await this.registry.persist(this.deps.store);
     const resumed = await this.executor.resumeScheduled((row) => this.contextForRow(row));
-    return { commands: rows.length, ...resumed };
+    let cards = 0;
+    try {
+      const open = await this.deps.store.humanRequest.list(
+        { status: "open", kind: "approval" } as never,
+        { limit: 500 },
+      );
+      cards = (
+        await this.executor.restorePending(open, async (stored) => {
+          const human = await this.deps.store.human.get(stored.humanId);
+          return {
+            actor: stored.actor,
+            humanId: stored.humanId,
+            agentId: stored.agentId,
+            activeProjectId: stored.activeProjectId,
+            store: this.deps.store,
+            clock: this.deps.clock,
+            ports: this.deps.ports,
+            source: stored.source,
+            wordsUsed: stored.wordsUsed,
+            timezone: human?.timezone || "UTC",
+            deviceId: stored.deviceId,
+            sessionId: stored.sessionId,
+          };
+        })
+      ).length;
+    } catch (e) {
+      this.logger.warn("waiting change cards not armed again", { error: errorMessage(e) });
+    }
+    return { commands: rows.length, ...resumed, cards };
   }
 
   stop(): void {
@@ -274,10 +312,11 @@ export class CommandLoop implements ConversationCommands {
   async undo(
     changeLogId: string | null,
     turn: CommandTurn,
-    opts: { confirmation?: ConfirmationAnswer } = {},
+    opts: { confirmation?: ConfirmationAnswer; projectId?: string } = {},
   ): Promise<CommandResultView> {
     const ctx = await this.contextFor(turn);
-    const id = changeLogId ?? (await this.executor.undoable(turn.humanId))[0]?.id;
+    // A project's conversation undoes that project's latest change only (design §3.9).
+    const id = changeLogId ?? (await this.executor.undoable(turn.humanId, opts.projectId))[0]?.id;
     if (!id) {
       return {
         status: "refused",
@@ -288,7 +327,11 @@ export class CommandLoop implements ConversationCommands {
     }
     const ended = await this.endedStart(id, turn.humanId);
     if (ended) return ended;
-    const r = await this.executor.undo(id, ctx, opts);
+    const r = await this.executor.undo(
+      id,
+      ctx,
+      opts.confirmation ? { confirmation: opts.confirmation } : {},
+    );
     return viewOf(r, ["undo"]);
   }
 
@@ -379,6 +422,20 @@ export class CommandLoop implements ConversationCommands {
     const pending = this.executor.getPending(pendingId);
     const r = await this.executor.cancel(pendingId, by);
     return viewOf(r, commandsOf(pending?.card));
+  }
+
+  /** A change card still waiting for its yes (a conversation's card after a restart). */
+  pendingCard(id: string): PendingCardView | null {
+    const p = this.executor.getPending(id);
+    if (!p) return null;
+    const cost = p.card.impact.costUsdMicro;
+    return {
+      readback: p.readback,
+      commands: commandsOf(p.card),
+      decision: p.decision,
+      ...(typeof cost === "number" ? { costUsdMicro: cost } : {}),
+      what: p.card.what,
+    };
   }
 
   pending(humanId?: string): PendingView[] {
@@ -660,9 +717,13 @@ export function sessionCommandPorts(deps: {
         return deps.kill.stop({ agentId, sessionId: session.id }, reason, { by: "you" });
       }
       if (scope === "all") return deps.kill.stop(scope, reason, { by: "stop_all" });
-      // The kill switch's scope is the agent and the session; a start id is the port's.
+      // The kill switch's scope is the agent and the session; a start id is the port's. One
+      // session is the person's Stop now (design §3.7): it freezes nothing, so the next start
+      // works; the agent's scope is Stop all's freeze.
       const { startId: _startId, ...killScope } = scope;
-      return deps.kill.stop(killScope, reason, { by: killScope.sessionId ? "you" : "stop_all" });
+      return killScope.sessionId
+        ? deps.kill.stop(killScope, reason, { by: "you", freeze: false })
+        : deps.kill.stop(killScope, reason, { by: "stop_all" });
     },
     startUndoState,
   };

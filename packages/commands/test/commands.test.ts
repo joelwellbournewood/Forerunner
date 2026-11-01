@@ -192,9 +192,10 @@ describe("session.start / stop / pause", () => {
     const cheap = done(
       await w.executor.execute({ name: "session.start", params: { budgetChf: 1 }, ctx: w.ctx() }),
     );
-    expect(cheap.sentence).toBe(
-      "Started a session on PharmaWatch on your PC with a budget of CHF 1. Undo.",
-    );
+    // Design §5: the start in plain words, its budget, no "Undo." (the Undo is a button).
+    expect(cheap.sentence).toBe("Started a session on PharmaWatch (up to CHF 1).");
+    // Read back as one question when it needs a yes (design §5 "Chat read-back").
+    expect(costly.ask).toBe("Start a session on PharmaWatch (up to CHF 5)?");
     expect(w.ports.starts).toEqual([
       {
         agentId: w.agent.id,
@@ -221,7 +222,9 @@ describe("session.start / stop / pause", () => {
         ctx: w.ctx({ deviceId: w.phone.id }),
       }),
     );
-    expect(r.sentence).toContain("the PC picks it up in seconds");
+    expect(r.sentence).toBe(
+      "Sent a start for PharmaWatch to your PC (up to CHF 1); it picks it up in seconds.",
+    );
     const [row] = await w.store.remoteCommand.pending("pc");
     expect(row).toMatchObject({
       command: "session.start",
@@ -239,15 +242,42 @@ describe("session.start / stop / pause", () => {
     const r = done(
       await w.executor.execute({ name: "session.stop", params: { scope: "all" }, ctx: w.ctx() }),
     );
-    expect(r.sentence).toBe("Stopped every running session (1 run, 0 processes).");
+    // Plain words (no "(1 run, 0 processes)") and how to undo it in words.
+    expect(r.sentence).toBe(
+      'Stopped every running session. No session starts until you say "resume" or press Allow sessions again.',
+    );
     expect(r.undoToken).toBeNull();
     expect(w.ports.kills[0]?.scope).toBe("all");
     expect((await w.store.changeLog.mustGet(r.changeLogId)).undo_state).toBe("irreversible");
+    // A plain "stop" (scope agent) is Stop now of the running session (design §3.7, §4.9): the
+    // kill names that session, never the agent's scope (which froze it until allowed again).
+    const nothing = done(
+      await w.executor.execute({ name: "session.stop", params: {}, ctx: w.ctx() }),
+    );
+    expect(nothing.sentence).toBe("Nothing is running, so nothing was stopped.");
+    expect(w.ports.kills).toHaveLength(1);
+    const s = await w.store.session.insert({
+      agent_id: w.agent.id,
+      project_id: w.pharma.id,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1,
+      step_cap: 10,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "planned",
+      summary: "work",
+      handoff: {},
+      runner: "pc",
+    });
+    await w.store.session.start(s.id, s.version);
     const agent = done(
       await w.executor.execute({ name: "session.stop", params: {}, ctx: w.ctx() }),
     );
-    expect(agent.sentence).toMatch(/^Stopped your agent's running sessions/);
-    expect(w.ports.kills[1]?.scope).toEqual({ agentId: w.agent.id });
+    expect(agent.sentence).toBe(
+      "Stopped the session on PharmaWatch. What it wrote stays; the task it was on is ready again.",
+    );
+    expect(w.ports.kills[1]?.scope).toEqual({ sessionId: s.id });
     await w.store.close();
   });
 
@@ -269,7 +299,8 @@ describe("session.start / stop / pause", () => {
     });
     await w.store.session.start(s.id, s.version);
     const r = done(await w.executor.execute({ name: "session.pause", params: {}, ctx: w.ctx() }));
-    expect(r.sentence).toBe("Paused the session on PharmaWatch. Undo.");
+    // Stop after this task (design §3.7), in plain words.
+    expect(r.sentence).toBe("The session on PharmaWatch stops after the task it is on.");
     expect((await w.store.session.mustGet(s.id)).status).toBe("paused");
     done(await w.executor.undo(r.changeLogId, w.ctx()));
     expect((await w.store.session.mustGet(s.id)).status).toBe("running");
@@ -675,11 +706,20 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     expect(draft.sentence).toBe(
       'Added "Sketch the import" to PharmaWatch as a draft (no session picks it up).',
     );
+    // Said in chat, a move is read back first (design §3.9): one question, then the yes.
+    const asked = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "sketch the import", to: "ready" },
+      ctx: w.ctx(),
+    });
+    expect(asked).toMatchObject({
+      status: "pending",
+      readback: 'Make "Sketch the import" ready? A session will pick it up.',
+    });
     const ready = done(
-      await w.executor.execute({
-        name: "task.transition",
-        params: { task: "sketch the import", to: "ready" },
-        ctx: w.ctx(),
+      await w.executor.confirmByText((asked as { pendingId: string }).pendingId, "yes", {
+        kind: "human",
+        id: w.human.id,
       }),
     );
     expect(ready.sentence).toBe('"Sketch the import" is ready: a session will pick it up.');
@@ -1152,19 +1192,23 @@ describe("summary.speak (spec A.6 readable aloud, L.6 TTS for summaries)", () =>
       spoken: true,
       speak_id: "speak-1",
     });
-    // A named project; the port says voice is unavailable: the text is the reply instead.
-    w.ports.speak = async () => ({ spoken: false, reason: "no TTS provider available" });
+    // A named project, asked aloud by chat; the port says voice is unavailable: the summary
+    // in text is the reply, with the reason in plain words (never the provider's internals).
+    w.ports.speak = async () => ({
+      spoken: false,
+      reason: "no TTS provider available: kokoro: python3: import kokoro failed",
+    });
     const named = done(
       await w.executor.execute({
         name: "summary.speak",
         params: { project: "the game" },
-        ctx: w.ctx({ source: "chat" }),
+        ctx: w.ctx({ source: "chat", wordsUsed: "read me the summary of the game" }),
       }),
     );
-    const game = spokenProjectSummary(w.game, 0, 0.8);
     expect(named.sentence).toBe(
-      `Voice is unavailable (no TTS provider available). Summary of Game: ${game}`,
+      "I cannot read it aloud: voice is not set up (Settings → Voice). Here it is:\nGame: no tasks yet.\nNo session yet.",
     );
+    expect(named.sentence).not.toMatch(/python|kokoro|provider/i);
     expect(named.card.usesActiveProject).toBe(false);
     await w.store.close();
   });
@@ -1187,11 +1231,29 @@ describe("summary.speak (spec A.6 readable aloud, L.6 TTS for summaries)", () =>
     expect(called).toBe(0);
     delete w.ports.speak;
     const plain = done(
-      await w.executor.execute({ name: "summary.speak", params: {}, ctx: w.ctx() }),
+      await w.executor.execute({
+        name: "summary.speak",
+        params: {},
+        ctx: w.ctx({ wordsUsed: "read me the summary" }),
+      }),
     );
     expect(plain.sentence).toBe(
-      `Voice is unavailable. Summary of PharmaWatch: ${spokenProjectSummary(w.pharma, 0, 0.8)}`,
+      "I cannot read it aloud: voice is not set up (Settings → Voice). Here it is:\nPharmaWatch: no tasks yet.\nNo session yet.",
     );
+    // Typed "summary" (design §3.9): the summary in text, no attempt to speak, no voice error.
+    w.ports.speak = async () => {
+      called++;
+      return { spoken: true, id: "y" };
+    };
+    const typed = done(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: {},
+        ctx: w.ctx({ wordsUsed: "summary" }),
+      }),
+    );
+    expect(called).toBe(0);
+    expect(typed.sentence).toBe("PharmaWatch: no tasks yet.\nNo session yet.");
     expect(
       refused(
         await w.executor.execute({
@@ -1243,7 +1305,7 @@ describe("summary.speak (spec A.6 readable aloud, L.6 TTS for summaries)", () =>
       await w.executor.execute({
         name: "summary.speak",
         params: { project: shared.id },
-        ctx: w.ctx({ source: "chat" }),
+        ctx: w.ctx({ source: "chat", wordsUsed: "read me its summary" }),
       }),
     );
     expect(called).toBe(1);

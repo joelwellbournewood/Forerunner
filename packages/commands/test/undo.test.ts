@@ -273,11 +273,13 @@ describe("undo says when it cannot work (U-061)", () => {
     );
     expect((await w.store.task.mustGet(task.id)).status).toBe("ready");
 
+    // From the Tasks tab (a tap): said in chat it would be read back first (design §3.9).
     const failed = done(
       await w.executor.execute({
         name: "task.transition",
         params: { task: task.id, to: "needs_human" },
-        ctx: w.ctx(),
+        ctx: w.ctx({ source: "ui" }),
+        confirmation: tap(w.human.id),
       }),
     );
     const t = await w.store.task.mustGet(task.id);

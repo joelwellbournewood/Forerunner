@@ -312,7 +312,9 @@ describe("standard doc set at project creation (G.5)", () => {
     await chat("how do we calibrate the telescope mount?");
     const sent = provider.calls
       .slice(before)
-      .map((c) => String(c.messages[0]?.content))
+      // The turn's own message (the facts, the retrieved docs and the line) comes last, after
+      // the conversation's earlier turns (design §3.9).
+      .map((c) => String(c.messages.at(-1)?.content))
       .join("\n");
     expect(sent).toContain("[docs/runbook.md > Runbook > Calibrate]");
     expect(sent).toContain("star-hop routine");

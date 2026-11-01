@@ -474,10 +474,11 @@ describe("speak routes on the composed daemon", () => {
     const unheard = await json(
       await post("/commands/execute", {
         commands: [{ name: "summary.speak", params: { project: projectId } }],
+        wordsUsed: "read me the summary of PharmaWatch",
       }),
     );
-    expect(unheard.sentence).toBe(
-      `Voice is unavailable (no app window open to play speech). Summary of PharmaWatch: ${summary.spoken}`,
+    expect(unheard.sentence).toMatch(
+      /^I cannot read it aloud: no app window is open to play it\. Here it is:\nPharmaWatch: /,
     );
     expect(rt.speech.current).toBeNull();
     // The UI's window attaches as a speech player; the command now reads aloud.
@@ -593,11 +594,13 @@ describe("speak without a TTS provider", () => {
       const r = await json(
         await post("/commands/execute", {
           commands: [{ name: "summary.speak", params: { project: p.id } }],
+          wordsUsed: "read me the summary",
         }),
       );
       expect(r.status).toBe("done");
-      expect(String(r.sentence)).toMatch(
-        /^Voice is unavailable \(.*no TTS provider available.*\)\. Summary of Gamma: Gamma\. Goal: Ship the thing\./,
+      // The reason in plain words, the summary in text (design §5: no module or secret names).
+      expect(String(r.sentence)).toBe(
+        "I cannot read it aloud: voice is not set up (Settings → Voice). Here it is:\nGamma: no tasks yet.\nNo session yet.",
       );
       await player.cancel();
     } finally {

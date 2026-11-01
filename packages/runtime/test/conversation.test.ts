@@ -12,6 +12,7 @@ import {
   ConversationAgent,
   type ConversationDeps,
 } from "../src/conversation/agent.ts";
+import { READ_TOOL_NAMES } from "../src/conversation/read-tools.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import type { CapsPort } from "../src/enforcement/ports.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.ts";
@@ -158,8 +159,11 @@ async function setup(
     const sessions = await store.session.list({ agent_id: alice } as never);
     return store.event.list(sessions[0]?.id ?? "");
   };
-  /** The volatile first user message of the n-th model call (where retrieval lands). */
-  const firstUser = (n = 0) => String(w.provider.calls[n]?.request.messages[0]?.content ?? "");
+  /**
+   * The turn's own user message of the n-th model call (the volatile facts, what was retrieved
+   * and the line): the last message, after the conversation's earlier turns (design §3.9).
+   */
+  const firstUser = (n = 0) => String(w.provider.calls[n]?.request.messages.at(-1)?.content ?? "");
   const w = {
     h,
     store,
@@ -180,7 +184,7 @@ async function setup(
 }
 
 describe("conversation agent over the command registry", () => {
-  it("answers a question with context through the model, with only the command tools offered", async () => {
+  it("answers a question with context through the model, with the command tools and the read-only tools offered", async () => {
     const w = await setup([textReply("Next step on Game: polish the menu.", { ttftMs: 0 })]);
     const tokens: string[] = [];
     const res = await w.chat("what's next on the game?", { onToken: (t) => tokens.push(t) });
@@ -196,14 +200,17 @@ describe("conversation agent over the command registry", () => {
     const names = (call?.tools ?? []).map((t) => t.name);
     expect(names).toContain("budget_set");
     expect(names).toContain("project_switch");
+    // The registry's commands, and the read-only tools that change nothing (design §3.9).
     expect(
-      names.every((n) =>
-        w.commands.registry
-          .names()
-          .map((c) => c.replace(/\./g, "_"))
-          .includes(n),
+      names.every(
+        (n) =>
+          w.commands.registry
+            .names()
+            .map((c) => c.replace(/\./g, "_"))
+            .includes(n) || (READ_TOOL_NAMES as readonly string[]).includes(n),
       ),
     ).toBe(true);
+    expect(names).toEqual(expect.arrayContaining([...READ_TOOL_NAMES]));
     expect((await w.log()).map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
     // Spec D.19: the reply row carries the turn's first token and total time and what produced
     // them; the Performance view's text-chat row reads them (performance-view.test.ts).
@@ -627,7 +634,10 @@ describe("conversation agent over the command registry", () => {
     const r = await agent.chat({ humanId: human, agentId: alice, text: "switch to pharmawatch" });
     expect(r.reply).toBe("I can only answer questions here.");
     expect(r.actions).toEqual([]);
-    expect(provider.calls[0]?.request.tools ?? []).toHaveLength(0);
+    // No command tool: only the read-only tools, which change nothing (design §3.9).
+    expect((provider.calls[0]?.request.tools ?? []).map((t) => t.name).sort()).toEqual([
+      ...READ_TOOL_NAMES,
+    ]);
     await store.close();
   });
 });

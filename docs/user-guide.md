@@ -112,15 +112,27 @@ again as soon as the service answers.
   context compression.
 - **Data**: files and datasets the project knows about; agents see metadata and samples, never
   whole files.
-- **Chat**: a quick chat with the fast model about this project. A small change you ask for
-  (a task, a note for the next session) is made at once and its reply has an **Undo** button;
-  a bigger one is read back first and waits for your **Yes**. "Make this a task" turns a
-  message into a ready task, which the next session works on. Each project keeps its
-  own conversation in this window: switching tabs or reloading keeps it, a Yes/No question you
-  have not answered yet included. Before you have added a Claude key, Chat still runs the
-  commands that need no model ("add a task: …", "make this a task", "start a session", "switch
-  to …"); anything else is answered with where to add the key: Settings → Accounts and keys →
-  Open the setup assistant.
+- **Chat**: ask about this project and change it in words. It knows the conversation so far,
+  every task with its status (what it waits for, why it failed), the last session's result, what
+  runs now, the cards waiting for you and where the files are, and it can look up a task's runs
+  and review. Ask "what is going on?", "what failed and why?", "what is left?". Tell it what to
+  change: "add a task: …" (a ready task, with **Undo**), "make the FAQ task depend on the README
+  task", "skip the LICENSE task" (a pause), "resume …", "cancel …", "try … again", "start working
+  now", "stop" (stops the running session now; its task is ready again), "stop after this task",
+  "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
+  session, "summary". A change to a task is read back once in one line ('Make "Write the FAQ"
+  wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other
+  things, and "yes" with nothing waiting asks "Yes to what?" (or, when the card it meant was
+  answered in the Inbox or expired, says so). Under each read-back the conversation says what
+  became of it: you said yes, you said no, or not answered. "start a session" when nothing can
+  start (Stop all is on, Claude is not connected, no task can run) says why at once, as the
+  Start dialog does. During a session a question is
+  answered from what runs now; nothing you type is handed silently to the specialist. "Make
+  this a task" under one of your own lines turns it into a ready task. Each project has its own
+  conversation, kept by Forerunner: a reload or a restart keeps it, and **Talk** on this
+  project's pages shows the same one. Before you have added a Claude key, Chat still runs the
+  commands that need no model; anything else is answered with where to add the key: Settings →
+  Accounts and keys → Open the setup assistant.
 
 **A project without a repository** works in its own folder on this computer (where its docs
 are): the agents read and write there, and the critic reviews what each task changed. To give
@@ -217,9 +229,10 @@ task, as asked"). **Stop now** asks once, then stops the task at once: it goes b
 "Stopped by you", and what it wrote so far stays in the project's folder. The session reads
 "Stopped by you", not an error, and the Inbox gets no line about your own click unless the
 session finished something first. **Stop all** in the header (or the tray, `fr kill`, a kill from
-your phone, or "stop" typed in Chat) stops every session the same way: they read "Stopped: Stop
-all", their tasks go back to Ready with that reason, and no session starts until you press
-**Allow sessions again**. "Stop this session" in Chat, or Stop from your phone, is Stop now.
+your phone, or "stop everything" typed in Chat) stops every session the same way: they read
+"Stopped: Stop all", their tasks go back to Ready with that reason, and no session starts until
+you press **Allow sessions again** (or say "resume" in Chat). "stop" typed in Chat, or Stop from
+your phone, is Stop now; "stop after this task" in Chat is Stop after this task.
 Quitting Forerunner while a session runs reads "Stopped: Forerunner was closed". If Forerunner
 crashed while a session ran, the next start of Forerunner ends that session ("Interrupted:
 Forerunner closed"), puts its task back to Ready ("Forerunner closed while it ran") and posts one
@@ -420,15 +433,17 @@ what its Send it back / Try again (or no) button does: the work goes back for an
 with the findings to address.
 Speech on this PC is
 chosen in Settings → Voice (or `fr setup` from a source checkout): none, CPU (any PC, slower replies)
-or GPU (NVIDIA, fastest), each with its disk size shown. A cloud voice provider (Deepgram, Without it, Talk says "install voice in
-Settings → Voice" and why (while an install runs: wait for it to finish); type instead meanwhile.
+or GPU (NVIDIA, fastest), each with its disk size shown. A cloud voice provider (Deepgram, Without it, Talk says "Voice is not installed.
+Install it in Settings → Voice, or type below."; type instead meanwhile.
 Email is set on the Email page (Settings → Capabilities → Email) and nowhere else; it is your
 agent's mailbox, so the page has a card for your agent only.
 Cartesia, ElevenLabs) is added in Extensions; paste its API key on its row there. The agent's
 mailbox password goes into the password box on Settings → Capabilities → Email. Both are kept
 in this computer's credential store and never shown again.
 
-In the conversation panel (the Talk button or the global hotkey) your words show as they are
+In the conversation panel (the Talk button or the global hotkey) you talk or type about the
+project on screen: it shows the same conversation as that project's Chat tab (on Home, the
+conversation that is about no one project). Your words show as they are
 recognised and the agent's reply shows as it is written, the sentence being spoken
 highlighted. Press Talk while the agent answers to interrupt it; the part it had not said yet
 stays visible and readable, after a small "not spoken" tag and with a dotted underline, so you

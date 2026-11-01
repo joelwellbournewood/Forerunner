@@ -27,6 +27,9 @@ import {
   ConsolidationProposalView as ConsolidationProposalViewSchema,
   type ConsolidationRunView,
   ConsolidationRunView as ConsolidationRunViewSchema,
+  type ConversationTurnView,
+  type ConversationView,
+  ConversationView as ConversationViewSchema,
   type CostView,
   CostView as CostViewSchema,
   type CreateProjectBody as CreateProjectBodySchema,
@@ -250,6 +253,8 @@ export type {
   CommandResultJson,
   ConsolidationProposalView,
   ConsolidationRunView,
+  ConversationTurnView,
+  ConversationView,
   CostView,
   DaemonDeviceView,
   DataAssetView,
@@ -519,6 +524,11 @@ export interface DaemonClient {
   retryIntake(projectId: string): Promise<IntakeStatusView>;
   project(id: string, signal?: AbortSignal): Promise<ProjectCard>;
   projectSummary(id: string, signal?: AbortSignal): Promise<ProjectSummary>;
+  /**
+   * A project's conversation (design §3.9), or with `null` the one outside any project: the
+   * turns the Chat tab and Talk show and the change still waiting for a yes.
+   */
+  conversation(projectId: string | null, signal?: AbortSignal): Promise<ConversationView>;
   // Read aloud (spec A.6, L.6; ADR 0063): the daemon's voice provider reads a summary;
   // `lib/speech.ts` follows the utterance's stream and plays the frames.
   speakProject(id: string, body?: SpeakBody): Promise<SpeakView>;
@@ -939,6 +949,15 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("project", { id }), ProjectCardSchema, undefined, signal),
     projectSummary: (id, signal) =>
       get(routePath("projectSummary", { id }), ProjectSummarySchema, undefined, signal),
+    conversation: (projectId, signal) =>
+      projectId
+        ? get(
+            routePath("conversation", { id: projectId }),
+            ConversationViewSchema,
+            undefined,
+            signal,
+          )
+        : get(routePath("generalConversation"), ConversationViewSchema, undefined, signal),
     speakProject: (id, body) => post(routePath("speakProject", { id }), SpeakViewSchema, body),
     speakSession: (id, body) => post(routePath("speakSession", { id }), SpeakViewSchema, body),
     speak: (id, signal) => get(routePath("speak", { id }), SpeakViewSchema, undefined, signal),

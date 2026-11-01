@@ -2214,7 +2214,9 @@ stand-in), `scenario-update.ts` (the release repository and publish steps on the
 `storedZip`, the healthy, broken and hanging doctor scripts, the install's updater with the
 doctor probe, its wall-clock bound, and the shell stand-in),
 `scenario-commands.ts` (a `CommandLoop` and a `ConversationAgent` for an install, as the daemon
-composes them, plus predicates for scripting the agent's model calls), `scenario-voice.ts`
+composes them, plus predicates for scripting the agent's model calls: `wordsOf` reads the
+turn's own message, the last user message with text, since a chat call now carries the
+conversation's earlier turns before it, design §3.9), `scenario-voice.ts`
 (the voice bridge), `scenario-handover.ts` (the seeded repository, `freshInstall`, the
 read-then-write specialist script, the node test runner; `SEEDED_REPO`, `SEEDED_CHECKS`,
 `CLAMP_SEED` and the clamp sources are re-exported from the runtime's

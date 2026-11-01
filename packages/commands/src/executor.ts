@@ -29,6 +29,7 @@ import type {
   CommandContext,
   CommandDef,
   CommandOutcome,
+  CommandSource,
   Risk,
 } from "./types.ts";
 
@@ -112,6 +113,45 @@ interface Gate {
   perform: () => Promise<ExecuteResult>;
   redecide: () => Promise<ConfirmationDecision>;
   answer: ConfirmationAnswer | undefined;
+  /** The commands, kept with a pending card so it can be armed again after a restart. */
+  calls?: CommandCall[];
+}
+
+/**
+ * What a pending card keeps of its context (`change_card.context`) so a restarted daemon can
+ * arm it again (design §3.9: a Yes/No card survives a restart): who asked, through what, for
+ * which project and conversation. The ports, the store and the clock are the new process's.
+ */
+export interface StoredCardContext {
+  actor: Actor;
+  humanId: string;
+  agentId: string | null;
+  activeProjectId: string | null;
+  source: CommandSource;
+  wordsUsed: string;
+  deviceId: string | null;
+  sessionId: string | null;
+}
+
+/** The read-back of a pending card (design §5): its one question, else the rendered card. */
+function readbackOf(
+  card: ChangeCard,
+  decision: Exclude<ConfirmationDecision, "act">,
+  source: CommandSource,
+): string {
+  // A card with its one question reads back as that question (design §5: "Start a session on
+  // Quote page (up to CHF 5)?"); the chat shows Yes and No, voice asks for the word.
+  if (card.ask)
+    return decision === "needs_device"
+      ? `${card.ask} Confirm in the app on a paired device.`
+      : source === "voice"
+        ? `${card.ask} Say yes or no.`
+        : card.ask;
+  return `${renderChangeCard(card, { voice: true })} ${
+    decision === "needs_device"
+      ? "Confirm in the app on a paired device; on the phone with biometric."
+      : "Say yes to confirm, or reply yes to the email."
+  }`;
 }
 
 interface Step {
@@ -225,6 +265,7 @@ export class CommandExecutor {
       perform: () => this.perform([step], req.ctx),
       redecide: async () => this.decideSteps([await this.prepare(call, req.ctx)], req.ctx),
       answer: req.confirmation,
+      calls: [{ name: call.name, params: step.params }],
     });
   }
 
@@ -232,9 +273,17 @@ export class CommandExecutor {
   private decideSteps(steps: Step[], ctx: CommandContext): ConfirmationDecision {
     let risk: Risk = "low";
     for (const s of steps) if (RISK_RANK[s.risk] > RISK_RANK[risk]) risk = s.risk;
-    return this.policy.decide(risk, ctx.actor, ctx.source, {
+    const decision = this.policy.decide(risk, ctx.actor, ctx.source, {
       limitChange: steps.some((s) => s.def.limit === true),
     });
+    // Design §3.9: a change to a task said in words is read back once before it happens.
+    if (
+      decision === "act" &&
+      (ctx.source === "chat" || ctx.source === "voice") &&
+      steps.some((s) => s.def.askFromChat === true)
+    )
+      return "needs_yes";
+    return decision;
   }
 
   /**
@@ -262,6 +311,7 @@ export class CommandExecutor {
       perform: () => this.perform(steps, ctx),
       redecide: async () => this.decideSteps(await this.prepareAll(calls, ctx), ctx),
       answer: opts.confirmation,
+      calls: steps.map((s) => ({ name: s.def.name, params: s.params })),
     });
   }
 
@@ -306,7 +356,7 @@ export class CommandExecutor {
         ),
         g.card,
       );
-    return this.createPending(g.decision, g.card, g.ctx, g.perform, g.redecide);
+    return this.createPending(g.decision, g.card, g.ctx, g.perform, g.redecide, g.calls);
   }
 
   private async createPending(
@@ -315,15 +365,23 @@ export class CommandExecutor {
     ctx: CommandContext,
     perform: () => Promise<ExecuteResult>,
     redecide: () => Promise<ConfirmationDecision>,
+    calls?: CommandCall[],
   ): Promise<ExecuteResult> {
     const now = this.clock.now();
     const expiresAt = new Date(now + this.ttlMs).toISOString();
     const emailToken = shortToken(6, "FR-");
-    const readback = `${renderChangeCard(card, { voice: true })} ${
-      decision === "needs_device"
-        ? "Confirm in the app on a paired device; on the phone with biometric."
-        : "Say yes to confirm, or reply yes to the email."
-    }`;
+    const readback = readbackOf(card, decision, ctx.source);
+    // The commands and who asked, so a restarted daemon arms the card again (`restorePending`).
+    const stored: StoredCardContext = {
+      actor: ctx.actor,
+      humanId: ctx.humanId,
+      agentId: ctx.agentId ?? null,
+      activeProjectId: ctx.activeProjectId ?? null,
+      source: ctx.source,
+      wordsUsed: ctx.wordsUsed,
+      deviceId: ctx.deviceId ?? null,
+      sessionId: ctx.sessionId ?? null,
+    };
     const request = await this.store.humanRequest.insert({
       human_id: ctx.humanId,
       project_id: card.projectId,
@@ -340,6 +398,7 @@ export class CommandExecutor {
         email_token: emailToken,
         expires_at: expiresAt,
         words_used: ctx.wordsUsed,
+        ...(calls ? { calls: JSON.parse(JSON.stringify(calls)), context: stored } : {}),
       } as never,
       author_human: ctx.actor.kind === "human" ? ctx.actor.id : null,
       author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : null,
@@ -364,6 +423,76 @@ export class CommandExecutor {
       inFlight: false,
     });
     return { status: "pending", card, pendingId: id, decision, expiresAt, emailToken, readback };
+  }
+
+  /**
+   * Arms again the cards a stopped daemon showed (design §3.9: a Yes/No card survives a
+   * restart; before, U-029 expired every one at the next start): each open change card that
+   * kept its commands and context, not expired, is planned again on the state as it is now
+   * and waits for its yes as before, with its id, email token and expiry. A card that cannot be
+   * planned any more (its task is gone, a value is refused now) is left for the caller to
+   * expire. Answers the ids armed.
+   */
+  async restorePending(
+    rows: readonly { id: string; human_id: string | null; status: string; change_card: unknown }[],
+    contextFor: (stored: StoredCardContext) => Promise<CommandContext>,
+  ): Promise<string[]> {
+    const armed: string[] = [];
+    const now = this.clock.now();
+    for (const row of rows) {
+      if (row.status !== "open" || this.pendings.has(row.id)) continue;
+      const json = row.change_card as Record<string, unknown> | null;
+      if (!json || typeof json !== "object") continue;
+      const calls = json.calls;
+      const stored = json.context as StoredCardContext | undefined;
+      const decision = json.decision;
+      const expiresAt = typeof json.expires_at === "string" ? json.expires_at : null;
+      if (
+        !Array.isArray(calls) ||
+        !calls.length ||
+        !stored ||
+        (decision !== "needs_yes" && decision !== "needs_device") ||
+        !expiresAt ||
+        Date.parse(expiresAt) <= now
+      )
+        continue;
+      try {
+        const ctx = await contextFor(stored);
+        const commandCalls = calls as CommandCall[];
+        const steps = await this.prepareAll(commandCalls, ctx);
+        const card =
+          steps.length === 1 ? (steps[0] as Step).card : mergeCards(steps.map((s) => s.card));
+        const id = row.id;
+        const cancelTimer = this.clock.setTimeout(
+          () => {
+            void this.expirePending(id);
+          },
+          Math.max(0, Date.parse(expiresAt) - now),
+        );
+        this.pendings.set(id, {
+          id,
+          humanId: stored.humanId,
+          card,
+          decision,
+          createdAt: new Date(now).toISOString(),
+          expiresAt,
+          emailToken: typeof json.email_token === "string" ? json.email_token : "",
+          readback: readbackOf(card, decision, ctx.source),
+          wordsUsed: stored.wordsUsed,
+          perform: async () => this.perform(await this.prepareAll(commandCalls, ctx), ctx),
+          redecide: async () => this.decideSteps(await this.prepareAll(commandCalls, ctx), ctx),
+          cancelTimer,
+          inFlight: false,
+        });
+        armed.push(id);
+      } catch (e) {
+        this.logger.warn("a change card could not be armed again after a restart", {
+          id: row.id,
+          error: errorMessage(e),
+        });
+      }
+    }
+    return armed;
   }
 
   private async perform(steps: Step[], ctx: CommandContext): Promise<ExecuteResult> {

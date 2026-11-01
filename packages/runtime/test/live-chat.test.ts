@@ -8,7 +8,6 @@ import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.t
 import { CommandLoop } from "../src/loop/commands.ts";
 import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
 import {
-  FORWARDED_SENTENCE,
   type HeardLine,
   heardLineOf,
   heardMessageBody,
@@ -32,14 +31,14 @@ import {
 } from "./helpers.ts";
 
 /**
- * Spec O.9, "During a live session, what you say reaches the principal agent at the next step
- * boundary" (ADR 0078): a free-form line typed or spoken to the conversation agent while a
- * session of the human's principal agent runs is posted to that agent's own inbox naming the
- * session; the runner collects it between tasks (delivered), the next task's brief carries it
- * as quoted data (read), the human's session summary lists it, and the reply says so. A
- * command keeps going through the registry, nothing is posted when no session runs (the
- * existing note path), and another human's running session is never touched. Asserted with a
- * running `SessionRunner` held mid-task by a gated executor, as `session.test.ts` does.
+ * What you say during a live session (design §3.9, core-experience.md): a question is answered
+ * from the live state (the task in flight, the tasks), an instruction becomes a change with a
+ * read-back, and nothing is handed silently to whatever specialist runs next. Before (spec O.9
+ * as ADR 0078 built it) a free-form line was posted to the agent's inbox and pasted into the
+ * next task's brief as data, while the reply promised "Your agent sees this at its next step
+ * boundary"; the 2026-11-01 walk found "skip the README for now" marked read and the README
+ * written in that same session. Asserted with a running `SessionRunner` held mid-task by a
+ * gated executor, as `session.test.ts` does.
  */
 interface World {
   h: Harness;
@@ -209,14 +208,6 @@ function gatedExecutor(w: World) {
   return { executor, gate, given };
 }
 
-/** The running work session of the agent (not the conversation session). */
-async function runningSession(w: World) {
-  const rows = await w.store.session.active(w.alice);
-  const row = rows.find((s) => s.status === "running" && s.summary !== "conversation");
-  if (!row) throw new Error("no running session");
-  return row;
-}
-
 const heardMessages = (w: World, agentId = w.alice) =>
   w.store.message
     .inbox({ agentId }, { limit: 50 })
@@ -266,133 +257,36 @@ describe("renderHeardLines", () => {
   });
 });
 
-describe("what you say during a live session (spec O.9)", () => {
-  it("a free-form line during a running session reaches the inbox, the next task's brief and the summary; the reply says so", async () => {
-    const w = await setup([textReply("I will keep an eye on it.")]);
+describe("what you say during a live session (design §3.9)", () => {
+  it("a question during a running session is answered from the live state; nothing is handed to the session or promised", async () => {
+    const w = await setup([textReply("The coder is on the first task.")]);
     const first = await w.addTask("First task", 9);
     const second = await w.addTask("Second task", 1);
     const { executor, gate, given } = gatedExecutor(w);
     const running = w.start(w.runner(executor));
     await until(() => gate.release !== null, "the first task to be in flight");
-    const session = await runningSession(w);
-    if (!session) throw new Error("no running session");
     expect(given.has(first.id)).toBe(true);
 
-    const text = "please also check the README";
-    const r = await w.chat(text, { source: "voice" });
-    expect(w.provider.calls).toHaveLength(1); // the model still answers the human
-    expect(r.reply).toBe(`I will keep an eye on it. ${FORWARDED_SENTENCE}`);
-    expect(r.forwarded).toEqual({ sessionId: session.id, messageId: expect.any(String) });
-    expect(r.actions).toEqual([]);
-    // In the principal's own inbox, naming the session, authored by the human, unread so far.
-    const posted = await heardMessages(w);
-    expect(posted).toHaveLength(1);
-    expect(posted[0]).toMatchObject({
-      id: r.forwarded?.messageId,
-      from_agent_id: w.alice,
-      to_agent_id: w.alice,
-      project_id: w.game,
-      type: "info",
-      requires_ack: false,
-      author_agent: w.alice,
-      author_human: w.human,
-      delivered_at: null,
-      read_at: null,
-      body: heardMessageBody(session.id, "voice", text),
-    });
-    // The conversation transcript records the hand-over.
-    const events = await w.conversationEvents();
-    expect(events.map((e) => e.type)).toEqual(["chat.human", "chat.forwarded", "chat.reply"]);
-    expect(events[1]?.payload).toMatchObject({
-      sessionId: session.id,
-      messageId: posted[0]?.id,
-      source: "voice",
-    });
-    // The first task was already given nothing: it was in flight when the line arrived.
-    expect(given.get(first.id)?.heard).toEqual([]);
+    const r = await w.chat("what are you working on right now?", { source: "voice" });
+    expect(w.provider.calls).toHaveLength(1);
+    // The model is given what runs now (the task in flight by name) and the tasks.
+    const sent = String(w.provider.calls[0]?.request.messages.at(-1)?.content);
+    expect(sent).toContain("# Working now");
+    expect(sent).toContain('"First task"');
+    expect(sent).toContain('- "Second task": Ready');
+    // The reply is the answer alone: before, it promised "Your agent sees this at its next step
+    // boundary" while the line went to whatever task came next as data (ADR 0078).
+    expect(r.reply).toBe("The coder is on the first task.");
+    expect(r.reply).not.toContain("next step boundary");
+    expect(await heardMessages(w)).toHaveLength(0);
+    expect((await w.conversationEvents()).map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
 
-    // The task in flight finishes; the runner reads the inbox at the boundary and the second
-    // task's brief carries the line, read between the tasks.
     gate.release?.();
     const res = await running;
-    expect(res.status).toBe("completed");
     expect(res.completed).toEqual([first.id, second.id]);
-    const toSecond = given.get(second.id);
-    expect(toSecond?.heard).toEqual([
-      { id: posted[0]?.id, source: "voice", text, saidAt: posted[0]?.created_at },
-    ]);
-    expect(toSecond?.readAt[0]).not.toBeNull(); // read before the task started
-    const after = await w.store.message.mustGet(posted[0]?.id ?? "");
-    expect(after.delivered_at).not.toBeNull();
-    expect(after.read_at).not.toBeNull();
-    expect(res.heard).toEqual([
-      {
-        id: posted[0]?.id,
-        source: "voice",
-        text,
-        saidAt: posted[0]?.created_at,
-        deliveredTo: second.id,
-      },
-    ]);
-    // The runner's session log names the boundary and the task.
-    const log = await w.store.event.list(res.sessionId);
-    const heardEvent = log.find((e) => e.type === "inbox.heard");
-    expect(heardEvent?.payload).toMatchObject({ id: posted[0]?.id, source: "voice" });
-    const taskHeard = log.find((e) => e.type === "task.heard");
-    expect(taskHeard?.payload).toMatchObject({ taskId: second.id, ids: [posted[0]?.id] });
-    // The summary lists it; the human's message quotes it and names the task; the handoff
-    // and the project's cache carry the count and the task, never the words (peers read them).
-    // The result (design §5) does not echo the person; the Update below says where it went.
-    expect(res.summary).not.toContain(text);
-    expect(res.handoff).toMatchObject({
-      heard: [{ id: posted[0]?.id, source: "voice", delivered_to: second.id }],
-    });
-    expect(JSON.stringify(res.handoff)).not.toContain(text);
-    // The Inbox's one-line Update does not quote the person back (design §3.8, §5.11); the
-    // session log above names the task the line went to.
-    const toHuman = (await w.store.message.inbox({ humanId: w.human })).filter(
-      (m) => m.from_agent_id === w.alice && /^Game: /.test(m.body),
-    );
-    expect(toHuman).toHaveLength(1);
-    expect(toHuman[0]?.body).not.toContain("You said during the session");
-    expect(toHuman[0]?.body).not.toContain(text);
-    expect(toHuman[0]?.body.split("\n")).toHaveLength(1);
-    const cache = (await w.store.project.mustGet(w.game)).summary_cache as {
-      last_session: { summary: string };
-    };
-    expect(cache.last_session.summary).not.toContain(text);
-    await w.store.close();
-  });
-
-  it("a line during the last task stays unread and the next session's brief lists it", async () => {
-    const w = await setup([textReply("Noted.")]);
-    const only = await w.addTask("Only task", 5);
-    const { executor, gate } = gatedExecutor(w);
-    const running = w.start(w.runner(executor));
-    await until(() => gate.release !== null, "the task to be in flight");
-    const session = await runningSession(w);
-    if (!session) throw new Error("no running session");
-    const r = await w.chat("use the new renderer for the menu");
-    expect(r.forwarded?.sessionId).toBe(session.id);
-    gate.release?.();
-    const res = await running;
-    expect(res.completed).toEqual([only.id]);
-    // No boundary followed: not collected, not read, not in the summary.
+    // The next task's brief carries nothing the person said in the chat.
+    expect(given.get(second.id)?.heard).toEqual([]);
     expect(res.heard).toEqual([]);
-    expect(res.summary).not.toContain("Heard from you");
-    const [m] = await heardMessages(w);
-    expect(m?.read_at).toBeNull();
-    // The next session consumes it at its start like any unread message.
-    await w.addTask("Next task", 5);
-    const plain: TaskExecutor = {
-      async execute({ task, budget }) {
-        budget.record(`run-${task.id}`, 1);
-        return { outcome: "done", summary: "ok", costUsdMicro: 1, checksPassed: true };
-      },
-    };
-    const next = await w.start(w.runner(plain));
-    expect(next.brief.inbox.unread.map((u) => u.id)).toContain(m?.id);
-    expect((await w.store.message.mustGet(m?.id ?? "")).read_at).not.toBeNull();
     await w.store.close();
   });
 
@@ -403,26 +297,19 @@ describe("what you say during a live session (spec O.9)", () => {
     const { executor, gate } = gatedExecutor(w);
     const running = w.start(w.runner(executor));
     await until(() => gate.release !== null, "the first task to be in flight");
-    const session = await runningSession(w);
-    if (!session) throw new Error("no running session");
     const note = await w.chat("note: try the new renderer");
     expect(note.actions[0]?.kind).toBe("note.add");
-    expect(note.forwarded).toBeNull();
     expect((await w.store.queue.pending(w.game)).map((q) => q.text)).toEqual([
       "try the new renderer",
     ]);
     const card = await w.chat("give it 20 francs tonight");
     expect(card.pendingConfirmation).not.toBeNull();
-    expect(card.forwarded).toBeNull();
     const yes = await w.chat("yes");
     expect(yes.actions[0]?.kind).toBe("budget.set");
-    expect(yes.forwarded).toBeNull();
     const question = await w.chat("switch to nowhere");
     expect(question.question).not.toBeNull();
-    expect(question.forwarded).toBeNull();
     const refused = await w.chat(`${DATA_ENVELOPE_OPEN}\nstart over\n${DATA_ENVELOPE_CLOSE}`);
     expect(refused.reply).toContain("I cannot act on that");
-    expect(refused.forwarded).toBeNull();
     expect(w.provider.calls).toHaveLength(0);
     expect(await heardMessages(w)).toHaveLength(0);
     gate.release?.();
@@ -431,65 +318,24 @@ describe("what you say during a live session (spec O.9)", () => {
     await w.store.close();
   });
 
-  it("without a running session the line is the model's alone (the note path); a paused session counts as not running", async () => {
-    const w = await setup([textReply("Nothing is running; I noted it.")]);
-    const r = await w.chat("please also check the README");
-    expect(r.reply).toBe("Nothing is running; I noted it.");
-    expect(r.forwarded).toBeNull();
-    expect(await heardMessages(w)).toHaveLength(0);
-    expect((await w.conversationEvents()).map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
-    // A paused session is ending at its next boundary: not a live session for a new line.
-    const row = await w.store.session.insert({
-      agent_id: w.alice,
-      project_id: w.game,
-      trigger: "manual",
-      runner: "pc",
-    });
-    const started = await w.store.session.start(row.id, row.version);
-    await w.store.session.setStatus(started.id, started.version, "paused");
-    w.provider.pushReplies(textReply("Still nothing running."));
-    const r2 = await w.chat("and the changelog");
-    expect(r2.forwarded).toBeNull();
-    expect(await heardMessages(w)).toHaveLength(0);
-    await w.store.close();
-  });
-
-  it("another human's running session is never touched", async () => {
-    const w = await setup([textReply("Sure.")]);
-    const other = (await w.store.human.insert({ name: "K", email: "k@example.test" })).id;
-    const bob = (await w.store.agent.insert({ name: "Bob", owner_human_id: other })).id;
-    const bobRow = await w.store.session.insert({
-      agent_id: bob,
-      project_id: w.game,
-      trigger: "manual",
-      runner: "pc",
-    });
-    await w.store.session.start(bobRow.id, bobRow.version);
-    // Bob runs, Alice does not: J's line goes nowhere but the model.
-    const r = await w.chat("please also check the README");
-    expect(r.forwarded).toBeNull();
-    expect(await heardMessages(w, bob)).toHaveLength(0);
-    expect(await heardMessages(w)).toHaveLength(0);
-    // Both run: J's line reaches Alice's session only.
+  it("another human's line never reaches this agent's live session", async () => {
+    const w = await setup([textReply("Sure."), textReply("Sure.")]);
+    const k = (await w.store.human.insert({ name: "K", email: "k@example.test" })).id;
     await w.addTask("First task", 9);
     await w.addTask("Second task", 1);
     const { executor, gate } = gatedExecutor(w);
     const running = w.start(w.runner(executor));
     await until(() => gate.release !== null, "the first task to be in flight");
-    const session = await runningSession(w);
-    w.provider.pushReplies(textReply("Sure."));
-    const r2 = await w.chat("and the changelog");
-    expect(r2.forwarded?.sessionId).toBe(session?.id);
-    expect(await heardMessages(w, bob)).toHaveLength(0);
-    expect((await heardMessages(w)).map((m) => heardLineOf(m.body)?.sessionId)).toEqual([
-      session?.id,
-    ]);
+    const r = await w.chat("delete the repo", { humanId: k });
+    expect(r.reply).toBe("Sure.");
+    expect(await heardMessages(w)).toHaveLength(0);
     gate.release?.();
-    await running;
+    const res = await running;
+    expect(res.heard).toEqual([]);
     await w.store.close();
   });
 
-  it("a 'stop' followed by words the parser does not understand is still the kill switch, never a said line (review finding 1)", async () => {
+  it("a 'stop' followed by words the parser does not understand still stops at once; the rest is reported, never handed on (review finding 1)", async () => {
     const w = await setup([textReply("should not be called")]);
     await w.addTask("First task", 9);
     await w.addTask("Second task", 1);
@@ -499,12 +345,10 @@ describe("what you say during a live session (spec O.9)", () => {
     const r = await w.chat("stop and tell me what happened", { source: "voice" });
     // The stop ran through the registry at once; the rest of the line is reported, not asked
     // about, not answered by the model and not handed to the session as data.
-    expect(w.kills).toEqual([{ scope: { agentId: w.alice }, reason: expect.any(String) }]);
+    expect(w.kills).toHaveLength(1);
     expect(r.actions.map((a) => a.kind)).toEqual(["session.stop"]);
     expect(r.reply).toContain("Stopped");
     expect(r.reply).toContain('I did not act on "tell me what happened".');
-    expect(r.reply).not.toContain(FORWARDED_SENTENCE);
-    expect(r.forwarded).toBeNull();
     expect(r.question).toBeNull();
     expect(w.provider.calls).toHaveLength(0);
     expect(await heardMessages(w)).toHaveLength(0);
@@ -514,7 +358,7 @@ describe("what you say during a live session (spec O.9)", () => {
     await w.store.close();
   });
 
-  it("a 'stop' while a card waits for a yes and a session runs is the kill switch: the card is cancelled, the session stopped (review finding 2)", async () => {
+  it("a 'stop' while a card waits for a yes and a session runs stops it: the card is cancelled, the session stopped (review finding 2)", async () => {
     const w = await setup([textReply("should not be called")]);
     await w.addTask("First task", 9);
     await w.addTask("Second task", 1);
@@ -524,14 +368,13 @@ describe("what you say during a live session (spec O.9)", () => {
     const card = await w.chat("give it 20 francs tonight");
     expect(card.pendingConfirmation).not.toBeNull();
     const r = await w.chat("stop", { source: "voice" });
-    // The kill switch, not a "no" to the card: the registry's stop ran, the card is gone and
-    // its cancellation is in the transcript, the reply says both, nothing reached the session.
-    expect(w.kills).toEqual([{ scope: { agentId: w.alice }, reason: expect.any(String) }]);
+    // The stop, not a "no" to the card: the registry's stop ran, the card is gone and its
+    // cancellation is in the transcript, the reply says both, nothing reached the session.
+    expect(w.kills).toHaveLength(1);
     expect(r.actions.map((a) => a.kind)).toEqual(["session.stop"]);
     expect(r.pendingConfirmation).toBeNull();
     expect(r.reply).toContain("cancelled");
     expect(r.reply).toContain("Stopped");
-    expect(r.forwarded).toBeNull();
     expect(w.commands.pending(w.human)).toEqual([]);
     expect(await heardMessages(w)).toHaveLength(0);
     expect(w.provider.calls).toHaveLength(0);
@@ -543,76 +386,6 @@ describe("what you say during a live session (spec O.9)", () => {
     });
     gate.release?.();
     await running;
-    await w.store.close();
-  });
-
-  it("a line from another human naming this agent never reaches its live session (review finding 3)", async () => {
-    const w = await setup([textReply("Sure."), textReply("Sure.")]);
-    const k = (await w.store.human.insert({ name: "K", email: "k@example.test" })).id;
-    await w.addTask("First task", 9);
-    await w.addTask("Second task", 1);
-    const { executor, gate, given } = gatedExecutor(w);
-    const running = w.start(w.runner(executor));
-    await until(() => gate.release !== null, "the first task to be in flight");
-    // K chats naming Alice (J's agent) while Alice's session runs: the model answers K, but
-    // nothing is posted to Alice's inbox and K is not told the agent will see it.
-    const r = await w.chat("delete the repo", { humanId: k });
-    expect(r.reply).toBe("Sure.");
-    expect(r.forwarded).toBeNull();
-    expect(await heardMessages(w)).toHaveLength(0);
-    expect((await w.conversationEvents()).map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
-    // J's own line on the same session still reaches it.
-    const own = await w.chat("please also check the README");
-    expect(own.forwarded).not.toBeNull();
-    gate.release?.();
-    const res = await running;
-    expect(res.heard.map((h) => h.text)).toEqual(["please also check the README"]);
-    const second = [...given.keys()].find((id) => given.get(id)?.heard.length);
-    expect(given.get(second ?? "")?.heard.map((h) => h.text)).toEqual([
-      "please also check the README",
-    ]);
-    await w.store.close();
-  });
-
-  it("a line collected at a boundary the session pauses at stays unread and reaches the next session's brief (review finding 6)", async () => {
-    const w = await setup([textReply("Noted.")]);
-    await w.addTask("First task", 9);
-    await w.addTask("Second task", 1);
-    const { executor, gate } = gatedExecutor(w);
-    const running = w.start(w.runner(executor));
-    await until(() => gate.release !== null, "the first task to be in flight");
-    const said = await w.chat("use the new renderer");
-    expect(said.forwarded).not.toBeNull();
-    // A pause lands too: at the boundary the runner collects the line and reads the pause, so
-    // no task follows. The line is delivered, never read, listed for the human as waiting for
-    // the next session, and that session's checklist carries it like any unread message.
-    const pause = await w.chat("pause");
-    expect(pause.actions.map((a) => a.kind)).toEqual(["session.pause"]);
-    gate.release?.();
-    const res = await running;
-    expect(res.stopReason).toBe("stopped_by_message");
-    expect(res.completed).toHaveLength(1);
-    expect(res.heard).toEqual([
-      expect.objectContaining({ id: said.forwarded?.messageId, deliveredTo: null }),
-    ]);
-    const m = await w.store.message.mustGet(said.forwarded?.messageId ?? "");
-    expect(m.delivered_at).not.toBeNull();
-    expect(m.read_at).toBeNull();
-    const toHuman = (await w.store.message.inbox({ humanId: w.human })).filter(
-      (x) => x.from_agent_id === w.alice && /^Game: /.test(x.body),
-    );
-    // The Update does not quote the person back (design §3.8, §5.11); the line stays unread
-    // above, so the next session reads it.
-    expect(toHuman[0]?.body).not.toContain("use the new renderer");
-    const plain: TaskExecutor = {
-      async execute({ task, budget }) {
-        budget.record(`run-${task.id}`, 1);
-        return { outcome: "done", summary: "ok", costUsdMicro: 1, checksPassed: true };
-      },
-    };
-    const next = await w.start(w.runner(plain));
-    expect(next.brief.inbox.unread.map((u) => u.id)).toContain(m.id);
-    expect((await w.store.message.mustGet(m.id)).read_at).not.toBeNull();
     await w.store.close();
   });
 
@@ -628,7 +401,13 @@ describe("what you say during a live session (spec O.9)", () => {
     expect(w.provider.calls).toHaveLength(0);
     await w.store.close();
   });
+});
 
+/**
+ * The runner still reads a `said (...)` line that is already in the agent's inbox (an install
+ * that forwarded lines before design §3.9) and quotes it in the next brief as data.
+ */
+describe("heard lines already in an inbox", () => {
   it("the LoopTaskExecutor puts the lines after the brief as quoted data and warns on a flagged one", async () => {
     const h = harness();
     const store = await openStore({ url: "sqlite::memory:", clock: h.clock });

@@ -101,7 +101,7 @@ apps/ui/
 | `reviews` tab | counts (reviews, open findings, average grade, verdicts), the grade trend chart with the accept line, every review newest first (grade, verdict, tier, confidence, model, task, session link, summary, evidence, findings with severity and status), verdict filter | `GET /projects/:id/reviews` |
 | `costs` tab | totals, by model / specialist / task with accepted share and cost per accepted task, savings apart | `GET /costs?projectId=` |
 | `data` tab | registered datasets (name, kind, size, locator, sample, who), register by path or URI, remove (two clicks), import from github/zip/folder with the result in one line (`importSummary`: the repository and its migration branch with the default branch untouched, or the files and bytes and where they went, and the daemon's note) | `GET /projects/:id/data`, `POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/data/import` (since U-006) |
-| `chat` tab | quick chat with streaming, read-back confirmation, make-this-a-task (the New task dialog prefilled from the message, status `ready`: U-016, ADR 0093); without a Claude key the commands that need no model still run and any other line is answered with where the setup assistant is (U-047: the daemon no longer refuses Chat with 503; the fake's `noModel` option answers the same way) | `POST /chat/stream` |
+| `chat` tab | the project's one conversation (design §3.9; `components/Conversation.tsx`, the same component Talk shows): the turns the daemon keeps, streaming, a reply's changes as plain sentences with one **Undo** each (`canUndo` from the daemon), the change waiting for a yes as one card with Yes and No (it stays while other lines are typed; once answered the read-back says "(you said yes)" or "(you said no)", from the daemon's `card`, and one never answered "(not answered; ask again if you still want it)"), a parser question's options as buttons, three example phrases under the input ("what is left?", "add a task: …", "stop after this task"), make-this-a-task under the person's own requests and questions only (not under a command that acted, a read-back's yes or no, or an undo) (the New task dialog prefilled from the line, status `ready`: U-016, ADR 0093); no first-token badge, cost chip or `task.create:` chip; a reply that ran `session.stop` or `session.resume` ("stop everything", "resume") re-reads `GET /health` so the header's stopped bar follows at once (before, only a reload showed it); without a Claude key the commands that need no model still run and any other line is answered with where the setup assistant is (U-047; the fake's `noModel` option answers the same way) | `GET /projects/:id/conversation`, `POST /chat/stream`, `POST /changes/:id/undo`, `GET /health` |
 | `/sessions/:id` | Live session view: header (status, agent, current task + specialist, steps/stepCap, spent/cap bar, Stop), event stream with level chips, raw JSON toggle, follow/auto-scroll | `GET /sessions/:id`, `GET /sessions/:id/events` (JSON backlog, then SSE), `POST /sessions/:id/stop` |
 | `/inbox` | Design §3.8 (2026-11-01): two lists, **Needs you (n)** (the open cards, blocking first, newest first; n is `needsYouCount`, every open card, which the header badge shows too) and **Updates** (the messages, one line each with who and when, read marking, Mark all read), then **Answered (n)** collapsed (the answered or withdrawn cards `GET /inbox` lists after the open ones, each with its title and its `outcome` line). A card shows the daemon's words (`request-words.ts` through the view): its project and task as links (`Task: <title>` opens the drawer, `?task=`; U-073), its `title` (naming the task), its `body` (one or two sentences: the specialist's words, what waits on the task), its `choices` as buttons, each with its consequence line beside it (`option-explain`), the primary one blue, a destructive one red, one with `confirm` asked once in place (`choice-confirm`, "Yes, mark done anyway" / Back) before anything is sent, one with `input: "note"` sent with the optional "Note for the agent" field as `{ choice, note }`, one with `input: "text"` (Change the plan) opening a text box sent as `{ choice, text }`; `links` as link buttons (Set up Docker); `details` behind a closed Details; a text box ("Answer in your own words…") only when `reply` is `text`; no risk or kind badges, never the change card's JSON. After an answer the card is replaced by its Done line (`done-line`: "Done: Trying "X" again: a session started.", the answer's `outcome`) for as long as the page is open; a card with `followUp` (answers that came after their task finished) offers "Redo with these answers" in its Done line and its Answered entry (`FollowUp`: `GET /tasks/:id` for the version, then `POST /tasks/:id/action` with the follow-up's action and a note). An older daemon without the words: the `why`, the options, a text box on every card. Reloads when the install stream reports a count the page has not seen. An intake proposal (spec A.2, ADR 0055: a card whose `key` is `intake:<project>`) shows the plan once (`IntakeCard`, `intakeCardOf`, design §3.3): the tasks in order, each with who does it ("you: answer its questions" for a person task, "the agent chooses who"), about what it costs (CHF), what it comes after, and "Needs Docker" beside a full-review task while `GET /sandbox` is not ready; the total; the decision record as text (`markdownAsText`, open; U-073); the other docs are scaffolded without being listed. Questions only the person can answer (U-022, ADR 0095: a `decision` whose `key` is `person_questions:<task>`, `personQuestionsOf`; the prefix is checked against the runtime's) render as a form (`PersonQuestionsForm`) with one answer field per question and Send answers, which sends `{ answers: [{ question, answer }] }` without the blank ones (disabled until one is typed); the specialist's words are the card's body; the choices are Go ahead without (a specialist's questions only) and Cancel task (confirmed, naming what will be stuck). A cloud runner vault unlock (spec S.12, ADR 0068: a `credential` request whose card is the runner's challenge, `unlockChallengeOf`) renders as the **unlock card** (`UnlockCard`) instead of the options and the free-text box: the runner, the project, when it was filed, the challenge's age and time left; Unlock once / Unlock and allow for 1, 8 or 24 h / Unlock and clear the window / Deny. The key never reaches the page: `daemonRunnerKeys(client)` asks the daemon, which holds the OS keyring, to wrap it (`POST /runner-unlock/wrap { requestId }`: the page names the request, the daemon reads the challenge from its store) and the page sends the wrapped answer as the request's answer; the window it set is recorded in browser storage (`runnerUnlockWindow.<human>`) only after the answer was accepted. While that window is open the next challenge is answered once, without a choice, with a notice, on whatever page is open: `RunnerAutoUnlock` in the `Shell` (not the inbox page) reads the inbox on mount, on every streamed blocking count and every minute while the window is open, and runs `useAutoUnlock`; the page and the shell share the window record through `desktopUnlockWindowStore` / `useUnlockWindow`, so a window set on a card applies at once. Without the key on this computer (`GET /runner-unlock/:runnerId/key`) or after the challenge expired, the card is read-only with the reason. `InboxPage` takes `runnerKeys`, `unlockWindows` and `now` props for tests | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read`, `GET /runner-unlock/:runnerId/key`, `POST /runner-unlock/wrap` |
 | `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); Share (spec G.6: proposes the lesson for every project; shown for an active lesson that is not shared already, `canShare`: neither a global shared lesson nor a project copy of one accepted from an offer, whose `source` names its `promotion` origin, the rows the daemon refuses too; the row then says the critic reviews it at the next session end and gains the `general` tag); "Shared across projects": the proposals waiting for the critic and the offers of promoted lessons to the human's other projects (open first: Accept for that project / Dismiss, applied at once; decided ones with their outcome; its own route-missing notice when the daemon lacks the offers route); consolidation proposals with merged/contradictions/retired and "Run now" (its own route-missing notice, under the Consolidation heading, when the daemon lacks the consolidation routes) | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `POST /memory/lessons/:id/propose`, `GET /memory/promotions`, `GET /memory/offers`, `POST /memory/offers/:id/answer`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
@@ -338,20 +338,22 @@ both, closing on `speak.done` cut the last ~300 ms.
 daemon said anything, set from a frame by `desktopControlFromIndicator` and from a status by
 `desktopControlFromStatus`, where `revoked` is a stop the banner can resume and never a
 revoke by the Extensions panel (reason "… disabled|removed in the Extensions panel"); and
-`desktopOrder`, the frame/read order above; `chats`: each project's Chat conversation,
-U-071, below);
+`desktopOrder`, the frame/read order above; `conversations`: the conversations the daemon
+keeps, below);
 React reads it with `useUiState(selector)` over `useSyncExternalStore` (selectors must return
 stable values). `activeProject` and `theme` persist in `localStorage` under
 `forerunner.ui.<installId>.<name>` (`lib/storage.ts`, wrapped in try/catch; `memoryStorage()`
 in tests). Page data stays in the page through `useAsync(loader, deps)` (`data`, `error`,
 `routeMissing`, `errorStatus`, `loading`, `reload`, `setData`), which aborts stale loads.
-The Chat tab's conversation is the exception (U-071: a tab switch or a reload lost it, with an
-unanswered Yes/No card): it lives in `chats[projectId]` (`store/chat-history.ts`). The tab
-dispatches `chat.load` on mount (the store reads `forerunner.ui.<installId>.chat.<projectId>`,
-a reply cut off by a reload turned into one that says so) and every change as `chat` with an
-updater, so a reply still streaming after the tab closed lands in the store; the store saves
-the newest 100 messages when a message is added or a reply ends (not on every token). The
-daemon has no per-project transcript route, so the window keeps what it showed.
+The conversations are the exception (design §3.9, U-071): they live in
+`conversations[key]` (`store/conversation.ts`; the key is the project id, "" for the
+conversation outside any project), read from the daemon (`loadConversation`: `GET
+/projects/:id/conversation` or `GET /conversation`) when a Chat tab or Talk shows one and again
+after every line, with the line in flight and its streamed reply (`live`) beside it, so the
+Chat tab and Talk always show the same lines and a reply still streaming after the tab closed
+lands in the store. Nothing is kept in the browser: a reload or a restart reads the daemon's
+turns. Before, the Chat tab kept its lines in `localStorage` (`store/chat-history.ts`, removed)
+and Talk in its own memory, so the two disagreed and a restart of the app lost Talk's.
 
 ### Money
 
@@ -372,8 +374,8 @@ outcome said under the reply), an Inbox message a link to Changes. `reviewLevel`
 (Tasks, Plan, Reviews, the new-task dialog, the project header and card). Ids are shown as
 names: a setting's scope (`scopeName`: you, the agent, the project), a lesson's project, a
 task's dependencies (by title), the Inbox's answered list (the answer's words, never JSON). The
-Chat header says what happens: a small change is made at once with Undo, a bigger one is read
-back and waits for Yes. The intake card's estimates are CHF (`usdMicroToChfMicro`).
+Chat header says what it can be asked and that a change to a task is read back once and waits
+for Yes (design §3.9). The intake card's estimates are CHF (`usdMicroToChfMicro`).
 
 ### Charts
 
@@ -427,6 +429,18 @@ project, `g m` Memory, `g e` Extensions, `g c` Changes, `g t` Performance, `g u`
 help, `Escape` closes; sequences are ignored inside text fields, chords with a modifier are
 not. Theme: `system | light | dark`, resolved to `<html data-theme>` and `color-scheme`;
 `styles.css` binds Tailwind's `dark:` variant to that attribute with `@custom-variant`.
+
+**Talk shows the conversation of the project on screen (design §3.9).** Typing in Talk is the
+shared `Conversation` for the project of the page (`/projects/:id/...`; the conversation outside
+any project elsewhere), with "About <project>: the same conversation as its Chat tab." above it,
+and a voice session starts on that project; before, Talk kept its own lines, lost them on a
+reload, showed read-backs and "Undo." as plain text and acted on the header's active project.
+Spoken lines of the current opening show above it as they come (`conversation-lines`); the
+stored spoken turns from that moment are left out of the thread (`hideVoiceSince`) so none
+shows twice. Voice unavailable is said plainly (U-075: `VOICE_NOT_INSTALLED` "Voice is not
+installed. Install it in Settings → Voice, or type below.", `VOICE_NO_MIC_WINDOW`,
+`VOICE_MIC_FAILED`, `VOICE_DID_NOT_START`), never the provider's reason with module or secret
+names.
 
 **Conversation and the global hotkey (spec O.1, ADR 0064).** `shell/ConversationPanel.tsx` is
 a dialog opened by the desktop shell's global hotkey (`forerunner://hotkey`, see "What the

@@ -41,3 +41,30 @@ describe("new projects start at the default autonomy (U-058)", () => {
     );
   });
 });
+
+/**
+ * A name another project has (wave 1's handoff): `POST /projects` answered 500 `internal`
+ * "UNIQUE constraint failed: project.name". Now a sentence with a stable code, nothing
+ * written, and the dialog stays open with the sentence (the route's case is in
+ * real-daemon.test.ts).
+ */
+describe("a new project with a name another project has", () => {
+  it("says so in a sentence and keeps the dialog open", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/", harness);
+    await user.click(await screen.findByTestId("active-project"));
+    await user.click(await screen.findByText("+ New project"));
+    const create = await screen.findByTestId("new-project-dialog");
+    await user.type(within(create).getByLabelText("Name"), "Atlas");
+    await user.type(within(create).getByLabelText(/Goal/), "Another one");
+    await user.click(within(create).getByTestId("create-project"));
+    expect(
+      await within(create).findByText(
+        'There is already a project called "Atlas". Pick another name.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(create).queryByText(/UNIQUE|constraint|internal/i)).toBeNull();
+    expect(screen.getByTestId("new-project-dialog")).toBeInTheDocument();
+  });
+});

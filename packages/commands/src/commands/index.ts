@@ -10,7 +10,7 @@ import { noteAdd } from "./note.ts";
 import { projectCreate, projectSwitch } from "./project.ts";
 import { repoCreate } from "./repo.ts";
 import { requestAnswer } from "./request.ts";
-import { sessionPause, sessionStart, sessionStop } from "./session.ts";
+import { sessionPause, sessionResume, sessionStart, sessionStop } from "./session.ts";
 import { settingsSet } from "./settings.ts";
 import { specialistPropose } from "./specialist.ts";
 import { summarySpeak } from "./summary.ts";
@@ -59,6 +59,7 @@ export function defaultRegistry(): CommandRegistry {
     .register(sessionStart)
     .register(sessionStop)
     .register(sessionPause)
+    .register(sessionResume)
     .register(capabilityGrant)
     .register(settingsSet)
     .register(noteAdd)

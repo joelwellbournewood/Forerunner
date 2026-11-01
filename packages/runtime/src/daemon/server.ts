@@ -18,6 +18,8 @@ import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType } from "zod";
+import { cardFate } from "../conversation/card-fate.ts";
+import { readTranscript, TRANSCRIPT_SHOW_LIMIT } from "../conversation/transcript.ts";
 import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
@@ -92,6 +94,7 @@ import {
   type CommandSourceBody,
   type ConsolidationProposalView,
   type ConsolidationRunView,
+  type ConversationView,
   CreateProjectBody,
   CreateTaskBody,
   type DecisionView,
@@ -151,6 +154,7 @@ import { sandboxHealth } from "./sandbox-port.ts";
 import { createSandboxRoutes } from "./sandbox-routes.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
+import { startBlocked as startBlockedReason } from "./start-blocked.ts";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -1193,78 +1197,19 @@ export function createDaemonApp(
     ).usd_micro;
     return Math.max(0, cap - spent);
   };
-  /**
-   * Why a Start now would do nothing (design §3.6), first match wins: sessions are stopped, no
-   * Claude credential, nothing can run (the first blocker, named with the button that unblocks
-   * it). Null when a session would work.
-   */
+  /** Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same). */
   const startBlocked = (
     r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
     projectId: string,
     busy: boolean,
-  ): StartCheckView["blocked"] => {
-    if (rt.kill.isFrozen({ agentId: rt.agent.id }))
-      return {
-        kind: "stopped",
-        sentence: "Sessions are stopped (Stop all), so nothing can start.",
-        action: { kind: "resume", label: "Allow sessions again", to: null },
-      };
-    if (!rt.provider)
-      return {
-        kind: "no_model",
-        sentence: "Claude is not connected: planning and tasks need it.",
-        action: { kind: "link", label: "Connect Claude", to: "/settings" },
-      };
-    // A session runs now: the start waits for it, and its work makes more tasks ready.
-    if (r.runnable.length > 0 || busy) return null;
-    const tasksTab = `/projects/${encodeURIComponent(projectId)}/tasks`;
-    const stuck = r.waiting.find((w) =>
-      w.waitsOn.some(
-        (d) =>
-          d.status === "needs_human" ||
-          d.status === "failed" ||
-          d.status === "cancelled" ||
-          d.status === null,
-      ),
-    );
-    if (stuck) {
-      const dep = stuck.waitsOn.find((d) => d.status !== "done") ?? stuck.waitsOn[0];
-      const name = dep?.title ? `"${dep.title}"` : "a task that does not exist";
-      if (dep?.status === "needs_human")
-        return {
-          kind: "nothing_runnable",
-          sentence: `Nothing can run: ${name} needs your answer.`,
-          action: { kind: "link", label: "Open it", to: "/inbox" },
-        };
-      return {
-        kind: "nothing_runnable",
-        sentence: `Nothing can run: "${stuck.title}" waits on ${name}, which ${dep?.status === "cancelled" ? "was cancelled" : dep?.status === "failed" ? "failed" : "does not exist"}.`,
-        action: { kind: "link", label: "Open Tasks", to: tasksTab },
-      };
-    }
-    const docker = r.waitingForSandbox?.tasks[0];
-    if (docker)
-      return {
-        kind: "nothing_runnable",
-        sentence: `Nothing can run: "${docker.title}" is waiting for Docker.`,
-        action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
-      };
-    const big = r.overBudget[0];
-    if (big)
-      return {
-        kind: "nothing_runnable",
-        sentence: `Nothing can run within this budget: "${big.title}" needs about ${formatChf(usdToChfMicro(big.estimateUsdMicro, chf()))}.`,
-        action: null,
-      };
-    return {
-      kind: "nothing_runnable",
-      sentence:
-        r.ready === 0
-          ? "Nothing can run: no task is ready."
-          : "Nothing can run: every ready task waits on another one.",
-      action: { kind: "link", label: "Open Tasks", to: tasksTab },
-    };
-  };
+  ): StartCheckView["blocked"] =>
+    startBlockedReason(r, {
+      stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
+      hasModel: !!rt.provider,
+      busy,
+      projectId,
+      chfPerUsd: chf(),
+    });
 
   app.get("/projects/:id/start-check", async (c) => {
     const budget = intQuery(c, "budgetUsdMicro", 0, Number.MAX_SAFE_INTEGER);
@@ -1867,6 +1812,85 @@ export function createDaemonApp(
       await stream.writeSSE({ event: "reply", data: JSON.stringify(chatReplyView(r)) });
     });
   });
+
+  // One conversation per project (design §3.9): the Chat tab and Talk read the same turns from
+  // here, so a reload, a restart and either surface show the same lines, Yes/No card included.
+  const conversationView = async (
+    projectId: string | null,
+    limit: number,
+  ): Promise<ConversationView> => {
+    const sessionId = await conversationSessionId(rt);
+    const turns = await readTranscript(rt.store, sessionId, projectId, { limit });
+    // The change still waiting for a yes: the newest read-back whose card the registry holds.
+    const lastAsked = [...turns].reverse().find((t) => t.reply?.pendingId)?.reply?.pendingId;
+    const live = lastAsked ? rt.commands.pendingCard(lastAsked) : null;
+    // What became of each read-back: its request row says whether it was answered and how
+    // (`cardFate`: an Inbox "no" is a no, a yes the registry refused is still your yes).
+    const cardStates = new Map<string, "waiting" | "yes" | "no" | "expired">();
+    for (const t of turns) {
+      const id = t.reply?.pendingId;
+      if (!id || cardStates.has(id)) continue;
+      const row = await rt.store.humanRequest.get(id);
+      cardStates.set(id, cardFate(row, !!live && id === lastAsked).state);
+    }
+    const undoable = new Map<string, boolean>();
+    for (const t of turns)
+      for (const a of t.reply?.actions ?? [])
+        if (a.id && !undoable.has(a.id))
+          undoable.set(a.id, (await rt.store.changeLog.get(a.id))?.undo_state === "undoable");
+    return {
+      projectId,
+      turns: turns.map((t) => {
+        const r = t.reply;
+        // The reply's text ends with the read-back the card shows: it is shown once, there.
+        const text =
+          r?.readback && r.text.endsWith(r.readback)
+            ? r.text.slice(0, -r.readback.length).trim()
+            : (r?.text ?? "");
+        return {
+          id: t.transcriptId,
+          at: t.at,
+          said: t.human.text,
+          source: t.human.source,
+          reply: r
+            ? {
+                text,
+                actions: r.actions.map((a) => ({
+                  kind: a.kind,
+                  sentence: a.summary,
+                  changeId: a.id ?? null,
+                  canUndo: !!a.id && a.kind !== "undo" && undoable.get(a.id) === true,
+                })),
+                question: r.question,
+                notice: r.notice,
+                readback: r.readback ?? (r.pendingId ? text : null),
+                waiting: !!live && r.pendingId === lastAsked,
+                card: r.pendingId ? (cardStates.get(r.pendingId) ?? "expired") : null,
+              }
+            : null,
+        };
+      }),
+      waiting:
+        live && lastAsked
+          ? {
+              id: lastAsked,
+              readback: live.readback,
+              estimate: money(live.costUsdMicro ?? 0, chf()),
+              commands: live.commands,
+              decision: live.decision ?? null,
+            }
+          : null,
+    };
+  };
+  app.get("/projects/:id/conversation", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    return c.json(
+      await conversationView(project.id, intQuery(c, "limit", TRANSCRIPT_SHOW_LIMIT, 500)),
+    );
+  });
+  app.get("/conversation", async (c) =>
+    c.json(await conversationView(null, intQuery(c, "limit", TRANSCRIPT_SHOW_LIMIT, 500))),
+  );
 
   // -------------------------------------------------------------------------------------
   // Reviews tab (spec H, K.2): findings, grades, verdicts, grade trend
