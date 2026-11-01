@@ -522,11 +522,18 @@ describe("daemon wiring", () => {
       budgetUsdMicro: 2_000_000,
     });
     expect(started.status).toBe(202);
-    for (let i = 0; i < 100; i++) {
-      const t = await rt.store.task.mustGet(str(task.id));
-      if (t.status !== "ready" && t.status !== "claimed" && t.status !== "in_progress") break;
-      await new Promise((r) => setTimeout(r, 20));
+    const startedBody = (await started.json()) as { result?: string; session?: { id?: string } };
+    expect(startedBody.result).toBe("started");
+    // Wait for the task to finish its run. The run calls git five times; on Windows CI each
+    // call takes far longer than here, and the old 2 s wait ran out before the run returned
+    // (CI run 41355752207; reproduced here with a git that sleeps 0.4 s per call).
+    let status = "";
+    for (let i = 0; i < 1200; i++) {
+      status = (await rt.store.task.mustGet(str(task.id))).status;
+      if (status !== "ready" && status !== "claimed" && status !== "in_progress") break;
+      await new Promise((r) => setTimeout(r, 25));
     }
+    expect(status, "the task's run returned").not.toMatch(/^(ready|claimed|in_progress)$/);
     const res = await req("/costs/estimates");
     expect(res.status).toBe(200);
     const view = EstimateAccuracyViewSchema.parse(await res.json());
@@ -535,7 +542,14 @@ describe("daemon wiring", () => {
     expect(view.rows.find((r) => r.specialist === "coder")?.samples).toBeGreaterThanOrEqual(1);
     // The planner now prices the next task of that kind with the learned ratio.
     expect(rt.estimates.estimate({ specialist: "coder", risk_tier: 1 }).basis).toBe("learned");
-  });
+    // Leave nothing running for the next test: stop the session the way a person does (Stop
+    // now answers 200 for a session that already ended) and wait until the agent is free.
+    const sessionId = str(startedBody.session?.id);
+    expect((await post(`/sessions/${sessionId}/stop`, {})).status).toBe(200);
+    for (let i = 0; i < 1200 && (await rt.store.session.active(rt.agent.id)).length > 0; i++)
+      await new Promise((r) => setTimeout(r, 25));
+    expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
+  }, 120_000);
 
   /** A task, its session, a run token and a budget for one executor call (worktree pinned). */
   const seedExecutorRun = async (name: string, worktree: string, riskTier: number) => {
