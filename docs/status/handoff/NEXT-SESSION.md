@@ -4,7 +4,7 @@ Handoff written 2026-11-01 at the end of session `claude/dreamy-johnson-2zfr0m`.
 then `AGENTS.md` and `docs/maintainers/validation.md`. Do not re-plan from scratch: the owner
 has approved this plan and asked for it to be done thoroughly, hands-on, for real.
 
-## Where things stand
+## Where things stood at the start of the round
 
 - Branch `claude/dreamy-johnson-2zfr0m` = `claude/adoring-meitner-ebkoom` (012c9009, U-018 to
   U-088 fixes, the newest work) plus this handoff. Work on this branch.
@@ -14,6 +14,73 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   `ANTHROPIC_API_KEY` (preferred), or as a network secret for `api.anthropic.com` with the
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
+
+## Progress, and the plan from here (approved by the owner, 2026-11-01 evening)
+
+Session `claude/nifty-knuth-f9udt0` (the branch to work on) did steps 0 to 3 below and fix
+waves 1 (session engine, Tasks screen) and 2 (Inbox, chat): merged, pushed, CI green on Windows
+and Linux at c316eba. The walks found 132 problems, grouped into 67 (4 blockers, 46 major).
+The real model ran for the first time (two live walks, about USD 1.20). It showed that a plan
+from a brief was rejected 5 times out of 6, among other things (scratch reports were in
+/tmp/frbench of that session: live1-report.md, live2-report.md, handoffs.json).
+
+The owner approved this plan for the rest of the round. **Done means:** a person goes from a
+brief to finished work they can open, with the real model on their own PC, without the app
+getting stuck or saying anything untrue; each of the owner's 8 complaints has a "Check in the
+app" step that passes on their machine.
+
+**Quality rules (the evidence of this round; do not trade them for usage):** a failing test
+first, never a weakened test; the full suite at every stage (fixer, reviewer, merge: the fixers'
+full runs surfaced 53 existing tests changed by the design, the merges 5 bugs that exist only
+when two areas meet); an independent reviewer who walks the app on the bench before anything
+merges (every area came back with blocking findings that all tests passed); one merge at a time,
+then the full suite and a bench walk; CI on Windows and Linux (it caught 3 timing failures the
+local suite missed); the real model for anything that depends on how it behaves; helpers always
+on the current code; one agent per journey for walks (27 of the 67 problems were found by a
+single walk, including the owner's complaints 1 and 2).
+
+- **A. Running:** wave 3 (progress and navigation: one-sentence status, Stop all only while
+  something runs, the project switcher, the 30 s queued start; system text and wording); the live
+  fixes (plan rejected for a long reason or a fenced doc, right-sized plans for short briefs,
+  true failure words, chat told about planning, raw markdown, the bench on the real model); live
+  walks on GitHub (`joelwellbournewood/forerunner-sandbox`) and on steering.
+- **B. Merge and confirm:** wave 3, then the live fixes, one at a time with full validation; a
+  real-model walk brief → plan → approve → session → result; exit when plans pass first time and
+  are the right size.
+- **C. Wrong or stuck work:** answers to a person task reach the next task's brief (the coder
+  asked the same 7 questions again: `task-context.ts` uses the dependency's planned outcome);
+  nothing is Done without a check (the planner chose tier 0 with no checks, and the specialist is
+  told "the critic checks each"); plans only contain work this install can run (on an API key the
+  researcher and science-evaluator get no web tools and have no stand-in, so their tasks go to the
+  person; Docker-only tasks say so on the plan card); the result is visible (the project folder
+  with Open folder, the last task's work committed); what the GitHub walk finds; re-check the
+  findings of the walk that ran on pre-wave-2 code.
+- **D. Live coverage (helpers, about USD 5):** one small real project per specialist not yet run
+  live (researcher, writer-marketing, designer, data-analyst, migration-specialist,
+  science-evaluator, reviewer; ops-deploy up to its Docker wait); real API errors (overloaded,
+  rate limit, no credit, no network) through the bench's failure injection. Findings go to E.
+- **E. Leftovers sweep:** about 35 collected items, real problems first (what misleads, blocks or
+  contradicts), polish batched into one agent; same pipeline.
+- **F. Independent final check:** fresh agents, one per journey (Tasks tab; a chain with a
+  failure and a restart; chat steering; Inbox; wording and navigation; start / stop / settings;
+  a real-model end-to-end walk that also covers the first project); at most two fix rounds; then
+  full validation and CI.
+- **G. Hand-over:** UPDATE-LOG U-entries with commits, tests and "Check in the app"; CHANGELOG,
+  requirements, gates evidence; what was and was not tested; remove the CLAUDE.md WIP paragraph;
+  the Desktop app workflow installer; the owner's checklist: (1) remove the old install and its
+  data, install fresh; (2) a first project from a brief; (3) answer a question and see work
+  continue; (4) steer from chat, open the result and its PR in forerunner-sandbox; (5) with
+  Docker Desktop, a task that needs it.
+- **H. Then the phone, not before:** first map, screen by screen, what carries over from the
+  desktop (the daemon's words and fields, ADR 0102, design §3 and §5); then the same rigour for
+  `apps/ui/src/mobile` and `apps/mobile` (walks in phone emulation, fixes that show the daemon's
+  words, the Android workflow's emulator scenarios, a check on the owner's phone). Known gaps: the
+  phone Inbox shows the old options, count and reply box; Reviews "Approve" maps to Mark done
+  anyway without the ADR 0102 confirmation; Reviews links use `target=_blank`.
+
+Out of scope this round: voice, email, extensions, the GitHub Projects mirror (the cloud GitHub
+proxy blocks GraphQL, so it cannot be tested from a cloud session), peers and teams, the cloud
+runner. The owner's old Forerunner install is not kept: no upgrade check.
 
 ## What the owner says (verbatim, the target of this round)
 
@@ -130,6 +197,18 @@ ports and the journey list before running it.
   Stop processes by their PIDs.
 - No Docker here: tasks at risk tier 2 and above wait for a Docker sandbox (U-079). The owner's
   Windows machine may not have Docker either; check what a person sees.
-- GitHub: only `joelwellbournewood/Forerunner` is reachable from this environment. Test projects
-  without a repository (they work in their folder, U-037) and the pull-request flow with the
-  fake GitHub in `testenv/src/githost`.
+- GitHub: the cloud GitHub proxy serves only repositories attached to the session (attach
+  `joelwellbournewood/forerunner-sandbox` with the add_repo tool for live GitHub checks) and
+  rejects GraphQL whatever the token. The owner put a fine-grained token for forerunner-sandbox
+  only in the environment as `FORERUNNER_TEST_GITHUB_TOKEN` (7-day expiry from 2026-11-01): enter
+  it in the app's UI from the environment, never print it. Otherwise test projects without a
+  repository (they work in their folder, U-037) and the pull-request flow with the fake GitHub in
+  `testenv/src/githost`.
+- The Anthropic key: `ANTHROPIC_API_KEY` set in the environment never reaches a session (the name
+  is held back), so the owner stored it as `FORERUNNER_ANTHROPIC_API_KEY`. Pass it to the app as
+  a prefix on the bench start only:
+  `ANTHROPIC_API_KEY="$FORERUNNER_ANTHROPIC_API_KEY" node scripts/bench/start.mjs ... --provider bench-live`.
+  A session reads environment variables when it is created: a running session does not see a
+  change; start a new one. Network secrets are never attached to `api.anthropic.com`.
+- Auto-mode refuses scanning environment values or the proxy status for credentials; do not work
+  around it. Check a named variable with `test -n "$NAME"` only.
