@@ -38,7 +38,7 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 ## Current version
 
 - Released: **1.0.4** (2026-10-30), with U-013 to U-017.
-- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-084 are open; U-036 is won't fix.
+- Next release: not scheduled. U-012, U-018 to U-035 and U-037 to U-087 are open; U-036 is won't fix.
 
 ## Open and fixed, not released
 
@@ -112,6 +112,9 @@ stands. Each entry says what you see first, then the cause and the fix for maint
 | U-082 | 2026-10-31, owner (test build) | After replacing the GitHub token in the setup assistant, **Create a repository** made the repository under the new token's account, then failed: "pushing the project's folder to it failed … Permission … denied to Afanc", the previous token's owner. Every push, clone and fetch kept using the old token until the app was restarted. | Every git step reads the token when it runs, as the GitHub API calls already did (U-049). Until the next build: delete the empty repository on GitHub, Quit from the tray, open the app, Create a repository again. | open (fix committed; fixed once CI is green and the owner has tried it) |
 | U-083 | 2026-11-01, owner (test build) | With the project's docs pull request open on GitHub, every task fails at once: "git checkout -B fr/… failed: 'origin/fr/…' is not a commit". | The lookup of a task's own pull request asks GitHub in the form it reads (`owner:branch`) and keeps only that branch's; the fake GitHub in the tests answers as GitHub does. Until the next build: merge or close the open pull request before a session. | open (fix committed; fixed once CI is green and the owner has tried it) |
 | U-084 | 2026-11-01, owner (test build) | Project Chat cannot see the project's tasks or change what a task depends on ("I don't have the task ID or title for the cancelled bottleneck task in my context"), and **Make this a task** under that reply made a task whose title is the reply; a session ran it and failed. | Chat gets the project's tasks (titles, statuses, what waits on what) and a command to change a task's dependencies, with the usual read-back; **Make this a task** is offered on your own messages only, or says it makes a task of the agent's text. | open |
+| U-085 | 2026-11-01, owner (test build) | "Create the repository and static site scaffold" ran 29 s, read the project, ran `node --version`, then wrote nothing and reported nothing: "Finished task: failed … completed (no changes were made in the worktree)". | A reply cut off at the output limit inside a tool call (a whole file in one write) is asked again with a larger limit, never taken as the end; after two tries the task says it was cut off and that the work must be written in smaller parts. | open (fix committed; fixed once CI is green and the owner has tried it) |
+| U-086 | 2026-11-01, owner (test build) | A failed run cannot be looked into in the app: the session's Raw output has only the session's own events, and a run that ended with an empty reply reads "completed". The owner had to export the audit log to see what the coder did. | Each run keeps its steps (model calls with their stop reason, tool calls with allowed or refused, the final reply) under its task; a run that ends with no report and no change says so in words. | open |
+| U-087 | 2026-11-01, owner (test build) | Every session opens a new docs status pull request (#1, #2, #3 after three sessions), so they pile up. | One standing status pull request that each session updates until it is merged. | open |
 
 ### U-012 The Windows installed-app check cannot make a folder read-only
 
@@ -325,6 +328,57 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   it and nothing appears in the Inbox; Cancel adds nothing.
 - **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
 
+### U-087 Every session opens a new docs status pull request
+
+- **Found:** 2026-11-01: the owner's repository had pull requests #1, #2 and #3, one per session,
+  each "Updated the project status in docs/status.md".
+- **What happens:** the status branch is named per session (`statusBranchFor(session.id)` in
+  `loop/docs.ts`), so each session finds no pull request of its own and opens one.
+- **Action (proposal):** one standing branch for the status (`fr/status`) whose pull request each
+  session updates until it is merged; a new one only after that.
+- **Check in the app:** run two sessions on a project with a repository: the second updates
+  the first's status pull request.
+- **Status:** open.
+
+### U-086 A failed run cannot be looked into in the app
+
+- **Found:** 2026-11-01, chasing U-085: the session page's Raw output holds the session's
+  events only; the run's model calls and tool calls are emitted live (`run` events) and not
+  kept; model calls are not in the audit log; a run with an empty final reply has the summary
+  "completed" (`result.outcome` as the fallback). The owner exported the audit log (Performance
+  → Export audit log) to show what the coder did.
+- **Action (proposal):** keep each run's steps (each model call with its stop reason and
+  tokens, each tool call allowed or refused with its reason, the final reply) and show them
+  under the task and in the session's Raw output; a run that ends without a report and without a
+  change says "the coder stopped without a report and without changing a file" instead of
+  "completed".
+- **Check in the app:** open a failed task: its runs list what the specialist did and why it
+  stopped.
+- **Status:** open.
+
+### U-085 A reply cut off at the output limit ended the run as finished
+
+- **Found:** 2026-11-01, by the owner: "Create the repository and static site scaffold" failed in
+  29 s with "completed (no changes were made in the worktree)". The audit log the owner sent
+  shows the run listed the folder, read four files, ran `node --version` in the sandbox, and
+  then nothing for 23 s: no write tried, none refused.
+- **Cause:** the loop driver asks for 4096 output tokens per call by default. A reply cut off at
+  that limit (`stop_reason: max_tokens`) ended the loop like a finished one, with only a warning
+  that is not kept; with a tool call cut in the middle (a whole file in one `write_file`) or no
+  text, the run "completed" empty and the PR executor failed the task for having no changes.
+  23 s is about how long a 4096-token reply takes; that the owner's reply was such a cut-off is
+  the likely reading, since model calls are not recorded (U-086).
+- **Fix:** a reply cut off inside a tool call, or before any text, is not used and is asked again
+  with four times the limit (at most twice, up to 32 000 tokens or the model's limit); after
+  that the run ends as an error that says it was cut off and that the work must be written in
+  smaller parts (`agent/loop.ts`, `CUT_OFF_RETRIES`, `CUT_OFF_MAX_TOKENS`).
+- **Tests:** `runtime/test/loop.test.ts`: a cut tool call is asked again with 4096 and the whole
+  call runs once; one cut every time ends as that error with nothing run; a reply cut off before
+  any text is asked again. All three failed before the fix.
+- **Check in the app:** run the scaffold task again: it writes its files, or the task's summary
+  says the reply was cut off at the output limit.
+- **Status:** open (fix committed; fixed once CI is green and the owner has tried it).
+
 ### U-084 Project Chat cannot see or unblock the tasks
 
 - **Found:** 2026-11-01, by the owner: the project was stuck behind a cancelled task, Chat
@@ -456,6 +510,9 @@ stands. Each entry says what you see first, then the cause and the fix for maint
   3. Tests at the route, the UI and `real-daemon.test.ts`, and the owner's case end to end: an
      old question task cancelled, Reopen, the Inbox card with the questions, the answers, the
      task done, the dependent task planned.
+  4. The session summary names the one task to change and the step: "open <task> → Depends on…
+     and remove <cancelled task>, or reopen it", instead of listing the whole chain (the owner
+     did not know which of eight tasks to change).
 - **Until then (the test build):** create a task titled "Confirm stack, hosting, domain and
   repository with the human"; the Inbox asks its questions. On each task that waited on the
   cancelled one, **Depends on…** swaps it for the new task.
