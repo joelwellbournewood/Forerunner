@@ -914,15 +914,28 @@ function RequestCard({
       ) : null}
       {!pending && (choices.length > 0 || (request.links ?? []).length > 0) ? (
         <ul className="mt-2 space-y-1.5" data-testid="options">
+          {/* A link that unblocks (Set up Docker) is the main way on; then the answers. */}
+          {(request.links ?? []).map((l) => (
+            <li key={l.label} className="flex flex-wrap items-center gap-2">
+              <Link to={l.to} className={buttonClassName("primary")} data-testid="option-link">
+                {l.label}
+              </Link>
+              {l.explain ? (
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">{l.explain}</span>
+              ) : null}
+            </li>
+          ))}
           {choices.map((c) => (
             <li key={c.label} className="flex flex-wrap items-center gap-2">
               <Button
-                variant={
-                  c.tone === "primary" ? "primary" : c.tone === "danger" ? "danger" : "secondary"
-                }
+                // Design §3.8: the safe or likely option primary; a destructive one secondary
+                // (outlined, its words in red) and asked once.
+                variant={c.tone === "primary" ? "primary" : "secondary"}
+                className={c.tone === "danger" ? "text-red-700 dark:text-red-300" : ""}
                 onClick={() => choose(c)}
                 disabled={busy}
                 data-testid="option"
+                data-tone={c.tone}
               >
                 {c.label}
               </Button>
@@ -933,16 +946,6 @@ function RequestCard({
                 >
                   {c.explain}
                 </span>
-              ) : null}
-            </li>
-          ))}
-          {(request.links ?? []).map((l) => (
-            <li key={l.label} className="flex flex-wrap items-center gap-2">
-              <Link to={l.to} className={buttonClassName("primary")} data-testid="option-link">
-                {l.label}
-              </Link>
-              {l.explain ? (
-                <span className="text-xs text-neutral-600 dark:text-neutral-400">{l.explain}</span>
               ) : null}
             </li>
           ))}

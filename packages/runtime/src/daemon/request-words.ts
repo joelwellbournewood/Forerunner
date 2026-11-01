@@ -385,7 +385,7 @@ function intakeCard(
       choices.push({
         label: "Reject",
         explain: "Nothing is written. You can draft a new plan later from the project page.",
-        tone: "danger",
+        tone: "secondary",
         confirm: null,
         input: null,
       });

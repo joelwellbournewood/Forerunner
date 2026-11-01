@@ -1332,7 +1332,7 @@ export class IntakeService {
     try {
       const out = await this.deps.docs.scaffoldProject(project);
       if (!out.created.length) return "; the standard doc set was already in place";
-      return `; the standard doc set was scaffolded from the templates (${out.created.length} file(s)${
+      return `; the standard doc set was scaffolded from the templates (${out.created.length === 1 ? "1 file" : `${out.created.length} files`}${
         out.prUrl ? `, pull request ${out.prUrl}` : ""
       })`;
     } catch (e) {
