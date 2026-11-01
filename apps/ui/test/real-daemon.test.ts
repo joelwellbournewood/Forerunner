@@ -411,6 +411,16 @@ describe("the UI client against the real daemon", () => {
     // The agent holds no session any more: a start is not refused as "already active".
     const started = await client.startSession({ agentId, projectId, trigger: "manual" });
     expect(["started", "queued"]).toContain(started.result);
+    // Leave nothing running or waiting for the next case: a queued start now runs as soon as
+    // the session before it ends (no scheduler tick needed), so wait until it has run.
+    await eventually(
+      async () =>
+        !rt.scheduler.isActive(agentId) && rt.scheduler.pendingStarts(agentId).length === 0,
+      "the agent to be free",
+      async () =>
+        `active ${rt.scheduler.isActive(agentId)}, ${rt.scheduler.pendingStarts(agentId).length} waiting`,
+      10_000,
+    );
   });
 
   it("start check: what runs and what follows, why nothing would, the default budget, the month left (design §3.6)", async () => {
