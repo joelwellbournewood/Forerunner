@@ -47,7 +47,10 @@ export function registerPullRoutes(app: HostApp, ctx: RouteContext): void {
     const pulls = [...repo.issues.values()]
       .filter((i): i is IssueRecord & { pull: PullData } => i.pull !== null)
       .filter((i) => state === "all" || i.state === state)
-      .filter((i) => !head || `${repo.owner}:${i.pull.headRef}` === head || i.pull.headRef === head)
+      // GitHub reads `head` only as `owner:branch`; a bare branch was ignored and every open
+      // pull request came back (seen live, U-083). The fake answers the same way, so a caller
+      // that forgets the owner fails here as it does on GitHub.
+      .filter((i) => !head?.includes(":") || `${repo.owner}:${i.pull.headRef}` === head)
       .filter((i) => !base || i.pull.baseRef === base)
       .sort((a, b) => {
         const key = sort === "updated" ? "updatedAt" : "createdAt";

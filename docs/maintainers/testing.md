@@ -466,6 +466,11 @@ exercised.
 - Everything that changes a ref must go through `RepoOps.applyRefChanges` so push events and
   PR synchronisation stay consistent between the API, `seedCommit` and git over HTTP.
 - Time only through `store.clock`; ids only through `store.nextId()`.
+- Answer as GitHub does, including where GitHub is lax: a stand-in that is stricter or kinder
+  than the real service hides the bug. `GET /pulls?head=` filters only by `owner:branch`; a bare
+  branch is ignored and every open pull request comes back, as GitHub answered in the owner's
+  project (U-083). The fake used to match a bare branch, so no test saw the PR executor take
+  the docs pull request for a task's own.
 
 Other stand-ins: to be filled by the testenv items that build them.
 

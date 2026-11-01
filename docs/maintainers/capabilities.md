@@ -19,7 +19,11 @@ with their milestone.
   git host in `testenv` (same REST shapes). The token is a bearer header taken from the vault by
   reference; it is never logged. With `tokenSource` (the daemon passes the vault read of
   `github_token`) the token is read again before every REST and GraphQL request, so a token
-  replaced in the app is used by the next call without a restart (U-049). Git over HTTPS does the
+  replaced in the app is used by the next call without a restart (U-049). `listPullRequests`
+  sends `head` as `owner:branch` (a bare branch is qualified with the repository's owner) and
+  keeps only the pull requests of that branch: GitHub ignores a bare branch and returns every
+  open pull request, so a task took the project's docs pull request for its own and failed at
+  its start (U-083). Git over HTTPS does the
   same: every consumer of the person's token (`PrTaskExecutor`, project docs, the reviewed-PR
   merge, the intake's docs push, repository creation) takes a `GitTokenSource` (a token or a
   function) and resolves it with `resolveGitToken()` when the step runs; the daemon passes the

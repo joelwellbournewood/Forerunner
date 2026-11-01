@@ -401,8 +401,18 @@ export class GitHubHost implements GitHost {
     opts: { state?: "open" | "closed" | "all"; head?: string } = {},
   ): Promise<PullRequestInfo[]> {
     const params = new URLSearchParams({ state: opts.state ?? "open", per_page: "100" });
-    if (opts.head) params.set("head", opts.head);
-    return (await this.request<Json[]>("GET", `${this.repoPath(repo)}/pulls?${params}`)).map(toPr);
+    // GitHub reads `head` only as `owner:branch`: a bare branch was ignored and every open pull
+    // request came back, so a task took the docs pull request for its own (U-083). A branch of
+    // this repository is qualified with its owner.
+    if (opts.head)
+      params.set("head", opts.head.includes(":") ? opts.head : `${repo.owner}:${opts.head}`);
+    const pulls = (await this.request<Json[]>("GET", `${this.repoPath(repo)}/pulls?${params}`)).map(
+      toPr,
+    );
+    const branch = opts.head?.includes(":")
+      ? opts.head.slice(opts.head.indexOf(":") + 1)
+      : opts.head;
+    return branch ? pulls.filter((p) => p.head.ref === branch) : pulls;
   }
 
   async mergePullRequest(

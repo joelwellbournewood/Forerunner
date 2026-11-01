@@ -31,6 +31,8 @@ describe("a GitHub token replaced in the app is used by git at once (U-082)", ()
   let root: string;
   let worktrees: string;
   let newToken = "";
+  /** The project the first case links to joel/joels-test. */
+  let projectId = "";
   let req: (path: string, init?: RequestInit) => Promise<Response>;
   const clock = new SimulatedClock("2026-10-31T09:00:00Z");
   const json = async (res: Response) => (await res.json()) as Record<string, unknown>;
@@ -88,6 +90,52 @@ describe("a GitHub token replaced in the app is used by git at once (U-082)", ()
     await host?.stop();
   });
 
+  /** One run of a project's task, as a session's executor runs it. */
+  async function runTask(projectId: string, taskId: string) {
+    const session = await rt.store.session.insert({
+      agent_id: rt.agent.id,
+      project_id: projectId,
+      trigger: "manual",
+      status: "running",
+      runner: "pc",
+    });
+    const grant = await rt.sessionGrant(projectId);
+    const runToken = rt.tokens.issue({
+      runId: `run-${taskId}`,
+      sessionId: session.id,
+      agentId: rt.agent.id,
+      ownerHumanId: rt.human.id,
+      projectId,
+      allowedTools: grant?.allowedTools ?? [],
+      allowedPaths: grant?.allowedPaths ?? [],
+      allowedDomains: [],
+      grantedSecrets: [],
+      budgetUsdMicro: 1_000_000,
+      depth: 0,
+      maxDepth: 2,
+      autonomy: 2,
+      planApproved: true,
+      expiresAt: new Date(clock.now() + 60_000).toISOString(),
+    });
+    const task = await rt.store.task.mustGet(taskId);
+    const result = await rt.executor.execute({
+      task,
+      session,
+      token: runToken,
+      budget: new SessionBudget({
+        sessionId: session.id,
+        budgetUsdMicro: 1_000_000,
+        stepCap: 20,
+        deadlineMs: clock.now() + 60_000,
+        reserveShare: 0,
+      }),
+      item: { taskId, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    await rt.store.session.patch(session.id, { status: "completed", ended_at: clock.nowIso() });
+    return result;
+  }
+
   it("the repository's first push and the next task's clone use the new token", async () => {
     // The person replaces the token in the setup assistant's GitHub step.
     const saved = await req("/setup/github", {
@@ -103,6 +151,7 @@ describe("a GitHub token replaced in the app is used by git at once (U-082)", ()
     });
     expect(created.status).toBe(201);
     const id = String((await json(created)).id);
+    projectId = id;
     writeFileSync(
       join(projectWorkspaceDir(rt.data.assets.projectsRoot, id), "notes.md"),
       "# Notes\n",
@@ -149,48 +198,42 @@ describe("a GitHub token replaced in the app is used by git at once (U-082)", ()
     expect(readFileSync(join(root, "check", "notes.md"), "utf8")).toBe("# Notes\n");
 
     // The next run of the project's task clones the private repository with the new token.
-    const session = await rt.store.session.insert({
-      agent_id: rt.agent.id,
-      project_id: id,
-      trigger: "manual",
-      status: "running",
-      runner: "pc",
-    });
-    const grant = await rt.sessionGrant(id);
-    const runToken = rt.tokens.issue({
-      runId: "run-session",
-      sessionId: session.id,
-      agentId: rt.agent.id,
-      ownerHumanId: rt.human.id,
-      projectId: id,
-      allowedTools: grant?.allowedTools ?? [],
-      allowedPaths: grant?.allowedPaths ?? [],
-      allowedDomains: [],
-      grantedSecrets: [],
-      budgetUsdMicro: 1_000_000,
-      depth: 0,
-      maxDepth: 2,
-      autonomy: 2,
-      planApproved: true,
-      expiresAt: new Date(clock.now() + 60_000).toISOString(),
-    });
-    await rt.executor.execute({
-      task: await rt.store.task.mustGet(task.id),
-      session,
-      token: runToken,
-      budget: new SessionBudget({
-        sessionId: session.id,
-        budgetUsdMicro: 1_000_000,
-        stepCap: 20,
-        deadlineMs: clock.now() + 60_000,
-        reserveShare: 0,
-      }),
-      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
-      signal: new AbortController().signal,
-    });
-    await rt.store.session.patch(session.id, { status: "completed", ended_at: clock.nowIso() });
+    await runTask(id, task.id);
     const clone = join(worktrees, safeSegment(task.id));
     expect(existsSync(join(clone, ".git"))).toBe(true);
     expect(readFileSync(join(clone, "notes.md"), "utf8")).toBe("# Notes\n");
+  }, 120_000);
+  it("a task runs while another branch's pull request is open (U-083)", async () => {
+    // The owner's session: the project's docs pull request was open, and every task failed at
+    // once with "git checkout -B fr/… failed: 'origin/fr/…' is not a commit", having taken that
+    // pull request for its own.
+    await host.seedCommit("joel/joels-test", { "docs/status.md": "status\n" }, "docs", "fr/docs");
+    const docsPr = await fetch(`${host.baseUrl}/repos/joel/joels-test/pulls`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${newToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Project status",
+        body: "docs",
+        head: "fr/docs",
+        base: "main",
+      }),
+    });
+    expect(docsPr.status).toBe(201);
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Create the static site scaffold",
+      outcome: "The site has an index page",
+      status: "ready",
+      priority: 5,
+      risk_tier: 1,
+      specialist: "coder",
+    });
+    const result = await runTask(projectId, task.id);
+    expect(JSON.stringify(result)).not.toContain("is not a commit");
+    // The worktree is on the task's own new branch, started from main.
+    const branch = (await rt.store.task.mustGet(task.id)).branch as string;
+    expect(branch).toMatch(/^fr\//);
+    const git = new GitOps({ cwd: join(worktrees, safeSegment(task.id)) });
+    expect(await git.currentBranch()).toBe(branch);
   }, 120_000);
 });
