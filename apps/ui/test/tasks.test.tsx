@@ -363,6 +363,65 @@ describe("Tasks tab (design §3.5)", () => {
       ),
     );
     expect(harness.daemon.state.requests.find((r) => r.id === "req_ask")?.status).toBe("withdrawn");
+    // Undo puts it back as it was: it needs the answer again and its card is in the Inbox.
+    await user.click(screen.getByTestId("task-moved-undo"));
+    await waitFor(() =>
+      expect(screen.getByTestId("task-moved-sentence")).toHaveTextContent(
+        'Undone: the task "Decide where it is published" needs your answer again; its card is back in the Inbox.',
+      ),
+    );
+    await waitFor(async () =>
+      expect(within(await rowOf("t_ask")).getByTestId("task-status")).toHaveTextContent(
+        "Needs your answer",
+      ),
+    );
+    expect(harness.daemon.state.requests.find((r) => r.id === "req_ask")?.status).toBe("open");
+  });
+
+  it("a task only the person can do offers Answer and Cancel, never Go ahead without", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_mine", "Choose the domain name", {
+      status: "needs_human",
+      specialist: "person",
+    });
+    harness.daemon.state.requests.push({
+      ...(harness.daemon.state.requests[0] as (typeof harness.daemon.state.requests)[number]),
+      id: "req_mine",
+      taskId: "t_mine",
+      projectId: "proj_atlas",
+      status: "open",
+      why: "Which domain name?",
+    });
+    renderApp("/projects/proj_atlas/tasks?task=t_mine", harness);
+    const row = await rowOf("t_mine");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent("Needs your answer");
+    expect(actionsOf(row)).toEqual(["Answer", "Cancel"]);
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(within(drawer).queryByTestId("drawer-action-go_ahead")).toBeNull();
+  });
+
+  it("the drawer shows each run's own report; the critic's run is the review, with no report of its own", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const work = RUNS.find((r) => r.taskId === "task_2") as (typeof RUNS)[number];
+    harness.daemon.state.runs.unshift({
+      ...work,
+      id: "run_review",
+      specialist: "critic",
+      createdAt: "2026-04-01T12:00:00.000Z",
+    });
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const runs = await within(drawer).findAllByTestId("drawer-run");
+    const review = runs.find((r) => r.getAttribute("data-kind") === "review") as HTMLElement;
+    const own = runs.find((r) => r.getAttribute("data-kind") === "work") as HTMLElement;
+    expect(review).toHaveTextContent(/^Review by the critic/);
+    expect(review).not.toHaveTextContent("Wrote the page");
+    expect(within(review).queryByTestId("drawer-files")).toBeNull();
+    expect(own).toHaveTextContent(/^coder/);
+    expect(own).toHaveTextContent("Wrote the page and checked it loads.");
+    expect(within(own).getByTestId("drawer-files")).toHaveTextContent("index.html");
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
   });
 
   it("the drawer shows what a task asks for and its runs; Edit lowers the review level and the row follows", async () => {
@@ -499,13 +558,30 @@ describe("Tasks tab (design §3.5)", () => {
     );
   });
 
-  it("the filters live in the address: they survive switching tabs", async () => {
+  it("the filters live in the address and survive switching tabs", async () => {
     const user = userEvent.setup();
     renderApp("/projects/proj_atlas/tasks?status=done");
     await waitFor(() => expect(screen.getAllByTestId("task-row")).toHaveLength(1));
     expect((screen.getByTestId("filter-status") as HTMLSelectElement).value).toBe("done");
     await user.type(screen.getByTestId("filter-text"), "index");
     expect(screen.getAllByTestId("task-row")).toHaveLength(1);
+    // Away to another tab and back through the tab links, which carry no query.
+    await user.click(screen.getByTestId("tab-summary"));
+    await screen.findByTestId("tab-panel-summary");
+    await user.click(screen.getByTestId("tab-tasks"));
+    await waitFor(() =>
+      expect((screen.getByTestId("filter-status") as HTMLSelectElement).value).toBe("done"),
+    );
+    expect((screen.getByTestId("filter-text") as HTMLInputElement).value).toBe("index");
+    expect(screen.getAllByTestId("task-row")).toHaveLength(1);
+    // Cleared, they stay cleared on the next return.
+    await user.selectOptions(screen.getByTestId("filter-status"), "");
+    await user.clear(screen.getByTestId("filter-text"));
+    await user.click(screen.getByTestId("tab-summary"));
+    await screen.findByTestId("tab-panel-summary");
+    await user.click(screen.getByTestId("tab-tasks"));
+    await waitFor(() => expect(screen.getAllByTestId("task-row").length).toBeGreaterThan(1));
+    expect((screen.getByTestId("filter-status") as HTMLSelectElement).value).toBe("");
   });
 
   it("Change what it waits for: picked by title in plain words, sent through the command, with Undo", async () => {

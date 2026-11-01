@@ -76,6 +76,7 @@ import {
   csvLine,
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
+import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import {
@@ -357,6 +358,8 @@ export interface FakeDaemonState {
   tasks: TaskView[];
   /** Who paused which task, and the order tasks were added (the daemon's row authors and ages). */
   taskMeta: FakeTaskMeta;
+  /** The tasks' runs (`/projects/:id/runs`, the drawer's runs); the critic's are its reviews. */
+  runs: (typeof RUNS)[number][];
   sessions: SessionView[];
   events: EventView[];
   requests: HumanRequestView[];
@@ -646,6 +649,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     projects: clone(PROJECTS),
     tasks: clone(TASKS),
     taskMeta: createTaskMeta(TASKS),
+    runs: clone(RUNS),
     sessions: clone(SESSIONS),
     events: clone(EVENTS),
     requests: clone(REQUESTS),
@@ -1233,15 +1237,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     change: { changeLogId: entry.id, undoToken: entry.id, sentence: entry.sentence },
   });
   /** As the daemon: a person's move withdraws the task's open Inbox cards. */
-  const withdrawCards = (taskId: string): number => {
-    let n = 0;
+  const withdrawCards = (taskId: string): string[] => {
+    const ids: string[] = [];
     for (const r of state.requests)
       if (r.taskId === taskId && r.status === "open") {
         r.status = "withdrawn";
-        n++;
+        ids.push(r.id);
       }
-    if (n) emit("inbox.changed", { blockingCount: blockingCount() });
-    return n;
+    if (ids.length) emit("inbox.changed", { blockingCount: blockingCount() });
+    return ids;
   };
   /** As the daemon: a note for the agent is a queued note that names the task. */
   const queueTaskNote = (task: TaskView, note: string | undefined): string | null => {
@@ -1346,7 +1350,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         views.find((v) => v.id === task.id) ?? task,
         views,
         state.requests,
-        RUNS.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        state.runs.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       ),
     );
   });
@@ -1443,6 +1447,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if ("refused" in target) return errorBody(c, 409, "conflict", target.refused);
     const from = task.status;
     const { action, note } = parsed.data;
+    // The row as it was, for the undo (as the daemon's change log records it).
+    const was = {
+      reason: task.reason,
+      paused_by_person: state.taskMeta.pausedByPerson.has(task.id),
+      attempt: task.attempt,
+    };
     task.status = target.to;
     if (target.to === "needs_human") state.taskMeta.pausedByPerson.add(task.id);
     else state.taskMeta.pausedByPerson.delete(task.id);
@@ -1461,10 +1471,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         redo: "Redo asked by you",
       }[action];
     touch(task);
-    const withdrawn =
+    const withdrawnIds =
       ["needs_human", "failed", "in_review"].includes(from) || target.to === "cancelled"
         ? withdrawCards(task.id)
-        : 0;
+        : [];
+    const withdrawn = withdrawnIds.length;
     const withoutAnswers =
       action === "go_ahead" || (from === "needs_human" && withdrawn > 0 && target.to === "ready")
         ? queueTaskNote(
@@ -1496,18 +1507,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           params: { task: task.id, project: task.projectId },
         },
       ],
-      before: { task_id: task.id, status: from, title: task.title },
+      before: { task_id: task.id, status: from, title: task.title, ...was },
       after: {
         task_id: task.id,
         status: task.status,
         title: task.title,
         ...(noteId ? { note_id: noteId } : {}),
         ...(withoutAnswers ? { without_answers_note_id: withoutAnswers } : {}),
+        ...(withdrawn ? { withdrawn_requests: withdrawnIds } : {}),
       },
       scope: "project",
       projectId: task.projectId,
       source: "ui",
-      wordsUsed: note ?? action,
+      // What the person pressed, in the button's words (Changes shows it as what they said).
+      wordsUsed: note ?? ACTION_WORDS[action],
       sentence: actionSentence(task, from, task.status, {
         withdrawn,
         noted: noteId !== null,
@@ -1610,7 +1623,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/projects/:id/runs", (c) => {
     const id = c.req.param("id");
     const taskIds = new Set(state.tasks.filter((t) => t.projectId === id).map((t) => t.id));
-    return c.json(RUNS.filter((r) => r.taskId && taskIds.has(r.taskId)));
+    return c.json(state.runs.filter((r) => r.taskId && taskIds.has(r.taskId)));
   });
   app.get("/projects/:id/decisions", (c) => {
     const id = c.req.param("id");
@@ -4478,6 +4491,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       title?: string;
       note_id?: string;
       without_answers_note_id?: string;
+      withdrawn_requests?: string[];
     };
     const task = state.tasks.find((t) => t.id === after.task_id);
     const words = (s: string) =>
@@ -4494,19 +4508,42 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       first?.name ?? "",
     );
     if (isMove && task && typeof before?.status === "string") {
-      // As the daemon's `restoreStatus`: the status before the move; an agent's own status
-      // (running, being reviewed) comes back as ready.
+      // As the daemon's `restoreStatus`: the status before the move, with its reason, who set
+      // it and the retry count; an agent's own status (running, being reviewed) comes back as
+      // ready. The cards the move withdrew are open again.
+      const was = before as { reason?: unknown; paused_by_person?: unknown; attempt?: unknown };
       const previous = ["claimed", "in_progress", "in_review"].includes(before.status)
         ? "ready"
         : before.status;
       task.status = previous;
-      if (previous === "needs_human") state.taskMeta.pausedByPerson.add(task.id);
+      if (typeof was.reason === "string") task.reason = was.reason;
+      if (previous === "failed" && typeof was.attempt === "number") task.attempt = was.attempt;
+      const byPerson =
+        typeof was.paused_by_person === "boolean"
+          ? was.paused_by_person
+          : previous === "needs_human";
+      if (previous === "needs_human" && byPerson) state.taskMeta.pausedByPerson.add(task.id);
       else state.taskMeta.pausedByPerson.delete(task.id);
       task.version += 1;
+      const cards = after.withdrawn_requests ?? [];
+      for (const r of state.requests)
+        if (cards.includes(r.id) && r.status === "withdrawn") r.status = "open";
+      if (cards.length) emit("inbox.changed", { blockingCount: blockingCount() });
+      const again =
+        previous === "needs_human" && cards.length
+          ? "needs your answer again"
+          : previous === "failed"
+            ? "is marked failed again"
+            : `is ${words(previous)} again`;
+      const back = !cards.length
+        ? ""
+        : cards.length === 1
+          ? "its card is back in the Inbox"
+          : `its ${cards.length} cards are back in the Inbox`;
       sentence =
         after.status === "cancelled"
-          ? `Undone: reopened the task "${task.title}"; it is ${words(previous)} again.`
-          : `Undone: the task "${task.title}" is ${words(previous)} again.`;
+          ? `Undone: reopened the task "${task.title}"; it ${again}${back ? ` and ${back}` : ""}.`
+          : `Undone: the task "${task.title}" ${again}${back ? `; ${back}` : ""}.`;
     }
     if (first?.name === "task.update" && task) {
       const fields = ((before as { fields?: Record<string, unknown> } | null)?.fields ??

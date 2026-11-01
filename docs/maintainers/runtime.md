@@ -3314,10 +3314,23 @@ runs `task.transition`, the reason optional. A stale version is a 409 whose mess
 the task is now ("This task changed: it is now Running.") and whose `details.task` is the task's
 view, so the screen updates the row. Stop and Cancel on a running task stop its run
 (`KillSwitch.stopTask`, U-039); a move withdraws the task's open Inbox cards and the route
-sends `inbox.changed`. `GET /tasks/:id` is the task drawer (`TaskDetailView`, `taskDetail` in
-`daemon/task-display.ts`): what it waits for and what waits on it, its runs with the report and
-the files from the session log (`task.finished`, `task.files`), the critic's last review in a
-sentence (`reviewSentence`), the open findings, its open cards. Results are
+sends `inbox.changed`. The change log's words used are the person's note, else the button's
+words (`ACTION_WORDS`: "Pause", "Go ahead without"), so Changes never shows an action key.
+`GET /tasks/:id` is the task drawer (`TaskDetailView`, `taskDetail` in
+`daemon/task-display.ts`): what it waits for and what waits on it, its runs, the critic's last
+review in a sentence (`reviewSentence`), the open findings (each once, however many reviews
+raised it), its open cards (`plainReason`: the retry card's text reads ""X" failed 4 times",
+"2 question(s)" reads "2 questions"). Each run has `kind`: `work` (a specialist's run) or
+`review` (the critic's run, `specialist: "critic"`, whose words are under `review`; it carries
+no report or files). A work run's report and files come from its session's log: the runner
+writes, per run of the task, `task.files` then `task.finished`, neither naming the run, so
+`pairReports` gives each report to the latest specialist run of the task in that session
+begun at or before it that has none yet (a run that never reported is passed over when a later
+run began before the report; a report from before any run began has no run). Before, reports
+were paired with every run row by position, the critic's included, so the coder's report and
+files showed under the critic's run and the coder's own run was empty. A run stopped from
+outside reads "The run was stopped." instead of the driver's words, and reports and the
+review's summary read "(s)" plurals as their number says (`plainPlurals`). Results are
 `CommandResultViewSchema`; `/me.activeProjectId` is the registry's record, the one active
 project of every channel (U-056): the header's switcher, the palette and Home's Make active run
 `project.switch` (source `ui`) and the app shows `/me`'s project at start. `POST /chat` and

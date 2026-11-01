@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { taskNoteText, WITHOUT_ANSWERS_NOTE } from "@forerunner/commands";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import type { JsonObject } from "@forerunner/state";
 import { FakeProvider, textReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -13,7 +14,8 @@ import {
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { plainReason, runOrder } from "../src/daemon/task-words.ts";
+import { pairReports } from "../src/daemon/task-display.ts";
+import { plainPlurals, plainReason, runOrder } from "../src/daemon/task-words.ts";
 import { notesForTask } from "../src/session/next-session.ts";
 
 /**
@@ -157,6 +159,65 @@ describe("the words of a task's status (design §2, §5)", () => {
       ),
     ).toBe("you answered its questions in the Inbox");
     expect(plainReason("x ".repeat(80)).length).toBeLessThanOrEqual(100);
+    // The retry card's own text, as the drawer lists it under "In your Inbox".
+    expect(
+      plainReason(
+        'Retry ladder exhausted for "Style the page" after 4 failed attempt(s) (ceiling opus): [stand-in model] Sent back for rework',
+        160,
+      ),
+    ).toBe('"Style the page" failed 4 times');
+    // "(s)" plurals read as the number says (design §5 rule 6).
+    expect(plainReason("2 question(s) from coder")).toBe("2 questions from coder");
+    expect(plainReason("1 question(s) from coder")).toBe("1 question from coder");
+    expect(plainPlurals("Accepted: 1 changed file(s) match the brief.")).toBe(
+      "Accepted: 1 changed file match the brief.",
+    );
+    expect(plainPlurals("Waiting for your answers (2 question(s) from coder).")).toBe(
+      "Waiting for your answers (2 questions from coder).",
+    );
+  });
+
+  it("the drawer pairs each specialist run with its own report, never a review or a later run", () => {
+    const run = (id: string, at: string) => ({ id, created_at: at });
+    const ev = (seq: number, at: string, type: string, payload: JsonObject) => ({
+      seq,
+      created_at: at,
+      type,
+      payload,
+    });
+    const T = "task-1";
+    const events = [
+      ev(1, "2026-03-05T08:00:01.000Z", "task.started", { taskId: T }),
+      ev(2, "2026-03-05T08:00:02.000Z", "task.files", { taskId: T, files: ["a.md"] }),
+      ev(3, "2026-03-05T08:00:02.000Z", "task.finished", { taskId: T, summary: "Wrote a.md" }),
+      ev(4, "2026-03-05T08:00:03.000Z", "task.finished", { taskId: "other", summary: "x" }),
+      ev(5, "2026-03-05T08:00:09.000Z", "task.finished", { taskId: T, summary: "Could not" }),
+    ];
+    // Two runs, each reporting once: each gets its own report and files.
+    const both = pairReports(
+      [run("r1", "2026-03-05T08:00:01.500Z"), run("r2", "2026-03-05T08:00:05.000Z")],
+      events,
+      T,
+    );
+    expect(both.get("r1")).toEqual({ report: "Wrote a.md", files: ["a.md"] });
+    expect(both.get("r2")).toEqual({ report: "Could not", files: [] });
+    // A run that never reported (its session ended under it) is passed over.
+    const orphan = pairReports(
+      [
+        run("r0", "2026-03-05T08:00:00.500Z"),
+        run("r1", "2026-03-05T08:00:01.500Z"),
+        run("r2", "2026-03-05T08:00:05.000Z"),
+      ],
+      events.slice(0, 3),
+      T,
+    );
+    expect(orphan.get("r0")).toBeUndefined();
+    expect(orphan.get("r1")?.report).toBe("Wrote a.md");
+    expect(orphan.get("r2")).toBeUndefined();
+    // A report from before any run began (the run never started) has no run.
+    expect(pairReports([run("r2", "2026-03-05T08:00:05.000Z")], events.slice(0, 3), T).size).toBe(
+      0,
+    );
   });
 
   it("the run order puts a task after what it waits for, then priority, then age; stable", () => {

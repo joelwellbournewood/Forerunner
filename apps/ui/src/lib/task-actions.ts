@@ -48,8 +48,16 @@ export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: s
   cancel: { label: "Cancel", explain: "Drops it." },
 };
 
-/** The actions a status offers, the main one first (design §3.5's table). */
-export function actionsFor(key: TaskDisplayKey): readonly TaskActionKey[] {
+/**
+ * The actions a status offers, the main one first (design §3.5's table). A task only the
+ * person can do ("Me: ask me in the Inbox") has no specialist to go ahead without its answers:
+ * it offers Answer and Cancel.
+ */
+export function actionsFor(
+  key: TaskDisplayKey,
+  task?: Pick<TaskView, "specialist">,
+): readonly TaskActionKey[] {
+  if (key === "answer" && task?.specialist === WHO_PERSON) return ["answer", "cancel"];
   switch (key) {
     case "draft":
       return ["make_ready", "edit", "cancel"];

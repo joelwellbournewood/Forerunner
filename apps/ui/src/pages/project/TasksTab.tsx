@@ -37,7 +37,7 @@ import {
   whoName,
 } from "../../lib/task-actions.ts";
 import { useAsync } from "../../lib/use-async.ts";
-import { useClient, useUiState } from "../../store/context.tsx";
+import { useClient, useIdentity, useUiState, useUiStore } from "../../store/context.tsx";
 import { DependencyPicker } from "./DependencyPicker.tsx";
 import { NewTaskDialog } from "./NewTaskDialog.tsx";
 import { TaskDrawer } from "./TaskDrawer.tsx";
@@ -105,6 +105,20 @@ export function waitingOn(task: Pick<TaskView, "id">, tasks: readonly TaskView[]
   return tasks.filter((t) => t.dependsOn.includes(task.id) && !isFinished(t));
 }
 
+/** The filters' names in the address (`?status=&who=&q=`). */
+const FILTER_KEYS = ["status", "who", "q"] as const;
+type KeptFilters = Record<(typeof FILTER_KEYS)[number], string>;
+/** Each window's (store's) last Tasks filters per project, for a return to the tab. */
+const keptFilters = new WeakMap<object, Map<string, KeptFilters>>();
+function rememberedFilters(store: object): Map<string, KeptFilters> {
+  let kept = keptFilters.get(store);
+  if (!kept) {
+    kept = new Map();
+    keptFilters.set(store, kept);
+  }
+  return kept;
+}
+
 /** A change the person just made, with its one Undo (design §3.5). */
 interface Moved {
   sentence: string;
@@ -139,7 +153,9 @@ export function TasksTab({
     (signal) => client.runs(projectId, { limit: 500 }, signal),
     [client, projectId],
   );
-  // The filters live in the address, so they survive switching tabs and a reload.
+  // The filters live in the address, so a reload and Back keep them; the project's tab links
+  // carry no query, so this window also remembers them per project and puts them back when the
+  // person returns to the tab (design §3.5: leave the tab and come back, they are still set).
   const [params, setParams] = useSearchParams();
   const status = params.get("status") ?? "";
   const who = params.get("who") ?? "";
@@ -148,18 +164,37 @@ export function TasksTab({
     () => ({ status, specialist: who, text: q }),
     [status, who, q],
   );
-  const setFilter = (patch: Partial<TaskFilter>) => {
-    const next = { ...filter, ...patch };
+  const uiStore = useUiStore();
+  const remembered = rememberedFilters(uiStore);
+  const arrived = useRef(false);
+  useEffect(() => {
+    if (arrived.current) return;
+    arrived.current = true;
+    const kept = remembered.get(projectId);
+    if (!kept || FILTER_KEYS.some((k) => params.has(k))) return;
     setParams(
       (prev) => {
         const p = new URLSearchParams(prev);
-        for (const [key, value] of [
-          ["status", next.status],
-          ["who", next.specialist],
-          ["q", next.text],
-        ] as const)
-          if (value) p.set(key, value);
-          else p.delete(key);
+        for (const k of FILTER_KEYS) if (kept[k]) p.set(k, kept[k]);
+        return p;
+      },
+      { replace: true },
+    );
+  }, [remembered, projectId, params, setParams]);
+  // Whatever set them (these fields, a link with a filter), they are kept for the next visit.
+  useEffect(() => {
+    if (arrived.current) remembered.set(projectId, { status, who, q });
+  }, [remembered, projectId, status, who, q]);
+  const setFilter = (patch: Partial<TaskFilter>) => {
+    const next = { ...filter, ...patch };
+    const values = { status: next.status, who: next.specialist, q: next.text };
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        for (const k of FILTER_KEYS) {
+          if (values[k]) p.set(k, values[k]);
+          else p.delete(k);
+        }
         return p;
       },
       { replace: true },
@@ -189,6 +224,16 @@ export function TasksTab({
     tasks.reload();
     runs.reload();
   }, [tasks.reload, runs.reload]);
+  const identity = useIdentity();
+  const refreshInboxCount = () => {
+    if (!identity) return;
+    void client
+      .inbox(identity.humanId)
+      .then((inbox) => uiStore.dispatch({ type: "blockingCount", count: inbox.blockingCount }))
+      .catch(() => {
+        // the /events stream or the next poll brings the count
+      });
+  };
 
   // Live (design §3.5): the store re-reads the project card on every `project.changed`, which
   // the daemon sends when a session moves a task; the rows follow it, once per burst.
@@ -312,6 +357,8 @@ export function TasksTab({
                       setMoved({ sentence: r.sentence ?? "Undone.", undoToken: null });
                       setError(null);
                       tasks.reload();
+                      // An undo can put a withdrawn card back: the header's count follows.
+                      refreshInboxCount();
                     } else {
                       setError(`Not undone: ${r.reason ?? r.status}.`);
                     }
@@ -422,7 +469,7 @@ export function TasksTab({
                     </td>
                     <td className="py-1.5">
                       <div className="flex flex-wrap gap-1">
-                        {actionsFor(d.key)
+                        {actionsFor(d.key, t)
                           .filter((a) => a !== "edit" && a !== "dependencies")
                           .map((a, i) => (
                             <Button
@@ -545,7 +592,7 @@ export function ActionDialog({
   if (!pending) return null;
   const { task, action } = pending;
   const def = ACTIONS[action];
-  const offered = actionsFor(displayOf(task).key).includes(action);
+  const offered = actionsFor(displayOf(task).key, task).includes(action);
   const stuck = action === "cancel" ? stuckLine(waitingOn(task, tasks).map((t) => t.title)) : null;
   const submit = async (e: FormEvent) => {
     e.preventDefault();

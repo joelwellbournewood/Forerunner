@@ -29,6 +29,28 @@ const RESTORED_AS_READY: readonly TaskStatus[] = ["claimed", "in_progress", "in_
 export const EDITABLE_STATUSES: readonly TaskStatus[] = ["draft", "ready", "needs_human", "failed"];
 
 /**
+ * Statuses whose reason and author say why the task waits ("Failed: tried 4 times", an agent's
+ * pause, "Paused by you"): a change that leaves the status as it is (an edit, what it waits
+ * for) keeps them, so the task still reads as it did; the change log records the change.
+ */
+export const STATUS_EXPLAINED_BY_REASON: readonly TaskStatus[] = ["needs_human", "failed"];
+
+/** The reason and author a change that keeps the status writes on the row. */
+function changeAuthor(
+  current: TaskRow,
+  reason: string,
+  actor: Actor,
+): Pick<TaskRow, "reason" | "author_agent" | "author_human"> {
+  if (STATUS_EXPLAINED_BY_REASON.includes(current.status))
+    return {
+      reason: current.reason,
+      author_agent: current.author_agent,
+      author_human: current.author_human,
+    };
+  return { reason, author_agent: actor.agentId ?? null, author_human: actor.humanId ?? null };
+}
+
+/**
  * Where a cancelled task reopens to (U-061): the status it had before the cancel when a person
  * can set it, else `ready`, so a session plans it again (an agent's `claimed`, `in_progress`
  * or `in_review` needs a session's claim).
@@ -270,7 +292,10 @@ export class TaskRepo extends Repository<TaskRow> {
    * on the Tasks tab (design §3.5: "every action has one Undo right after it"), which may lead
    * where the workflow graph has no edge (back to done after a Redo, to cancelled, to draft).
    * A status only an agent's claim sets (`claimed`, `in_progress`, `in_review`) is restored as
-   * `ready`, without a claim; a session picks it up again. The version is checked.
+   * `ready`, without a claim; a session picks it up again. The version is checked. The caller
+   * passes the reason and author the row had before the action, so the task reads as it did
+   * ("Failed: tried 4 times", an agent's pause); the change log records the undo itself.
+   * `attempt` puts back the retry count a Try again raised when the task goes back to failed.
    */
   async restoreStatus(
     id: string,
@@ -278,6 +303,7 @@ export class TaskRepo extends Repository<TaskRow> {
     previous: TaskStatus,
     reason: string,
     actor: Actor = {},
+    opts: { attempt?: number } = {},
   ): Promise<TaskRow> {
     const current = await this.mustGet(id);
     const to: TaskStatus = RESTORED_AS_READY.includes(previous) ? "ready" : previous;
@@ -297,6 +323,9 @@ export class TaskRepo extends Repository<TaskRow> {
       claimed_by: null,
       claim_expires: null,
       ...(current.status === "failed" && to === "ready" ? { attempt: current.attempt + 1 } : {}),
+      ...(to === "failed" && opts.attempt !== undefined && opts.attempt >= 0
+        ? { attempt: opts.attempt }
+        : {}),
       author_agent: actor.agentId ?? null,
       author_human: actor.humanId ?? null,
     });
@@ -338,9 +367,7 @@ export class TaskRepo extends Repository<TaskRow> {
     }
     return this.update(id, expectedVersion, {
       ...patch,
-      reason,
-      author_agent: actor.agentId ?? null,
-      author_human: actor.humanId ?? null,
+      ...changeAuthor(current, reason, actor),
     });
   }
 
@@ -494,9 +521,7 @@ export class TaskRepo extends Repository<TaskRow> {
     const ids = await this.checkDependencies(current.project_id, current.id, dependsOn);
     return this.update(id, expectedVersion, {
       depends_on: ids,
-      reason,
-      author_agent: actor.agentId ?? null,
-      author_human: actor.humanId ?? null,
+      ...changeAuthor(current, reason, actor),
     });
   }
 

@@ -104,6 +104,11 @@ export function actionTarget(
     return {
       refused: `"${task.title}" is ${task.display?.label ?? task.status}: ${ACTION_WORDS[action]} is not offered for it.`,
     };
+  // As the daemon's task.resume: a task only the person can do has nobody to go ahead.
+  if (action === "go_ahead" && task.specialist === "person")
+    return {
+      refused: `"${task.title}" is a task only you can do: answer its card in the Inbox, or cancel it.`,
+    };
   const to: TaskStatus =
     action === "cancel"
       ? "cancelled"
@@ -140,7 +145,11 @@ export function actionSentence(
       names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
     s += ` ${list} ${names.length === 1 ? "waits" : "wait"} on it and ${names.length === 1 ? "is" : "are"} stuck now.`;
   }
-  if (extra.noted) s += " Your note goes into its next brief.";
+  if (extra.noted)
+    s +=
+      to === "cancelled"
+        ? " Your note goes into its brief if you reopen it."
+        : " Your note goes into its next brief.";
   return s;
 }
 
@@ -180,16 +189,21 @@ export function fakeTaskDetail(
         (v) => v.dependsOn.includes(task.id) && v.status !== "done" && v.status !== "cancelled",
       )
       .map((v) => ({ taskId: v.id, title: v.title })),
-    runs: mine.map((r) => ({
-      id: r.id,
-      specialist: r.specialist,
-      startedAt: r.createdAt,
-      durationMs: r.durationMs,
-      cost: r.cost,
-      outcome: r.outcome === "success" ? "Finished" : r.outcome,
-      report: "Wrote the page and checked it loads.",
-      files: ["index.html"],
-    })),
+    // As the daemon: the critic's runs are the reviews, with no report or files of their own.
+    runs: mine.map((r) => {
+      const review = r.specialist === "critic";
+      return {
+        id: r.id,
+        kind: review ? ("review" as const) : ("work" as const),
+        specialist: r.specialist,
+        startedAt: r.createdAt,
+        durationMs: r.durationMs,
+        cost: r.cost,
+        outcome: r.outcome === "success" ? "Finished" : r.outcome,
+        report: review ? null : "Wrote the page and checked it loads.",
+        files: review ? [] : ["index.html"],
+      };
+    }),
     review:
       latest?.reviewId && latest.verdict
         ? {

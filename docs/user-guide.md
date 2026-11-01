@@ -82,12 +82,15 @@ again as soon as the service answers.
   **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
   and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
   (opens its card in the Inbox) or **Go ahead without** (the specialist decides and says what it
-  assumed), **Redo** (a done task: say what is wrong), **Reopen** (a cancelled task) and
-  **Cancel** (it names the tasks that wait on it and will be stuck). Every action asks for an
-  optional **note for the agent**, which goes into the task's next brief, and has one **Undo**
-  right after it; each is listed in Changes. Click a task's title to open it: what done looks
-  like and the criteria, what it waits for and what waits on it, its runs (who ran it, the
-  report, the files it changed), the critic's review in words, its pull request, and **Edit**
+  assumed; not offered on a task only you can do), **Redo** (a done task: say what is wrong),
+  **Reopen** (a cancelled task) and **Cancel** (it names the tasks that wait on it and will be
+  stuck). Every action asks for an optional **note for the agent**, which goes into the task's
+  next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
+  that puts the task back as it was, its card in the Inbox included; each is listed in
+  Changes. Click a task's title to open it: what done looks like and the criteria, what it
+  waits for and what waits on it, its runs (who ran each one, with that run's report and the
+  files it changed; the critic's run is marked as the review), the critic's review in words,
+  its pull request, and **Edit**
   (the wording, priority, budget, review level and who does it; for example a full-review task
   waiting for Docker can go to a light review) and **Change what it waits for** (the project's
   tasks by title; a failed one is flagged; a task cannot wait on itself, a cancelled task or a

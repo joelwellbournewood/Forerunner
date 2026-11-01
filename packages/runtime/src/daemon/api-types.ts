@@ -323,6 +323,11 @@ export const TaskDetailView = z.object({
   runs: z.array(
     z.object({
       id: z.string(),
+      /**
+       * `work`: a specialist's run, with its report and files; `review`: the critic's review of
+       * the work (its verdict is in `review`), which carries no report or files of its own.
+       */
+      kind: z.enum(["work", "review"]),
       specialist: z.string(),
       startedAt: z.string(),
       durationMs: z.number().int().nullable(),

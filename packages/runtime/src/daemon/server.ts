@@ -1044,7 +1044,13 @@ export function createDaemonApp(
         { details: { taskId: task.id, action: body.action, task: now, reason: "not_offered" } },
       );
     }
-    const r = await taskCommand(task.project_id, name, params, body.note ?? body.action);
+    // Changes shows what the person said: their note, else the button they pressed.
+    const r = await taskCommand(
+      task.project_id,
+      name,
+      params,
+      body.note ?? ACTION_WORDS[body.action],
+    );
     if (["claimed", "in_progress"].includes(task.status))
       rt.kill.stopTask(task.id, `${ACTION_WORDS[body.action]} by you`);
     // A withdrawn card leaves the Inbox: its count and the header follow.

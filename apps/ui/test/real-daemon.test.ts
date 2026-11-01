@@ -2,7 +2,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { appDirs, join, SimulatedClock, SystemClock } from "@forerunner/platform";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
@@ -10,6 +10,8 @@ import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ScriptedProvider } from "../../../packages/runtime/test/helpers.ts";
+import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
+import { benchOptionsFromEnv, createRolePlayer } from "../../../testenv/src/bench/role-player.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 
@@ -392,9 +394,11 @@ describe("the UI client against the real daemon", () => {
     expect(label(notes.id)).toBe('Waiting for "Write a README for the project"');
     // No Docker on this computer: the full-review task waits for it, in words.
     expect(label(license.id)).toBe("Waiting for Docker");
-    expect(rows.find((t) => t.id === license.id)?.display?.detail).toContain(
-      "Full review runs in Docker, which is not running on this computer",
+    const docker = rows.find((t) => t.id === license.id)?.display?.detail ?? "";
+    expect(docker).toBe(
+      "Full review needs Docker, not running on this computer. Set it up, or edit to a light review.",
     );
+    expect(docker.length).toBeLessThanOrEqual(100);
     // No raw state, tier or id in anything the row says.
     const said = JSON.stringify(rows.map((t) => t.display));
     expect(said).not.toMatch(/needs_human|in_progress|claimed|tier \d|request 01/);
@@ -430,6 +434,11 @@ describe("the UI client against the real daemon", () => {
     // A pause is the person's own: no Inbox card, and the project does not say "needs you".
     expect(await open()).toBe(cardsBefore);
     expect((await client.project(own.id)).needsYou).toBeNull();
+    // Changes says what they pressed in the button's words, never the action's key.
+    const logged = (await client.changes({ projectId: own.id })).find(
+      (ch) => ch.id === paused.change?.changeLogId,
+    );
+    expect(logged?.wordsUsed).toBe("Pause");
     // Undo puts it back as it was.
     const undone = await client.undoChange(paused.change?.undoToken ?? "");
     expect(undone.sentence).toBe('Undone: the task "Create notes/todo.md" is ready again.');
@@ -599,6 +608,151 @@ describe("the UI client against the real daemon", () => {
     expect((await client.queue(own.id)).map((q) => q.text).join("\n")).toContain(
       "The person chose to go ahead without answering",
     );
+    // Undo puts it back as it was: it needs the answer again and its card is back in the
+    // Inbox; the note for the brief is taken back.
+    const undone = await client.undoChange(went.change?.undoToken ?? "");
+    expect(undone.status).toBe("done");
+    expect(undone.sentence).toBe(
+      'Undone: the task "Decide where the page is published" needs your answer again; its card is back in the Inbox.',
+    );
+    const back = (await client.tasks(own.id)).find((x) => x.id === task.id);
+    expect(back?.display).toMatchObject({
+      label: "Needs your answer",
+      blocker: { kind: "card", requestId: card.id },
+    });
+    expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("open");
+    expect((await client.inbox(humanId)).requests.map((r) => r.id)).toContain(card.id);
+    expect(
+      (await client.queue(own.id)).filter(
+        (q) => q.status === "queued" && q.text.includes("go ahead without answering"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("Tasks tab: Cancel and Try again withdraw a task's card; Undo brings the card back and the task as it was (design §3.5, §3.8)", async () => {
+    const own = await client.createProject({ name: "Cards back", goal: "Undo is whole" });
+    const card = async (taskId: string, why: string) =>
+      rt.store.humanRequest.insert({
+        human_id: humanId,
+        project_id: own.id,
+        task_id: taskId,
+        kind: "decision",
+        why,
+        options: ["Try again", "Cancel"],
+        blocking: true,
+        risk: "low",
+      });
+    const inboxIds = async () => (await client.inbox(humanId)).requests.map((r) => r.id);
+    const rowOf = async (id: string) => (await client.tasks(own.id)).find((x) => x.id === id);
+
+    // A task that waits for the person's answer, cancelled and then undone.
+    const asks = await client.createTask(own.id, {
+      title: "Pick the colour scheme",
+      outcome: "The colours are chosen",
+    });
+    let t = await rt.store.task.mustGet(asks.id);
+    await rt.store.task.transition(t.id, t.version, "needs_human", "asked the person", {
+      agentId,
+    });
+    const question = await card(asks.id, "Which colours should the page use?");
+    const cancelled = await client.taskAction(asks.id, {
+      version: (await rowOf(asks.id))?.version ?? 0,
+      action: "cancel",
+    });
+    expect(cancelled.change?.sentence).toBe(
+      'Cancelled "Pick the colour scheme". Its card in the Inbox was withdrawn.',
+    );
+    expect(await inboxIds()).not.toContain(question.id);
+    const undoCancel = await client.undoChange(cancelled.change?.undoToken ?? "");
+    expect(undoCancel.sentence).toBe(
+      'Undone: reopened the task "Pick the colour scheme"; it needs your answer again and its card is back in the Inbox.',
+    );
+    expect((await rowOf(asks.id))?.display?.label).toBe("Needs your answer");
+    expect(await inboxIds()).toContain(question.id);
+    // The agent's reason is back on the row, not the undo's.
+    expect((await rt.store.task.mustGet(asks.id)).reason).toBe("asked the person");
+
+    // A task that failed after its tries, with its card: Try again, then Undo.
+    const broken = await client.createTask(own.id, {
+      title: "Style the page in styles.css",
+      outcome: "styles.css styles the page",
+    });
+    t = await rt.store.task.mustGet(broken.id);
+    t = await rt.store.task.transition(
+      t.id,
+      t.version,
+      "failed",
+      "retry ladder exhausted after 4 failed attempt(s) (ceiling opus): could not do it",
+      { agentId },
+    );
+    const attemptBefore = t.attempt;
+    const retry = await card(
+      broken.id,
+      'Retry ladder exhausted for "Style the page in styles.css"',
+    );
+    expect((await rowOf(broken.id))?.display?.label).toBe("Failed: tried 4 times");
+    const again = await client.taskAction(broken.id, {
+      version: (await rowOf(broken.id))?.version ?? 0,
+      action: "try_again",
+    });
+    expect(again.display?.label).toBe("Ready");
+    expect(await inboxIds()).not.toContain(retry.id);
+    const undoAgain = await client.undoChange(again.change?.undoToken ?? "");
+    expect(undoAgain.sentence).toBe(
+      'Undone: the task "Style the page in styles.css" is marked failed again; its card is back in the Inbox.',
+    );
+    expect((await rowOf(broken.id))?.display?.label).toBe("Failed: tried 4 times");
+    expect(await inboxIds()).toContain(retry.id);
+    // The retry count is as it was, so the next Try again is counted once.
+    expect((await rt.store.task.mustGet(broken.id)).attempt).toBe(attemptBefore);
+    // Edit keeps what the status says: still why it failed, not the edit.
+    const edited = await client.updateTask(broken.id, {
+      version: (await rowOf(broken.id))?.version ?? 0,
+      priority: "high",
+    });
+    expect(edited.display?.label).toBe("Failed: tried 4 times");
+    expect(edited.change?.sentence).toBe(
+      'Changed "Style the page in styles.css": priority to High.',
+    );
+    // An agent's pause without a card stays the agent's ("Paused"), not "Paused by you".
+    const parked = await client.createTask(own.id, {
+      title: "Check the links",
+      outcome: "Every link works",
+    });
+    t = await rt.store.task.mustGet(parked.id);
+    await rt.store.task.transition(t.id, t.version, "needs_human", "the run hit its budget", {
+      agentId,
+    });
+    const before = await rowOf(parked.id);
+    expect(before?.display?.label).toBe("Paused");
+    const parkedEdit = await client.updateTask(parked.id, {
+      version: before?.version ?? 0,
+      riskTier: 0,
+    });
+    expect(parkedEdit.display?.label).toBe("Paused");
+    expect(parkedEdit.display?.detail).toContain("the run hit its budget");
+
+    // A task only the person can do: nobody goes ahead without its answers.
+    const mine = await client.createTask(own.id, {
+      title: "Choose the domain name",
+      outcome: "The domain is chosen",
+      specialist: "person",
+    });
+    t = await rt.store.task.mustGet(mine.id);
+    await rt.store.task.transition(t.id, t.version, "needs_human", "asked the person", {
+      agentId,
+    });
+    await card(mine.id, "Which domain name?");
+    const refused = await client
+      .taskAction(mine.id, { version: (await rowOf(mine.id))?.version ?? 0, action: "go_ahead" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect((refused as ApiError).message).toBe(
+      '"Choose the domain name" is a task only you can do: answer its card in the Inbox, or cancel it.',
+    );
+    expect((await rowOf(mine.id))?.display?.label).toBe("Needs your answer");
   });
 
   it("priority: New task's level comes back as the word; an old row's number reads as its level, highest first (U-041)", async () => {
@@ -1224,12 +1378,31 @@ async function eventually(
   cond: () => Promise<boolean>,
   what: string,
   seen: () => Promise<string> = async () => "",
+  timeoutMs = 3000,
 ): Promise<void> {
-  for (let i = 0; i < 600; i++) {
+  for (let i = 0; i < timeoutMs / 5; i++) {
     if (await cond()) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error(`timed out waiting for ${what} (${await seen()})`);
+}
+
+/**
+ * The system clock moved to another day: time passes as in the app (each run and each line of
+ * a session's log has its own moment), from `start`.
+ */
+class ShiftedClock extends SystemClock {
+  private readonly offset: number;
+  constructor(start: string) {
+    super();
+    this.offset = new Date(start).getTime() - Date.now();
+  }
+  override now(): number {
+    return Date.now() + this.offset;
+  }
+  override nowIso(): string {
+    return new Date(this.now()).toISOString();
+  }
 }
 
 describe("the UI client against the real daemon: a task a session is running", () => {
@@ -1376,6 +1549,119 @@ describe("the UI client against the real daemon: a task a session is running", (
       "the session to end",
     );
     expect((await rowOf())?.display?.label).toBe("Paused by you");
+  });
+});
+
+describe("the UI client against the real daemon: the task drawer after a session ran its tasks (design §3.5)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-drawer-"));
+    // Time moves as in the app (each run and each line of the log has its own moment), from a
+    // day that is not the 1st, when the monthly calibration would hold the agent.
+    const clock = new ShiftedClock("2026-03-05T08:00:00Z");
+    // The bench's role-playing stand-in: the specialist writes a file through the app's tools
+    // and reports, the critic reviews through `submit_review`; "Broken" fails its first run.
+    const provider = createRolePlayer(
+      benchOptionsFromEnv(
+        {
+          FORERUNNER_BENCH_DELAY_MS: "0",
+          FORERUNNER_BENCH_FAIL: "Broken",
+          FORERUNNER_BENCH_FAIL_TIMES: "1",
+        },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("each run carries its own report and files; the critic's entry is the review, with none of them", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Drawer", goal: "Runs in their place" });
+    const task = await client.createTask(project.id, {
+      title: "Add a LICENSE file (MIT)",
+      outcome: "LICENSE holds the MIT text",
+      riskTier: 1,
+    });
+    const broken = await client.createTask(project.id, {
+      title: "Broken page check",
+      outcome: "the check passes",
+      riskTier: 1,
+    });
+    const statuses = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    // Sessions until both are done: "Broken" fails its first run and works on the next.
+    for (let i = 0; i < 3; i++) {
+      const open = (await client.tasks(project.id)).filter((t) => t.status !== "done");
+      if (!open.length) break;
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, await statuses()).not.toBe("");
+      await eventually(
+        async () => (await client.session(sessionId)).status !== "running",
+        "the session to end",
+        statuses,
+        30_000,
+      );
+    }
+    const done = await client.task(task.id);
+    expect(done.task.status).toBe("done");
+    // The specialist's run holds its report and files; the critic's holds neither.
+    expect(done.runs.map((r) => [r.specialist, !!r.report, r.files.length > 0])).toEqual([
+      ["critic", false, false],
+      ["coder", true, true],
+    ]);
+    const work = done.runs.filter((r) => r.kind === "work");
+    const reviews = done.runs.filter((r) => r.kind === "review");
+    expect(work).toHaveLength(1);
+    expect(work[0]).toMatchObject({ specialist: "coder", outcome: "Finished" });
+    expect(work[0]?.report).toContain("LICENSE");
+    expect(work[0]?.files.length).toBeGreaterThan(0);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({ specialist: "critic", report: null, files: [] });
+
+    // A task whose first run failed and second run worked: each report under its own run,
+    // newest first, and no review entry carries a specialist's report.
+    const retried = await client.task(broken.id);
+    expect(retried.task.status, await statuses()).toBe("done");
+    const attempts = retried.runs.filter((r) => r.kind === "work");
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]?.report).toMatch(/could not/i);
+    expect(attempts[1]?.files).toEqual([]);
+    expect(attempts[0]?.report).not.toMatch(/could not/i);
+    expect(attempts[0]?.files.length).toBeGreaterThan(0);
+    expect(retried.runs.filter((r) => r.kind === "review").length).toBeGreaterThan(0);
+    expect(retried.runs.filter((r) => r.kind === "review" && (r.report || r.files.length))).toEqual(
+      [],
+    );
   });
 });
 

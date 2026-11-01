@@ -68,7 +68,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `task.create` | project | low | yes (cancel) | `task` row, **ready** unless `status: draft` is asked for (design §3.9: a draft is planned by no session, so a task made by chat or the app waited silently); `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051); `priority` is `low`, `medium` (default) or `high` (`TaskPrioritySchema` from `@forerunner/runtime/priority`; an old number is read as its level), stored as the level's number; `depends_on` (ids or titles, checked by `TaskRepo.checkDependencies`), `budget_usd_micro`, `specialist` (a specialist, or `person` for a task only the person can answer) and `milestone_id`. The daemon's `POST /projects/:id/tasks` runs it, so New task is in Changes with its Undo. Sentence: "Added "X" to Atlas, high priority." (U-041) |
 | `task.transition` | project | low; `done`/`cancelled` medium | yes (the status before) | `task.status` through `TaskRepo.transition`; the API route and agents use it, the Tasks tab sends the actions below |
 | `task.pause` | project | low | yes (ready again) | ready → `needs_human` recorded as the person's own (`author_human`), the reason "Paused by you"; on a running task it is Stop: the run is stopped (`ports.stopTask`, and the daemon's route) and the task paused, "Stopped by you". The project does not count it as "needs you" (design §2) |
-| `task.resume` | project | low | yes (paused again) | `needs_human` → ready, "Resumed by you"; `without_answers: true` is the Tasks tab's Go ahead without: the task's open Inbox cards are withdrawn and a note tells the specialist the person went ahead without answering |
+| `task.resume` | project | low | yes (paused again) | `needs_human` → ready, "Resumed by you"; `without_answers: true` is the Tasks tab's Go ahead without: the task's open Inbox cards are withdrawn and a note tells the specialist the person went ahead without answering; refused for a task only the person can do; its undo opens the cards again |
 | `task.reopen` | project | low | yes (cancelled or done again) | Reopen (cancelled → ready) and Redo (done → ready, the person's note says what to fix) through `TaskRepo.reopen`, which takes `cancelled` and `done` (U-080) |
 | `task.update` | project | low | yes (the fields as they were, while nothing changed them since) | Edit: title, outcome, criteria, priority, review level (`risk_tier`), budget, specialist, through `TaskRepo.edit`, refused while the task runs or is being reviewed and once it is done or cancelled ("Redo it first") |
 | `task.dependencies` | project | low | yes (what it waited for, while unchanged since) | what a task waits for (ids or titles), through `TaskRepo.setDependencies` (a cancelled task, the task itself or a cycle is refused with the titles); the daemon's `POST /tasks/:id/dependencies` runs it, so the change is in Changes (it bypassed the change log before) |
@@ -299,9 +299,22 @@ gone. State-based undos that used to return without a change now throw. `undoSen
 the sentence when "<what> is back to <old value>" would not be true (`task.create`: "Undone:
 cancelled the task ..."; a move: "Undone: the task "X" is ready again.", a cancel: "Undone:
 reopened the task ..."). Every person's move of a task can be undone (design §3.5: "every
-action has one Undo right after it"): the undo puts back the status it had through
-`TaskRepo.restoreStatus` (a status only an agent sets comes back as ready), and takes back
-the note the move queued while no session read it.
+action has one Undo right after it"): the undo puts the task back as it was. The move's
+`before` records the row's `status`, `reason`, `author_human`, `author_agent` and `attempt`;
+the undo restores them through `TaskRepo.restoreStatus` (a status only an agent sets comes
+back as ready; back to failed the retry count a Try again raised is taken back), so an agent's
+pause reads "Needs your answer" or "Paused" again and never "Paused by you", and a failed task
+reads "Failed: tried 4 times", not "Failed: undo". The cards the move withdrew
+(`after.withdrawn_requests`) are opened again (`HumanRequestRepo.reopenWithdrawn`), and the note
+the move queued is taken back while no session read it. The sentence says what is true again:
+"Undone: the task "X" needs your answer again; its card is back in the Inbox.", "Undone:
+reopened the task "X"; it needs your answer again and its card is back in the Inbox.",
+"Undone: the task "X" is marked failed again; its card is back in the Inbox.". Before these
+fields were recorded (an older change), the undo writes "undo" and its own author. The undo of
+a Redo is refused in words while the critic still asks for changes ("the critic still asks
+for changes to "X", so it cannot be done again"), not with the store's `findings_open` text.
+`task.resume` with `without_answers` is refused for a task only the person can do
+(`specialist: person`): nobody would go ahead, the next session would ask again.
 
 **Task sentences and notes** (design §5). A task command's sentence is one plain line with
 the task's title, no raw state and no "Undo." (the Undo is a button beside it):
@@ -311,7 +324,11 @@ and is stuck now.", "Reopened "X" to redo it: …". A move out of waiting for th
 says so ("Its card in the Inbox was withdrawn."); the card never lingers as blocking. The
 person's note (`note` on every task command: "Note for the agent (optional): goes into the
 task's next brief") is queued as a `note` queue item that names the task (`taskNoteText`:
-"About "X": …"), which `notesForTask` routes to that task's brief only.
+"About "X": …"), which `notesForTask` routes to that task's brief only. On a cancel the
+sentence says "Your note goes into its brief if you reopen it.": a cancelled task has no next
+brief until it is reopened. `task.update` and `task.dependencies` on a paused or failed task
+leave the row's reason and author as they were (`TaskRepo.edit`, `setDependencies`), so the
+row still says why it waits.
 
 Temporary changes (`expires_at`) get a Clock timer; at the time the executor
 reverts them (same undo), marks the row `expired`, logs a revert row (`undo_state`

@@ -1,8 +1,8 @@
-import type { HumanRequestRow, RunRow, StateStore, TaskRow } from "@forerunner/state";
+import type { EventRow, HumanRequestRow, RunRow, StateStore, TaskRow } from "@forerunner/state";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import type { TaskDetailView, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
-import { plainReason, type TaskDisplayContext } from "./task-words.ts";
+import { plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
 
 export * from "./task-words.ts";
 
@@ -94,9 +94,63 @@ function runOutcomeWords(outcome: string): string {
   }
 }
 
+/** The critic's run rows of a task are its reviews (`specialist: "critic"`, views.runMode). */
+const REVIEW_SPECIALIST = "critic";
+
+/** A specialist's own run of the task (not the critic's review, not a sub-run). */
+function isWorkRun(r: Pick<RunRow, "specialist" | "parent_run_id">): boolean {
+  return r.specialist !== REVIEW_SPECIALIST && !r.parent_run_id;
+}
+
+interface RunReport {
+  report: string | null;
+  files: string[];
+}
+
+/**
+ * Each specialist run's report and files from its session's log. The runner writes, per run of
+ * the task, `task.files` (when it changed files) and then `task.finished`; neither names the
+ * run, so a report goes to the latest run of the task begun at or before it that has none yet.
+ * A run that never reported (its session ended under it) is passed over when a later run began
+ * before the report; a report from before any run began (the run never started) has no run.
+ * `work` is the session's specialist runs of the task, oldest first.
+ */
+export function pairReports(
+  work: readonly Pick<RunRow, "id" | "created_at">[],
+  events: readonly Pick<EventRow, "seq" | "type" | "payload" | "created_at">[],
+  taskId: string,
+): Map<string, RunReport> {
+  const finished: { at: string; report: RunReport }[] = [];
+  let files: string[] = [];
+  for (const e of [...events].sort((x, y) => x.seq - y.seq)) {
+    const p = (e.payload ?? {}) as { taskId?: unknown; summary?: unknown; files?: unknown };
+    if (p.taskId !== taskId) continue;
+    if (e.type === TASK_FILES_EVENT && Array.isArray(p.files)) {
+      files = p.files.filter((x): x is string => typeof x === "string");
+    } else if (e.type === "task.finished") {
+      const report = typeof p.summary === "string" ? reportText(p.summary) : null;
+      finished.push({ at: e.created_at, report: { report, files } });
+      files = [];
+    }
+  }
+  const out = new Map<string, RunReport>();
+  let r = 0;
+  for (const f of finished) {
+    // A run with no report of its own: a later run began before this report.
+    for (let next = work[r + 1]; next && next.created_at < f.at; next = work[r + 1]) r++;
+    const run = work[r];
+    if (!run || run.created_at > f.at) continue;
+    out.set(run.id, f.report);
+    r++;
+  }
+  return out;
+}
+
 /** A report as the drawer shows it: plain text, at most `lines` lines. */
 function reportText(text: string, lines = 6): string | null {
-  const t = text
+  // A run stopped from outside (Stop, Cancel, Stop all) reports only the driver's words.
+  if (/^\s*run stopped by its caller\.?\s*$/i.test(text)) return "The run was stopped.";
+  const t = plainPlurals(text)
     .replace(/\*\*/g, "")
     .replace(/\[stand-in model\]\s*/gi, "")
     .split(/\r?\n/)
@@ -136,39 +190,23 @@ export async function taskDetail(
     orderBy: [{ column: "created_at", direction: "desc" }],
     limit: 20,
   });
-  // The report and the files of each run are in its session's log (task.finished, task.files).
-  const bySession = new Map<string, { report: string | null; files: string[] }[]>();
+  // The report and the files of each specialist run are in its session's log (task.files,
+  // then task.finished, once per run); the critic's runs of the task are its reviews, which
+  // report nothing there.
+  const reports = new Map<string, RunReport>();
   for (const sessionId of new Set(runRows.map((r) => r.session_id))) {
+    const work = runRows
+      .filter((r) => r.session_id === sessionId && isWorkRun(r))
+      .sort((x, y) => x.created_at.localeCompare(y.created_at) || x.id.localeCompare(y.id));
+    if (!work.length) continue;
     const events = await store.event.list(sessionId, 0, 5000);
-    const mine = events.filter(
-      (e) => (e.payload as { taskId?: unknown } | null)?.taskId === task.id,
-    );
-    const finished = mine
-      .filter((e) => e.type === "task.finished")
-      .map((e) => {
-        const p = e.payload as { summary?: unknown };
-        return typeof p.summary === "string" ? reportText(p.summary) : null;
-      });
-    const files = mine
-      .filter((e) => e.type === TASK_FILES_EVENT)
-      .map((e) => {
-        const f = (e.payload as { files?: unknown }).files;
-        return Array.isArray(f) ? f.filter((x): x is string => typeof x === "string") : [];
-      });
-    // One run per task per session in the common case; pair them newest first.
-    const n = Math.max(finished.length, files.length);
-    const pairs: { report: string | null; files: string[] }[] = [];
-    for (let i = n - 1; i >= 0; i--)
-      pairs.push({ report: finished[i] ?? null, files: files[i] ?? [] });
-    bySession.set(sessionId, pairs);
+    for (const [runId, report] of pairReports(work, events, task.id)) reports.set(runId, report);
   }
-  const used = new Map<string, number>();
   const runs = runRows.map((r) => {
-    const i = used.get(r.session_id) ?? 0;
-    used.set(r.session_id, i + 1);
-    const got = bySession.get(r.session_id)?.[i];
+    const got = reports.get(r.id);
     return {
       id: r.id,
+      kind: isWorkRun(r) ? ("work" as const) : ("review" as const),
       specialist: r.specialist,
       startedAt: r.created_at,
       durationMs: r.duration_ms,
@@ -185,7 +223,8 @@ export async function taskDetail(
         id: latest.id,
         verdict: reviewSentence(latest.verdict),
         summary: reportText(latest.summary, 4) ?? "",
-        open: open.map((f) => plainReason(f.required_action || f.description, 160)),
+        // Each thing the critic still asks for once, however many reviews raised it.
+        open: [...new Set(open.map((f) => plainReason(f.required_action || f.description, 160)))],
       }
     : null;
   const requests = await store.humanRequest.list({ task_id: task.id, status: "open" } as never, {

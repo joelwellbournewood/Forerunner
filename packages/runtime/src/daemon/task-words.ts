@@ -83,21 +83,35 @@ const IDS =
   /\s*\((?:request|run|session|task)[ :][^)]*\)|\b(?:request|run|session|task)[ :]?[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 /**
+ * "(s)" plurals as the number says (design §5 rule 6): "2 question(s)" reads "2 questions",
+ * "1 changed file(s)" reads "1 changed file"; one with no number before it reads plural.
+ */
+export function plainPlurals(text: string): string {
+  return text
+    .replace(
+      /\b(\d+) ((?:[a-z]+ ){0,2})([a-z]+)\(s\)/gi,
+      (_, n: string, between: string, w: string) => `${n} ${between}${n === "1" ? w : `${w}s`}`,
+    )
+    .replace(/\(s\)/g, "s");
+}
+
+/**
  * A stored reason as one plain line (design §5): no ids, no ladder words, at most `max`
  * characters, cut at a word. The runner's own texts are rewritten where they are known.
  */
 export function plainReason(reason: string, max = 100): string {
   let r = reason.replace(IDS, "").replace(/\s+/g, " ").trim();
-  const ladder = /^retry ladder exhausted after (\d+) failed attempt/i.exec(r);
-  if (ladder) r = `tried ${ladder[1]} times`;
+  // The task's reason ("retry ladder exhausted after 4 failed attempt(s) …") and the retry
+  // card's text ('Retry ladder exhausted for "X" after 4 failed attempt(s) …').
+  const ladder = /^retry ladder exhausted (?:for ("[^"]*") )?after (\d+) failed attempt/i.exec(r);
+  if (ladder) r = ladder[1] ? `${ladder[1]} failed ${ladder[2]} times` : `tried ${ladder[2]} times`;
   r = r
     .replace(/\(ceiling [^)]*\)/gi, "")
     .replace(/\bat (?:haiku|sonnet|opus)\b/gi, "")
     .replace(/:\s*human decides$/i, "")
     .replace(/\[stand-in model\]\s*/gi, "")
-    .replace(/\*\*/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/\*\*/g, "");
+  r = plainPlurals(r).replace(/\s+/g, " ").trim();
   if (r.length <= max) return r;
   const cut = r.slice(0, max - 1);
   const space = cut.lastIndexOf(" ");
@@ -220,8 +234,9 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       }
       if (task.risk_tier >= FULL_REVIEW_TIER && ctx.sandboxReady === false)
         return display("docker", "Waiting for Docker", "warn", {
+          // A consequence line: at most 100 characters (design §5 rule 1).
           detail:
-            "Full review runs in Docker, which is not running on this computer. Set up Docker, or edit the task to a light review.",
+            "Full review needs Docker, not running on this computer. Set it up, or edit to a light review.",
           blocker: { kind: "docker", taskId: null, requestId: null, title: null },
         });
       return display("ready", "Ready", "neutral");

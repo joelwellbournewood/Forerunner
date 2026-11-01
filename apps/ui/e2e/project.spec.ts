@@ -23,7 +23,7 @@ test("opening a project shows the tabs; the tasks tab lists the tasks", async ({
   await expect(page).toHaveURL(/status=ready/);
 });
 
-test("Pause says what it does, posts the action with the note, and Undo puts it back (design §3.5)", async ({
+test("Redo says what it does, posts the action with the note, and Undo puts it back (design §3.5)", async ({
   page,
   request,
 }) => {

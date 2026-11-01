@@ -150,7 +150,7 @@ function DrawerBody({
       <section data-testid="drawer-actions">
         <h3 className="font-medium">What you can do</h3>
         <ul className="mt-1 space-y-1">
-          {actionsFor(d.key).map((key) => (
+          {actionsFor(d.key, task).map((key) => (
             <li key={key} className="flex flex-wrap items-baseline gap-2">
               <Button
                 variant={key === "cancel" ? "ghost" : "secondary"}
@@ -222,10 +222,12 @@ function DrawerBody({
                 key={r.id}
                 className="rounded border border-neutral-200 p-2 dark:border-neutral-800"
                 data-testid="drawer-run"
+                data-kind={r.kind}
               >
                 <div className="text-xs text-neutral-500">
-                  {r.specialist} · {formatDateTime(r.startedAt)} · {r.outcome} ·{" "}
-                  <Money value={r.cost} />
+                  {/* The critic's run is its review of the work (its words are under Review). */}
+                  {r.kind === "review" ? "Review by the critic" : whoName(r.specialist)} ·{" "}
+                  {formatDateTime(r.startedAt)} · {r.outcome} · <Money value={r.cost} />
                 </div>
                 {r.report ? <p className="mt-1 whitespace-pre-wrap">{r.report}</p> : null}
                 {r.files.length > 0 ? (

@@ -64,10 +64,19 @@ cancel, U-061) to the status it had when a person can set it (`draft`, `ready`,
 `needs_human`, `failed`), else to `ready`, unclaimed. `restoreStatus` is the Undo of every
 person's task action (design §3.5): it puts back the status before the action, even where the
 graph has no edge (back to `done` after a Redo, with the open-findings check of a close), and a
-status only an agent sets (`claimed`, `in_progress`, `in_review`) as `ready`, unclaimed. `edit`
+status only an agent sets (`claimed`, `in_progress`, `in_review`) as `ready`, unclaimed. The
+caller passes the reason and author the row had before the action (the task reads as it did:
+"Failed: tried 4 times", an agent's pause) and, back to `failed`, the `attempt` a Try again
+raised; the change log records the undo itself. `edit`
 is the person's Edit (title, outcome, criteria, priority, review level, budget, specialist),
 allowed in `EDITABLE_STATUSES` (`draft`, `ready`, `needs_human`, `failed`) only: a run or a
-review in progress would go on with what the task said before.
+review in progress would go on with what the task said before. On a `needs_human` or
+`failed` task (`STATUS_EXPLAINED_BY_REASON`) `edit` and `setDependencies` keep the row's
+reason and author, which say why it waits; the change is in the change log.
+
+`human_request.withdrawn` is terminal in the graph; `HumanRequestRepo.reopenWithdrawn` is the
+one way back to `open`: the Undo of a person's task action that withdrew the task's cards
+(Go ahead without, Cancel, Try again), with the version check.
 
 ### Reasons on plan, task and milestone changes
 

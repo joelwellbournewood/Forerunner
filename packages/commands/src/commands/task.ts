@@ -233,7 +233,12 @@ export function moveSentence(
     s += ` ${namesList(extra.stuck)} ${extra.stuck.length === 1 ? "waits" : "wait"} on it and ${
       extra.stuck.length === 1 ? "is" : "are"
     } stuck now.`;
-  if (extra.noted) s += " Your note goes into its next brief.";
+  // A cancelled task has a next brief only once it is reopened (design §5 rule 9).
+  if (extra.noted)
+    s +=
+      to === "cancelled"
+        ? " Your note goes into its brief if you reopen it."
+        : " Your note goes into its next brief.";
   return s;
 }
 
@@ -273,7 +278,18 @@ async function personMove(
   if (RUNNING.includes(from)) await ctx.ports.stopTask?.(task.id, `${statusWords(to)} by you`);
   const stuck = to === "cancelled" ? (await waitingOn(ctx, task)).map((t) => t.title) : [];
   return {
-    before: { task_id: task.id, status: from, title: task.title },
+    // The row as it was, so the undo puts it back whole: its reason and who set the status
+    // (an agent's pause reads "Needs your answer" or "Paused", a person's "Paused by you"), and
+    // the retry count a Try again raises.
+    before: {
+      task_id: task.id,
+      status: from,
+      title: task.title,
+      reason: task.reason,
+      author_human: task.author_human,
+      author_agent: task.author_agent,
+      attempt: task.attempt,
+    },
     after: {
       task_id: task.id,
       status: moved.status,
@@ -310,10 +326,25 @@ async function moveUndoBlocked(before: JsonValue, after: JsonValue, ctx: Command
   if (task.status !== a.status) {
     return `the task ${quote(task.title)} is ${statusWords(task.status)} now; undo would not put it back where it was`;
   }
+  // Back to done (the undo of a Redo) is a close: refused while the critic still asks for
+  // changes, said in words here rather than as the store's refusal.
+  if (b.status === "done" && (await ctx.store.finding.openFor(task.id)).length > 0) {
+    return `the critic still asks for changes to ${quote(task.title)}, so it cannot be done again`;
+  }
   return null;
 }
 
-/** The undo of a person's move: the status before it, the note taken back. */
+/** The cards a move withdrew (`after.withdrawn_requests`). */
+function withdrawnIds(after: JsonValue): string[] {
+  const ids = asObject(after).withdrawn_requests;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+}
+
+/**
+ * The undo of a person's move: the task as it was (its status, its reason and who set it, the
+ * retry count), the Inbox cards the move withdrew open again, the note taken back. Before
+ * these were recorded (an older change) the undo writes its own reason and author.
+ */
 async function undoMove(before: JsonValue, after: JsonValue, ctx: CommandContext) {
   const b = asObject(before);
   const a = asObject(after);
@@ -321,14 +352,32 @@ async function undoMove(before: JsonValue, after: JsonValue, ctx: CommandContext
     throw new ForerunnerError("validation", "this change does not name the task it moved");
   }
   const task = await ctx.store.task.mustGet(a.task_id);
+  // The reason and author come back with the status they explain; a running or reviewed task
+  // comes back as ready, which its old reason ("claimed by …") does not describe.
+  const recorded =
+    typeof b.reason === "string" && !["claimed", "in_progress", "in_review"].includes(b.status);
+  const id = (v: JsonValue | undefined) => (typeof v === "string" ? v : null);
   await ctx.store.task.restoreStatus(
     task.id,
     task.version,
     b.status as TaskStatus,
-    "undo",
-    actorOf(ctx),
+    recorded ? String(b.reason) : "undo",
+    recorded ? { humanId: id(b.author_human), agentId: id(b.author_agent) } : actorOf(ctx),
+    typeof b.attempt === "number" ? { attempt: b.attempt } : {},
   );
+  for (const requestId of withdrawnIds(after)) {
+    const card = await ctx.store.humanRequest.get(requestId);
+    if (card?.status === "withdrawn")
+      await ctx.store.humanRequest.reopenWithdrawn(card.id, card.version);
+  }
   await dismissNotes(ctx, after);
+}
+
+/** How the task reads again after an undo, for its sentence ("needs your answer again"). */
+function againWords(status: TaskStatus, cards: number): string {
+  if (status === "needs_human" && cards > 0) return "needs your answer again";
+  if (status === "failed") return "is marked failed again";
+  return `is ${statusWords(status)} again`;
 }
 
 function undoMoveSentence(before: JsonValue, after: JsonValue): string {
@@ -336,16 +385,23 @@ function undoMoveSentence(before: JsonValue, after: JsonValue): string {
   const a = asObject(after);
   const title = typeof a.title === "string" ? `the task ${quote(a.title)}` : "the task";
   const previous = String(b.status) as TaskStatus;
+  const cards = withdrawnIds(after).length;
+  const cardsBack =
+    cards === 0
+      ? ""
+      : cards === 1
+        ? "its card is back in the Inbox"
+        : `its ${cards} cards are back in the Inbox`;
   if (a.status === "cancelled") {
     const to = reopenTarget(previous);
-    return to === previous
-      ? `Undone: reopened ${title}; it is ${statusWords(to)} again.`
-      : `Undone: reopened ${title}; it is ready again and a session picks it up.`;
+    if (to !== previous)
+      return `Undone: reopened ${title}; it is ready again and a session picks it up.`;
+    return `Undone: reopened ${title}; it ${againWords(to, cards)}${cardsBack ? ` and ${cardsBack}` : ""}.`;
   }
   const back: TaskStatus = ["claimed", "in_progress", "in_review"].includes(previous)
     ? "ready"
     : previous;
-  return `Undone: ${title} is ${statusWords(back)} again.`;
+  return `Undone: ${title} ${againWords(back, cards)}${cardsBack ? `; ${cardsBack}` : ""}.`;
 }
 
 // --- task.create -----------------------------------------------------------------------------
@@ -633,11 +689,13 @@ export const taskResume: CommandDef<TaskResumeParams> = {
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
     assertFrom(task, ["needs_human"], "paused or waiting for your answers");
+    assertSomeoneElse(task, params.without_answers);
     return moveCard(ctx, "task.resume", task, "ready", params);
   },
   async run(params, ctx) {
     const task = await findTask(params, ctx);
     assertFrom(task, ["needs_human"], "paused or waiting for your answers");
+    assertSomeoneElse(task, params.without_answers);
     return personMove(ctx, task, "ready", {
       reason: params.without_answers
         ? "Go ahead without the answers: asked by you"
@@ -697,6 +755,20 @@ function assertCan(task: TaskRow, to: TaskStatus, word: string): void {
     throw new ForerunnerError(
       "validation",
       `${quote(task.title)} is ${statusWords(task.status)}; a ${statusWords(task.status)} task cannot be ${word}.`,
+      { details: { taskId: task.id, status: task.status, reason: "not_offered" } },
+    );
+  }
+}
+
+/**
+ * A task only the person can do (`specialist: person`) has nobody to go ahead without its
+ * answers: the next session would ask the same questions again.
+ */
+function assertSomeoneElse(task: TaskRow, withoutAnswers: boolean): void {
+  if (withoutAnswers && task.specialist === PERSON_SPECIALIST) {
+    throw new ForerunnerError(
+      "validation",
+      `${quote(task.title)} is a task only you can do: answer its card in the Inbox, or cancel it.`,
       { details: { taskId: task.id, status: task.status, reason: "not_offered" } },
     );
   }
