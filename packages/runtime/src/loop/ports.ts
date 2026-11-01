@@ -343,6 +343,15 @@ export interface CommandResultView {
   commands: string[];
 }
 
+/** A change card waiting for a yes, as the conversation shows it again. */
+export interface PendingCardView {
+  readback: string;
+  commands: string[];
+  decision?: "needs_yes" | "needs_device";
+  costUsdMicro?: number;
+  what?: string;
+}
+
 export interface ConversationCommands {
   /** Deterministic understanding before any model call; `matched: "none"` means ask the model. */
   parse(text: string, turn: CommandTurn): Promise<ParsedIntent>;
@@ -351,8 +360,20 @@ export interface ConversationCommands {
   /** The command tools for the model path; `onResult` reports each run so the agent can read it back. */
   tools(turn: CommandTurn, onResult: (r: CommandResultView) => void): ToolSpec[];
   confirmByText(pendingId: string, text: string, turn: CommandTurn): Promise<CommandResultView>;
-  /** Undo one change, or the latest undoable one of the human when no id is given. */
-  undo(changeLogId: string | null, turn: CommandTurn): Promise<CommandResultView>;
+  /**
+   * Undo one change, or the latest undoable one of the human when no id is given; with
+   * `projectId`, the latest of that project (a project's conversation never undoes another's).
+   */
+  undo(
+    changeLogId: string | null,
+    turn: CommandTurn,
+    opts?: { projectId?: string },
+  ): Promise<CommandResultView>;
+  /**
+   * A change card still waiting for its yes, by id (a conversation finds its card again after a
+   * restart); null once it was answered, cancelled or expired. Absent: cards are not looked up.
+   */
+  pendingCard?(id: string): PendingCardView | null;
   /** The active project the registry keeps for the human. */
   activeProject(humanId: string): Promise<string | null>;
 }

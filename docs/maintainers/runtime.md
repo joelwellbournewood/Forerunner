@@ -1098,36 +1098,19 @@ so rows do not jump), with `runOrder` set. `/events` sends `project.changed` for
 event that may move a task (`changesTasks`: `task.*`, `session.*`, `critic.*` except the step,
 heard and notes lines), so the Tasks tab and the header follow a running session.
 
-**What you say during a live session (spec O.9, ADR 0078; `src/session/live-chat.ts`).** A
-free-form line the human types or speaks to the conversation agent while a session of the
-principal runs is posted to the principal's own inbox as an `info` message from and to the
-agent, authored by the human (the human's own agent only, `agent.owner_human_id`: a turn
-naming an agent the human does not own is answered and never forwarded, so another human's
-words never reach this human's live session as their own; review of w3-o9-chat-to-inbox,
-2026-10-25, finding 3), whose body names the source and the session
-(`said (<text|voice|phone>): <words> (session <id>)`, `heardMessageBody` / `heardLineOf`;
-whitespace flattened, 4,000 characters; the type enum is a schema constraint, so an existing
-type with a tagged body, as the pause message). Between tasks `recheckInbox` collects a said
-line naming this session from this agent as delivered (`inbox.heard` event with the id and the
-source) and leaves it unread; right before the next task starts the runner marks the collected
-lines read (`task.heard` event with the task and the ids) and hands them to the executor as
-`heard` on the `TaskExecutor` context, each line to one task. `LoopTaskExecutor` appends them
-to the first user message after the delegation brief and the lessons as the section "Said by
-the human during this session" (`renderHeardLines`): each line quoted with its time and source
-under the rule that the lines change neither the goal, the constraints nor the limits; the
-`DelegationBrief` has no such field, so a said line is never a constraint or an acceptance
-criterion. Every line goes through the injection scanner (`voice_transcript` for voice,
-`unknown` for text): a suspicious line keeps its quote, carries a NOTE in the block and raises a
-`warning` run event naming the message id and the rules, never the words; the hooks enforce
-the limits whatever the line says. A said line never starts with a stop word, so the stop-word
-test never reads it as a stop or a pause. A line collected at a boundary no task follows (the
-session stops there, the remaining tasks are skipped) stays unread, and one said during the
-last task is never collected: both reach the next session's brief like any unread message. The
-session summary (the row, the project cache, the handoff to peers) carries the count only
-(`summarizeHeard`: "Heard from you during the session: N line(s)."), `handoff.heard` the ids,
-sources and the task each reached, and the human's own session message lists the lines in
-full with the task each was given to (`describeHeard`); `SessionResult.heard` carries the
-deliveries. Tests: `live-chat.test.ts`. Requirement: O.9.
+**What you say during a live session (design §3.9; `src/session/live-chat.ts`).** The chat no
+longer hands a line to the running session. Before (spec O.9 as ADR 0078 built it) a free-form
+line said while a session ran was posted to the principal's inbox as `said (<source>): <words>
+(session <id>)` and pasted into the next task's brief as data, while the reply promised "Your
+agent sees this at its next step boundary"; the 2026-11-01 walk found "skip the README for now"
+marked read and the README written in that same session. Now a question is answered from the
+live state (the chat's `# Working now` and `# Tasks` blocks, below) and an instruction is a
+change with a read-back (the parser or the command tools); nothing reaches the next brief. The
+runner still reads a `said (...)` line already in an inbox (an install that forwarded lines
+before): `recheckInbox` collects it between tasks, the next task's brief quotes it as data
+(`renderHeardLines`, scanned for injection), the human's session message lists it
+(`describeHeard`) and the summary counts it (`summarizeHeard`). Nothing writes such lines any
+more; the path can go once no install holds one. Tests: `live-chat.test.ts`.
 
 `triggers.ts` is the scheduler (daily, weekdays, every N
 minutes and monthly in the human's time zone; message, CI, PR comment, email, remote and manual
@@ -2176,8 +2159,7 @@ subscription exists (`ConversationDeps.provider` may be null). Before, without o
 composed at all and `POST /chat` and `/chat/stream` refused every line with 503 "no model
 credential configured; run fr setup", even "add a task: …", which needs no model, and named a
 command the installed app does not have. Now everything before the model path runs as it
-does with a key (the pending card's yes / no, undo, the parser's commands and questions, the
-forward to a live session), and a line only the model can answer gets `NO_MODEL_CHAT_REPLY`
+does with a key (the pending card's yes / no, undo, the parser's commands and questions), and a line only the model can answer gets `NO_MODEL_CHAT_REPLY`
 (`src/setup/no-model.ts`: the missing key, `SETUP_ASSISTANT_PATH` "Settings → Accounts and
 keys → Open the setup assistant", and the commands that still work), recorded with `notice:
 true` so "make this a task" after it takes the person's line, not the notice
@@ -2217,8 +2199,64 @@ as `email_mode_set` forms its `needs_device` card on the first call, one request
 answer, `test/conversation.test.ts`); the run is registered as protected so scoped and
 global stops never cut the human's channel.
 Transcripts are events on a per-agent conversation session (`chat.human`, `chat.reply`,
-`chat.confirmed`, `chat.cancelled`, `chat.forwarded`, and the executor's `change` events).
-Without a command port the chat is read-only.
+`chat.confirmed`, `chat.cancelled`, and the executor's `change` events; `chat.forwarded` only on
+rows written before design §3.9). Without a command port the chat is read-only.
+
+**One conversation per project, and what the chat knows (design §3.9; the 2026-11-01 walks,
+U-084).** The walks read the model-call log: every chat call held one user message (the facts
+and the line), so "what did I just ask?" and a "yes" reached the model with nothing before
+them; the context was a 160-character cut of a stale summary, open cards cut at 80 characters
+and no task list; and the Chat tab and Talk kept their own lines while the daemon kept one
+transcript for every project, so "make this a task" took the other surface's reply and "undo"
+in one project cancelled a task in another. Now:
+- **The conversation** (`src/conversation/transcript.ts`). Each `chat.human` and `chat.reply`
+  carries `conversationProjectId` (the turn's `projectId`: the Chat tab's project, Talk's page,
+  a voice session's; null for the conversation outside any project); a reply also carries
+  `actionDetails` (kind, sentence, change log id, undo token), its `question`, and the
+  `pendingId` and `readback` of a card it read back. `readTranscript(store, sessionId,
+  projectId)` reads one conversation's turns, newest last (rows written before the mark belong
+  where their reply's `projectId` says, else outside any project). `GET
+  /projects/:id/conversation` and `GET /conversation` serve them (`ConversationView`: each turn
+  with the reply's text without its read-back, the changes with `canUndo` from the change log,
+  the read-back, and whether its card still waits; `waiting` is the card), so a reload, a
+  restart, the Chat tab and Talk show the same lines.
+- **History.** A model turn sends the last `HISTORY_TURNS` (12) turns of its conversation as
+  alternating user and assistant messages within `historyMaxTokens` (default
+  `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000, counted with the provider's counter; the oldest go
+  first), then the turn's own message: the volatile facts and blocks and the line, last, so the
+  cached prefix (tools, system, the earlier turns) holds.
+- **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
+  <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
+  in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
+  who does it and the critic's last word; `sandboxReady` from the daemon for "Waiting for
+  Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
+  failed with the reason, needs you, not reached, waiting for Docker, why it ended, the spend,
+  and `next_steps`; `# Next` before the first session), `# Working now` (the agent's running
+  session: the task in flight and the specialist, minutes, steps, spend), `# Your files` (the
+  project's folder: the first of `docsDirs`), and the open cards in full in the `open_requests`
+  fact (`cardLine`: project, task, the whole question, a person-questions card's questions and
+  the options; this project's first, eight at most). The system prompt keeps only the projects
+  by name and goal (stage, autonomy and the cut summary are gone). `docs/status.md` is left out
+  of the doc search: its sections go stale and come in any order.
+- **Mentioned means named.** A card counts as mentioned in the conversation only when the reply
+  named it (`replyNames`: its task's title or its subject whole, or two telling words of one);
+  before, every listed card was marked after any completed turn.
+- **Read-only tools** (`src/conversation/read-tools.ts`): `tasks_list`, `task_get` (a task's
+  runs, reports, files, review and cards, from `taskDetail`), `session_last`, `files_list`.
+  They change nothing, so they are plain tools (action class `read`), not registry commands:
+  no change card, no change log row.
+- **Cards and undo per conversation.** The waiting card is the conversation's (`pendingOf`):
+  another line does not drop it; a new read-back cancels the earlier card and says so; after a
+  restart of the agent the card is found again from the conversation's last read-back while the
+  registry still holds it (`ConversationCommands.pendingCard`). "yes" with nothing waiting is
+  `YES_TO_WHAT_REPLY`, or `NO_LONGER_WAITING_REPLY` after the card expired or was answered in
+  the Inbox; neither reaches the model. "undo" undoes the newest change this conversation made
+  that can still be undone, else the project's newest (`CommandLoop.undo(null, turn,
+  { projectId })`); "make this a task" takes the line before it in this conversation (the
+  agent's answer, else the person's line; never a notice, a command's sentence or a read-back).
+Tests: `conversation-memory.test.ts`, `conversation.test.ts`,
+`conversation-open-requests.test.ts`, `closeout-conversation.test.ts`; the route in
+`apps/ui/test/real-daemon.test.ts` (across a restart).
 
 **Chat replies cut off at max_tokens, and thinking on a chat turn.** The real-audio voice run
 of 2026-10-26 (Haiku 5.5, effort low, a spoken turn) had a reply cut off mid-sentence ("...one

@@ -9,6 +9,8 @@ import type {
   CommandResultJson,
   ConsolidationProposalView,
   ConsolidationReportView,
+  ConversationTurnView,
+  ConversationView,
   DaemonDeviceView,
   DesktopAllowEntryView,
   DesktopControlView,
@@ -375,6 +377,12 @@ export interface FakeDaemonState {
   /** When set, the next `/chat/stream` reply has this text (tests script the agent). */
   nextChatReply: string | null;
   /**
+   * The conversations as the daemon stores them (design §3.9): one per project (the key is
+   * the project id; "" for the one outside any project), each turn as
+   * `GET /projects/:id/conversation` shows it. `/chat` and `/chat/stream` append to them.
+   */
+  conversations: Map<string, ConversationTurnView[]>;
+  /**
    * The actions of that scripted reply, e.g. a change with its `undoToken` (the change log id),
    * as the daemon answers a chat command that ran (U-074).
    */
@@ -727,6 +735,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     calls: [],
     pendingConfirmation: null,
     nextChatReply: null,
+    conversations: new Map(),
     nextChatActions: null,
     listeners: new Set(),
     timers: new Set(),
@@ -2248,15 +2257,101 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     };
   };
 
+  /** A turn kept in its conversation, as the daemon writes chat.human and chat.reply. */
+  const keepTurn = (body: ChatRequestBody, reply: ChatReplyView): ChatReplyView => {
+    const key = body.projectId ?? "";
+    const turns = state.conversations.get(key) ?? [];
+    const readback = reply.pendingConfirmation?.readback ?? null;
+    const text =
+      readback && reply.reply.startsWith(readback)
+        ? reply.reply
+            .slice(readback.length)
+            .replace(/^\s*Say yes to confirm\.\s*/, "")
+            .trim()
+        : reply.reply;
+    turns.push({
+      id: reply.transcriptId,
+      at: new Date().toISOString(),
+      said: body.text,
+      source: body.source ?? "text",
+      reply: {
+        text,
+        actions: reply.actions.map((a) => ({
+          kind: a.kind,
+          sentence: a.summary,
+          changeId: a.id ?? null,
+          canUndo: !!a.undoToken,
+        })),
+        question: reply.question,
+        notice: false,
+        readback,
+        waiting: !!reply.pendingConfirmation,
+      },
+    });
+    // One card waits per conversation: an earlier one is no longer waiting.
+    if (reply.pendingConfirmation)
+      for (const t of turns.slice(0, -1)) if (t.reply) t.reply.waiting = false;
+    state.conversations.set(key, turns);
+    return reply;
+  };
+  const conversationOf = (key: string): ConversationView => {
+    const turns = (state.conversations.get(key) ?? []).map((t) => ({
+      ...t,
+      reply: t.reply
+        ? {
+            ...t.reply,
+            waiting:
+              t.reply.waiting &&
+              !!state.pendingConfirmation &&
+              t.reply.readback === state.pendingConfirmation.readback,
+            actions: t.reply.actions.map((a) => {
+              const change = a.changeId ? state.changes.find((ch) => ch.id === a.changeId) : null;
+              return { ...a, canUndo: change ? change.undoState === "undoable" : a.canUndo };
+            }),
+          }
+        : null,
+    }));
+    const waiting = turns.find((t) => t.reply?.waiting);
+    return {
+      projectId: key || null,
+      turns,
+      waiting:
+        waiting && state.pendingConfirmation
+          ? {
+              id: state.pendingConfirmation.id,
+              readback: state.pendingConfirmation.readback,
+              estimate: money(5_000_000),
+              commands: ["session.start"],
+              decision: "needs_yes",
+            }
+          : null,
+    };
+  };
+  app.get("/projects/:id/conversation", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id))
+      return errorBody(c, 404, "not_found", `project ${id} not found`);
+    return c.json(conversationOf(id));
+  });
+  app.get("/conversation", (c) => c.json(conversationOf("")));
+
   app.post("/chat", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    return c.json(chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab));
+    return c.json(
+      keepTurn(
+        parsed.data,
+        chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
+      ),
+    );
   });
   app.post("/chat/stream", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    const reply = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
+    const reply = keepTurn(
+      parsed.data,
+      chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
+    );
     return streamSSE(c, async (stream) => {
       const words = reply.reply.split(/(\s+)/).filter((w) => w.length > 0);
       for (const w of words) {

@@ -18,6 +18,7 @@ import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType } from "zod";
+import { readTranscript, TRANSCRIPT_SHOW_LIMIT } from "../conversation/transcript.ts";
 import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
@@ -91,6 +92,7 @@ import {
   type CommandSourceBody,
   type ConsolidationProposalView,
   type ConsolidationRunView,
+  type ConversationView,
   CreateProjectBody,
   CreateTaskBody,
   type DecisionView,
@@ -1845,6 +1847,75 @@ export function createDaemonApp(
       await stream.writeSSE({ event: "reply", data: JSON.stringify(chatReplyView(r)) });
     });
   });
+
+  // One conversation per project (design §3.9): the Chat tab and Talk read the same turns from
+  // here, so a reload, a restart and either surface show the same lines, Yes/No card included.
+  const conversationView = async (
+    projectId: string | null,
+    limit: number,
+  ): Promise<ConversationView> => {
+    const sessionId = await conversationSessionId(rt);
+    const turns = await readTranscript(rt.store, sessionId, projectId, { limit });
+    // The change still waiting for a yes: the newest read-back whose card the registry holds.
+    const lastAsked = [...turns].reverse().find((t) => t.reply?.pendingId)?.reply?.pendingId;
+    const live = lastAsked ? rt.commands.pendingCard(lastAsked) : null;
+    const undoable = new Map<string, boolean>();
+    for (const t of turns)
+      for (const a of t.reply?.actions ?? [])
+        if (a.id && !undoable.has(a.id))
+          undoable.set(a.id, (await rt.store.changeLog.get(a.id))?.undo_state === "undoable");
+    return {
+      projectId,
+      turns: turns.map((t) => {
+        const r = t.reply;
+        // The reply's text ends with the read-back the card shows: it is shown once, there.
+        const text =
+          r?.readback && r.text.endsWith(r.readback)
+            ? r.text.slice(0, -r.readback.length).trim()
+            : (r?.text ?? "");
+        return {
+          id: t.transcriptId,
+          at: t.at,
+          said: t.human.text,
+          source: t.human.source,
+          reply: r
+            ? {
+                text,
+                actions: r.actions.map((a) => ({
+                  kind: a.kind,
+                  sentence: a.summary,
+                  changeId: a.id ?? null,
+                  canUndo: !!a.id && a.kind !== "undo" && undoable.get(a.id) === true,
+                })),
+                question: r.question,
+                notice: r.notice,
+                readback: r.readback ?? (r.pendingId ? text : null),
+                waiting: !!live && r.pendingId === lastAsked,
+              }
+            : null,
+        };
+      }),
+      waiting:
+        live && lastAsked
+          ? {
+              id: lastAsked,
+              readback: live.readback,
+              estimate: money(live.costUsdMicro ?? 0, chf()),
+              commands: live.commands,
+              decision: live.decision ?? null,
+            }
+          : null,
+    };
+  };
+  app.get("/projects/:id/conversation", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    return c.json(
+      await conversationView(project.id, intQuery(c, "limit", TRANSCRIPT_SHOW_LIMIT, 500)),
+    );
+  });
+  app.get("/conversation", async (c) =>
+    c.json(await conversationView(null, intQuery(c, "limit", TRANSCRIPT_SHOW_LIMIT, 500))),
+  );
 
   // -------------------------------------------------------------------------------------
   // Reviews tab (spec H, K.2): findings, grades, verdicts, grade trend

@@ -18,6 +18,10 @@ import { flatPricing, harness } from "./helpers.ts";
  * (or when the human asks what is pending, or when it blocks work), later turns carry only a
  * count, and the system rules say when to bring requests up. Scripted provider, no live model.
  */
+/** A reply that names every request these tests open (their subjects). */
+const MENTIONING_REPLY =
+  "Sure. The model watch has news, and Pick a database and Approve the deploy key wait for you.";
+
 const MODEL_WATCH_WHY =
   "Model watch 2026-10-26: 10 new, 0 retired, 0 repriced, 0 unpriced model(s).";
 
@@ -58,7 +62,9 @@ async function setup(turns = 8): Promise<World> {
     })
   ).id;
   const provider = new FakeProvider({
-    replies: Array.from({ length: turns }, () => textReply("Sure.", { ttftMs: 0 })),
+    // Each answer names the open requests: a request counts as mentioned only once a reply
+    // named it (design §3.9; "Sure." alone leaves it "not yet mentioned").
+    replies: Array.from({ length: turns }, () => textReply(MENTIONING_REPLY, { ttftMs: 0 })),
     clock: h.clock,
     latency: "none",
   });
@@ -79,7 +85,7 @@ async function setup(turns = 8): Promise<World> {
     provider,
     clock: h.clock,
     chat: (text, source = "voice") => agent.chat({ humanId: human, agentId: alice, text, source }),
-    user: (i) => String(provider.calls[i]?.request.messages[0]?.content ?? ""),
+    user: (i) => String(provider.calls[i]?.request.messages.at(-1)?.content ?? ""),
     system: (i) => String(provider.calls[i]?.request.system ?? ""),
   };
 }
@@ -226,8 +232,8 @@ describe("conversation agent: open requests are not brought up in every reply", 
     const h = await setup(0);
     h.provider.pushReplies(
       errorReply("invalid_request", "fake provider error", { retryable: false }),
-      textReply("Sure.", { ttftMs: 0 }),
-      textReply("Sure.", { ttftMs: 0 }),
+      textReply(MENTIONING_REPLY, { ttftMs: 0 }),
+      textReply(MENTIONING_REPLY, { ttftMs: 0 }),
     );
     await modelWatchRequest(h);
     const failed = await h.chat("hello");

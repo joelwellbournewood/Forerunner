@@ -3121,6 +3121,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const project = await store.project.get(projectId);
       return project ? docs.docsDirsFor(project) : [];
     },
+    // Design §3.9: the chat sees each task's status in the person's words ("Waiting for
+    // Docker" needs the sandbox's state) and the money in CHF at the day's rate.
+    sandboxReady: () => {
+      try {
+        const r = sandbox.readiness.current();
+        return r ? r.state === "ready" : null;
+      } catch {
+        return null;
+      }
+    },
+    chfPerUsd,
   });
   // Voice (spec O; ADR 0012, ADR 0048): the loop over the conversation agent, behind the
   // daemon's /voice routes. The providers are the local helpers and the cloud ones by secret

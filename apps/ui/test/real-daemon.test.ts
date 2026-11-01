@@ -105,6 +105,8 @@ describe("the UI client against the real daemon", () => {
       ["projects", () => client.projects()],
       ["project", () => client.project(projectId)],
       ["projectSummary", () => client.projectSummary(projectId)],
+      ["conversation", () => client.conversation(projectId)],
+      ["generalConversation", () => client.conversation(null)],
       ["tasks", () => client.tasks(projectId)],
       ["startCheck", () => client.startCheck(projectId)],
       ["runs", () => client.runs(projectId)],
@@ -2174,4 +2176,88 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
       action: { kind: "link", label: "Connect Claude", to: "/settings" },
     });
   });
+});
+
+describe("one conversation per project, stored by the daemon (design §3.9)", () => {
+  it("the Chat tab and Talk read the same turns; a waiting card stays after another line; the turns survive a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-conversation-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const compose = (replies: { text: string }[]) =>
+      composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        provider: new ScriptedProvider(replies, clock),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+      });
+    const clientOf = (rt: RuntimeApp) => {
+      const { app, token } = createDaemonApp(rt);
+      return createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+    };
+    let rt = await compose([
+      { text: "Nothing has run yet: two tasks are ready." },
+      { text: "About CHF 30 at most." },
+    ]);
+    let client = clientOf(rt);
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const quote = await client.createProject({ name: "Quote page", goal: "A quote a day" });
+    const notes = await client.createProject({ name: "Notes", goal: "A notes tool" });
+    const say = (projectId: string, text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, source: "text" });
+    await say(quote.id, "what is going on?");
+    await say(notes.id, "add a task: write the changelog");
+    const card = await say(quote.id, "start a session with 30 francs");
+    expect(card.pendingConfirmation).not.toBeNull();
+    await say(quote.id, "how much will it cost?");
+
+    const seen = await client.conversation(quote.id);
+    expect(seen.projectId).toBe(quote.id);
+    expect(seen.turns.map((t) => t.said)).toEqual([
+      "what is going on?",
+      "start a session with 30 francs",
+      "how much will it cost?",
+    ]);
+    expect(seen.turns[0]?.reply?.text).toBe("Nothing has run yet: two tasks are ready.");
+    // The read-back is shown once, on the card: the turn's text does not repeat it.
+    const asked = seen.turns[1]?.reply;
+    expect(asked?.readback).toBe(card.pendingConfirmation?.readback);
+    expect(asked?.text).toBe("");
+    // The question typed after it did not drop the card: it still waits for the yes.
+    expect(asked?.waiting).toBe(true);
+    expect(seen.waiting?.id).toBe(card.pendingConfirmation?.id);
+    // Notes has its own conversation; the one outside any project is empty.
+    const other = await client.conversation(notes.id);
+    expect(other.turns.map((t) => t.said)).toEqual(["add a task: write the changelog"]);
+    expect(other.turns[0]?.reply?.actions).toEqual([
+      expect.objectContaining({ kind: "task.create", canUndo: true }),
+    ]);
+    expect((await client.conversation(null)).turns).toEqual([]);
+
+    // A restart: the daemon comes back on the same home and shows the same conversation.
+    await rt.close();
+    rt = await compose([]);
+    client = clientOf(rt);
+    const again = await client.conversation(quote.id);
+    expect(again.turns.map((t) => [t.said, t.reply?.text])).toEqual(
+      seen.turns.map((t) => [t.said, t.reply?.text]),
+    );
+    await rt.close();
+  }, 120_000);
 });

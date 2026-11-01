@@ -600,6 +600,56 @@ export const ChatPendingView = z.object({
 });
 export type ChatPendingView = z.infer<typeof ChatPendingView>;
 
+/**
+ * One turn of a conversation as the Chat tab and Talk show it (design §3.9): what the person
+ * said and the reply, with the changes it made (each with whether its Undo still works) and
+ * the read-back it showed, if any.
+ */
+export const ConversationTurnView = z.object({
+  /** The turn's transcript id. */
+  id: z.string(),
+  /** When the person said it (ISO-8601 UTC). */
+  at: z.string(),
+  said: z.string(),
+  /** How it was said: "text", "voice" or "phone". */
+  source: z.string(),
+  reply: z
+    .object({
+      /** The reply, without a read-back (that is `readback`). */
+      text: z.string(),
+      /** The changes it made, each a plain sentence; `changeId` for Undo while `canUndo`. */
+      actions: z.array(
+        z.object({
+          kind: z.string(),
+          sentence: z.string(),
+          changeId: z.string().nullable(),
+          canUndo: z.boolean(),
+        }),
+      ),
+      question: z.object({ text: z.string(), options: z.array(z.string()) }).nullable(),
+      /** A reply about the app (no Claude key, a refusal), not an answer. */
+      notice: z.boolean(),
+      /** The change it read back for a yes; null when it read back none. */
+      readback: z.string().nullable(),
+      /** That change still waits for the yes (it is `ConversationView.waiting`). */
+      waiting: z.boolean(),
+    })
+    .nullable(),
+});
+export type ConversationTurnView = z.infer<typeof ConversationTurnView>;
+
+/**
+ * A project's conversation (`GET /projects/:id/conversation`), or the one outside any project
+ * (`GET /conversation`): the newest turns, oldest first, and the change waiting for a yes.
+ * Stored by the daemon, so a reload, a restart, the Chat tab and Talk show the same.
+ */
+export const ConversationView = z.object({
+  projectId: z.string().nullable(),
+  turns: z.array(ConversationTurnView),
+  waiting: ChatPendingView.nullable(),
+});
+export type ConversationView = z.infer<typeof ConversationView>;
+
 export const ChatReplyView = z.object({
   reply: z.string(),
   actions: z.array(ChatActionView),
@@ -2312,6 +2362,10 @@ export const DAEMON_ROUTES = {
   createProject: "POST /projects",
   project: "GET /projects/:id",
   projectSummary: "GET /projects/:id/summary",
+  conversation:
+    "GET /projects/:id/conversation?limit= (ConversationView: the project's conversation as the Chat tab and Talk show it, design §3.9: the newest turns (default 100) oldest first, each with what the person said, the reply, the changes it made with whether their Undo still works, and the read-back it showed; `waiting` is the change still waiting for a yes; stored by the daemon, the same after a reload or a restart; 404 for an unknown project)",
+  generalConversation:
+    "GET /conversation?limit= (ConversationView: the conversation outside any project, as Talk shows it on a screen that is about no project)",
   tasks:
     "GET /projects/:id/tasks?status=&limit= (TaskView[] in run order: the order a session runs them, what a task waits for before it, then priority, then age; each with `display`, its status in words, and `runOrder`)",
   createTask:

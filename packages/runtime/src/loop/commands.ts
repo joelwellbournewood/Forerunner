@@ -41,6 +41,7 @@ import type {
   CommandTurn,
   ConversationCommands,
   ParsedIntent,
+  PendingCardView,
 } from "./ports.ts";
 
 /**
@@ -274,10 +275,11 @@ export class CommandLoop implements ConversationCommands {
   async undo(
     changeLogId: string | null,
     turn: CommandTurn,
-    opts: { confirmation?: ConfirmationAnswer } = {},
+    opts: { confirmation?: ConfirmationAnswer; projectId?: string } = {},
   ): Promise<CommandResultView> {
     const ctx = await this.contextFor(turn);
-    const id = changeLogId ?? (await this.executor.undoable(turn.humanId))[0]?.id;
+    // A project's conversation undoes that project's latest change only (design §3.9).
+    const id = changeLogId ?? (await this.executor.undoable(turn.humanId, opts.projectId))[0]?.id;
     if (!id) {
       return {
         status: "refused",
@@ -288,7 +290,11 @@ export class CommandLoop implements ConversationCommands {
     }
     const ended = await this.endedStart(id, turn.humanId);
     if (ended) return ended;
-    const r = await this.executor.undo(id, ctx, opts);
+    const r = await this.executor.undo(
+      id,
+      ctx,
+      opts.confirmation ? { confirmation: opts.confirmation } : {},
+    );
     return viewOf(r, ["undo"]);
   }
 
@@ -379,6 +385,20 @@ export class CommandLoop implements ConversationCommands {
     const pending = this.executor.getPending(pendingId);
     const r = await this.executor.cancel(pendingId, by);
     return viewOf(r, commandsOf(pending?.card));
+  }
+
+  /** A change card still waiting for its yes (a conversation's card after a restart). */
+  pendingCard(id: string): PendingCardView | null {
+    const p = this.executor.getPending(id);
+    if (!p) return null;
+    const cost = p.card.impact.costUsdMicro;
+    return {
+      readback: p.readback,
+      commands: commandsOf(p.card),
+      decision: p.decision,
+      ...(typeof cost === "number" ? { costUsdMicro: cost } : {}),
+      what: p.card.what,
+    };
   }
 
   pending(humanId?: string): PendingView[] {

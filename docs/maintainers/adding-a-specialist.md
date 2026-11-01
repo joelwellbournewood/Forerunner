@@ -26,7 +26,9 @@ evals/registry/                      (forerunner-registry has the same layout at
   proposed/<name>/specialist.md      proposals written by proposeSpecialist (status: proposed)
   proposed/<name>/proposal.json      who proposed it, when, why; approval and eval result slots
   principals/project-manager.md      the principal agent (PM) prompt
-  principals/conversation-agent.md   the chat/voice front prompt
+  principals/conversation-agent.md   the chat/voice front prompt (1.1.0, design §3.9: says what
+                                     each turn carries: the conversation, the tasks, the last
+                                     session, the open cards; and the read-only tools)
   critic/critic.md                   the independent reviewer prompt
   evals/<name>/NNN-<slug>.json       golden tasks (20 each for coder and researcher today)
   evals/README.md                    task format and how to add a task
