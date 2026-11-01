@@ -450,7 +450,11 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       depends_on: dependsOn,
       budget_usd_micro: params.budget_usd_micro,
       specialist: params.specialist ?? null,
-      reason: ctx.actor.kind === "human" ? "Added by you" : `Added by ${ctx.source}`,
+      // Who made it, on the row (spec B.5): the person, or which agent through which channel.
+      reason:
+        ctx.actor.kind === "human"
+          ? "Added by you"
+          : `created by ${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`,
       ...authorOf(ctx),
     });
     return {

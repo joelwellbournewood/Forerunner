@@ -877,9 +877,15 @@ export function createDaemonApp(
   // Every view carries the status in words (`display`, design §2) and the run order; every
   // change a person makes from the Tasks tab goes through a registry command, so it is in
   // Changes with its Undo, and answers the change log entry with the task.
+  // Not known (no check yet, or a runtime without the sandbox, like the phase 5 harness): no
+  // task is said to wait for Docker.
   const sandboxReady = (): boolean | null => {
-    const r = rt.sandbox.readiness.current();
-    return r ? r.state === "ready" : null;
+    try {
+      const r = rt.sandbox.readiness.current();
+      return r ? r.state === "ready" : null;
+    } catch {
+      return null;
+    }
   };
   const projectTaskViews = async (projectId: string): Promise<TaskView[]> => {
     const rows = await rt.store.task.forProject(projectId, {}, { limit: 10_000 });
