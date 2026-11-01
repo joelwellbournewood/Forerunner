@@ -2236,7 +2236,9 @@ export class SessionRunner {
       !outcome.failed.length &&
       !outcome.needsYou.length &&
       !inReviewNow.length;
+    const update = sessionUpdateLine(project?.name ?? null, resultLines);
     if (
+      update &&
       stopReason !== "plan_awaiting_approval" &&
       stopReason !== NOTHING_RUNNABLE &&
       !onlyTheirStop
@@ -2246,7 +2248,7 @@ export class SessionRunner {
         to_human_id: agent.owner_human_id,
         project_id: project?.id ?? null,
         type: "info",
-        body: sessionUpdateLine(project?.name ?? null, resultLines),
+        body: update,
         requires_ack: false,
         author_agent: agent.id,
       });

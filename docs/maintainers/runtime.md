@@ -4253,6 +4253,15 @@ with plurals as the number says; the summary too. Before, the header read "17 op
 for three findings filed on four attempts, those of a task accepted since included, and the
 evidence listed the prompt hash and the run id.
 
+### The session's Update (design §3.8, §5.10, §5.11)
+
+`sessionUpdateLine` (`session/result.ts`) gives the Inbox one line of news per session, or
+null: a decision waiting in the Inbox is the card's to say (its sentence is left out, so the
+Update neither repeats the card beside it nor goes stale once it is answered), and a line that
+is only money, how the session ended or what waits is no news. A session whose only task the
+person stopped, or whose only result is a card, posts no Update (before: "<Project>: CHF
+0.00." and '"X" needs your decision (Inbox).' beside the card).
+
 ### The writing rules, checked (`test/writing-rules.test.ts`)
 
 Design §5's rules are checked mechanically on what the system writes from fixtures: the
@@ -4272,7 +4281,9 @@ task's row is labelled with its title ("Planning and chat" for spend that names 
 project's with its name, the work by the specialist that ran it (the ledger's `specialist`
 column is not filled; each entry names its run, and the run its specialist; the critic's runs
 are "the critic"), and `accepted`, the runs the critic accepted (a task's last work run before
-each accepting review; per task, per specialist and per model). Without a period asked for,
+each accepting review; per task, per specialist and per model). `runs` counts runs, not the
+ledger's entries (one per model call): a task's work runs, a model's runs; the planning run is
+"planning" and, like the critic's reviews, has no accepted count. Without a period asked for,
 `from` and `to` are the first and the last entry's time, which the Costs tab says in words
 ("1 Nov to 3 Nov"). Before, tasks were listed by id, every specialist as "(none)", Accepted "—"
 and the period "— → —".

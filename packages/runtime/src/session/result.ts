@@ -177,9 +177,31 @@ export function sessionResultLines(f: ResultFacts): string[] {
   return lines.slice(0, 3);
 }
 
-/** The one-line Update the Inbox gets for a session (design §3.8): the project and the gist. */
-export function sessionUpdateLine(projectName: string | null, lines: readonly string[]): string {
-  const head = lines[0] ?? "";
+/**
+ * A sentence the result says that a card in the Needs you list already says (design §5.10: one
+ * place per fact): a decision waiting in the Inbox. In an Update it repeats the card beside it
+ * and is stale once the card is answered (wave 2).
+ */
+const CARD_SAYS_IT = /[^.]*\bneeds? your decision \(Inbox\)\.\s*/g;
+
+/** Money, how the session ended and what waits: not news on their own in an Update. */
+const NOT_NEWS =
+  /^(?:(?:CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.)\s*)+$/;
+
+/**
+ * The one-line Update the Inbox gets for a session (design §3.8): the project and the gist, or
+ * null when there is no news. A decision that waits is the card's to say, not the Update's,
+ * and a session that did nothing but what a card or the person's own stop says posts nothing
+ * (wave 1: "<Project>: CHF 0.00." after the person stopped its only task).
+ */
+export function sessionUpdateLine(
+  projectName: string | null,
+  lines: readonly string[],
+): string | null {
+  const head = lines
+    .map((l) => l.replace(CARD_SAYS_IT, "").trim())
+    .find((l) => l.length > 0 && !NOT_NEWS.test(l));
+  if (!head) return null;
   const gist = head.length > 160 ? `${head.slice(0, 157).replace(/\s+\S*$/, "")}…` : head;
   return projectName ? `${projectName}: ${lowerFirstIfDid(gist)}` : gist;
 }

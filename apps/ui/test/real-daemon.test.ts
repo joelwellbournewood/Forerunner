@@ -2129,7 +2129,10 @@ describe("the UI client against the real daemon: the task drawer after a session
     expect(coder?.accepted).toBeGreaterThanOrEqual(2);
     expect(costs.bySpecialist.some((b) => b.key === "(none)" && b.runs > 1)).toBe(false);
     const licence = costs.byTask.find((b) => b.label === "Add a LICENSE file (MIT)");
-    expect(licence?.accepted).toBe(1);
+    // Runs are the task's work runs (one), not the ledger's entries per model call.
+    expect(licence).toMatchObject({ runs: 1, accepted: 1 });
+    const broken = costs.byTask.find((b) => b.label === "Broken page check");
+    expect(broken).toMatchObject({ runs: 2, accepted: 1 });
     expect(costs.from).not.toBe("");
     expect(costs.to >= costs.from).toBe(true);
   });

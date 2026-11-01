@@ -664,14 +664,20 @@ export async function costView(
         accepted: s.accepted,
       }))
     : ledgerBySpecialist;
+  // "Runs" counts runs, not ledger entries (one per model call): "1 / 3 accepted" compares
+  // like with like.
   for (const b of byTask) {
     const t = facts.tasks.get(b.key);
     if (t) {
       b.label = t.title;
+      b.runs = facts.runsByTask.get(b.key) ?? b.runs;
       b.accepted = facts.acceptedRunsByTask.get(b.key) ?? 0;
     } else if (b.key === "(none)") b.label = "Planning and chat";
   }
-  for (const b of byModel) b.accepted = facts.acceptedRunsByModel.get(b.key) ?? null;
+  for (const b of byModel) {
+    b.runs = facts.runsByModel.get(b.key) ?? b.runs;
+    b.accepted = facts.acceptedRunsByModel.get(b.key) ?? null;
+  }
   for (const b of byProject) {
     const name = b.key === "(none)" ? null : (await store.project.get(b.key))?.name;
     if (name) b.label = name;
@@ -721,6 +727,8 @@ async function costFacts(
   }[];
   acceptedRunsByTask: Map<string, number>;
   acceptedRunsByModel: Map<string, number>;
+  runsByTask: Map<string, number>;
+  runsByModel: Map<string, number>;
   first: string | null;
   last: string | null;
 }> {
@@ -781,14 +789,31 @@ async function costFacts(
     }
     specialists.set(key, s);
   }
+  const runsByTask = new Map<string, number>();
+  const runsByModel = new Map<string, number>();
+  for (const r of runs.values()) {
+    // A task's runs are its work runs; the critic's reviews of it are not attempts.
+    if (r.task_id && r.specialist !== "critic")
+      runsByTask.set(r.task_id, (runsByTask.get(r.task_id) ?? 0) + 1);
+    runsByModel.set(r.model, (runsByModel.get(r.model) ?? 0) + 1);
+  }
+  // The planning run and the critic's reviews are no work for the critic to accept.
+  const notWork = (key: string) =>
+    key === "critic" || key === "(none)" || key === INTAKE_RUN_SPECIALIST;
   const bySpecialist = [...specialists.entries()]
     .map(([key, s]) => ({
       key,
-      label: key === "(none)" ? "Planning and chat" : key === "critic" ? "the critic" : key,
+      label:
+        key === "(none)"
+          ? "Planning and chat"
+          : key === "critic"
+            ? "the critic"
+            : key === INTAKE_RUN_SPECIALIST
+              ? "planning"
+              : key,
       usdMicro: s.usdMicro,
       runs: s.runs.size || s.entries,
-      // The critic's own runs are reviews, not work to accept.
-      accepted: key === "critic" || key === "(none)" ? null : s.accepted,
+      accepted: notWork(key) ? null : s.accepted,
     }))
     .sort((a, b) => b.usdMicro - a.usdMicro || a.key.localeCompare(b.key));
   const times = entries.map((e) => e.occurred_at).sort();
@@ -797,6 +822,8 @@ async function costFacts(
     bySpecialist,
     acceptedRunsByTask,
     acceptedRunsByModel,
+    runsByTask,
+    runsByModel,
     first: times[0] ?? null,
     last: times.at(-1) ?? null,
   };
