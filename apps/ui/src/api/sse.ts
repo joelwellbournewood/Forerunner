@@ -47,6 +47,8 @@ export type DaemonEvent =
    * not a session view. The shell re-reads the project cards on a session's start and end.
    */
   | { event: "session.activity"; data: SessionActivity }
+  /** Polling only: the sessions running now, read on every poll (a session that ended is gone). */
+  | { event: "sessions.running"; data: SessionView[] }
   | { event: "project.changed"; data: { id: string } }
   /** An agent was renamed (U-025): `/me` and `/agents` are read again. */
   | { event: "agent.changed"; data: { id: string; name: string } }
@@ -383,6 +385,7 @@ export function subscribeDaemonEvents(
       });
       const running = await client.sessions({ status: "running" });
       for (const s of running) handlers.onEvent({ event: "session.changed", data: s });
+      handlers.onEvent({ event: "sessions.running", data: running });
       try {
         const desktop = await client.desktopStatus();
         handlers.onEvent({

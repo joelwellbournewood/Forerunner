@@ -11,10 +11,19 @@ describe("Live session view", () => {
   it("shows the header, the readable stream and highlights escalations", async () => {
     renderApp("/sessions/sess_1");
     const header = await screen.findByTestId("session-header");
+    // Design §3.7: "Atlas · session at 19:00", never the session's id.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Atlas · session at /),
+    );
+    expect(screen.getByRole("heading", { level: 1 })).not.toHaveTextContent("sess_1");
     expect(within(header).getByTestId("session-status")).toHaveTextContent("completed");
-    expect(within(header).getByTestId("steps")).toHaveTextContent("57 / 200");
+    expect(within(header).getByTestId("steps")).toHaveTextContent("57");
     expect(within(header).getByTestId("session-spend")).toHaveTextContent("CHF 5.80 of CHF 5.00");
-    expect(within(header).getByTestId("current-task")).toHaveTextContent("no task running");
+    // An ended session has no task in flight and nothing to stop (wave 1 handoff: a faded
+    // Stop now stayed on ended sessions).
+    expect(within(header).queryByTestId("current-task")).toBeNull();
+    expect(within(header).queryByTestId("stop-now")).toBeNull();
+    expect(within(header).queryByTestId("stop-after-task")).toBeNull();
 
     const rows = await screen.findAllByTestId("event-row");
     expect(rows).toHaveLength(5);
@@ -44,22 +53,48 @@ describe("Live session view", () => {
     expect(screen.getByTestId("session-read-aloud")).toHaveTextContent("Stop reading");
   });
 
-  it("filters by level and toggles raw output", async () => {
+  it("Details shows the event types, the level filters and the raw payloads (design §3.7)", async () => {
     const user = userEvent.setup();
     renderApp("/sessions/sess_1");
-    await screen.findAllByTestId("event-row");
+    const first = (await screen.findAllByTestId("event-row"))[0] as HTMLElement;
+    // Person-level by default: no event type names, no level chips with counts.
+    expect(first).not.toHaveTextContent("session.started");
+    expect(screen.queryByTestId("filter-info")).toBeNull();
+    await user.click(screen.getByTestId("raw-toggle"));
+    await waitFor(() => expect(screen.getAllByTestId("event-raw")).toHaveLength(5));
+    await user.click(screen.getByTestId("raw-toggle"));
+    await user.click(screen.getByTestId("raw-toggle"));
     await user.click(screen.getByTestId("filter-info"));
     await waitFor(() => expect(screen.getAllByTestId("event-row")).toHaveLength(2));
     expect(screen.getByTestId("filter-info")).toHaveAttribute("aria-pressed", "false");
     await user.click(screen.getByTestId("filter-info"));
     await waitFor(() => expect(screen.getAllByTestId("event-row")).toHaveLength(5));
 
-    await user.click(screen.getByTestId("raw-toggle"));
     const raw = await screen.findAllByTestId("event-raw");
     expect(raw).toHaveLength(5);
     expect(raw[3]).toHaveTextContent('"requestId": "req_1"');
     await user.click(screen.getByTestId("raw-toggle"));
     await waitFor(() => expect(screen.queryByTestId("event-raw")).not.toBeInTheDocument());
+  });
+
+  it("while it runs: the current task with its specialist and live step lines, from the log (design §3.7)", async () => {
+    const harness = createHarness({ eventDelayMs: 60 });
+    const { session } = await harness.client.startSession({
+      agentId: "agent_alice",
+      projectId: "proj_atlas",
+    });
+    if (!session) throw new Error("the fake daemon started no session");
+    renderApp(`/sessions/${session.id}`, harness, { pollIntervalMs: 30 });
+    const current = await screen.findByTestId("current-task");
+    await waitFor(() =>
+      expect(current).toHaveTextContent('"Decide the versioning scheme" · researcher'),
+    );
+    expect(await screen.findByTestId("current-steps")).toHaveTextContent("read docs/versioning.md");
+    // At the end the session is done and its stop buttons go.
+    await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("Done"), {
+      timeout: 10_000,
+    });
+    expect(screen.queryByTestId("stop-now")).toBeNull();
   });
 
   it("stops a running session and keeps receiving events through the polling fallback", async () => {

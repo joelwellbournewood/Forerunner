@@ -2887,8 +2887,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/settings", (c) => {
     const scope = c.req.query("scope");
     const scopeId = c.req.query("scopeId");
-    // Like the daemon, the project rows read the live project (a command may have changed it).
-    const rows = SETTINGS.map((s) => {
+    // Like the daemon, every project has its rows (settings-view.ts), read from the live project
+    // (a command may have changed it); the fixtures name Atlas's.
+    const projectRows = state.projects
+      .filter((p) => !SETTINGS.some((s) => s.key === "project.autonomy" && s.scopeId === p.id))
+      .map((p): (typeof SETTINGS)[number] => ({
+        key: "project.autonomy",
+        label: "Autonomy",
+        scope: "project",
+        scopeId: p.id,
+        value: p.autonomyLevel,
+        description: `Autonomy for ${p.name}`,
+        risk: "medium",
+      }));
+    const rows = [...SETTINGS, ...projectRows].map((s) => {
       if (s.key === "project.autonomy") {
         const p = state.projects.find((x) => x.id === s.scopeId);
         return p ? { ...s, value: p.autonomyLevel } : s;
@@ -5976,40 +5988,54 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
 
   /** After POST /sessions: a short scripted run with a warning and an escalation. */
   function scheduleScriptedEvents(session: SessionView) {
-    const script: Array<[string, string, EventView["level"], number]> = [
-      ["session.started", "Session started; reading the state brief", "info", 0],
-      ["task.claimed", "Claimed task_3 Decide the versioning scheme for researcher", "info", 0],
-      ["run.started", "researcher started on sonnet-5.5 (effort high)", "info", 0],
-      ["budget.warning", "Session spend at 80% of the cap", "warning", 2_000_000],
-      ["escalation", "Choice of versioning scheme needs your decision", "escalation", 0],
-      ["run.finished", "researcher finished task_3", "info", 2_500_000],
+    // The real runner's event types and payloads (session/runner.ts): a task begins
+    // (`task.started` with its title and specialist), one `task.step` per tool call with its
+    // line, and ends (`task.finished`).
+    const task = {
+      taskId: "task_3",
+      title: "Decide the versioning scheme",
+      specialist: "researcher",
+    };
+    const script: Array<[string, string, EventView["level"], number, Record<string, unknown>]> = [
+      ["session.started", "Session started", "info", 0, {}],
+      ["task.started", 'Started "Decide the versioning scheme"', "info", 0, task],
+      [
+        "task.step",
+        "read docs/versioning.md",
+        "info",
+        0,
+        { ...task, text: "read docs/versioning.md" },
+      ],
+      ["budget.warning", "Session spend at 80% of the cap", "warning", 2_000_000, {}],
+      ["escalation", "Choice of versioning scheme needs your decision", "escalation", 0, {}],
+      ["task.finished", 'Finished "Decide the versioning scheme"', "info", 2_500_000, task],
     ];
-    script.forEach(([type, text, level, cost], i) => {
+    script.forEach(([type, text, level, cost, extra], i) => {
       later(
         () => {
           // Stop after this task (the real daemon's pause): the task in flight finishes, then
           // the session ends.
-          if (session.status === "paused" && type === "run.finished") {
+          if (session.status === "paused" && type === "task.finished") {
             session.status = "stopped";
             session.endedAt = new Date().toISOString();
             session.currentTask = null;
             session.stopReason = "stopped_after_task";
             session.statusText = "Stopped after the task, as asked";
-            pushEvent(session, type, text, level, { step: session.steps }, cost);
+            pushEvent(session, type, text, level, { step: session.steps, ...extra }, cost);
             emit("session.changed", clone(session));
             return;
           }
           if (session.status !== "running" && session.status !== "paused") return;
           session.steps += 1;
           session.spent = money(session.spent.usdMicro + cost);
-          if (type === "task.claimed") {
+          if (type === "task.started") {
             session.currentTask = {
               id: "task_3",
               title: "Decide the versioning scheme",
               specialist: "researcher",
             };
           }
-          pushEvent(session, type, text, level, { step: session.steps }, cost);
+          pushEvent(session, type, text, level, { step: session.steps, ...extra }, cost);
           emit("session.changed", clone(session));
           if (i === script.length - 1) {
             session.status = "completed";

@@ -1,30 +1,34 @@
 import { type FormEvent, useState } from "react";
 import { describeError } from "../../api/client.ts";
-import { QUEUE_KINDS, type QueueItemView } from "../../api/contracts.ts";
+import type { QueueItemView } from "../../api/contracts.ts";
 import { RouteMissing } from "../../components/RouteMissing.tsx";
-import { Badge, Button, ErrorBanner, Field, INPUT_CLASS, Loading } from "../../components/ui.tsx";
+import { Button, ErrorBanner, INPUT_CLASS } from "../../components/ui.tsx";
 import { relativeTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 
-/** Kinds a human types here; voice notes arrive through the voice loop (module O). */
-const TYPED_KINDS = QUEUE_KINDS.filter((k) => k !== "voice_note");
+/** What a note does, said with the box (design §3.4; `session/next-session.ts`). */
+export const NOTE_EXPLAIN =
+  "Goes into the brief of every task the next session runs, or of the task it names.";
 
-function kindTone(kind: QueueItemView["kind"]) {
-  switch (kind) {
-    case "correction":
-      return "warn" as const;
-    case "task":
-      return "info" as const;
-    default:
-      return "neutral" as const;
-  }
+/** The priority a note is queued at: the middle of the queue's 1 to 9. */
+const NOTE_PRIORITY = 5;
+
+/**
+ * Items the person did not write and cannot act on: the first-session plan an approved brief
+ * queues (`session/first-session.ts`), which only says which tasks the first session runs.
+ */
+function isOwnNote(q: QueueItemView): boolean {
+  return !/^First-session plan\b/.test(q.text);
 }
 
 /**
- * Next-session queue (spec J.2): notes, tasks, corrections and ideas with a priority and a
- * type. The next session takes them in: each reaches the brief of the task it names, or every
- * task's brief when it names none (U-038, `session/next-session.ts`), and the panel says so.
+ * Note for the next session (design §3.4): one text box. It replaces the next-session queue
+ * form with its types and priorities, which the walks found to be internals ("task p9
+ * First-session plan (approved intake 01a1992e-…)"). A note is a queue item of kind `note`; the
+ * next session takes it in as before: it reaches the brief of the task it names, or every
+ * task's brief when it names none (U-038). Items already queued (of any kind) keep what they
+ * mean and can be dismissed.
  */
 export function QueueSection({ projectId }: { projectId: string }) {
   const client = useClient();
@@ -32,25 +36,26 @@ export function QueueSection({ projectId }: { projectId: string }) {
     (signal) => client.queue(projectId, undefined, signal),
     [client, projectId],
   );
-  const [kind, setKind] = useState<QueueItemView["kind"]>("note");
   const [text, setText] = useState("");
-  const [priority, setPriority] = useState("5");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!text.trim() || busy) return;
     setBusy(true);
     setError(null);
+    setSaved(false);
     try {
       const created = await client.enqueue(projectId, {
-        kind,
+        kind: "note",
         text: text.trim(),
-        priority: Number(priority),
+        priority: NOTE_PRIORITY,
       });
       queue.setData((prev) => [created, ...(prev ?? [])]);
       setText("");
+      setSaved(true);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -73,127 +78,84 @@ export function QueueSection({ projectId }: { projectId: string }) {
   };
 
   const queued = (queue.data ?? [])
-    .filter((q) => q.status === "queued")
+    .filter((q) => q.status === "queued" && isOwnNote(q))
     .sort((a, b) => b.priority - a.priority || b.createdAt.localeCompare(a.createdAt));
-  const past = (queue.data ?? []).filter((q) => q.status !== "queued");
 
   return (
     <section data-testid="queue" aria-labelledby="queue-title">
       <h2 id="queue-title" className="font-semibold">
-        Next session
+        Note for the next session
       </h2>
       {queue.routeMissing ? (
-        <RouteMissing route="queue" what="the next-session queue" />
+        <RouteMissing route="queue" what="the note for the next session" />
       ) : (
         <>
-          <p className="text-xs text-neutral-500" data-testid="queue-explainer">
-            Notes, tasks, corrections and ideas for the next session. Each one reaches the brief of
-            the task it names (by its title or id), or of every task when it names none. A
-            first-session plan you approved with the project's setup decides which tasks the first
-            session runs, in its order.
+          <form onSubmit={(e) => void submit(e)} className="mt-1 flex flex-wrap gap-2">
+            <input
+              className={`${INPUT_CLASS} min-w-64 flex-1`}
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                setSaved(false);
+              }}
+              placeholder="What the agent should know next time"
+              aria-label="Note for the next session"
+              aria-describedby="queue-explainer"
+              data-testid="queue-text"
+            />
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={busy || !text.trim()}
+              data-testid="queue-add"
+            >
+              Save note
+            </Button>
+          </form>
+          <p
+            id="queue-explainer"
+            className="mt-1 text-xs text-neutral-500"
+            data-testid="queue-explainer"
+          >
+            {NOTE_EXPLAIN}
           </p>
-          {queue.loading && !queue.data ? <Loading what="queue" /> : null}
+          {saved ? (
+            <output
+              className="block text-xs text-green-800 dark:text-green-300"
+              data-testid="queue-saved"
+            >
+              Saved. The next session reads it.
+            </output>
+          ) : null}
           {queue.error && !queue.data ? (
             <ErrorBanner message={queue.error} onRetry={queue.reload} />
           ) : null}
-          {queue.data && queued.length === 0 ? (
-            <p className="mt-1 text-sm text-neutral-500" data-testid="queue-empty">
-              Nothing queued.
-            </p>
-          ) : null}
-          <ul className="mt-2 space-y-1" data-testid="queue-list">
-            {queued.map((q) => (
-              <li
-                key={q.id}
-                className="flex flex-wrap items-center gap-2 rounded border border-neutral-200 px-2 py-1 text-sm dark:border-neutral-800"
-                data-testid="queue-item"
-                data-kind={q.kind}
-                data-queue-id={q.id}
-              >
-                <Badge tone={kindTone(q.kind)}>{q.kind}</Badge>
-                <Badge title="Priority 1 (low) to 9 (high)">p{q.priority}</Badge>
-                <span className="flex-1">{q.text}</span>
-                <span className="text-xs text-neutral-500">{relativeTime(q.createdAt)}</span>
-                <Button
-                  variant="ghost"
-                  onClick={() => void dismiss(q.id)}
-                  disabled={busy}
-                  data-testid="queue-dismiss"
+          {queued.length > 0 ? (
+            <ul className="mt-2 space-y-1" data-testid="queue-list">
+              {queued.map((q) => (
+                <li
+                  key={q.id}
+                  className="flex flex-wrap items-center gap-2 rounded border border-neutral-200 px-2 py-1 text-sm dark:border-neutral-800"
+                  data-testid="queue-item"
+                  data-kind={q.kind}
+                  data-queue-id={q.id}
                 >
-                  Dismiss
-                </Button>
-              </li>
-            ))}
-          </ul>
-          <form
-            onSubmit={(e) => void submit(e)}
-            className="mt-2 grid gap-2 md:grid-cols-[auto_1fr_auto_auto]"
-          >
-            <Field label="Type">
-              <select
-                className={INPUT_CLASS}
-                value={kind}
-                onChange={(e) => setKind(e.target.value as QueueItemView["kind"])}
-                data-testid="queue-kind"
-              >
-                {TYPED_KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Text">
-              <input
-                className={INPUT_CLASS}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="What the agent should know or do next time"
-                data-testid="queue-text"
-              />
-            </Field>
-            <Field label="Priority">
-              <input
-                className={INPUT_CLASS}
-                type="number"
-                min={1}
-                max={9}
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-                data-testid="queue-priority"
-              />
-            </Field>
-            <div className="flex items-end">
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={busy || !text.trim()}
-                data-testid="queue-add"
-              >
-                Queue
-              </Button>
-            </div>
-          </form>
-          {error ? <ErrorBanner message={error} /> : null}
-          {past.length > 0 ? (
-            <details className="mt-2 text-xs">
-              <summary className="cursor-pointer text-neutral-500">
-                {past.length} consumed or dismissed
-              </summary>
-              <ul className="mt-1 space-y-1">
-                {past.map((q) => (
-                  <li
-                    key={q.id}
-                    className="text-neutral-600 dark:text-neutral-400"
-                    data-testid="queue-past"
+                  <span className="flex-1">{q.text}</span>
+                  <span className="text-xs text-neutral-500">{relativeTime(q.createdAt)}</span>
+                  <Button
+                    variant="ghost"
+                    onClick={() => void dismiss(q.id)}
+                    disabled={busy}
+                    data-testid="queue-dismiss"
+                    title="The next session will not read it."
                   >
-                    <Badge>{q.status}</Badge> {q.text}
-                    {q.consumedBySession ? ` (session ${q.consumedBySession})` : ""}
-                  </li>
-                ))}
-              </ul>
-            </details>
+                    Dismiss
+                  </Button>
+                </li>
+              ))}
+            </ul>
           ) : null}
+          {error ? <ErrorBanner message={error} /> : null}
         </>
       )}
     </section>

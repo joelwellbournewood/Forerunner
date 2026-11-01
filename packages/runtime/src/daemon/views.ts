@@ -40,7 +40,7 @@ import { countsList } from "../session/counts.ts";
 import { runCapOf } from "../session/executor.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
-import { sessionStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
+import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { optionLabel } from "../wiring/request-answers.ts";
 import type {
@@ -377,7 +377,12 @@ export function sessionView(
     runner: s.runner,
     // How it ended, in words (session-engine, design §3.7).
     stopReason: stopReasonOfHandoff(s.handoff),
-    statusText: sessionStatusText(s.status, stopReasonOfHandoff(s.handoff)),
+    // "Ended: 1 task needs you" when it finished with tasks waiting for the person.
+    statusText: endedStatusText(
+      s.status,
+      stopReasonOfHandoff(s.handoff),
+      blockedOfHandoff(s.handoff),
+    ),
   };
 }
 

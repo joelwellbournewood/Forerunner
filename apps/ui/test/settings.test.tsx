@@ -156,11 +156,11 @@ describe("Settings", () => {
   it("shows the scope on every row, the daemon status and the same-command hint", async () => {
     renderApp("/settings");
     const rows = await screen.findAllByTestId("setting-row");
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(17); // the fixture's 16, and Beacon's autonomy: the daemon lists every project's
     for (const row of rows) {
       const scope = within(row).getByTestId("setting-scope");
       // Names, never ids (U-074).
-      expect(scope.textContent).toMatch(/^(everyone|you|Alice's agent|Atlas)$/);
+      expect(scope.textContent).toMatch(/^(everyone|you|Alice's agent|Atlas|Beacon)$/);
       expect(scope.textContent).not.toMatch(/human_|agent_|proj_/);
     }
     expect(screen.getByTestId("scope-group-global")).toBeInTheDocument();

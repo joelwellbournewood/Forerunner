@@ -6,15 +6,31 @@ import { money, PROJECTS, TASKS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Project page", () => {
-  it("redirects to the summary tab, shows the tabs and the cached summary", async () => {
+  it("opens on the Overview: the tabs are Overview, Tasks, Chat, Files and More; Last result, Next computed now, Your files (design §3.4, §6)", async () => {
     renderApp("/projects/proj_atlas");
     const summary = await screen.findByTestId("summary");
     expect(summary).toHaveTextContent("Indexed the docs and opened a PR for the search box.");
-    expect(summary).toHaveTextContent("Review PR #12");
-    expect(summary).toHaveTextContent("1 open question");
-    expect(screen.getByTestId("project-tabs")).toHaveTextContent(
-      "SummaryPlanTasksDocsReviewsCostsDataChat",
+    // Next is the tasks as they are now, not the titles the last session captured.
+    expect(within(summary).getByTestId("next")).toHaveTextContent(
+      '"Add the search box to the header": Being reviewed',
     );
+    expect(summary).not.toHaveTextContent("Review PR #12");
+    expect(within(summary).getByTestId("your-files")).toHaveTextContent(
+      "/home/alice/.local/share/forerunner/worktrees/proj_atlas",
+    );
+    const tabs = screen.getByTestId("project-tabs");
+    const primary = within(tabs)
+      .getAllByRole("link")
+      .filter((l) => !l.closest("details"))
+      .map((l) => l.textContent);
+    expect(primary).toEqual(["Overview", "Tasks", "Chat", "Files"]);
+    expect(
+      within(screen.getByTestId("tab-more"))
+        .getAllByRole("link")
+        .map((l) => l.textContent),
+    ).toEqual(["Plan", "Docs", "Reviews", "Costs", "Data"]);
+    // The Overview's own cards: this project's open ones, each with Answer.
+    expect(await screen.findAllByTestId("overview-card")).toHaveLength(2);
     expect(screen.getByTestId("read-aloud")).toBeEnabled();
     expect(screen.getByTestId("read-aloud")).toHaveTextContent("Read aloud");
   });
@@ -349,7 +365,9 @@ describe("Project page", () => {
     expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
     await user.click(within(dialog).getByTestId("start-session-open"));
     const header = await screen.findByTestId("session-header");
-    expect(header).toHaveTextContent(/Session sess_/);
+    // Design §3.7: named by its project and when it began, never its id.
+    expect(header).toHaveTextContent(/Atlas · session at /);
+    expect(header).not.toHaveTextContent(/sess_/);
     // The first event arrives over SSE after the session page mounts; CI runners have needed more than 4 s.
     await waitFor(() => expect(screen.getAllByTestId("event-row").length).toBeGreaterThan(0), {
       timeout: 15_000,

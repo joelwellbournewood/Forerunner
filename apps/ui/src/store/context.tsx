@@ -129,11 +129,17 @@ export function AppProvider({
               // and the project headers follow (design §3.2).
               if (/^(session\.(started|ended|stopped)|kill)/.test(event.data.type))
                 liveProjects.refresh();
-            } else if (event.event === "session.changed") {
-              // Polling reads the running sessions: one that is new, or one that ended, moves
-              // the project cards.
-              const p = store.getState().projects.find((x) => x.id === event.data.projectId);
-              if (p && (p.working?.sessionId ?? null) !== event.data.id) liveProjects.refresh();
+            } else if (event.event === "sessions.running") {
+              // Polling reads the running sessions: one the cards do not show yet, or a card
+              // whose session is no longer running, moves the project cards.
+              const ids = new Set(event.data.map((s) => s.id));
+              const shown = new Set(
+                store.getState().projects.flatMap((p) => (p.working ? [p.working.sessionId] : [])),
+              );
+              const moved =
+                event.data.some((s) => s.projectId && !shown.has(s.id)) ||
+                [...shown].some((id) => !ids.has(id));
+              if (moved) liveProjects.refresh();
             } else if (event.event === "project.changed") {
               void client
                 .project(event.data.id)

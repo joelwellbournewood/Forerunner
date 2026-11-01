@@ -222,7 +222,8 @@ describe("Settings: models per agent and specialist", () => {
     const section = await screen.findByTestId("model-settings");
     await waitFor(() => expect(section).toHaveTextContent("/settings/models"));
     // Every row of "All settings" is still there (the fixture's, the D.16 slider row included).
-    expect(await screen.findAllByTestId("setting-row")).toHaveLength(SETTINGS.length);
+    // Beacon's autonomy too: the daemon lists every project's rows (settings-view.ts).
+    expect(await screen.findAllByTestId("setting-row")).toHaveLength(SETTINGS.length + 1);
   });
 });
 

@@ -4,43 +4,106 @@ import { describe, expect, it } from "vitest";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Home", () => {
-  it("renders one card per project with stage, milestone, health, spend, waiting count and grade", async () => {
+  it("one row per project: its status sentence, 'n of m done' and one action; no stage, grade, autonomy or spend (design §3.2)", async () => {
     renderApp("/");
     const cards = await screen.findAllByTestId("project-card");
     expect(cards).toHaveLength(2);
     const atlas = within(cards[0] as HTMLElement);
     expect(atlas.getByText("Atlas")).toBeInTheDocument();
-    expect(atlas.getByTestId("stage")).toHaveTextContent("build");
-    expect(atlas.getByTestId("next-milestone")).toHaveTextContent("Search works · 2026-11-05");
-    expect(atlas.getByTestId("health-badge")).toHaveTextContent("attention");
-    expect(atlas.getByTestId("spend-bar")).toHaveTextContent("CHF 25.00 of CHF 100.00 (25%)");
-    expect(atlas.getByTestId("spend-bar")).not.toHaveTextContent("USD");
-    expect(atlas.getByTestId("waiting-on-you")).toHaveTextContent("1");
-    expect(atlas.getByTestId("critic-grade")).toHaveTextContent("82 / 100");
-
+    // Two open cards wait on the person: that comes first (design §2, §5 rule 2).
+    expect(atlas.getByTestId("project-status")).toHaveTextContent("Waiting for you: 2 questions");
+    expect(atlas.getByTestId("project-status-action")).toHaveTextContent("Answer");
+    expect(atlas.getByTestId("project-status-action")).toHaveAttribute("href", "/inbox");
+    expect(atlas.getByTestId("progress")).toHaveTextContent("1 of 3 done");
     const beacon = within(cards[1] as HTMLElement);
-    expect(beacon.getByTestId("next-milestone")).toHaveTextContent("none planned");
-    expect(beacon.getByTestId("critic-grade")).toHaveTextContent("no review yet");
-    expect(beacon.getByTestId("health-badge")).toHaveTextContent("good");
+    expect(beacon.getByTestId("project-status")).toHaveTextContent(
+      "0 of 1 done; 1 draft to make ready",
+    );
+    for (const card of cards) {
+      expect(card).not.toHaveTextContent(/Stage|critic grade|Autonomy|Spend|Make active|USD/i);
+      expect(within(card).queryByTestId("spend-bar")).toBeNull();
+    }
   });
 
-  it("names the task that needs you instead of saying blocked, and links to it (U-071)", async () => {
+  it("Needs you lists every open card of every project, one line each with Answer (design §3.2)", async () => {
+    const user = userEvent.setup();
+    renderApp("/");
+    const list = await screen.findByTestId("home-needs-you");
+    const lines = within(list).getAllByTestId("home-card");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toHaveTextContent("Atlas:");
+    const answer = within(lines[0] as HTMLElement).getByTestId("home-card-answer");
+    expect(answer.getAttribute("href")).toMatch(/^\/inbox#card-req_/);
+    await user.click(answer);
+    expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument();
+  });
+
+  it("Continue on a project with work that can run opens the Start dialog; Working now while a session runs (design §3.2)", async () => {
+    const user = userEvent.setup();
     const harness = createHarness();
-    const beacon = harness.daemon.state.projects[1];
-    if (!beacon) throw new Error("fixture changed");
-    beacon.health = "attention";
-    beacon.needsYou = { taskId: "task_9", title: "Confirm the stack" };
-    renderApp("/", harness);
+    // Beacon gets a ready task and nothing waits on the person there.
+    const draft = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!draft) throw new Error("fixture changed");
+    draft.status = "ready";
+    renderApp("/", harness, { pollIntervalMs: 40 });
     const cards = await screen.findAllByTestId("project-card");
-    const card = within(cards[1] as HTMLElement);
-    const needsYou = card.getByTestId("needs-you");
-    expect(needsYou).toHaveTextContent("needs you: Confirm the stack");
-    expect(needsYou).toHaveAttribute("href", "/projects/proj_beacon/tasks");
-    expect(card.queryByText("blocked")).not.toBeInTheDocument();
-    expect(card.queryByTestId("health-badge")).not.toBeInTheDocument();
-    await userEvent.setup().click(needsYou);
-    expect(await screen.findByTestId("project-header")).toHaveTextContent("Beacon");
-    expect(screen.getByTestId("project-header")).toHaveTextContent("needs you: Confirm the stack");
+    const beacon = within(cards[1] as HTMLElement);
+    expect(beacon.getByTestId("project-status")).toHaveTextContent(
+      "Ready to continue: 1 task ready",
+    );
+    const cont = beacon.getByTestId("project-status-action");
+    expect(cont).toHaveTextContent("Continue");
+    expect(cont).toHaveAttribute(
+      "title",
+      "Starts a session that works until nothing more can run.",
+    );
+    await user.click(cont);
+    expect(await screen.findByTestId("start-session-dialog")).toBeInTheDocument();
+    await user.click(within(screen.getByTestId("start-session-dialog")).getByText("Cancel"));
+    expect(screen.queryByTestId("working-now")).toBeNull();
+    harness.daemon.state.sessions.push({
+      ...(harness.daemon.state.sessions[0] as (typeof harness.daemon.state.sessions)[0]),
+      id: "sess_live",
+      projectId: "proj_beacon",
+      agentName: "Alice",
+      status: "running",
+      endedAt: null,
+      startedAt: new Date().toISOString(),
+      currentTask: { id: "task_4", title: draft.title, specialist: "coder" },
+    });
+    const working = await screen.findByTestId("working-now");
+    expect(working).toHaveTextContent(`Alice is working on "${draft.title}" in Beacon`);
+    expect(within(working).getByTestId("working-open")).toHaveAttribute(
+      "href",
+      "/sessions/sess_live",
+    );
+    // The project's row says it too, and offers no second Start.
+    await waitFor(() =>
+      expect(
+        within(screen.getAllByTestId("project-card")[1] as HTMLElement).getByTestId(
+          "project-status",
+        ),
+      ).toHaveTextContent(`Working on "${draft.title}" (0 of 1 done)`),
+    );
+  });
+
+  it("Home follows the Inbox without a reload: a card answered elsewhere changes the project's sentence (design §3.2)", async () => {
+    const harness = createHarness();
+    renderApp("/", harness, { pollIntervalMs: 40 });
+    const cards = await screen.findAllByTestId("project-card");
+    expect(within(cards[0] as HTMLElement).getByTestId("project-status")).toHaveTextContent(
+      "Waiting for you: 2 questions",
+    );
+    // Both cards are answered on the phone: the poll sees the count move.
+    for (const r of harness.daemon.state.requests) r.status = "answered";
+    await waitFor(() =>
+      expect(
+        within(screen.getAllByTestId("project-card")[0] as HTMLElement).getByTestId(
+          "project-status",
+        ),
+      ).not.toHaveTextContent("Waiting for you"),
+    );
+    expect(screen.queryByTestId("home-needs-you")).toBeNull();
   });
 
   it("opens a project through a link, not a button nested in a link", async () => {

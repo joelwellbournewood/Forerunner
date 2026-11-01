@@ -4241,6 +4241,10 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   "project status sentence" in `apps/ui/test/real-daemon.test.ts`.
 - `/me` names the provider in force (`provider`, null without a model): the shell's "Claude is
   not connected" bar reads it.
+- `SessionView.statusText` of a session that completed with tasks waiting for the person
+  (`handoff.blocked`: needs an answer or failed) reads "Ended: 1 task needs you", not "Done"
+  (`endedStatusText`, `blockedOfHandoff` in `session/stop-words.ts`;
+  `test/session-status-words.test.ts`).
 
 ### The project's files (design §3.10; `daemon/docs-routes.ts`)
 

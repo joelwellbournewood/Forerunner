@@ -17,6 +17,7 @@ import {
 import { formatAmount, type MoneyLike } from "../lib/money.ts";
 import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
+import { useScrollToHash } from "../lib/use-hash-scroll.ts";
 import { HotkeySettings } from "../shell/HotkeySettings.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference, UiState } from "../store/store.ts";
@@ -634,6 +635,8 @@ export function SettingsPage() {
   const { theme, connection, config, me, agents, projects } = useUiState((s) => s);
   const settings = useAsync((signal) => client.settings(undefined, signal), [client]);
   const groups = groupByScope(settings.data ?? []);
+  // "Set up Docker" (`/settings#sandbox`) and other in-app links land on their section.
+  useScrollToHash(true);
   const [editing, setEditing] = useState<{ setting: SettingView; command: SettingCommand } | null>(
     null,
   );

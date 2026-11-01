@@ -9,7 +9,7 @@ import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
  * default (its real-daemon case is in real-daemon.test.ts).
  */
 describe("new projects start at the default autonomy (U-058)", () => {
-  it("Settings → default autonomy 3, then New project: the project starts at autonomy 3", async () => {
+  it("Settings → default autonomy 3, then New project: the project starts at autonomy 3, which Settings names (design §2: not on the header)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/settings", harness);
@@ -36,9 +36,17 @@ describe("new projects start at the default autonomy (U-058)", () => {
     await waitFor(() => expect(postedCalls(harness, "/projects")).toHaveLength(1));
     // The dialog names no level: the person's default applies.
     expect(postedCalls(harness, "/projects")[0]?.body).not.toHaveProperty("autonomyLevel");
-    expect(await screen.findByTestId("project-header")).toHaveTextContent(
-      "autonomy: Trusted (level 3)",
-    );
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Gamma");
+    // Design §2: autonomy is not on the project header; Settings names it.
+    expect(screen.getByTestId("project-header")).not.toHaveTextContent(/autonomy/i);
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    const settingRows = await screen.findAllByTestId("setting-row");
+    const gamma = settingRows.find(
+      (r) =>
+        r.dataset.key === "project.autonomy" &&
+        within(r).getByTestId("setting-scope").textContent === "Gamma",
+    ) as HTMLElement;
+    expect(within(gamma).getByTestId("setting-value-cell")).toHaveTextContent("Trusted");
   });
 });
 

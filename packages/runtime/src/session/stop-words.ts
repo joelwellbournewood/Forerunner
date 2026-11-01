@@ -80,6 +80,28 @@ export function sessionStatusText(status: string, stopReason: string | null | un
   return "Stopped";
 }
 
+/**
+ * How many tasks a finished session left waiting for the person (`handoff.blocked`: the tasks
+ * that need an answer or failed, each with its card). A session that "completed" with those is
+ * not simply "Done" (wave 1 handoff).
+ */
+export function blockedOfHandoff(handoff: unknown): number {
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return 0;
+  const b = (handoff as { blocked?: unknown }).blocked;
+  return Array.isArray(b) ? b.length : 0;
+}
+
+/** "Ended: 1 task needs you" for a session that finished with tasks waiting for the person. */
+export function endedStatusText(
+  status: string,
+  stopReason: string | null,
+  blocked: number,
+): string {
+  const text = sessionStatusText(status, stopReason);
+  if (status !== "completed" || blocked === 0 || text !== "Done") return text;
+  return `Ended: ${blocked} ${blocked === 1 ? "task needs" : "tasks need"} you`;
+}
+
 /** `handoff.stop_reason` of a session row, or null. */
 export function stopReasonOfHandoff(handoff: unknown): string | null {
   if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return null;
