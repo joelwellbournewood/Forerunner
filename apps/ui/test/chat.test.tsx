@@ -116,7 +116,9 @@ describe("Quick chat", () => {
     expect(confirmation).toHaveTextContent(
       "You want to start a session with a budget of CHF 4.00.",
     );
-    expect(confirmation).toHaveTextContent("Estimated CHF 4.00");
+    // One figure, once: the question names the amount, so no "Estimated CHF 4.00" under it.
+    expect(confirmation).not.toHaveTextContent("Estimated");
+    expect(confirmation.textContent?.match(/CHF \d/g)).toHaveLength(1);
     // Shown once: the reply's own text does not repeat the read-back (the walk saw it twice).
     expect(screen.getAllByText(/You want to start a session/)).toHaveLength(1);
     await user.click(within(confirmation).getByTestId("confirm-yes"));

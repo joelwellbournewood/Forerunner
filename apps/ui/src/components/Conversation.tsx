@@ -378,7 +378,9 @@ function Turn({
                 data-testid="pending-confirmation"
               >
                 <p className="text-sm">{inAppText(r.readback)}</p>
-                {waitingEstimate && waitingEstimate.usdMicro > 0 ? (
+                {/* One figure, once (wave 2: "Estimated CHF 5.00" under "(up to CHF 5)?"): the
+                    estimate only when the question names no amount of its own. */}
+                {waitingEstimate && waitingEstimate.usdMicro > 0 && !/CHF\s?\d/.test(r.readback) ? (
                   <p className="text-xs text-neutral-600 dark:text-neutral-300">
                     Estimated <Money value={waitingEstimate} />
                   </p>

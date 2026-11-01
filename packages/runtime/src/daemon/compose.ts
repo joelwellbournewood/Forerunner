@@ -2544,15 +2544,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   store.humanRequest.insert = async (input) => {
     const row = await insertHumanRequest(input);
     if (row.human_id === human.id) {
-      // The notification names the project and the task (design §5, "Notification").
-      const named = async () =>
-        notifications.requestOpened(row, human.id, {
-          projectName: row.project_id
-            ? ((await store.project.get(row.project_id))?.name ?? null)
-            : null,
-          taskTitle: row.task_id ? ((await store.task.get(row.task_id))?.title ?? null) : null,
-        });
-      notifyLater(named(), `request ${row.id}`);
+      // The notification names the project and the task (design §5, "Notification"). The
+      // names are read before the insert returns, so the notification is recorded by then, as
+      // it was before it named them.
+      const names = { projectName: null as string | null, taskTitle: null as string | null };
+      try {
+        if (row.project_id)
+          names.projectName = (await store.project.get(row.project_id))?.name ?? null;
+        if (row.task_id) names.taskTitle = (await store.task.get(row.task_id))?.title ?? null;
+      } catch {
+        // without the names the notification still goes, titled by the card alone
+      }
+      notifyLater(notifications.requestOpened(row, human.id, names), `request ${row.id}`);
       events.emit("inbox", {});
     }
     return row;
