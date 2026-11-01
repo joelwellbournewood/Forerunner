@@ -345,6 +345,8 @@ describe("the UI client against the real daemon", () => {
       status: "stopped",
       stopReason: "you",
       statusText: "Stopped by you",
+      // An ended session has no current task, whatever its log's last start says.
+      currentTask: null,
     });
     expect(stopped.summary).toBe('Stopped by you. "Half built page" is ready again.');
     const after = (await client.tasks(projectId)).find((t) => t.id === task.id);

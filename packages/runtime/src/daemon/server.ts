@@ -1288,7 +1288,8 @@ export function createDaemonApp(
       .filter((e) => e.type === "task.started" || e.type === "task.finished")
       .at(-1);
     const current =
-      last?.type === "task.started"
+      last?.type === "task.started" &&
+      !["completed", "stopped", "failed", "killed"].includes(s.status)
         ? {
             id: String((last.payload as { taskId: string }).taskId),
             title: String((last.payload as { title: string }).title),

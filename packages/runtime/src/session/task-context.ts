@@ -68,7 +68,11 @@ function quote(text: string, max = MAX_QUOTE_CHARS): string {
 }
 
 function firstLine(text: string, max = 200): string {
-  const line = (text.split(/\r?\n/).find((l) => l.trim()) ?? "").replace(/\*\*/g, "").trim();
+  // A report's first line often starts with its own heading ("**Summary** ..."): the words only.
+  const line = (text.split(/\r?\n/).find((l) => l.trim()) ?? "")
+    .replace(/\*\*/g, "")
+    .trim()
+    .replace(/^(summary|result|report)\s*:?\s+/i, "");
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 

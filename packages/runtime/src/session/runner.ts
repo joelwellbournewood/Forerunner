@@ -467,7 +467,8 @@ function inputField(input: unknown, ...keys: string[]): string {
  */
 export function stepLine(step: Extract<TaskStep, { kind: "tool" }>): string {
   const name = step.name.replace(/^cc:/, "").toLowerCase();
-  const path = inputField(step.input, "path", "file_path", "file");
+  const raw = inputField(step.input, "path", "file_path", "file");
+  const path = raw === "." || raw === "./" ? "" : raw;
   const cut = (s: string) => (s.length > 80 ? `${s.slice(0, 79)}…` : s);
   if (step.denied) return `was not allowed to use ${name.replace(/_/g, " ")}`;
   const failed = step.isError ? " (failed)" : "";

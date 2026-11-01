@@ -320,6 +320,7 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
     const executor: TaskExecutor = {
       async execute({ session, onStep }) {
         onStep?.({ kind: "model", costUsdMicro: 1_200 });
+        onStep?.({ kind: "tool", name: "list_dir", input: { path: "." }, isError: false });
         onStep?.({ kind: "tool", name: "read_file", input: { path: "README.md" }, isError: false });
         onStep?.({ kind: "model", costUsdMicro: 800 });
         onStep?.({
@@ -346,9 +347,14 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
     };
     await start(runner({ executor }));
     expect(midRun).toEqual({
-      steps: 5,
+      steps: 6,
       spent: 2_000,
-      lines: ["read README.md", "wrote index.html", "ran node --check script.js: failed"],
+      lines: [
+        "looked at the folder",
+        "read README.md",
+        "wrote index.html",
+        "ran node --check script.js: failed",
+      ],
     });
   });
 

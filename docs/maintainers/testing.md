@@ -2424,7 +2424,13 @@ smoke journey is `scripts/bench/journeys/smoke.cjs`. `scripts/bench/journeys/ses
 <bench> <label>` walks the session engine's acceptance (core-experience design §4): a 7-task chain
 (`FORERUNNER_BENCH_PLAN=chain`) started once from the Start dialog, then a hard daemon restart
 while a task runs, the session page after it and the next Start; its checks and the session
-results land in `steps/<label>-session-engine.json`.
+results land in `steps/<label>-session-engine.json`. `session-engine-failures.cjs <bench> <label>`
+restarts the daemon with each injection in turn on the same chain bench: a critic send-back
+(`FORERUNNER_BENCH_CRITIC_REJECT`, the rework accepted in the same session), a step that keeps
+failing (`FORERUNNER_BENCH_FAIL`, its retries in one session, one card, the steps after it not
+attempted) and a failed model call (`FORERUNNER_BENCH_FAIL_MODE=error`, the task reads "Claude
+did not answer (model call failed)."). The injections match task titles, so they name the chain
+plan's titles ("quote list", "random quote"), not "Step 3".
 
 Since a session reworks a sent-back task in the same session (design §4.3, ADR 0102), the e2e
 worlds see a task's whole retry ladder in one session: `RecordingPlanner` (`tests/e2e/src/world.ts`)
