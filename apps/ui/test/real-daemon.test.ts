@@ -1674,13 +1674,25 @@ describe("the UI client against the real daemon: a task a session is running", (
       first.startId,
       second.startId,
     ]);
-    // End the running task so nothing is left running.
+    // Leave nothing behind for the next test: drop the two waiting starts (they only drain on a
+    // scheduler tick, which this simulated clock fires whenever it happens to move), end the
+    // running task, and wait until the agent is free.
+    rt.scheduler.cancelPending(agentId, "test cleanup", second.startId);
+    rt.scheduler.cancelPending(agentId, "test cleanup", first.startId);
     const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
     await client.transitionTask(task.id, {
       version: row?.version ?? 0,
       to: "cancelled",
       reason: "Cancelled in the app",
     });
+    await eventually(
+      async () =>
+        !rt.scheduler.isActive(agentId) && rt.scheduler.pendingStarts(agentId).length === 0,
+      "the agent to be free",
+      async () =>
+        `active ${rt.scheduler.isActive(agentId)}, ${rt.scheduler.pendingStarts(agentId).length} waiting`,
+      10_000,
+    );
   });
 
   it("Stop on the running task: the row says Running with the agent's name; Stop ends that run and it is Paused by you (design §3.5)", async () => {
@@ -1692,12 +1704,15 @@ describe("the UI client against the real daemon: a task a session is running", (
       riskTier: 0,
     });
     const started = await client.startSession({ agentId, projectId: project.id });
+    // Started at once, not queued behind something an earlier test left.
+    expect(started.result).toBe("started");
     const sessionId = started.session?.id ?? "";
     const rowOf = async () => (await client.tasks(project.id)).find((t) => t.id === task.id);
     await eventually(
       async () => (await rowOf())?.display?.key === "running" && provider.calls.length === 4,
       "the task's run",
       async () => `${(await rowOf())?.status}, ${provider.calls.length} model call(s)`,
+      10_000,
     );
     const running = await rowOf();
     expect(running?.display).toMatchObject({ label: "Running", agentName: "Alice" });
