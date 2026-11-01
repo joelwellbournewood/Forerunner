@@ -2179,6 +2179,14 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
     const told = await line("What should we do first?");
     expect(told.reply).toContain("Settings → Accounts and keys → Open the setup assistant");
     expect(told.reply).not.toMatch(/fr setup/);
+    // It does not promise a session start (review of fix/chat: it listed "start a session",
+    // which refuses without Claude); that one says why at once, with no Yes/No card.
+    expect(told.reply).not.toContain("start a session");
+    const start = await line("start a session");
+    expect(start.pendingConfirmation).toBeNull();
+    expect(start.reply).toBe(
+      "Claude is not connected: planning and tasks need it. Connect Claude in Settings.",
+    );
   });
 
   it("the Start dialog's check says Claude is not connected, with the button that fixes it (design §3.6)", async () => {
@@ -2310,6 +2318,96 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     expect(after.waiting).toBeNull();
     // The read-back says what became of it.
     expect(after.turns[1]?.reply?.card).toBe("yes");
+    await rt.close();
+  }, 120_000);
+
+  // Review of fix/chat (2026-11-01): a "yes" after a card answered in this same chat said "it
+  // expired or was answered in the Inbox"; and a card answered "no" in the Inbox was shown in
+  // the conversation as "(you said yes)" (the Inbox's answer carries no verdict).
+  it("'yes' with nothing waiting says what is true: 'Yes to what?' after a Yes or a No here, what you said after an answer in the Inbox", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-yes-to-what-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const quote = await client.createProject({ name: "Quote page", goal: "A quote a day" });
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: quote.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    const faq = await client.createTask(quote.id, {
+      title: "Write the FAQ",
+      outcome: "A FAQ.",
+      acceptanceCriteria: [],
+      riskTier: 1,
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    // What the Tasks tab shows for the FAQ.
+    const status = async () =>
+      (await client.tasks(quote.id)).find((t) => t.id === faq.id)?.display?.label;
+
+    // No: the card's No, then "yes".
+    const first = await say("skip the FAQ task");
+    expect(first.pendingConfirmation?.readback).toMatch(/^Pause "Write the FAQ"\?/);
+    expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
+    expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
+    expect(await status()).toBe("Ready");
+
+    // Yes: the card's Yes, then "yes".
+    await say("skip the FAQ task");
+    expect((await say("yes")).actions.map((a) => a.kind)).toEqual(["task.pause"]);
+    expect(await status()).toBe("Paused by you");
+    expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
+
+    // The Inbox: the card answered there with the option the Inbox shows for "no".
+    const asked = await say("resume the FAQ task");
+    const id = asked.pendingConfirmation?.id ?? "";
+    const card = (await client.inbox(me.id)).requests.find((r) => r.id === id);
+    expect(card?.options).toEqual(["yes", "no"]);
+    await client.answerRequest(id, { version: card?.version ?? 0, answer: card?.options[1] ?? "" });
+    expect(await status()).toBe("Paused by you");
+    expect((await say("yes")).reply).toBe(
+      "You already answered the change I asked about in the Inbox: you said no. Nothing else is waiting for your yes.",
+    );
+    expect(await status()).toBe("Paused by you");
+
+    // What the conversation shows under each read-back.
+    const seen = await client.conversation(quote.id);
+    const cards = seen.turns.filter((t) => t.reply?.readback).map((t) => t.reply?.card);
+    expect(cards).toEqual(["no", "yes", "no"]);
+    expect(seen.waiting).toBeNull();
     await rt.close();
   }, 120_000);
 });

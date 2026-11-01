@@ -12,4 +12,4 @@ export const NO_MODEL_CREDENTIAL = `No Claude key or subscription is set up yet.
  * The chat's reply to a line only the model can answer, on an install without a credential:
  * the missing key, where to add it, and the commands Chat still runs without one.
  */
-export const NO_MODEL_CHAT_REPLY = `${NO_MODEL_CREDENTIAL} Until then I can still run commands that need no model: "add a task: …", "make this a task", "start a session" and "switch to <project>".`;
+export const NO_MODEL_CHAT_REPLY = `${NO_MODEL_CREDENTIAL} Until then I can still run commands that need no model: "add a task: …", "make this a task", "skip the … task" and "switch to <project>". A session needs Claude.`;

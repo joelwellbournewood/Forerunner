@@ -118,7 +118,11 @@ again as soon as the service answers.
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
   session, "summary". A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other
-  things, and "yes" with nothing waiting asks "Yes to what?". During a session a question is
+  things, and "yes" with nothing waiting asks "Yes to what?" (or, when the card it meant was
+  answered in the Inbox or expired, says so). Under each read-back the conversation says what
+  became of it: you said yes, you said no, or not answered. "start a session" when nothing can
+  start (Stop all is on, Claude is not connected, no task can run) says why at once, as the
+  Start dialog does. During a session a question is
   answered from what runs now; nothing you type is handed silently to the specialist. "Make
   this a task" under one of your own lines turns it into a ready task. Each project has its own
   conversation, kept by Forerunner: a reload or a restart keeps it, and **Talk** on this

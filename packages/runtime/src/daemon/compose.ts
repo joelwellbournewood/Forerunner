@@ -3132,7 +3132,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     return out;
   };
   // U-047: Chat exists without a model too. The commands its parser understands ("add a task:
-  // …", "make this a task", "start a session", "switch to …") need no model and run; a line
+  // …", "make this a task", "skip the … task", "switch to …") need no model and run (a session
+  // start says Claude is not connected, `startBlocked`); a line
   // only the model can answer is told the key is missing and where the setup assistant is.
   const conversation = new ConversationAgent({
     store,

@@ -1,13 +1,16 @@
+import type { SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import {
+  CARD_EXPIRED_REPLY,
   ConversationAgent,
-  NO_LONGER_WAITING_REPLY,
+  cardAnsweredReply,
   YES_TO_WHAT_REPLY,
 } from "../src/conversation/agent.ts";
 import { readTranscript } from "../src/conversation/transcript.ts";
+import { syncAnsweredCards } from "../src/loop/answered-cards.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import { flatPricing, harness } from "./helpers.ts";
 
@@ -23,6 +26,7 @@ import { flatPricing, harness } from "./helpers.ts";
 
 interface World {
   store: StateStore;
+  clock: SimulatedClock;
   human: string;
   alice: string;
   quote: string;
@@ -115,6 +119,7 @@ async function setup(replies: ScriptedReply[] = []): Promise<World> {
     });
   const w: World = {
     store,
+    clock: h.clock,
     human,
     alice,
     quote,
@@ -446,14 +451,100 @@ describe("a Yes/No card stays until it is answered (design §3.9)", () => {
     await w.store.close();
   });
 
-  it("'yes' after the card was answered elsewhere says it is no longer waiting", async () => {
+  it("'yes' after the card was answered elsewhere (Talk, the phone, Changes) says you answered it and what you said", async () => {
     const w = await setup();
     const card = await w.chat("start a session with 30 francs");
     const id = card.pendingConfirmation?.id ?? "";
     await w.commands.cancel(id, { kind: "human", id: w.human });
     const r = await w.chat("yes");
-    expect(r.reply).toBe(NO_LONGER_WAITING_REPLY);
+    expect(r.reply).toBe(cardAnsweredReply("elsewhere", "no"));
+    expect(r.reply).toBe(
+      "You already answered the change I asked about: you said no. Nothing else is waiting for your yes.",
+    );
     expect(w.provider.calls).toHaveLength(0);
+    await w.store.close();
+  });
+
+  // Review of fix/chat (2026-11-01): after a card was answered in this same chat, "yes" said
+  // "it expired or was answered in the Inbox", which was untrue; any read-back in the last 12
+  // turns made it so, whatever became of the card.
+  for (const answer of ["yes", "no"] as const) {
+    it(`'yes' after the card was answered here with '${answer}' asks 'Yes to what?'`, async () => {
+      const w = await setup();
+      const card = await w.chat("start a session with 30 francs");
+      expect(card.pendingConfirmation).not.toBeNull();
+      const answered = await w.chat(answer);
+      expect(answered.reply).toBe(
+        answer === "yes"
+          ? "Started a session on Quote Page (up to CHF 30)."
+          : "Cancelled; nothing was changed.",
+      );
+      const again = await w.chat("yes");
+      expect(again.reply).toBe(YES_TO_WHAT_REPLY);
+      expect(again.actions).toEqual([]);
+      expect(w.provider.calls).toHaveLength(0);
+      // A restart of the chat reads the same from the conversation.
+      w.restart();
+      expect((await w.chat("yes")).reply).toBe(YES_TO_WHAT_REPLY);
+      await w.store.close();
+    });
+  }
+
+  it("'yes' after the card was answered in the Inbox says so, with the option you chose there", async () => {
+    const w = await setup();
+    const card = await w.chat("start a session with 30 francs");
+    const id = card.pendingConfirmation?.id ?? "";
+    // The Inbox answers the request with one of the options it shows; the daemon's sync then
+    // takes the card out of the registry (`syncAnsweredCards`, as after POST /requests/:id/answer).
+    const row = await w.store.humanRequest.mustGet(id);
+    expect(row.options).toEqual(["yes", "no"]);
+    await w.store.humanRequest.answer(id, row.version, row.options[1] as string, w.human);
+    await syncAnsweredCards({
+      store: w.store,
+      commands: w.commands,
+      humanId: w.human,
+      deviceId: null,
+    });
+    expect(w.commands.pendingCard(id)).toBeNull();
+    const r = await w.chat("yes");
+    expect(r.reply).toBe(
+      "You already answered the change I asked about in the Inbox: you said no. Nothing else is waiting for your yes.",
+    );
+    expect(r.actions).toEqual([]);
+    expect(w.provider.calls).toHaveLength(0);
+    await w.store.close();
+  });
+
+  it("'yes' after the card expired says it expired and nothing was changed", async () => {
+    const w = await setup();
+    const card = await w.chat("start a session with 30 francs");
+    const id = card.pendingConfirmation?.id ?? "";
+    await w.clock.advance(11 * 60 * 1000);
+    expect(w.commands.pendingCard(id)).toBeNull();
+    expect((await w.store.humanRequest.mustGet(id)).status).toBe("expired");
+    const r = await w.chat("yes");
+    expect(r.reply).toBe(CARD_EXPIRED_REPLY);
+    expect(r.reply).toBe(
+      "The change I asked about expired before your yes, so nothing was changed. Ask again if you still want it.",
+    );
+    expect(w.provider.calls).toHaveLength(0);
+    await w.store.close();
+  });
+
+  it("a card read back more than 12 turns ago still waits after a restart, as the conversation shows it, and 'yes' runs it", async () => {
+    // Before, the chat looked for its card in the last 12 turns only, while the conversation
+    // (GET /projects/:id/conversation) shows the last 100: after a restart the card was shown
+    // with Yes and No, and "yes" answered "Yes to what?".
+    const lines = Array.from({ length: 13 }, (_, i) => `question ${i + 1}?`);
+    const w = await setup(lines.map((_, i) => textReply(`Answer ${i + 1}.`, { ttftMs: 0 })));
+    const asked = await w.chat("start a session with 30 francs");
+    const id = asked.pendingConfirmation?.id ?? "";
+    for (const line of lines) await w.chat(line);
+    expect(w.provider.calls).toHaveLength(13);
+    expect(w.commands.pendingCard(id)).not.toBeNull();
+    w.restart();
+    const r = await w.chat("yes");
+    expect(r.reply).toBe("Started a session on Quote Page (up to CHF 30).");
     await w.store.close();
   });
 

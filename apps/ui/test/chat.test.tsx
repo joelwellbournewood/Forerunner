@@ -207,6 +207,34 @@ describe("Quick chat", () => {
     await waitFor(() => expect(postedCalls(harness, "/chat/stream")).toHaveLength(2));
     const second = postedCalls(harness, "/chat/stream")[1]?.body as { text?: string } | undefined;
     expect(second?.text).toBe("no");
+    // A "yes" after the card was answered here asks what it is for.
+    await user.type(input, "yes");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(3));
+    expect(screen.getAllByTestId("chat-agent")[2]).toHaveTextContent(
+      "Yes to what? Nothing is waiting for your yes.",
+    );
+  });
+
+  // Review of fix/chat (2026-11-01): after "stop everything" in Chat the header showed no
+  // stopped bar until the window was reloaded (it read the kill state at start only).
+  it("'stop everything' shows the header's stopped bar at once; 'resume' takes it away", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    expect(screen.queryByTestId("kill-banner")).toBeNull();
+    await user.type(input, "stop everything");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-agent")).toHaveTextContent("Stopped every running session."),
+    );
+    await waitFor(() => expect(screen.getByTestId("kill-banner")).toBeInTheDocument());
+    await user.type(input, "resume");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByTestId("kill-banner")).toBeNull());
   });
 
   it("turns your own message into a ready task through the prefilled dialog (U-016); never an agent's reply", async () => {

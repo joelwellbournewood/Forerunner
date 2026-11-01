@@ -2188,6 +2188,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       state.pendingConfirmation = null;
       return { ...base, reply: "Cancelled. Nothing was started." };
     }
+    // A "yes" with nothing waiting never reaches the model (the daemon's `YES_TO_WHAT_REPLY`).
+    if (!state.pendingConfirmation && lower === "yes") {
+      return { ...base, reply: "Yes to what? Nothing is waiting for your yes." };
+    }
+    // "stop everything" is Stop all and "resume" lifts it, as the daemon's session.stop (scope
+    // all) and session.resume, with their sentences.
+    if (lower === "stop everything") {
+      state.killActive = true;
+      const sentence =
+        'Stopped every running session. No session starts until you say "resume" or press Allow sessions again.';
+      return {
+        ...base,
+        reply: sentence,
+        actions: [{ kind: "session.stop", summary: sentence, id: nextId("chg"), undoToken: null }],
+      };
+    }
+    if (lower === "resume") {
+      state.killActive = false;
+      const sentence =
+        'Sessions can start again. Say "start a session" to continue where it stopped.';
+      return {
+        ...base,
+        reply: sentence,
+        actions: [
+          { kind: "session.resume", summary: sentence, id: nextId("chg"), undoToken: null },
+        ],
+      };
+    }
     if (state.nextChatReply !== null) {
       const reply = state.nextChatReply;
       const actions = state.nextChatActions ?? [];

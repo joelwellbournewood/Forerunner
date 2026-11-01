@@ -18,6 +18,7 @@ import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType } from "zod";
+import { cardFate } from "../conversation/card-fate.ts";
 import { readTranscript, TRANSCRIPT_SHOW_LIMIT } from "../conversation/transcript.ts";
 import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
@@ -1801,25 +1802,14 @@ export function createDaemonApp(
     // The change still waiting for a yes: the newest read-back whose card the registry holds.
     const lastAsked = [...turns].reverse().find((t) => t.reply?.pendingId)?.reply?.pendingId;
     const live = lastAsked ? rt.commands.pendingCard(lastAsked) : null;
-    // What became of each read-back: its request row says whether it was answered and how.
+    // What became of each read-back: its request row says whether it was answered and how
+    // (`cardFate`: an Inbox "no" is a no, a yes the registry refused is still your yes).
     const cardStates = new Map<string, "waiting" | "yes" | "no" | "expired">();
     for (const t of turns) {
       const id = t.reply?.pendingId;
       if (!id || cardStates.has(id)) continue;
       const row = await rt.store.humanRequest.get(id);
-      const verdict = (row?.answer as { verdict?: unknown } | null | undefined)?.verdict;
-      cardStates.set(
-        id,
-        live && id === lastAsked
-          ? "waiting"
-          : row?.status === "answered"
-            ? verdict === "declined"
-              ? "no"
-              : verdict === "refused"
-                ? "expired"
-                : "yes"
-            : "expired",
-      );
+      cardStates.set(id, cardFate(row, !!live && id === lastAsked).state);
     }
     const undoable = new Map<string, boolean>();
     for (const t of turns)

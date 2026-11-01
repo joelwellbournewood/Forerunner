@@ -2044,7 +2044,9 @@ the Tasks tab's route does, U-039), `allowSessions` (`session.resume`: `KillSwit
 the `kill.resumed` event the header follows, as `POST /kill/resume`), `startBlocked`
 (`session.start` refuses a start that would do nothing with the Start dialog's sentence from
 `daemon/start-blocked.ts`, `startBlocked`, which `GET /projects/:id/start-check` uses too, and
-the dialog's button in words: 'Say "resume" to allow sessions again.'), `requestAnswered`
+the dialog's button in words: 'Say "resume" to allow sessions again.'; asked when the start is
+planned, so the chat says it at once with no Yes/No card, and again when it runs),
+`requestAnswered`
 (`syncApprovals`), `memory` (`memoryCommandPort`), `speak`, `modelSettings`, `emailMode`
 and `specialists` (`specialistCommandPort` over `RuntimeApp.specialistApprovals`, so
 `specialist.propose` reaches the C.5 approval gate; "The approval gate" under the specialist
@@ -2220,15 +2222,21 @@ in one project cancelled a task in another. Now:
 - **The conversation** (`src/conversation/transcript.ts`). Each `chat.human` and `chat.reply`
   carries `conversationProjectId` (the turn's `projectId`: the Chat tab's project, Talk's page,
   a voice session's; null for the conversation outside any project); a reply also carries
-  `actionDetails` (kind, sentence, change log id, undo token), its `question`, and the
-  `pendingId` and `readback` of a card it read back. `readTranscript(store, sessionId,
+  `actionDetails` (kind, sentence, change log id, undo token), its `question`, the
+  `pendingId` and `readback` of a card it read back, and `answeredId`, the card the turn
+  answered here (a yes, a no, or a stop that cancelled it). `readTranscript(store, sessionId,
   projectId)` reads one conversation's turns, newest last (rows written before the mark belong
   where their reply's `projectId` says, else outside any project). `GET
   /projects/:id/conversation` and `GET /conversation` serve them (`ConversationView`: each turn
   with the reply's text without its read-back, the changes with `canUndo` from the change log,
-  the read-back, whether its card still waits and what became of it (`card`: waiting, yes or
-  no from the request's answer, else expired); `waiting` is the card), so a reload, a restart,
-  the Chat tab and Talk show the same lines.
+  the read-back, whether its card still waits and what became of it (`card`, from
+  `cardFate` in `src/conversation/card-fate.ts`: waiting while the registry holds it; yes or no
+  from the request's answer, the executor's `verdict` (a yes it refused is still your yes) or
+  the option the Inbox sent (an Inbox "no" is a no; before, every answer without a verdict
+  showed as "you said yes"); else expired); `waiting` is the card), so a reload, a restart,
+  the Chat tab and Talk show the same lines. The agent reads as many turns as the view shows
+  (`TRANSCRIPT_SHOW_LIMIT`), so a card shown with Yes and No is the one a "yes" answers (before,
+  it looked 12 turns back, and after a restart a card further up answered "Yes to what?").
 - **History.** A model turn sends the last `HISTORY_TURNS` (12) turns of its conversation as
   alternating user and assistant messages within `historyMaxTokens` (default
   `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000, counted with the provider's counter; the oldest go
@@ -2257,9 +2265,14 @@ in one project cancelled a task in another. Now:
 - **Cards and undo per conversation.** The waiting card is the conversation's (`pendingOf`):
   another line does not drop it; a new read-back cancels the earlier card and says so; after a
   restart of the agent the card is found again from the conversation's last read-back while the
-  registry still holds it (`ConversationCommands.pendingCard`). "yes" with nothing waiting is
-  `YES_TO_WHAT_REPLY`, or `NO_LONGER_WAITING_REPLY` after the card expired or was answered in
-  the Inbox; neither reaches the model. "undo" undoes the newest change this conversation made
+  registry still holds it (`ConversationCommands.pendingCard`). "yes" with nothing waiting never
+  reaches the model and says what is true now (`nothingWaitingReply`, from the conversation's
+  last read-back): `YES_TO_WHAT_REPLY` when there is none or a later turn answered it here
+  (`answeredId`); `cardAnsweredReply("inbox" | "elsewhere", said)` when it was answered in the
+  Inbox or by the registry from Talk, the phone or Changes ("You already answered the change I
+  asked about in the Inbox: you said no. ..."); `CARD_EXPIRED_REPLY` when it expired unanswered.
+  Before (review of fix/chat), any read-back in the last 12 turns gave "it expired or was
+  answered in the Inbox", also after a Yes or a No in this chat. "undo" undoes the newest change this conversation made
   that can still be undone, else the project's newest (`CommandLoop.undo(null, turn,
   { projectId })`); "make this a task" takes the line before it in this conversation (the
   agent's answer, else the person's line; never a notice, a command's sentence or a read-back).

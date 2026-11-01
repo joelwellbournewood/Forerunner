@@ -91,6 +91,17 @@ function startSentence(s: StartPlan, outcome?: "started" | "queued" | "deferred"
   return `Started a session on ${name}${where} ${up}.`;
 }
 
+/**
+ * Design §3.6 and §3.9: a start that would do nothing (Stop all is on, Claude is not connected,
+ * nothing can run) is refused in words, as the Start dialog refuses it; before, the chat said
+ * "Started a session ... Undo." while nothing started. A phone's start is the PC's to judge.
+ */
+async function refuseBlockedStart(s: StartPlan, ctx: CommandContext): Promise<void> {
+  if (s.remote) return;
+  const blocked = await ctx.ports.startBlocked?.(s.resolved.project.id, s.budgetUsd);
+  if (blocked) throw new ForerunnerError("validation", blocked, { details: { blocked } });
+}
+
 /** The start as one question for the read-back (design §5, "Chat read-back"). */
 function startAsk(s: StartPlan): string {
   const where = s.runner === "cloud" ? " on the cloud runner" : "";
@@ -115,6 +126,10 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   actionClass: "non_routine",
   async plan(p, ctx) {
     const s = await startPlan(p, ctx);
+    // A start that would do nothing is refused before any card is shown: the chat says why at
+    // once, as the Start dialog does, instead of a Yes/No for a start that cannot happen (review
+    // of fix/chat). `run` checks again: the state may change while a card waits.
+    await refuseBlockedStart(s, ctx);
     const costly =
       s.budgetUsd > (ctx.ports.costlySessionUsdMicro ?? DEFAULT_COSTLY_SESSION_USD_MICRO);
     return buildCard({
@@ -137,13 +152,7 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   async run(p, ctx): Promise<CommandOutcome> {
     const s = await startPlan(p, ctx);
     const agentId = needAgent(ctx);
-    // Design §3.6 and §3.9: a start that would do nothing (Stop all is on, Claude is not
-    // connected, nothing can run) is refused in words, as the Start dialog refuses it; before,
-    // the chat said "Started a session ... Undo." while nothing started.
-    if (!s.remote) {
-      const blocked = await ctx.ports.startBlocked?.(s.resolved.project.id, s.budgetUsd);
-      if (blocked) throw new ForerunnerError("validation", blocked, { details: { blocked } });
-    }
+    await refuseBlockedStart(s, ctx);
     const reason = p.reason ?? `${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`;
     if (s.remote) {
       const row = await ctx.store.remoteCommand.enqueue({

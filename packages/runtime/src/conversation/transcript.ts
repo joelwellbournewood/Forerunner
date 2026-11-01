@@ -31,6 +31,11 @@ export interface TranscriptReply {
   pendingId: string | null;
   /** That card's read-back, as the reply's text ends with it. */
   readback: string | null;
+  /**
+   * The card this turn answered here (a yes, a no, or a stop that cancelled it): a later "yes"
+   * with nothing waiting is "Yes to what?", not a sentence about the Inbox or an expiry.
+   */
+  answered: string | null;
   /** A reply about the app (no model, a refusal), not an answer. */
   notice: boolean;
   /** What the turn cost (micro-USD); 0 for a command or a yes. */
@@ -96,6 +101,7 @@ function replyOf(p: Record<string, unknown>): TranscriptReply {
         : null,
     pendingId: typeof p.pendingId === "string" ? p.pendingId : null,
     readback: typeof p.readback === "string" && p.readback ? p.readback : null,
+    answered: typeof p.answeredId === "string" && p.answeredId ? p.answeredId : null,
     notice: p.notice === true,
     costUsdMicro: typeof p.costUsdMicro === "number" ? p.costUsdMicro : 0,
   };

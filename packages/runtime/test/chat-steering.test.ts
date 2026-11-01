@@ -190,12 +190,25 @@ describe("steering by chat (design §3.9)", () => {
       'Sessions are stopped (Stop all), so nothing can start. Say "resume" to allow sessions again.',
     );
     expect(start.actions).toEqual([]);
+    // A start that needs a yes (the default budget) says the reason at once too: no Yes/No card
+    // for a start that cannot happen (review of fix/chat: the card came first, the reason only
+    // after Yes, because the check ran in session.start's run and not its plan).
+    const asked = await say("start a session");
+    expect(asked.pendingConfirmation).toBeNull();
+    expect(asked.reply).toBe(
+      'Sessions are stopped (Stop all), so nothing can start. Say "resume" to allow sessions again.',
+    );
+    expect(asked.actions).toEqual([]);
     const resume = await say("resume");
     expect(resume.actions.map((a) => a.kind)).toEqual(["session.resume"]);
     expect(resume.reply).toBe(
       'Sessions can start again. Say "start a session" to continue where it stopped.',
     );
     expect(rt.kill.isFrozen({ agentId: rt.agent.id })).toBe(false);
+    // The same line asks for its yes once a session can start.
+    const card = await say("start a session");
+    expect(card.pendingConfirmation?.readback).toMatch(/^Start a session on Quote page \(up to /);
+    expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
   });
 
   it("typed 'summary' and 'summarise the last session' answer in text: no voice error, one spend figure", async () => {

@@ -11,6 +11,9 @@ import {
 } from "../store/conversation.ts";
 import { Button, INPUT_CLASS, Money } from "./ui.tsx";
 
+/** The chat's commands that may switch Stop all on or off. */
+const KILL_COMMANDS = new Set(["session.stop", "session.resume"]);
+
 /** The three example phrases under the input (design §3.9). */
 export const EXAMPLE_PHRASES = ["what is left?", "add a task: …", "stop after this task"] as const;
 
@@ -95,6 +98,15 @@ export function Conversation({
       );
       await loadConversation(client, store, projectId);
       update((c) => ({ ...c, live: null }));
+      // "stop everything" (Stop all) and "resume" switch the kill state: the header's bar
+      // follows at once (before, it read the kill state only at start, so the bar came with
+      // the next reload).
+      if (reply.actions.some((a) => a.kind.split("+").some((k) => KILL_COMMANDS.has(k)))) {
+        void client
+          .health()
+          .then((health) => store.dispatch({ type: "killActive", active: health.killActive }))
+          .catch(() => {});
+      }
       if (reply.activeProjectId && reply.activeProjectId !== store.getState().activeProjectId) {
         store.dispatch({ type: "activeProject", id: reply.activeProjectId });
       }

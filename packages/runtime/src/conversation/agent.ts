@@ -37,6 +37,7 @@ import {
 import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CHAT_REPLY } from "../setup/no-model.ts";
 import { isYes } from "../wiring/state-ports.ts";
+import { cardFate } from "./card-fate.ts";
 import {
   cardLine,
   cardNames,
@@ -50,9 +51,9 @@ import { readTools } from "./read-tools.ts";
 import { completeSentencesOf, SentenceGate } from "./sentences.ts";
 import {
   DEFAULT_CHAT_HISTORY_TOKENS,
-  HISTORY_TURNS,
   historyMessages,
   readTranscript,
+  TRANSCRIPT_SHOW_LIMIT,
   type TranscriptTurn,
 } from "./transcript.ts";
 
@@ -300,11 +301,29 @@ function changesOf(turns: readonly TranscriptTurn[]): string[] {
   return out;
 }
 
-/** A "yes" when nothing waits for one (design §3.9). */
+/**
+ * Whether this yes or no answered the card: not when the registry no longer held it (it expired
+ * or was answered elsewhere a moment before) or another answer to it was in flight.
+ */
+function answeredBy(r: CommandResultView): boolean {
+  return !(r.status === "refused" && (r.code === "not_found" || r.code === "version_conflict"));
+}
+
+/**
+ * A "yes" when nothing waits for one (design §3.9): no card was read back in this conversation,
+ * or the last one was answered here (a yes, a no, a stop).
+ */
 export const YES_TO_WHAT_REPLY = "Yes to what? Nothing is waiting for your yes.";
-/** A "yes" after the card it meant expired or was answered elsewhere. */
-export const NO_LONGER_WAITING_REPLY =
-  "The change I asked about is no longer waiting for your yes: it expired or was answered in the Inbox. Ask again if you still want it.";
+/** A "yes" after the card it meant expired unanswered (its ten minutes, a restart). */
+export const CARD_EXPIRED_REPLY =
+  "The change I asked about expired before your yes, so nothing was changed. Ask again if you still want it.";
+/**
+ * A "yes" after the card it meant was answered somewhere else: in the Inbox, or by the registry
+ * from Talk, the phone or Changes. It says what was answered there (true now, design §5 rule 4).
+ */
+export function cardAnsweredReply(where: "inbox" | "elsewhere", said: "yes" | "no"): string {
+  return `You already answered the change I asked about${where === "inbox" ? " in the Inbox" : ""}: you said ${said}. Nothing else is waiting for your yes.`;
+}
 
 const DEFAULT_PROMPT = `You are the conversation agent speaking for the human's principal agent in Forerunner.
 Answer in one to three short sentences. Every change goes through the command tools (one per
@@ -473,9 +492,12 @@ export class ConversationAgent {
     conv.lastTurnAt = clock.now();
     const sessionId = await this.conversationSession(agent.id, projectId);
     const transcriptId = newId(clock.now());
-    // The conversation so far (oldest first), read before this line is written.
+    // The conversation so far (oldest first), read before this line is written: as many turns
+    // as the conversation shows (`GET /projects/:id/conversation`), so a card shown there
+    // with Yes and No is the one a "yes" here answers; a model turn carries the last
+    // `HISTORY_TURNS` of them (`historyMessages`).
     const earlier = await readTranscript(store, sessionId, conversationProject, {
-      limit: HISTORY_TURNS,
+      limit: TRANSCRIPT_SHOW_LIMIT,
     });
     await store.event.append(sessionId, "chat.human", {
       transcriptId,
@@ -496,6 +518,8 @@ export class ConversationAgent {
     };
     /** Set when a stop cancelled the pending card on its way to the registry (spec O.9). */
     let cancelledForStop = false;
+    /** The card this turn answered here (a yes, a no, a stop), kept on the reply. */
+    let answeredHere: string | null = null;
     const finish = async (
       text: string,
       actions: ChatAction[],
@@ -509,6 +533,7 @@ export class ConversationAgent {
         text: reply,
         conversationProjectId: conversationProject,
         ...(meta.notice ? { notice: true } : {}),
+        ...(answeredHere ? { answeredId: answeredHere } : {}),
         actions: actions.map((a) => a.kind),
         actionDetails: actions,
         ...(extra.question ? { question: extra.question } : {}),
@@ -557,6 +582,7 @@ export class ConversationAgent {
           stop: true,
         } as never);
         cancelledForStop = true;
+        if (answeredBy(r)) answeredHere = pending.id;
       } else if (isYes(req.text) || NO_RE.test(req.text)) {
         this.pending.delete(pendingKey);
         const r = await this.deps.commands.confirmByText(pending.id, req.text, turn);
@@ -567,15 +593,17 @@ export class ConversationAgent {
           words: req.text,
           status: r.status,
         } as never);
+        if (answeredBy(r)) answeredHere = pending.id;
         const actions = this.actionsOf(r, pending.commands);
         return finish(this.sentenceOf(r, "Confirmed"), actions);
       }
       // Anything else leaves the card waiting: the line is answered below, and the card's Yes
       // and No stay until it is answered or another change read back replaces it.
     } else if (this.deps.commands && isYes(req.text)) {
-      // A "yes" with nothing waiting (design §3.9) is never handed to the model as a bare word.
-      const asked = [...earlier].reverse().find((t) => t.reply?.pendingId);
-      return finish(asked ? NO_LONGER_WAITING_REPLY : YES_TO_WHAT_REPLY, [], {}, { notice: true });
+      // A "yes" with nothing waiting (design §3.9) is never handed to the model as a bare word,
+      // and what it says is true now: "Yes to what?" unless the last card read back here was
+      // answered somewhere else or expired, which it then says.
+      return finish(await this.nothingWaitingReply(earlier), [], {}, { notice: true });
     }
 
     // "undo" undoes the latest change this conversation made that can still be undone (spec
@@ -889,6 +917,7 @@ export class ConversationAgent {
         // The conversation the turn belongs to (design §3.9), read back by `readTranscript`.
         conversationProjectId: conversationProject,
         ...(pendingCard ? { pendingId: pendingCard.id, readback: pendingCard.readback } : {}),
+        ...(answeredHere ? { answeredId: answeredHere } : {}),
         costUsdMicro: result.costUsdMicro,
         // "truncated": the model stopped at max_tokens and the reply was trimmed to its last
         // full sentence; the stop reason of the turn's last model call says why it ended.
@@ -955,6 +984,31 @@ export class ConversationAgent {
     };
     this.pending.set(key, card);
     return card;
+  }
+
+  /**
+   * The reply to a "yes" with no card waiting (design §3.9, §5 rule 4). The last card this
+   * conversation read back decides it: none, or answered here (a later turn says it answered
+   * it: a yes, a no, a stop), is "Yes to what?"; answered in the Inbox or elsewhere says so and
+   * what was said there; anything else expired unanswered. Before (review of fix/chat), any
+   * read-back in the last 12 turns gave "it expired or was answered in the Inbox", also for a
+   * card answered with Yes or No in this chat a moment before.
+   */
+  private async nothingWaitingReply(earlier: readonly TranscriptTurn[]): Promise<string> {
+    let at = -1;
+    for (let i = earlier.length - 1; i >= 0; i--)
+      if (earlier[i]?.reply?.pendingId) {
+        at = i;
+        break;
+      }
+    const id = at >= 0 ? earlier[at]?.reply?.pendingId : null;
+    if (!id) return YES_TO_WHAT_REPLY;
+    if (earlier.slice(at + 1).some((t) => t.reply?.answered === id)) return YES_TO_WHAT_REPLY;
+    const row = await this.deps.store.humanRequest.get(id).catch(() => undefined);
+    const fate = cardFate(row, false);
+    if (fate.state === "yes" || fate.state === "no")
+      return cardAnsweredReply(fate.where === "inbox" ? "inbox" : "elsewhere", fate.state);
+    return CARD_EXPIRED_REPLY;
   }
 
   /**
