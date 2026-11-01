@@ -95,6 +95,7 @@ export function AppProvider({
             ...(realtime?.audio ? { audio: realtime.audio } : {}),
           })
         : null;
+    const liveProjects = coalescedRefresh(() => refreshProjects(client, store));
     void bootstrapStore(client, store, controller.signal).then((ok) => {
       if (controller.signal.aborted) return;
       if (!ok) {
@@ -115,10 +116,24 @@ export function AppProvider({
               announcer?.started(event.data);
             } else if (event.event === "inbox.changed") {
               // The header counts every card that needs you (design §3.8).
-              store.dispatch({
-                type: "blockingCount",
-                count: event.data.needsYouCount ?? event.data.blockingCount,
-              });
+              const count = event.data.needsYouCount ?? event.data.blockingCount;
+              const changed = count !== store.getState().blockingCount;
+              store.dispatch({ type: "blockingCount", count });
+              // A card came or went: the projects' status sentences follow (design §3.2: Home
+              // follows inbox.changed without a reload).
+              // Polling sends the count every few seconds: re-read only when it moved there.
+              if (changed || store.getState().connection.streamMode === "sse")
+                liveProjects.refresh();
+            } else if (event.event === "session.activity") {
+              // A session began or ended (or Stop all): the running chip, Home's Working now
+              // and the project headers follow (design §3.2).
+              if (/^(session\.(started|ended|stopped)|kill)/.test(event.data.type))
+                liveProjects.refresh();
+            } else if (event.event === "session.changed") {
+              // Polling reads the running sessions: one that is new, or one that ended, moves
+              // the project cards.
+              const p = store.getState().projects.find((x) => x.id === event.data.projectId);
+              if (p && (p.working?.sessionId ?? null) !== event.data.id) liveProjects.refresh();
             } else if (event.event === "project.changed") {
               void client
                 .project(event.data.id)
@@ -399,6 +414,32 @@ export async function switchActiveProject(
   } catch {
     // the next start reads the record
   }
+}
+
+/**
+ * A refresh that never runs twice at once: a call while one is in flight runs once more after
+ * it, so a burst of events reads the projects at most twice and the last read is fresh.
+ */
+export function coalescedRefresh(run: () => Promise<void>): { refresh: () => void } {
+  let running = false;
+  let again = false;
+  const refresh = () => {
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
+    void run()
+      .catch(() => {})
+      .finally(() => {
+        running = false;
+        if (again) {
+          again = false;
+          refresh();
+        }
+      });
+  };
+  return { refresh };
 }
 
 /** Reload the project list (after a create, a transition, or a project.changed event). */

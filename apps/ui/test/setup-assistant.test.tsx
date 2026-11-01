@@ -181,7 +181,8 @@ describe("setup assistant", () => {
     expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 200));
     expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("link", { name: "Memory" }));
+    await user.click(screen.getByTestId("more-nav"));
+    await user.click(await screen.findByRole("menuitem", { name: "Memory" }));
     await new Promise((r) => setTimeout(r, 200));
     expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
     // Settings → Accounts and keys still opens it.

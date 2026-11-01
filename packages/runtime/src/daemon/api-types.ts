@@ -875,6 +875,40 @@ export const DocContentView = z.object({
 });
 export type DocContentView = z.infer<typeof DocContentView>;
 
+/** One file or folder of the project (design §3.10), its path relative to the folder. */
+export const ProjectFileEntryView = z.object({
+  /** Relative to the project's folder, with forward slashes ("site/index.html"). */
+  path: z.string(),
+  kind: z.enum(["file", "dir"]),
+  sizeBytes: z.number().int(),
+  updatedAt: z.string(),
+});
+export type ProjectFileEntryView = z.infer<typeof ProjectFileEntryView>;
+
+/**
+ * `GET /projects/:id/files` (design §3.10): the folder the project's files are in on this
+ * computer (null before anything was written) and what is in it, read-only, without `.git`,
+ * `node_modules` and the install marker; at most 2000 entries (`truncated` says when cut).
+ */
+export const ProjectFilesView = z.object({
+  folder: z.string().nullable(),
+  entries: z.array(ProjectFileEntryView),
+  truncated: z.boolean(),
+});
+export type ProjectFilesView = z.infer<typeof ProjectFilesView>;
+
+/** `GET /projects/:id/files/:path`: one file's text, read-only; null for a file that is not text. */
+export const ProjectFileContentView = z.object({
+  path: z.string(),
+  content: z.string().nullable(),
+  sizeBytes: z.number().int(),
+  updatedAt: z.string(),
+  binary: z.boolean(),
+  /** The text was cut at 256 KiB. */
+  truncated: z.boolean(),
+});
+export type ProjectFileContentView = z.infer<typeof ProjectFileContentView>;
+
 export const KillBody = z.object({
   scope: z.union([
     z.literal("all"),
@@ -1349,6 +1383,12 @@ export const HumanView = z.object({
    * header, the palette, chat, voice or the phone. The header shows it at start.
    */
   activeProjectId: z.string().nullable().optional(),
+  /**
+   * The model provider in force (`anthropic`, a stand-in), null without a working Claude
+   * credential: the shell then says "Claude is not connected" (design §3.1). Absent from an
+   * older daemon.
+   */
+  provider: z.string().nullable().optional(),
 });
 
 export const SettingView = z.object({
@@ -2506,7 +2546,11 @@ export const DAEMON_ROUTES = {
   dismissQueueItem:
     "POST /queue/:id/dismiss (QueueItemView: dismissed; 409 conflict when it is no longer queued, 403 forbidden for another human's item)",
   docs: "GET /projects/:id/docs (DocView[]: the standard doc set in order, read from the project's linked folder, this install's docs clone or its workspace, without fetching; drift from the open critic findings)",
-  doc: "GET /projects/:id/docs/:path (DocContentView: one doc of the set, the path URL-encoded; 404 for a path outside the set or a doc not written yet)",
+  doc: "GET /projects/:id/docs/:path (DocContentView: one doc of the set or a decision record docs/decisions/<name>.md, the path URL-encoded; 404 for a path outside them or a doc not written yet)",
+  projectFiles:
+    "GET /projects/:id/files (ProjectFilesView: the project's folder on this computer and its files and folders, read-only, without .git and node_modules; folder null before anything was written; design §3.10)",
+  projectFile:
+    "GET /projects/:id/files/:path (ProjectFileContentView: one file's text under the folder, the path URL-encoded; content null for a file that is not text; 404 for a path that leaves the folder or does not exist)",
   milestones:
     "GET /projects/:id/milestones (MilestoneView[] in planning order, each with the reason and author of its last change, spec B.5; 404 for an unknown project)",
   changeMilestone:

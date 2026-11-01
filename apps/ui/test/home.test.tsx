@@ -92,7 +92,7 @@ describe("Home", () => {
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Gamma");
   });
 
-  it("shows the not-connected state when the daemon is unreachable", async () => {
+  it("shows the not-connected state when the daemon is unreachable; no Stop all while nothing runs (design §3.1)", async () => {
     const harness = createHarness();
     const broken = {
       ...harness.client,
@@ -101,6 +101,6 @@ describe("Home", () => {
     renderApp("/", { ...harness, client: broken });
     expect(await screen.findByTestId("not-connected")).toHaveTextContent(/Not connected/);
     expect(screen.getByTestId("active-project")).toHaveTextContent("No active project");
-    expect(screen.getByTestId("kill-switch")).toBeEnabled();
+    expect(screen.queryByTestId("kill-switch")).toBeNull();
   });
 });

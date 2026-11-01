@@ -102,6 +102,11 @@ import {
   PlanAllowanceView as PlanAllowanceViewSchema,
   type ProjectCard,
   ProjectCard as ProjectCardSchema,
+  type ProjectFileContentView,
+  ProjectFileContentView as ProjectFileContentViewSchema,
+  type ProjectFileEntryView,
+  type ProjectFilesView,
+  ProjectFilesView as ProjectFilesViewSchema,
   type ProjectSummary,
   ProjectSummary as ProjectSummarySchema,
   type RemoveSourceView,
@@ -303,6 +308,9 @@ export type {
   PerformanceView,
   PlanAllowanceView,
   ProjectCard,
+  ProjectFileContentView,
+  ProjectFileEntryView,
+  ProjectFilesView,
   ProjectSettingsView,
   ProjectSummary,
   QueueItemView,
@@ -770,6 +778,14 @@ export interface DaemonClient {
   importProject(projectId: string, body: ImportInput): Promise<ImportResultView>;
   docs(projectId: string, signal?: AbortSignal): Promise<DocView[]>;
   doc(projectId: string, path: string, signal?: AbortSignal): Promise<DocContentView>;
+  /** The Files tab (design §3.10): the project's folder and what is in it, read-only. */
+  projectFiles(projectId: string, signal?: AbortSignal): Promise<ProjectFilesView>;
+  /** One file of the project's folder, its text inline (null when it is not text). */
+  projectFile(
+    projectId: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<ProjectFileContentView>;
   /** The Performance view (spec D.7, D.19); `days` is the window, 7 by default, at most 90. */
   performance(
     filter?: { projectId?: string; days?: number },
@@ -1222,6 +1238,15 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("docs", { id: projectId }), DocList, undefined, signal),
     doc: (projectId, path, signal) =>
       get(routePath("doc", { id: projectId, path }), DocContentViewSchema, undefined, signal),
+    projectFiles: (projectId, signal) =>
+      get(routePath("projectFiles", { id: projectId }), ProjectFilesViewSchema, undefined, signal),
+    projectFile: (projectId, path, signal) =>
+      get(
+        routePath("projectFile", { id: projectId, path }),
+        ProjectFileContentViewSchema,
+        undefined,
+        signal,
+      ),
     performance: (filter, signal) =>
       get(
         routePath("performance"),

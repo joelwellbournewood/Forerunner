@@ -4239,6 +4239,21 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   `lastSession.changedFiles` (the last session's `task.files` events). The UI fake computes
   both with the same functions. Tests: `test/project-status.test.ts`, and the real-daemon case
   "project status sentence" in `apps/ui/test/real-daemon.test.ts`.
+- `/me` names the provider in force (`provider`, null without a model): the shell's "Claude is
+  not connected" bar reads it.
+
+### The project's files (design §3.10; `daemon/docs-routes.ts`)
+
+`GET /projects/:id/files` lists the project's folder (the first of `docsDirsFor`; `folder`
+null when none exists yet) depth first in name order with sizes and change dates, without
+`.git`, `node_modules` and `.forerunner`, links not followed, at most 2000 entries
+(`truncated`). `GET /projects/:id/files/:path` (the path URL-encoded) answers one file's text
+(cut at 256 KiB; `binary` with `content: null` when its first 8 KiB hold a NUL byte);
+`fileUnder` refuses an absolute path, a drive, an empty, `.` or `..` segment, a skipped folder
+and anything whose real path leaves the folder's real path, as 404. `GET
+/projects/:id/docs/:path` also opens a decision record (`DECISION_RECORD`,
+`docs/decisions/<name>.md`), which the Overview's Decisions link to. Both are read-only; the
+real-daemon case "files: the project's folder" covers them.
 
 ## How to change it
 

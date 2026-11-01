@@ -37,7 +37,9 @@ describe("Updates screen", () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/", harness);
-    await user.click(await screen.findByRole("link", { name: "Updates" }));
+    // Updates is behind More (design §6).
+    await user.click(await screen.findByTestId("more-nav"));
+    await user.click(await screen.findByRole("menuitem", { name: "Updates" }));
     expect(await screen.findByTestId("updates-check")).toHaveTextContent("Check for updates");
     expect(postedCalls(harness, "/updates/check")).toHaveLength(0);
   });

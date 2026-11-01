@@ -284,6 +284,52 @@ describe("the UI client against the real daemon", () => {
     expect(content.content).toContain("Contract");
   });
 
+  it("files: the project's folder and what the work wrote, one file's text, nothing outside it; Docs opens a decision record (design §3.10)", async () => {
+    const card = await client.project(projectId);
+    const listed = await client.projectFiles(projectId);
+    // The folder the card names is the one listed: the project's workspace here.
+    expect(listed.folder).toBeTruthy();
+    expect(listed.folder).toBe(card.folder);
+    const folder = listed.folder ?? "";
+    // What a specialist writes there, a folder with a file and a file that is not text.
+    mkdirSync(join(folder, "site"), { recursive: true });
+    writeFileSync(join(folder, "site", "index.html"), "<!doctype html><h1>Quotes</h1>\n");
+    writeFileSync(join(folder, "logo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));
+    mkdirSync(join(folder, "node_modules", "x"), { recursive: true });
+    writeFileSync(join(folder, "node_modules", "x", "index.js"), "skip me");
+    const after = await client.projectFiles(projectId);
+    const paths = after.entries.map((e) => e.path);
+    expect(paths).toEqual(expect.arrayContaining(["README.md", "site", "site/index.html"]));
+    expect(after.entries.find((e) => e.path === "site")?.kind).toBe("dir");
+    expect(paths.some((p) => p.startsWith("node_modules") || p.startsWith(".git"))).toBe(false);
+    const page = await client.projectFile(projectId, "site/index.html");
+    expect(page).toMatchObject({ path: "site/index.html", binary: false });
+    expect(page.content).toContain("<h1>Quotes</h1>");
+    const logo = await client.projectFile(projectId, "logo.png");
+    expect(logo).toMatchObject({ binary: true, content: null });
+    // A path that leaves the folder is refused, whatever its form.
+    for (const outside of [
+      "../daemon.json",
+      "/etc/passwd",
+      "site/../../x",
+      "node_modules/x/index.js",
+    ]) {
+      const refused = await client.projectFile(projectId, outside).catch((e: unknown) => e);
+      expect(refused, outside).toBeInstanceOf(ApiError);
+      expect((refused as ApiError).status, outside).toBe(404);
+    }
+    // Docs opens a decision record, not only the standard set (walk: "not one of the docs").
+    mkdirSync(join(folder, "docs", "decisions"), { recursive: true });
+    writeFileSync(
+      join(folder, "docs", "decisions", "0001-where-it-is-published.md"),
+      "# 0001 Where it is published\n\nOnly as a local file for now.\n",
+    );
+    const record = await client.doc(projectId, "docs/decisions/0001-where-it-is-published.md");
+    expect(record.content).toContain("Only as a local file for now.");
+    const notADoc = await client.doc(projectId, "site/index.html").catch((e: unknown) => e);
+    expect((notADoc as ApiError).status).toBe(404);
+  });
+
   it("rename the agent: Settings' call renames the principal and /me and /agents follow (U-025)", async () => {
     const renamed = await client.renameAgent(agentId, "  Robin  ");
     expect(renamed).toMatchObject({ id: agentId, name: "Robin", ownerHumanId: humanId });
@@ -1113,6 +1159,8 @@ describe("the UI client against the real daemon", () => {
     });
     expect(ready.progress).toEqual({ done: 0, total: 2 });
     expect(ready.working).toBeNull();
+    // A model is in force here: /me names it, so the header shows no "not connected" bar.
+    expect(typeof (await client.me()).provider).toBe("string");
     // The list Home reads carries the same sentence.
     expect((await client.projects()).find((p) => p.id === own.id)?.statusLine?.text).toBe(
       "Ready to continue: 1 task ready",
@@ -2974,6 +3022,10 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
     expect(start.reply).toBe(
       "Claude is not connected: planning and tasks need it. Connect Claude in Settings.",
     );
+  });
+
+  it("/me says no provider is in force, which the header's no-key bar reads (design §3.1)", async () => {
+    expect((await client.me()).provider).toBeNull();
   });
 
   it("the Start dialog's check says Claude is not connected, with the button that fixes it (design §3.6)", async () => {

@@ -8,13 +8,13 @@ import { createFakeDaemon } from "./fake-daemon.ts";
 import { fetchFromApp, testConfig } from "./helpers.tsx";
 
 describe("App shell", () => {
-  it("always shows the active project slot and the kill switch, even with no daemon", async () => {
+  it("always shows the active project slot, even with no daemon; Stop all only while something runs (design §3.1)", async () => {
     const client = createClient(testConfig(null), async () => {
       throw new TypeError("fetch failed");
     });
     render(<App client={client} store={createStore(testConfig(null), memoryStorage())} />);
     expect(screen.getByTestId("active-project")).toHaveTextContent("No active project");
-    expect(screen.getByTestId("kill-switch")).toBeEnabled();
+    expect(screen.queryByTestId("kill-switch")).toBeNull();
     expect(await screen.findByTestId("not-connected")).toBeInTheDocument();
     expect(screen.getByTestId("connection-status")).toHaveTextContent("not connected");
   });

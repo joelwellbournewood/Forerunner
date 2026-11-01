@@ -5785,6 +5785,53 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const doc = DOC_CONTENTS[c.req.param("path")];
     return doc ? c.json(doc) : errorBody(c, 404, "not_found", "no such doc");
   });
+  // The Files tab (design §3.10), as the daemon's docs-routes.ts answers it: the folder and
+  // its files with every folder on their path, and one file's text; a path that leaves the
+  // folder is 404.
+  app.get("/projects/:id/files", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id))
+      return errorBody(c, 404, "not_found", "no such project");
+    const folder = state.folders[id] ?? null;
+    const files = folder ? (state.files[id] ?? []) : [];
+    const dirs = new Map<string, string>();
+    for (const f of files) {
+      const parts = f.path.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        const dir = parts.slice(0, i).join("/");
+        if (!dirs.has(dir) || (dirs.get(dir) ?? "") < f.updatedAt) dirs.set(dir, f.updatedAt);
+      }
+    }
+    const entries = [
+      ...[...dirs].map(([path, updatedAt]) => ({
+        path,
+        kind: "dir" as const,
+        sizeBytes: 0,
+        updatedAt,
+      })),
+      ...files.map((f) => ({
+        path: f.path,
+        kind: "file" as const,
+        sizeBytes: f.content?.length ?? 2048,
+        updatedAt: f.updatedAt,
+      })),
+    ].sort((a, b) => a.path.localeCompare(b.path));
+    return c.json({ folder, entries, truncated: false });
+  });
+  app.get("/projects/:id/files/:path", (c) => {
+    const id = c.req.param("id");
+    const rel = c.req.param("path");
+    const f = (state.folders[id] ? (state.files[id] ?? []) : []).find((x) => x.path === rel);
+    if (!f) return errorBody(c, 404, "not_found", `${rel} is not a file of this project`);
+    return c.json({
+      path: f.path,
+      content: f.content,
+      sizeBytes: f.content?.length ?? 2048,
+      updatedAt: f.updatedAt,
+      binary: f.content === null,
+      truncated: false,
+    });
+  });
 
   // The daemon's `GET /performance` (runtime daemon/views.ts `performanceView`): the fixture in
   // the runtime shape, with the window and the project of the query; a bad `days` is 400 and an
@@ -5849,6 +5896,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       let open = true;
       const listener: Listener = (event, data) => {
         if (!open) return;
+        // As the daemon's install-wide stream (server.ts `onSession`): what happened in a
+        // session travels as `session.changed` with `{ type, payload }`, never a session view
+        // and never the log line itself (that is the session's own stream).
+        if (event === "session.event") {
+          const ev = data as EventView;
+          void stream.writeSSE({
+            event: "session.changed",
+            data: JSON.stringify({ type: ev.type, payload: ev.payload ?? {} }),
+          });
+          return;
+        }
+        if (event === "session.changed") {
+          const view = data as SessionView;
+          const type = ["completed", "stopped", "failed", "killed"].includes(view.status)
+            ? "session.ended"
+            : view.status === "running"
+              ? "session.started"
+              : "session.updated";
+          void stream.writeSSE({
+            event: "session.changed",
+            data: JSON.stringify({ type, payload: { sessionId: view.id } }),
+          });
+          if (view.projectId)
+            void stream.writeSSE({
+              event: "project.changed",
+              data: JSON.stringify({ id: view.projectId }),
+            });
+          return;
+        }
         void stream.writeSSE({ event, data: JSON.stringify(data) });
       };
       state.listeners.add(listener);

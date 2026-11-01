@@ -111,7 +111,30 @@ describe("Shell", () => {
     fireEvent.keyDown(window, { key: "g" });
     fireEvent.keyDown(window, { key: "u" });
     expect(await screen.findByRole("heading", { name: "Updates" })).toBeInTheDocument();
-    expect(screen.getByTestId("main-nav")).toHaveTextContent("ChangesPerformanceUpdates");
+  });
+
+  it("the bar is Home, Inbox, More and the Settings gear; the other screens are one click away under More (design §3.1, §6)", async () => {
+    const user = userEvent.setup();
+    renderApp("/");
+    await screen.findAllByTestId("project-card");
+    const nav = screen.getByTestId("main-nav");
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((l) => l.textContent?.replace(/\d+$/, "")),
+    ).toEqual(["Home", "Inbox"]);
+    expect(nav).not.toHaveTextContent(/Memory|Extensions|Changes|Performance|Updates/);
+    await user.click(within(nav).getByTestId("more-nav"));
+    const more = await screen.findByTestId("more-menu");
+    expect(
+      within(more)
+        .getAllByRole("menuitem")
+        .map((l) => l.textContent),
+    ).toEqual(["Memory", "Extensions", "Changes", "Performance", "Updates"]);
+    await user.click(within(more).getByText("Changes"));
+    expect(await screen.findByRole("heading", { name: "Changes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("switches project from the header dropdown", async () => {
@@ -124,19 +147,32 @@ describe("Shell", () => {
     await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Beacon"));
   });
 
-  it("stops everything with the kill switch and resumes on the second click", async () => {
+  it("Stop all shows only while a session runs, asks once, and the stopped bar allows sessions again (design §3.1)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
-    renderApp("/", harness);
+    renderApp("/", harness, { pollIntervalMs: 40 });
     await screen.findAllByTestId("project-card");
+    // Nothing runs: no red Stop all.
+    expect(screen.queryByTestId("kill-switch")).toBeNull();
+    const running = { ...harness.daemon.state.sessions[0], id: "sess_live", status: "running" };
+    harness.daemon.state.sessions.push(running as (typeof harness.daemon.state.sessions)[0]);
+    await waitFor(() =>
+      expect(screen.getByTestId("kill-switch")).toHaveTextContent("Stop all (1 running)"),
+    );
     await user.click(screen.getByTestId("kill-switch"));
+    // It asks once, with what it does; nothing is sent before the confirmation.
+    expect(await screen.findByTestId("kill-confirm")).toHaveTextContent(
+      "Stops every running session now. No session starts until you allow it again.",
+    );
+    expect(postedCalls(harness, "/kill")).toHaveLength(0);
+    await user.click(screen.getByTestId("kill-confirm-stop"));
     await waitFor(() => expect(postedCalls(harness, "/kill")).toHaveLength(1));
     expect(postedCalls(harness, "/kill")[0]?.body).toMatchObject({ scope: "all" });
-    await waitFor(() => expect(screen.getByTestId("kill-switch")).toHaveTextContent("Resume"));
-    expect(screen.getByTestId("kill-banner")).toBeInTheDocument();
-    await user.click(screen.getByTestId("kill-switch"));
+    expect(await screen.findByTestId("kill-banner")).toHaveTextContent("Sessions are stopped.");
+    expect(screen.queryByTestId("kill-switch")).toBeNull();
+    await user.click(screen.getByTestId("kill-resume"));
     await waitFor(() => expect(postedCalls(harness, "/kill/resume")).toHaveLength(1));
-    await waitFor(() => expect(screen.getByTestId("kill-switch")).toHaveTextContent("Stop all"));
+    await waitFor(() => expect(screen.queryByTestId("kill-banner")).toBeNull());
   });
 
   it("persists the active project and the theme per install", async () => {

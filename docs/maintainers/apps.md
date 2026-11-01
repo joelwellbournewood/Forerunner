@@ -388,6 +388,25 @@ the word beside it; blue when there is no target) for the Performance view. Both
 
 ### Shell, palette, shortcuts, theme
 
+**The header while work runs (design §3.1, §6; `shell/ShellBars.tsx`).** The bar is **Home**,
+**Inbox** (the badge's label says "N need you") and **More ▾** (Memory, Extensions, Changes,
+Performance, Updates: the same routes, `MORE_NAV`), with a gear link for **Settings**. The
+switcher's label is the project on screen (`/projects/:id/...`), else the active project. The
+running chip ('Alice is working on "Style the page" · 2 min ›', `RunningChip`) and **Stop all
+(N running)** come from the live project cards' `working`; Stop all shows only while something
+runs and asks once ("Stops every running session now. No session starts until you allow it
+again.") before `POST /kill {scope:"all"}`. While stopped, the bar "Sessions are stopped" offers
+**Allow sessions again** (`POST /kill/resume`) and **Continue where it stopped** (resume, then a
+session for every project whose start check would run something). `/me.provider` null shows
+"Claude is not connected: planning and tasks need it. You can still add tasks. [Connect]"
+(`/setup`). The project cards stay live: `project.changed` upserts one, `inbox.changed` (in SSE
+mode, or when the count moved) and a session's start or end re-read the list
+(`coalescedRefresh`: never two reads at once). The install-wide `/events` frame
+`session.changed` carries `{ type, payload }` (server.ts `onSession`): `parseDaemonEvent` reads
+it as `session.activity`; before, it failed the session view's schema and was dropped, so the
+shell never heard of a session in SSE mode. The fake daemon's `/events` now sends that same
+shape (and no `session.event` lines, which only a session's own stream carries).
+
 The header always shows the active project, the one of every channel (U-056): at start the one
 `/me.activeProjectId` names (the daemon's record) over this window's stored choice, and the
 switcher, the palette's "Switch project", Home's Make active and Open and a new project from

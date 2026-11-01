@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { matchPath, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { describeError, NOT_REACHABLE } from "../api/client.ts";
 import { RunnerAutoUnlock } from "../components/RunnerAutoUnlock.tsx";
 import { Badge, Button } from "../components/ui.tsx";
@@ -13,19 +13,18 @@ import { ConversationPanel } from "./ConversationPanel.tsx";
 import { buildCommands } from "./commands.ts";
 import { DesktopControlBanner } from "./DesktopControlBanner.tsx";
 import { formatChord, useHotkeyBridge } from "./hotkey.ts";
+import { MoreMenu, NoKeyBar, RunningChip, StopAll, StoppedBar } from "./ShellBars.tsx";
 import { ShellContext } from "./ShellContext.ts";
 import { ShortcutsHelp } from "./ShortcutsHelp.tsx";
 import { createSequenceMatcher, isEditableTarget, paletteShortcut } from "./shortcuts.ts";
 
+/**
+ * Primary navigation (design §3.1, §6): Home and Inbox; Memory, Extensions, Changes,
+ * Performance and Updates are behind More (same routes, one click away); Settings is the gear.
+ */
 const NAV = [
   { to: "/", label: "Home", end: true },
   { to: "/inbox", label: "Inbox", end: false },
-  { to: "/memory", label: "Memory", end: false },
-  { to: "/extensions", label: "Extensions", end: false },
-  { to: "/changes", label: "Changes", end: false },
-  { to: "/performance", label: "Performance", end: false },
-  { to: "/updates", label: "Updates", end: false },
-  { to: "/settings", label: "Settings", end: false },
 ];
 
 /**
@@ -39,7 +38,12 @@ export function Shell() {
   const store = useUiStore();
   const navigate = useNavigate();
   const state = useUiState((s) => s);
-  const active = activeProject(state);
+  const location = useLocation();
+  // The header names the project on screen (design §3.1), not a hidden "active" one; elsewhere
+  // the active project, which chat and voice use outside a project page.
+  const viewedId = matchPath("/projects/:id/*", location.pathname)?.params.id ?? null;
+  const viewed = viewedId ? (state.projects.find((p) => p.id === viewedId) ?? null) : null;
+  const active = viewed ?? activeProject(state);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -93,6 +97,8 @@ export function Shell() {
     [client, store],
   );
 
+  // The palette's "Stop all sessions" / "Allow sessions again"; the header's own buttons ask
+  // once first (ShellBars.tsx).
   const toggleKill = useCallback(async () => {
     if (killBusy) return;
     setKillBusy(true);
@@ -287,7 +293,6 @@ export function Shell() {
                       }}
                     >
                       <span>{p.name}</span>
-                      <span className="text-xs text-neutral-500">{p.stage}</span>
                     </button>
                   </li>
                 ))}
@@ -332,16 +337,18 @@ export function Shell() {
                     role="status"
                     className="ml-1 rounded-full bg-red-600 px-1.5 text-xs font-semibold text-white"
                     data-testid="inbox-badge"
-                    aria-label={`${state.blockingCount} blocking`}
+                    aria-label={`${state.blockingCount} need${state.blockingCount === 1 ? "s" : ""} you`}
                   >
                     {state.blockingCount}
                   </span>
                 ) : null}
               </NavLink>
             ))}
+            <MoreMenu onNavigate={() => setMenuOpen(false)} />
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
+            <RunningChip />
             <Badge tone={connectionTone} testId="connection-status" title={connection.error ?? ""}>
               {connectionLabel}
             </Badge>
@@ -373,15 +380,22 @@ export function Shell() {
             >
               {palette}
             </Button>
-            <Button
-              variant={state.killActive ? "primary" : "danger"}
-              data-testid="kill-switch"
-              aria-label={state.killActive ? "Resume all sessions" : "Stop all sessions"}
-              onClick={() => void toggleKill()}
-              disabled={killBusy}
+            <StopAll />
+            <NavLink
+              to="/settings"
+              aria-label="Settings"
+              title="Settings"
+              data-testid="settings-link"
+              className={({ isActive }) =>
+                `rounded px-2 py-1 text-lg leading-none ${
+                  isActive
+                    ? "bg-neutral-200 dark:bg-neutral-800"
+                    : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                }`
+              }
             >
-              {state.killActive ? "Resume" : "Stop all"}
-            </Button>
+              <span aria-hidden>⚙</span>
+            </NavLink>
           </div>
           {killError ? (
             <output
@@ -391,14 +405,8 @@ export function Shell() {
               {killError}
             </output>
           ) : null}
-          {state.killActive ? (
-            <output
-              className="w-full rounded bg-red-50 px-2 py-1 text-xs text-red-900 dark:bg-red-950 dark:text-red-200"
-              data-testid="kill-banner"
-            >
-              Kill switch active: no session runs until you press Resume.
-            </output>
-          ) : null}
+          <StoppedBar />
+          <NoKeyBar />
           {state.restart ? (
             <output
               className="w-full rounded bg-blue-50 px-2 py-1 text-xs text-blue-900 dark:bg-blue-950 dark:text-blue-200"
