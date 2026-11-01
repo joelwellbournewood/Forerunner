@@ -65,6 +65,12 @@ describe("money in Settings (design §6)", () => {
     });
   });
 
+  it("an in-app link to a section lands on it: /settings#sandbox (wave 2 handoff: Set up Docker)", async () => {
+    renderApp("/settings#sandbox");
+    const card = await screen.findByTestId("sandbox-settings");
+    await waitFor(() => expect(card).toHaveAttribute("data-targeted", "true"));
+  });
+
   it("closing a preview that waits for a Yes answers it no: no card is left waiting", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

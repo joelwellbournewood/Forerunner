@@ -374,6 +374,9 @@ describe("Project page", () => {
     expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
       "Started: the session works until nothing more can run, the budget is used, or you stop it.",
     );
+    // Said once: not also "Starts after the current session" about the session it just began.
+    await waitFor(() => expect(within(dialog).queryByTestId("start-session-explain")).toBeNull());
+    expect(dialog).not.toHaveTextContent("Starts after the current session");
     expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
     await user.click(within(dialog).getByTestId("start-session-open"));
     const header = await screen.findByTestId("session-header");

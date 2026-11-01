@@ -381,11 +381,16 @@ export function StartSessionDialog({
             ) : null}
           </p>
         ) : null}
-        <p className="text-xs text-neutral-500" data-testid="start-session-explain">
-          {data?.busy
-            ? "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
-            : "Start: works until nothing more can run, the budget is used, or you stop it."}
-        </p>
+        {/* After Start the notice says what happened; the line about what Start would do goes
+            (wave 1 handoff: "Started: …" stood above "Starts after the current session", read
+            again from the start check the new session itself made busy). */}
+        {notice ? null : (
+          <p className="text-xs text-neutral-500" data-testid="start-session-explain">
+            {data?.busy
+              ? "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
+              : "Start: works until nothing more can run, the budget is used, or you stop it."}
+          </p>
+        )}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>{notice ? "Close" : "Cancel"}</Button>
           <Button
