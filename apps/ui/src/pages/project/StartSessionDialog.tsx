@@ -227,7 +227,12 @@ export function StartSessionDialog({
   // What a session would run is said only when it can start: above "Claude is not connected"
   // or "Sessions are stopped", "This session runs ..." contradicted the disabled Start.
   const plan = data && !blocked ? planSentence(data) : null;
-  const noReadyTask = data !== null && data.ready === 0 && blocked?.kind === "nothing_runnable";
+  // While the plan from the brief waits for approval or is being drafted, the daemon's one
+  // sentence names it with its one link (startBlocked); nothing is said twice (wave 2 handoff:
+  // three statements of one blocker, one pointing to the Tasks tab).
+  const planBlocks = intake === "pending" || intake === "drafting";
+  const noReadyTask =
+    data !== null && data.ready === 0 && blocked?.kind === "nothing_runnable" && !planBlocks;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -306,16 +311,7 @@ export function StartSessionDialog({
                 there, or ask in Chat, for example "add a task: write the README".
               </p>
             ) : null}
-            {noReadyTask && intake === "pending" ? (
-              <p className="mt-1" data-testid="start-session-intake">
-                The plan from your brief waits for your approval in the Inbox; approving it adds its
-                tasks.
-              </p>
-            ) : noReadyTask && intake === "drafting" ? (
-              <p className="mt-1" data-testid="start-session-intake">
-                The plan from your brief is being drafted; it lands in the Inbox when it is ready.
-              </p>
-            ) : noReadyTask && intake === "failed" ? (
+            {noReadyTask && intake === "failed" ? (
               <p className="mt-1" data-testid="start-session-intake">
                 The plan from your brief could not be drafted; the project page says why and has a
                 Retry.

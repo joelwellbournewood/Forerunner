@@ -14,7 +14,7 @@ import {
   Loading,
   Money,
 } from "../components/ui.tsx";
-import { formatAmount, type MoneyLike } from "../lib/money.ts";
+import { chfToMicro, formatAmount, type MoneyLike } from "../lib/money.ts";
 import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useScrollToHash } from "../lib/use-hash-scroll.ts";
@@ -148,7 +148,7 @@ export interface SettingCommand {
    * `slider`: a range over `positions` (the speed-versus-quality slider), not a typed value;
    * `fields`: labelled inputs (`fields`) for a structured value such as quiet hours (U-060).
    */
-  inputType: "number" | "text" | "slider" | "fields";
+  inputType: "number" | "text" | "slider" | "fields" | "money";
   /** The labelled inputs of a `fields` setting; the dialog keeps their values as JSON. */
   fields?: readonly FieldSpec[];
   /** The named stops of a slider, lowest first. */
@@ -169,10 +169,27 @@ const asInt = (value: string): number | null => {
   const n = Number(value);
   return Number.isInteger(n) ? n : null;
 };
-const asChf = (value: string): number | null => {
-  const n = Number(value.replace(/'/g, ""));
-  return Number.isFinite(n) && n > 0 ? n : null;
+/**
+ * An amount in CHF as typed (design §6): any amount with a point or a comma ("12.30",
+ * "150.40", "1,50", "CHF 5"), never only steps of 0.50 or whole francs, which the number
+ * input's `step` enforced (walk lifecycle: the default cap it showed, 150.40, was refused).
+ */
+export const asChf = (value: string): number | null => {
+  const micro = chfToMicro(value);
+  return micro === null || micro <= 0 ? null : micro / 1_000_000;
 };
+
+/** Why a typed amount cannot be sent, in words; null when it can. */
+export function moneyProblem(value: string): string | null {
+  if (!value.trim()) return null;
+  const micro = chfToMicro(value);
+  if (micro === null)
+    return value.trim().startsWith("-")
+      ? "The amount must be more than CHF 0."
+      : "Type an amount in CHF, like 12.30 or 12,30.";
+  if (micro <= 0) return "The amount must be more than CHF 0.";
+  return null;
+}
 const parseLoose = (value: string): unknown => {
   const t = value.trim();
   if (t === "true") return true;
@@ -225,9 +242,7 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
   if (key === "project.budget") {
     return {
       name: "budget.set",
-      inputType: "number",
-      min: 0,
-      step: 0.5,
+      inputType: "money",
       unit: "CHF",
       initial: initialPlain,
       params: (v) => {
@@ -239,9 +254,7 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
   if (key === "human.monthly_cap" || key === "budget.monthly_cap_chf") {
     return {
       name: "budget.set",
-      inputType: "number",
-      min: 0,
-      step: 1,
+      inputType: "money",
       unit: "CHF",
       initial: initialPlain,
       params: (v) => {
@@ -420,7 +433,12 @@ export function SettingChangeDialog({
     );
   };
 
+  // Closing the dialog (x, Escape, Cancel) while a change waits for a Yes answers it "no", so
+  // no confirmation card is left waiting in the Inbox (walk lifecycle: an "approval needed"
+  // card stayed after the preview was closed).
   const finish = () => {
+    if (result?.status === "pending" && result.pendingId)
+      void client.confirmCommand(result.pendingId, { answer: "no" }).catch(() => {});
     onChanged();
     onClose();
   };
@@ -469,10 +487,10 @@ export function SettingChangeDialog({
                 ) : (
                   <input
                     className={INPUT_CLASS}
-                    type={command.inputType}
-                    min={command.min}
-                    max={command.max}
-                    step={command.step}
+                    type={command.inputType === "money" ? "text" : command.inputType}
+                    {...(command.inputType === "money"
+                      ? { inputMode: "decimal" as const }
+                      : { min: command.min, max: command.max, step: command.step })}
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
                     data-testid="setting-value"
@@ -480,6 +498,14 @@ export function SettingChangeDialog({
                 )}
               </Field>
             )}
+            {command.inputType === "money" && moneyProblem(value) ? (
+              <p
+                className="text-sm text-red-700 dark:text-red-300"
+                data-testid="setting-value-problem"
+              >
+                {moneyProblem(value)}
+              </p>
+            ) : null}
             {error ? <ErrorBanner message={error} /> : null}
             <div className="flex gap-2">
               <Button

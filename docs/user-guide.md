@@ -358,7 +358,10 @@ secrets, changing permissions, granting a new capability, sending money, enterin
 third-party sites.
 
 Budgets exist per month, per project, per session, per task and per run. The runtime refuses a
-model call that would cross a cap; it never relies on the agent noticing.
+model call that would cross a cap; it never relies on the agent noticing. In Settings a money
+field takes any amount in CHF with a point or a comma ("12.30", "150.40", "1,50"); 0 or a
+negative amount is refused in words. Closing a change's preview without answering it (the x,
+Escape or Cancel) answers it "no", so no confirmation is left waiting in the Inbox.
 
 On a Claude subscription, Settings → **Claude subscription allowance** says how much
 API-equivalent use your plan covers a month, in CHF. Forerunner cannot see your plan's real

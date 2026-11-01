@@ -209,24 +209,36 @@ describe("Project page", () => {
     });
 
     for (const [state, text] of [
-      ["pending", /plan from your brief waits for your approval in the Inbox/],
-      ["drafting", /plan from your brief is being drafted/],
-      ["failed", /plan from your brief could not be drafted; the project page says why/],
+      ["pending", /^Nothing can run yet: the plan from your brief waits for your approval\.$/],
+      ["drafting", /^Nothing can run yet: the plan from your brief is being drafted\.$/],
     ] as const) {
-      it(`the Start dialog names the plan as it stands: ${state}`, async () => {
+      it(`the Start dialog names the plan as it stands in one sentence, said once: ${state} (wave 2 handoff)`, async () => {
         const user = userEvent.setup();
         const harness = createHarness();
-        harness.daemon.state.intake.proj_beacon = intake(
-          state,
-          state === "failed" ? FAILURE : null,
-        );
+        harness.daemon.state.intake.proj_beacon = intake(state, null);
         renderApp("/projects/proj_beacon", harness);
         await screen.findByTestId("summary");
         await user.click(screen.getByTestId("start-session"));
         const dialog = await screen.findByTestId("start-session-dialog");
-        expect(await within(dialog).findByTestId("start-session-intake")).toHaveTextContent(text);
+        expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(text);
+        // Not again in other words, and not "add a task on the Tasks tab".
+        expect(within(dialog).queryByTestId("start-session-intake")).toBeNull();
+        expect(dialog).not.toHaveTextContent(/Give your agent work first/);
       });
     }
+
+    it("the Start dialog names the plan as it stands: failed", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.intake.proj_beacon = intake("failed", FAILURE);
+      renderApp("/projects/proj_beacon", harness);
+      await screen.findByTestId("summary");
+      await user.click(screen.getByTestId("start-session"));
+      const dialog = await screen.findByTestId("start-session-dialog");
+      expect(await within(dialog).findByTestId("start-session-intake")).toHaveTextContent(
+        /plan from your brief could not be drafted; the project page says why/,
+      );
+    });
   });
 
   it("warns when ready tasks exist but none can run: what each waits on, what the budget leaves out (U-040)", async () => {
