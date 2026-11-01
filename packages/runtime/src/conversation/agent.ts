@@ -1032,8 +1032,14 @@ export class ConversationAgent {
         return r.readback ?? "Needs confirmation.";
       case "cancelled":
         return "Cancelled; nothing was changed.";
-      default:
-        return `Not done: ${r.reason ?? "refused"}.`;
+      default: {
+        // A reason written as a sentence for the person ("Sessions are stopped (Stop all), so
+        // nothing can start. Say ...") stands as it is; a short one is said as not done.
+        const reason = (r.reason ?? "refused").trim();
+        return /^[A-Z"“]/.test(reason) && /[.!?]$/.test(reason)
+          ? reason
+          : `Not done: ${reason.replace(/[.\s]+$/, "")}.`;
+      }
     }
   }
 

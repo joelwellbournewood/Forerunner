@@ -78,6 +78,7 @@ import {
   csvLine,
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
+import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
@@ -1136,6 +1137,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    // As the daemon: a name another project has is refused in a sentence, nothing written.
+    const clash = state.projects.find((p) => p.name === parsed.data.name);
+    if (clash) return errorBody(c, 409, "validation", duplicateProjectSentence(clash.name));
     const project: ProjectCard = {
       id: nextId("proj"),
       name: parsed.data.name,

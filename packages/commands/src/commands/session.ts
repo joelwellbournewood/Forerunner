@@ -73,10 +73,28 @@ async function startPlan(p: SessionStartParams, ctx: CommandContext): Promise<St
   };
 }
 
-function startSentence(s: StartPlan): string {
-  return `Started a session on ${s.resolved.project.name} ${s.where} with a budget of ${chf(s.budgetChf)}${
-    s.remote ? "; the PC picks it up in seconds" : ""
-  }. Undo.`;
+/**
+ * What the start did, said when it is known (design §3.9, §5: no promise the code does not
+ * keep): started, waiting behind the running session, or waiting for quiet hours to end. A
+ * phone's start is handed to the PC. No "Undo." in the words: the Undo is a button.
+ */
+function startSentence(s: StartPlan, outcome?: "started" | "queued" | "deferred"): string {
+  const where = s.runner === "cloud" ? " on the cloud runner" : "";
+  const up = `(up to ${chf(s.budgetChf)})`;
+  const name = s.resolved.project.name;
+  if (s.remote)
+    return `Sent a start for ${name}${where} to your PC ${up}; it picks it up in seconds.`;
+  if (outcome === "queued")
+    return `A session on ${name}${where} starts after the one running now ${up}.`;
+  if (outcome === "deferred")
+    return `A session on ${name}${where} starts when your quiet hours end ${up}.`;
+  return `Started a session on ${name}${where} ${up}.`;
+}
+
+/** The start as one question for the read-back (design §5, "Chat read-back"). */
+function startAsk(s: StartPlan): string {
+  const where = s.runner === "cloud" ? " on the cloud runner" : "";
+  return `Start a session on ${s.resolved.project.name}${where} (up to ${chf(s.budgetChf)})?`;
 }
 
 export const sessionStart: CommandDef<SessionStartParams> = {
@@ -113,11 +131,19 @@ export const sessionStart: CommandDef<SessionStartParams> = {
       usesActiveProject: s.resolved.usedActive,
       costUsdMicro: s.budgetUsd,
       costChfMicro: s.budgetChf,
+      ask: startAsk(s),
     });
   },
   async run(p, ctx): Promise<CommandOutcome> {
     const s = await startPlan(p, ctx);
     const agentId = needAgent(ctx);
+    // Design §3.6 and §3.9: a start that would do nothing (Stop all is on, Claude is not
+    // connected, nothing can run) is refused in words, as the Start dialog refuses it; before,
+    // the chat said "Started a session ... Undo." while nothing started.
+    if (!s.remote) {
+      const blocked = await ctx.ports.startBlocked?.(s.resolved.project.id, s.budgetUsd);
+      if (blocked) throw new ForerunnerError("validation", blocked, { details: { blocked } });
+    }
     const reason = p.reason ?? `${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`;
     if (s.remote) {
       const row = await ctx.store.remoteCommand.enqueue({
@@ -170,6 +196,10 @@ export const sessionStart: CommandDef<SessionStartParams> = {
       started && typeof started === "object" && typeof started.startId === "string"
         ? started.startId
         : null;
+    const outcome =
+      started && typeof started === "object" && "outcome" in started
+        ? (started as { outcome?: unknown }).outcome
+        : undefined;
     return {
       before: { session_id: null, remote_command_id: null },
       after: {
@@ -179,7 +209,12 @@ export const sessionStart: CommandDef<SessionStartParams> = {
         agent_id: agentId,
         budget_usd_micro: s.budgetUsd,
       },
-      sentence: startSentence(s),
+      sentence: startSentence(
+        s,
+        outcome === "queued" || outcome === "deferred" || outcome === "started"
+          ? outcome
+          : undefined,
+      ),
       projectId: s.resolved.project.id,
     };
   },
@@ -221,14 +256,33 @@ function stopWhat(p: SessionStopParams): string {
   return p.scope === "all"
     ? "every running session"
     : p.scope === "session"
-      ? `the session ${p.session ?? ""}`.trim()
-      : "your agent's running sessions";
+      ? "the session"
+      : "the running session";
+}
+
+/** The agent's work sessions that run now (not its conversation session). */
+async function runningWork(ctx: CommandContext): Promise<SessionRow[]> {
+  const agentId = needAgent(ctx);
+  return (await ctx.store.session.active(agentId)).filter(
+    (s) => (s.status === "running" || s.status === "paused") && s.summary !== "conversation",
+  );
+}
+
+/** "Stopped the session on Quote page during "Style the page": it is ready again." */
+async function stoppedSentence(ctx: CommandContext, rows: readonly SessionRow[]): Promise<string> {
+  if (!rows.length) return "Nothing is running, so nothing was stopped.";
+  const names: string[] = [];
+  for (const r of rows) {
+    const project = r.project_id ? await ctx.store.project.get(r.project_id) : undefined;
+    names.push(project ? `the session on ${project.name}` : "the session");
+  }
+  return `Stopped ${names.join(" and ")}. What it wrote stays; the task it was on is ready again.`;
 }
 
 export const sessionStop: CommandDef<SessionStopParams> = {
   name: "session.stop",
   description:
-    "Stop running sessions at once (the kill switch): your agent's, one session, or everything.",
+    "Stop now: the running session (scope agent, the default) or one session (scope session) stops at once; its task goes back to ready and sessions can start again. Scope all is Stop all: every running session stops and none starts until the person allows sessions again (session.resume).",
   params: stopParams,
   risk: "low",
   scope: (p) => (p.scope === "all" ? "global" : "session"),
@@ -245,6 +299,10 @@ export const sessionStop: CommandDef<SessionStopParams> = {
       risk: "low",
       sentence: `Stopped ${stopWhat(p)}.`,
       reversible: false,
+      ask:
+        p.scope === "all"
+          ? "Stop every running session now? No session starts until you allow it again."
+          : "Stop the running session now?",
     });
   },
   async run(p, ctx): Promise<CommandOutcome> {
@@ -265,27 +323,46 @@ export const sessionStop: CommandDef<SessionStopParams> = {
     }
     if (!ctx.ports.kill)
       throw new ForerunnerError("not_supported", "the kill switch is not available here");
-    const scope =
-      p.scope === "all"
-        ? "all"
-        : p.scope === "session"
-          ? { sessionId: p.session }
-          : { agentId: needAgent(ctx) };
-    if (scope !== "all" && "sessionId" in scope && !scope.sessionId) {
+    if (p.scope === "session" && !p.session) {
       throw new ForerunnerError("validation", "session.stop with scope session needs a session id");
     }
-    const report = await ctx.ports.kill(scope, reason);
-    const detail = report
-      ? ` (${report.stoppedRuns} run${report.stoppedRuns === 1 ? "" : "s"}, ${report.killedProcesses} process${report.killedProcesses === 1 ? "" : "es"})`
-      : "";
+    if (p.scope === "all") {
+      // Stop all (design §4.9): every run stops and nothing starts until allowed again.
+      const report = await ctx.ports.kill("all", reason);
+      return {
+        before: { running: true },
+        after: {
+          stopped: true,
+          stoppedRuns: report?.stoppedRuns ?? null,
+          killedProcesses: report?.killedProcesses ?? null,
+        },
+        sentence:
+          'Stopped every running session. No session starts until you say "resume" or press Allow sessions again.',
+      };
+    }
+    // Stop now (design §3.7, §4.9): the running session, or the one named, stops at once
+    // without freezing the agent; the next start works. Before, a chat "stop" stopped the
+    // agent's scope, which froze it ("Sessions are stopped") until Allow sessions again.
+    const rows =
+      p.scope === "session"
+        ? [await ctx.store.session.mustGet(p.session as string)]
+        : await runningWork(ctx);
+    let stoppedRuns = 0;
+    let killedProcesses = 0;
+    for (const row of rows) {
+      const report = await ctx.ports.kill({ sessionId: row.id }, reason);
+      stoppedRuns += report?.stoppedRuns ?? 0;
+      killedProcesses += report?.killedProcesses ?? 0;
+    }
     return {
-      before: { running: true },
+      before: { running: rows.length > 0 },
       after: {
-        stopped: true,
-        stoppedRuns: report?.stoppedRuns ?? null,
-        killedProcesses: report?.killedProcesses ?? null,
+        stopped: rows.length > 0,
+        sessions: rows.map((r) => r.id),
+        stoppedRuns,
+        killedProcesses,
       },
-      sentence: `Stopped ${stopWhat(p)}${detail}.`,
+      sentence: await stoppedSentence(ctx, rows),
     };
   },
 };
@@ -307,13 +384,15 @@ async function pausable(p: SessionPauseParams, ctx: CommandContext): Promise<Ses
     (s) => s.status === "running" && s.summary !== "conversation",
   );
   const row = active[0];
-  if (!row) throw new ForerunnerError("validation", "no running session to pause");
+  if (!row)
+    throw new ForerunnerError("validation", "Nothing is running, so there is nothing to stop.");
   return row;
 }
 
 export const sessionPause: CommandDef<SessionPauseParams> = {
   name: "session.pause",
-  description: "Pause the running session (it can be resumed).",
+  description:
+    "Stop after this task: the running session finishes the task it is on, then ends (Undo lets it go on).",
   params: pauseParams,
   risk: "low",
   scope: "session",
@@ -330,7 +409,7 @@ export const sessionPause: CommandDef<SessionPauseParams> = {
       newValue: "paused",
       scope: "session",
       risk: "low",
-      sentence: `Paused the session${project ? ` on ${project.name}` : ""}. Undo.`,
+      sentence: `The session${project ? ` on ${project.name}` : ""} stops after the task it is on.`,
       reversible: true,
       projectId: project?.id ?? null,
       projectName: project?.name ?? null,
@@ -344,7 +423,7 @@ export const sessionPause: CommandDef<SessionPauseParams> = {
     return {
       before: { session_id: s.id, status: s.status },
       after: { session_id: s.id, status: "paused" },
-      sentence: `Paused the session${project ? ` on ${project.name}` : ""}. Undo.`,
+      sentence: `The session${project ? ` on ${project.name}` : ""} stops after the task it is on.`,
       projectId: s.project_id,
     };
   },
@@ -367,5 +446,49 @@ export const sessionPause: CommandDef<SessionPauseParams> = {
     }
     const s = await ctx.store.session.mustGet(b.session_id);
     if (s.status === "paused") await ctx.store.session.setStatus(s.id, s.version, "running");
+  },
+};
+
+const resumeParams = z.object({ reason: z.string().optional() });
+export type SessionResumeParams = z.infer<typeof resumeParams>;
+
+/**
+ * "resume", "allow sessions again" (design §3.1, §3.9): lifts Stop all, so sessions may start
+ * again. It starts nothing itself; the reply says how to continue. Before, "resume" had neither
+ * a command nor a tool, and a chat "stop" froze the agent with no way back by chat.
+ */
+export const sessionResume: CommandDef<SessionResumeParams> = {
+  name: "session.resume",
+  description:
+    "Allow sessions again after Stop all: new sessions may start. Starts nothing by itself (session.start does).",
+  params: resumeParams,
+  risk: "low",
+  scope: "global",
+  reversible: false,
+  undoStrategy: "say stop everything to stop all sessions again",
+  actionClass: "routine_reversible",
+  async plan() {
+    return buildCard({
+      command: "session.resume",
+      what: "whether sessions may start",
+      oldValue: "stopped",
+      newValue: "allowed",
+      scope: "global",
+      risk: "low",
+      sentence: "Sessions can start again.",
+      reversible: false,
+    });
+  },
+  async run(_p, ctx): Promise<CommandOutcome> {
+    if (!ctx.ports.allowSessions)
+      throw new ForerunnerError("not_supported", "allowing sessions again is not available here");
+    const { wasStopped } = await ctx.ports.allowSessions();
+    return {
+      before: { stopped: wasStopped },
+      after: { stopped: false },
+      sentence: wasStopped
+        ? 'Sessions can start again. Say "start a session" to continue where it stopped.'
+        : 'Sessions were not stopped. Say "start a session" to start one.',
+    };
   },
 };

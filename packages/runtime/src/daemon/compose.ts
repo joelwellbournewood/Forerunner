@@ -325,6 +325,7 @@ import {
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
+import { startBlocked as startBlockedReason } from "./start-blocked.ts";
 import { fileTools } from "./tools.ts";
 
 /**
@@ -2877,6 +2878,46 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // running in this process ends at the next task boundary (the runner reads the pause
       // message between tasks); its undo withdraws the message (wiring/session-ports.ts).
       ...sessionPausePorts({ store, kill, agentId: agent.id, humanId: human.id }),
+      // A pause, stop or cancel of a RUNNING task by chat or voice stops its run at once, as
+      // the Tasks tab's route does (U-039); the session goes on with the rest.
+      stopTask: (taskId, reason) => {
+        kill.stopTask(taskId, reason);
+      },
+      // session.resume ("resume", "allow sessions again", design §3.1): Stop all lifted, as
+      // POST /kill/resume does (kill.json removed by `onResume`), the header told.
+      allowSessions: () => {
+        const wasStopped = kill.isFrozen({ agentId: agent.id });
+        kill.resume();
+        events.emit("session", { type: "kill.resumed", payload: {} });
+        return { wasStopped };
+      },
+      // session.start refuses in words what the Start dialog refuses (design §3.6, §3.9).
+      startBlocked: async (projectId, budgetUsdMicro) => {
+        const project = await store.project.mustGet(projectId);
+        const check = await startCheck(
+          { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+          project.id,
+          budgetUsdMicro,
+        );
+        const blocked = startBlockedReason(check, {
+          stopped: kill.isFrozen({ agentId: agent.id }),
+          hasModel: !!provider,
+          busy: scheduler.isActive(agent.id),
+          projectId: project.id,
+          chfPerUsd: chfPerUsd(),
+        });
+        if (!blocked) return null;
+        // The dialog's button, said in words for the chat.
+        const next =
+          blocked.kind === "stopped"
+            ? ' Say "resume" to allow sessions again.'
+            : blocked.kind === "no_model"
+              ? " Connect Claude in Settings."
+              : blocked.action?.label === "Open it"
+                ? " Answer it in the Inbox."
+                : "";
+        return `${blocked.sentence}${next}`;
+      },
       // An answer by chat, voice, the palette or the phone applies at once, as the inbox
       // route's does (an approved plan starts its follow-up, ADR 0053). The answer stands
       // when the sync fails: the next sync (an answer, the poll, a restart) applies it.

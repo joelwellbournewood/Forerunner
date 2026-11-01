@@ -105,7 +105,7 @@ export function stopScopeOf(clause: string): "all" | "agent" | null {
     return "all";
   }
   if (
-    /^(?:stop|halt|kill|stopp|stoppe|beende)(?:\s+(?:the\s+|die\s+)?(?:session|sitzung|work|arbeit))?$/i.test(
+    /^(?:stop|halt|kill|stopp|stoppe|beende)(?:\s+(?:the\s+|die\s+)?(?:session|sitzung|work|arbeit|working))?(?:\s+(?:now|right\s+now|at\s+once|jetzt|sofort))?$/i.test(
       clause,
     ) ||
     /^(?:session|sitzung)\s+(?:stoppen|beenden)$/i.test(clause)
@@ -113,6 +113,22 @@ export function stopScopeOf(clause: string): "all" | "agent" | null {
     return "agent";
   }
   return null;
+}
+
+/** Words that name the work itself, never a task ("pause the session", "resume work"). */
+const NOT_A_TASK =
+  /^(?:session|sessions|sitzung|work|working|arbeit|everything|all|alles|it|that|this|now)$/i;
+
+/** A task named in a phrase: "the FAQ task" -> "FAQ"; quotes and "the" dropped. */
+function taskName(raw: string | undefined): string | null {
+  const name = (raw ?? "")
+    .trim()
+    .replace(/^(?:the|die|der|das)\s+/i, "")
+    .replace(/\s+(?:task|aufgabe)$/i, "")
+    .replace(/^["'“”‘’](.*)["'“”‘’]$/, "$1")
+    .trim();
+  if (name.length < 2 || NOT_A_TASK.test(name)) return null;
+  return name;
 }
 
 /**
@@ -301,7 +317,9 @@ export class IntentParser {
       this.matchLesson(clean(trimmed)) ??
       this.matchNote(clean(trimmed)) ??
       this.matchAddTask(clean(trimmed)) ??
-      this.matchTask(clean(trimmed), ctx);
+      this.matchTask(clean(trimmed), ctx) ??
+      this.matchStopAfterTask(clean(trimmed)) ??
+      this.matchDependency(clean(trimmed));
     if (whole) return this.finish([whole], ctx, []);
 
     const clauses = trimmed.split(SPLIT_RE).map(clean).filter(Boolean);
@@ -442,8 +460,10 @@ export class IntentParser {
       this.matchAutonomy(clause, ctx, project) ??
       this.matchStop(clause) ??
       this.matchPause(clause) ??
+      this.matchResume(clause) ??
       this.matchStart(clause, ctx, project) ??
       this.matchSummary(clause, ctx, project) ??
+      this.matchTaskMove(clause) ??
       this.matchSwitch(clause, ctx)
     );
   }
@@ -553,6 +573,10 @@ export class IntentParser {
   private matchSummary(c: string, ctx: IntentContext, current: string | null): Match | null {
     const en =
       /^(?:(?:read|speak|say|tell)\s+(?:me\s+)?(?:the\s+)?(?:project\s+)?)?summary(?:\s+(?:aloud|out\s+loud|to\s+me))?(?:\s+(?:of|for|on)\s+(?:the\s+)?(.+?))?(?:\s+(?:aloud|out\s+loud|to\s+me))?$/i.exec(
+        c,
+      ) ??
+      // "summarise the last session", "summarize it", "recap" (design §3.9).
+      /^(?:summari[sz]e|recap|sum\s+up)(?:\s+(?:the\s+|my\s+)?(?:last\s+|latest\s+)?(?:session|project|work|it|this|that|progress))?(?:\s+(?:of|for|on)\s+(?:the\s+)?(.+?))?$/i.exec(
         c,
       );
     const de =
@@ -732,6 +756,106 @@ export class IntentParser {
     return scope ? { command: { name: "session.stop", params: { scope } } } : null;
   }
 
+  /**
+   * "stop after this task", "finish this task and stop", "stop when the current task is done"
+   * (design §3.7, §3.9): the running session ends at its next task boundary (`session.pause`).
+   */
+  private matchStopAfterTask(c: string): Match | null {
+    if (
+      /^(?:stop|end|halt)\s+(?:the\s+session\s+|work\s+)?(?:after|when|once)\s+(?:this|the\s+current|the|that)\s+(?:task|one)(?:\s+(?:is\s+)?(?:done|finished|over))?$/i.test(
+        c,
+      ) ||
+      /^(?:finish|complete)\s+(?:this|the\s+current|the)\s+(?:task|one)\s+(?:and|then|and\s+then)\s+stop$/i.test(
+        c,
+      ) ||
+      /^(?:stopp|stoppe|beende)\s+nach\s+(?:dieser|der)\s+aufgabe$/i.test(c)
+    )
+      return { command: { name: "session.pause", params: {} } };
+    return null;
+  }
+
+  /**
+   * "make the FAQ task depend on the README task", "make X wait for Y", "X should wait for Y",
+   * "run X after Y" (design §3.9): what X waits for, Y added (`task.dependencies` with `add`),
+   * read back before it happens.
+   */
+  private matchDependency(c: string): Match | null {
+    if (QUESTION_RE.test(c)) return null;
+    const m =
+      /^make\s+(.+?)\s+(?:depend|wait)\s+(?:on|for|upon)\s+(.+)$/i.exec(c) ??
+      /^(.+?)\s+(?:should|must|has\s+to|needs\s+to)\s+(?:depend\s+on|wait\s+(?:for|on)|come\s+after|run\s+after)\s+(.+)$/i.exec(
+        c,
+      ) ??
+      /^(?:run|do|start)\s+(.+?)\s+(?:only\s+)?after\s+(.+)$/i.exec(c) ??
+      /^(.+?)\s+depends\s+on\s+(.+)$/i.exec(c);
+    if (!m) return null;
+    const task = taskName(m[1]);
+    const after = taskName(m[2]);
+    if (!task || !after) return null;
+    return { command: { name: "task.dependencies", params: { task, add: [after] } } };
+  }
+
+  /**
+   * One task moved by name (design §3.9): "skip the LICENSE task", "postpone X", "pause the
+   * CSS task", "stop the X task" (pause; a running one stops now), "cancel X", "resume X",
+   * "reopen X", "redo X", "try X again", "make X ready". Read back before it happens.
+   */
+  private matchTaskMove(c: string): Match | null {
+    if (QUESTION_RE.test(c)) return null;
+    const ref = (raw: string | undefined) => taskName(raw);
+    const pause =
+      /^(?:skip|postpone|pause|defer|park|hold\s+off\s+on|put\s+off|stop|überspring(?:e)?|pausiere)\s+(.+?)(?:\s+(?:for\s+now|for\s+later|until\s+later|for\s+the\s+moment|vorerst|erst\s+mal))?$/i.exec(
+        c,
+      );
+    if (pause) {
+      const task = ref(pause[1]);
+      return task ? { command: { name: "task.pause", params: { task } } } : null;
+    }
+    const cancel = /^(?:cancel|drop|abbrechen)\s+(.+)$/i.exec(c);
+    if (cancel) {
+      const task = ref(cancel[1]);
+      return task
+        ? { command: { name: "task.transition", params: { task, to: "cancelled" } } }
+        : null;
+    }
+    const resume = /^(?:resume|unpause|continue\s+with|fortsetzen)\s+(.+)$/i.exec(c);
+    if (resume) {
+      const task = ref(resume[1]);
+      return task ? { command: { name: "task.resume", params: { task } } } : null;
+    }
+    const reopen = /^(?:reopen|re-open|redo|undo\s+the\s+cancel(?:lation)?\s+of)\s+(.+)$/i.exec(c);
+    if (reopen) {
+      const task = ref(reopen[1]);
+      return task ? { command: { name: "task.reopen", params: { task } } } : null;
+    }
+    const again =
+      /^(?:try|run|do)\s+(.+?)\s+again$/i.exec(c) ?? /^(?:retry|rerun|re-run)\s+(.+)$/i.exec(c);
+    if (again) {
+      const task = ref(again[1]);
+      return task ? { command: { name: "task.transition", params: { task, to: "ready" } } } : null;
+    }
+    const ready = /^(?:make|mark|set)\s+(.+?)\s+(?:as\s+)?ready$/i.exec(c);
+    if (ready) {
+      const task = ref(ready[1]);
+      return task ? { command: { name: "task.transition", params: { task, to: "ready" } } } : null;
+    }
+    return null;
+  }
+
+  /**
+   * "resume", "allow sessions again", "continue" (design §3.1, §3.9): Stop all lifted
+   * (`session.resume`); a session is started by "start a session".
+   */
+  private matchResume(c: string): Match | null {
+    if (
+      /^(?:resume|unpause|continue|go\s+on|allow\s+sessions(?:\s+again)?|resume\s+(?:sessions|work|working|the\s+sessions?)|allow\s+(?:work|starts)\s+again|lift\s+the\s+stop|weiter(?:machen)?|fortsetzen)$/i.test(
+        c,
+      )
+    )
+      return { command: { name: "session.resume", params: {} } };
+    return null;
+  }
+
   private matchPause(c: string): Match | null {
     if (
       /^(?:pause|pausiere|pausieren)(?:\s+(?:the\s+|die\s+)?(?:session|sitzung|work|arbeit))?$/i.test(
@@ -760,11 +884,16 @@ export class IntentParser {
       budgetChf = amount(withBudget[1] as string);
       rest = rest.slice(0, withBudget.index).trim();
     }
+    // "now", "right away", "again" at the end change nothing ("start working now").
+    rest = rest.replace(/\s+(?:now|right\s+now|right\s+away|at\s+once|again|jetzt|sofort)$/i, "");
     const m =
-      /^(?:start|begin|launch|run|kick\s+off)\s+(?:a\s+|the\s+|another\s+)?(?:work\s+)?(?:session|sitzung)(?:\s+(?:on|for)\s+(?:the\s+)?(.+?))?$/i.exec(
+      /^(?:start|begin|launch|run|kick\s+off)\s+(?:a\s+|the\s+|another\s+|a\s+new\s+)?(?:work\s+)?(?:session|sitzung)(?:\s+(?:on|for)\s+(?:the\s+)?(.+?))?$/i.exec(
         rest,
       ) ??
-      /^(?:start|begin)\s+working(?:\s+on\s+(?:the\s+)?(.+?))?$/i.exec(rest) ??
+      /^(?:start|begin|get|keep)\s+(?:working|going|started|to\s+work)(?:\s+on\s+(?:the\s+)?(.+?))?$/i.exec(
+        rest,
+      ) ??
+      /^(?:start|begin)\s+(?:the\s+)?work(?:\s+on\s+(?:the\s+)?(.+?))?$/i.exec(rest) ??
       /^(?:starte|start)\s+(?:eine\s+|die\s+)?(?:session|sitzung)(?:\s+(?:f[üu]r|an|zu)\s+(?:dem\s+|der\s+)?(.+?))?$/i.exec(
         rest,
       ) ??

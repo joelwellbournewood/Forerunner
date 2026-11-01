@@ -232,9 +232,17 @@ export class CommandExecutor {
   private decideSteps(steps: Step[], ctx: CommandContext): ConfirmationDecision {
     let risk: Risk = "low";
     for (const s of steps) if (RISK_RANK[s.risk] > RISK_RANK[risk]) risk = s.risk;
-    return this.policy.decide(risk, ctx.actor, ctx.source, {
+    const decision = this.policy.decide(risk, ctx.actor, ctx.source, {
       limitChange: steps.some((s) => s.def.limit === true),
     });
+    // Design §3.9: a change to a task said in words is read back once before it happens.
+    if (
+      decision === "act" &&
+      (ctx.source === "chat" || ctx.source === "voice") &&
+      steps.some((s) => s.def.askFromChat === true)
+    )
+      return "needs_yes";
+    return decision;
   }
 
   /**
@@ -307,11 +315,19 @@ export class CommandExecutor {
     const now = this.clock.now();
     const expiresAt = new Date(now + this.ttlMs).toISOString();
     const emailToken = shortToken(6, "FR-");
-    const readback = `${renderChangeCard(card, { voice: true })} ${
-      decision === "needs_device"
-        ? "Confirm in the app on a paired device; on the phone with biometric."
-        : "Say yes to confirm, or reply yes to the email."
-    }`;
+    // A card with its one question reads back as that question (design §5: "Start a session on
+    // Quote page (up to CHF 5)?"); the chat shows Yes and No, voice asks for the word.
+    const readback = card.ask
+      ? decision === "needs_device"
+        ? `${card.ask} Confirm in the app on a paired device.`
+        : ctx.source === "voice"
+          ? `${card.ask} Say yes or no.`
+          : card.ask
+      : `${renderChangeCard(card, { voice: true })} ${
+          decision === "needs_device"
+            ? "Confirm in the app on a paired device; on the phone with biometric."
+            : "Say yes to confirm, or reply yes to the email."
+        }`;
     const request = await this.store.humanRequest.insert({
       human_id: ctx.humanId,
       project_id: card.projectId,

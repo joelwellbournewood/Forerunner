@@ -870,7 +870,9 @@ abort reason (`KillSwitchStop.stopBy`, read with `stopByOf`; `personStopOf` is t
 the palette) is `stop_all` whatever `reason` it carries; `POST /shutdown` (Quit) is `quit`; the
 kill file (`fr kill`, a Stop all that survives a restart) is `stop_all`; the registry's
 `session.stop` (`sessionCommandPorts.kill`: the chat, voice) is `stop_all` for everything or
-the agent (both freeze) and `you` for one session or the undo of the person's own start; the
+the agent (both freeze) and `you` for one session (with `freeze: false`, as Stop now) or the
+undo of the person's own start; a chat "stop" names the running session, never the agent's
+scope (design §3.9: before, it froze the agent until Allow sessions again); the
 phone's `kill` is `stop_all` and its `stop` is `you` (`remote/watcher.ts`, and the cloud runner's
 `remote.ts` alike); a run that registers while a scope is frozen is aborted as `stop_all`.
 Before, the runner matched the reason against three fixed strings, so the header's Stop all
@@ -2036,7 +2038,13 @@ caller: the human as actor, the principal, the active project (`activeProjectOf`
 human's time zone, the paired device, the conversation session for the activity event, and
 the source (`SOURCE_OF`: `chat` for text and the phone, `voice` for voice, `ui` for the
 settings screen's route calls). The daemon's ports are the CHF rate, the price table, the
-session ports (`sessionCommandPorts`, `sessionPausePorts`), `requestAnswered`
+session ports (`sessionCommandPorts`, `sessionPausePorts`), `stopTask` (a chat or voice
+pause, stop or cancel of a running task stops its run at once through `KillSwitch.stopTask`, as
+the Tasks tab's route does, U-039), `allowSessions` (`session.resume`: `KillSwitch.resume()` and
+the `kill.resumed` event the header follows, as `POST /kill/resume`), `startBlocked`
+(`session.start` refuses a start that would do nothing with the Start dialog's sentence from
+`daemon/start-blocked.ts`, `startBlocked`, which `GET /projects/:id/start-check` uses too, and
+the dialog's button in words: 'Say "resume" to allow sessions again.'), `requestAnswered`
 (`syncApprovals`), `memory` (`memoryCommandPort`), `speak`, `modelSettings`, `emailMode`
 and `specialists` (`specialistCommandPort` over `RuntimeApp.specialistApprovals`, so
 `specialist.propose` reaches the C.5 approval gate; "The approval gate" under the specialist

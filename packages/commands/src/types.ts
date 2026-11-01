@@ -44,6 +44,7 @@ export const COMMAND_NAMES = [
   "session.start",
   "session.stop",
   "session.pause",
+  "session.resume",
   "capability.grant",
   "settings.set",
   "note.add",
@@ -230,6 +231,17 @@ export interface CommandPorts {
    * task's end (the daemon's Tasks tab route also stops it).
    */
   stopTask?(taskId: string, reason: string): Promise<void> | void;
+  /**
+   * Lifts Stop all ("Allow sessions again", design §3.1): new sessions may start. Answers
+   * whether sessions were stopped. Absent: `session.resume` is refused as unavailable.
+   */
+  allowSessions?(): Promise<{ wasStopped: boolean }> | { wasStopped: boolean };
+  /**
+   * Why a session started now on the project would do nothing (design §3.6: Stop all is on,
+   * Claude is not connected, nothing can run), in one sentence; null when it would work.
+   * `session.start` refuses with it, as the Start dialog does. Absent: no check.
+   */
+  startBlocked?(projectId: string, budgetUsdMicro: number): Promise<string | null>;
   /** Starting a session above this budget is "costly" and needs a yes. Default USD 2. */
   costlySessionUsdMicro?: number;
   /** Lesson memory (`memory.record`); absent: the command is refused as unavailable. */
@@ -368,6 +380,12 @@ export interface CommandDef<P = unknown> {
   params: z.ZodType<P>;
   /** Static, or a function of the parameters and the current state. */
   risk: Risk | RiskFn<P>;
+  /**
+   * A change said in words (chat, voice) is read back for a yes first, whatever its risk
+   * (design §3.9): the words were interpreted, so the person sees which task it touches
+   * before it happens. The Tasks tab's buttons (source ui) act at once, with Undo.
+   */
+  askFromChat?: boolean;
   /** The highest risk a dynamic risk can reach; the tool spec and the command table use it. */
   maxRisk?: Risk;
   scope: CommandScope | ((params: P) => CommandScope);

@@ -254,7 +254,8 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     expect(r.pendingConfirmation).toBeNull(); // low risk: acts at once
     expect(r.actions[0]).toMatchObject({ kind: "session.pause" });
     expect(r.actions[0]?.undoToken).toBeTruthy();
-    expect(r.reply).toBe("Paused the session on Game. Undo.");
+    // Stop after this task (design §3.7), in plain words; the Undo is the action's button.
+    expect(r.reply).toBe("The session on Game stops after the task it is on.");
     expect((await w.store.session.mustGet(s.id)).status).toBe("paused");
     // Graceful: the task in flight was not aborted; the runner ends at the next boundary.
     expect(controller.signal.aborted).toBe(false);

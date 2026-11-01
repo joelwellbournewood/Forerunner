@@ -111,8 +111,11 @@ describe("scenario 3: voice", () => {
     expect(w.provider.calls).toHaveLength(callsBefore + 1);
     const sessionRow = await w.store.session.mustGet(session.sessionId);
     expect(statusCall?.system ?? "").toContain("Sample service (active)");
-    expect(statusCall?.system ?? "").toContain(sessionRow.summary.slice(0, 60));
-    expect(String(statusCall?.messages[0]?.content)).toContain(merge.id.slice(0, 8));
+    // The session's result and the open request are in the turn's own message, computed now
+    // (design §3.9), after any earlier turns of the conversation.
+    const turnMessage = String(statusCall?.messages.at(-1)?.content);
+    expect(turnMessage).toContain(sessionRow.summary.split("\n")[0]?.slice(0, 60));
+    expect(turnMessage).toContain(merge.id.slice(0, 8));
     expect((statusCall?.tools ?? []).map((t) => t.name)).toContain("budget_set");
     expect(statusCall?.model).toBe("fake-haiku");
 

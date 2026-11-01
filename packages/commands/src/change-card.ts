@@ -41,6 +41,11 @@ export interface ChangeCard {
   reversible: boolean;
   /** The cards of a composed plan, when command is "compose". */
   parts?: ChangeCard[];
+  /**
+   * The read-back as one question (design §3.9, §5: 'Make "Write the FAQ" wait for "Write the
+   * README"?'): what the chat shows with Yes and No, in place of the rendered card.
+   */
+  ask?: string;
 }
 
 export const SCOPE_LABELS: Record<CommandScope, string> = {
@@ -75,6 +80,8 @@ export interface CardInput {
   untilText?: string;
   costUsdMicro?: number;
   costChfMicro?: number;
+  /** The read-back as one question (`ChangeCard.ask`). */
+  ask?: string;
 }
 
 export function buildCard(input: CardInput): ChangeCard {
@@ -102,6 +109,7 @@ export function buildCard(input: CardInput): ChangeCard {
     usesActiveProject: input.usesActiveProject ?? false,
     expiresAt: input.expiresAt ?? null,
     reversible: input.reversible,
+    ...(input.ask ? { ask: input.ask } : {}),
   };
 }
 
@@ -162,6 +170,8 @@ export function mergeCards(parts: readonly ChangeCard[]): ChangeCard {
     expiresAt: first?.expiresAt ?? null,
     reversible,
     parts: [...parts],
+    // One question per part, when every part has one.
+    ...(parts.every((p) => p.ask) ? { ask: parts.map((p) => p.ask).join(" ") } : {}),
   };
 }
 

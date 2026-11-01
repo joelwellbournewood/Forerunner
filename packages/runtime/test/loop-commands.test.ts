@@ -619,7 +619,7 @@ describe("session commands over the scheduler", () => {
     // 1. The start the PC picked up is running: its undo stops that session only.
     const first = await commands.execute(startCommand, phoneTurn);
     expect(first.status).toBe("done");
-    expect(first.sentence).toContain("the PC picks it up");
+    expect(first.sentence).toContain("it picks it up in seconds");
     const firstRemoteId = await remoteIdOf(first.changeLogId);
     sched.setMode("running");
     expect(await watcher.drain()).toBe(1);

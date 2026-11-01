@@ -1267,9 +1267,10 @@ describe("voice routes on the composed daemon", () => {
     expect(no.heard).toBe("Cancelled; nothing was changed.");
     expect(rt.kill.isFrozen({ agentId: rt.agent.id })).toBe(false);
     // A work session of the agent runs (the row is what the agent and the kill switch read):
-    // the same "stop" is the kill switch, whatever waits for a yes. The bridge hands the line
-    // to the agent instead of answering the card: the card is cancelled, the stop runs, the
-    // reply says both, and no approval decision is booked for it.
+    // the same "stop" stops it, whatever waits for a yes. The bridge hands the line to the
+    // agent instead of answering the card: the card is cancelled, the stop runs, the reply
+    // says both, and no approval decision is booked for it. It is Stop now of that session
+    // (design §3.9, §4.9), never Stop all: nothing is frozen, the next start works.
     const row = await rt.store.session.insert({
       agent_id: rt.agent.id,
       project_id: projectId,
@@ -1286,7 +1287,7 @@ describe("voice routes on the composed daemon", () => {
     expect(stop.heard).toContain("cancelled");
     expect(stop.heard).toContain("Stopped");
     expect(await jsonList(await req("/commands/pending"))).toEqual([]);
-    expect(rt.kill.isFrozen({ agentId: rt.agent.id })).toBe(true);
+    expect(rt.kill.isFrozen({ agentId: rt.agent.id })).toBe(false);
     const cancelled = (await rt.store.event.list(started.conversationSessionId))
       .filter((e) => e.type === "chat.cancelled")
       .map((e) => e.payload as Json);

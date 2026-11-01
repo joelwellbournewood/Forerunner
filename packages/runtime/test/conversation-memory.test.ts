@@ -301,7 +301,7 @@ describe("the chat sees the project (design §3.9: tasks, the last session, open
         next_steps: ["Check that the files work together"],
       },
     });
-    await w.chat("summarise the last session");
+    await w.chat("what happened last time?");
     const sent = w.last(0);
     expect(sent).toContain("# Last session (ended 2026-11-01T12:00:00.000Z)");
     expect(sent).toContain('Failed: "Style the page": the model call failed');

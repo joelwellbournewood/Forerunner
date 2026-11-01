@@ -1973,7 +1973,7 @@ describe("the UI client against the real daemon: Stop all and the chat's stop wh
     expect((await client.resume()).killActive).toBe(false);
   });
 
-  it("'stop' in the chat stops and freezes the agent: the session reads Stop all, not an error (design §4.9)", async () => {
+  it("'stop' in the chat is Stop now of the running session: 'Stopped by you', nothing frozen (design §3.9, §4.9)", async () => {
     const me = await client.me();
     const { agentId, project, one, sessionId, taskOf, ended } =
       await runningSession("Chat stop page");
@@ -1986,18 +1986,29 @@ describe("the UI client against the real daemon: Stop all and the chat's stop wh
       source: "text",
     });
     expect(reply.actions.map((a) => a.kind)).toEqual(["session.stop"]);
+    expect(reply.reply).toBe(
+      "Stopped the session on Chat stop page. What it wrote stays; the task it was on is ready again.",
+    );
     await ended();
     const view = await client.session(sessionId);
-    expect(view).toMatchObject({ stopReason: "stop_all", statusText: "Stopped: Stop all" });
-    expect(await taskOf(one.id)).toMatchObject({ status: "ready", reason: "Stopped: Stop all" });
+    expect(view).toMatchObject({ stopReason: "you", statusText: "Stopped by you" });
+    expect(await taskOf(one.id)).toMatchObject({ status: "ready", reason: "Stopped by you" });
     const events = await client.sessionEvents(sessionId);
     expect(events.map((e) => e.type)).not.toContain("session.error");
     expect(events.find((e) => e.type === "session.stopped")?.payload).toMatchObject({
-      by: "stop_all",
+      by: "you",
     });
-    // The chat's stop is the kill switch: the header shows it until Allow sessions again.
+    // Stop now, not Stop all: nothing is frozen, so the next start works (before, the chat's
+    // stop froze the agent until Allow sessions again). "stop everything" is Stop all, and
+    // "resume" lifts it, by chat as by the header.
+    expect((await client.health()).killActive).toBe(false);
+    const line = (text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId: project.id, text, source: "text" });
+    await line("stop everything");
     expect((await client.health()).killActive).toBe(true);
-    expect((await client.resume()).killActive).toBe(false);
+    const resumed = await line("resume");
+    expect(resumed.actions.map((a) => a.kind)).toEqual(["session.resume"]);
+    expect((await client.health()).killActive).toBe(false);
   });
 });
 
@@ -2258,6 +2269,50 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     expect(again.turns.map((t) => [t.said, t.reply?.text])).toEqual(
       seen.turns.map((t) => [t.said, t.reply?.text]),
     );
+    await rt.close();
+  }, 120_000);
+});
+
+describe("a project name another project has (wave 1 handoff)", () => {
+  it("POST /projects answers a sentence with a stable code, not a 500, and writes nothing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-dup-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "ok" }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    await client.createProject({ name: "Quote page", goal: "A quote a day" });
+    const error = await client.createProject({ name: "Quote page", goal: "Again" }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(409);
+    expect((error as ApiError).message).toBe(
+      'There is already a project called "Quote page". Pick another name.',
+    );
+    expect((await client.projects()).map((p) => p.name)).toEqual(["Quote page"]);
     await rt.close();
   }, 120_000);
 });

@@ -152,6 +152,7 @@ import { sandboxHealth } from "./sandbox-port.ts";
 import { createSandboxRoutes } from "./sandbox-routes.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
+import { startBlocked as startBlockedReason } from "./start-blocked.ts";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -1183,78 +1184,19 @@ export function createDaemonApp(
     ).usd_micro;
     return Math.max(0, cap - spent);
   };
-  /**
-   * Why a Start now would do nothing (design §3.6), first match wins: sessions are stopped, no
-   * Claude credential, nothing can run (the first blocker, named with the button that unblocks
-   * it). Null when a session would work.
-   */
+  /** Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same). */
   const startBlocked = (
     r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
     projectId: string,
     busy: boolean,
-  ): StartCheckView["blocked"] => {
-    if (rt.kill.isFrozen({ agentId: rt.agent.id }))
-      return {
-        kind: "stopped",
-        sentence: "Sessions are stopped (Stop all), so nothing can start.",
-        action: { kind: "resume", label: "Allow sessions again", to: null },
-      };
-    if (!rt.provider)
-      return {
-        kind: "no_model",
-        sentence: "Claude is not connected: planning and tasks need it.",
-        action: { kind: "link", label: "Connect Claude", to: "/settings" },
-      };
-    // A session runs now: the start waits for it, and its work makes more tasks ready.
-    if (r.runnable.length > 0 || busy) return null;
-    const tasksTab = `/projects/${encodeURIComponent(projectId)}/tasks`;
-    const stuck = r.waiting.find((w) =>
-      w.waitsOn.some(
-        (d) =>
-          d.status === "needs_human" ||
-          d.status === "failed" ||
-          d.status === "cancelled" ||
-          d.status === null,
-      ),
-    );
-    if (stuck) {
-      const dep = stuck.waitsOn.find((d) => d.status !== "done") ?? stuck.waitsOn[0];
-      const name = dep?.title ? `"${dep.title}"` : "a task that does not exist";
-      if (dep?.status === "needs_human")
-        return {
-          kind: "nothing_runnable",
-          sentence: `Nothing can run: ${name} needs your answer.`,
-          action: { kind: "link", label: "Open it", to: "/inbox" },
-        };
-      return {
-        kind: "nothing_runnable",
-        sentence: `Nothing can run: "${stuck.title}" waits on ${name}, which ${dep?.status === "cancelled" ? "was cancelled" : dep?.status === "failed" ? "failed" : "does not exist"}.`,
-        action: { kind: "link", label: "Open Tasks", to: tasksTab },
-      };
-    }
-    const docker = r.waitingForSandbox?.tasks[0];
-    if (docker)
-      return {
-        kind: "nothing_runnable",
-        sentence: `Nothing can run: "${docker.title}" is waiting for Docker.`,
-        action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
-      };
-    const big = r.overBudget[0];
-    if (big)
-      return {
-        kind: "nothing_runnable",
-        sentence: `Nothing can run within this budget: "${big.title}" needs about ${formatChf(usdToChfMicro(big.estimateUsdMicro, chf()))}.`,
-        action: null,
-      };
-    return {
-      kind: "nothing_runnable",
-      sentence:
-        r.ready === 0
-          ? "Nothing can run: no task is ready."
-          : "Nothing can run: every ready task waits on another one.",
-      action: { kind: "link", label: "Open Tasks", to: tasksTab },
-    };
-  };
+  ): StartCheckView["blocked"] =>
+    startBlockedReason(r, {
+      stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
+      hasModel: !!rt.provider,
+      busy,
+      projectId,
+      chfPerUsd: chf(),
+    });
 
   app.get("/projects/:id/start-check", async (c) => {
     const budget = intQuery(c, "budgetUsdMicro", 0, Number.MAX_SAFE_INTEGER);

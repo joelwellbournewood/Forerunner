@@ -680,9 +680,13 @@ export function sessionCommandPorts(deps: {
         return deps.kill.stop({ agentId, sessionId: session.id }, reason, { by: "you" });
       }
       if (scope === "all") return deps.kill.stop(scope, reason, { by: "stop_all" });
-      // The kill switch's scope is the agent and the session; a start id is the port's.
+      // The kill switch's scope is the agent and the session; a start id is the port's. One
+      // session is the person's Stop now (design §3.7): it freezes nothing, so the next start
+      // works; the agent's scope is Stop all's freeze.
       const { startId: _startId, ...killScope } = scope;
-      return deps.kill.stop(killScope, reason, { by: killScope.sessionId ? "you" : "stop_all" });
+      return killScope.sessionId
+        ? deps.kill.stop(killScope, reason, { by: "you", freeze: false })
+        : deps.kill.stop(killScope, reason, { by: "stop_all" });
     },
     startUndoState,
   };
