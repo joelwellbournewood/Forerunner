@@ -2392,6 +2392,21 @@ in one project cancelled a task in another. Now:
   the options; this project's first, eight at most). The system prompt keeps only the projects
   by name and goal (stage, autonomy and the cut summary are gone). `docs/status.md` is left out
   of the doc search: its sections go stale and come in any order.
+- **The plan from the brief** (`planBlock`, from `ConversationDeps.intakeStatus`, which compose
+  wires to `IntakeService.status`): `# Plan from the brief`, before the task list it explains:
+  drafting "The plan from your brief is being drafted."; waiting "The plan from your brief waits
+  for your approval in the Inbox."; failed "Planning failed: <cause>. The person can press Try
+  again on the project page." (the cause is the status's `error`, the words the project page
+  shows); rejected "... They can press Draft a new plan on the project page."; nothing once the
+  plan is approved or when none was asked for. `CHAT_PLAN_RULES` (in the stable system part
+  after the role prompt, like the retrieval and open-request rules) tells the model to say where
+  the plan stands, never "no tasks yet, I can add tasks" while it does, to point to Try again
+  after a failure, and to write plain sentences without markdown. Before (the live run of
+  2026-11-01) the chat got only "(no tasks yet)" and answered a person whose planning had
+  failed "The Quote page project has no tasks yet… I can add tasks…". There is no command to
+  retry the plan from chat; Try again is the project page's button (`POST
+  /projects/:id/intake/retry`). Tests: `chat-plan-state.test.ts`; the real daemon with the
+  stand-in in `apps/ui/test/real-daemon.test.ts` ("planning failed: a chat turn ...").
 - **Mentioned means named.** A card counts as mentioned in the conversation only when the reply
   named it (`replyNames`: its task's title or its subject whole, or two telling words of one);
   before, every listed card was marked after any completed turn.

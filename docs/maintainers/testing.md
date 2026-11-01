@@ -2449,7 +2449,9 @@ The model is `fr daemon --provider bench`: the role-player in `testenv/src/bench
 reads the run label the loop driver puts on every call (`ModelRequest.origin.label`:
 `intake <id>`, `<specialist> on <title>`, `critic tier <n> on ...`, `conversation`) and answers
 so the real flow goes on: an intake proposal `parseIntakeReply` accepts, specialist runs through
-the app's own tools, a `submit_review` verdict, a chat reply that says what context it got.
+the app's own tools, a `submit_review` verdict, a chat reply that says what context it got
+and quotes back the plan's state (`# Plan from the brief`) and the first task line it was told
+(`chatFacts`), so a journey can check that a reply names a task as a real model's would.
 Every request is a line of `<home>/bench/model-calls.jsonl` (`call-log.ts`), which is how a
 tester sees what the app sends a model. `--provider bench-live` wraps the Messages API in the
 same log (`withModelCallLog`, the key replaced and every string redacted); it is unproven

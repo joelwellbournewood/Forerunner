@@ -421,6 +421,32 @@ describe("bench role-player: critic and chat", () => {
     expect(detectRole(chat("x")).role).toBe("chat");
   });
 
+  it("quotes back the plan's state and the first task it was told, as a real reply names them", async () => {
+    const { p } = player();
+    const told = (blocks: string) =>
+      call(p, {
+        ...chat("x"),
+        messages: [
+          {
+            role: "user",
+            content: `# Now\n- now: x\n\n${blocks}\n\nwhat is left to do?`,
+          },
+        ],
+      });
+    const failed = await told(
+      "# Plan from the brief\nPlanning failed: Claude's plan was missing parts Forerunner needs. The person can press Try again on the project page.\n\n# Tasks of Quote page\n(no tasks yet)",
+    );
+    expect(failed.text).toContain(
+      "The plan: Planning failed: Claude's plan was missing parts Forerunner needs.",
+    );
+    expect(failed.text).not.toContain("First task");
+    const working = await told(
+      '# Tasks of Quote page (run order; 1 of 2 done, 1 open)\n- "Build the quote page": Done; by the coder\n- "Write the README": Ready',
+    );
+    expect(working.text).toContain('First task: "Build the quote page": Done.');
+    expect(working.text).not.toContain("The plan:");
+  });
+
   it("calls a command tool for 'tool: <name> <json>' and reports its answer", async () => {
     const { p } = player();
     const r = await call(p, chat('tool: task_list {"project":"p1"}', ["task_list"]));

@@ -43,6 +43,8 @@ import {
   cardNames,
   filesBlock,
   lastSessionBlock,
+  type PlanState,
+  planBlock,
   replyNames,
   tasksBlock,
   workingNowBlock,
@@ -173,6 +175,11 @@ export interface ConversationDeps {
   sandboxReady?: () => boolean | null;
   /** CHF per USD at the day's rate, for the money the context names. Default 1. */
   chfPerUsd?: () => number;
+  /**
+   * Where the plan from the brief stands for a project (`IntakeService.status`): drafted now,
+   * waiting in the Inbox, failed and why, rejected (design §3.3, §3.9). Absent: not told.
+   */
+  intakeStatus?: (projectId: string) => Promise<PlanState>;
 }
 
 /** Docs search results in one chat turn's context at most (tokens, envelope included). */
@@ -361,6 +368,24 @@ A request marked [blocking] holds up work: mention it once like the others. One 
 [already mentioned; blocking] stays listed so you know of it: repeat it only when what the
 human asks depends on it. When the facts say the requests were already mentioned, do not
 bring them up unless the human asks.`;
+
+/**
+ * The plan from the brief, and how a reply is written (design §3.3, §3.9, §5 rule 6; the live
+ * run of 2026-11-01). The real chat model answered a person whose planning had failed "The
+ * Quote page project has no tasks yet… I can add tasks…", and its replies showed raw `**`. In
+ * the stable system part after the role prompt, whatever that prompt is, as the rules above.
+ */
+export const CHAT_PLAN_RULES = `# The plan from the brief
+When the facts carry "# Plan from the brief", the project's tasks come from that plan: it is
+being drafted, waits for the person's approval in the Inbox, failed, or was rejected. When the
+person asks about the project, its tasks or what is left, say where the plan stands first and
+never say the project has no tasks or offer to add tasks instead. When planning failed, give
+the cause in the words the facts use and say that Try again on the project page drafts the
+plan again.
+
+# How to write
+Write plain sentences. No markdown: no asterisks for bold, no headings, no tables. A short
+list may use lines that start with "- ".`;
 
 /**
  * A pause this long ends a conversation: the next turn starts a new one, in which an open
@@ -735,7 +760,7 @@ export class ConversationAgent {
     const system = layoutSystem({
       registryPrompt: this.deps.prompt ?? DEFAULT_PROMPT,
       projectBrief: context.stable,
-      instructions: `${CHAT_RETRIEVAL_RULES}\n\n${CHAT_OPEN_REQUEST_RULES}`,
+      instructions: `${CHAT_RETRIEVAL_RULES}\n\n${CHAT_OPEN_REQUEST_RULES}\n\n${CHAT_PLAN_RULES}`,
     });
     // The conversation so far (design §3.9: "what it knows on every turn: the recent
     // conversation"), then this turn: the volatile facts stay in the last user message, so the
@@ -1206,6 +1231,15 @@ export class ConversationAgent {
       running_sessions: sessions.filter((s) => s.summary !== "conversation").length,
     });
     const blocks: string[] = [];
+    // Where the plan from the brief stands, before the task list it explains (design §3.3).
+    if (project && this.deps.intakeStatus) {
+      try {
+        const plan = planBlock(await this.deps.intakeStatus(project.id));
+        if (plan) blocks.push(plan);
+      } catch (e) {
+        this.logger.warn("chat plan state not read", { projectId, error: errorMessage(e) });
+      }
+    }
     if (project) {
       try {
         blocks.push(

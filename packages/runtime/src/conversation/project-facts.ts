@@ -13,6 +13,7 @@ import {
   runOrder,
   taskDisplay,
 } from "../daemon/task-display.ts";
+import type { IntakeState } from "../session/intake.ts";
 import type { LastSessionOutcome } from "../session/result.ts";
 
 /**
@@ -260,6 +261,46 @@ export function cardLine(
       : "";
   const options = r.options.length ? ` Options: ${r.options.map(String).join(" / ")}.` : "";
   return `${where ? `[${where}] ` : ""}${why}${steps}${options}`;
+}
+
+/** Where the plan from the brief stands, as the chat is told it (`IntakeService.status`). */
+export interface PlanState {
+  state: IntakeState;
+  /** Why planning failed, in words (`intakeFailureWords`), for `failed`. */
+  error: string | null;
+}
+
+/**
+ * `# Plan from the brief` (design §3.3, §3.9): the plan the intake drafts from the brief, while
+ * it is drafted, waits in the Inbox, failed or was rejected; empty once it is approved (the
+ * tasks speak for themselves) or when none was asked for. Before (the live run of 2026-11-01)
+ * the chat got only "(no tasks yet)" and answered a person whose planning had failed "The
+ * Quote page project has no tasks yet… I can add tasks…", with no word of the failure or of
+ * Try again.
+ */
+export function planBlock(plan: PlanState): string {
+  const line = planLine(plan);
+  return line ? `# Plan from the brief\n${line}` : "";
+}
+
+function planLine({ state, error }: PlanState): string {
+  switch (state) {
+    case "drafting":
+      return "The plan from your brief is being drafted.";
+    case "pending":
+      return "The plan from your brief waits for your approval in the Inbox.";
+    case "failed": {
+      const cause = (error ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/[.\s]+$/, "");
+      return `Planning failed${cause ? `: ${cause}` : ""}. The person can press Try again on the project page.`;
+    }
+    case "rejected":
+      return "The person rejected the plan; nothing was written. They can press Draft a new plan on the project page.";
+    default:
+      return "";
+  }
 }
 
 /** `# Your files`: where the project's files are (its folder or checkout). */

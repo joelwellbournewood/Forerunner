@@ -732,5 +732,23 @@ function chatAnswer(req: ModelRequest): Answer {
     }
     return { text: `Running ${name}.`, toolCalls: [{ name, input }] };
   }
-  return text(`${STAND_IN} ${describeChatContext(req)}`);
+  const told = chatFacts(req);
+  return text(`${STAND_IN} ${describeChatContext(req)}${told ? ` ${told}` : ""}`);
+}
+
+/**
+ * What the turn was told about the project, quoted back in the reply so a journey can check
+ * the reply names the project's state and a task as a real model's would (scripts/bench): the
+ * plan from the brief (`# Plan from the brief`) and the first task line of `# Tasks of …`.
+ */
+export function chatFacts(req: ModelRequest): string {
+  const last = lastUserText(req.messages);
+  const plan = /(?:^|\n)# Plan from the brief\n([^\n]+)/.exec(last)?.[1]?.trim();
+  const task = /(?:^|\n)# Tasks of [^\n]*\n- ("[^"\n]+": [^;\n]+)/.exec(last)?.[1]?.trim();
+  return [
+    plan ? `The plan: ${plan}` : "",
+    task ? `First task: ${task.replace(/[.\s]+$/, "")}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }

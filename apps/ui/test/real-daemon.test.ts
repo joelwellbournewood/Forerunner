@@ -2297,6 +2297,8 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
   bench: BenchOptions;
   /** The intake calls the stand-in received, in order (what the planner was told). */
   intakeCalls: ModelRequest[];
+  /** The chat turns' calls the stand-in received, in order (what the chat was told). */
+  chatCalls: ModelRequest[];
 }> {
   const home = mkdtempSync(join(tmpdir(), "fr-ui-real-needs-me-"));
   const bench = benchOptionsFromEnv(
@@ -2305,9 +2307,13 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
   );
   const provider = createRolePlayer(bench);
   const intakeCalls: ModelRequest[] = [];
+  const chatCalls: ModelRequest[] = [];
   const stream = provider.stream.bind(provider);
   provider.stream = (req) => {
-    if (detectRole(req).role === "intake") intakeCalls.push(req);
+    const role = detectRole(req).role;
+    if (role === "intake") intakeCalls.push(req);
+    // A copy: the loop appends the reply to the same messages after the call.
+    if (role === "chat") chatCalls.push({ ...req, messages: structuredClone(req.messages) });
     return stream(req);
   };
   const rt = await composeRuntime({
@@ -2335,7 +2341,7 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
     },
     (input, init) => Promise.resolve(app.request(input, init)),
   );
-  return { rt, client, bench, intakeCalls };
+  return { rt, client, bench, intakeCalls, chatCalls };
 }
 
 describe("the UI client against the real daemon: a task that fails gets one card, and answering it resumes work (design §3.8)", () => {
@@ -2593,9 +2599,10 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
   let client: DaemonClient;
   let bench: BenchOptions;
   let intakeCalls: ModelRequest[];
+  let chatCalls: ModelRequest[];
 
   beforeAll(async () => {
-    ({ rt, client, bench, intakeCalls } = await composeWithRolePlayer({}));
+    ({ rt, client, bench, intakeCalls, chatCalls } = await composeWithRolePlayer({}));
   }, 120_000);
   afterAll(async () => {
     await rt?.close();
@@ -2784,6 +2791,60 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(last).toContain("Add a dark mode.");
     expect(last.indexOf("No build step.")).toBeLessThan(last.indexOf("Add a dark mode."));
     expect((await client.intakeStatus(project.id)).state).toBe("pending");
+  }, 60_000);
+
+  it("planning failed: a chat turn is told why and that Try again drafts the plan again (the live run of 2026-11-01)", async () => {
+    // The live model answered "The Quote page project has no tasks yet… I can add tasks…"
+    // after planning had failed: the chat was told "(no tasks yet)" and nothing of the plan.
+    bench.intake = "malformed";
+    let project: Awaited<ReturnType<DaemonClient["createProject"]>>;
+    try {
+      project = await client.createProject({
+        name: "Quote failed",
+        goal: "A quote page",
+        brief: BRIEF,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id)?.catch(() => undefined);
+    } finally {
+      bench.intake = "ok";
+    }
+    const failed = await client.intakeStatus(project.id);
+    expect(failed.state).toBe("failed");
+    const cause = (failed.error ?? "").replace(/[.\s]+$/, "");
+    expect(cause).not.toBe("");
+    const me = await client.me();
+    const before = chatCalls.length;
+    // What the project's Chat tab sends.
+    const reply = await client.chat({
+      humanId: me.id,
+      agentId: rt.agent.id,
+      projectId: project.id,
+      projectTab: true,
+      text: "what is left to do?",
+      source: "text",
+    });
+    expect(chatCalls.length).toBeGreaterThan(before);
+    const sent = JSON.stringify(chatCalls.at(-1)?.messages.at(-1)?.content ?? "");
+    expect(sent).toContain(
+      `Planning failed: ${cause}. The person can press Try again on the project page.`,
+    );
+    // The stand-in says what it was told about the plan, so the person reads it in the reply.
+    expect(reply.reply).toContain(`Planning failed: ${cause}.`);
+    // Once the plan waits in the Inbox, the chat is told that instead.
+    await client.retryIntake(project.id);
+    await rt.intake.inFlight(project.id);
+    await client.chat({
+      humanId: me.id,
+      agentId: rt.agent.id,
+      projectId: project.id,
+      projectTab: true,
+      text: "what is left to do?",
+      source: "text",
+    });
+    const after = JSON.stringify(chatCalls.at(-1)?.messages.at(-1)?.content ?? "");
+    expect(after).toContain("The plan from your brief waits for your approval in the Inbox.");
+    expect(after).not.toContain("Planning failed");
   }, 60_000);
 });
 
