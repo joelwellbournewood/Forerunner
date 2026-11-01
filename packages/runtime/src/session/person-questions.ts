@@ -651,6 +651,8 @@ async function applyAnswers(
             for (const to of CLOSE_PATH)
               t = await tx.task.transition(t.id, t.version, to, reason, actor);
             status = t.status;
+            // Closed: what waits on it may run now (resumeWork starts only when a task can).
+            follow = true;
           } else if (current && current.status === "needs_human") {
             const t = await tx.task.transition(current.id, current.version, "ready", reason, actor);
             await tx.queue.enqueue({
@@ -759,6 +761,8 @@ async function applyAnswers(
           const path =
             t.status === "needs_human" ? CLOSE_PATH : from >= 0 ? CLOSE_PATH.slice(from + 1) : [];
           for (const to of path) t = await tx.task.transition(t.id, t.version, to, reason, actor);
+          // The person's task is done: the tasks that wait on it may run now.
+          follow = t.status === "done";
         } else if (t.status === "needs_human") {
           t = await tx.task.transition(t.id, t.version, "ready", reason, actor);
           follow = true;
@@ -768,8 +772,10 @@ async function applyAnswers(
         await audit(tx, "answered", t.status);
         out.answered++;
       });
-      // Answering resumes work (design §3.8): the task goes on in a session of its project;
-      // the card records what became of the start for its "Done" line.
+      // Answering resumes work (design §3.8): the task goes on in a session of its project, or,
+      // the person's own task now done, what waits on it does. resumeWork starts only when a
+      // task of the project can run; the card records what became of the start for its "Done"
+      // line.
       if (follow && task)
         await recordStart(
           store,

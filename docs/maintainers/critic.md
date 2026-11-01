@@ -261,6 +261,10 @@ reads `"<title>" failed 4 times. The <specialist> said: "<its report>"` (`retryC
 `quotedWords` of the run's final report passed in `FollowupContext.workReport`, the critic's
 summary only when the run reported nothing; no ladder, ceiling or "attempt(s)") with
 `RETRY_CARD_OPTIONS` (Try again, Mark done anyway, Cancel task; `signoffOptionsFor(reason)`).
+The "4 times" is `triedTimes(store, taskId, fallback)`: the specialists' runs of the task (not
+the critic's, no sub-run), as the Tasks tab lists them; the task's `attempt` counter also moves
+when Try again sends the task back to ready, so it overstated the tries ("failed 6 times" after
+5 runs).
 Before, the options were `accept`, `revise`, `cancel`, which the runtime's reader still reads.
 The `change_card` is built by `signoffCard` and keyed `SIGNOFF_KEY` (`critic:signoff`): the
 task, the review, the run that produced the work, the review's finding ids, the reason

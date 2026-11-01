@@ -2114,12 +2114,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         task.status = personCard.on_answer === "done" ? "done" : "ready";
       else if (task && read?.kind === "answers")
         task.status = personCard.on_answer === "ready" ? "ready" : "done";
+      // As the daemon's resumeWork: an answer that leaves a task of the project runnable (the
+      // task itself back at ready, or what waited on the person's task now done) starts a
+      // session; nothing runnable, no start.
+      const byId = new Map(state.tasks.map((t) => [t.id, t]));
+      const runnable = state.tasks.some(
+        (t) =>
+          t.projectId === r.projectId &&
+          t.status === "ready" &&
+          t.dependsOn.every((d) => byId.get(d)?.status === "done"),
+      );
       r.changeCard = {
         ...personCard,
         applied_at: new Date().toISOString(),
         outcome:
           read?.kind === "cancel" ? "cancelled" : read?.kind === "without" ? "without" : "answered",
-        ...(read?.kind !== "cancel" && personCard.on_answer !== "done" ? { start: "started" } : {}),
+        ...(read?.kind !== "cancel" && runnable ? { start: "started" } : {}),
       };
     }
     // As the daemon's `syncSignoffAnswers` (design §3.8): Try again / Send it back sends the task

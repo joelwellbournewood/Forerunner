@@ -141,6 +141,20 @@ export function cardKindOf(card: { change_card?: unknown } | undefined): "retry"
     : "questions";
 }
 
+/**
+ * Whether an open card holds its task on the Tasks tab ("Needs your answer", "Needs your
+ * decision"). The Docker card (`sandbox.not_ready`, one per project, naming its task for Cancel
+ * task) asks nothing of the task: the row reads "Waiting for Docker", or "Paused by you" with
+ * Resume when the person paused it. Before, a paused task with that card read "Needs your
+ * answer" and lost its Resume.
+ */
+export function holdsTask(card: { change_card?: unknown }): boolean {
+  const c = card.change_card;
+  const key =
+    c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
+  return key !== "sandbox.not_ready";
+}
+
 /** True when a person paused the task (Pause or Stop) and no card asks anything about it. */
 export function isPausedByPerson(
   task: Pick<TaskRow, "status" | "author_human" | "author_agent">,

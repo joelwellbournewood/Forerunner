@@ -15,6 +15,7 @@ import {
   retryCardWords,
   saidByName,
   signoffCard,
+  triedTimes,
 } from "@forerunner/critic";
 import { checkDocDrift, STATUS_DOC } from "@forerunner/memory";
 import {
@@ -414,11 +415,15 @@ export class CriticLoop implements CriticPort {
     } else if (followup?.action === "revise") {
       const rung = retryAction(followup.attempt, currentTier, ceiling);
       if (rung === "human") {
+        // How often it was tried (its runs), not the retry counter (design §1, true now), which
+        // Try again's way back to ready also moves: the card and the Tasks tab's "tried N
+        // times" (read from this reason) say the same number.
+        const tried = await triedTimes(store, task.id, followup.attempt);
         current = await store.task.transition(
           current.id,
           current.version,
           "needs_human",
-          `retry ladder exhausted after ${followup.attempt} failed attempt(s) at ${currentTier} (ceiling ${ceiling}): human decides`,
+          `retry ladder exhausted after ${tried} failed attempt(s) at ${currentTier} (ceiling ${ceiling}): human decides`,
           { agentId: this.deps.criticAgentId },
         );
         // Design §3.8: one card after the last retry. Its title names the task and how often
@@ -427,12 +432,7 @@ export class CriticLoop implements CriticPort {
         const reported = quotedWords(result.finalReport ?? result.summary);
         const said = reported ?? quotedWords(output.summary);
         const saidBy = reported ? saidByName(req.item.specialist) : "critic";
-        const words = retryCardWords({
-          title: task.title,
-          attempts: followup.attempt,
-          said,
-          saidBy,
-        });
+        const words = retryCardWords({ title: task.title, attempts: tried, said, saidBy });
         const request = await store.humanRequest.insert({
           human_id: owner,
           project_id: task.project_id,

@@ -144,7 +144,8 @@ priority.
 When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox for your
 approval (see "Inbox" below: Approve and start, Change the plan, Reject). Above the project's
 tabs you see where it stands: "Drafting the plan from your brief…", "Waiting for you: approve
-the plan" with **Open**, "Planning failed" with what went wrong and **Try again**, or "You
+the plan" with **Open**, "Planning failed" with what went wrong in words ("Claude did not
+answer (model call failed).") and **Try again**, or "You
 rejected the plan. Nothing was written." with **Draft a new plan**. Without a Claude key the
 failure says so; add one in Settings → Accounts and keys → Open the setup assistant, then Try
 again.
@@ -251,8 +252,10 @@ The cards you meet most:
   costs, "Needs Docker" beside a task that needs a full review while Docker is not running, and
   the decision it records as text. **Approve and start** writes the tasks and starts working on
   them now. **Change the plan** opens a box: say what to change and the agent drafts a new plan
-  for you to approve. **Reject** writes nothing; the project page then says "You rejected the
-  plan. Nothing was written." with **Draft a new plan**.
+  for you to approve. Your words are kept: if that draft fails, or Forerunner closes before it
+  is done, **Try again** on the project page drafts it with them, and a second change on the
+  new plan adds to the first. **Reject** writes nothing; the project page then says "You
+  rejected the plan. Nothing was written." with **Draft a new plan**.
 - **A task that failed**: after its tries (the critic sent it back each time) or when its run
   failed ("Claude did not answer"), one card, never one per try. **Try again** starts a session
   that tries again; type a note first if you know what to change, and the next attempt reads it.
@@ -285,8 +288,9 @@ questions, each with its own answer field.
 Type your answers and click **Send answers**; leave a question blank if you have no answer yet.
 Your answers are written to the project's decision record (`docs/decisions/0001-…` in the
 project's workspace folder) and the decision log. A task planned for you is then
-done; a task a specialist was working on goes back to ready, a session starts, and its next run
-gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
+done, and if a task was waiting on it, a session starts and works on that task (the card's Done
+line says so); a task a specialist was working on goes back to ready, a session starts, and its
+next run gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
 and say in its report what it assumed; the task goes on in a session. **Cancel task** cancels it
 instead (asked once, naming the tasks that wait on it). You can also answer in your own words
 from the phone; one text then answers all the questions.

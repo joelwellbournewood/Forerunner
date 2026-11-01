@@ -147,6 +147,23 @@ export function retryCardWords(input: {
   return { title, why };
 }
 
+/**
+ * How often a task was tried, for a retry card's "failed N times" (design §1, true now): the
+ * specialists' own runs of the task (not the critic's reviews, not sub-runs), as the Tasks tab
+ * lists them. The task's retry counter (`attempt`) also moves on the way back from a card ("Try
+ * again" goes needs_human -> ready, and a failed task -> ready again), so it overstates the
+ * tries. `fallback` when the task has no run rows (a card filed without one).
+ */
+export async function triedTimes(
+  store: Pick<StateStore, "run">,
+  taskId: string,
+  fallback: number,
+): Promise<number> {
+  const runs = await store.run.forTask(taskId, { limit: 1000 });
+  const work = runs.filter((r) => r.specialist !== "critic" && !r.parent_run_id).length;
+  return work > 0 ? work : fallback;
+}
+
 /** The words of the critic's sign-off card: the title names the task, the body the critic. */
 export function signoffCardWords(input: { title: string; summary: string | null }): {
   title: string;
@@ -424,7 +441,7 @@ export async function applyVerdict(
           needs,
           review,
           "retry_ladder_exhausted",
-          task.attempt + 1,
+          await triedTimes(store, task.id, task.attempt + 1),
         );
         return { action: "human", task: needs, humanRequestId, reason: "retry_ladder_exhausted" };
       }

@@ -1377,7 +1377,23 @@ the plan waiting in the Inbox, or the failure with its error and a Retry:
 in the background through `enqueue` and answers `drafting` at once; it acts only on a `failed`
 or `none` intake (a plan waiting, a draft running or an answered intake is answered as it
 stands, no call), and without a provider it is refused `unavailable` with
-`INTAKE_NEEDS_A_MODEL` (the setup assistant) before anything starts.
+`INTAKE_NEEDS_A_MODEL` (the setup assistant) before anything starts. The failure is recorded
+in words (`intakeFailureWords`: "Claude did not answer (model call failed).", "Planning took
+longer than its time limit.", "Claude's answer was not the JSON plan Forerunner asks for."),
+not the planning call's error text (design §3.3).
+**Change the plan keeps the person's words (design §3.3).** The answered card keeps the change
+(`change_card.change`) and each plan card the changes it was drafted with (`changes`, in
+order); the new draft is asked with all of them (`IntakeDraftOptions.changes`,
+`briefWithChanges`), so a second change adds to the first. When that draft fails or is lost to
+a restart (the latest card is `changed` and nothing was filed after it: `failed`, "…was not
+drafted: Forerunner closed before it was done. Try again drafts it with your changes."),
+`retry` reads the changes from that card and drafts with them. Before (review of fix/needs-me),
+Try again drafted from the brief alone and the change was lost; only the in-memory job carried
+it. A Reject's Draft a new plan drafts from the brief.
+Tests: `intake.test.ts` ("Change the plan keeps the person's words": the runtime composed twice
+on one home, the change answered and the daemon closed before the draft; Try again's call
+carries the words), `apps/ui/test/real-daemon.test.ts` ("the plan card": a failing re-draft,
+its reason in words and Try again with the words; a second change keeps the first).
 Tests: `intake.test.ts` (U-046: drafting, failed with the error, Retry drafting again and the plan reaching the Inbox, a second Retry calling nothing, the refusal without a provider). Requirement: A.2. Reviewed 2026-10-25
 (`docs/status/reviews/w2-a2-intake.md`; the ADR 0055 amendment of that date).
 
@@ -1930,9 +1946,23 @@ waits on you" while 4 tasks waited on it).
   nothing. The same for the blocked-findings and failed-review cards, the person's answers (the
   existing start, now through `resumeWork`) and the questions card's new **Go ahead without**
   (`personQuestionsAnswer` reads it as `without`: the task goes back to ready with
-  `WITHOUT_ANSWERS_NOTE` queued for its brief). The card records `change_card.start`
+  `WITHOUT_ANSWERS_NOTE` queued for its brief). A planned person task (`on_answer: "done"`,
+  New task's "Me") that the answers close calls `resumeWork` too, so the task that waited on it
+  runs without a Start click (the review of fix/needs-me found it closed the task and started
+  nothing; the Done line reads 'Answers saved in the decision record; "X" is done; a session
+  started.'). The card records `change_card.start`
   (`started`, `queued`, `deferred`, `failed`, `nothing_to_run`) for its Done line. compose.ts
-  passes the scheduler's `requestStart` to these syncs while the services run.
+  passes the scheduler's `requestStart` to these syncs while the services run. A `queued`
+  start runs on the scheduler's next tick (30 s) after the session before it ends.
+- **"Failed N times" is true now** (`triedTimes`, `@forerunner/critic`): the retry card counts
+  the specialists' runs of the task (no review, no sub-run), as the Tasks tab lists them, not
+  the task's `attempt` counter, which Try again's way back to ready also moves (a second card
+  read "failed 6 times" after 5 runs). The loop's ladder reason uses the same number, so the
+  Tasks tab's "Needs your decision: tried N times" agrees with the card.
+- **The Docker card does not hold its task on the Tasks tab** (`holdsTask`, `task-words.ts`, read
+  by `loadTaskDisplayContext`): the card names one task (for Cancel task), and a paused task
+  with it read "Needs your answer" with Answer and Cancel, and lost its Resume. The row now reads
+  "Waiting for Docker", or "Paused by you" with Resume.
 - **The card in words** (`daemon/request-words.ts`, pure, also used by the UI's fake daemon):
   `requestView` now carries `title`, `body` (one or two sentences: the specialist's words, then
   what waits on the task, read now), `choices` (`label` sent as the answer, `explain` the
@@ -1981,8 +2011,11 @@ waits on you" while 4 tasks waited on it).
 
 Tests: `apps/ui/test/real-daemon.test.ts` ("a task that fails gets one card, and answering it
 resumes work": one card after the in-session retries, its title, the specialist's words, what
-waits, each option's consequence line; Try again with a note starts a session; Mark done anyway
-is Done: accepted without review and the task after it runs; the Answered list; "a run that
+waits, each option's consequence line, "failed N times" equal to the task's work runs; Try
+again with a note starts a session; Mark done anyway
+is Done: accepted without review and the task after it runs; the Answered list; Send answers on
+a person's task starts the task waiting on it, and with nothing waiting starts no session; a
+paused task waiting for Docker is "Paused by you" and resumes; "a run that
 errors fails its task, which gets a card": the failed-task card, the counts, Cancel task and the
 stuck task after it), `signoff-answer.test.ts` (the new words, Mark done anyway's reason, Try
 again's note and start), `critic.test.ts` and `followup.test.ts` (the card's words),

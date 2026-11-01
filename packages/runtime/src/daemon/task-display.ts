@@ -2,7 +2,7 @@ import type { EventRow, HumanRequestRow, RunRow, StateStore, TaskRow } from "@fo
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import type { TaskDetailView, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
-import { plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
+import { holdsTask, plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
 
 export * from "./task-words.ts";
 
@@ -32,7 +32,8 @@ export async function loadTaskDisplayContext(
       orderBy: [{ column: "created_at" }, { column: "id" }],
       limit: 1000,
     });
-    for (const r of open) if (r.task_id && !cards.has(r.task_id)) cards.set(r.task_id, r);
+    for (const r of open)
+      if (r.task_id && !cards.has(r.task_id) && holdsTask(r)) cards.set(r.task_id, r);
   }
   const runs = new Map<string, RunRow>();
   const agentNames = new Map<string, string>();

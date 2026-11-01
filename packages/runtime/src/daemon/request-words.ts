@@ -336,9 +336,12 @@ function questionsOutcome(card: JsonObject, ctx: RequestWordsContext): string | 
   if (outcome === "task_moved_on")
     return `Your answers came after ${task} had finished. They are kept in the decision record.`;
   if (outcome === "without")
-    return `${task} goes on without your answers${started ? `: ${started}` : ""}.`;
+    return ctx.taskStatus === "done"
+      ? `${task} is done without your answers${started ? `; ${started}` : ""}.`
+      : `${task} goes on without your answers${started ? `: ${started}` : ""}.`;
   if (outcome === "answered") {
-    if (ctx.taskStatus === "done") return `Answers saved in the decision record; ${task} is done.`;
+    if (ctx.taskStatus === "done")
+      return `Answers saved in the decision record; ${task} is done${started ? `; ${started}` : ""}.`;
     return `Answers sent: ${task} goes on with them${started ? `; ${started}` : ""}.`;
   }
   return null;
@@ -555,7 +558,8 @@ export function requestWords(
     outcome = intakeOutcome(card);
   } else if (key === "sandbox.not_ready") {
     words = dockerCard(r, card, ctx);
-    if (card.outcome === "cancel") outcome = `${q(ctx.taskTitle ?? "The task")} was cancelled.`;
+    if (card.outcome === "cancel")
+      outcome = `${ctx.taskTitle ? q(ctx.taskTitle) : "The task"} was cancelled.`;
   } else {
     words = genericCard(r);
   }

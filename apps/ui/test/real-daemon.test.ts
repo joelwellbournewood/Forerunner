@@ -6,13 +6,19 @@ import { appDirs, join, SimulatedClock, SystemClock } from "@forerunner/platform
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
+import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ScriptedProvider } from "../../../packages/runtime/test/helpers.ts";
 import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
-import { benchOptionsFromEnv, createRolePlayer } from "../../../testenv/src/bench/role-player.ts";
+import {
+  type BenchOptions,
+  benchOptionsFromEnv,
+  createRolePlayer,
+} from "../../../testenv/src/bench/role-player.ts";
+import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 
@@ -2259,14 +2265,23 @@ describe("the UI client against the real daemon: Settings → Sandbox (Docker) (
 async function composeWithRolePlayer(env: Record<string, string>): Promise<{
   rt: RuntimeApp;
   client: DaemonClient;
+  /** The stand-in's knobs, read at each call: a case can plant a failure for one step. */
+  bench: BenchOptions;
+  /** The intake calls the stand-in received, in order (what the planner was told). */
+  intakeCalls: ModelRequest[];
 }> {
   const home = mkdtempSync(join(tmpdir(), "fr-ui-real-needs-me-"));
-  const provider = createRolePlayer(
-    benchOptionsFromEnv(
-      { FORERUNNER_BENCH_DELAY_MS: "0", ...env },
-      new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
-    ),
+  const bench = benchOptionsFromEnv(
+    { FORERUNNER_BENCH_DELAY_MS: "0", ...env },
+    new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
   );
+  const provider = createRolePlayer(bench);
+  const intakeCalls: ModelRequest[] = [];
+  const stream = provider.stream.bind(provider);
+  provider.stream = (req) => {
+    if (detectRole(req).role === "intake") intakeCalls.push(req);
+    return stream(req);
+  };
   const rt = await composeRuntime({
     env: { FORERUNNER_HOME: home },
     dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
@@ -2292,7 +2307,7 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
     },
     (input, init) => Promise.resolve(app.request(input, init)),
   );
-  return { rt, client };
+  return { rt, client, bench, intakeCalls };
 }
 
 describe("the UI client against the real daemon: a task that fails gets one card, and answering it resumes work (design §3.8)", () => {
@@ -2338,6 +2353,12 @@ describe("the UI client against the real daemon: a task that fails gets one card
     expect(cards).toHaveLength(1);
     const card = cards[0];
     expect(card?.title).toMatch(/^"Write the scope in docs\/scope\.md" failed (twice|\d+ times)$/);
+    // "Failed N times" is true now: N is the specialist's runs of the task the Tasks tab lists.
+    const failedTimes = async () => {
+      const n = (await client.task(scope.id)).runs.filter((r) => r.kind === "work").length;
+      return `"Write the scope in docs/scope.md" failed ${n === 2 ? "twice" : `${n} times`}`;
+    };
+    expect(card?.title).toBe(await failedTimes());
     // The specialist's own words, and what waits on the task (true now).
     expect(card?.body).toContain('said: "I could not complete this task.');
     expect(card?.body).toContain('"Write the README" waits on it.');
@@ -2380,6 +2401,13 @@ describe("the UI client against the real daemon: a task that fails gets one card
     const again = await cardsOf();
     expect(again).toHaveLength(1);
     expect(again[0]?.id).not.toBe(card?.id);
+    // The count goes on from the runs, not from the task's retry counter (which Try again's
+    // way back to ready also moved), and the Tasks tab says the same number.
+    expect(again[0]?.title).toBe(await failedTimes());
+    const runs = (await client.task(scope.id)).runs.filter((r) => r.kind === "work").length;
+    expect((await client.tasks(project.id)).find((t) => t.id === scope.id)?.display?.label).toBe(
+      `Needs your decision: tried ${runs} times`,
+    );
 
     // Mark done anyway: closed although nothing passed review, and the README runs.
     const marked = await client.answerRequest(again[0]?.id ?? "", {
@@ -2406,14 +2434,140 @@ describe("the UI client against the real daemon: a task that fails gets one card
       expect.arrayContaining([marked.outcome, tried.outcome]),
     );
   }, 120_000);
+
+  it("a task only the person can do: Send answers closes it, and the task waiting on it starts in a session at once", async () => {
+    const me = await client.me();
+    const project = await client.createProject({ name: "Hosting", goal: "A quote page" });
+    // New task, Who does it: "Me: ask me in the Inbox". The README waits on it.
+    const decide = await client.createTask(project.id, {
+      title: "Decide where the page is published",
+      outcome: "The hosting is chosen",
+      acceptanceCriteria: ["Where should the page be published?"],
+      specialist: "person",
+    });
+    const readme = await client.createTask(project.id, {
+      title: "Write the README",
+      outcome: "README.md says how to run it",
+      riskTier: 1,
+      dependsOn: [decide.id],
+    });
+    const sessionsOf = async () => client.sessions({ projectId: project.id });
+    expect(await sessionsOf()).toEqual([]);
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.taskId === decide.id && r.status === "open",
+    );
+    expect(card?.reply).toBe("form");
+    // What the Inbox form sends: one answer per question.
+    const answered = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: {
+        answers: [{ question: card?.steps[0] ?? null, answer: "GitHub Pages" }],
+      },
+    });
+    expect(answered.status).toBe("answered");
+    // The Done line says what came of the answer: the task is done and work goes on.
+    expect(answered.outcome).toMatch(
+      /^Answers saved in the decision record; "Decide where the page is published" is done; (a session started|it runs after the current session)\.$/,
+    );
+    // No Start click: the session the answer started (or queued behind the session that was
+    // still ending, which the scheduler starts on its next tick) runs the README.
+    await eventually(
+      async () => (await sessionsOf()).length > 0,
+      "the session the answer started",
+      async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
+      60_000,
+    );
+    await eventually(
+      async () =>
+        (await client.tasks(project.id)).find((t) => t.id === readme.id)?.status === "done",
+      "the README to be done by the session the answer started",
+      async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
+      60_000,
+    );
+  }, 120_000);
+
+  it("a task waiting for Docker that the person pauses reads Paused by you and can be resumed: its Docker card asks nothing of the task", async () => {
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Docker wait", goal: "A quote page" });
+    await client.createTask(project.id, {
+      title: "Write the notes",
+      outcome: "notes.md lists what the page is for",
+      riskTier: 1,
+    });
+    const check = await client.createTask(project.id, {
+      title: "Check the page in a browser",
+      outcome: "The page opens without errors",
+      riskTier: 2,
+    });
+    expect(check.display?.label).toBe("Waiting for Docker");
+    // The start may wait behind a session an earlier case left ending (the next tick runs it).
+    await client.startSession({ agentId, projectId: project.id });
+    const dockerCard = async () =>
+      (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    await eventually(
+      async () => {
+        const ss = await client.sessions({ projectId: project.id });
+        return (
+          ss.length > 0 &&
+          ss.every((s) => !["running", "paused"].includes(s.status)) &&
+          (await dockerCard()) !== undefined
+        );
+      },
+      "the session to end with the project's Docker card",
+      async () => JSON.stringify((await client.sessions({ projectId: project.id })).length),
+      90_000,
+    );
+    // The project's Docker card names the task (Set up Docker, Cancel task).
+    expect((await dockerCard())?.title).toBe('"Check the page in a browser" waits for Docker');
+    const row = (await client.tasks(project.id)).find((t) => t.id === check.id);
+    expect(row?.display?.label).toBe("Waiting for Docker");
+    // Pause on the Tasks tab: the row says so and offers Resume, not "Needs your answer".
+    const paused = await client.taskAction(check.id, {
+      version: row?.version ?? 0,
+      action: "pause",
+    });
+    expect(paused.display).toMatchObject({ key: "paused", label: "Paused by you" });
+    const resumed = await client.taskAction(check.id, {
+      version: paused.version,
+      action: "resume",
+    });
+    expect(resumed.display?.label).toBe("Waiting for Docker");
+  }, 120_000);
+
+  it("a person's task with nothing waiting on it: the answers close it and no empty session starts", async () => {
+    const me = await client.me();
+    const project = await client.createProject({ name: "Alone", goal: "A quote page" });
+    const decide = await client.createTask(project.id, {
+      title: "Choose the colours",
+      outcome: "The colours are chosen",
+      acceptanceCriteria: ["Which colours?"],
+      specialist: "person",
+    });
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.taskId === decide.id && r.status === "open",
+    );
+    const answered = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: { answers: [{ question: card?.steps[0] ?? null, answer: "Blue and white" }] },
+    });
+    expect(answered.outcome).toBe(
+      'Answers saved in the decision record; "Choose the colours" is done.',
+    );
+    expect(await client.sessions({ projectId: project.id })).toEqual([]);
+  }, 60_000);
 });
 
 describe("the UI client against the real daemon: the plan card (design §3.3)", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;
+  let bench: BenchOptions;
+  let intakeCalls: ModelRequest[];
 
   beforeAll(async () => {
-    ({ rt, client } = await composeWithRolePlayer({}));
+    ({ rt, client, bench, intakeCalls } = await composeWithRolePlayer({}));
   }, 120_000);
   afterAll(async () => {
     await rt?.close();
@@ -2515,6 +2669,66 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     const again = await client.retryIntake(project.id);
     expect(again.state).toBe("drafting");
     await rt.intake.inFlight(project.id);
+    expect((await client.intakeStatus(project.id)).state).toBe("pending");
+  }, 60_000);
+
+  /** What the planner was told: its user message, which carries the brief and the changes. */
+  const told = (req: ModelRequest | undefined) =>
+    JSON.stringify(req?.messages.find((m) => m.role === "user")?.content ?? "");
+
+  it("Change the plan whose new draft fails: the project page says so, and Try again drafts it with the person's words", async () => {
+    const { project, card } = await planned("Quote four");
+    const asked = "Only a single index.html, no build step.";
+    // The planning call fails once, for the draft the change asked for.
+    bench.intake = "error";
+    try {
+      const changed = await client.answerRequest(card.id, {
+        version: card.version,
+        answer: { choice: "Change the plan", text: asked },
+      });
+      expect(changed.status).toBe("answered");
+      await rt.intake.inFlight(project.id)?.catch(() => undefined);
+    } finally {
+      bench.intake = "ok";
+    }
+    expect(told(intakeCalls.at(-1))).toContain(asked);
+    const failed = await client.intakeStatus(project.id);
+    expect(failed.state).toBe("failed");
+    // The banner's reason is in words (design §3.3), not the planning call's error text.
+    expect(failed.error).toBe("Claude did not answer (model call failed).");
+    // Try again (the banner's button): one draft, and it carries the person's words.
+    const before = intakeCalls.length;
+    const retried = await client.retryIntake(project.id);
+    expect(retried.state).toBe("drafting");
+    await rt.intake.inFlight(project.id);
+    expect(intakeCalls).toHaveLength(before + 1);
+    expect(told(intakeCalls.at(-1))).toContain(asked);
+    const status = await client.intakeStatus(project.id);
+    expect(status.state).toBe("pending");
+    expect(status.requestId).not.toBe(card.id);
+    expect(await client.tasks(project.id)).toEqual([]);
+  }, 60_000);
+
+  it("a second Change the plan keeps the first: the new draft is asked with both changes, in order", async () => {
+    const { project, card, me } = await planned("Quote five");
+    await client.answerRequest(card.id, {
+      version: card.version,
+      answer: { choice: "Change the plan", text: "No build step." },
+    });
+    await rt.intake.inFlight(project.id);
+    const second = (await client.inbox(me.id)).requests.find(
+      (r) => r.projectId === project.id && r.status === "open",
+    );
+    expect(second?.id).not.toBe(card.id);
+    await client.answerRequest(second?.id ?? "", {
+      version: second?.version ?? 0,
+      answer: { choice: "Change the plan", text: "Add a dark mode." },
+    });
+    await rt.intake.inFlight(project.id);
+    const last = told(intakeCalls.at(-1));
+    expect(last).toContain("No build step.");
+    expect(last).toContain("Add a dark mode.");
+    expect(last.indexOf("No build step.")).toBeLessThan(last.indexOf("Add a dark mode."));
     expect((await client.intakeStatus(project.id)).state).toBe("pending");
   }, 60_000);
 });

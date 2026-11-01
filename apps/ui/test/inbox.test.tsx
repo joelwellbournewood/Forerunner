@@ -405,6 +405,51 @@ describe("Inbox", () => {
       expect(harness.daemon.state.tasks.find((t) => t.id === "task_1")?.status).toBe("done");
     });
 
+    it("Send answers closes the task; the Done line says the task waiting on it started, and says nothing of a session when none can run (design §3.8)", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(questionsCard());
+      const task = (id: string) => harness.daemon.state.tasks.find((t) => t.id === id);
+      const t1 = task("task_1");
+      if (t1) t1.status = "needs_human";
+      // "Add the search box to the header" waits on it; nothing else can run.
+      const after = task("task_2");
+      if (after) {
+        after.dependsOn = ["task_1"];
+        after.status = "ready";
+      }
+      const other = task("task_3");
+      if (other) other.status = "done";
+      renderApp("/inbox", harness);
+      const form = await screen.findByTestId("person-questions");
+      const fields = within(form).getAllByTestId("person-answer");
+      await user.type(fields[0] as HTMLElement, "Cloudflare Pages");
+      await user.click(within(form).getByTestId("send-answers"));
+      expect(await screen.findByTestId("done-line")).toHaveTextContent(
+        'Done: Answers saved in the decision record; "Index the documentation pages" is done; a session started.',
+      );
+    });
+
+    it("Send answers on a task nothing waits on: the Done line says it is done, and no session is promised", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(questionsCard());
+      const task = (id: string) => harness.daemon.state.tasks.find((t) => t.id === id);
+      const t1 = task("task_1");
+      if (t1) t1.status = "needs_human";
+      const other = task("task_3");
+      if (other) other.status = "done";
+      renderApp("/inbox", harness);
+      const form = await screen.findByTestId("person-questions");
+      await user.type(within(form).getAllByTestId("person-answer")[0] as HTMLElement, "Cloudflare");
+      await user.click(within(form).getByTestId("send-answers"));
+      const line = await screen.findByTestId("done-line");
+      expect(line).toHaveTextContent(
+        'Done: Answers saved in the decision record; "Index the documentation pages" is done.',
+      );
+      expect(line).not.toHaveTextContent("session");
+    });
+
     it("Cancel task asks once, names what waits on the task, then sends the option and cancels it (design §3.8)", async () => {
       const user = userEvent.setup();
       const harness = createHarness();
