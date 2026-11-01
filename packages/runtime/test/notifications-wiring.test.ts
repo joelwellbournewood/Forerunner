@@ -10,6 +10,7 @@ import { RESTART_EXIT_CODE } from "../src/daemon/restart.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { NotificationEventPayload } from "../src/notifications/emitter.ts";
 import type { NotificationKind, NotificationRecord } from "../src/notifications/types.ts";
+import { STOP_NOW_REASON } from "../src/session/stop-words.ts";
 import { NOTIFY_PREFS_TOOL } from "../src/wiring/notification-ports.ts";
 import {
   FAKE_CATALOG_ID,
@@ -465,6 +466,28 @@ describe("notifications wired into the daemon", () => {
     // The session log says it in words, never as JSON (U-074).
     expect(str((entry as Json).text)).toContain(`Notified you: "${logged.notification.title}"`);
     expect(str((entry as Json).text)).not.toContain("{");
+  });
+
+  it("Stop now on a session is your own click: no 'Kill switch' notification echoes it (design §5.11)", async () => {
+    const kinds: string[] = [];
+    const off = rt.notifier.emitter.on("record", (r) => kinds.push(r.notification.kind));
+    const sessionId = "sess-stop-now";
+    const controller = new AbortController();
+    const unregister = rt.kill.register({
+      agentId: rt.agent.id,
+      sessionId,
+      controller,
+      label: "a live run",
+    });
+    try {
+      await rt.kill.stop({ sessionId }, STOP_NOW_REASON, { freeze: false });
+      expect(controller.signal.aborted).toBe(true);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(kinds).not.toContain("kill_switch");
+    } finally {
+      off();
+      unregister();
+    }
   });
 
   it("the kill switch is urgent, names what stopped and why, and links home", async () => {

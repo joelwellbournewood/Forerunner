@@ -2546,9 +2546,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   emailPorts.settings.onCommandsSwitchedOff((e) =>
     notifyLater(notifications.emailCommandsOff(human.id, e), "email commands off"),
   );
-  kill.onStop((report, reason) =>
-    notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch"),
-  );
+  kill.onStop((report, reason) => {
+    // A person's own Stop now on one session is their click, not news (design §5.11): the
+    // session says "Stopped by you"; Stop all and Quit are still told.
+    if (personStopOf(reason) === "you") return;
+    notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch");
+  });
   events.on("restart", (r: RestartRequestFile) => {
     // A restart after the setup assistant stored a credential is no update (ADR 0092).
     if (r.reason === "setup") return;

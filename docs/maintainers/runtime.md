@@ -864,7 +864,9 @@ the abort reason into the stop reason `you`, `stop_all` or `quit` (`personStopOf
 `session.stopped` with "Stopped by you during "X". It is ready again." instead of a
 `session.error`, and releases the task with `taskReasonForStop` ("Stopped by you", "Stopped:
 Stop all", "Forerunner was closed"); the kill switch's claim freeze in `compose.ts` uses the same
-words (it wrote "kill switch" for every stop, Quit included). The session status stays `killed`
+words (it wrote "kill switch" for every stop, Quit included). A Stop now raises no "Kill switch"
+notification (the `kill.onStop` listener in `compose.ts` skips the person's own click; Stop all
+and Quit are still told). The session status stays `killed`
 for these (enforcement and the handover read it); `SessionView.stopReason` and
 `SessionView.statusText` ("Working", "Done", "Stopped by you", "Interrupted: Forerunner closed",
 "Stopping after this task") are what a screen shows.
