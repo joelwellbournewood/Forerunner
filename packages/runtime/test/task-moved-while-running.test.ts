@@ -243,7 +243,11 @@ describe("the session runner after a person's move on a running task (U-039)", (
     expect(asked.reason).toBe("I want to look");
     expect(r.needsHuman).toEqual([first.id]);
     expect(r.completed).toEqual([second.id]);
-    expect(r.summary.split("\n")[0]).toBe('"Ask me first" needs your decision (Inbox).');
+    // A person's own move to needs_human with no card is their pause ("Paused by you",
+    // design §2; ADR 0102 removed "Needs me" as a person's button): the result does not call
+    // it a decision waiting in the Inbox, where there is no card, nor echo the click (§5.11).
+    expect(r.summary.split("\n")[0]).toBe('Did 1 task: "Then this".');
+    expect(r.summary).not.toMatch(/needs your decision/);
     await store.close();
   });
 

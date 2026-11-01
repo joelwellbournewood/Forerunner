@@ -17,6 +17,7 @@ import {
   type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
+import { isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -1872,10 +1873,28 @@ export class SessionRunner {
     const uniq = (ids: readonly string[]) => [...new Set(ids)];
     const doneNow = uniq(completed).filter((id) => endState.rows.get(id)?.status === "done");
     const failedNow = uniq(failed).filter((id) => endState.rows.get(id)?.status === "failed");
+    // A task the person paused or stopped (the Tasks tab's Pause and Stop: needs_human by
+    // them, no card) waits on nobody: it is "Paused by you", not a decision in the Inbox
+    // (design §2), and their own click is not news (§5.11).
+    const carded = new Set(
+      project
+        ? (
+            await store.humanRequest.list({ status: "open", project_id: project.id } as never, {
+              limit: 1000,
+            })
+          )
+            .map((r) => r.task_id)
+            .filter((id): id is string => Boolean(id))
+        : [],
+    );
+    const pausedByYou = (id: string) => {
+      const row = endState.rows.get(id);
+      return !!row && isPausedByPerson(row, carded.has(id));
+    };
     const needsYouNow = uniq([...needsHuman, ...reviewFailed, ...blockedByFindings]).filter(
       (id) => {
         const st = endState.rows.get(id)?.status;
-        return st === "needs_human" || st === "in_review";
+        return (st === "needs_human" && !pausedByYou(id)) || st === "in_review";
       },
     );
     const inReviewNow = uniq(inReview).filter(
@@ -2156,7 +2175,7 @@ export class SessionRunner {
             ...endState.readyNow.map((t) => t.title),
             ...endState.waitingNow.map((w) => w.task.title),
           ].slice(0, 3),
-          open_questions: needsHuman.length,
+          open_questions: needsHuman.filter((id) => !pausedByYou(id)).length,
           spend_usd_micro: (await store.costLedger.sum({ projectId: project.id })).usd_micro,
         } as never,
       });

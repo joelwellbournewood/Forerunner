@@ -855,7 +855,12 @@ ids, empty whenever the plan ran). The Inbox gets one line per session (`session
 "Quote page: did 5 tasks: …"), none for a session that ran nothing or only filed its plan; the
 spec O.9 report of what the person said follows on the next lines. `docs/status.md` gets the
 blocked tasks as they stand (needs you, failed, waiting on another task, waiting for Docker) and
-the ready tasks as next.
+the ready tasks as next. A task the person paused or stopped during the session (the Tasks tab's
+Pause and Stop store `needs_human` authored by them with no card, `isPausedByPerson` in
+`daemon/task-words.ts`) is not in `needsYou`, the status doc's blocked list or
+`summary_cache.open_questions`: it reads "Paused by you" and waits on nobody (design §2), and
+their own click is not news (§5.11). Before the two areas were merged, the runner named it
+'"X" needs your decision (Inbox).' in the result and the Inbox Update with no card to answer.
 
 **Stops (`session/stop-words.ts`, design §3.7, §4.9).** Whose stop it was is named where the
 stop is asked for, never read from the reason's words: `KillSwitch.stop(scope, reason, { by })`

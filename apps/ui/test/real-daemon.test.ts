@@ -1718,6 +1718,62 @@ describe("the UI client against the real daemon: a task a session is running", (
   });
 });
 
+describe("the UI client against the real daemon: the Tasks tab's Stop while a session goes on", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let provider: ScriptedProvider;
+
+  beforeAll(async () => {
+    // The first task's run waits until it is stopped; every later call answers.
+    ({ rt, client, provider } = await composeWithWaitingRun([WAITING_CALL, { text: "Done." }]));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("a task the person stopped is Paused by you, not 'needs your decision': the result and the Inbox do not echo the click (design §2, §5.11)", async () => {
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Stop one", goal: "Two pages" });
+    const task = (title: string, priority: "low" | "high") =>
+      client.createTask(project.id, { title, outcome: `${title} exists`, riskTier: 0, priority });
+    const first = await task("Long first task", "high");
+    const second = await task("Second task", "low");
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    const rowOf = async (id: string) => (await client.tasks(project.id)).find((t) => t.id === id);
+    await eventually(
+      async () =>
+        (await rowOf(first.id))?.display?.key === "running" && provider.calls.length === 1,
+      "the first task's run",
+      async () => `${(await rowOf(first.id))?.status}, ${provider.calls.length} model call(s)`,
+    );
+    const running = await rowOf(first.id);
+    const stopped = await client.taskAction(first.id, {
+      version: running?.version ?? 0,
+      action: "stop",
+    });
+    expect(stopped.display?.label).toBe("Paused by you");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+    );
+    expect((await rowOf(first.id))?.display?.label).toBe("Paused by you");
+    expect((await rowOf(second.id))?.status).toBe("done");
+    // The session went on with the second task; the person's own Stop is not news, and the
+    // paused task has no card, so nothing says it needs a decision in the Inbox.
+    const session = await client.session(sessionId);
+    expect(session.summary).toBe('Did 1 task: "Second task".\nCHF 0.00.');
+    const inbox = await client.inbox(me.id);
+    expect(inbox.requests.filter((r) => r.projectId === project.id)).toEqual([]);
+    const lines = inbox.messages.filter((m) => m.projectId === project.id).map((m) => m.body);
+    expect(lines).toContain('Stop one: did 1 task: "Second task".');
+    expect(lines.filter((l) => /needs your decision/.test(l))).toEqual([]);
+    // The Summary tab does not count it as an open question either.
+    expect((await client.projectSummary(project.id)).openQuestions).toBe(0);
+  });
+});
+
 describe("the UI client against the real daemon: the task drawer after a session ran its tasks (design §3.5)", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;
