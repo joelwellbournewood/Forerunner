@@ -28,7 +28,9 @@ The owner approved this plan for the rest of the round. **Done means:** a person
 brief to finished work they can open, with the real model on their own PC, without the app
 getting stuck or saying anything untrue; each of the owner's 8 complaints has a "Check in the
 app" step that passes on their machine. The owner's own install "boots up, but you can't really
-get a project into a workable state": that is the test the round must pass.
+get a project into a workable state": that is the test the round must pass. The owner will use
+an API key first (the priority) and a Claude subscription too; Docker Desktop runs on their PC,
+so full-review tasks will run in the Docker sandbox there.
 
 **Quality rules (the evidence of this round; do not trade them for usage):** a failing test
 first, never a weakened test; the full suite at every stage (fixer, reviewer, merge: the fixers'
@@ -72,14 +74,19 @@ single walk, including the owner's complaints 1 and 2).
   bug). `scripts/installed-check.ps1` already installs the MSI and checks the service starts; add a
   job that starts the installed app with WebView2 remote debugging and drives the core journey
   through it with the stand-in model (brief, plan, a session, a card answered, PR and file links,
-  notifications if reachable).
+  notifications if reachable). On a Linux runner (Docker with Linux containers), run a task that
+  needs a full review in the real Docker sandbox end to end with the stand-in model: nobody has
+  run that path hands-on, and it is the one the owner's PC will use
+  (`packages/runtime/test/sandbox.integration.test.ts` covers only the adapter).
 - **G. Hand-over:** UPDATE-LOG U-entries with commits, tests and "Check in the app"; CHANGELOG,
   requirements, gates evidence; what was and was not tested; remove the CLAUDE.md WIP paragraph;
   the Desktop app workflow installer; the owner's checklist: (1) remove the old install and its
   data, install fresh; (2) a first project from a brief; (3) answer a question and see work
   continue; (4) steer from chat, open the result and its PR in forerunner-sandbox; (5) with
-  Docker Desktop, a task that needs it.
-- **G2. Fix what the owner's checklist finds,** with the same pipeline, until the five steps pass
+  Docker Desktop, a task that needs a full review; (6, optional) switch Settings to the Claude
+  subscription and run one task (the subscription path last ran live on 2026-10-20, through a
+  test harness).
+- **G2. Fix what the owner's checklist finds,** with the same pipeline, until the checklist passes
   on the owner's PC.
 - **H. The phone, last (after every desktop phase above, G2 included):** first map, screen by
   screen, what carries over from the
