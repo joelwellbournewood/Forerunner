@@ -244,6 +244,17 @@ critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call
   API that rejects a subscription token costs one round trip per few minutes, not one per
   review; a read cut short by the caller's signal is not kept. Without the option every call
   asks for `maxTokensPerCall`, as before, and none of these reads happen.
+- A reply cut off at `max_tokens` inside a tool call, or before any text (U-085), is not used:
+  its tool input is incomplete. The call is asked again with four times its `max_tokens`
+  (clamped to `CUT_OFF_MAX_TOKENS`, 32 000, and the model's limit), and that raised floor holds
+  for the rest of the run; a `warning` event says so. After `CUT_OFF_RETRIES` (2) the run ends
+  as `error` with "The reply was cut off at the output limit (N tokens) inside a <tool> call,
+  K time(s); nothing from it was used. Work this large has to be written in smaller parts.",
+  which the task's summary carries. Every call is billed, the cut ones included. A reply cut off
+  after some text and with no tool call keeps its text and only warns, as before. Before this,
+  a coder that wrote a whole file in one `write_file` call stopped at 4096 tokens mid-call and
+  the loop took it for the end: the run "completed", empty, and the task failed with "no
+  changes were made in the worktree".
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
 

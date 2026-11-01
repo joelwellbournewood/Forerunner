@@ -454,4 +454,101 @@ describe("agent loop: the stop reason and the thinking request", () => {
     // The thinking request reaches the provider with the call.
     expect(provider.calls[0]?.request).toMatchObject({ max_tokens: 1024, thinking: "off" });
   });
+  // U-085: the owner's coder ran 29 s, read the project, then wrote nothing and reported
+  // nothing; the run "completed" and the task failed with "no changes were made". A whole file
+  // in one tool call stopped at the 4096-token limit mid-call, and the loop took that for the end.
+  const cutOffRun = (h: ReturnType<typeof harness>, provider: FakeProvider, events: RunEvent[]) =>
+    driver(h).run({
+      token: issue(h),
+      budget: budget("sess-1", 5_000_000, h.clock),
+      provider,
+      model: "fake-haiku",
+      billingSourceId: "bs",
+      system: "s",
+      messages: [{ role: "user", content: "write the site" }],
+      tools: registry(),
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+      maxTokensPerCall: 1024,
+      onEvent: (e) => events.push(e),
+    });
+
+  it("a reply cut off inside a tool call is asked again with a larger limit, never taken as the end (U-085)", async () => {
+    const h = harness();
+    const provider = new FakeProvider({
+      replies: [
+        {
+          reply: {
+            toolCalls: [{ name: "echo", input: { text: "half a fi" } }],
+            stopReason: "max_tokens",
+          },
+        },
+        { reply: { toolCalls: [{ name: "echo", input: { text: "the whole file" } }] } },
+        textReply("Wrote the site."),
+      ],
+      clock: h.clock,
+      latency: "none",
+    });
+    const events: RunEvent[] = [];
+    const res = await cutOffRun(h, provider, events);
+    expect(res.outcome).toBe("completed");
+    expect(res.finalText).toBe("Wrote the site.");
+    // The cut call was asked again with four times the limit, and later calls keep it.
+    expect(provider.calls.map((c) => c.request.max_tokens)).toEqual([1024, 4096, 4096]);
+    // The cut tool call never ran and is not in the conversation; the complete one ran once.
+    const ran = h.audit.entries.filter((a) => a.tool === "echo");
+    expect(ran).toHaveLength(1);
+    expect(JSON.stringify(res.messages)).not.toContain("half a fi");
+    expect(JSON.stringify(res.messages)).toContain("echo:the whole file");
+    expect(
+      events.some(
+        (e) =>
+          e.type === "warning" &&
+          e.message.includes("cut off at the output limit (1024 tokens) inside a echo call"),
+      ),
+    ).toBe(true);
+    // Every call was billed, the cut one included.
+    expect(h.ledger.entries).toHaveLength(3);
+  });
+
+  it("a reply cut off every time ends the run as an error that says so, with nothing run (U-085)", async () => {
+    const h = harness();
+    const provider = new FakeProvider({
+      replies: [
+        {
+          reply: {
+            toolCalls: [{ name: "echo", input: { text: "never whole" } }],
+            stopReason: "max_tokens",
+          },
+          times: Number.POSITIVE_INFINITY,
+        },
+      ],
+      clock: h.clock,
+      latency: "none",
+    });
+    const res = await cutOffRun(h, provider, []);
+    expect(res.outcome).toBe("error");
+    expect(res.error?.message).toContain(
+      "cut off at the output limit (16384 tokens) inside a echo call, 3 time(s)",
+    );
+    expect(res.error?.message).toContain("smaller parts");
+    expect(provider.calls.map((c) => c.request.max_tokens)).toEqual([1024, 4096, 16384]);
+    expect(h.audit.entries.filter((a) => a.tool === "echo")).toHaveLength(0);
+  });
+
+  it("a reply cut off before it said anything is asked again too (U-085)", async () => {
+    const h = harness();
+    const provider = new FakeProvider({
+      replies: [
+        { reply: { text: "", stopReason: "max_tokens" } },
+        textReply("Here is the report."),
+      ],
+      clock: h.clock,
+      latency: "none",
+    });
+    const res = await cutOffRun(h, provider, []);
+    expect(res.outcome).toBe("completed");
+    expect(res.finalText).toBe("Here is the report.");
+    expect(provider.calls.map((c) => c.request.max_tokens)).toEqual([1024, 4096]);
+  });
 });

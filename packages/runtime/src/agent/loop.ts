@@ -27,6 +27,15 @@ import type { ToolRegistry, ToolSpec } from "./tools.ts";
  */
 /** `max_tokens` per call when the run names none (the effort table's coding row, ADR 0072). */
 export const DEFAULT_MAX_TOKENS_PER_CALL = 4096;
+/**
+ * A reply cut off at `max_tokens` inside a tool call, or before it said anything, is asked
+ * again with four times the limit, at most this often per run and never above
+ * `CUT_OFF_MAX_TOKENS` (or the model's own limit). The owner's coder wrote a whole file in one
+ * `write_file` call, the reply stopped at 4096 tokens mid-call, and the loop took it for the
+ * end: the run "completed" with no report and no change (U-085).
+ */
+export const CUT_OFF_RETRIES = 2;
+export const CUT_OFF_MAX_TOKENS = 32_000;
 
 export interface RunPricing {
   estimate(inputTokens: number, maxOutputTokens: number): number;
@@ -319,6 +328,10 @@ export class LoopAgentDriver {
 
     // The run's output-cap ceiling, clamped to the model's limit on the first turn.
     let ceiling: number | undefined;
+    // After a reply cut off inside a tool call (U-085): the raised floor of every later call,
+    // and how often it happened.
+    let cutOffFloor: number | undefined;
+    let cutOffs = 0;
 
     emit({ type: "run_start", runId: claims.runId, model: recordedModel });
     try {
@@ -332,7 +345,10 @@ export class LoopAgentDriver {
         const inputTokens = req.provider.countTokens(
           req.system + JSON.stringify(messages) + JSON.stringify(toolDefs),
         );
-        const floor = req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL;
+        const floor = Math.max(
+          req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL,
+          cutOffFloor ?? 0,
+        );
         if (turn === 1 && req.maxTokensCeiling !== undefined) {
           ceiling = await clampToModelLimit(
             req.provider,
@@ -442,16 +458,46 @@ export class LoopAgentDriver {
         });
 
         stopReason = response.stop_reason;
-        messages.push({ role: "assistant", content: response.content });
         const text = response.content
           .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
           .map((b) => b.text)
           .join("");
-        if (text) finalText = text;
-
         const toolUses = response.content.filter(
           (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
         );
+        // Cut off inside a tool call or before any text (U-085): the reply is not used (its tool
+        // input is incomplete) and the call is asked again with a larger limit; after
+        // `CUT_OFF_RETRIES` the run ends as an error that says so, never as "completed".
+        if (response.stop_reason === "max_tokens" && (toolUses.length > 0 || !text)) {
+          cutOffs++;
+          const where = toolUses[0]
+            ? `inside a ${toolUses[0].name} call`
+            : "before it said anything";
+          const top = await clampToModelLimit(
+            req.provider,
+            req.model,
+            CUT_OFF_MAX_TOKENS,
+            controller.signal,
+            clock,
+          );
+          const next = Math.min(maxOut * 4, top);
+          if (cutOffs <= CUT_OFF_RETRIES && next > maxOut) {
+            cutOffFloor = next;
+            emit({
+              type: "warning",
+              message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; asking again with ${next}`,
+            });
+            continue;
+          }
+          throw new ForerunnerError(
+            "provider_error",
+            `The reply was cut off at the output limit (${maxOut} tokens) ${where}, ${cutOffs} time(s); nothing from it was used. Work this large has to be written in smaller parts.`,
+            { retryable: false, details: { stopReason: "max_tokens", maxTokens: maxOut } },
+          );
+        }
+        messages.push({ role: "assistant", content: response.content });
+        if (text) finalText = text;
+
         if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
           if (response.stop_reason === "max_tokens") {
             emit({ type: "warning", message: "model hit max_tokens; output may be truncated" });
