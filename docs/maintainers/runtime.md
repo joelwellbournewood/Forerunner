@@ -857,19 +857,31 @@ spec O.9 report of what the person said follows on the next lines. `docs/status.
 blocked tasks as they stand (needs you, failed, waiting on another task, waiting for Docker) and
 the ready tasks as next.
 
-**Stops (`session/stop-words.ts`, design §3.7, §4.9).** The kill switch's reason says who
-stopped a session: `STOP_NOW_REASON` (the session page's Stop now, `POST /sessions/:id/stop`),
-`STOP_ALL_REASON` (Stop all, `POST /kill`), `QUIT_REASON` (`POST /shutdown`). The runner turns
-the abort reason into the stop reason `you`, `stop_all` or `quit` (`personStopOf`), emits
-`session.stopped` with "Stopped by you during "X". It is ready again." instead of a
-`session.error`, and releases the task with `taskReasonForStop` ("Stopped by you", "Stopped:
-Stop all", "Forerunner was closed"); the kill switch's claim freeze in `compose.ts` uses the same
-words (it wrote "kill switch" for every stop, Quit included). A Stop now raises no "Kill switch"
-notification (the `kill.onStop` listener in `compose.ts` skips the person's own click; Stop all
-and Quit are still told). The session status stays `killed`
-for these (enforcement and the handover read it); `SessionView.stopReason` and
-`SessionView.statusText` ("Working", "Done", "Stopped by you", "Interrupted: Forerunner closed",
-"Stopping after this task") are what a screen shows.
+**Stops (`session/stop-words.ts`, design §3.7, §4.9).** Whose stop it was is named where the
+stop is asked for, never read from the reason's words: `KillSwitch.stop(scope, reason, { by })`
+with `by` one of `you`, `stop_all`, `quit` (`StopBy`), carried to every run it stops in the
+abort reason (`KillSwitchStop.stopBy`, read with `stopByOf`; `personStopOf` is the same).
+`POST /sessions/:id/stop` (Stop now) is `you`; `POST /kill` (the header's Stop all, the tray,
+the palette) is `stop_all` whatever `reason` it carries; `POST /shutdown` (Quit) is `quit`; the
+kill file (`fr kill`, a Stop all that survives a restart) is `stop_all`; the registry's
+`session.stop` (`sessionCommandPorts.kill`: the chat, voice) is `stop_all` for everything or
+the agent (both freeze) and `you` for one session or the undo of the person's own start; the
+phone's `kill` is `stop_all` and its `stop` is `you` (`remote/watcher.ts`, and the cloud runner's
+`remote.ts` alike); a run that registers while a scope is frozen is aborted as `stop_all`.
+Before, the runner matched the reason against three fixed strings, so the header's Stop all
+("stop all from the UI"), the chat's ("human <id> via chat") and the phone's stops ended the
+session as an error ("error  Error: killed session stopped during task", stop reason
+`killed`, badge "Stopped"); a stop with no `by` still does (`stop-by.test.ts`). The runner turns
+`by` into the stop reason `you`, `stop_all` or `quit`, emits `session.stopped` with "Stopped by
+you during "X". It is ready again." instead of a `session.error`, and releases the task with
+`taskReasonForStop` ("Stopped by you", "Stopped: Stop all", "Forerunner was closed"); the kill
+switch's claim freeze in `compose.ts` gets the same `by` (it wrote "kill switch" for every
+stop, Quit included). A Stop now raises no "Kill switch" notification (the `kill.onStop`
+listener in `compose.ts` gets `by` and skips `you`; Stop all and Quit are still told).
+The session status stays `killed` for these (enforcement and the handover read it);
+`SessionView.stopReason` and `SessionView.statusText` ("Working", "Done", "Stopped by you",
+"Stopped: Stop all", "Interrupted: Forerunner closed", "Stopping after this task") are what a
+screen shows.
 
 **Stop after this task (`POST /sessions/:id/pause`, design §3.7).** The default stop: the
 route runs the pause port (`sessionPausePorts.pauseSession`: the row goes `paused`, statusText

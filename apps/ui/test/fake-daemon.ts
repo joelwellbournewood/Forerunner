@@ -1511,11 +1511,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const s = state.sessions.find((x) => x.id === c.req.param("id"));
     if (!s) return errorBody(c, 404, "not_found", "no such session");
     if (["running", "paused", "planned"].includes(s.status)) {
-      // As the real daemon: Stop now ends it, says who stopped it, and is no error.
+      // As the real daemon: Stop now ends it, says who stopped it, and is no error; an ended
+      // session has no current task.
       s.status = "stopped";
       s.endedAt = new Date().toISOString();
       s.stopReason = "you";
       s.statusText = "Stopped by you";
+      s.currentTask = null;
       pushEvent(s, "session.stopped", "Stopped by you.", "info");
       emit("session.changed", clone(s));
     }
@@ -1542,8 +1544,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     let stopped = 0;
     for (const s of state.sessions) {
       if (s.status === "running" || s.status === "paused" || s.status === "planned") {
+        // As the real daemon: whatever words the header sends, this is the person's Stop all
+        // (design §4.9), never an error line.
         s.status = "killed";
         s.endedAt = new Date().toISOString();
+        s.stopReason = "stop_all";
+        s.statusText = "Stopped: Stop all";
+        s.currentTask = null;
+        pushEvent(s, "session.stopped", "Stopped: Stop all.", "info");
         stopped += 1;
         emit("session.changed", clone(s));
       }

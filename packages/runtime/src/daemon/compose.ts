@@ -234,7 +234,7 @@ import {
 } from "../session/runner.ts";
 import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
 import { type StartCheck, startCheck } from "../session/start-check.ts";
-import { personStopOf, taskReasonForStop } from "../session/stop-words.ts";
+import { taskReasonForStop } from "../session/stop-words.ts";
 import { fileFiredKeys, Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
@@ -1542,7 +1542,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const tokens = new TokenIssuer({ now: () => clock.now() });
   const kill = new KillSwitch(
     tokens,
-    async (scope, reason) => {
+    async (scope, _reason, by) => {
       // Freeze claims: release every claim held by the stopped agent(s) so peers can continue.
       // The task's reason says whose stop it was (design §4.9): "Forerunner was closed" for
       // Quit, "Stopped: Stop all" for the kill switch, never "kill switch".
@@ -1556,7 +1556,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       for (const id of agents)
         for (const t of await store.task.claimedBy(id))
           await store.task
-            .releaseClaim(t.id, id, taskReasonForStop(personStopOf(reason) ?? "stop_all"))
+            .releaseClaim(t.id, id, taskReasonForStop(by ?? "stop_all"))
             .catch(() => undefined);
     },
     // Whatever lifts the kill (Resume in the header or the tray, a start from the phone, a
@@ -2546,10 +2546,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   emailPorts.settings.onCommandsSwitchedOff((e) =>
     notifyLater(notifications.emailCommandsOff(human.id, e), "email commands off"),
   );
-  kill.onStop((report, reason) => {
+  kill.onStop((report, reason, by) => {
     // A person's own Stop now on one session is their click, not news (design §5.11): the
     // session says "Stopped by you"; Stop all and Quit are still told.
-    if (personStopOf(reason) === "you") return;
+    if (by === "you") return;
     notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch");
   });
   events.on("restart", (r: RestartRequestFile) => {

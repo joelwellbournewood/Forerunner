@@ -169,7 +169,8 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
           signal.addEventListener("abort", () =>
             resolve({ outcome: "killed", summary: "stopped", costUsdMicro: 0 }),
           );
-          void kill.stop({ sessionId: session.id }, STOP_NOW_REASON, { freeze: false });
+          // As the session page's Stop now asks for it (`POST /sessions/:id/stop`).
+          void kill.stop({ sessionId: session.id }, STOP_NOW_REASON, { freeze: false, by: "you" });
         });
       },
     };
@@ -292,7 +293,8 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
           signal.addEventListener("abort", () =>
             resolve({ outcome: "killed", summary: "stopped", costUsdMicro: 0 }),
           );
-          void kill.stop({ sessionId: session.id }, STOP_NOW_REASON, { freeze: false });
+          // As the session page's Stop now asks for it (`POST /sessions/:id/stop`).
+          void kill.stop({ sessionId: session.id }, STOP_NOW_REASON, { freeze: false, by: "you" });
         });
       },
     };

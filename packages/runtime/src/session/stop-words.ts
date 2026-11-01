@@ -1,10 +1,16 @@
+import { type StopBy, stopByOf } from "../enforcement/killswitch.ts";
+
 /**
  * How a session ended, in the person's words (core-experience design §3.7, §4.9). Stop now,
  * Stop all and Quit all end the runs through the kill switch; before, every one of them read
  * "killed", "Kill switch: one session stopped" and left the task with the reason "kill switch",
- * so a person could not tell their own Stop from a crash or a quit. The kill switch's reason
- * text says who stopped it; the runner and the claim release turn it into a stop reason, the
- * task's reason and the session's status line here.
+ * so a person could not tell their own Stop from a crash or a quit. The place that asks for
+ * the stop names whose it is (`KillSwitch.stop`'s `by`: the session page's Stop now, the
+ * header's and the tray's Stop all, Quit, the chat's and the phone's stops); the runner and
+ * the claim release read it from the abort and turn it into a stop reason, the task's reason
+ * and the session's status line here. The reason's own words are never matched: the header
+ * sends "stop all from the UI", the chat "human <id> via chat", the phone "remote stop from
+ * device <id>", and each of them read as an error while only fixed strings were recognised.
  */
 
 /** The kill switch reason of the session page's Stop now (`POST /sessions/:id/stop`). */
@@ -14,16 +20,12 @@ export const STOP_ALL_REASON = "kill switch from the app";
 /** The kill switch reason of Quit (`POST /shutdown`). */
 export const QUIT_REASON = "Forerunner quit";
 
-/** Who ended a session from outside its run, from the kill switch's reason text. */
-export type PersonStop = "you" | "stop_all" | "quit";
+/** Who ended a session from outside its run: the kill switch's `by`. */
+export type PersonStop = StopBy;
 
-/** The person's stop a kill switch reason names, or null for any other abort. */
+/** The person's stop an abort names (the kill switch's `by`), or null for any other abort. */
 export function personStopOf(reason: unknown): PersonStop | null {
-  const text = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
-  if (text === STOP_NOW_REASON || text === "stopped from the app") return "you";
-  if (text === QUIT_REASON) return "quit";
-  if (text === STOP_ALL_REASON || /^kill switch/i.test(text)) return "stop_all";
-  return null;
+  return stopByOf(reason);
 }
 
 /** The reason a task gets when its run is stopped this way (it goes back to ready). */

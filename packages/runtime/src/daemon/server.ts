@@ -1372,7 +1372,8 @@ export function createDaemonApp(
   app.post("/sessions/:id/stop", async (c) => {
     const s = await rt.store.session.mustGet(c.req.param("id"));
     const live = rt.kill.activeCount({ sessionId: s.id }) > 0;
-    if (live) await rt.kill.stop({ sessionId: s.id }, STOP_NOW_REASON, { freeze: false });
+    if (live)
+      await rt.kill.stop({ sessionId: s.id }, STOP_NOW_REASON, { freeze: false, by: "you" });
     else if (["running", "paused", "planned"].includes(s.status) && !isIntakeSession(s)) {
       await endDeadSession(rt, s, {
         stopReason: "you",
@@ -1430,9 +1431,14 @@ export function createDaemonApp(
     return c.json(await liveSessionView(await rt.store.session.mustGet(s.id)));
   });
 
+  // Stop all (the header, the tray, the palette): whatever words the caller sends (the header
+  // sends "stop all from the UI", the tray "kill switch from the tray"), this route is the
+  // person's Stop all, and the sessions it ends say so (design §4.9), never "killed".
   app.post("/kill", async (c) => {
     const body = await parse(c, KillBody);
-    const report = await rt.kill.stop(body.scope, body.reason ?? STOP_ALL_REASON);
+    const report = await rt.kill.stop(body.scope, body.reason ?? STOP_ALL_REASON, {
+      by: "stop_all",
+    });
     const killActive = rt.kill.isFrozen({ agentId: rt.agent.id });
     writeKillRequest(
       {
@@ -1453,7 +1459,7 @@ export function createDaemonApp(
   app.post("/shutdown", async (c) => {
     if (!opts.onShutdown)
       return c.json({ code: "conflict", message: "this daemon cannot be stopped over HTTP" }, 409);
-    const report = await rt.kill.stop("all", QUIT_REASON);
+    const report = await rt.kill.stop("all", QUIT_REASON, { by: "quit" });
     logger.info("shutdown requested", { ...report });
     setTimeout(opts.onShutdown, SHUTDOWN_DELAY_MS);
     return c.json({ stopping: true, ...report }, 202);

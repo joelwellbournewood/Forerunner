@@ -296,7 +296,7 @@ runner's device or to nobody) atomically every `FORERUNNER_RUNNER_COMMAND_POLL_M
 | Command | Effect |
 | --- | --- |
 | `kill` (`params.scope` `"all"` or `{ agentId?, sessionId? }`, `reason?`) | `KillSwitch.stop(scope)`: runs aborted, processes killed, tokens revoked, claims released; new sessions refused until a `start` |
-| `stop` | stops the agent's runs and freezes nothing; a kill already in force stays (U-032) |
+| `stop` | stops the agent's runs and freezes nothing; a kill already in force stays (U-032). The sessions it ends read "Stopped by you" (`KillSwitch.stop`'s `by: "you"`; a `kill` is `by: "stop_all"`, "Stopped: Stop all"), never an error, whatever words the row carries (design §4.9) |
 | `start` (`agentId?`, `projectId?`, `budgetUsdMicro?`, `reason?`) | lifts the freeze and asks the scheduler (trigger `remote`, forced past the PC rule) |
 | `pause` | refused: `failed` with a reason |
 

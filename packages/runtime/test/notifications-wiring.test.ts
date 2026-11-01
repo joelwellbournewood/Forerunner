@@ -10,7 +10,6 @@ import { RESTART_EXIT_CODE } from "../src/daemon/restart.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { NotificationEventPayload } from "../src/notifications/emitter.ts";
 import type { NotificationKind, NotificationRecord } from "../src/notifications/types.ts";
-import { STOP_NOW_REASON } from "../src/session/stop-words.ts";
 import { NOTIFY_PREFS_TOOL } from "../src/wiring/notification-ports.ts";
 import {
   FAKE_CATALOG_ID,
@@ -471,7 +470,22 @@ describe("notifications wired into the daemon", () => {
   it("Stop now on a session is your own click: no 'Kill switch' notification echoes it (design §5.11)", async () => {
     const kinds: string[] = [];
     const off = rt.notifier.emitter.on("record", (r) => kinds.push(r.notification.kind));
-    const sessionId = "sess-stop-now";
+    const row = await rt.store.session.insert({
+      agent_id: rt.agent.id,
+      project_id: projectId,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1_000_000,
+      step_cap: 10,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "planned",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+      author_agent: rt.agent.id,
+    });
+    const sessionId = row.id;
     const controller = new AbortController();
     const unregister = rt.kill.register({
       agentId: rt.agent.id,
@@ -480,7 +494,8 @@ describe("notifications wired into the daemon", () => {
       label: "a live run",
     });
     try {
-      await rt.kill.stop({ sessionId }, STOP_NOW_REASON, { freeze: false });
+      // The session page's Stop now, the route the person uses.
+      expect((await post(`/sessions/${sessionId}/stop`)).status).toBe(200);
       expect(controller.signal.aborted).toBe(true);
       await new Promise((r) => setTimeout(r, 200));
       expect(kinds).not.toContain("kill_switch");

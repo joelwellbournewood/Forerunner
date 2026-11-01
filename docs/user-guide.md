@@ -187,12 +187,20 @@ earlier version marked failed for want of a sandbox goes back to ready by itself
 A session where nothing was done because its tasks failed or were sent back gets a lower grade
 from the critic's session review.
 
-**Stopping and crashes.** **Stop** on a session's page stops it now: the task it was working on
-goes back to Ready with "Stopped by you", and what it wrote so far stays in the project's folder.
-The session reads "Stopped by you", not an error. If Forerunner was closed or crashed while a
-session ran, the next start of Forerunner ends that session ("Interrupted: Forerunner closed"),
-puts its task back to Ready ("Forerunner closed while it ran") and posts one line in the Inbox;
-the next Start works at once. Stop on a session that nothing runs any more ends it the same way.
+**Stopping and crashes.** A session's page has two stops. **Stop after this task** (the usual
+one) lets the task in flight finish, starts no other, and ends the session ("Stopped after the
+task, as asked"). **Stop now** asks once, then stops the task at once: it goes back to Ready with
+"Stopped by you", and what it wrote so far stays in the project's folder. The session reads
+"Stopped by you", not an error, and the Inbox gets no line about your own click unless the
+session finished something first. **Stop all** in the header (or the tray, `fr kill`, a kill from
+your phone, or "stop" typed in Chat) stops every session the same way: they read "Stopped: Stop
+all", their tasks go back to Ready with that reason, and no session starts until you press
+**Allow sessions again**. "Stop this session" in Chat, or Stop from your phone, is Stop now.
+Quitting Forerunner while a session runs reads "Stopped: Forerunner was closed". If Forerunner
+crashed while a session ran, the next start of Forerunner ends that session ("Interrupted:
+Forerunner closed"), puts its task back to Ready ("Forerunner closed while it ran") and posts one
+line in the Inbox; the next Start works at once. Stop on a session that nothing runs any more
+ends it the same way.
 
 ## Inbox
 

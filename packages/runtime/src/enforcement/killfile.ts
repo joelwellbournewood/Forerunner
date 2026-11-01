@@ -103,7 +103,9 @@ export class KillFileWatcher {
       by: req.requestedBy,
       reason: req.reason,
     });
-    await this.kill.stop(req.scope, `${req.requestedBy}: ${req.reason}`);
+    // A kill file is the kill switch (`fr kill`, the daemon's own Stop all that survives a
+    // restart): the sessions it ends read Stop all, whatever its reason says (design §4.9).
+    await this.kill.stop(req.scope, `${req.requestedBy}: ${req.reason}`, { by: "stop_all" });
     return true;
   }
 

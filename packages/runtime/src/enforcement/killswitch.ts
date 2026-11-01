@@ -27,6 +27,17 @@ interface Registration {
   protected?: boolean;
 }
 
+/**
+ * Whose stop a kill switch stop is (core-experience design §4.9): the person's Stop now
+ * (`you`: a session page's Stop now, the phone's stop, the chat's stop of one session), Stop
+ * all (`stop_all`: the header, the tray, `fr kill`, a kill from the phone, the chat's stop of
+ * the agent; it freezes) or Quit (`quit`). The place that asks for the stop names it; the run
+ * reads it from its abort signal (`stopByOf`). Before, the runner matched the reason's free
+ * text against three fixed strings, so the header's Stop all ("stop all from the UI"), the
+ * chat's and the phone's stops ended the session as an error ("killed").
+ */
+export type StopBy = "you" | "stop_all" | "quit";
+
 /** `stop()` options. */
 export interface StopOptions {
   /**
@@ -35,6 +46,30 @@ export interface StopOptions {
    * phone's `stop`): it never lifts a kill already in force (U-032).
    */
   freeze?: boolean;
+  /** Whose stop this is; the runs read it from their abort signal. None: an error ("killed"). */
+  by?: StopBy;
+}
+
+/**
+ * The abort reason the kill switch gives every run it stops: the reason in words (`message`)
+ * and whose stop it was (`stopBy`, null when the caller named none).
+ */
+export class KillSwitchStop extends Error {
+  readonly stopBy: StopBy | null;
+  constructor(message: string, stopBy: StopBy | null) {
+    super(message);
+    this.name = "KillSwitchStop";
+    this.stopBy = stopBy;
+  }
+}
+
+const STOP_BY: readonly string[] = ["you", "stop_all", "quit"];
+
+/** Whose stop an abort reason names (a `KillSwitchStop`'s `stopBy`), or null for any other. */
+export function stopByOf(reason: unknown): StopBy | null {
+  if (!reason || typeof reason !== "object") return null;
+  const by = (reason as { stopBy?: unknown }).stopBy;
+  return typeof by === "string" && STOP_BY.includes(by) ? (by as StopBy) : null;
 }
 
 export interface KillReport {
@@ -54,7 +89,7 @@ export class KillSwitch {
    * a session stopped during Stop all leaves everything stopped (U-032).
    */
   private frozen: (KillScope | "all")[] = [];
-  private listeners = new Set<(report: KillReport, reason: string) => void>();
+  private listeners = new Set<(report: KillReport, reason: string, by: StopBy | null) => void>();
   private readonly protectedSessions = new Set<string>();
 
   /**
@@ -68,6 +103,7 @@ export class KillSwitch {
     private readonly onFreezeClaims?: (
       scope: KillScope | "all",
       reason: string,
+      by: StopBy | null,
     ) => Promise<void> | void,
     private readonly onResume?: () => void,
   ) {}
@@ -78,16 +114,17 @@ export class KillSwitch {
     this.regs.set(id, { ...reg, id });
     if (reg.protected) this.protectedSessions.add(reg.sessionId);
     if (!reg.protected && this.isFrozen({ agentId: reg.agentId, sessionId: reg.sessionId })) {
-      // Stopped scope: abort immediately so nothing new starts.
-      reg.controller?.abort(new Error("kill switch active"));
+      // Stopped scope: abort immediately so nothing new starts. A freeze is Stop all's
+      // ("Sessions are stopped" until allowed again), whoever asked for it.
+      reg.controller?.abort(new KillSwitchStop("kill switch active", "stop_all"));
     }
     return () => {
       this.regs.delete(id);
     };
   }
 
-  /** Called after every stop with the report and the reason given to `stop()`. */
-  onStop(fn: (report: KillReport, reason: string) => void): () => void {
+  /** Called after every stop with the report, the reason and whose stop it was (`by`). */
+  onStop(fn: (report: KillReport, reason: string, by: StopBy | null) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
@@ -117,6 +154,7 @@ export class KillSwitch {
     opts: StopOptions = {},
   ): Promise<KillReport> {
     const t0 = performance.now();
+    const by = opts.by ?? null;
     const matches = (r: Registration) =>
       scope === "all" ||
       ((scope.sessionId ? r.sessionId === scope.sessionId : true) &&
@@ -126,7 +164,7 @@ export class KillSwitch {
     for (const r of [...this.regs.values()]) {
       if (r.protected || !matches(r)) continue;
       if (r.controller && !r.controller.signal.aborted) {
-        r.controller.abort(new Error(reason));
+        r.controller.abort(new KillSwitchStop(reason, by));
         stoppedRuns++;
       }
       if (r.child && r.child.exitCode === null && !r.child.killed) {
@@ -147,7 +185,7 @@ export class KillSwitch {
     }
     if (opts.freeze !== false) this.freeze(scope);
     try {
-      await this.onFreezeClaims?.(scope, reason);
+      await this.onFreezeClaims?.(scope, reason, by);
     } catch (e) {
       this.logger.error("freezing claims failed", { error: String(e) });
     }
@@ -158,8 +196,8 @@ export class KillSwitch {
       durationMs: Math.round(performance.now() - t0),
       scope,
     };
-    this.logger.warn("stopped", { ...report, reason });
-    for (const l of this.listeners) l(report, reason);
+    this.logger.warn("stopped", { ...report, reason, by });
+    for (const l of this.listeners) l(report, reason, by);
     return report;
   }
 

@@ -148,9 +148,11 @@ export class RemoteCommandWatcher {
       case "kill": {
         const params = KillParams.parse(row.params ?? {});
         const scope: KillScope | "all" = params.scope;
+        // A kill is Stop all: the sessions it ends read so, whatever its words (design §4.9).
         const report = await this.deps.kill.stop(
           scope,
           `remote kill from device ${row.device_id}${params.reason ? `: ${params.reason}` : ""}`,
+          { by: "stop_all" },
         );
         this.lastKill = report;
         return {
@@ -170,7 +172,7 @@ export class RemoteCommandWatcher {
             ? { agentId: this.deps.agentId }
             : { agentId: params.scope.agentId ?? this.deps.agentId, ...params.scope };
         const reason = `remote stop from device ${row.device_id}`;
-        const report = await this.deps.kill.stop(scope, reason, { freeze: false });
+        const report = await this.deps.kill.stop(scope, reason, { freeze: false, by: "you" });
         return { stoppedRuns: report.stoppedRuns, killDurationMs: report.durationMs };
       }
       case "start": {

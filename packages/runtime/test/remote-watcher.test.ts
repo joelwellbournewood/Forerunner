@@ -11,7 +11,7 @@ import {
 } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatReply, ChatRequest } from "../src/conversation/agent.ts";
-import { KillSwitch } from "../src/enforcement/killswitch.ts";
+import { KillSwitch, stopByOf } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
 import { CommandLoop, sessionCommandPorts } from "../src/loop/commands.ts";
 import {
@@ -524,6 +524,8 @@ describe("kill, stop, pause, start", () => {
     expect(clock.now() - simulated0).toBe(500);
     expect(controller.signal.aborted).toBe(true);
     expect(kill.isFrozen({ agentId: agent.id })).toBe(true);
+    // The runner reads whose stop it was from the abort, not from the row's words (design §4.9).
+    expect(stopByOf(controller.signal.reason)).toBe("stop_all");
     const done = await store.remoteCommand.mustGet(row.id);
     expect(done.status).toBe("done");
     expect(done.result).toMatchObject({ kind: "plan", status: "done", executed: ["session.stop"] });
@@ -544,6 +546,8 @@ describe("kill, stop, pause, start", () => {
     expect(await w.drain()).toBe(1);
     expect(controller.signal.aborted).toBe(true);
     expect(kill.isFrozen({ agentId: agent.id })).toBe(false);
+    // The phone's stop is the person's Stop now; its kill below is Stop all (design §4.9).
+    expect(stopByOf(controller.signal.reason)).toBe("you");
     expect((await store.remoteCommand.mustGet(stop.id)).result).toMatchObject({
       kind: "stop",
       stoppedRuns: 1,
@@ -561,6 +565,7 @@ describe("kill, stop, pause, start", () => {
     expect(await w.drain()).toBe(1);
     expect(c2.signal.aborted).toBe(true);
     expect(kill.isFrozen({ agentId: agent.id })).toBe(true);
+    expect(stopByOf(c2.signal.reason)).toBe("stop_all");
     expect((await store.remoteCommand.mustGet(killRow.id)).result).toMatchObject({
       kind: "kill",
       stoppedRuns: 1,
