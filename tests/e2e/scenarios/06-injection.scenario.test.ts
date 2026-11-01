@@ -352,8 +352,9 @@ describe("scenario 6: injection", () => {
     for (const run of researchRuns) {
       expect(run.outcome).toBe("completed");
       expect(run.provider).toBe("fake");
-      // The run row counts the reports the loop raised (one per hostile read).
-      expect(run.artifacts).toEqual([{ injectionReports: 1 }]);
+      // The run row counts the reports the loop raised (one per hostile read), and keeps the
+      // specialist's own report for the next attempt's brief (design §4.6), quoted there as data.
+      expect(run.artifacts).toEqual([{ injectionReports: 1 }, { report: expect.any(String) }]);
     }
 
     // --- Clause: both are reported --------------------------------------------------------
