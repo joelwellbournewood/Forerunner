@@ -213,6 +213,14 @@ async function describe(p: BudgetSetParams, ctx: CommandContext): Promise<Budget
       : next.usdMicro > ceiling.usdMicro
         ? "high"
         : "medium";
+  // A cap set to what it already is changes nothing (design §5): refused in words, not logged.
+  if (next.chfMicro === old.chfMicro && !p.until) {
+    throw new ForerunnerError(
+      "validation",
+      `${what.charAt(0).toUpperCase()}${what.slice(1)} is already ${chf(old.chfMicro)}.`,
+      { details: { scope: p.scope, unchanged: true } },
+    );
+  }
   const verb =
     next.chfMicro > old.chfMicro ? "Raised" : next.chfMicro < old.chfMicro ? "Lowered" : "Set";
   const sentence = `${verb} ${what} from ${chf(old.chfMicro)} to ${chf(next.chfMicro)}${
@@ -235,12 +243,26 @@ export const budgetSet: CommandDef<BudgetSetParams> = {
   limit: true,
   async plan(p, ctx) {
     const d = await describe(p, ctx);
+    const ask = `${
+      d.next.chfMicro > d.old.chfMicro
+        ? "Raise"
+        : d.next.chfMicro < d.old.chfMicro
+          ? "Lower"
+          : "Set"
+    } ${d.what} to ${chf(d.next.chfMicro)}${d.untilText ? ` until ${d.untilText}` : ""}?`;
     return buildCard({
       command: "budget.set",
       what: d.what,
       oldValue: chf(d.old.chfMicro),
       newValue: chf(d.next.chfMicro),
       scope: d.scope,
+      // The per-session cap holds for every session of the project, not "this session" (the
+      // walks); a cap until a time is the one session's.
+      ...(p.scope === "session" && !p.until && d.resolved
+        ? { scopeLabel: `every session of ${d.resolved.project.name}` }
+        : {}),
+      // The read-back in one line (design §3.9, §5), not the rendered card with its risk.
+      ask,
       risk: d.risk,
       sentence: d.sentence,
       reversible: true,

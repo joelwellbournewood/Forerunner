@@ -1,6 +1,7 @@
 import type { PricingTable } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 // The module path, not the package index: the index imports this package back (a cycle).
+import { AUTONOMY_NAMES, type AutonomyLevel } from "@forerunner/runtime/enforcement/autonomy";
 import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import { DEFAULT_CEILING, TIERS } from "@forerunner/runtime/models/ladder";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
@@ -56,6 +57,20 @@ export interface SettingEffectContext {
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Quiet hours as a person reads them: "12:00–18:00", "off" (design §5: never JSON). */
+export function quietHoursWords(v: unknown): string {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "off";
+  const o = v as Record<string, unknown>;
+  return typeof o.start === "string" && typeof o.end === "string" ? `${o.start}–${o.end}` : "off";
+}
+
+/** An autonomy level by its name: "Trusted (level 3)" (design §2: autonomy by name). */
+export function autonomyLevelWords(v: unknown): string {
+  if (typeof v !== "number") return "not set";
+  const name = AUTONOMY_NAMES[v as AutonomyLevel];
+  return name ? `${name} (level ${v})` : `level ${v}`;
+}
 
 /** The rung a ceiling names, `DEFAULT_CEILING` for unset: for comparing two ceilings. */
 const rungOf = (v: unknown): number =>
@@ -254,6 +269,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     schema: z.object({ start: z.string().regex(HHMM), end: z.string().regex(HHMM) }).nullable(),
     description:
       "No notifications and no non-manual session starts between start and end (local time).",
+    display: quietHoursWords,
   },
   notify_channel: {
     key: "notify_channel",
@@ -281,6 +297,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     narrows: (to, from) => typeof to === "number" && typeof from === "number" && to < from,
     column: "default_autonomy",
     description: "Autonomy level new projects start with.",
+    display: autonomyLevelWords,
   },
   language: {
     key: "language",
@@ -448,6 +465,33 @@ function sentenceOf(t: Target): string {
   return `Set ${t.what} from ${showFor(t.spec, t.current)} to ${showFor(t.spec, t.value)}${effect ? `: ${effect}` : ""}. Undo.`;
 }
 
+/** The same value in JSON terms (key order aside): a change from it to it changes nothing. */
+function sameValue(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown): unknown =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>)
+            .sort(([x], [y]) => x.localeCompare(y))
+            .map(([k, x]) => [k, norm(x)]),
+        )
+      : Array.isArray(v)
+        ? v.map(norm)
+        : (v ?? null);
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+/**
+ * A change to the value already set is refused in words (design §5; the walks: "Set the
+ * default autonomy for new projects from 3 to 3." was accepted and logged in Changes).
+ */
+function refuseNoChange(t: Target): void {
+  if (!sameValue(t.current, t.value)) return;
+  const what = t.what.charAt(0).toUpperCase() + t.what.slice(1);
+  throw new ForerunnerError("validation", `${what} is already ${showFor(t.spec, t.current)}.`, {
+    details: { key: t.spec.key, unchanged: true },
+  });
+}
+
 /** The card's new value, with what it changes when the key defines an effect. */
 function newValueOf(t: Target): string {
   const { effect } = t;
@@ -495,6 +539,7 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
   undoStrategy: "restore the previous value from the change log",
   async plan(p, ctx) {
     const t = await target(p, ctx);
+    refuseNoChange(t);
     return buildCard({
       command: "settings.set",
       what: t.what,
@@ -507,10 +552,13 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
       projectId: t.project?.id ?? null,
       projectName: t.project?.name ?? null,
       usesActiveProject: t.usedActive,
+      // The read-back in one line (design §3.9, §5): "Set quiet hours to 12:00–18:00?"
+      ask: `Set ${t.what} to ${showFor(t.spec, t.value)}?`,
     });
   },
   async run(p, ctx) {
     const t = await target(p, ctx);
+    refuseNoChange(t);
     await write(ctx, t.spec, t.project?.id ?? null, t.value);
     return {
       before: { key: t.spec.key, project_id: t.project?.id ?? null, value: t.current },

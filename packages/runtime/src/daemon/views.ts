@@ -640,16 +640,42 @@ export async function costView(
         label: b.key ?? "(none)",
         cost: money(b.usd_micro, chfPerUsd),
         runs: b.entries ?? b.count ?? 0,
-        accepted: null,
+        accepted: null as number | null,
       }),
     );
   };
-  const [byModel, bySpecialist, byTask, byProject] = await Promise.all([
+  const [byModel, ledgerBySpecialist, byTask, byProject] = await Promise.all([
     bucket("model"),
     bucket("specialist"),
     bucket("task_id"),
     bucket("project_id"),
   ]);
+  // Design §5 rule 3 (names, not ids): the tasks by their titles and the work by the
+  // specialist that ran it, with the runs the critic accepted. The ledger's entries name a run;
+  // the run names its specialist (the ledger's own column is not filled), and a task's accepted
+  // run is its last work run before an accepting review.
+  const facts = await costFacts(store, f);
+  const bySpecialist = facts.bySpecialist.length
+    ? facts.bySpecialist.map((s) => ({
+        key: s.key,
+        label: s.label,
+        cost: money(s.usdMicro, chfPerUsd),
+        runs: s.runs,
+        accepted: s.accepted,
+      }))
+    : ledgerBySpecialist;
+  for (const b of byTask) {
+    const t = facts.tasks.get(b.key);
+    if (t) {
+      b.label = t.title;
+      b.accepted = facts.acceptedRunsByTask.get(b.key) ?? 0;
+    } else if (b.key === "(none)") b.label = "Planning and chat";
+  }
+  for (const b of byModel) b.accepted = facts.acceptedRunsByModel.get(b.key) ?? null;
+  for (const b of byProject) {
+    const name = b.key === "(none)" ? null : (await store.project.get(b.key))?.name;
+    if (name) b.label = name;
+  }
   // Savings (ADR 0003 section 3): read from the Run rows and priced at read time by the billing
   // ledger; "estimated" for compression, "measured" for cache reads, never netted against spend.
   const savings = await (ledger ?? savingsLedger(store, chfPerUsd)).savings({
@@ -674,8 +700,105 @@ export async function costView(
       },
       cache: { usdMicro: savings.cache.usd_micro, chfMicro: savings.cache.chf_micro },
     },
-    from: filter.from ?? "",
-    to: filter.to ?? "",
+    // The period the figures cover: the filter's, else the first and the last entry's.
+    from: filter.from ?? facts.first ?? "",
+    to: filter.to ?? facts.last ?? "",
+  };
+}
+
+/** What the cost view adds to the ledger's sums: names, specialists, accepted runs, period. */
+async function costFacts(
+  store: StateStore,
+  f: { projectId?: string; from?: string; to?: string; humanId?: string },
+): Promise<{
+  tasks: Map<string, TaskRow>;
+  bySpecialist: {
+    key: string;
+    label: string;
+    usdMicro: number;
+    runs: number;
+    accepted: number | null;
+  }[];
+  acceptedRunsByTask: Map<string, number>;
+  acceptedRunsByModel: Map<string, number>;
+  first: string | null;
+  last: string | null;
+}> {
+  const where: Record<string, unknown> = {};
+  if (f.projectId) where.project_id = f.projectId;
+  if (f.humanId) where.human_id = f.humanId;
+  const entries = (await store.costLedger.list(where as never, { limit: 20_000 })).filter(
+    (e) => (!f.from || e.occurred_at >= f.from) && (!f.to || e.occurred_at < f.to),
+  );
+  const runIds = [...new Set(entries.map((e) => e.run_id).filter((x): x is string => !!x))];
+  const runs = new Map<string, RunRow>();
+  for (const id of runIds) {
+    const r = await store.run.get(id);
+    if (r) runs.set(id, r);
+  }
+  const taskIds = [...new Set(entries.map((e) => e.task_id).filter((x): x is string => !!x))];
+  const tasks = new Map<string, TaskRow>();
+  for (const id of taskIds) {
+    const t = await store.task.get(id);
+    if (t) tasks.set(id, t);
+  }
+  // A task's accepted run: its last work run before each accepting review.
+  const accepted = new Set<string>();
+  for (const id of taskIds) {
+    const reviews = (await store.review.forTask(id, { limit: 200 })).filter(
+      (r) => r.verdict === "accept",
+    );
+    if (!reviews.length) continue;
+    const work = (await store.run.forTask(id))
+      .filter((r) => r.specialist !== "critic")
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    for (const rv of reviews) {
+      const before = work.filter((r) => r.created_at <= rv.created_at).at(-1);
+      if (before) accepted.add(before.id);
+    }
+  }
+  const acceptedRunsByTask = new Map<string, number>();
+  const acceptedRunsByModel = new Map<string, number>();
+  for (const id of accepted) {
+    const r = runs.get(id) ?? (await store.run.get(id));
+    if (!r) continue;
+    if (r.task_id) acceptedRunsByTask.set(r.task_id, (acceptedRunsByTask.get(r.task_id) ?? 0) + 1);
+    acceptedRunsByModel.set(r.model, (acceptedRunsByModel.get(r.model) ?? 0) + 1);
+  }
+  const specialists = new Map<
+    string,
+    { usdMicro: number; runs: Set<string>; entries: number; accepted: number }
+  >();
+  for (const e of entries) {
+    const run = e.run_id ? runs.get(e.run_id) : undefined;
+    const key = e.specialist ?? run?.specialist ?? "(none)";
+    const s = specialists.get(key) ?? { usdMicro: 0, runs: new Set(), entries: 0, accepted: 0 };
+    s.usdMicro += e.usd_micro;
+    s.entries += 1;
+    if (e.run_id && !s.runs.has(e.run_id)) {
+      s.runs.add(e.run_id);
+      if (accepted.has(e.run_id)) s.accepted += 1;
+    }
+    specialists.set(key, s);
+  }
+  const bySpecialist = [...specialists.entries()]
+    .map(([key, s]) => ({
+      key,
+      label: key === "(none)" ? "Planning and chat" : key === "critic" ? "the critic" : key,
+      usdMicro: s.usdMicro,
+      runs: s.runs.size || s.entries,
+      // The critic's own runs are reviews, not work to accept.
+      accepted: key === "critic" || key === "(none)" ? null : s.accepted,
+    }))
+    .sort((a, b) => b.usdMicro - a.usdMicro || a.key.localeCompare(b.key));
+  const times = entries.map((e) => e.occurred_at).sort();
+  return {
+    tasks,
+    bySpecialist,
+    acceptedRunsByTask,
+    acceptedRunsByModel,
+    first: times[0] ?? null,
+    last: times.at(-1) ?? null,
   };
 }
 

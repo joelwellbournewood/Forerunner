@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { autonomyLevelWords } from "../src/commands/settings.ts";
 import {
   ACTIVE_PROJECT_KEY,
   EMAIL_EXTENSION_KIND,
@@ -368,9 +369,8 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         ctx: w.ctx(),
       }),
     );
-    expect(quiet.sentence).toBe(
-      'Set quiet hours from unset to {"start":"22:00","end":"07:00"}. Undo.',
-    );
+    // Times in words, never JSON (design §5; the walks read 'unset → {"start":"12:00",…}').
+    expect(quiet.sentence).toBe("Set quiet hours from off to 22:00–07:00. Undo.");
     expect((await w.store.human.mustGet(w.human.id)).notify_prefs.quiet_hours).toEqual({
       start: "22:00",
       end: "07:00",
@@ -384,8 +384,9 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         confirmation: tap(w.human.id),
       }),
     );
+    // Autonomy by its name (design §2), not the bare number.
     expect(def.sentence).toBe(
-      `Set the default autonomy for new projects from ${initialAutonomy} to 3. Undo.`,
+      `Set the default autonomy for new projects from ${autonomyLevelWords(initialAutonomy)} to Trusted (level 3). Undo.`,
     );
     expect((await w.store.human.mustGet(w.human.id)).default_autonomy).toBe(3);
     done(await w.executor.undo(def.changeLogId, w.ctx()));

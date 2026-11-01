@@ -193,6 +193,18 @@ trailing `.00`. The card's `sentence` is the past-tense sentence posted afterwar
 the test `commands.test.ts` asserts it exactly. When no project was named the card says
 "(PharmaWatch, the active project)".
 
+Values are words, never JSON (design §5): a `SettingSpec.display` says them ("quiet hours":
+`quietHoursWords`, "12:00–18:00" or "off"; "default autonomy": `autonomyLevelWords`, "Trusted
+(level 3)"). A card may name its scope itself (`buildCard({ scopeLabel })`): a project's
+per-session cap (`budget.set` with `scope: "session"` and no `until`) holds for "every session of
+PharmaWatch", not "this session"; `renderChangeCard` names the project once. A change to the
+value already set is refused before anything is written, in words: `settings.set` ("The default
+autonomy for new projects is already Trusted (level 3).", `refuseNoChange`) and `budget.set`
+("The session budget for PharmaWatch is already CHF 5."); the walks found "from 3 to 3" accepted
+and logged in Changes. `settings.set` and `budget.set` read back in one line (`ask`: "Set quiet
+hours to 12:00–18:00?", "Raise tonight's session budget for PharmaWatch to CHF 20 until
+06:00?"), not the rendered card with its "Risk:" line.
+
 ### Confirmation by risk (`src/confirmation.ts`)
 
 `ConfirmationPolicy.decide(risk, actor, source, {limitChange})`:

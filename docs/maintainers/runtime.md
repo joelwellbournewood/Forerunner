@@ -4250,6 +4250,18 @@ with plurals as the number says; the summary too. Before, the header read "17 op
 for three findings filed on four attempts, those of a task accepted since included, and the
 evidence listed the prompt hash and the run id.
 
+### Costs view (design §5 rule 3)
+
+`costView` (`GET /costs`) keeps the ledger's sums and adds what a person reads (`costFacts`): a
+task's row is labelled with its title ("Planning and chat" for spend that names no task), a
+project's with its name, the work by the specialist that ran it (the ledger's `specialist`
+column is not filled; each entry names its run, and the run its specialist; the critic's runs
+are "the critic"), and `accepted`, the runs the critic accepted (a task's last work run before
+each accepting review; per task, per specialist and per model). Without a period asked for,
+`from` and `to` are the first and the last entry's time, which the Costs tab says in words
+("1 Nov to 3 Nov"). Before, tasks were listed by id, every specialist as "(none)", Accepted "—"
+and the period "— → —".
+
 ### Session counts (U-072)
 
 The session summary, the `session.ended` log line and the `session_ended` notification count

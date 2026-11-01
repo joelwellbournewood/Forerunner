@@ -4332,6 +4332,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           },
         };
       }
+      // The daemon's words for these values (`quietHoursWords`, `autonomyLevelWords` in
+      // @forerunner/commands): times and names, never JSON; the same value again is refused.
+      const AUTONOMY = ["Advisor", "Assisted", "Standard", "Trusted", "Autopilot"];
+      const shown = (v: unknown): string => {
+        if (key === "quiet_hours") {
+          const o = v as { start?: unknown; end?: unknown } | null;
+          return o && typeof o.start === "string" && typeof o.end === "string"
+            ? `${o.start}–${o.end}`
+            : "off";
+        }
+        if (key === "default_autonomy" && typeof v === "number")
+          return `${AUTONOMY[v] ?? "level"} (level ${v})`;
+        return v === undefined || v === null ? "unset" : JSON.stringify(v);
+      };
+      const currentValue =
+        key === "default_autonomy"
+          ? me.defaultAutonomy
+          : (state.settingValues[
+              settingSlot(key, PROJECT_KEYS.has(key) ? (project?.id ?? null) : null)
+            ] ?? null);
+      if (
+        (key === "quiet_hours" || key === "default_autonomy") &&
+        JSON.stringify(currentValue ?? null) === JSON.stringify(params.value ?? null)
+      ) {
+        const label =
+          key === "quiet_hours" ? "Quiet hours" : "The default autonomy for new projects";
+        return refuse(`${label} is already ${shown(currentValue)}.`);
+      }
       return {
         name,
         params,
@@ -4340,10 +4368,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           {
             command: name,
             what: `${key}${project ? ` for ${project.name}` : ""}`,
-            oldValue: "unset",
-            newValue: JSON.stringify(params.value),
+            oldValue: shown(currentValue),
+            newValue: shown(params.value),
             scope: "project",
-            sentence: `Set ${key}${project ? ` for ${project.name}` : ""} to ${JSON.stringify(params.value)}. Undo.`,
+            sentence: `Set ${key}${project ? ` for ${project.name}` : ""} to ${shown(params.value)}. Undo.`,
             projectId: project?.id ?? null,
             projectName: project?.name ?? null,
             usesActiveProject: projectRef === undefined,

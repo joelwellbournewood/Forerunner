@@ -1561,6 +1561,21 @@ describe("the UI client against the real daemon", () => {
       confirm: "tap",
     });
     expect(set.status).toBe("done");
+    // The level by its name (design §2), and the same change again is refused in words, with
+    // nothing written to Changes (the walks: "from 3 to 3" was accepted and logged).
+    expect(set.sentence).toMatch(/to Trusted \(level 3\)\. Undo\.$/);
+    const changesBefore = (await client.changes()).length;
+    const again = await client.executeCommands({
+      commands: [{ name: "settings.set", params: { key: "default_autonomy", value: 3 } }],
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(again).toMatchObject({
+      status: "refused",
+      code: "validation",
+      reason: "The default autonomy for new projects is already Trusted (level 3).",
+    });
+    expect((await client.changes()).length).toBe(changesBefore);
     const created = await client.createProject({ name: "At three", goal: "Default autonomy" });
     expect(created.autonomyLevel).toBe(3);
   });
@@ -1644,6 +1659,8 @@ describe("the UI client against the real daemon", () => {
       source: "ui",
     });
     expect(quiet.status).toBe("done");
+    // Times in words, never JSON (design §5; before: 'unset → {"start":"22:00",…}').
+    expect(quiet.sentence).toBe("Set quiet hours from off to 22:00–07:00. Undo.");
     expect((await client.settings()).find((s) => s.key === "human.quiet_hours")?.value).toEqual({
       start: "22:00",
       end: "07:00",
@@ -2097,6 +2114,24 @@ describe("the UI client against the real daemon: the task drawer after a session
     }
     // The trend and the counts are the tasks' reviews; a session check is not among them.
     expect(view.gradeTrend.every((p) => p.taskId !== null)).toBe(true);
+  });
+
+  it("Costs: tasks by title, the work by specialist with the runs the critic accepted, and the period (design §5)", async () => {
+    const project = (await client.projects()).find((p) => p.name === "Drawer");
+    const costs = await client.costs({ projectId: project?.id ?? "" });
+    const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+    expect(costs.byTask.map((b) => b.label)).toEqual(
+      expect.arrayContaining(["Add a LICENSE file (MIT)", "Broken page check"]),
+    );
+    for (const b of costs.byTask) expect(b.label).not.toMatch(uuid);
+    // Before: one "(none)" row for every specialist, nothing accepted.
+    const coder = costs.bySpecialist.find((b) => b.key === "coder");
+    expect(coder?.accepted).toBeGreaterThanOrEqual(2);
+    expect(costs.bySpecialist.some((b) => b.key === "(none)" && b.runs > 1)).toBe(false);
+    const licence = costs.byTask.find((b) => b.label === "Add a LICENSE file (MIT)");
+    expect(licence?.accepted).toBe(1);
+    expect(costs.from).not.toBe("");
+    expect(costs.to >= costs.from).toBe(true);
   });
 
   it("the session log: person lines by default with names and no type names, the internals under Details (design §3.7)", async () => {

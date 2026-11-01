@@ -81,6 +81,10 @@ describe("Project page", () => {
     );
     expect(screen.getByTestId("cost-savings")).toHaveTextContent("Savings (not spend)");
     expect(screen.getByTestId("cost-savings")).toHaveTextContent("CHF 2.30");
+    // The period in words (design §5), never "— → —" or an ISO time.
+    expect(screen.getByTestId("cost-period")).toHaveTextContent(
+      /^\d{1,2} (Sept?|Oct) to \d{1,2} Oct$/,
+    );
   });
 
   it("fills every tab: docs, reviews and data are no longer placeholders", async () => {
