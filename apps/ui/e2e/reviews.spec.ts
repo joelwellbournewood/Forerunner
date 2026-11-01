@@ -22,9 +22,7 @@ test("reviews tab lists the critic's verdicts with findings and draws the grade 
   await revise.getByTestId("review-details-toggle").click();
   await expect(revise.getByTestId("review-details")).toContainText("confidence 80%");
   await page.getByTestId("filter-verdict").selectOption("accept");
-  await expect(page.getByTestId("review").filter({ hasText: "Add the search box" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByTestId("review").filter({ hasText: "Add the search box" })).toHaveCount(0);
 });
 
 test("a review link (?review=) opens the review highlighted", async ({ page }) => {
