@@ -90,7 +90,9 @@ async function plan(page, projectId) {
     const s = await waitForPlan(page, projectId);
     const text = await step(page, s.state === "failed" ? "planning failed" : "plan waits");
     if (s.state === "pending") return true;
-    const banner = /Planning failed[^\n]*\n?[^\n]*/.exec(text)?.[0] ?? s.error;
+    const banner = (/Planning failed[\s\S]*?(?=Try again|$)/.exec(text)?.[0] ?? s.error)
+      .replace(/\s+/g, " ")
+      .trim();
     result.failures = [...(result.failures ?? []), banner];
     out(`planning failed: ${banner}`);
     if (attempt === 2) return false;
@@ -131,7 +133,7 @@ async function approve(page, projectId) {
     .catch(() => "");
   check("the total says what it covers", /About CHF \d/.test(total), total);
   const decision = await card
-    .getByTestId("intake-decision")
+    .getByTestId("intake-decision-line")
     .innerText()
     .catch(() => "");
   check(
