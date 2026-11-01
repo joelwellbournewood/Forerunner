@@ -3125,6 +3125,10 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     const id = asked.pendingConfirmation?.id ?? "";
     const card = (await client.inbox(me.id)).requests.find((r) => r.id === id);
     expect(card?.options).toEqual(["yes", "no"]);
+    // The Inbox shows the chat's card as the same one-line question the chat read back (design
+    // §3.8, §3.9), not the change card's object ('the task "Write the FAQ"').
+    expect(card?.title).toBe('Resume "Write the FAQ"?');
+    expect(card?.body).toBe("It is ready again; the next session can run it.");
     await client.answerRequest(id, { version: card?.version ?? 0, answer: card?.options[1] ?? "" });
     expect(await status()).toBe("Paused by you");
     expect((await say("yes")).reply).toBe(

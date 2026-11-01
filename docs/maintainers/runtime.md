@@ -1957,7 +1957,9 @@ waits on you" while 4 tasks waited on it).
   plain words) and, once answered or withdrawn, `outcome`: the line of what happened next
   ("Trying "X" again: a session started.", '"X" is done: accepted without review.', "Withdrawn:
   you moved the task, so this card was closed."). `requestViews(store, rows)` reads each card's
-  project, task, task status and the open tasks waiting on it (`requestContexts`).
+  project, task, task status and the open tasks waiting on it (`requestContexts`). A change
+  asked for in Chat or Talk (the executor's yes/no card) is titled by the question the chat read
+  back (`change_card.ask`: 'Pause "X"?', the rest as its body), not by the change card's object.
 - **GET /inbox** returns the open cards, then the last `INBOX_ANSWERED_KEPT` (20) answered or
   withdrawn ones for the Inbox's Answered list, and `needsYouCount` (every open card: the
   Inbox's heading, the header badge, and the sum of the projects' `waitingOnYou` plus the cards of

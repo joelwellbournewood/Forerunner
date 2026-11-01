@@ -514,10 +514,14 @@ function genericCard(
     r.kind === "credential" || r.kind === "info" || r.kind === "approval" || optionOnly
       ? "none"
       : "text";
-  const title = firstSentence(r.why);
+  // A change asked for in Chat or Talk waits as the one-line question the chat read back
+  // ('Pause "X"? No session runs it until you press Resume.', `ChangeCard.ask`), not as the
+  // change card's object ('the task "X"').
+  const ask = isRecord(r.change_card) ? str(r.change_card.ask) : null;
+  const said = ask ?? r.why;
   return {
-    title,
-    body: afterFirstSentence(r.why),
+    title: firstSentence(said),
+    body: afterFirstSentence(said),
     choices,
     links: [],
     reply,
