@@ -27,7 +27,8 @@ from a brief was rejected 5 times out of 6, among other things (scratch reports 
 The owner approved this plan for the rest of the round. **Done means:** a person goes from a
 brief to finished work they can open, with the real model on their own PC, without the app
 getting stuck or saying anything untrue; each of the owner's 8 complaints has a "Check in the
-app" step that passes on their machine.
+app" step that passes on their machine. The owner's own install "boots up, but you can't really
+get a project into a workable state": that is the test the round must pass.
 
 **Quality rules (the evidence of this round; do not trade them for usage):** a failing test
 first, never a weakened test; the full suite at every stage (fixer, reviewer, merge: the fixers'
@@ -63,15 +64,25 @@ single walk, including the owner's complaints 1 and 2).
   contradicts), polish batched into one agent; same pipeline.
 - **F. Independent final check:** fresh agents, one per journey (Tasks tab; a chain with a
   failure and a restart; chat steering; Inbox; wording and navigation; start / stop / settings;
-  a real-model end-to-end walk that also covers the first project); at most two fix rounds; then
-  full validation and CI.
+  a real-model end-to-end walk that also covers the first project; a larger real-model project of
+  about 10 tasks with dependencies, a planted failure and a daemon restart, about USD 3-5, since
+  the live walks so far had 3 to 5 tasks); at most two fix rounds; then full validation and CI.
+- **F2. The real desktop window, on Windows CI:** every walk drives the UI in Chromium, but the
+  desktop shell opens links, files and windows its own way (the owner's complaint 1 was such a
+  bug). `scripts/installed-check.ps1` already installs the MSI and checks the service starts; add a
+  job that starts the installed app with WebView2 remote debugging and drives the core journey
+  through it with the stand-in model (brief, plan, a session, a card answered, PR and file links,
+  notifications if reachable).
 - **G. Hand-over:** UPDATE-LOG U-entries with commits, tests and "Check in the app"; CHANGELOG,
   requirements, gates evidence; what was and was not tested; remove the CLAUDE.md WIP paragraph;
   the Desktop app workflow installer; the owner's checklist: (1) remove the old install and its
   data, install fresh; (2) a first project from a brief; (3) answer a question and see work
   continue; (4) steer from chat, open the result and its PR in forerunner-sandbox; (5) with
   Docker Desktop, a task that needs it.
-- **H. Then the phone, not before:** first map, screen by screen, what carries over from the
+- **G2. Fix what the owner's checklist finds,** with the same pipeline, until the five steps pass
+  on the owner's PC.
+- **H. The phone, last (after every desktop phase above, G2 included):** first map, screen by
+  screen, what carries over from the
   desktop (the daemon's words and fields, ADR 0102, design §3 and §5); then the same rigour for
   `apps/ui/src/mobile` and `apps/mobile` (walks in phone emulation, fixes that show the daemon's
   words, the Android workflow's emulator scenarios, a check on the owner's phone). Known gaps: the
