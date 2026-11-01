@@ -65,8 +65,13 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | --- | --- | --- | --- | --- |
 | `project.switch` | global | low | yes | `human.notify_prefs.active_project`, `project_history` (last 10; "go back") |
 | `project.create` | global | low | yes (archive) | `project` row, active project; `ports.projectCreated` (the daemon's G.5 scaffold of the standard doc set, in the background; runtime.md "Project docs") |
-| `task.create` | project | low | yes (cancel) | `task` row, draft or ready; `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051); `priority` is `low`, `medium` (default) or `high` (`TaskPrioritySchema` from `@forerunner/runtime/priority`; an old number is read as its level), stored as the level's number, and the sentence names a level other than medium ("…, high priority. Undo."; U-041) |
-| `task.transition` | project | low; `done`/`cancelled` medium | when the graph allows the way back | `task.status` through `TaskRepo.transition` |
+| `task.create` | project | low | yes (cancel) | `task` row, **ready** unless `status: draft` is asked for (design §3.9: a draft is planned by no session, so a task made by chat or the app waited silently); `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051); `priority` is `low`, `medium` (default) or `high` (`TaskPrioritySchema` from `@forerunner/runtime/priority`; an old number is read as its level), stored as the level's number; `depends_on` (ids or titles, checked by `TaskRepo.checkDependencies`), `budget_usd_micro`, `specialist` (a specialist, or `person` for a task only the person can answer) and `milestone_id`. The daemon's `POST /projects/:id/tasks` runs it, so New task is in Changes with its Undo. Sentence: "Added "X" to Atlas, high priority." (U-041) |
+| `task.transition` | project | low; `done`/`cancelled` medium | yes (the status before) | `task.status` through `TaskRepo.transition`; the API route and agents use it, the Tasks tab sends the actions below |
+| `task.pause` | project | low | yes (ready again) | ready → `needs_human` recorded as the person's own (`author_human`), the reason "Paused by you"; on a running task it is Stop: the run is stopped (`ports.stopTask`, and the daemon's route) and the task paused, "Stopped by you". The project does not count it as "needs you" (design §2) |
+| `task.resume` | project | low | yes (paused again) | `needs_human` → ready, "Resumed by you"; `without_answers: true` is the Tasks tab's Go ahead without: the task's open Inbox cards are withdrawn and a note tells the specialist the person went ahead without answering |
+| `task.reopen` | project | low | yes (cancelled or done again) | Reopen (cancelled → ready) and Redo (done → ready, the person's note says what to fix) through `TaskRepo.reopen`, which takes `cancelled` and `done` (U-080) |
+| `task.update` | project | low | yes (the fields as they were, while nothing changed them since) | Edit: title, outcome, criteria, priority, review level (`risk_tier`), budget, specialist, through `TaskRepo.edit`, refused while the task runs or is being reviewed and once it is done or cancelled ("Redo it first") |
+| `task.dependencies` | project | low | yes (what it waited for, while unchanged since) | what a task waits for (ids or titles), through `TaskRepo.setDependencies` (a cancelled task, the task itself or a cycle is refused with the titles); the daemon's `POST /tasks/:id/dependencies` runs it, so the change is in Changes (it bypassed the change log before) |
 | `budget.set` | session / project / global (month) | medium within the ceiling, high above it or raising the ceiling | yes | see below |
 | `autonomy.set` | project | one step medium, more high, same level low | yes | `project.autonomy_level` |
 | `session.start` | session | medium above the costly threshold (USD 2), else low | yes (stop that start's session; `after.start_id` names the start) | ports or a `remote_command` row |
@@ -286,14 +291,27 @@ value's risk. A command without `undoRisk` undoes at once. The confirmed undo re
 An undo that cannot work says so (U-061): `undoBlockedReason(row)` is the row state (undone,
 reverted) and each command's `undoBlocked` in plain words, checked before the gate and again
 before the run, and `CommandLoop.undoBlocked` gives it to `GET /changes`, which offers no Undo
-then. `task.create` cannot be undone once the task cannot be cancelled; `task.transition` once
-the task moved on; `note.add` once a session read the note; `session.pause` once the session
-ended; `capability.grant` once the extension is gone. State-based undos that used to return
-without a change now throw. `undoSentence` gives the sentence when "<what> is back to <old
-value>" would not be true (`task.create`: "Undone: cancelled the task ..."; `task.transition`:
-"Undone: reopened the task ..."). A move to `cancelled` is reversible: its undo reopens the
-task through `TaskRepo.reopen` (the status before the cancel when a person can set it, else
-`ready`); a move to `done` stays final.
+then. `task.create` cannot be undone once the task cannot be cancelled; a task move
+(`task.transition`, `task.pause`, `task.resume`, `task.reopen`) once the task moved on;
+`task.update` and `task.dependencies` once the fields changed again; `note.add` once a session
+read the note; `session.pause` once the session ended; `capability.grant` once the extension is
+gone. State-based undos that used to return without a change now throw. `undoSentence` gives
+the sentence when "<what> is back to <old value>" would not be true (`task.create`: "Undone:
+cancelled the task ..."; a move: "Undone: the task "X" is ready again.", a cancel: "Undone:
+reopened the task ..."). Every person's move of a task can be undone (design §3.5: "every
+action has one Undo right after it"): the undo puts back the status it had through
+`TaskRepo.restoreStatus` (a status only an agent sets comes back as ready), and takes back
+the note the move queued while no session read it.
+
+**Task sentences and notes** (design §5). A task command's sentence is one plain line with
+the task's title, no raw state and no "Undo." (the Undo is a button beside it):
+"Paused "X": no session runs it until you press Resume.", "Cancelled "X". "Y" waits on it
+and is stuck now.", "Reopened "X" to redo it: …". A move out of waiting for the person
+(`needs_human`, `failed`, `in_review`) or a cancel withdraws the task's open Inbox cards and
+says so ("Its card in the Inbox was withdrawn."); the card never lingers as blocking. The
+person's note (`note` on every task command: "Note for the agent (optional): goes into the
+task's next brief") is queued as a `note` queue item that names the task (`taskNoteText`:
+"About "X": …"), which `notesForTask` routes to that task's brief only.
 
 Temporary changes (`expires_at`) get a Clock timer; at the time the executor
 reverts them (same undo), marks the row `expired`, logs a revert row (`undo_state`

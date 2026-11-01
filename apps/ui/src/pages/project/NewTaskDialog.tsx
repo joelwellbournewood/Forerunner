@@ -6,11 +6,17 @@ import {
   type TaskPriority,
 } from "@forerunner/runtime/priority";
 import { type FormEvent, useEffect, useState } from "react";
-import { type CreateTaskInput, describeError, type TaskView } from "../../api/client.ts";
+import { Link } from "react-router";
+import { type CreateTaskInput, describeError, type TaskTransitionView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS } from "../../components/ui.tsx";
 import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
-import { reviewLevel } from "../../lib/plain-words.ts";
+import {
+  reviewLevelChoices,
+  reviewLevelName,
+  WHO_AGENT,
+  WHO_PERSON,
+} from "../../lib/task-actions.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 import { DependencyPicker } from "./DependencyPicker.tsx";
@@ -36,8 +42,48 @@ export function seedFromMessage(text: string): TaskSeed {
   };
 }
 
-/** The tier select's value for "leave it to the project": no `riskTier` is sent. */
+/** The review level select's value for "leave it to the project": no `riskTier` is sent. */
 export const PROJECT_DEFAULT_TIER = "";
+
+/**
+ * Whether the Docker sandbox is ready (`GET /sandbox`), for the review level's words: a full
+ * review needs it (ADR 0101). Null while not known (or the daemon has no such route).
+ */
+export function useDockerReady(open: boolean): boolean | null {
+  const client = useClient();
+  const sandbox = useAsync(
+    (signal) => (open ? client.sandboxStatus(signal) : Promise.resolve(null)),
+    [client, open],
+  );
+  return sandbox.data ? sandbox.data.ready : null;
+}
+
+/**
+ * "Who does it" (design §3.5): let the agent choose, one of the runnable specialists (with
+ * what it is for), or "Me: ask me in the Inbox" (`person`: the task's questions come to the
+ * person's Inbox, no specialist runs).
+ */
+export function useWhoChoices(open: boolean): { value: string; label: string }[] {
+  const client = useClient();
+  const models = useAsync(
+    (signal) => (open ? client.modelSettings(signal) : Promise.resolve(null)),
+    [client, open],
+  );
+  const specialists = (models.data?.specialists ?? []).map((s) => ({
+    value: s.name,
+    label: s.description ? `${s.name}: ${firstSentence(s.description)}` : s.name,
+  }));
+  return [
+    { value: WHO_AGENT, label: "Let the agent choose" },
+    ...specialists,
+    { value: WHO_PERSON, label: "Me: ask me in the Inbox" },
+  ];
+}
+
+function firstSentence(text: string): string {
+  const s = text.split(/(?<=\.)\s/)[0] ?? text;
+  return s.length > 70 ? `${s.slice(0, 69)}…` : s;
+}
 
 export function NewTaskDialog({
   open,
@@ -56,11 +102,11 @@ export function NewTaskDialog({
   reference?: MoneyLike;
   /**
    * The tier the daemon gives a task that names none (the project card's `defaultRiskTier`:
-   * 0 in small-project mode, spec B.6), shown on the "project default" option; the dialog
+   * 0 in small-project mode, spec B.6), named on the "project default" option; the dialog
    * never computes it.
    */
   defaultRiskTier?: number;
-  onCreated: (task: TaskView) => void;
+  onCreated: (task: TaskTransitionView) => void;
 }) {
   const client = useClient();
   const [title, setTitle] = useState("");
@@ -69,8 +115,10 @@ export function NewTaskDialog({
   const [riskTier, setRiskTier] = useState(PROJECT_DEFAULT_TIER);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [budget, setBudget] = useState("");
-  const [status, setStatus] = useState<"draft" | "ready">("ready");
+  const [who, setWho] = useState(WHO_AGENT);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
+  const docker = useDockerReady(open);
+  const whoChoices = useWhoChoices(open);
   // The tasks it may wait on, by title (U-040): picked, never typed as ids.
   const projectTasks = useAsync(
     (signal) => (open ? client.tasks(projectId, { limit: 500 }, signal) : Promise.resolve(null)),
@@ -83,12 +131,12 @@ export function NewTaskDialog({
     if (!open) return;
     setTitle(seed?.title ?? "");
     setOutcome(seed?.outcome ?? "");
-    setStatus(seed?.status ?? "ready");
     setCriteria("");
     setBudget("");
     setDependsOn([]);
     setRiskTier(PROJECT_DEFAULT_TIER);
     setPriority(DEFAULT_TASK_PRIORITY);
+    setWho(WHO_AGENT);
     setError(null);
   }, [open, seed]);
 
@@ -97,7 +145,7 @@ export function NewTaskDialog({
     if (busy) return;
     const chf = budget.trim() ? chfToMicro(budget) : null;
     if (budget.trim() && chf === null) {
-      setError("Budget must be a number of CHF.");
+      setError("The budget is an amount in CHF, like 2.40 or 2,40.");
       return;
     }
     setBusy(true);
@@ -109,12 +157,13 @@ export function NewTaskDialog({
         .split(/\r?\n/)
         .map((l) => l.trim())
         .filter(Boolean),
-      // Only a tier the human picked is sent; otherwise the daemon applies the project's.
+      // Only a level the person picked is sent; otherwise the daemon applies the project's.
       ...(riskTier === PROJECT_DEFAULT_TIER ? {} : { riskTier: Number(riskTier) }),
       priority,
-      status,
+      status: seed?.status ?? "ready",
       dependsOn,
       budgetUsdMicro: chf !== null ? chfMicroToUsdMicro(chf, reference) : 0,
+      ...(who === WHO_AGENT ? {} : { specialist: who }),
     };
     try {
       const task = await client.createTask(projectId, body);
@@ -127,6 +176,8 @@ export function NewTaskDialog({
     }
   };
 
+  const tier = riskTier === PROJECT_DEFAULT_TIER ? (defaultRiskTier ?? 1) : Number(riskTier);
+  const fullWithoutDocker = tier >= 2 && docker === false;
   return (
     <Dialog open={open} onClose={onClose} title="New task" testId="new-task-dialog" wide>
       <form onSubmit={submit} className="space-y-3">
@@ -141,7 +192,7 @@ export function NewTaskDialog({
             data-testid="task-title"
           />
         </Field>
-        <Field label="Outcome" hint="What is true when the task is done.">
+        <Field label="What done looks like">
           <textarea
             className={`${INPUT_CLASS} min-h-20`}
             value={outcome}
@@ -152,19 +203,29 @@ export function NewTaskDialog({
             data-testid="task-outcome"
           />
         </Field>
-        <Field label="Acceptance criteria" hint="One per line.">
+        <Field label="Criteria (optional)" hint="One per line; the critic checks each.">
           <textarea
             className={`${INPUT_CLASS} min-h-16`}
             value={criteria}
             onChange={(e) => setCriteria(e.target.value)}
             name="criteria"
+            data-testid="task-criteria"
           />
         </Field>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Field
-            label="Review level (risk tier)"
-            hint="How carefully the critic checks the work. The project default applies unless you pick one."
-          >
+        <fieldset className="text-sm">
+          <legend className="mb-1 block font-medium">Waits for</legend>
+          <DependencyPicker
+            tasks={projectTasks.data}
+            loading={projectTasks.loading}
+            selected={dependsOn}
+            onChange={setDependsOn}
+          />
+          <span className="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+            The tasks that must be done before this one runs.
+          </span>
+        </fieldset>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Field label="Review level">
             <select
               className={INPUT_CLASS}
               value={riskTier}
@@ -173,11 +234,27 @@ export function NewTaskDialog({
               data-testid="task-risk-tier"
             >
               <option value={PROJECT_DEFAULT_TIER}>
-                project default{defaultRiskTier === undefined ? "" : ` (tier ${defaultRiskTier})`}
+                The project's default
+                {defaultRiskTier === undefined ? "" : ` (${reviewLevelName(defaultRiskTier)})`}
               </option>
-              {[0, 1, 2, 3].map((t) => (
-                <option key={t} value={String(t)}>
-                  {reviewLevel(t)}
+              {reviewLevelChoices(docker).map((c) => (
+                <option key={c.tier} value={String(c.tier)}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Who does it">
+            <select
+              className={INPUT_CLASS}
+              value={who}
+              onChange={(e) => setWho(e.target.value)}
+              name="who"
+              data-testid="task-who"
+            >
+              {whoChoices.map((w) => (
+                <option key={w.value} value={w.value}>
+                  {w.label}
                 </option>
               ))}
             </select>
@@ -197,46 +274,36 @@ export function NewTaskDialog({
               ))}
             </select>
           </Field>
-          <Field label="Budget (CHF)">
+          <Field
+            label="Budget (CHF, optional)"
+            hint="Empty: each run stops at its specialist's limit."
+          >
             <input
               className={INPUT_CLASS}
               value={budget}
               onChange={(e) => setBudget(e.target.value)}
               inputMode="decimal"
-              placeholder="0 = project default"
               name="budget"
+              data-testid="task-budget"
             />
           </Field>
-          <Field label="Status">
-            <select
-              className={INPUT_CLASS}
-              value={status}
-              onChange={(e) => setStatus(e.target.value === "draft" ? "draft" : "ready")}
-              name="status"
-              data-testid="task-status"
-            >
-              <option value="ready">ready</option>
-              <option value="draft">draft</option>
-            </select>
-          </Field>
         </div>
-        <fieldset className="text-sm">
-          <legend className="mb-1 block font-medium">Depends on</legend>
-          <DependencyPicker
-            tasks={projectTasks.data}
-            loading={projectTasks.loading}
-            selected={dependsOn}
-            onChange={setDependsOn}
-          />
-          <span className="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
-            The tasks that must be done before this one runs. Change them later on the Tasks tab.
-          </span>
-        </fieldset>
+        {fullWithoutDocker ? (
+          <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="task-docker-note">
+            Full review needs Docker, which is not running on this computer: the task waits until it
+            runs. <Link to="/settings">Settings</Link> has the steps.
+          </p>
+        ) : null}
+        {who === WHO_PERSON ? (
+          <p className="text-sm" data-testid="task-person-note">
+            No specialist runs it: its questions come to your Inbox.
+          </p>
+        ) : null}
         {error ? <ErrorBanner message={error} /> : null}
         <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>Close</Button>
           <Button variant="primary" type="submit" disabled={busy} data-testid="create-task">
-            {busy ? "Creating…" : "Create task"}
+            {busy ? "Adding…" : "Add task"}
           </Button>
         </div>
       </form>

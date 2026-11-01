@@ -23,6 +23,10 @@ const KEEPS_CLAIM: readonly TaskStatus[] = ["claimed", "in_progress", "in_review
 export const AGENT_ONLY_STATUSES: readonly TaskStatus[] = ["claimed", "in_progress"];
 /** Statuses a reopened task goes back to as they were; from any other it goes to `ready`. */
 export const REOPEN_STATUSES: readonly TaskStatus[] = ["draft", "ready", "needs_human", "failed"];
+/** Statuses an undo restores as `ready`: only an agent's session puts a task there. */
+const RESTORED_AS_READY: readonly TaskStatus[] = ["claimed", "in_progress", "in_review"];
+/** Statuses in which a person may edit a task (design §3.5: Draft/Ready/Waiting/Failed/Paused). */
+export const EDITABLE_STATUSES: readonly TaskStatus[] = ["draft", "ready", "needs_human", "failed"];
 
 /**
  * Where a cancelled task reopens to (U-061): the status it had before the cancel when a person
@@ -231,9 +235,10 @@ export class TaskRepo extends Repository<TaskRow> {
   }
 
   /**
-   * Reopen a cancelled task (U-061): the undo of a cancel, the one way out of `cancelled`,
-   * which the workflow graph keeps terminal for every other move. The task goes to
-   * `reopenTarget(previous)` without a claim; any other status is refused.
+   * Reopen a cancelled or done task: the person's Reopen and Redo (U-080, design §3.5) and the
+   * undo of a cancel (U-061), the ways out of `cancelled` and `done`, which the workflow graph
+   * keeps terminal for every other move. The task goes to `reopenTarget(previous)` (`ready`
+   * unless said) without a claim; any other status is refused.
    */
   async reopen(
     id: string,
@@ -243,10 +248,10 @@ export class TaskRepo extends Repository<TaskRow> {
     actor: Actor = {},
   ): Promise<TaskRow> {
     const current = await this.mustGet(id);
-    if (current.status !== "cancelled") {
+    if (current.status !== "cancelled" && current.status !== "done") {
       throw new ForerunnerError(
         "validation",
-        `only a cancelled task can be reopened; this one is ${current.status}`,
+        `only a cancelled or done task can be reopened; this one is ${current.status}`,
         { details: { taskId: id, status: current.status } },
       );
     }
@@ -255,6 +260,85 @@ export class TaskRepo extends Repository<TaskRow> {
       reason,
       claimed_by: null,
       claim_expires: null,
+      author_agent: actor.agentId ?? null,
+      author_human: actor.humanId ?? null,
+    });
+  }
+
+  /**
+   * Put a task back to the status it had before a person's change: the Undo of every action
+   * on the Tasks tab (design §3.5: "every action has one Undo right after it"), which may lead
+   * where the workflow graph has no edge (back to done after a Redo, to cancelled, to draft).
+   * A status only an agent's claim sets (`claimed`, `in_progress`, `in_review`) is restored as
+   * `ready`, without a claim; a session picks it up again. The version is checked.
+   */
+  async restoreStatus(
+    id: string,
+    expectedVersion: number,
+    previous: TaskStatus,
+    reason: string,
+    actor: Actor = {},
+  ): Promise<TaskRow> {
+    const current = await this.mustGet(id);
+    const to: TaskStatus = RESTORED_AS_READY.includes(previous) ? "ready" : previous;
+    if (to === "done") {
+      const open = await this.findings.openFor(id);
+      if (open.length > 0) {
+        throw new ForerunnerError(
+          "findings_open",
+          `task ${id} has ${open.length} open finding(s)`,
+          { details: { taskId: id, findings: open.map((f) => f.id) } },
+        );
+      }
+    }
+    return this.update(id, expectedVersion, {
+      status: to,
+      reason,
+      claimed_by: null,
+      claim_expires: null,
+      ...(current.status === "failed" && to === "ready" ? { attempt: current.attempt + 1 } : {}),
+      author_agent: actor.agentId ?? null,
+      author_human: actor.humanId ?? null,
+    });
+  }
+
+  /**
+   * A person's Edit (design §3.5): the wording, criteria, priority, budget, review level or
+   * specialist, with the version check and the reason on the row. Refused while a session
+   * works on the task or reviews it, and once it is done or cancelled (Redo or Reopen first):
+   * the run and the review would go on with what the task said before.
+   */
+  async edit(
+    id: string,
+    expectedVersion: number,
+    patch: Partial<
+      Pick<
+        TaskRow,
+        | "title"
+        | "outcome"
+        | "acceptance_criteria"
+        | "priority"
+        | "risk_tier"
+        | "budget_usd_micro"
+        | "specialist"
+      >
+    >,
+    reason: string,
+    actor: Actor = {},
+  ): Promise<TaskRow> {
+    const current = await this.mustGet(id);
+    if (!EDITABLE_STATUSES.includes(current.status)) {
+      throw new ForerunnerError(
+        "validation",
+        current.status === "done" || current.status === "cancelled"
+          ? `"${current.title}" is ${current.status}: ${current.status === "done" ? "Redo" : "Reopen"} it first, then edit it.`
+          : `"${current.title}" is being worked on now: stop it first, then edit it.`,
+        { details: { taskId: id, status: current.status, reason: "not_editable" } },
+      );
+    }
+    return this.update(id, expectedVersion, {
+      ...patch,
+      reason,
       author_agent: actor.agentId ?? null,
       author_human: actor.humanId ?? null,
     });

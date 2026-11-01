@@ -10,7 +10,7 @@ import {
   osFacts,
   redact,
 } from "@forerunner/platform";
-import type { LessonStatus, MilestoneRow, SessionRow } from "@forerunner/state";
+import type { LessonStatus, MilestoneRow, SessionRow, TaskRow } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
@@ -29,7 +29,6 @@ import { parseAgentModelConfig } from "../models/run-settings.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
-import { PRIORITY_VALUES } from "../priority.ts";
 import { providerCapabilities } from "../provider/types.ts";
 import { createSharedSecretRoutes } from "../secrets/routes.ts";
 import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
@@ -38,7 +37,6 @@ import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import {
   applyProjectPlan,
-  defaultRiskTier,
   describeMilestoneChange,
   MILESTONE_AUDIT_TOOL,
   ProjectPlanBody,
@@ -114,10 +112,13 @@ import {
   type StartSessionView,
   StartVoiceSessionBody,
   type SyncHealth,
+  TaskActionBody,
   type TaskTransitionView,
+  type TaskView,
   TransitionTaskBody,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
+  UpdateTaskBody,
   VoiceAnswerBody,
   VoiceAudioBody,
   VoiceHeardBody,
@@ -139,6 +140,15 @@ import { sandboxHealth } from "./sandbox-port.ts";
 import { createSandboxRoutes } from "./sandbox-routes.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
+import {
+  ACTION_FROM,
+  ACTION_WORDS,
+  changesTasks,
+  loadTaskDisplayContext,
+  runOrder,
+  taskDetail,
+  taskDisplay,
+} from "./task-display.ts";
 import {
   agentView,
   changeLogView,
@@ -863,42 +873,177 @@ export function createDaemonApp(
     const d = rt.registry.specialists.get(name);
     return d?.runnable ? Math.round(d.max_budget_usd * 1_000_000) : undefined;
   };
+  // --- Tasks (design §3.5, ADR 0102) --------------------------------------------------------
+  // Every view carries the status in words (`display`, design §2) and the run order; every
+  // change a person makes from the Tasks tab goes through a registry command, so it is in
+  // Changes with its Undo, and answers the change log entry with the task.
+  const sandboxReady = (): boolean | null => {
+    const r = rt.sandbox.readiness.current();
+    return r ? r.state === "ready" : null;
+  };
+  const projectTaskViews = async (projectId: string): Promise<TaskView[]> => {
+    const rows = await rt.store.task.forProject(projectId, {}, { limit: 10_000 });
+    const ctx = await loadTaskDisplayContext(rt.store, rows, sandboxReady());
+    return runOrder(rows).map((t, i) =>
+      taskView(t, chf(), specialistLimit, { display: taskDisplay(t, ctx), runOrder: i }),
+    );
+  };
+  const oneTaskView = async (t: TaskRow): Promise<TaskView> =>
+    (await projectTaskViews(t.project_id)).find((v) => v.id === t.id) ??
+    taskView(t, chf(), specialistLimit);
+  /** The task as the screen showed it, or a 409 that says what it is now (design §3.5). */
+  const taskAsShown = async (id: string, version: number): Promise<TaskRow> => {
+    const task = await rt.store.task.mustGet(id);
+    if (task.version !== version) {
+      const now = await oneTaskView(task);
+      throw new ForerunnerError(
+        "version_conflict",
+        `This task changed: it is now ${now.display?.label ?? task.status}.`,
+        { details: { taskId: task.id, expected: version, actual: task.version, task: now } },
+      );
+    }
+    return task;
+  };
+  /** A person's change to a task from the app: the registry's command, tapped in the app. */
+  const taskCommand = async (
+    projectId: string,
+    name: string,
+    params: Record<string, unknown>,
+    words: string,
+  ) => {
+    const turn = await turnFor({ wordsUsed: words, source: "ui", projectId });
+    const r = await rt.commands.execute({ name, params }, turn, {
+      confirmation: { kind: "tap", by: { kind: "human", id: rt.human.id } },
+    });
+    if (r.status !== "done" && r.status !== "partial") {
+      throw new ForerunnerError(
+        (r.code ?? "validation") as ErrorCode,
+        r.reason ?? `the task was not changed (${r.status})`,
+        { details: { name } },
+      );
+    }
+    return r;
+  };
+  const changeView = async (
+    taskId: string,
+    r: { changeLogId?: string | null; undoToken?: string | null; sentence?: string | null },
+  ): Promise<TaskTransitionView> => {
+    const t = await rt.store.task.mustGet(taskId);
+    rt.events.emit("project", { id: t.project_id });
+    return {
+      ...(await oneTaskView(t)),
+      change: r.changeLogId
+        ? { changeLogId: r.changeLogId, undoToken: r.undoToken ?? null, sentence: r.sentence ?? "" }
+        : null,
+    };
+  };
+
   app.get("/projects/:id/tasks", async (c) => {
     const status = c.req.query("status");
     const limit = intQuery(c, "limit", 200, 1000);
-    const rows = await rt.store.task.list(
-      { project_id: c.req.param("id"), ...(status ? { status } : {}) } as never,
-      { limit, orderBy: [{ column: "priority", direction: "desc" }, { column: "created_at" }] },
-    );
-    return c.json(rows.map((t) => taskView(t, chf(), specialistLimit)));
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const views = await projectTaskViews(project.id);
+    return c.json((status ? views.filter((v) => v.status === status) : views).slice(0, limit));
   });
 
+  // New task (design §3.5): `task.create`, logged with its Undo; "Me" makes a person task.
   app.post("/projects/:id/tasks", async (c) => {
     const body = await parse(c, CreateTaskBody);
     const project = await rt.store.project.mustGet(c.req.param("id"));
     // U-040: a dependency that is no task of the project (a typo) or a cancelled one would
-    // keep the task from ever running; it is refused with the names, nothing is written.
-    const dependsOn = await rt.store.task.checkDependencies(project.id, null, body.dependsOn);
-    const t = await rt.store.task.insert({
-      project_id: project.id,
-      milestone_id: body.milestoneId ?? null,
-      title: body.title,
-      outcome: body.outcome,
-      acceptance_criteria: body.acceptanceCriteria,
-      // A task that names no tier gets the project's default: 0 in small-project mode (B.6).
-      risk_tier: body.riskTier ?? defaultRiskTier(project),
-      status: body.status,
-      priority: PRIORITY_VALUES[body.priority],
-      depends_on: dependsOn,
-      budget_usd_micro: body.budgetUsdMicro,
-      est_cost_usd_micro: 0,
-      actual_cost_usd_micro: 0,
-      attempt: 0,
-      reason: "created from the app",
-      author_human: rt.human.id,
-    });
-    rt.events.emit("project", { id: project.id });
-    return c.json(taskView(t, chf(), specialistLimit), 201);
+    // keep the task from ever running; it is refused with the names (and the reason in the
+    // details), nothing is written.
+    await rt.store.task.checkDependencies(project.id, null, body.dependsOn);
+    const r = await taskCommand(
+      project.id,
+      "task.create",
+      {
+        title: body.title,
+        outcome: body.outcome,
+        acceptance_criteria: body.acceptanceCriteria,
+        ...(body.riskTier !== undefined ? { risk_tier: body.riskTier } : {}),
+        priority: body.priority,
+        status: body.status,
+        depends_on: body.dependsOn,
+        budget_usd_micro: body.budgetUsdMicro,
+        ...(body.specialist !== undefined ? { specialist: body.specialist } : {}),
+        ...(body.milestoneId ? { milestone_id: body.milestoneId } : {}),
+        project: project.id,
+      },
+      `New task: ${body.title}`,
+    );
+    const row = r.changeLogId ? await rt.store.changeLog.get(r.changeLogId) : undefined;
+    const taskId = (row?.after as { task_id?: unknown } | undefined)?.task_id;
+    if (typeof taskId !== "string") throw new ForerunnerError("internal", "the task was not added");
+    return c.json(await changeView(taskId, r), 201);
+  });
+
+  // The task drawer (design §3.5): what it asks, waits for, its runs, review, cards and PR.
+  app.get("/tasks/:id", async (c) => {
+    const t = await rt.store.task.mustGet(c.req.param("id"));
+    const views = await projectTaskViews(t.project_id);
+    const view = views.find((v) => v.id === t.id) ?? taskView(t, chf(), specialistLimit);
+    return c.json(await taskDetail(rt.store, view, t, views, chf()));
+  });
+
+  // Edit (design §3.5): `task.update`, logged with its Undo.
+  app.put("/tasks/:id", async (c) => {
+    const body = await parse(c, UpdateTaskBody);
+    const task = await taskAsShown(c.req.param("id"), body.version);
+    const r = await taskCommand(
+      task.project_id,
+      "task.update",
+      {
+        task: task.id,
+        ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.outcome !== undefined ? { outcome: body.outcome } : {}),
+        ...(body.acceptanceCriteria !== undefined
+          ? { acceptance_criteria: body.acceptanceCriteria }
+          : {}),
+        ...(body.priority !== undefined ? { priority: body.priority } : {}),
+        ...(body.riskTier !== undefined ? { risk_tier: body.riskTier } : {}),
+        ...(body.budgetUsdMicro !== undefined ? { budget_usd_micro: body.budgetUsdMicro } : {}),
+        ...(body.specialist !== undefined ? { specialist: body.specialist } : {}),
+        ...(body.note ? { note: body.note } : {}),
+        project: task.project_id,
+      },
+      body.note ?? `Edit ${task.title}`,
+    );
+    return c.json(await changeView(task.id, r));
+  });
+
+  // The person's actions on a task (design §3.5, ADR 0102): each one a registry command, so it
+  // is logged with its Undo. Stop and Cancel on a running task stop its run now (U-039).
+  app.post("/tasks/:id/action", async (c) => {
+    const body = await parse(c, TaskActionBody);
+    const task = await taskAsShown(c.req.param("id"), body.version);
+    const note = body.note ? { note: body.note } : {};
+    const ref = { task: task.id, project: task.project_id, ...note };
+    const [name, params]: [string, Record<string, unknown>] =
+      body.action === "make_ready" || body.action === "try_again"
+        ? ["task.transition", { ...ref, to: "ready" }]
+        : body.action === "cancel"
+          ? ["task.transition", { ...ref, to: "cancelled" }]
+          : body.action === "pause" || body.action === "stop"
+            ? ["task.pause", ref]
+            : body.action === "resume" || body.action === "go_ahead"
+              ? ["task.resume", { ...ref, without_answers: body.action === "go_ahead" }]
+              : ["task.reopen", ref];
+    const offered = ACTION_FROM[body.action];
+    if (!offered.includes(task.status)) {
+      const now = await oneTaskView(task);
+      throw new ForerunnerError(
+        "validation",
+        `"${task.title}" is ${now.display?.label ?? task.status}: ${ACTION_WORDS[body.action]} is not offered for it.`,
+        { details: { taskId: task.id, action: body.action, task: now, reason: "not_offered" } },
+      );
+    }
+    const r = await taskCommand(task.project_id, name, params, body.note ?? body.action);
+    if (["claimed", "in_progress"].includes(task.status))
+      rt.kill.stopTask(task.id, `${ACTION_WORDS[body.action]} by you`);
+    // A withdrawn card leaves the Inbox: its count and the header follow.
+    rt.events.emit("inbox", {});
+    return c.json(await changeView(task.id, r));
   });
 
   // The plan writer (spec B.6): a plan becomes milestone and task rows shaped by the project's
@@ -954,67 +1099,52 @@ export function createDaemonApp(
     return c.json(milestoneView(m));
   });
 
-  // A move in the Tasks tab (U-061): the registry's `task.transition`, so the move is in the
-  // change log as `ui` with the dialog's reason, and a cancel can be undone (reopened). The
-  // dialog's Confirm is the tap a cancel or a done asks for; a stale version is refused as the
-  // store refuses it.
+  // A move by the workflow's own words (U-061), for API clients and the e2e worlds; the Tasks
+  // tab sends `POST /tasks/:id/action`. The registry's `task.transition`, so the move is in the
+  // change log as `ui` with its Undo; a stale version is a 409 that says what the task is now.
   app.post("/tasks/:id/transition", async (c) => {
     const body = await parse(c, TransitionTaskBody);
-    const task = await rt.store.task.mustGet(c.req.param("id"));
-    if (task.version !== body.version) {
-      throw new ForerunnerError(
-        "version_conflict",
-        `the task changed since it was shown (version ${task.version}, not ${body.version}); reload and try again`,
-        { details: { taskId: task.id, expected: body.version, actual: task.version } },
-      );
-    }
-    const turn = await turnFor({
-      wordsUsed: body.reason,
-      source: "ui",
-      projectId: task.project_id,
-    });
-    const r = await rt.commands.execute(
+    const task = await taskAsShown(c.req.param("id"), body.version);
+    const r = await taskCommand(
+      task.project_id,
+      "task.transition",
       {
-        name: "task.transition",
-        params: { task: task.id, to: body.to, reason: body.reason, project: task.project_id },
+        task: task.id,
+        to: body.to,
+        ...(body.reason ? { reason: body.reason } : {}),
+        ...(body.note ? { note: body.note } : {}),
+        project: task.project_id,
       },
-      turn,
-      { confirmation: { kind: "tap", by: { kind: "human", id: rt.human.id } } },
+      body.reason ?? body.note ?? `move to ${body.to}`,
     );
-    if (r.status !== "done" && r.status !== "partial") {
-      throw new ForerunnerError(
-        (r.code ?? "validation") as ErrorCode,
-        r.reason ?? `the task was not moved (${r.status})`,
-        { details: { taskId: task.id, to: body.to } },
-      );
-    }
-    const t = await rt.store.task.mustGet(task.id);
-    // A person's move (Cancel, Mark failed, Needs me, Send to review) stops the task's run if
-    // one is going; the session goes on with its other tasks and leaves the task as set (U-039).
-    rt.kill.stopTask(t.id, `${t.status} by you: ${body.reason}`);
-    rt.events.emit("project", { id: t.project_id });
-    const view: TaskTransitionView = {
-      ...taskView(t, chf(), specialistLimit),
-      change: r.changeLogId
-        ? { changeLogId: r.changeLogId, undoToken: r.undoToken ?? null, sentence: r.sentence ?? "" }
-        : null,
-    };
-    return c.json(view);
+    // A person's move stops the task's run if one is going; the session goes on with its
+    // other tasks and leaves the task as set (U-039).
+    rt.kill.stopTask(task.id, `${body.to} by you${body.reason ? `: ${body.reason}` : ""}`);
+    rt.events.emit("inbox", {});
+    return c.json(await changeView(task.id, r));
   });
 
-  // The tasks a task waits on, changed after it was created (U-040): checked as at creation,
-  // plus the task itself and a cycle, with the version the screen loaded and the reason.
+  // What a task waits for (U-040), changed after it was created: the `task.dependencies`
+  // command (logged, with its Undo), checked as at creation, plus the task itself and a cycle.
   app.post("/tasks/:id/dependencies", async (c) => {
     const body = await parse(c, SetTaskDependenciesBody);
-    const t = await rt.store.task.setDependencies(
-      c.req.param("id"),
-      body.version,
-      body.dependsOn,
-      body.reason,
-      { humanId: rt.human.id },
+    const task = await rt.store.task.mustGet(c.req.param("id"));
+    // A refused dependency (a cycle, a cancelled task) is named whatever the version.
+    await rt.store.task.checkDependencies(task.project_id, task.id, body.dependsOn);
+    await taskAsShown(task.id, body.version);
+    const r = await taskCommand(
+      task.project_id,
+      "task.dependencies",
+      {
+        task: task.id,
+        depends_on: body.dependsOn,
+        ...(body.reason ? { reason: body.reason } : {}),
+        ...(body.note ? { note: body.note } : {}),
+        project: task.project_id,
+      },
+      body.reason ?? body.note ?? "Change what it waits for",
     );
-    rt.events.emit("project", { id: t.project_id });
-    return c.json(taskView(t, chf()));
+    return c.json(await changeView(task.id, r));
   });
 
   // What a session started now would plan (U-040): the Start dialog names the tasks that would
@@ -2073,11 +2203,22 @@ export function createDaemonApp(
 
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {
-      const onSession = (e: { type: string; payload: Record<string, unknown> }) => {
+      const onSession = (e: {
+        type: string;
+        payload: Record<string, unknown>;
+        projectId?: string | null;
+      }) => {
         void stream.writeSSE({
           event: "session.changed",
           data: JSON.stringify({ type: e.type, payload: e.payload }),
         });
+        // A session moved a task (began it, finished it, the critic took it): the project's
+        // screens (the Tasks tab, the header) re-read it, so rows follow the work live.
+        if (e.projectId && changesTasks(e.type))
+          void stream.writeSSE({
+            event: "project.changed",
+            data: JSON.stringify({ id: e.projectId }),
+          });
       };
       const onInbox = async () => {
         const open = await rt.store.humanRequest.open({ humanId: rt.human.id }, { limit: 500 });

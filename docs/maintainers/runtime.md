@@ -950,6 +950,27 @@ that followed it in `after_stop`; a pause read at the end of a session that fail
 row `failed`, not `paused`, and the next session starts; a message read at the end is carried
 past a session that failed before its receipts; an empty inbox adds nothing.
 
+### A task's status in words and the run order (design §2, §3.5)
+
+`taskView` carries `display` (`TaskDisplay`: `key`, `label`, `tone`, `detail`, `agentName`,
+`since`, `blocker`) from `taskDisplay` in `daemon/task-words.ts`, the one map the Tasks tab's
+badge and filter, the drawer, the Start dialog and the chat read: Draft; Ready; `Waiting for
+"X"` (a dependency not done); `Stuck: "X" failed` / `was cancelled` (one that will not finish by
+itself); Waiting for Docker (tier 2+ while the sandbox is not ready, read from
+`sandbox.readiness.current()`); Running (with the agent's name and the run's start from its
+run row, never the claim's id); Being reviewed; Needs your answer (an open Inbox card about the
+task, linked by `blocker.requestId`); Paused by you (`needs_human` the person set, no card:
+`isPausedByPerson` reads `author_human`); Paused (another `needs_human` without a card, with its
+reason); `Failed: <reason>` (`plainReason`: one line, no ids, no ladder words); Done ("Done:
+accepted without review" when the reason says so); Cancelled. `TASK_DISPLAY_FILTERS` is the
+Status filter in these words. `project-health.ts` does not count a person's pause as "needs
+you". `task-words.ts` has no store and nothing that needs Node, so the UI's stand-in daemon
+words its tasks with it. `GET /projects/:id/tasks` answers the tasks in run order (`runOrder`:
+a task after every task it waits for, then priority, then age; stable whatever the statuses,
+so rows do not jump), with `runOrder` set. `/events` sends `project.changed` for a session
+event that may move a task (`changesTasks`: `task.*`, `session.*`, `critic.*` except the step,
+heard and notes lines), so the Tasks tab and the header follow a running session.
+
 **What you say during a live session (spec O.9, ADR 0078; `src/session/live-chat.ts`).** A
 free-form line the human types or speaks to the conversation agent while a session of the
 principal runs is posted to the principal's own inbox as an `info` message from and to the
@@ -3278,11 +3299,25 @@ answers `undoable: false` with `undoBlockedReason` in plain words, and `undoable
 out, U-061) and `POST /changes/:id/undo` (the Changes screen's, the settings dialog's and the
 email page's Undo, logged with source `ui`; an undo that raises a limit answers `pending` with
 its undo card like a forward change and is confirmed on `/commands/:id/confirm`, U-057, ADR
-0099). `POST /tasks/:id/transition` (the Tasks tab, U-061) runs the registry's
-`task.transition` with the dialog's Confirm as the tap, after the version check (409
-`version_conflict` for a stale dialog), so the move is a change log row (source `ui`, the reason
-as the words used) and answers `TaskTransitionView`: the task and `change { changeLogId,
-undoToken, sentence }`; a cancel's undo reopens the task. Results are
+0099). The Tasks tab's changes (design §3.5, ADR 0102) each run a registry command with the
+dialog's Confirm as the tap, after the version check, so each is a change log row (source `ui`)
+with its Undo, and each answers `TaskTransitionView` (alias `TaskChangeView`): the task and
+`change { changeLogId, undoToken, sentence }`. `POST /projects/:id/tasks` runs `task.create`;
+`POST /tasks/:id/action { version, action, note? }` the person's actions (`make_ready` and
+`try_again` → `task.transition` to ready, `cancel` → to cancelled, `pause` and `stop` →
+`task.pause`, `resume` and `go_ahead` → `task.resume`, `reopen` and `redo` → `task.reopen`;
+`ACTION_FROM` in `daemon/task-words.ts` says from which statuses each is offered, and another
+is a 409 that names the status in words); `PUT /tasks/:id` runs `task.update` (Edit);
+`POST /tasks/:id/dependencies` runs `task.dependencies` (it wrote the row directly before, so
+the change was in no change log); `POST /tasks/:id/transition` (API clients, the e2e worlds)
+runs `task.transition`, the reason optional. A stale version is a 409 whose message says what
+the task is now ("This task changed: it is now Running.") and whose `details.task` is the task's
+view, so the screen updates the row. Stop and Cancel on a running task stop its run
+(`KillSwitch.stopTask`, U-039); a move withdraws the task's open Inbox cards and the route
+sends `inbox.changed`. `GET /tasks/:id` is the task drawer (`TaskDetailView`, `taskDetail` in
+`daemon/task-display.ts`): what it waits for and what waits on it, its runs with the report and
+the files from the session log (`task.finished`, `task.files`), the critic's last review in a
+sentence (`reviewSentence`), the open findings, its open cards. Results are
 `CommandResultViewSchema`; `/me.activeProjectId` is the registry's record, the one active
 project of every channel (U-056): the header's switcher, the palette and Home's Make active run
 `project.switch` (source `ui`) and the app shows `/me`'s project at start. `POST /chat` and

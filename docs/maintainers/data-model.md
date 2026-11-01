@@ -58,9 +58,16 @@ Only an agent's claim puts a task in `claimed` or `in_progress` (`AGENT_ONLY_STA
 `reason: "agent_only_status"`). A person's move there left the task with no holder and no
 expiry, so no session planned it and nothing returned it to ready (U-013).
 
-`cancelled` and `done` are terminal in the graph. The one way out of `cancelled` is
-`reopen`, the undo of a cancel (U-061): the task goes back to the status it had when a
-person can set it (`draft`, `ready`, `needs_human`, `failed`), else to `ready`, unclaimed.
+`cancelled` and `done` are terminal in the graph. The ways out are the person's: `reopen`
+takes a cancelled or a done task back (Reopen and Redo on the Tasks tab, U-080; the undo of a
+cancel, U-061) to the status it had when a person can set it (`draft`, `ready`,
+`needs_human`, `failed`), else to `ready`, unclaimed. `restoreStatus` is the Undo of every
+person's task action (design §3.5): it puts back the status before the action, even where the
+graph has no edge (back to `done` after a Redo, with the open-findings check of a close), and a
+status only an agent sets (`claimed`, `in_progress`, `in_review`) as `ready`, unclaimed. `edit`
+is the person's Edit (title, outcome, criteria, priority, review level, budget, specialist),
+allowed in `EDITABLE_STATUSES` (`draft`, `ready`, `needs_human`, `failed`) only: a run or a
+review in progress would go on with what the task said before.
 
 ### Reasons on plan, task and milestone changes
 

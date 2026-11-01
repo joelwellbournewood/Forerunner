@@ -94,13 +94,20 @@ describe("plain words (U-074)", () => {
   });
 
   it("Tasks: a dependency by its title, the review level in words, the critic's call plainly", async () => {
+    const user = userEvent.setup();
     renderApp("/projects/proj_atlas/tasks");
     const rows = await screen.findAllByTestId("task-row");
-    const second = rows[1] as HTMLElement;
-    expect(second).toHaveTextContent('after "Index the documentation pages"');
-    expect(second).not.toHaveTextContent("task_1");
-    expect(second).toHaveTextContent(/(checks only|light review|full review)/);
-    expect(second).not.toHaveTextContent(/· tier \d/);
+    const search = rows.find((r) => r.dataset.taskId === "task_2") as HTMLElement;
+    expect(search).not.toHaveTextContent("task_1");
+    expect(search).toHaveTextContent(/(Checks only|Light review|Full review)/);
+    expect(search).not.toHaveTextContent(/tier \d/);
+    // What it waits for is named by title in its drawer (design §3.5).
+    await user.click(within(search).getByTestId("task-title"));
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(await within(drawer).findByTestId("drawer-waits")).toHaveTextContent(
+      '"Index the documentation pages": Done',
+    );
+    expect(drawer).not.toHaveTextContent("task_1");
   });
 
   it("Project: the autonomy level is named and explained, not 'autonomy 2'", async () => {

@@ -62,7 +62,9 @@ import {
   StartSessionView,
   StartVoiceSessionBody,
   storableSecretInfo,
+  TaskActionBody,
   TransitionTaskBody,
+  UpdateTaskBody,
   VoiceAudioBody,
   VoiceHeardBody,
   VoicePressBody,
@@ -106,6 +108,14 @@ import type {
   QueueItemView,
 } from "../src/api/contracts.ts";
 import { TASK_TRANSITIONS } from "../src/lib/task-transitions.ts";
+import {
+  actionSentence,
+  actionTarget,
+  createTaskMeta,
+  type FakeTaskMeta,
+  fakeTaskDetail,
+  projectTaskViews,
+} from "./fake-tasks.ts";
 import {
   AGENTS,
   AUDIT_EXPORT,
@@ -345,6 +355,8 @@ export interface FakeDaemonState {
   agents: AgentView[];
   projects: ProjectCard[];
   tasks: TaskView[];
+  /** Who paused which task, and the order tasks were added (the daemon's row authors and ages). */
+  taskMeta: FakeTaskMeta;
   sessions: SessionView[];
   events: EventView[];
   requests: HumanRequestView[];
@@ -633,6 +645,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     agents: clone(AGENTS),
     projects: clone(PROJECTS),
     tasks: clone(TASKS),
+    taskMeta: createTaskMeta(TASKS),
     sessions: clone(SESSIONS),
     events: clone(EVENTS),
     requests: clone(REQUESTS),
@@ -760,6 +773,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.agents = clone(AGENTS);
     state.projects = clone(PROJECTS);
     state.tasks = clone(TASKS);
+    state.taskMeta = createTaskMeta(TASKS);
     state.sessions = clone(SESSIONS);
     state.events = clone(EVENTS);
     state.requests = clone(REQUESTS);
@@ -1192,11 +1206,67 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       ? c.json([])
       : errorBody(c, 404, "not_found", "no such utterance"),
   );
+  // --- Tasks (design §3.5): the daemon's words (`task-words`), run order, every change logged
+  // with its Undo, as the daemon's `task.*` commands do.
+  const sandboxReady = () => state.sandbox.ready;
+  const taskViewsOf = (projectId: string) =>
+    projectTaskViews(state.tasks, projectId, state.requests, sandboxReady(), state.taskMeta);
+  const viewOf = (task: TaskView): TaskView =>
+    taskViewsOf(task.projectId).find((v) => v.id === task.id) ?? task;
+  /** The task as the screen showed it, or the daemon's 409 naming what it is now. */
+  const stale = (c: Context, task: TaskView) =>
+    c.json(
+      {
+        code: "conflict",
+        message: `This task changed: it is now ${viewOf(task).display?.label ?? task.status}.`,
+        details: { cause: "version_conflict", taskId: task.id, task: viewOf(task) },
+      },
+      409,
+    );
+  const touch = (task: TaskView) => {
+    task.version += 1;
+    task.updatedAt = new Date().toISOString();
+    emit("project.changed", { id: task.projectId });
+  };
+  const changeOf = (task: TaskView, entry: ChangeLogView) => ({
+    ...viewOf(task),
+    change: { changeLogId: entry.id, undoToken: entry.id, sentence: entry.sentence },
+  });
+  /** As the daemon: a person's move withdraws the task's open Inbox cards. */
+  const withdrawCards = (taskId: string): number => {
+    let n = 0;
+    for (const r of state.requests)
+      if (r.taskId === taskId && r.status === "open") {
+        r.status = "withdrawn";
+        n++;
+      }
+    if (n) emit("inbox.changed", { blockingCount: blockingCount() });
+    return n;
+  };
+  /** As the daemon: a note for the agent is a queued note that names the task. */
+  const queueTaskNote = (task: TaskView, note: string | undefined): string | null => {
+    const text = note?.trim();
+    if (!text) return null;
+    const item: QueueItemView = {
+      id: nextId("q"),
+      projectId: task.projectId,
+      humanId: ME.id,
+      kind: "note",
+      text: `About "${task.title}": ${text}`,
+      priority: 0,
+      status: "queued",
+      consumedBySession: null,
+      createdAt: new Date().toISOString(),
+      version: 1,
+    };
+    state.queue.unshift(item);
+    return item.id;
+  };
   app.get("/projects/:id/tasks", (c) => {
     const id = c.req.param("id");
     const status = c.req.query("status");
     const limit = Number(c.req.query("limit") ?? "100");
-    const rows = state.tasks.filter((t) => t.projectId === id && (!status || t.status === status));
+    const rows = taskViewsOf(id).filter((t) => !status || t.status === status);
     return c.json(rows.slice(0, Number.isFinite(limit) && limit > 0 ? limit : 100));
   });
   app.post("/projects/:id/tasks", async (c) => {
@@ -1232,35 +1302,247 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       ...(parsed.data.budgetUsdMicro > 0
         ? { cap: money(parsed.data.budgetUsdMicro), capSource: "task_budget" as const }
         : { cap: money(3_000_000), capSource: "specialist_limit" as const }),
-      specialist: null,
+      specialist: parsed.data.specialist ?? null,
       attempt: 0,
       prUrl: null,
       branch: null,
-      reason: "",
+      reason: "Added by you",
       updatedAt: new Date().toISOString(),
       version: 1,
     };
-    state.tasks.unshift(task);
-    return c.json(task, 201);
+    state.tasks.push(task);
+    state.taskMeta.added.set(task.id, state.taskMeta.added.size + 1000);
+    const extra = [
+      ...(parsed.data.priority !== "medium" ? [`${parsed.data.priority} priority`] : []),
+      ...(parsed.data.specialist === "person"
+        ? ["it asks you in the Inbox"]
+        : parsed.data.specialist
+          ? [`for the ${parsed.data.specialist}`]
+          : []),
+    ];
+    const sentence = `Added "${task.title}" to ${project.name}${
+      task.status === "draft" ? " as a draft (no session picks it up)" : ""
+    }${extra.length ? `, ${extra.join(", ")}` : ""}.`;
+    const entry = pushChange({
+      commands: [{ name: "task.create", params: { title: task.title, project: id } }],
+      before: { task_id: null, project_id: id },
+      after: { task_id: task.id, project_id: id, status: task.status, title: task.title },
+      scope: "project",
+      projectId: id,
+      source: "ui",
+      wordsUsed: `New task: ${task.title}`,
+      sentence,
+      reversible: true,
+    });
+    emit("project.changed", { id });
+    return c.json(changeOf(task, entry), 201);
+  });
+  app.get("/tasks/:id", (c) => {
+    const task = state.tasks.find((t) => t.id === c.req.param("id"));
+    if (!task) return errorBody(c, 404, "not_found", "no such task");
+    const views = taskViewsOf(task.projectId);
+    return c.json(
+      fakeTaskDetail(
+        views.find((v) => v.id === task.id) ?? task,
+        views,
+        state.requests,
+        RUNS.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      ),
+    );
+  });
+  app.put("/tasks/:id", async (c) => {
+    const task = state.tasks.find((t) => t.id === c.req.param("id"));
+    if (!task) return errorBody(c, 404, "not_found", "no such task");
+    const parsed = UpdateTaskBody.safeParse(await c.req.json());
+    if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    if (parsed.data.version !== task.version) return stale(c, task);
+    if (!["draft", "ready", "needs_human", "failed"].includes(task.status))
+      return errorBody(
+        c,
+        409,
+        "conflict",
+        task.status === "done" || task.status === "cancelled"
+          ? `"${task.title}" is ${task.status}: ${task.status === "done" ? "Redo" : "Reopen"} it first, then edit it.`
+          : `"${task.title}" is being worked on now: stop it first, then edit it.`,
+      );
+    const b = parsed.data;
+    const before: Record<string, unknown> = {};
+    const words: string[] = [];
+    if (b.title !== undefined && b.title !== task.title) {
+      before.title = task.title;
+      task.title = b.title;
+      words.push(`the title to "${b.title}"`);
+    }
+    if (b.outcome !== undefined && b.outcome !== task.outcome) {
+      before.outcome = task.outcome;
+      task.outcome = b.outcome;
+      words.push("what done looks like");
+    }
+    if (
+      b.acceptanceCriteria !== undefined &&
+      JSON.stringify(b.acceptanceCriteria) !== JSON.stringify(task.acceptanceCriteria)
+    ) {
+      before.acceptanceCriteria = task.acceptanceCriteria;
+      task.acceptanceCriteria = b.acceptanceCriteria;
+      words.push("the criteria");
+    }
+    if (b.priority !== undefined && b.priority !== task.priority) {
+      before.priority = task.priority;
+      task.priority = b.priority;
+      words.push(`priority to ${b.priority[0]?.toUpperCase()}${b.priority.slice(1)}`);
+    }
+    if (b.riskTier !== undefined && b.riskTier !== task.riskTier) {
+      before.riskTier = task.riskTier;
+      task.riskTier = b.riskTier;
+      words.push(
+        `review level to ${["Checks only", "Light review", "Full review", "Full review and your sign-off"][b.riskTier]}`,
+      );
+    }
+    if (b.budgetUsdMicro !== undefined && b.budgetUsdMicro !== task.budget.usdMicro) {
+      before.budgetUsdMicro = task.budget.usdMicro;
+      task.budget = money(b.budgetUsdMicro);
+      words.push(
+        b.budgetUsdMicro > 0
+          ? `budget to CHF ${(b.budgetUsdMicro * 0.0000008).toFixed(2).replace(/\.00$/, "")}`
+          : "no budget of its own",
+      );
+    }
+    if (b.specialist !== undefined && (b.specialist ?? null) !== task.specialist) {
+      before.specialist = task.specialist;
+      task.specialist = b.specialist ?? null;
+      words.push(
+        `who does it to ${b.specialist === "person" ? "you" : (b.specialist ?? "the agent's choice")}`,
+      );
+    }
+    if (!words.length && !b.note?.trim())
+      return errorBody(c, 409, "conflict", `Nothing to change on "${task.title}".`);
+    touch(task);
+    const noteId = queueTaskNote(task, b.note);
+    const list =
+      words.length <= 1 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+    const entry = pushChange({
+      commands: [{ name: "task.update", params: { task: task.id, project: task.projectId } }],
+      before: { task_id: task.id, title: before.title ?? task.title, fields: before },
+      after: { task_id: task.id, title: task.title, version: task.version, note_id: noteId },
+      scope: "project",
+      projectId: task.projectId,
+      source: "ui",
+      wordsUsed: b.note ?? `Edit ${task.title}`,
+      sentence: `${words.length ? `Changed "${before.title ?? task.title}": ${list}.` : `Noted for "${task.title}".`}${noteId ? " Your note goes into its next brief." : ""}`,
+      reversible: true,
+    });
+    return c.json(changeOf(task, entry));
+  });
+  app.post("/tasks/:id/action", async (c) => {
+    const task = state.tasks.find((t) => t.id === c.req.param("id"));
+    if (!task) return errorBody(c, 404, "not_found", "no such task");
+    const parsed = TaskActionBody.safeParse(await c.req.json());
+    if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    if (parsed.data.version !== task.version) return stale(c, task);
+    const target = actionTarget(viewOf(task), parsed.data.action);
+    if ("refused" in target) return errorBody(c, 409, "conflict", target.refused);
+    const from = task.status;
+    const { action, note } = parsed.data;
+    task.status = target.to;
+    if (target.to === "needs_human") state.taskMeta.pausedByPerson.add(task.id);
+    else state.taskMeta.pausedByPerson.delete(task.id);
+    if (target.to !== "claimed" && target.to !== "in_progress") task.claimedBy = null;
+    task.reason =
+      note?.trim() ||
+      {
+        make_ready: "Made ready by you",
+        pause: "Paused by you",
+        stop: "Stopped by you",
+        resume: "Resumed by you",
+        go_ahead: "Go ahead without the answers: asked by you",
+        try_again: "Try again: asked by you",
+        cancel: "Cancelled by you",
+        reopen: "Reopened by you",
+        redo: "Redo asked by you",
+      }[action];
+    touch(task);
+    const withdrawn =
+      ["needs_human", "failed", "in_review"].includes(from) || target.to === "cancelled"
+        ? withdrawCards(task.id)
+        : 0;
+    const withoutAnswers =
+      action === "go_ahead" || (from === "needs_human" && withdrawn > 0 && target.to === "ready")
+        ? queueTaskNote(
+            task,
+            "The person chose to go ahead without answering the questions asked about this task: decide yourself and say in the report what you assumed.",
+          )
+        : null;
+    const noteId = queueTaskNote(task, note);
+    const stuck =
+      target.to === "cancelled"
+        ? state.tasks
+            .filter(
+              (t) =>
+                t.dependsOn.includes(task.id) && t.status !== "done" && t.status !== "cancelled",
+            )
+            .map((t) => t.title)
+        : [];
+    const entry = pushChange({
+      commands: [
+        {
+          name:
+            action === "pause" || action === "stop"
+              ? "task.pause"
+              : action === "resume" || action === "go_ahead"
+                ? "task.resume"
+                : action === "reopen" || action === "redo"
+                  ? "task.reopen"
+                  : "task.transition",
+          params: { task: task.id, project: task.projectId },
+        },
+      ],
+      before: { task_id: task.id, status: from, title: task.title },
+      after: {
+        task_id: task.id,
+        status: task.status,
+        title: task.title,
+        ...(noteId ? { note_id: noteId } : {}),
+        ...(withoutAnswers ? { without_answers_note_id: withoutAnswers } : {}),
+      },
+      scope: "project",
+      projectId: task.projectId,
+      source: "ui",
+      wordsUsed: note ?? action,
+      sentence: actionSentence(task, from, task.status, {
+        withdrawn,
+        noted: noteId !== null,
+        stuck,
+      }),
+      reversible: true,
+    });
+    return c.json(changeOf(task, entry));
   });
   app.post("/tasks/:id/transition", async (c) => {
     const task = state.tasks.find((t) => t.id === c.req.param("id"));
     if (!task) return errorBody(c, 404, "not_found", "no such task");
     const parsed = TransitionTaskBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    if (parsed.data.version !== task.version) {
-      return errorBody(c, 409, "conflict", "task changed since you loaded it");
-    }
+    if (parsed.data.version !== task.version) return stale(c, task);
+    // As the daemon's store: a person never puts a task where only an agent's claim does.
+    if (["claimed", "in_progress"].includes(parsed.data.to))
+      return errorBody(
+        c,
+        409,
+        "conflict",
+        `only an agent's session moves a task to ${parsed.data.to}; mark it ready and start a session`,
+      );
+    if (!(TASK_TRANSITIONS[task.status] ?? []).includes(parsed.data.to))
+      return errorBody(
+        c,
+        409,
+        "conflict",
+        `task: illegal transition ${task.status} -> ${parsed.data.to}`,
+      );
     const from = task.status;
     task.status = parsed.data.to;
-    task.reason = parsed.data.reason;
-    task.version += 1;
-    task.updatedAt = new Date().toISOString();
-    // As the daemon (U-061): the registry's task.transition, logged as `ui` with the reason;
-    // a cancel is undone by reopening, done stays done.
-    const reversible =
-      parsed.data.to === "cancelled" ? from !== "cancelled" : allowedBack(parsed.data.to, from);
-    const sentence = `Moved the task "${task.title}" from ${from} to ${parsed.data.to}.${reversible ? " Undo." : ""}`;
+    task.reason = parsed.data.reason ?? parsed.data.note ?? `Moved by you`;
+    if (parsed.data.to === "needs_human") state.taskMeta.pausedByPerson.add(task.id);
+    touch(task);
     const entry = pushChange({
       commands: [
         {
@@ -1273,14 +1555,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       scope: "project",
       projectId: task.projectId,
       source: "ui",
-      wordsUsed: parsed.data.reason,
-      sentence,
-      reversible,
+      wordsUsed: parsed.data.reason ?? "",
+      sentence: actionSentence(task, from, parsed.data.to),
+      reversible: true,
     });
-    return c.json({
-      ...task,
-      change: { changeLogId: entry.id, undoToken: reversible ? entry.id : null, sentence },
-    });
+    return c.json(changeOf(task, entry));
   });
   app.post("/tasks/:id/dependencies", async (c) => {
     const task = state.tasks.find((t) => t.id === c.req.param("id"));
@@ -1289,14 +1568,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     const deps = checkFakeDependencies(state.tasks, task.projectId, task.id, parsed.data.dependsOn);
     if (!deps.ok) return errorBody(c, 409, "conflict", deps.message);
-    if (parsed.data.version !== task.version) {
-      return errorBody(c, 409, "conflict", "task changed since you loaded it");
-    }
+    if (parsed.data.version !== task.version) return stale(c, task);
+    const before = task.dependsOn;
     task.dependsOn = deps.ids;
-    task.reason = parsed.data.reason;
-    task.version += 1;
-    task.updatedAt = new Date().toISOString();
-    return c.json(task);
+    task.reason = parsed.data.reason ?? parsed.data.note ?? "What it waits for changed by you";
+    touch(task);
+    const noteId = queueTaskNote(task, parsed.data.note);
+    const titles = deps.ids.map((d) => `"${state.tasks.find((t) => t.id === d)?.title ?? d}"`);
+    const list =
+      titles.length <= 1
+        ? titles.join("")
+        : `${titles.slice(0, -1).join(", ")} and ${titles.at(-1)}`;
+    const entry = pushChange({
+      commands: [{ name: "task.dependencies", params: { task: task.id, project: task.projectId } }],
+      before: { task_id: task.id, title: task.title, depends_on: before },
+      after: {
+        task_id: task.id,
+        title: task.title,
+        depends_on: deps.ids,
+        ...(noteId ? { note_id: noteId } : {}),
+      },
+      scope: "project",
+      projectId: task.projectId,
+      source: "ui",
+      wordsUsed: parsed.data.reason ?? parsed.data.note ?? "Change what it waits for",
+      sentence: `${titles.length ? `"${task.title}" now waits for ${list}.` : `"${task.title}" waits for no other task now.`}${noteId ? " Your note goes into its next brief." : ""}`,
+      reversible: true,
+    });
+    return c.json(changeOf(task, entry));
   });
   app.get("/projects/:id/start-check", (c) => {
     const id = c.req.param("id");
@@ -1673,8 +1972,6 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     updatedAt: new Date().toISOString(),
     version: 1,
   });
-  /** The workflow graph's way back from `to` to `from` (the daemon's TASK_TRANSITIONS). */
-  const allowedBack = (to: string, from: string) => (TASK_TRANSITIONS[to] ?? []).includes(from);
 
   const chatReply = (
     text: string,
@@ -1729,8 +2026,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const target = state.projects.find((p) => p.id === turnProject);
       const title = (addTask[1] ?? "").trim();
       const task = newTask(turnProject, title, "ready");
-      state.tasks.unshift(task);
-      const sentence = `Created the ready task "${title}" in ${target?.name ?? turnProject}. Undo.`;
+      state.tasks.push(task);
+      const sentence = `Added "${title}" to ${target?.name ?? turnProject}.`;
       const entry = pushChange({
         commands: [{ name: "task.create", params: { title, project: turnProject } }],
         before: { task_id: null, project_id: turnProject },
@@ -3978,9 +4275,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   /** As the daemon's `undoBlocked` (U-061): why a still-undoable row's Undo would not work. */
   const undoBlocked = (ch: ChangeLogView): string | null => {
     const name = (ch.commands[0] as { name?: string } | undefined)?.name;
-    const after = (ch.after ?? {}) as { task_id?: string; status?: string; title?: string };
-    const before = (ch.before ?? {}) as { status?: string };
-    if (name !== "task.create" && name !== "task.transition") return null;
+    const after = (ch.after ?? {}) as {
+      task_id?: string;
+      status?: string;
+      title?: string;
+      version?: number;
+      depends_on?: string[];
+    };
+    if (!name?.startsWith("task.")) return null;
     const task = state.tasks.find((t) => t.id === after.task_id);
     if (!task) return "the task no longer exists";
     if (name === "task.create") {
@@ -3989,12 +4291,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ? null
         : `the task "${task.title}" is ${task.status}; a ${task.status} task cannot be cancelled, so its creation cannot be undone`;
     }
+    // As the daemon's `task.update` and `task.dependencies`: the undo works while nothing
+    // changed them since.
+    if (name === "task.update")
+      return after.version === task.version
+        ? null
+        : `"${task.title}" was changed again since; undo would not put it back as it was`;
+    if (name === "task.dependencies")
+      return JSON.stringify(after.depends_on) === JSON.stringify(task.dependsOn)
+        ? null
+        : `what "${task.title}" waits for changed again since; undo would not put it back as it was`;
+    // Every move is undone by putting back the status it had (design §3.5).
     if (task.status !== after.status) {
-      return `the task "${task.title}" moved on to ${task.status} since; undo would not put it back where it was`;
+      return `"${task.title}" is ${viewOf(task).display?.label.toLowerCase() ?? task.status} now; undo would not put it back where it was`;
     }
-    return task.status === "cancelled" || allowedBack(task.status, before.status ?? "")
-      ? null
-      : `a ${task.status} task cannot go back to ${before.status}`;
+    return null;
   };
   const withUndoable = (ch: ChangeLogView, now: string): ChangeLogView => {
     const open = ch.undoState === "undoable" && (!ch.expiresAt || ch.expiresAt > now);
@@ -4161,22 +4472,61 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     let sentence = `Undone: ${entry.sentence.replace(/ Undo\.$/, ".")}`;
     // As the daemon (U-061): a cancel is undone by reopening, a creation by cancelling.
-    const after = (entry.after ?? {}) as { task_id?: string; status?: string; title?: string };
+    const after = (entry.after ?? {}) as {
+      task_id?: string;
+      status?: string;
+      title?: string;
+      note_id?: string;
+      without_answers_note_id?: string;
+    };
     const task = state.tasks.find((t) => t.id === after.task_id);
-    if (first?.name === "task.transition" && task && typeof before?.status === "string") {
-      const previous = before.status;
-      const reopenTo = ["draft", "ready", "needs_human", "failed"].includes(previous)
-        ? previous
-        : "ready";
-      task.status = task.status === "cancelled" ? reopenTo : previous;
+    const words = (s: string) =>
+      ({
+        draft: "a draft",
+        ready: "ready",
+        needs_human: "paused",
+        failed: "failed",
+        done: "done",
+        cancelled: "cancelled",
+        in_review: "being reviewed",
+      })[s] ?? s;
+    const isMove = ["task.transition", "task.pause", "task.resume", "task.reopen"].includes(
+      first?.name ?? "",
+    );
+    if (isMove && task && typeof before?.status === "string") {
+      // As the daemon's `restoreStatus`: the status before the move; an agent's own status
+      // (running, being reviewed) comes back as ready.
+      const previous = ["claimed", "in_progress", "in_review"].includes(before.status)
+        ? "ready"
+        : before.status;
+      task.status = previous;
+      if (previous === "needs_human") state.taskMeta.pausedByPerson.add(task.id);
+      else state.taskMeta.pausedByPerson.delete(task.id);
       task.version += 1;
       sentence =
         after.status === "cancelled"
-          ? reopenTo === previous
-            ? `Undone: reopened the task "${task.title}"; it is ${reopenTo} again.`
-            : `Undone: reopened the task "${task.title}" as ${reopenTo} (it was ${previous}; a session picks it up again).`
-          : `Undone: the task "${task.title}" is back to ${previous}.`;
+          ? `Undone: reopened the task "${task.title}"; it is ${words(previous)} again.`
+          : `Undone: the task "${task.title}" is ${words(previous)} again.`;
     }
+    if (first?.name === "task.update" && task) {
+      const fields = ((before as { fields?: Record<string, unknown> } | null)?.fields ??
+        {}) as Partial<TaskView> & { budgetUsdMicro?: number };
+      const { budgetUsdMicro, ...rest } = fields;
+      Object.assign(task, rest);
+      if (budgetUsdMicro !== undefined) task.budget = money(budgetUsdMicro);
+      task.version += 1;
+      sentence = `Undone: "${task.title}" is as it was.`;
+    }
+    if (first?.name === "task.dependencies" && task) {
+      task.dependsOn = ((before as { depends_on?: string[] } | null)?.depends_on ?? []).slice();
+      task.version += 1;
+      sentence = `Undone: "${task.title}" waits for what it waited for before.`;
+    }
+    for (const id of [after.note_id, after.without_answers_note_id]) {
+      const note = state.queue.find((q) => q.id === id);
+      if (note?.status === "queued") note.status = "dismissed";
+    }
+    if (task) emit("project.changed", { id: task.projectId });
     if (first?.name === "task.create" && task) {
       task.status = "cancelled";
       task.version += 1;

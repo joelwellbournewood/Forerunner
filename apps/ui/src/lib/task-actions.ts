@@ -1,0 +1,175 @@
+import {
+  TASK_DISPLAY_FILTERS,
+  type TaskDisplay,
+  type TaskDisplayKey,
+} from "@forerunner/runtime/daemon/api-types";
+import type { TaskAction, TaskView } from "../api/client.ts";
+
+/**
+ * The person's actions on a task (design §3.5, core-experience.md; ADR 0102), offered per
+ * status in the words of the design, each with its one-line explanation. Mark failed, Send to
+ * review, Mark done and Needs me are not among them: they led to states nothing processes.
+ * The status itself comes from the daemon (`TaskView.display`, design §2).
+ */
+
+/** What a button does: an action the daemon applies, or a form or a link the tab opens. */
+export type TaskActionKey = TaskAction | "edit" | "dependencies" | "answer";
+
+export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: string }>> = {
+  make_ready: { label: "Make ready", explain: "A session will pick it up." },
+  edit: {
+    label: "Edit",
+    explain: "Change the wording, priority, budget, review level or specialist.",
+  },
+  dependencies: {
+    label: "Change what it waits for",
+    explain: "Pick the tasks that must finish first.",
+  },
+  pause: { label: "Pause", explain: "No session runs it until you press Resume." },
+  resume: { label: "Resume", explain: "It is ready again; the next session can run it." },
+  stop: {
+    label: "Stop",
+    explain: "Its run stops now and it is paused; the session goes on with the rest.",
+  },
+  try_again: {
+    label: "Try again",
+    explain: "Back to ready; your note goes into the next attempt.",
+  },
+  answer: { label: "Answer", explain: "Opens its card in the Inbox." },
+  go_ahead: {
+    label: "Go ahead without",
+    explain: "Back to ready without your answers: the specialist decides and says what it assumed.",
+  },
+  redo: {
+    label: "Redo",
+    explain: "Reopens it; say what is wrong and the next attempt fixes it.",
+  },
+  reopen: { label: "Reopen", explain: "Brings it back as ready." },
+  cancel: { label: "Cancel", explain: "Drops it." },
+};
+
+/** The actions a status offers, the main one first (design §3.5's table). */
+export function actionsFor(key: TaskDisplayKey): readonly TaskActionKey[] {
+  switch (key) {
+    case "draft":
+      return ["make_ready", "edit", "cancel"];
+    case "ready":
+    case "waiting":
+    case "docker":
+      return ["pause", "edit", "dependencies", "cancel"];
+    case "stuck":
+      return ["dependencies", "edit", "cancel"];
+    case "running":
+      return ["stop", "cancel"];
+    case "review":
+      return ["cancel"];
+    case "answer":
+      return ["answer", "go_ahead", "cancel"];
+    case "paused":
+      return ["resume", "edit", "cancel"];
+    case "failed":
+      return ["try_again", "edit", "cancel"];
+    case "done":
+      return ["redo"];
+    case "cancelled":
+      return ["reopen"];
+  }
+}
+
+/** The actions that open a form or a page instead of the confirm dialog. */
+export const FORM_ACTIONS: readonly TaskActionKey[] = ["edit", "dependencies", "answer"];
+
+/**
+ * The status in words. The daemon sends it; a view without it (an older daemon, the state
+ * service) is worded from the stored status, never shown raw.
+ */
+export function displayOf(task: Pick<TaskView, "status" | "display" | "reason">): TaskDisplay {
+  if (task.display) return task.display;
+  const base = { detail: null, agentName: null, since: null, blocker: null };
+  switch (task.status) {
+    case "draft":
+      return { ...base, key: "draft", label: "Draft", tone: "neutral" };
+    case "claimed":
+    case "in_progress":
+      return { ...base, key: "running", label: "Running", tone: "info" };
+    case "in_review":
+      return { ...base, key: "review", label: "Being reviewed", tone: "info" };
+    case "needs_human":
+      return { ...base, key: "paused", label: "Paused", tone: "warn" };
+    case "failed":
+      return { ...base, key: "failed", label: "Failed", tone: "bad" };
+    case "done":
+      return { ...base, key: "done", label: "Done", tone: "good" };
+    case "cancelled":
+      return { ...base, key: "cancelled", label: "Cancelled", tone: "neutral" };
+    default:
+      return { ...base, key: "ready", label: "Ready", tone: "neutral" };
+  }
+}
+
+/** The Status filter's choices, in the design's words. */
+export const STATUS_FILTERS = TASK_DISPLAY_FILTERS;
+
+/** Finished: no cap, no "waits for" edits, no cost limit line. */
+export function isFinished(task: Pick<TaskView, "status">): boolean {
+  return task.status === "done" || task.status === "cancelled";
+}
+
+/** The review levels in words (ADR 0102 point 5); "full" says it needs Docker. */
+export function reviewLevelName(tier: number): string {
+  if (tier <= 0) return "Checks only";
+  if (tier === 1) return "Light review";
+  if (tier === 2) return "Full review";
+  return "Full review and your sign-off";
+}
+
+/** The review level choices with their one-line meaning; Docker's state is said where it matters. */
+export function reviewLevelChoices(dockerReady: boolean | null): { tier: number; label: string }[] {
+  const docker =
+    dockerReady === false
+      ? "needs Docker, not running on this computer"
+      : "the work runs in Docker, isolated";
+  return [
+    { tier: 0, label: "Checks only: automatic checks, no critic" },
+    { tier: 1, label: "Light review: the critic reads the work, nothing runs in isolation" },
+    { tier: 2, label: `Full review: ${docker}` },
+    { tier: 3, label: `Full review and your sign-off: ${docker}` },
+  ];
+}
+
+/** "Who does it" choices: the agent's choice, a specialist, or the person. */
+export const WHO_AGENT = "";
+export const WHO_PERSON = "person";
+
+export function whoName(specialist: string | null | undefined): string {
+  if (!specialist) return "Agent's choice";
+  if (specialist === WHO_PERSON) return "You";
+  return specialist;
+}
+
+/** Minutes since an instant, in words: "just now", "2 min", "1 h 5 min". */
+export function elapsed(sinceIso: string | null, nowMs: number): string | null {
+  if (!sinceIso) return null;
+  const ms = nowMs - Date.parse(sinceIso);
+  if (!Number.isFinite(ms)) return null;
+  const min = Math.max(0, Math.floor(ms / 60_000));
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min`;
+  return `${Math.floor(min / 60)} h ${min % 60} min`;
+}
+
+/** "2 tasks will be stuck: "A" and "B"." for Cancel (design §3.5). */
+export function stuckLine(titles: readonly string[]): string | null {
+  if (titles.length === 0) return null;
+  const named = titles.slice(0, 3).map((t) => `"${t}"`);
+  const more = titles.length > 3 ? ` and ${titles.length - 3} more` : "";
+  const list =
+    named.length === 1
+      ? named[0]
+      : more
+        ? `${named.join(", ")}${more}`
+        : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
+  return titles.length === 1
+    ? `${list} waits on it and will be stuck.`
+    : `${titles.length} tasks will be stuck: ${list}.`;
+}

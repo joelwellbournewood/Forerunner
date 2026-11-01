@@ -287,7 +287,7 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
       ),
       textReply(
         "That needs real work: I handed it to your agent as a draft task; you will hear back in the inbox.",
-        { when: { lastUserIncludes: "Created the draft task" } },
+        { when: { lastUserIncludes: "as a draft" } },
       ),
     ]);
     const res = await w.chat(question);
@@ -295,7 +295,7 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     expect(res.actions[0]?.undoToken).toBeTruthy();
     // It says so: the reply names the hand-over, after the registry confirmed the draft task.
     expect(res.reply).toContain("handed it to your agent as a draft task");
-    expect(res.actions[0]?.summary).toContain("Created the draft task");
+    expect(res.actions[0]?.summary).toContain("as a draft (no session picks it up)");
     const drafts = await w.store.task.list({ project_id: w.game, status: "draft" } as never);
     expect(drafts).toHaveLength(1);
     const task = drafts[0];
@@ -312,7 +312,7 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
       );
     const sessionSummaries = async () => (await inbox()).filter((m) => /^Session /.test(m.body));
     expect((await inbox()).map((m) => m.body)).toEqual([
-      'Created the draft task "Compare the three renderers" in Game. Undo.',
+      'Added "Compare the three renderers" to Game as a draft (no session picks it up).',
     ]);
     expect(await sessionSummaries()).toHaveLength(0);
 

@@ -196,9 +196,8 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
       }),
     );
     expect(moved.status).toBe("cancelled");
-    expect(moved.change?.sentence).toBe(
-      'Moved the task "Draft the onboarding mail" from ready to cancelled. Undo.',
-    );
+    // Design §3.5: one plain line, no raw state and no "Undo." in it (the Undo is a button).
+    expect(moved.change?.sentence).toBe('Cancelled "Draft the onboarding mail".');
     const changes = ChangeLogView.array().parse(await get(`/changes?projectId=${project.id}`));
     const row = changes.find((c) => c.id === moved.change?.changeLogId);
     expect(row).toMatchObject({
@@ -230,7 +229,8 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     );
     const taskId = ((await rt.store.changeLog.mustGet(created.changeLogId ?? "")).after as Json)
       .task_id as string;
-    for (const to of ["ready", "claimed", "in_progress", "in_review", "done"] as const) {
+    // task.create makes a ready task now (design §3.9); a session takes it to done.
+    for (const to of ["claimed", "in_progress", "in_review", "done"] as const) {
       const t = await rt.store.task.mustGet(taskId);
       await rt.store.task.transition(t.id, t.version, to, "work", { agentId: rt.agent.id });
     }

@@ -1,5 +1,6 @@
 import type { StateStore, TaskRow } from "@forerunner/state";
 import type { ProjectCard } from "./api-types.ts";
+import { isPausedByPerson } from "./task-words.ts";
 
 /**
  * A project's state on its card (U-071). "blocked" only when something waits on the person in
@@ -22,7 +23,11 @@ export async function projectHealth(
   const carded = new Set(open.map((r) => r.task_id).filter((id): id is string => Boolean(id)));
   const needsHuman = tasks.filter((t) => t.status === "needs_human");
   const waitsInInbox = open.some((r) => r.blocking) || needsHuman.some((t) => carded.has(t.id));
-  const uncarded = needsHuman.find((t) => !carded.has(t.id));
+  // A task the person paused (Pause, Stop on the Tasks tab) waits on nobody: it is not "needs
+  // you" (design §2, "Paused by you").
+  const uncarded = needsHuman.find(
+    (t) => !carded.has(t.id) && !("author_human" in t && isPausedByPerson(t as TaskRow, false)),
+  );
   const needsYou = uncarded ? { taskId: uncarded.id, title: uncarded.title } : null;
   const health: ProjectCard["health"] = waitsInInbox
     ? "blocked"

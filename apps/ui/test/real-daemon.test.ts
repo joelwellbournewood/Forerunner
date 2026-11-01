@@ -361,6 +361,246 @@ describe("the UI client against the real daemon", () => {
     );
   });
 
+  it("Tasks tab: rows in run order with their status in words; Waiting for a task and for Docker (design §2, §3.5)", async () => {
+    const own = await client.createProject({ name: "Hand tasks", goal: "Tasks made by hand" });
+    const add = (title: string, extra: Partial<Parameters<DaemonClient["createTask"]>[1]> = {}) =>
+      client.createTask(own.id, {
+        title,
+        outcome: `${title} is done`,
+        acceptanceCriteria: [],
+        ...extra,
+      });
+    const readme = await add("Write a README for the project");
+    // New task answers the change log entry with its Undo, like every change from the tab.
+    expect(readme.change?.sentence).toBe('Added "Write a README for the project" to Hand tasks.');
+    expect(readme.change?.undoToken).toBe(readme.change?.changeLogId);
+    const license = await add("Add a LICENSE file (MIT)", { riskTier: 2 });
+    const notes = await add("Create notes/todo.md", { dependsOn: [readme.id], priority: "high" });
+    const mine = await add("Confirm the hosting with me", { specialist: "person" });
+    expect(mine.specialist).toBe("person");
+    const rows = await client.tasks(own.id);
+    // Run order: what a task waits for comes before it, then priority, then age.
+    expect(rows.map((t) => t.title)).toEqual([
+      "Write a README for the project",
+      "Create notes/todo.md",
+      "Add a LICENSE file (MIT)",
+      "Confirm the hosting with me",
+    ]);
+    expect(rows.map((t) => t.runOrder)).toEqual([0, 1, 2, 3]);
+    const label = (id: string) => rows.find((t) => t.id === id)?.display?.label;
+    expect(label(readme.id)).toBe("Ready");
+    expect(label(notes.id)).toBe('Waiting for "Write a README for the project"');
+    // No Docker on this computer: the full-review task waits for it, in words.
+    expect(label(license.id)).toBe("Waiting for Docker");
+    expect(rows.find((t) => t.id === license.id)?.display?.detail).toContain(
+      "Full review runs in Docker, which is not running on this computer",
+    );
+    // No raw state, tier or id in anything the row says.
+    const said = JSON.stringify(rows.map((t) => t.display));
+    expect(said).not.toMatch(/needs_human|in_progress|claimed|tier \d|request 01/);
+    // The drawer: what it asks for and what waits on it.
+    const detail = await client.task(readme.id);
+    expect(detail.task.outcome).toBe("Write a README for the project is done");
+    expect(detail.waitedOnBy).toEqual([{ taskId: notes.id, title: "Create notes/todo.md" }]);
+    expect(detail.runs).toEqual([]);
+    expect((await client.task(notes.id)).waitsOn).toEqual([
+      {
+        taskId: readme.id,
+        title: "Write a README for the project",
+        status: "Ready",
+        done: false,
+      },
+    ]);
+  });
+
+  it("Tasks tab actions: Pause makes no card and no 'needs you'; Resume; every action has its Undo (design §3.5)", async () => {
+    const own = await client.createProject({ name: "Actions", goal: "One undo per action" });
+    const task = await client.createTask(own.id, {
+      title: "Create notes/todo.md",
+      outcome: "notes/todo.md lists the next steps",
+    });
+    const open = async () =>
+      (await client.inbox(humanId)).requests.filter((r) => r.projectId === own.id).length;
+    const cardsBefore = await open();
+    const paused = await client.taskAction(task.id, { version: task.version, action: "pause" });
+    expect(paused.display?.label).toBe("Paused by you");
+    expect(paused.change?.sentence).toBe(
+      'Paused "Create notes/todo.md": no session runs it until you press Resume.',
+    );
+    // A pause is the person's own: no Inbox card, and the project does not say "needs you".
+    expect(await open()).toBe(cardsBefore);
+    expect((await client.project(own.id)).needsYou).toBeNull();
+    // Undo puts it back as it was.
+    const undone = await client.undoChange(paused.change?.undoToken ?? "");
+    expect(undone.sentence).toBe('Undone: the task "Create notes/todo.md" is ready again.');
+    let row = (await client.tasks(own.id)).find((t) => t.id === task.id);
+    expect(row?.display?.label).toBe("Ready");
+    // Pause again, then Resume with a note: it is ready and the note waits for its brief.
+    const again = await client.taskAction(task.id, {
+      version: row?.version ?? 0,
+      action: "pause",
+    });
+    const resumed = await client.taskAction(task.id, {
+      version: again.version,
+      action: "resume",
+      note: "Keep it under 20 lines.",
+    });
+    expect(resumed.display?.label).toBe("Ready");
+    expect(resumed.change?.sentence).toBe(
+      '"Create notes/todo.md" is ready again. Your note goes into its next brief.',
+    );
+    const queued = await client.queue(own.id);
+    expect(queued.map((q) => q.text)).toContain(
+      'About "Create notes/todo.md": Keep it under 20 lines.',
+    );
+    // Undo takes the note back with the move.
+    await client.undoChange(resumed.change?.undoToken ?? "");
+    row = (await client.tasks(own.id)).find((t) => t.id === task.id);
+    expect(row?.display?.label).toBe("Paused by you");
+    expect(
+      (await client.queue(own.id)).find((q) => q.text.endsWith("Keep it under 20 lines."))?.status,
+    ).toBe("dismissed");
+    // A stale row: the 409 says what the task is now, and carries it for the row.
+    const stale = await client.taskAction(task.id, { version: task.version, action: "pause" }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(stale).toBeInstanceOf(ApiError);
+    expect((stale as ApiError).message).toBe("This task changed: it is now Paused by you.");
+    expect(((stale as ApiError).details?.task as { version?: number })?.version).toBe(row?.version);
+    // An action the status does not offer is refused in words.
+    const notOffered = await client
+      .taskAction(task.id, { version: row?.version ?? 0, action: "redo" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect((notOffered as ApiError).message).toBe(
+      '"Create notes/todo.md" is Paused by you: Redo is not offered for it.',
+    );
+  });
+
+  it("Tasks tab: Cancel names what waits on it; Reopen and Redo bring tasks back; Edit lowers the review level (U-080, design §3.5)", async () => {
+    const own = await client.createProject({ name: "Reopen", goal: "Nothing is final" });
+    const first = await client.createTask(own.id, {
+      title: "Write a README",
+      outcome: "README.md says what it is",
+    });
+    const next = await client.createTask(own.id, {
+      title: "Create notes/todo.md",
+      outcome: "notes/todo.md exists",
+      dependsOn: [first.id],
+    });
+    const cancelled = await client.taskAction(first.id, {
+      version: first.version,
+      action: "cancel",
+    });
+    expect(cancelled.display?.label).toBe("Cancelled");
+    expect(cancelled.change?.sentence).toBe(
+      'Cancelled "Write a README". "Create notes/todo.md" waits on it and is stuck now.',
+    );
+    expect((await client.tasks(own.id)).find((t) => t.id === next.id)?.display?.label).toBe(
+      'Stuck: "Write a README" was cancelled',
+    );
+    const reopened = await client.taskAction(first.id, {
+      version: cancelled.version,
+      action: "reopen",
+    });
+    expect(reopened.display?.label).toBe("Ready");
+    expect(reopened.change?.sentence).toBe('Reopened "Write a README": it is ready again.');
+    // Redo on a done task, with what to fix: ready again, the note queued for its brief.
+    const t = await rt.store.task.mustGet(first.id);
+    await rt.store.task.restoreStatus(t.id, t.version, "done", "work done", { agentId });
+    const doneRow = (await client.tasks(own.id)).find((x) => x.id === first.id);
+    expect(doneRow?.display?.label).toBe("Done");
+    const redo = await client.taskAction(first.id, {
+      version: doneRow?.version ?? 0,
+      action: "redo",
+      note: "The README must say how to open index.html.",
+    });
+    expect(redo.status).toBe("ready");
+    expect(redo.change?.sentence).toBe(
+      'Reopened "Write a README" to redo it: the next session works on it again. Your note goes into its next brief.',
+    );
+    expect((await client.queue(own.id)).map((q) => q.text)).toContain(
+      'About "Write a README": The README must say how to open index.html.',
+    );
+    // Undo of the Redo: done again.
+    await client.undoChange(redo.change?.undoToken ?? "");
+    expect((await client.tasks(own.id)).find((x) => x.id === first.id)?.display?.label).toBe(
+      "Done",
+    );
+    // Edit: a full-review task waiting for Docker goes to a light review and is ready.
+    const full = await client.createTask(own.id, {
+      title: "Add a LICENSE file (MIT)",
+      outcome: "LICENSE holds the MIT text",
+      riskTier: 2,
+    });
+    expect(full.display?.label).toBe("Waiting for Docker");
+    const edited = await client.updateTask(full.id, { version: full.version, riskTier: 1 });
+    expect(edited.riskTier).toBe(1);
+    expect(edited.display?.label).toBe("Ready");
+    expect(edited.change?.sentence).toBe(
+      'Changed "Add a LICENSE file (MIT)": review level to Light review.',
+    );
+    await client.undoChange(edited.change?.undoToken ?? "");
+    expect((await client.tasks(own.id)).find((x) => x.id === full.id)?.riskTier).toBe(2);
+    // What it waits for, through the command: logged with its Undo.
+    const deps = await client.setTaskDependencies(next.id, {
+      version: (await client.tasks(own.id)).find((x) => x.id === next.id)?.version ?? 0,
+      dependsOn: [],
+    });
+    expect(deps.change?.sentence).toBe('"Create notes/todo.md" waits for no other task now.');
+    await client.undoChange(deps.change?.undoToken ?? "");
+    expect((await client.tasks(own.id)).find((x) => x.id === next.id)?.dependsOn).toEqual([
+      first.id,
+    ]);
+  });
+
+  it("Tasks tab: Go ahead without on a task waiting for answers withdraws its card with a line (design §3.8)", async () => {
+    const own = await client.createProject({ name: "Answers", goal: "Cards follow tasks" });
+    const task = await client.createTask(own.id, {
+      title: "Decide where the page is published",
+      outcome: "The place is chosen",
+    });
+    const t = await rt.store.task.mustGet(task.id);
+    await rt.store.task.transition(t.id, t.version, "needs_human", "asks the person", {
+      agentId,
+    });
+    const card = await rt.store.humanRequest.insert({
+      human_id: humanId,
+      project_id: own.id,
+      task_id: task.id,
+      kind: "decision",
+      why: "Where should the page be published?",
+      options: ["Cancel the task"],
+      blocking: true,
+      risk: "low",
+    });
+    const row = (await client.tasks(own.id)).find((x) => x.id === task.id);
+    expect(row?.display).toMatchObject({
+      label: "Needs your answer",
+      blocker: { kind: "card", requestId: card.id },
+    });
+    expect((await client.task(task.id)).cards).toEqual([
+      { requestId: card.id, question: "Where should the page be published?" },
+    ]);
+    const went = await client.taskAction(task.id, {
+      version: row?.version ?? 0,
+      action: "go_ahead",
+    });
+    expect(went.display?.label).toBe("Ready");
+    expect(went.change?.sentence).toBe(
+      '"Decide where the page is published" is ready again. Its card in the Inbox was withdrawn.',
+    );
+    expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("withdrawn");
+    expect((await client.inbox(humanId)).requests.map((r) => r.id)).not.toContain(card.id);
+    // The specialist is told the person went ahead without answering.
+    expect((await client.queue(own.id)).map((q) => q.text).join("\n")).toContain(
+      "The person chose to go ahead without answering",
+    );
+  });
+
   it("priority: New task's level comes back as the word; an old row's number reads as its level, highest first (U-041)", async () => {
     const levels = await client.createProject({ name: "Levels", goal: "High first" });
     // A row from before the change holds a number; the higher ran first.
@@ -479,19 +719,21 @@ describe("the UI client against the real daemon", () => {
     expect((await client.extensionCatalog()).entries.map((e) => e.id)).not.toContain("email");
   });
 
-  it("project card: a task marked Needs me without a card is named, not 'blocked'; its card makes it blocked (U-071)", async () => {
+  it("project card: a task an agent left needing the person without a card is named, not 'blocked'; its card makes it blocked; a person's Pause is neither (U-071, design §2)", async () => {
     const own = await client.createProject({ name: "Health", goal: "State follows reality" });
     const task = await client.createTask(own.id, {
       title: "Confirm the stack",
       outcome: "The stack is chosen",
       acceptanceCriteria: ["chosen"],
     });
-    // The Tasks tab's "Needs me" button.
-    await client.transitionTask(task.id, {
-      version: task.version,
-      to: "needs_human",
-      reason: "Marked as needing you",
-    });
+    // The Tasks tab's Pause: the person's own, so nothing waits on them (design §2).
+    const paused = await client.taskAction(task.id, { version: task.version, action: "pause" });
+    expect(paused.display?.label).toBe("Paused by you");
+    expect((await client.project(own.id)).needsYou).toBeNull();
+    await client.taskAction(task.id, { version: paused.version, action: "resume" });
+    // A session left it needing the person (a budget stop) with no card: named on the card.
+    const t = await rt.store.task.mustGet(task.id);
+    await rt.store.task.transition(t.id, t.version, "needs_human", "budget stop", { agentId });
     const named = await client.project(own.id);
     expect(named.health).toBe("attention");
     expect(named.needsYou).toEqual({ taskId: task.id, title: "Confirm the stack" });
@@ -943,10 +1185,10 @@ async function composeWithWaitingRun(): Promise<{
 }> {
   const home = mkdtempSync(join(tmpdir(), "fr-ui-real-run-"));
   const clock = new SimulatedClock("2026-03-05T08:00:00Z");
-  // Model calls 1 and 3 wait an hour of simulated time that never passes (each test's running
-  // task); call 2 answers (U-039's next task).
+  // Model calls 1, 3 and 4 wait an hour of simulated time that never passes (each test's
+  // running task); call 2 answers (U-039's next task).
   const waiting = { ttftMs: 3_600_000, text: "never sent" };
-  const provider = new ScriptedProvider([waiting, { text: "Done." }, waiting], clock);
+  const provider = new ScriptedProvider([waiting, { text: "Done." }, waiting, waiting], clock);
   const rt = await composeRuntime({
     env: { FORERUNNER_HOME: home },
     dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
@@ -1098,6 +1340,42 @@ describe("the UI client against the real daemon: a task a session is running", (
       to: "cancelled",
       reason: "Cancelled in the app",
     });
+  });
+
+  it("Stop on the running task: the row says Running with the agent's name; Stop ends that run and it is Paused by you (design §3.5)", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Stop it", goal: "Stop one task" });
+    const task = await client.createTask(project.id, {
+      title: "Long task to stop",
+      outcome: "it is done",
+      riskTier: 0,
+    });
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    const rowOf = async () => (await client.tasks(project.id)).find((t) => t.id === task.id);
+    await eventually(
+      async () => (await rowOf())?.display?.key === "running" && provider.calls.length === 4,
+      "the task's run",
+      async () => `${(await rowOf())?.status}, ${provider.calls.length} model call(s)`,
+    );
+    const running = await rowOf();
+    expect(running?.display).toMatchObject({ label: "Running", agentName: "Alice" });
+    expect(running?.display?.since).toEqual(expect.any(String));
+    // The drawer lists the run while it goes.
+    expect((await client.task(task.id)).runs[0]).toMatchObject({ outcome: "Running" });
+    const stopped = await client.taskAction(task.id, {
+      version: running?.version ?? 0,
+      action: "stop",
+    });
+    expect(stopped.display?.label).toBe("Paused by you");
+    expect(stopped.change?.sentence).toBe(
+      'Stopped "Long task to stop": its run ended and it is paused until you press Resume.',
+    );
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+    );
+    expect((await rowOf())?.display?.label).toBe("Paused by you");
   });
 });
 

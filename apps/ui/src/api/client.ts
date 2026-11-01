@@ -121,6 +121,7 @@ import {
   type SessionView,
   SessionView as SessionViewSchema,
   type SetTaskDependenciesBody,
+  type SetTaskDependenciesBody as SetTaskDependenciesBodySchema,
   SettingView as SettingViewSchema,
   type SetupCheckView,
   SetupCheckView as SetupCheckViewSchema,
@@ -148,6 +149,11 @@ import {
   StoredSecretsView as StoredSecretsViewSchema,
   type StoreSecretView,
   StoreSecretView as StoreSecretViewSchema,
+  type TaskAction,
+  type TaskActionBody,
+  type TaskDetailView,
+  TaskDetailView as TaskDetailViewSchema,
+  type TaskDisplay,
   type TaskTransitionView,
   TaskTransitionView as TaskTransitionViewSchema,
   type TaskView,
@@ -155,6 +161,7 @@ import {
   type TransitionTaskBody as TransitionTaskBodySchema,
   type UpdateLessonBody,
   type UpdateProjectSettingsBody,
+  type UpdateTaskBody as UpdateTaskBodySchema,
   type VoiceAudioAckView,
   VoiceAudioAckView as VoiceAudioAckViewSchema,
   type VoiceAudioBody,
@@ -315,6 +322,10 @@ export type {
   StartSessionView,
   StoredSecretsView,
   StoreSecretView,
+  TaskAction,
+  TaskActionBody,
+  TaskDetailView,
+  TaskDisplay,
   TaskTransitionView,
   TaskView,
   UpdateLessonBody,
@@ -331,7 +342,9 @@ export type AgentView = z.infer<typeof AgentViewSchema>;
 export type HumanView = z.infer<typeof HumanViewSchema>;
 export type SettingView = z.infer<typeof SettingViewSchema>;
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
-export type TransitionTaskBody = z.infer<typeof TransitionTaskBodySchema>;
+export type TransitionTaskBody = z.input<typeof TransitionTaskBodySchema>;
+/** Edit (`PUT /tasks/:id`): the version the drawer showed and the fields that change. */
+export type UpdateTaskInput = z.input<typeof UpdateTaskBodySchema>;
 /** `POST /milestones/:id` (spec B.5): the change with the human's reason and the row's version. */
 export type ChangeMilestoneInput = z.input<typeof ChangeMilestoneBodySchema>;
 export type KillBody = z.infer<typeof KillBodySchema>;
@@ -517,11 +530,24 @@ export interface DaemonClient {
     filter?: { status?: string; limit?: number },
     signal?: AbortSignal,
   ): Promise<TaskView[]>;
-  createTask(projectId: string, body: CreateTaskInput): Promise<TaskView>;
+  /** New task: the task and the change log entry with its Undo (design §3.5). */
+  createTask(projectId: string, body: CreateTaskInput): Promise<TaskTransitionView>;
   /** The task after the move, and the change log entry it wrote with its Undo (U-061). */
   transitionTask(taskId: string, body: TransitionTaskBody): Promise<TaskTransitionView>;
+  /**
+   * A person's action on the Tasks tab (design §3.5): make ready, pause, resume, stop, try
+   * again, go ahead without answers, cancel, reopen, redo; the task and its Undo.
+   */
+  taskAction(taskId: string, body: TaskActionBody): Promise<TaskTransitionView>;
+  /** Edit: the fields that change, the version the drawer showed; the task and its Undo. */
+  updateTask(taskId: string, body: UpdateTaskInput): Promise<TaskTransitionView>;
+  /** The task drawer: what it asks, waits for, its runs, review and open cards. */
+  task(taskId: string, signal?: AbortSignal): Promise<TaskDetailView>;
   /** The tasks a task waits on, all of them (U-040); refused for an unknown, cancelled or circular one. */
-  setTaskDependencies(taskId: string, body: SetTaskDependenciesBody): Promise<TaskView>;
+  setTaskDependencies(
+    taskId: string,
+    body: z.input<typeof SetTaskDependenciesBodySchema>,
+  ): Promise<TaskTransitionView>;
   /** What a session started now would plan: runnable, left out for budget, waiting (U-040). */
   startCheck(
     projectId: string,
@@ -923,11 +949,17 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         signal,
       ),
     createTask: (projectId, body) =>
-      post(routePath("createTask", { id: projectId }), TaskViewSchema, body),
+      post(routePath("createTask", { id: projectId }), TaskTransitionViewSchema, body),
     transitionTask: (taskId, body) =>
       post(routePath("transitionTask", { id: taskId }), TaskTransitionViewSchema, body),
+    taskAction: (taskId, body) =>
+      post(routePath("taskAction", { id: taskId }), TaskTransitionViewSchema, body),
+    updateTask: (taskId, body) =>
+      put(routePath("updateTask", { id: taskId }), TaskTransitionViewSchema, body),
+    task: (taskId, signal) =>
+      get(routePath("task", { id: taskId }), TaskDetailViewSchema, undefined, signal),
     setTaskDependencies: (taskId, body) =>
-      post(routePath("setTaskDependencies", { id: taskId }), TaskViewSchema, body),
+      post(routePath("setTaskDependencies", { id: taskId }), TaskTransitionViewSchema, body),
     startCheck: (projectId, filter, signal) =>
       get(
         routePath("startCheck", { id: projectId }),

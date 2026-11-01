@@ -14,7 +14,15 @@ import { sessionPause, sessionStart, sessionStop } from "./session.ts";
 import { settingsSet } from "./settings.ts";
 import { specialistPropose } from "./specialist.ts";
 import { summarySpeak } from "./summary.ts";
-import { taskCreate, taskTransition } from "./task.ts";
+import {
+  taskCreate,
+  taskDependencies,
+  taskPause,
+  taskReopen,
+  taskResume,
+  taskTransition,
+  taskUpdate,
+} from "./task.ts";
 
 export * from "./autonomy.ts";
 export * from "./budget.ts";
@@ -41,6 +49,11 @@ export function defaultRegistry(): CommandRegistry {
     .register(projectCreate)
     .register(taskCreate)
     .register(taskTransition)
+    .register(taskPause)
+    .register(taskResume)
+    .register(taskReopen)
+    .register(taskUpdate)
+    .register(taskDependencies)
     .register(budgetSet)
     .register(autonomySet)
     .register(sessionStart)

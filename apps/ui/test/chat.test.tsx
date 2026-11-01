@@ -42,7 +42,7 @@ describe("Quick chat", () => {
     await user.click(screen.getByTestId("chat-send"));
     const added = await screen.findByTestId("chat-agent");
     await waitFor(() => expect(added).toHaveAttribute("data-streaming", "false"));
-    expect(added).toHaveTextContent('Created the ready task "write the README" in Atlas.');
+    expect(added).toHaveTextContent('Added "write the README" to Atlas.');
     expect(added).not.toHaveTextContent(/fr setup/);
     expect(harness.daemon.state.tasks.find((t) => t.title === "write the README")?.status).toBe(
       "ready",
@@ -177,7 +177,8 @@ describe("Quick chat", () => {
     expect(within(dialog).getByTestId("task-outcome")).toHaveValue(
       "Add a dark mode toggle to the docs site",
     );
-    expect(within(dialog).getByTestId("task-status")).toHaveValue("ready");
+    // No draft choice in New task (design §3.5): what the person adds is ready for a session.
+    expect(within(dialog).queryByTestId("task-status")).toBeNull();
     await user.click(within(dialog).getByTestId("create-task"));
     await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(1));
     expect(postedCalls(harness, "/projects/proj_atlas/tasks")[0]?.body).toMatchObject({

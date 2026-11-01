@@ -238,12 +238,10 @@ describe("daemon client", () => {
       outcome: "Done means done",
     });
     expect(task.status).toBe("ready");
-    const moved = await client.transitionTask(task.id, {
-      version: task.version,
-      to: "claimed",
-      reason: "test",
-    });
-    expect(moved.status).toBe("claimed");
+    // A person's move (the daemon refuses `claimed` from a person, U-013; the fake now too).
+    const moved = await client.taskAction(task.id, { version: task.version, action: "pause" });
+    expect(moved.status).toBe("needs_human");
+    expect(moved.display?.label).toBe("Paused by you");
     await expect(
       client.transitionTask(task.id, { version: task.version, to: "ready", reason: "stale" }),
     ).rejects.toMatchObject({ code: "conflict" });
