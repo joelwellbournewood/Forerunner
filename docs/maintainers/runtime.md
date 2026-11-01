@@ -3827,6 +3827,24 @@ model (`critic_ceiling`, opus unless set), which Settings shows per project as "
 `validateBrief` rejects any delegation missing goal, context links, constraints, acceptance
 criteria, budget, risk tier or specialist with `brief_incomplete` and the list of issues.
 
+**What else a task's brief carries (`src/session/task-context.ts`, design §4.6).** After the
+delegation brief, `LoopTaskExecutor` adds `taskContextBlock`, read from the store when the run
+starts: `## Project` (name, goal, the person's brief from `summary_cache.brief` as a quoted
+string, and where `docs/overview.md` and the decision record are), `## Done before this task`
+(each dependency's title, the first line of its last worker run's report, or its outcome, and
+the files that run changed from its session's `task.files` event), `## The previous attempt`
+(the last worker run's report, or "It failed: <the error in words>"), `## The person's note on
+this task` (the words of the person's newest change-log row naming the task) and `## Note for
+this session (from the person)` (`SessionStartOptions.note`, from the Start dialog through
+`POST /sessions` `note` and `StartRequest.note`; also on the session's handoff). Everything quoted
+is data. The run row's `artifacts` keep `{ report }` (the redacted final text, cut to 1,500
+characters) or `{ error }` (the error in words) for that. `retryConstraints` writes "the brief
+was improved with the critic's findings below" only when findings follow; a first retry
+without findings points to the previous attempt instead. A run that ended on an error is
+named by `failureWords` ("Claude did not answer (model call failed).", the redacted message
+otherwise), never by the text the model wrote before the error, and carries
+`TaskExecutionResult.errorCode`; a timeout keeps its partial output (D.17).
+
 ### Injection (`src/injection/scan.ts`)
 
 `wrapUntrusted` puts external content in a data envelope and lists instruction-like passages;

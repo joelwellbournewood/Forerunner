@@ -107,6 +107,7 @@ import {
   type TaskExecutionResult,
   type TaskExecutor,
 } from "./runner.ts";
+import { failureWords, taskContextBlock } from "./task-context.ts";
 
 /**
  * Runs one task through a specialist: validates the delegation brief, picks the billing
@@ -321,7 +322,13 @@ export function retryConstraints(
   openFindings: readonly { severity: string; description: string; required_action: string }[],
 ): string[] {
   const lines: string[] = [];
-  if (attempt >= 1) {
+  // The "findings below" line only when findings follow (design §4.6): a retry after an error
+  // has none, and its brief said so anyway.
+  if (attempt === 1 && openFindings.length === 0) {
+    lines.push(
+      "Attempt 2: the previous attempt did not pass; what it said is under The previous attempt.",
+    );
+  } else if (attempt >= 1) {
     const rung =
       attempt === 1
         ? "retry 1 of the ladder: the brief was improved with the critic's findings below"
@@ -791,7 +798,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       });
     // U-022: the person's answers to questions asked on this task reach its next run.
     const answers = await answersBlockFor(store, task.id);
-    const userText = [renderBrief(brief), lessonsBlock, answers, heard.block, queued.block]
+    // Design §4.6: the project, what the task waited on, the previous attempt, the person's notes.
+    const context = await taskContextBlock(store, task, {
+      sessionNote: ctx.sessionNote ?? null,
+      currentRunId: run.id,
+    });
+    const userText = [renderBrief(brief), context, lessonsBlock, answers, heard.block, queued.block]
       .filter((t) => t)
       .join("\n\n");
     const label = `${spec.name} on ${task.title}`;
@@ -958,7 +970,15 @@ export class LoopTaskExecutor implements TaskExecutor {
         tokens_after_compression: result.context?.tokensAfter ?? 0,
         context_transforms: result.context?.transforms ?? [],
         headroom_used: result.context?.headroomUsed ?? headroomUsed,
-        artifacts: result.artifacts,
+        // What the next attempt's brief reads (design §4.6): the report, or the error in words.
+        artifacts: [
+          ...result.artifacts,
+          ...(result.error
+            ? [{ error: failureWords({ ...result.error, message: redact(result.error.message) }) }]
+            : redact(result.finalText).trim()
+              ? [{ report: redact(result.finalText).trim().slice(0, 1_500) }]
+              : []),
+        ],
       });
     } catch (e) {
       // The result is never lost because bookkeeping failed, and the failure is on record.
@@ -1011,11 +1031,20 @@ export class LoopTaskExecutor implements TaskExecutor {
         lessons: [],
       };
     }
+    // A run that ended on an error is named by the error in words (design §4.4); before, any
+    // text the model wrote first ("I'll look at what is already in the folder first.") won.
+    // A timeout keeps its partial output (spec D.17); the error's message is redacted (ADR 0044).
+    const failedOn =
+      outcome === "failed" && result.error
+        ? failureWords({ ...result.error, message: redact(result.error.message) })
+        : "";
     return {
       outcome,
+      ...(result.error ? { errorCode: result.error.code } : {}),
       summary: askedPerson
         ? `Waiting for your answers in the Inbox (${askedPerson.steps.length} question(s) from ${spec.name}).`
-        : finalText.slice(0, 2000) ||
+        : failedOn ||
+          finalText.slice(0, 2000) ||
           (result.error ? redact(result.error.message) : "") ||
           result.outcome,
       costUsdMicro: result.costUsdMicro,

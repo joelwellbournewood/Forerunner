@@ -502,6 +502,11 @@ export const StartSessionBody = z.object({
   budgetUsdMicro: z.number().int().positive().optional(),
   trigger: z.enum(["manual", "remote"]).default("manual"),
   reason: z.string().optional(),
+  /**
+   * The Start dialog's "Note for this session" (design §4.6): it reaches every task's brief of
+   * the session it starts and is kept on its handoff. Up to 2,000 characters.
+   */
+  note: z.string().max(2_000).optional(),
 });
 export type StartSessionBody = z.infer<typeof StartSessionBody>;
 

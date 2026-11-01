@@ -1132,6 +1132,7 @@ export function createDaemonApp(
         projectId: body.projectId,
         trigger: body.trigger,
         reason: body.reason ?? "started from the app",
+        ...(body.note?.trim() ? { note: body.note.trim() } : {}),
         ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
       } as StartRequest);
       let session: StartSessionView["session"] = null;

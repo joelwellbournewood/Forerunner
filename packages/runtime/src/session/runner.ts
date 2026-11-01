@@ -229,6 +229,8 @@ export interface TaskExecutor {
      * brief's queue items that name it, or that name no task. Quoted data in the task's brief.
      */
     notes?: readonly QueueNote[];
+    /** The person's note for this session (the Start dialog's), for every task's brief. */
+    sessionNote?: string;
   }): Promise<TaskExecutionResult>;
 }
 
@@ -242,6 +244,12 @@ export interface SessionStartOptions {
   reserveShare?: number;
   /** Autonomy level for this session; defaults to the project's. */
   autonomy?: AutonomyLevel;
+  /**
+   * The person's note for this session (the Start dialog's "Note for this session"): it reaches
+   * every task's brief (design §4.6) and is kept on the session's handoff. Before, the typed
+   * Reason was thrown away.
+   */
+  note?: string;
   /**
    * The plan the human approved (spec J.6, J.7; ADR 0053): the `plan_id` of the answered plan
    * request (`plan:<session>#<hash>`), which runs the plan only while the plan computed now is
@@ -1299,6 +1307,7 @@ export class SessionRunner {
               signal: taskController.signal,
               heard: said.map(({ deliveredTo: _to, ...line }) => line),
               ...(notes.length ? { notes } : {}),
+              ...(opts.note?.trim() ? { sessionNote: opts.note.trim() } : {}),
             });
           } catch (e) {
             if (isSandboxNotReady(e)) {
@@ -1932,6 +1941,7 @@ export class SessionRunner {
       })),
       next: skipped,
       stop_reason: stopReason,
+      ...(opts.note?.trim() ? { note: opts.note.trim() } : {}),
       ...(endInboxRecord ? { end_inbox: endInboxRecord } : {}),
       ...(carriedForward.length ? { carried_forward: carriedForward } : {}),
       spent_usd_micro: spent,

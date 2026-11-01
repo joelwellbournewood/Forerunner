@@ -2790,6 +2790,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         budgetCapUsdMicro: budgetUsdMicro,
         // The approved plan's id from the inbox answer (`syncPlanApprovals`); never a bare true.
         ...(req.planApproved ? { planApproved: req.planApproved } : {}),
+        // The person's note for this session reaches every task's brief (design §4.6).
+        ...(req.note ? { note: req.note } : {}),
         appVersion,
         grant: sessionGrant(project, await sharedSecretNamesFor(store, req.agentId)),
         onEvent: (type, payload) =>

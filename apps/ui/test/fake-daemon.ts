@@ -1377,7 +1377,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       steps: 0,
       currentTask: null,
       summary: "",
-      handoff: null,
+      // As the daemon: the note for the session is kept on its handoff.
+      handoff: parsed.data.note?.trim() ? { note: parsed.data.note.trim() } : null,
       runner: "desktop",
       stopReason: null,
       statusText: "Working",

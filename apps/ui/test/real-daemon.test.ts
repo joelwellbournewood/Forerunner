@@ -170,6 +170,30 @@ describe("the UI client against the real daemon", () => {
     expect((await client.session(session?.id ?? "")).id).toBe(session?.id);
   });
 
+  it("start session with a note: the session keeps it for every task's brief (design §4.6)", async () => {
+    // The session the case before started ends first (one session per agent).
+    for (let i = 0; i < 200; i++) {
+      const running = (await client.sessions({ projectId })).filter((s) => !s.endedAt);
+      if (running.length === 0) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const started = await client.startSession({
+      agentId,
+      projectId,
+      trigger: "manual",
+      note: "Keep it in plain HTML.",
+    });
+    const id = started.session?.id ?? "";
+    let handoff: unknown = null;
+    for (let i = 0; i < 200; i++) {
+      const s = await client.session(id);
+      handoff = s.handoff;
+      if (s.endedAt) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(handoff).toMatchObject({ note: "Keep it in plain HTML." });
+  });
+
   it("next-session queue: add, list and dismiss (U-004)", async () => {
     const added = await client.enqueue(projectId, {
       kind: "correction",
