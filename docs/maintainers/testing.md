@@ -2454,13 +2454,21 @@ and quotes back the plan's state (`# Plan from the brief`) and the first task li
 (`chatFacts`), so a journey can check that a reply names a task as a real model's would.
 Every request is a line of `<home>/bench/model-calls.jsonl` (`call-log.ts`), which is how a
 tester sees what the app sends a model. `--provider bench-live` wraps the Messages API in the
-same log (`withModelCallLog`, the key replaced and every string redacted); it is unproven
-against the real API until a session with a key runs it. Tests:
-`testenv/test/bench-role-player.test.ts` (the stand-in against the runtime's own intake parser,
-plan writer and critic schema; the live wrapper over a stubbed provider).
+same log (`withModelCallLog`, the key replaced whole and in part, every string redacted); it
+first ran against the real API on 2026-11-01 (bench `live1`, 25 calls, USD 0.63). Every line
+carries `usd` and the `price` row from the app's own table (`benchPriceOf` in
+`packages/runtime/src/cli/main.ts`), and `scripts/bench/calls.mjs` sums calls and USD by kind,
+with `--cap` for a live run's spend cap. A live start stores the key in the bench home's vault
+with `fr setup --non-interactive` (the setup assistant then shows Claude connected, as on an
+install with a key), refuses at once without a key, and a daemon that exits during its start
+ends the start at once. Tests: `testenv/test/bench-role-player.test.ts` (the stand-in against
+the runtime's own intake parser, plan writer and critic schema; the live wrapper over a stubbed
+provider), `packages/runtime/test/cli-daemon-provider.test.ts` (the live path end to end
+against a stub of the Messages API: prices, no part of the key), `scripts/bench-scripts.test.ts`
+(calls.mjs, the daemon's environment, a live start without a key, a daemon that exits).
 
-Known limits: the stand-in proves mechanics, never model quality; the setup assistant and
-Settings still say no Claude key is connected while it serves; the daemon gets a new token on
+Known limits: the stand-in proves mechanics, never model quality; on the stand-in the setup
+assistant and Settings still say no Claude key is connected; the daemon gets a new token on
 every start, so a page open across `restart-daemon.mjs` needs `reconnect(page, name)` (what the
 desktop shell does after its own daemon restarts is not covered); injection counters live in
 the daemon process and start again with it.

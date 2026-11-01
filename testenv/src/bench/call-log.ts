@@ -54,14 +54,87 @@ export interface ModelCallRecord {
   /** Failure injection that shaped this reply (stand-in only). */
   injected?: string;
   durationMs: number;
+  /** `ModelRequest.speed` when the request set one (fast mode is priced on its own row). */
+  speed?: string;
+  /**
+   * What the call cost in USD by the app's own price table (`packages/billing/src/pricing.ts`
+   * and `<config>/pricing.json`, through `ModelCallLogOptions.priceOf`): null when the model has
+   * no price row (the stand-in's `fake-*` rungs) or the reply carried no usage.
+   */
+  usd?: number | null;
+  /** The price row `usd` was computed from (USD per million tokens). */
+  price?: PriceRowUsed | null;
+  /** Why there is no `usd` ("no price known for model ..."). */
+  priceError?: string;
 }
+
+/** A row of the app's price table as a log line records it. */
+export interface PriceRowUsed {
+  /** The table's key: the canonical model id (`-fast` for a fast-mode call). */
+  model: string;
+  input_per_mtok_usd: number;
+  output_per_mtok_usd: number;
+  cache_read_per_mtok_usd: number;
+  cache_write_per_mtok_usd: number;
+  source: string;
+  as_of: string;
+}
+
+/** What one call cost: the USD and the row, or why there is none. */
+export interface CallPrice {
+  usd: number | null;
+  price: PriceRowUsed | null;
+  priceError?: string;
+}
+
+/**
+ * Prices a call from its model (and speed) and its usage. The daemon passes one built from the
+ * app's own table (`packages/runtime/src/cli/main.ts`, `daemonProvider`); testenv itself does
+ * not depend on billing.
+ */
+export type PriceOf = (call: { model: string; speed?: string }, usage: Usage) => CallPrice;
 
 export interface ModelCallLogOptions {
   /** The JSONL file; its directory is created on the first write. */
   file: string;
-  /** Literal values that must never appear in the file (an API key). */
+  /**
+   * Values that must never appear in the file (an API key): neither whole nor any part of
+   * `SECRET_FRAGMENT_CHARS` characters or more.
+   */
   secrets?: readonly string[];
+  /** Adds `usd` and `price` to every line whose reply carried usage. */
+  priceOf?: PriceOf;
   clock?: Clock;
+}
+
+/** The shortest run of a secret's characters the log replaces (a key's fragment in an error). */
+export const SECRET_FRAGMENT_CHARS = 8;
+
+/**
+ * `s` with every run of `min` or more characters that also occurs in `secret` replaced. A
+ * provider error may quote part of a key ("key ending in ..."); the whole key is caught by the
+ * plain replacement, a fragment only here. Cheap when nothing matches: one set lookup per
+ * position.
+ */
+export function withoutSecretParts(s: string, secret: string, min = SECRET_FRAGMENT_CHARS): string {
+  if (!secret || secret.length < min) return secret ? s.split(secret).join("[REDACTED]") : s;
+  const windows = new Set<string>();
+  for (let i = 0; i + min <= secret.length; i++) windows.add(secret.slice(i, i + min));
+  let out = "";
+  let pos = 0;
+  let plainFrom = 0;
+  while (pos + min <= s.length) {
+    if (!windows.has(s.slice(pos, pos + min))) {
+      pos++;
+      continue;
+    }
+    let len = min;
+    while (pos + len < s.length && secret.includes(s.slice(pos, pos + len + 1))) len++;
+    out += `${s.slice(plainFrom, pos)}[REDACTED]`;
+    pos += len;
+    plainFrom = pos;
+  }
+  return plainFrom === 0 ? s : out + s.slice(plainFrom);
 }
 
 /** The log file for a daemon home: `<FORERUNNER_HOME>/bench/model-calls.jsonl`. */
@@ -99,7 +172,7 @@ export class ModelCallLog {
   /** Append one record; never throws (a full disk must not fail the model call). */
   write(record: Omit<ModelCallRecord, "seq">): ModelCallRecord {
     this.seq += 1;
-    const full: ModelCallRecord = { seq: this.seq, ...record };
+    const full: ModelCallRecord = { seq: this.seq, ...record, ...this.priced(record) };
     try {
       if (!this.dirReady) {
         mkdirSync(dirname(this.opts.file), { recursive: true });
@@ -112,11 +185,26 @@ export class ModelCallLog {
     return full;
   }
 
-  /** Every string redacted and every secret replaced, at any depth. */
+  /** `usd` and `price` from `priceOf`, for a reply that carried usage; nothing otherwise. */
+  private priced(record: Omit<ModelCallRecord, "seq">): Partial<CallPrice> {
+    const usage = record.reply.usage;
+    if (!this.opts.priceOf || !usage) return {};
+    try {
+      const p = this.opts.priceOf(
+        { model: record.model, ...(record.speed ? { speed: record.speed } : {}) },
+        usage,
+      );
+      return { usd: p.usd, price: p.price, ...(p.priceError ? { priceError: p.priceError } : {}) };
+    } catch (e) {
+      return { usd: null, price: null, priceError: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** Every string redacted and every secret (whole or in part) replaced, at any depth. */
   private scrub<T>(value: T): T {
     if (typeof value === "string") {
       let s: string = value;
-      for (const secret of this.secrets) s = s.split(secret).join("[REDACTED]");
+      for (const secret of this.secrets) s = withoutSecretParts(s, secret);
       return redact(s) as T;
     }
     if (Array.isArray(value)) return value.map((v) => this.scrub(v)) as T;
@@ -149,6 +237,7 @@ export function requestFields(
   | "system"
   | "messages"
   | "tools"
+  | "speed"
 > {
   const guess = detectRole(req);
   return {
@@ -166,6 +255,7 @@ export function requestFields(
     system: req.system ?? "",
     messages: req.messages,
     tools: (req.tools ?? []).map((t) => t.name),
+    ...(req.speed ? { speed: req.speed } : {}),
   };
 }
 

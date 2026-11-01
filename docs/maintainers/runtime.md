@@ -3226,7 +3226,16 @@ credentials decide), `fake` is the echoing shim, an unknown name is refused, and
 bench's `bench` (the role-playing stand-in model) and `bench-live` (the Messages API with every
 call logged) load `testenv/src/bench/` from a repository checkout by a computed import and
 refuse with the reason where it is absent, so an installed app never runs them
-(`scripts/bench/README.md`; test: `packages/runtime/test/cli-daemon-provider.test.ts`).
+(`scripts/bench/README.md`; test: `packages/runtime/test/cli-daemon-provider.test.ts`). Both get
+`benchPriceOf(env)`: the app's own price table (`loadPricing`: the built-ins plus
+`<config>/pricing.json`, as compose loads it), so every line of the bench's model-call log
+carries `usd` and the `price` row used (a `-fast` row for `speed: "fast"`; `usd: null` with
+`priceError` for a model without a row); testenv takes it as a function, since it does not
+depend on billing. `bench-live` passes its key as a secret of the log, which replaces it whole
+and in any run of 8 or more of its characters (`withoutSecretParts`). The test drives
+`--provider bench-live` against a local stub of the Messages API with the usage the live run's
+intake calls had (`test/fixtures/live1-intake-usage.json`: the six sum to USD 0.353, what the
+live helper priced them at) and an API that echoes the key and quotes part of it.
 
 **Starting a session from the app (`POST /sessions`; U-003 in `docs/status/UPDATE-LOG.md`).**
 The route calls `Scheduler.requestStart` and answers `202 StartSessionView`: `result`

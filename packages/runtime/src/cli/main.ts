@@ -2,11 +2,22 @@
 import { existsSync } from "node:fs";
 import { createInterface, type Interface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  BUILTIN_PRICING,
+  canonicalModelId,
+  costOf,
+  fastModeVariantId,
+  loadPricing,
+  type ModelPrice,
+  PRICING_FILE_NAME,
+  priceFor,
+} from "@forerunner/billing";
 import { registerMirrorCli } from "@forerunner/capabilities";
 import {
   appDirs,
   errorMessage,
   ForerunnerError,
+  join,
   log,
   osFacts,
   run,
@@ -26,7 +37,7 @@ import type { RunningDaemon } from "../daemon/server.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { registerJobsCli } from "../jobs/cli.ts";
 import { registerModelWatchCli } from "../models/watch-cli.ts";
-import type { ModelProvider } from "../provider/types.ts";
+import type { ModelProvider, Usage } from "../provider/types.ts";
 import { registerRunnerKeyCli } from "../secrets/runner-key-cli.ts";
 import { describePlanAllowance } from "../setup/plan-allowance.ts";
 import {
@@ -529,12 +540,50 @@ async function identityCheck(
 /** Where the bench's stand-in lives in a repository checkout; an installed app has no testenv/. */
 const BENCH_ENTRY = new URL("../../../../testenv/src/bench/index.ts", import.meta.url);
 
+/** What a bench model call cost by the app's price table (testenv's `CallPrice`). */
+interface BenchCallPrice {
+  usd: number | null;
+  price: (ModelPrice & { model: string }) | null;
+  priceError?: string;
+}
+type BenchPriceOf = (call: { model: string; speed?: string }, usage: Usage) => BenchCallPrice;
+
 interface BenchModule {
-  benchProvider(opts: { env: NodeJS.ProcessEnv }): ModelProvider;
+  benchProvider(opts: { env: NodeJS.ProcessEnv; priceOf?: BenchPriceOf }): ModelProvider;
   benchLiveProvider(
     inner: ModelProvider,
-    opts: { env: NodeJS.ProcessEnv; secrets: readonly string[] },
+    opts: { env: NodeJS.ProcessEnv; secrets: readonly string[]; priceOf?: BenchPriceOf },
   ): ModelProvider;
+}
+
+/**
+ * The bench's model-call log prices every line (`usd`, `price`) from the table the app itself
+ * bills with: the built-in rows plus `<config>/pricing.json` (`loadPricing`), as the daemon
+ * composes it. A model without a row (the stand-in's `fake-*` rungs) gets `usd: null` and why.
+ */
+export async function benchPriceOf(env: NodeJS.ProcessEnv): Promise<BenchPriceOf> {
+  const table = await loadPricing(join(appDirs({ env }).config, PRICING_FILE_NAME)).catch(
+    () => BUILTIN_PRICING,
+  );
+  return ({ model, speed }, usage) => {
+    const id = speed === "fast" ? fastModeVariantId(model) : canonicalModelId(model);
+    try {
+      const row = priceFor(id, table);
+      const micro = costOf(
+        {
+          tokens_in: usage.input_tokens,
+          tokens_out: usage.output_tokens,
+          cache_read_tokens: usage.cache_read_input_tokens,
+          cache_write_tokens: usage.cache_creation_input_tokens,
+        },
+        id,
+        table,
+      );
+      return { usd: micro / 1_000_000, price: { model: id, ...row } };
+    } catch (e) {
+      return { usd: null, price: null, priceError: errorMessage(e) };
+    }
+  };
 }
 
 /**
@@ -564,7 +613,8 @@ export async function daemonProvider(
       `--provider ${name} is a development option of the test bench and needs the repository checkout's testenv/ (not found: ${entry})`,
     );
   const bench = (await import(benchEntry.href)) as BenchModule;
-  if (name === "bench") return bench.benchProvider({ env });
+  const priceOf = await benchPriceOf(env);
+  if (name === "bench") return bench.benchProvider({ env, priceOf });
   const key = env.ANTHROPIC_API_KEY?.trim() || env.FORERUNNER_ANTHROPIC_KEY?.trim();
   if (!key)
     throw new ForerunnerError(
@@ -578,7 +628,7 @@ export async function daemonProvider(
     apiKey: key,
     baseURL: env.FORERUNNER_BENCH_LIVE_API?.trim() || "https://api.anthropic.com",
   });
-  return bench.benchLiveProvider(inner, { env, secrets: [key] });
+  return bench.benchLiveProvider(inner, { env, secrets: [key], priceOf });
 }
 
 export function billingSourcesLine(sources: SetupReport["sources"]): string {
