@@ -38,9 +38,12 @@ test("quick chat streams a reply, confirms an action with Yes and turns a messag
   await page.getByTestId("chat-human").first().getByTestId("make-task").click();
   const dialog = page.getByTestId("new-task-dialog");
   await expect(dialog.getByTestId("task-title")).toHaveValue("what happened last session?");
-  // "Make this a task" makes a ready task, which the next session works on (U-016, ADR 0093).
-  await expect(dialog.getByTestId("task-status")).toHaveValue("ready");
   await dialog.getByTestId("create-task").click();
   await expect(page.getByTestId("task-created")).toContainText("Task created");
   await expect(page.getByTestId("task-created")).not.toContainText("Draft");
+  // "Make this a task" makes a ready task, which the next session works on (U-016, ADR 0093).
+  const created = (await recordedCalls(request)).find(
+    (c) => c.path === "/projects/proj_atlas/tasks",
+  );
+  expect(created?.body).toMatchObject({ status: "ready" });
 });

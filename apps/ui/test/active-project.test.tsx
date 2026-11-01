@@ -82,9 +82,7 @@ describe("one active project for every channel (U-056)", () => {
     });
     const agents = await screen.findAllByTestId("chat-agent");
     await waitFor(() =>
-      expect(agents[1]).toHaveTextContent(
-        'Created the ready task "write the Atlas README" in Atlas.',
-      ),
+      expect(agents[1]).toHaveTextContent('Added "write the Atlas README" to Atlas.'),
     );
     const task = harness.daemon.state.tasks.find((t) => t.title === "write the Atlas README");
     expect(task?.projectId).toBe("proj_atlas");

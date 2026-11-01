@@ -14,20 +14,22 @@ describe("undo and the change log (U-061)", () => {
     const harness = createHarness();
     renderApp("/projects/proj_atlas/tasks", harness);
     const rows = await screen.findAllByTestId("task-row");
-    await user.click(within(rows[2] as HTMLElement).getByTestId("transition-cancelled"));
-    const dialog = await screen.findByTestId("transition-dialog");
-    expect(dialog).toHaveTextContent("Recorded on the task and in the change log");
-    await user.type(within(dialog).getByTestId("transition-reason"), "not needed any more");
-    await user.click(within(dialog).getByTestId("confirm-transition"));
+    const row = rows.find((r) => r.dataset.taskId === "task_3") as HTMLElement;
+    await user.click(within(row).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(dialog).toHaveTextContent("Goes into the task's next brief.");
+    await user.type(within(dialog).getByTestId("action-note"), "not needed any more");
+    await user.click(within(dialog).getByTestId("confirm-action"));
     const moved = await screen.findByTestId("task-moved");
+    // One plain line (design §3.5); its Undo is the button beside it.
     expect(within(moved).getByTestId("task-moved-sentence")).toHaveTextContent(
-      'Moved the task "Decide the versioning scheme" from ready to cancelled. Undo.',
+      'Cancelled "Decide the versioning scheme". Its card in the Inbox was withdrawn. Your note goes into its brief if you reopen it.',
     );
-    // In the change log as the dialog said: the Tasks tab's own source and the reason given.
+    // In the change log: the Tasks tab's own source and the words given.
     expect(harness.daemon.state.changes[0]).toMatchObject({
       source: "ui",
       wordsUsed: "not needed any more",
-      commands: [{ name: "task.transition", params: { task: "task_3", to: "cancelled" } }],
+      commands: [{ name: "task.transition", params: { task: "task_3" } }],
       undoable: true,
     });
     await user.click(within(moved).getByTestId("task-moved-undo"));
@@ -35,9 +37,13 @@ describe("undo and the change log (U-061)", () => {
       expect(
         within(screen.getByTestId("task-moved")).getByTestId("task-moved-sentence"),
       ).toHaveTextContent(
-        'Undone: reopened the task "Decide the versioning scheme"; it is ready again.',
+        'Undone: reopened the task "Decide the versioning scheme"; it is ready again and its card is back in the Inbox.',
       ),
     );
+    // The card the cancel withdrew is open again.
+    const cards = harness.daemon.state.requests.filter((r) => r.taskId === "task_3");
+    expect(cards.map((r) => r.status)).toContain("open");
+    expect(cards.map((r) => r.status)).not.toContain("withdrawn");
     await waitFor(() =>
       expect(
         screen.getAllByTestId("task-row").find((r) => r.dataset.taskId === "task_3"),

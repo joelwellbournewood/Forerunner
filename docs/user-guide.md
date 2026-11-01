@@ -60,8 +60,8 @@ changes the header too. Opening a project's page does not change it; that page's
 always talks about that page's project. Each switch is listed in Changes.
 
 A project reads **blocked** only while something waits for your answer in the Inbox. A task
-that needs you but has no Inbox card (for example one you marked "Needs me") shows as
-**needs you: <task>**; click it to open the project's tasks.
+a session left waiting for you without an Inbox card shows as **needs you: <task>**; click it
+to open the project's tasks. A task you paused yourself is not "needs you".
 
 The header says **connected** while Forerunner's background service answers. When it stops
 answering (or refuses this window after a restart) the header says **not connected** with a
@@ -72,20 +72,36 @@ again as soon as the service answers.
 
 - **Summary**: one screen the agent keeps current. "Read aloud" speaks it.
 - **Plan**: milestones and their dependencies.
-- **Tasks**: every task with status, specialist, cost, verdict and links to the pull request
-  and the review. Transitions you may make by hand are buttons. Each move is listed in Changes
-  with the reason you gave; the line under the filters says what moved, with **Undo** while it
-  can be taken back (a cancelled task is reopened; a task marked done stays done).
-  **Cancel**, **Mark failed**, **Needs me** or **Send to review** on a task a session is working
-  on stops that task's run at once; the session goes on with its other tasks and leaves the
-  task as you set it, and its summary names the task you moved. The same move from the phone
-  or Chat stops the run within a few seconds. A task shows the tasks it waits on by title
-  ("after …"); **Depends on…** changes them, from a list of the project's tasks. A task that
-  waits on a cancelled or failed task says so, since no session runs it until you change what
-  it depends on (or mark the failed one ready again). A task cannot wait on itself, on a
-  cancelled task, or on a task that already waits on it. A task's priority is **Low**,
-  **Medium** or **High**; High runs first. New tasks are Medium unless you pick another; in
-  Chat say it at the end: "add a task: fix the login, priority high".
+- **Tasks**: every task, in the order a session runs them (a task after the tasks it waits for,
+  then by priority), with its status in words, who does it, its cost and the critic's call. The
+  status says what is going on: **Ready**, **Waiting for "Write the README"**, **Stuck: "X"
+  failed**, **Waiting for Docker** (a full review needs Docker, and it is not running), **Running
+  (Alice, 2 min)**, **Being reviewed**, **Needs your answer** (its card is in the Inbox),
+  **Paused by you**, **Failed: why**, **Done**, **Cancelled**. The rows follow a running session
+  by themselves. Each task offers what fits its status, each with a line saying what it does:
+  **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
+  and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
+  (opens its card in the Inbox) or **Go ahead without** (the specialist decides and says what it
+  assumed; not offered on a task only you can do), **Redo** (a done task: say what is wrong),
+  **Reopen** (a cancelled task) and **Cancel** (it names the tasks that wait on it and will be
+  stuck). Every action asks for an optional **note for the agent**, which goes into the task's
+  next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
+  that puts the task back as it was, its card in the Inbox included; each is listed in
+  Changes. Click a task's title to open it: what done looks like and the criteria, what it
+  waits for and what waits on it, its runs (who ran each one, with that run's report and the
+  files it changed; the critic's run is marked as the review), the critic's review in words,
+  its pull request, and **Edit**
+  (the wording, priority, budget, review level and who does it; for example a full-review task
+  waiting for Docker can go to a light review) and **Change what it waits for** (the project's
+  tasks by title; a failed one is flagged; a task cannot wait on itself, a cancelled task or a
+  task that already waits on it). **New task** asks the title, what done looks like, what it
+  waits for, the review level ("Light review: the critic reads the work, nothing runs in
+  isolation"; "Full review: needs Docker" says when Docker is not running on this computer),
+  who does it (let the agent choose, a specialist, or **Me: ask me in the Inbox**), the
+  priority (**Low**, **Medium** or **High**; High runs first) and a budget in CHF ("1.50" or
+  "1,50"). In Chat say the priority at the end: "add a task: fix the login, priority high".
+  The filters (status, who does it, a search) stay in the address, so they are still set when
+  you come back to the tab.
 - **Docs**: the standard document set the agent maintains.
 - **Reviews**: critic findings and grades over time.
 - **Costs**: spend by model, specialist and task, in CHF, with the savings from caching and
@@ -289,8 +305,9 @@ and reviews use the API key first.
 
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
-without a budget stops each run at its specialist's limit, and the Tasks tab says so ("no
-budget; each run stops at CHF 2.40 (coder limit)"). The estimate a plan shows is only a
+without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
+run stops at CHF 2.40 (coder limit)"); a done or cancelled task shows no limit. The estimate a
+plan shows is only a
 forecast. When a task reaches its budget it waits for you with what it spent: raise the budget
 and set it back to ready, split it, or cancel it; the session goes on with the other tasks.
 

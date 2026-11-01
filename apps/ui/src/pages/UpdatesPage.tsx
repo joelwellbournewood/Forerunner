@@ -395,14 +395,9 @@ export function UpdatesPage() {
                     <td className="py-1 text-neutral-600 dark:text-neutral-400">
                       {c.notes ?? ""}
                       {c.sourceUrl ? (
-                        <a
-                          href={c.sourceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="ml-1 text-blue-700 hover:underline dark:text-blue-300"
-                        >
+                        <ExternalLink href={c.sourceUrl} variant="inline" className="ml-1">
                           source
-                        </a>
+                        </ExternalLink>
                       ) : null}
                     </td>
                   </tr>

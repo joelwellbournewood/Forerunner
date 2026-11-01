@@ -34,6 +34,11 @@ export const COMMAND_NAMES = [
   "project.create",
   "task.create",
   "task.transition",
+  "task.pause",
+  "task.resume",
+  "task.reopen",
+  "task.update",
+  "task.dependencies",
   "budget.set",
   "autonomy.set",
   "session.start",
@@ -219,6 +224,12 @@ export interface CommandPorts {
   kill?(scope: KillScope | "all", reason: string): Promise<KillReportLike | undefined>;
   pauseSession?(sessionId: string, reason: string): Promise<void>;
   resumeSession?(sessionId: string, reason: string): Promise<void>;
+  /**
+   * Stops the run working on one task now (U-039): a person paused, stopped or cancelled it.
+   * The session goes on with its other tasks. Absent: the session notices the move at the
+   * task's end (the daemon's Tasks tab route also stops it).
+   */
+  stopTask?(taskId: string, reason: string): Promise<void> | void;
   /** Starting a session above this budget is "costly" and needs a yes. Default USD 2. */
   costlySessionUsdMicro?: number;
   /** Lesson memory (`memory.record`); absent: the command is refused as unavailable. */

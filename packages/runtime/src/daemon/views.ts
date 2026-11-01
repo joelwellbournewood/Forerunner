@@ -62,6 +62,7 @@ import type {
   ReviewView,
   RunView,
   SessionView,
+  TaskDisplay,
   TaskView,
 } from "./api-types.ts";
 import { PERFORMANCE_DEFAULT_DAYS, PERFORMANCE_MAX_DAYS } from "./api-types.ts";
@@ -218,6 +219,8 @@ export function taskView(
   t: TaskRow,
   chfPerUsd: number,
   specialistLimit?: (name: string) => number | undefined,
+  /** The status in words (`taskDisplay`) and the place in the run order, when known. */
+  extra: { display?: TaskDisplay; runOrder?: number } = {},
 ): TaskView {
   const limit = specialistLimit?.(t.specialist ?? "coder");
   const cap = t.budget_usd_micro > 0 || limit !== undefined ? runCapOf(t, limit ?? 0) : null;
@@ -247,6 +250,8 @@ export function taskView(
     reason: t.reason,
     updatedAt: t.updated_at,
     version: t.version,
+    ...(extra.display ? { display: extra.display } : {}),
+    ...(extra.runOrder !== undefined ? { runOrder: extra.runOrder } : {}),
   };
 }
 

@@ -27,7 +27,8 @@ describe("small-project mode (B.6)", () => {
       within(flat)
         .getAllByTestId("flat-task")
         .map((li) => li.getAttribute("data-task-id")),
-    ).toEqual(["task_1", "task_2", "task_3"]);
+      // The daemon's run order (design §3.5): what a task waits for first, then priority.
+    ).toEqual(["task_3", "task_1", "task_2"]);
     expect(flat).toHaveTextContent("Index the documentation pages");
     expect(flat).toHaveTextContent("tier 1");
     expect(screen.getByTestId("small-project-notice")).toHaveTextContent(/one milestone/i);
@@ -135,7 +136,7 @@ describe("small-project mode (B.6)", () => {
     const tier = within(dialog).getByTestId("task-risk-tier");
     expect(tier).toHaveValue("");
     expect(
-      within(dialog).getByRole("option", { name: "project default (tier 0)" }),
+      within(dialog).getByRole("option", { name: "The project's default (Checks only)" }),
     ).toBeInTheDocument();
     await user.type(within(dialog).getByTestId("task-title"), "Fix the typo on the home page");
     await user.type(within(dialog).getByTestId("task-outcome"), "The home page reads right");
@@ -147,18 +148,21 @@ describe("small-project mode (B.6)", () => {
     >;
     expect(body).not.toHaveProperty("riskTier");
     expect(body).toMatchObject({ title: "Fix the typo on the home page", status: "ready" });
-    // The fake daemon applies the project's default like the real one: the row shows tier 0.
+    // The fake daemon applies the project's default like the real one: checks only, in words.
     await waitFor(() => expect(screen.getAllByTestId("task-row")).toHaveLength(4));
     const created = screen
       .getAllByTestId("task-row")
       .find((row) => row.textContent?.includes("Fix the typo on the home page"));
-    expect(created).toHaveTextContent("tier 0");
+    expect(created).toHaveTextContent("Checks only");
 
     await user.click(screen.getByTestId("new-task"));
     const second = await screen.findByTestId("new-task-dialog");
     await user.type(within(second).getByTestId("task-title"), "Rotate the deploy key");
     await user.type(within(second).getByTestId("task-outcome"), "A new key is in the vault");
     await user.selectOptions(within(second).getByTestId("task-risk-tier"), "2");
+    expect(within(second).getByTestId("task-risk-tier")).toHaveDisplayValue(
+      "Full review: the work runs in Docker, isolated",
+    );
     await user.click(within(second).getByTestId("create-task"));
     await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(2));
     expect(postedCalls(harness, "/projects/proj_atlas/tasks")[1]?.body).toMatchObject({
@@ -175,7 +179,7 @@ describe("small-project mode (B.6)", () => {
     await user.click(screen.getByTestId("new-task"));
     const dialog = await screen.findByTestId("new-task-dialog");
     expect(
-      within(dialog).getByRole("option", { name: "project default (tier 1)" }),
+      within(dialog).getByRole("option", { name: "The project's default (Light review)" }),
     ).toBeInTheDocument();
   });
 
@@ -189,6 +193,8 @@ describe("small-project mode (B.6)", () => {
     await screen.findAllByTestId("task-row");
     await user.click(screen.getByTestId("new-task"));
     const plain = await screen.findByTestId("new-task-dialog");
-    expect(within(plain).getByRole("option", { name: "project default" })).toBeInTheDocument();
+    expect(
+      within(plain).getByRole("option", { name: "The project's default" }),
+    ).toBeInTheDocument();
   });
 });

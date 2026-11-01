@@ -8,6 +8,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { describeError } from "../api/client.ts";
 import { followSandboxPull, pullProgress } from "../api/sandbox.ts";
+import { ExternalLink } from "../components/ExternalLink.tsx";
 import { RouteMissing } from "../components/RouteMissing.tsx";
 import { Badge, Button, ErrorBanner, Loading } from "../components/ui.tsx";
 import { useAsync } from "../lib/use-async.ts";
@@ -160,15 +161,9 @@ export function SandboxSettingsCard() {
           ) : null}
           {v.state === "not_installed" && v.platform !== "linux" ? (
             <p className="mt-1 text-sm">
-              <a
-                href={DOCKER_DESKTOP_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="text-blue-700 hover:underline dark:text-blue-300"
-                data-testid="sandbox-docker-link"
-              >
+              <ExternalLink href={DOCKER_DESKTOP_URL} variant="inline" testId="sandbox-docker-link">
                 Get Docker Desktop
-              </a>
+              </ExternalLink>
             </p>
           ) : null}
           {v.waiting > 0 && !v.ready ? (

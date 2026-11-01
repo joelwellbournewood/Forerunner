@@ -73,26 +73,24 @@ describe("small fixes (U-077)", () => {
     const harness = createHarness();
     renderApp("/projects/proj_atlas/tasks", harness);
     const rows = await screen.findAllByTestId("task-row");
-    const open = rows.find((r) => within(r).queryByTestId("transition-cancelled")) as HTMLElement;
-    await user.click(within(open).getByTestId("transition-cancelled"));
-    const dialog = await screen.findByTestId("transition-dialog");
-    expect(within(dialog).getByTestId("dismiss-transition")).toHaveTextContent("Keep task");
-    expect(within(dialog).getByTestId("confirm-transition")).toHaveTextContent("Cancel task");
+    const open = rows.find((r) => within(r).queryByTestId("action-cancel")) as HTMLElement;
+    await user.click(within(open).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(within(dialog).getByTestId("dismiss-action")).toHaveTextContent("Keep task");
+    expect(within(dialog).getByTestId("confirm-action")).toHaveTextContent("Cancel task");
     expect(dialog).not.toHaveTextContent("Confirm");
-    await user.click(within(dialog).getByTestId("dismiss-transition"));
-    await waitFor(() => expect(screen.queryByTestId("transition-dialog")).not.toBeInTheDocument());
-    expect(harness.daemon.state.calls.filter((c) => c.path.endsWith("/transition"))).toEqual([]);
-    await user.click(within(open).getByTestId("transition-cancelled"));
+    await user.click(within(dialog).getByTestId("dismiss-action"));
+    await waitFor(() => expect(screen.queryByTestId("action-dialog")).not.toBeInTheDocument());
+    expect(harness.daemon.state.calls.filter((c) => c.path.endsWith("/action"))).toEqual([]);
+    await user.click(within(open).getByTestId("action-cancel"));
     await user.click(
-      within(await screen.findByTestId("transition-dialog")).getByTestId("confirm-transition"),
+      within(await screen.findByTestId("action-dialog")).getByTestId("confirm-action"),
     );
     await waitFor(() =>
-      expect(harness.daemon.state.calls.filter((c) => c.path.endsWith("/transition"))).toHaveLength(
-        1,
-      ),
+      expect(harness.daemon.state.calls.filter((c) => c.path.endsWith("/action"))).toHaveLength(1),
     );
-    expect(
-      harness.daemon.state.calls.find((c) => c.path.endsWith("/transition"))?.body,
-    ).toMatchObject({ to: "cancelled" });
+    expect(harness.daemon.state.calls.find((c) => c.path.endsWith("/action"))?.body).toMatchObject({
+      action: "cancel",
+    });
   });
 });

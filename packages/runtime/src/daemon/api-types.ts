@@ -182,6 +182,65 @@ export const ProjectSummary = z.object({
 });
 export type ProjectSummary = z.infer<typeof ProjectSummary>;
 
+/**
+ * A task's status as a person reads it (design §2, core-experience.md): one map, computed by
+ * the daemon from the stored state, what it waits for, the Docker sandbox and its open Inbox
+ * cards, used by the badge, the filter, the Start dialog and the chat. Raw states never show.
+ */
+export const TASK_DISPLAY_KEYS = [
+  "draft",
+  "ready",
+  "waiting",
+  "stuck",
+  "docker",
+  "running",
+  "review",
+  "answer",
+  "paused",
+  "failed",
+  "done",
+  "cancelled",
+] as const;
+export type TaskDisplayKey = (typeof TASK_DISPLAY_KEYS)[number];
+
+/** What the Tasks tab's Status filter offers, in this order, with these words. */
+export const TASK_DISPLAY_FILTERS: ReadonlyArray<{ key: TaskDisplayKey; label: string }> = [
+  { key: "running", label: "Running" },
+  { key: "review", label: "Being reviewed" },
+  { key: "answer", label: "Needs your answer" },
+  { key: "ready", label: "Ready" },
+  { key: "waiting", label: "Waiting for a task" },
+  { key: "stuck", label: "Stuck" },
+  { key: "docker", label: "Waiting for Docker" },
+  { key: "paused", label: "Paused" },
+  { key: "failed", label: "Failed" },
+  { key: "draft", label: "Draft" },
+  { key: "done", label: "Done" },
+  { key: "cancelled", label: "Cancelled" },
+];
+
+export const TaskDisplay = z.object({
+  key: z.enum(TASK_DISPLAY_KEYS),
+  /** The badge: "Ready", "Waiting for "Write the README"", "Failed: the model call failed". */
+  label: z.string(),
+  tone: z.enum(["neutral", "good", "warn", "bad", "info"]),
+  /** One more plain sentence where there is one (why it waits, why it failed); null otherwise. */
+  detail: z.string().nullable(),
+  /** Running: the name of the agent that runs it (never an id) and when its run began. */
+  agentName: z.string().nullable(),
+  since: z.string().nullable(),
+  /** What holds it, for the row's link: the task it waits for, Docker, or its Inbox card. */
+  blocker: z
+    .object({
+      kind: z.enum(["task", "docker", "card"]),
+      taskId: z.string().nullable(),
+      requestId: z.string().nullable(),
+      title: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type TaskDisplay = z.infer<typeof TaskDisplay>;
+
 export const TaskView = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -212,12 +271,20 @@ export const TaskView = z.object({
   reason: z.string(),
   updatedAt: z.string(),
   version: z.number().int(),
+  /**
+   * The status in words (design §2). Absent on a view the state service serves; the screens
+   * then word the stored status themselves.
+   */
+  display: TaskDisplay.optional(),
+  /** Where the task stands in the order a session runs the project's tasks (0 first). */
+  runOrder: z.number().int().optional(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
 /**
- * `POST /tasks/:id/transition` (U-061): the task after the move, and the change log entry the
- * move wrote (the Tasks tab says it is logged and offers its Undo while `undoToken` is set).
+ * Every change a person makes to a task from the Tasks tab (an action, an edit, what it waits
+ * for, a new task): the task after it, and the change log entry it wrote, whose Undo the tab
+ * offers while `undoToken` is set (U-061). `POST /tasks/:id/transition` answers it too.
  */
 export const TaskTransitionView = TaskView.extend({
   change: z
@@ -230,6 +297,63 @@ export const TaskTransitionView = TaskView.extend({
     .nullable(),
 });
 export type TaskTransitionView = z.infer<typeof TaskTransitionView>;
+/** The same answer under the name the Tasks tab's actions use. */
+export const TaskChangeView = TaskTransitionView;
+export type TaskChangeView = TaskTransitionView;
+
+/**
+ * `GET /tasks/:id`: the task drawer (design §3.5). What it asks (outcome, criteria), what it
+ * waits for and what waits on it, its runs (who ran it, what came of it, the files it changed,
+ * its report or error in words), the review in plain words, its open Inbox cards and the PR.
+ */
+export const TaskDetailView = z.object({
+  task: TaskView,
+  waitsOn: z.array(
+    z.object({
+      taskId: z.string(),
+      /** Null for a task that no longer exists. */
+      title: z.string().nullable(),
+      /** That task's status in words ("Done", "Failed: …"). */
+      status: z.string(),
+      done: z.boolean(),
+    }),
+  ),
+  /** The open tasks that wait on this one (Cancel names them). */
+  waitedOnBy: z.array(z.object({ taskId: z.string(), title: z.string() })),
+  runs: z.array(
+    z.object({
+      id: z.string(),
+      /**
+       * `work`: a specialist's run, with its report and files; `review`: the critic's review of
+       * the work (its verdict is in `review`), which carries no report or files of its own.
+       */
+      kind: z.enum(["work", "review"]),
+      specialist: z.string(),
+      startedAt: z.string(),
+      durationMs: z.number().int().nullable(),
+      cost: Money,
+      /** "Finished", "Failed", "Stopped", "Running" … in words. */
+      outcome: z.string(),
+      /** The specialist's report, or what went wrong, cut to a few lines; null when none. */
+      report: z.string().nullable(),
+      /** Files the run changed, relative to the project's folder. */
+      files: z.array(z.string()),
+    }),
+  ),
+  /** The critic's last review in words, null when none. */
+  review: z
+    .object({
+      id: z.string(),
+      verdict: z.string(),
+      summary: z.string(),
+      /** What the critic still asks for (open findings), in its words. */
+      open: z.array(z.string()),
+    })
+    .nullable(),
+  /** Inbox cards about this task that are still open. */
+  cards: z.array(z.object({ requestId: z.string(), question: z.string() })),
+});
+export type TaskDetailView = z.infer<typeof TaskDetailView>;
 
 export const MILESTONE_STATUSES = ["planned", "active", "done", "cancelled"] as const;
 
@@ -663,22 +787,80 @@ export const CreateTaskBody = z.object({
   dependsOn: z.array(z.string()).default([]),
   budgetUsdMicro: z.number().int().nonnegative().default(0),
   status: z.enum(["draft", "ready"]).default("ready"),
+  /**
+   * Who does it (design §3.5 "Who does it"): a specialist's name, `person` ("Me: ask me in the
+   * Inbox"), or left out to let the agent choose.
+   */
+  specialist: z.string().trim().min(1).max(80).nullable().optional(),
 });
+
+/** A person's note for the agent, sent with an action: it goes into the task's next brief. */
+const TaskNote = z.string().trim().max(2000).optional();
 
 export const TransitionTaskBody = z.object({
   version: z.number().int(),
   to: z.string(),
-  reason: z.string().min(1),
+  /** Recorded on the row; left out, the move's plain words ("Cancelled by you"). */
+  reason: z.string().min(1).optional(),
+  note: TaskNote,
 });
 
 /**
+ * The person's task actions (design §3.5, ADR 0102): what each button of the Tasks tab sends.
+ * `stop` stops the task's run and pauses it; `go_ahead` takes a task that waits for answers
+ * back to ready without them; `redo` reopens a done task, `reopen` a cancelled one.
+ */
+export const TASK_ACTIONS = [
+  "make_ready",
+  "pause",
+  "resume",
+  "stop",
+  "try_again",
+  "go_ahead",
+  "cancel",
+  "reopen",
+  "redo",
+] as const;
+export type TaskAction = (typeof TASK_ACTIONS)[number];
+
+/** `POST /tasks/:id/action`: the action, the version the row showed, the optional note. */
+export const TaskActionBody = z.object({
+  version: z.number().int(),
+  action: z.enum(TASK_ACTIONS),
+  note: TaskNote,
+});
+export type TaskActionBody = z.infer<typeof TaskActionBody>;
+
+/**
+ * `PUT /tasks/:id`: Edit (design §3.5): the wording, criteria, priority, budget, review level
+ * or specialist; only the fields given change. Refused while the task runs or once it is done
+ * or cancelled (Redo or Reopen first).
+ */
+export const UpdateTaskBody = z.object({
+  version: z.number().int(),
+  title: z.string().trim().min(3).max(200).optional(),
+  outcome: z.string().trim().min(3).optional(),
+  acceptanceCriteria: z.array(z.string()).optional(),
+  priority: TaskPrioritySchema.optional(),
+  riskTier: z.number().int().min(0).max(3).optional(),
+  budgetUsdMicro: z.number().int().nonnegative().optional(),
+  /** A specialist's name, `person`, or null to let the agent choose. */
+  specialist: z.string().trim().min(1).max(80).nullable().optional(),
+  note: TaskNote,
+});
+export type UpdateTaskBody = z.infer<typeof UpdateTaskBody>;
+
+/**
  * `POST /tasks/:id/dependencies` (U-040): the tasks this task waits on, all of them (an empty
- * list removes every dependency), with the version the screen loaded and a reason for the row.
+ * list removes every dependency), with the version the screen loaded. It goes through the
+ * `task.dependencies` command, so it is in Changes with its Undo.
  */
 export const SetTaskDependenciesBody = z.object({
   version: z.number().int(),
   dependsOn: z.array(z.string()),
-  reason: z.string().min(1),
+  /** Recorded on the row; left out, "What it waits for changed". */
+  reason: z.string().min(1).optional(),
+  note: TaskNote,
 });
 export type SetTaskDependenciesBody = z.infer<typeof SetTaskDependenciesBody>;
 
@@ -2130,11 +2312,17 @@ export const DAEMON_ROUTES = {
   createProject: "POST /projects",
   project: "GET /projects/:id",
   projectSummary: "GET /projects/:id/summary",
-  tasks: "GET /projects/:id/tasks?status=&limit=",
+  tasks:
+    "GET /projects/:id/tasks?status=&limit= (TaskView[] in run order: the order a session runs them, what a task waits for before it, then priority, then age; each with `display`, its status in words, and `runOrder`)",
   createTask:
-    "POST /projects/:id/tasks (CreateTaskBody -> 201 TaskView; dependsOn must name tasks of the project that are not cancelled, else 409 conflict with cause validation and a message naming them, U-040)",
+    "POST /projects/:id/tasks (CreateTaskBody -> 201 TaskChangeView: through the `task.create` command, so it is in Changes with its Undo; dependsOn must name tasks of the project that are not cancelled, else 409 conflict with cause validation and a message naming them, U-040; `specialist: person` makes a task for the person)",
+  task: "GET /tasks/:id (TaskDetailView: the task drawer; 404 for an unknown task)",
+  updateTask:
+    "PUT /tasks/:id (UpdateTaskBody -> TaskChangeView: Edit through the `task.update` command, logged with its Undo; refused 409 conflict with cause validation while the task runs, is being reviewed, is done or cancelled; a stale version is 409 conflict with the task's status now)",
+  taskAction:
+    "POST /tasks/:id/action (TaskActionBody { version, action, note? } -> TaskChangeView: a person's action on the Tasks tab, design §3.5: make_ready, pause, resume, stop (stops the run, pauses the task), try_again, go_ahead (back to ready without the answers its cards ask for), cancel, reopen (a cancelled task), redo (a done task); every one logged with its Undo; a move out of waiting for answers withdraws the task's open Inbox cards; the note goes into the task's next brief; an action the task's status does not offer, or a stale version, is 409 conflict naming the status now)",
   setTaskDependencies:
-    "POST /tasks/:id/dependencies (SetTaskDependenciesBody { version, dependsOn, reason } -> TaskView: the tasks it waits on, all of them; an id that is no task of the project, the task itself, a cancelled task or a cycle is 409 conflict with cause validation and a message naming it, a stale version 409 conflict, nothing written; 404 for an unknown task; U-040)",
+    "POST /tasks/:id/dependencies (SetTaskDependenciesBody { version, dependsOn, reason?, note? } -> TaskChangeView: the tasks it waits on, all of them, through the `task.dependencies` command (logged, with its Undo); an id that is no task of the project, the task itself, a cancelled task or a cycle is 409 conflict with cause validation and a message naming it, a stale version 409 conflict, nothing written; 404 for an unknown task; U-040)",
   startCheck:
     "GET /projects/:id/start-check?budgetUsdMicro= (StartCheckView: what a session started now would plan: the ready tasks it would run, those left out for budget and those waiting on a task not done, priced and cut as the runner does; without a budget the project's session cap; waitingForSandbox: the tier 2+ tasks that wait while the Docker sandbox is not ready, with the step, U-079; 404 for an unknown project; U-040)",
   planProject:

@@ -59,6 +59,15 @@ describe("money formatting", () => {
     expect(chfToMicro("abc")).toBeNull();
   });
 
+  it('takes a decimal comma, as typed in Switzerland (design §6; the walk\'s "1,50" was refused)', () => {
+    expect(chfToMicro("1,50")).toBe(1_500_000);
+    expect(chfToMicro("2,5")).toBe(2_500_000);
+    expect(chfToMicro("CHF 0,80")).toBe(800_000);
+    // Not a decimal comma: refused rather than guessed.
+    expect(chfToMicro("1,250")).toBeNull();
+    expect(chfToMicro("1,250.10")).toBeNull();
+  });
+
   it("converts CHF to USD micro at the rate implied by a Money pair, else the default 0.80", () => {
     expect(chfMicroToUsdMicro(4_000_000, { usdMicro: 125_000_000, chfMicro: 100_000_000 })).toBe(
       5_000_000,

@@ -651,7 +651,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
-  it("task.create makes a draft that undo cancels; task.transition is undoable only when the graph allows it", async () => {
+  it("task.create makes a ready task that undo cancels; every task.transition can be undone (design §3.5)", async () => {
     const w = await world();
     const c = done(
       await w.executor.execute({
@@ -660,21 +660,33 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         ctx: w.ctx(),
       }),
     );
-    expect(c.sentence).toBe('Created the draft task "Add CSV export" in PharmaWatch. Undo.');
-    const taskId =
-      (c.card as unknown as { projectId: string }).projectId &&
-      (await w.store.task.forProject(w.pharma.id))[0]?.id;
+    // Ready unless a draft is asked for (design §3.9): a draft is planned by no session.
+    expect(c.sentence).toBe('Added "Add CSV export" to PharmaWatch.');
+    const taskId = (await w.store.task.forProject(w.pharma.id))[0]?.id;
     expect(taskId).toBeTruthy();
-    const ready = done(
+    expect((await w.store.task.mustGet(taskId as string)).status).toBe("ready");
+    const draft = done(
       await w.executor.execute({
-        name: "task.transition",
-        params: { task: "csv export", to: "ready" },
+        name: "task.create",
+        params: { title: "Sketch the import", status: "draft" },
         ctx: w.ctx(),
       }),
     );
-    expect(ready.sentence).toBe('Moved the task "Add CSV export" from draft to ready.');
-    expect(ready.undoToken).toBeNull();
-    expect((await w.store.task.mustGet(taskId as string)).status).toBe("ready");
+    expect(draft.sentence).toBe(
+      'Added "Sketch the import" to PharmaWatch as a draft (no session picks it up).',
+    );
+    const ready = done(
+      await w.executor.execute({
+        name: "task.transition",
+        params: { task: "sketch the import", to: "ready" },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(ready.sentence).toBe('"Sketch the import" is ready: a session will pick it up.');
+    // Every move can be undone right after it: the undo puts the status back.
+    expect(ready.undoToken).toBe(ready.changeLogId);
+    const back = done(await w.executor.undo(ready.changeLogId, w.ctx()));
+    expect(back.sentence).toBe('Undone: the task "Sketch the import" is a draft again.');
     const cancel = await w.executor.execute({
       name: "task.transition",
       params: { task: taskId as string, to: "cancelled" },
@@ -717,11 +729,9 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         }),
       );
     expect((await create("Urgent fix", "high")).sentence).toBe(
-      'Created the draft task "Urgent fix" in PharmaWatch, high priority. Undo.',
+      'Added "Urgent fix" to PharmaWatch, high priority.',
     );
-    expect((await create("Plain task")).sentence).toBe(
-      'Created the draft task "Plain task" in PharmaWatch. Undo.',
-    );
+    expect((await create("Plain task")).sentence).toBe('Added "Plain task" to PharmaWatch.');
     // A model or an old caller that still says a number is taken as its level.
     await create("Old number", 2);
     const stored = new Map(

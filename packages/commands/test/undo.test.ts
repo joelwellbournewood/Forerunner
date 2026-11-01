@@ -264,9 +264,8 @@ describe("undo says when it cannot work (U-061)", () => {
         confirmation: tap(w.human.id),
       }),
     );
-    expect(cancel.sentence).toBe(
-      'Moved the task "Check the dosage table" from ready to cancelled. Undo.',
-    );
+    // Design §3.5: one plain line; the Undo is a button beside it, never "Undo." in the text.
+    expect(cancel.sentence).toBe('Cancelled "Check the dosage table".');
     expect(cancel.undoToken).toBe(cancel.changeLogId);
     const u = done(await w.executor.undo(cancel.changeLogId, w.ctx()));
     expect(u.sentence).toBe(
@@ -285,10 +284,10 @@ describe("undo says when it cannot work (U-061)", () => {
     await w.store.task.transition(t.id, t.version, "ready", "answered", { humanId: w.human.id });
     const row = await w.store.changeLog.mustGet(failed.changeLogId);
     expect(await w.executor.undoBlockedReason(row, w.ctx())).toBe(
-      'the task "Check the dosage table" moved on to ready since; undo would not put it back where it was',
+      'the task "Check the dosage table" is ready now; undo would not put it back where it was',
     );
     expect(refused(await w.executor.undo(failed.changeLogId, w.ctx())).reason).toMatch(
-      /moved on to ready since/,
+      /is ready now; undo would not put it back/,
     );
     await w.store.close();
   });
@@ -311,8 +310,9 @@ describe("undo says when it cannot work (U-061)", () => {
       }),
     );
     const u = done(await w.executor.undo(cancel.changeLogId, w.ctx()));
+    // No raw state ("claimed") in what the person reads (design §5).
     expect(u.sentence).toBe(
-      'Undone: reopened the task "Port the parser" as ready (it was claimed; a session picks it up again).',
+      'Undone: reopened the task "Port the parser"; it is ready again and a session picks it up.',
     );
     const after = await w.store.task.mustGet(task.id);
     expect(after).toMatchObject({ status: "ready", claimed_by: null });

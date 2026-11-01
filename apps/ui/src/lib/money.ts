@@ -57,10 +57,22 @@ export function percent(ratio: number): string {
   return `${Math.round(ratio * 100)}%`;
 }
 
-/** CHF decimal input ("12.5") to micro-units; null when not a finite non-negative number. */
+/**
+ * CHF decimal input ("12.5", or "1,50" with a decimal comma, as typed in Switzerland and
+ * Germany; design §6) to micro-units; null when not a finite non-negative number. A comma is a
+ * decimal comma only when it is the one separator and one or two digits follow it: "1,250" is
+ * refused rather than read as 1.25 or 1250.
+ */
 export function chfToMicro(input: string): number | null {
-  const trimmed = input.trim().replace(/'/g, "");
+  let trimmed = input
+    .trim()
+    .replace(/^CHF\s*/i, "")
+    .replace(/'/g, "");
   if (trimmed.length === 0) return null;
+  if (trimmed.includes(",")) {
+    if (!/^\d+,\d{1,2}$/.test(trimmed)) return null;
+    trimmed = trimmed.replace(",", ".");
+  }
   const value = Number(trimmed);
   if (!Number.isFinite(value) || value < 0) return null;
   return roundHalfUp(value * MICRO);
