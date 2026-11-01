@@ -151,9 +151,13 @@ export async function recoverInterruptedSessions(deps: RecoveryDeps): Promise<Re
       }
     }
   }
-  if (out.length) {
-    const titles = out.flatMap((r) => r.tasks.map((t) => t.title));
-    const projectIds = [...new Set(out.map((r) => r.session.project_id))];
+  // The person hears about their own work only: a background job's row on no project (the
+  // critic's monthly calibration) is ended so it holds nothing, without an Update that would
+  // read "Your last session was interrupted" for a session the person never started.
+  const theirs = out.filter((r) => r.session.project_id !== null);
+  if (theirs.length) {
+    const titles = theirs.flatMap((r) => r.tasks.map((t) => t.title));
+    const projectIds = [...new Set(theirs.map((r) => r.session.project_id))];
     const body =
       titles.length > 0
         ? `Your last session was interrupted when Forerunner closed. ${namesOf(titles)} ${
@@ -169,10 +173,11 @@ export async function recoverInterruptedSessions(deps: RecoveryDeps): Promise<Re
       requires_ack: false,
       author_agent: deps.principalId,
     });
+  }
+  if (out.length)
     logger.warn("interrupted sessions ended at start", {
       sessions: out.map((r) => r.session.id),
       tasks: out.flatMap((r) => r.tasks.map((t) => t.id)),
     });
-  }
   return out;
 }

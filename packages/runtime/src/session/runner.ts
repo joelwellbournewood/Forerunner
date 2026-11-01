@@ -311,6 +311,10 @@ export interface SessionResult {
   completed: string[];
   inReview: string[];
   failed: string[];
+  /**
+   * Tasks planned and not started, each once; a task sent back by the critic whose rework was
+   * still queued is in `retried` only (U-072). The handoff's `next` keeps both.
+   */
   skipped: string[];
   needsHuman: string[];
   /** Tasks a person cancelled while they ran (U-039). */
@@ -2176,8 +2180,18 @@ export class SessionRunner {
       heard,
       (taskId) => plan?.items.find((i) => i.taskId === taskId)?.title,
     );
+    // A session the person stopped (Stop now, Stop all, Quit) before anything finished is
+    // their own click, not news (design §3.8, §5.11): the session page says who stopped it.
+    const onlyTheirStop =
+      personStop !== null &&
+      !outcome.done.length &&
+      !outcome.failed.length &&
+      !outcome.needsYou.length &&
+      !inReviewNow.length;
     if (
-      (stopReason !== "plan_awaiting_approval" && stopReason !== NOTHING_RUNNABLE) ||
+      (stopReason !== "plan_awaiting_approval" &&
+        stopReason !== NOTHING_RUNNABLE &&
+        !onlyTheirStop) ||
       heardForHuman
     ) {
       const line = sessionUpdateLine(project?.name ?? null, resultLines);
@@ -2264,6 +2278,10 @@ export class SessionRunner {
         await emit("critic.session_review_failed", { warning: errorMessage(e) });
       }
     }
+    // A task the critic sent back whose rework was still queued when the session ended is one
+    // task, counted once: sent back, not also "not started" (U-072). It stays in the handoff's
+    // `next`, where the next session and the peers read what is left.
+    const notStarted = [...new Set(skipped)].filter((id) => !retried.includes(id));
     await emit("session.ended", {
       status: finalStatus,
       stopReason,
@@ -2274,7 +2292,7 @@ export class SessionRunner {
       needsHuman: needsHuman.length,
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
-      skipped: skipped.length,
+      skipped: notStarted.length,
       retried: retried.length,
       blockedByFindings: blockedByFindings.length,
       lessonsRecorded,
@@ -2291,7 +2309,7 @@ export class SessionRunner {
       completed,
       inReview,
       failed,
-      skipped,
+      skipped: notStarted,
       needsHuman,
       cancelled,
       movedWhileRunning,

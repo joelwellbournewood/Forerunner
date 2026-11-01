@@ -224,7 +224,9 @@ export function StartSessionDialog({
   const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;
   const problem = budgetProblem(budget, data?.monthLeft ?? null);
   const blocked = data?.blocked ?? null;
-  const plan = data ? planSentence(data) : null;
+  // What a session would run is said only when it can start: above "Claude is not connected"
+  // or "Sessions are stopped", "This session runs ..." contradicted the disabled Start.
+  const plan = data && !blocked ? planSentence(data) : null;
   const noReadyTask = data !== null && data.ready === 0 && blocked?.kind === "nothing_runnable";
 
   const submit = async (e: FormEvent) => {

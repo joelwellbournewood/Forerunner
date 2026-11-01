@@ -67,7 +67,14 @@ function stateWords(status: string | null): string {
   }
 }
 
-const lowerFirst = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+/** Names a reason can start with; they keep their capital ("failed: Claude did not answer"). */
+const NAME_FIRST = /^(Claude|Forerunner|Docker|GitHub|Git|Node|Anthropic|Cloudflare)\b/;
+/**
+ * The sentence with its first letter lowercased, to follow a colon; a name ("Claude") or an
+ * abbreviation ("HTTP 500") keeps its capital.
+ */
+const lowerFirst = (s: string) =>
+  !s || NAME_FIRST.test(s) || /^[A-Z]{2}/.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
 const noDot = (s: string) => s.trim().replace(/[.\s]+$/, "");
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 const titlesOf = (l: readonly NamedTask[]) => l.map((t) => t.title);

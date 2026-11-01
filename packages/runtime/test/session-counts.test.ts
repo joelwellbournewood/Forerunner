@@ -60,7 +60,7 @@ describe("session counts (U-072)", () => {
       );
       expect(
         describeEvent("session.ended", (ended?.payload ?? {}) as Record<string, unknown>),
-      ).toContain("0 done, 0 failed, 0 need you, 1 sent back, 0 in review, 1 not started");
+      ).toContain("0 done, 0 failed, 0 need you, 1 sent back, 0 in review, 0 not started");
       // The notification title, built from the run's lists as the daemon builds it.
       const note = sessionEnded("h-1", {
         sessionId: result.sessionId,
@@ -76,9 +76,8 @@ describe("session counts (U-072)", () => {
         skipped: result.skipped,
         agentName: "Alice",
       });
-      expect(note.title).toBe(
-        `Alice's session ${result.status}: 0 done, 1 sent back, 1 not started`,
-      );
+      // One task, counted once: sent back, not also "not started" for its rework in the queue.
+      expect(note.title).toBe(`Alice's session ${result.status}: 0 done, 1 sent back`);
       // The session review does not read it as fine.
       expect(result.sessionReview?.grade).toBeLessThan(100);
       expect(result.sessionReview?.findings.map((f) => f.description)).toContain(

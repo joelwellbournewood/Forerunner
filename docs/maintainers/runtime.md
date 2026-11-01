@@ -877,8 +877,10 @@ you during "X". It is ready again." instead of a `session.error`, and releases t
 `taskReasonForStop` ("Stopped by you", "Stopped: Stop all", "Forerunner was closed"); the kill
 switch's claim freeze in `compose.ts` gets the same `by` (it wrote "kill switch" for every
 stop, Quit included). A Stop now raises no "Kill switch" notification (the `kill.onStop`
-listener in `compose.ts` gets `by` and skips `you`; Stop all and Quit are still told).
-The session status stays `killed` for these (enforcement and the handover read it);
+listener in `compose.ts` gets `by` and skips `you`; Stop all and Quit are still told). A session
+the person stopped before anything finished (nothing done, failed, needing them or in review)
+posts no Inbox Update: the click is theirs, not news (design §3.8, §5.11); the session page
+says it. The session status stays `killed` for these (enforcement and the handover read it);
 `SessionView.stopReason` and `SessionView.statusText` ("Working", "Done", "Stopped by you",
 "Stopped: Stop all", "Interrupted: Forerunner closed", "Stopping after this task") are what a
 screen shows.
@@ -927,9 +929,12 @@ intake session, not a cloud runner's, not another device's) with no live kill-sw
 registration is ended `stopped` with the stop reason `interrupted` and the summary
 "Interrupted: Forerunner closed while this session ran. "X" is ready again.", its running runs
 are closed (`killed`), the tasks its agent holds go back to ready with the reason "Forerunner
-closed while it ran", and the person gets one Update. `POST /sessions/:id/stop` on a row nothing
-in this process runs ends it the same way (`endDeadSession`, stop reason `you`). The runner's
-refusal of a second session says it in words, never with the other session's id.
+closed while it ran", and the person gets one Update about their own work (rows on a project);
+a background job's row on no project (the critic's monthly calibration) is ended without one,
+so a crash during it never reads "Your last session was interrupted". `POST /sessions/:id/stop`
+on a row nothing in this process runs ends it the same way (`endDeadSession`, stop reason
+`you`). The runner's refusal of a second session says it in words, never with the other
+session's id.
 
 **The inbox before the session-end writes (spec E.4).** Step 4 of `runner.ts` starts with one
 more `recheckInbox(..., { atEnd: true })`, so a message that landed during the last task is

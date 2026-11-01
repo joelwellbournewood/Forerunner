@@ -188,4 +188,40 @@ describe("a session a dead daemon left running is ended at the next start (desig
     expect(task.reason).toBe("Stopped by you");
     expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
   }, 120_000);
+
+  it("a background job's row (the critic's calibration) is ended without telling the person", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-recovery-critic-"));
+    const clock = new SimulatedClock("2026-11-01T12:00:00Z");
+    const first = await compose(home, clock, false);
+    // What a daemon that died during the monthly calibration leaves: the critic's own row, on
+    // no project (ADR 0102 decision 4).
+    let calibration = await first.store.session.insert({
+      agent_id: first.criticAgent.id,
+      project_id: null,
+      trigger: "schedule",
+      plan: {},
+      budget_cap_usd_micro: 5_000_000,
+      step_cap: 200,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "planned",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+      author_agent: first.criticAgent.id,
+    });
+    calibration = await first.store.session.start(calibration.id, calibration.version);
+    opened.splice(0);
+
+    const rt = await compose(home, clock, true);
+    // Ended, so it holds the critic's one session no longer.
+    expect((await rt.store.session.mustGet(calibration.id)).status).toBe("stopped");
+    expect(await rt.store.session.active(rt.criticAgent.id)).toEqual([]);
+    // Not the person's session: no "Your last session was interrupted" Update for it.
+    const human = (await rt.store.human.list({}, { limit: 1 }))[0];
+    const updates = (await rt.store.message.inbox({ humanId: human?.id ?? "" })).filter((m) =>
+      /interrupted/.test(m.body),
+    );
+    expect(updates).toEqual([]);
+  }, 120_000);
 });

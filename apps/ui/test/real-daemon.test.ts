@@ -1531,4 +1531,26 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
     expect(told.reply).toContain("Settings → Accounts and keys → Open the setup assistant");
     expect(told.reply).not.toMatch(/fr setup/);
   });
+
+  it("the Start dialog's check says Claude is not connected, with the button that fixes it (design §3.6)", async () => {
+    const project = await client.createProject({ name: "No key start", goal: "One page" });
+    await client.createTask(project.id, {
+      title: "Write index.html",
+      outcome: "index.html exists",
+      acceptanceCriteria: [],
+      riskTier: 0,
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    const check = await client.startCheck(project.id);
+    // A ready task, and still nothing can start: the reason and the button, not a failed run.
+    expect(check.ready).toBe(1);
+    expect(check.blocked).toEqual({
+      kind: "no_model",
+      sentence: "Claude is not connected: planning and tasks need it.",
+      action: { kind: "link", label: "Connect Claude", to: "/settings" },
+    });
+  });
 });

@@ -195,6 +195,9 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
     expect((row.handoff as { stop_reason?: string }).stop_reason).toBe("you");
     // The kill switch is not frozen by a session's Stop now: the next Start works.
     expect(kill.isFrozen({ agentId: w.agent })).toBe(false);
+    // A session the person stopped before anything finished: their own click is not news, so
+    // the Inbox gets no Update echoing it (design §3.8, §5.11); the session page says it.
+    expect(await w.store.message.inbox({ humanId: w.human })).toEqual([]);
   });
 
   it("a transient error is tried again once at once; a lasting one fails with the error in words", async () => {
@@ -237,8 +240,9 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
     const row = await w.store.task.mustGet(u.id);
     expect(row.status).toBe("failed");
     expect(row.reason).toBe("Claude did not answer (model call failed).");
+    // A name keeps its capital ("Claude", not "claude"); a plain word after the colon does not.
     expect(r2.summary.split("\n")[0]).toBe(
-      '"Add script.js" failed: claude did not answer (model call failed).',
+      '"Add script.js" failed: Claude did not answer (model call failed).',
     );
   });
 
