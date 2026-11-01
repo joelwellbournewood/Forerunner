@@ -96,6 +96,27 @@ single walk, including the owner's complaints 1 and 2).
   phone Inbox shows the old options, count and reply box; Reviews "Approve" maps to Mark done
   anyway without the ADR 0102 confirmation; Reviews links use `target=_blank`.
 
+Owner decisions of 2026-11-01, late evening:
+- **Verification of code tasks (to record as an ADR in phase C; the owner may still change it):**
+  proportional, set by the planner and enforced by the runner. (1) The project's build, lint and
+  tests always run for a code task and are never shown as a "level"; a task that adds behaviour to
+  a project without tests adds them. (2) The critic always reviews code tasks, with read access to
+  the project, not only the diff. (3) Work a person will use (a page, an app, a CLI, an API) is
+  also tried: started in its own environment (the Docker sandbox on the owner's PC) and used as a
+  person would, with screenshots and outputs as evidence the critic judges. (4) Deploys, data
+  migrations, money and security keep the full review and the owner's sign-off. (5) The person
+  sees "Done" only after the right check passed, with "Reviewed" or "Reviewed and tried" and the
+  evidence one click away; no "checks only" or tier words. The owner's words: automated checks
+  "should be absolutely mandatory and not even mentioned in the UI ... we will clearly need to
+  boot things up in their own environment, and test them in an agentic way".
+- **Research on an API key:** give the researcher and the science-evaluator web access on the
+  API-key path through Forerunner's own fetch/search capability, within the network rules (phase C).
+- **GitHub token:** the owner kept FORERUNNER_TEST_GITHUB_TOKEN as it is; the app reports it
+  reaches 4 repositories with admin rights. Agents link and touch only forerunner-sandbox. A
+  first commit (README.md, main at f6aa072) was pushed there so tasks can branch; the app's
+  failure on an empty linked repository is a phase C blocker of its own (pr-executor.ts branches
+  from `origin/<base>` without checking it exists; project docs are not scaffolded, silently).
+
 Out of scope this round: voice, email, extensions, the GitHub Projects mirror (the cloud GitHub
 proxy blocks GraphQL, so it cannot be tested from a cloud session), peers and teams, the cloud
 runner. The owner's old Forerunner install is not kept: no upgrade check.
