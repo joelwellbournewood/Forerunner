@@ -79,6 +79,7 @@ import {
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
+import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
@@ -494,6 +495,14 @@ interface PendingCommand {
 }
 
 const clone = <T>(value: T): T => structuredClone(value);
+
+/** The stand-in's scripted session lines that stand for what a person follows (design §3.7). */
+const SCRIPTED_PERSON_TYPES = new Set([
+  "task.claimed",
+  "run.started",
+  "run.finished",
+  "escalation",
+]);
 
 function errorBody(c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) {
   return c.json({ code, message }, status);
@@ -3591,13 +3600,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     filter: { projectId?: string; taskId?: string },
   ): ReviewsView => {
     const sorted = [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // As the daemon counts (design §3.5): the tasks' reviews only; each open finding once per
+    // task and finding; none for a done or cancelled task.
     const verdicts: Record<string, number> = {};
-    let openFindings = 0;
+    const open = new Set<string>();
     for (const r of sorted) {
+      if (!r.taskId) continue;
       verdicts[r.verdict] = (verdicts[r.verdict] ?? 0) + 1;
-      openFindings += r.openFindings;
+      if (r.taskStatus === "done" || r.taskStatus === "cancelled") continue;
+      for (const f of r.findings)
+        if (f.status === "open") open.add(`${r.taskId}:${f.fingerprint || f.description}`);
     }
-    const trend = [...sorted]
+    const openFindings = open.size;
+    const trend = sorted
+      .filter((r) => r.taskId !== null)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
       .map((r) => ({
         at: r.createdAt,
@@ -5813,6 +5829,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       cost: money(costUsdMicro),
       at: new Date().toISOString(),
       level,
+      // The daemon's split (design §3.7); the stand-in's scripted lines (`task.claimed`,
+      // `run.*`, `escalation`) stand for what a person follows, so they are person lines too.
+      audience:
+        eventAudience(type) === "person" || SCRIPTED_PERSON_TYPES.has(type) ? "person" : "detail",
     };
     state.events.push(event);
     emit("session.event", event);

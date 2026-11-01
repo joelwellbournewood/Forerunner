@@ -7,7 +7,9 @@
  * JSON. Money is CHF at the day's rate.
  */
 import { formatChf, usdToChfMicro } from "@forerunner/billing";
+import { quotedWords, saidByName } from "@forerunner/critic";
 import { AUTONOMY_NAMES } from "../enforcement/autonomy.ts";
+import { sessionStatusText } from "../session/stop-words.ts";
 
 type Payload = Record<string, unknown>;
 
@@ -16,6 +18,218 @@ const num = (p: Payload, k: string): number =>
   typeof p[k] === "number" && Number.isFinite(p[k]) ? (p[k] as number) : 0;
 const list = (p: Payload, k: string): unknown[] => (Array.isArray(p[k]) ? (p[k] as unknown[]) : []);
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
+// ---------------------------------------------------------------------------------------
+// Person-level lines (core-experience design §3.7, §5)
+
+export { type EventAudience, eventAudience } from "./event-audience.ts";
+
+/** One line of text: no markdown, no stand-in tag, whitespace folded. */
+export function plainLine(text: string): string {
+  return text
+    .replace(/\[stand-in model\]\s*/gi, "")
+    .replace(/\*\*|__|`|^#+\s*/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** A text cut at a word with "…" when longer than `max` (never mid-word). */
+export function cutAtWord(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, "")}…`;
+}
+
+/** '"Create the page skeleton in index.html"' with a long title cut at a word. */
+function quoted(title: string, max = 60): string {
+  return `"${cutAtWord(title.replace(/"/g, "'"), max)}"`;
+}
+
+/** The task an event names, in quotes, or "the task" for an event from before titles. */
+function taskName(p: Payload): string {
+  const t = str(p, "title");
+  return t ? quoted(t) : "the task";
+}
+
+/** "the coder", "the writer" ("writer-marketing"), or "the specialist". */
+function specialistWho(p: Payload): string {
+  const who = saidByName(str(p, "specialist"));
+  return who ? `the ${who}` : "the specialist";
+}
+
+const capital = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/** "index.html", "a.js and b.js", "a.js, b.js, c.js and 4 more" (design §5 rule 5). */
+export function namedList(items: readonly string[], max = 3): string {
+  const shown = items.slice(0, max);
+  const more = items.length - shown.length;
+  if (more > 0) return `${shown.join(", ")} and ${more} more`;
+  if (shown.length <= 1) return shown[0] ?? "";
+  return `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`;
+}
+
+/**
+ * A report says the work was not done: "I could not complete this task", "I was unable to",
+ * "I cannot". The run itself ended without an error, so its outcome reads "done"; the line must
+ * not (design §5, "Log line" before and after).
+ */
+const COULD_NOT =
+  /\b(could not|couldn't|cannot|can't|was unable to|am unable to|unable to|did not (?:do|complete|finish))\b/i;
+
+/** The report's own words for the line: one or two sentences, plain, at most `max`. */
+function reportWords(summary: string, max = 120): string | null {
+  const w = quotedWords(summary, max);
+  if (!w) return null;
+  // The heading words a report starts with ("Summary", "Files changed") are not what it said.
+  return w.replace(/^(summary|report)\s*[:-]?\s*/i, "").trim() || null;
+}
+
+/** The sentence of a report that says what stood in the way, after "I could not ...". */
+function couldNotReason(summary: string): string | null {
+  const words = reportWords(summary, 200);
+  if (!words) return null;
+  const sentences = words.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g) ?? [words];
+  const first = sentences[0]?.trim() ?? "";
+  // "I could not complete this task. The work needs X." -> "The work needs X."
+  const reason = sentences.length > 1 && COULD_NOT.test(first) ? sentences[1]?.trim() : first;
+  return reason ? cutAtWord(reason, 100) : null;
+}
+
+/** The session's counts that happened, short: "2 done, 1 needs you" (no zero counts). */
+function endedCounts(p: Payload): string {
+  const parts: string[] = [];
+  const add = (k: string, words: (n: number) => string) => {
+    const n = num(p, k);
+    if (n > 0) parts.push(words(n));
+  };
+  add("completed", (n) => `${n} done`);
+  add("failed", (n) => `${n} failed`);
+  add("needsHuman", (n) => `${n} need${n === 1 ? "s" : ""} you`);
+  add("retried", (n) => `${n} sent back`);
+  add("inReview", (n) => `${n} in review`);
+  add("skipped", (n) => `${n} not started`);
+  return parts.join(", ");
+}
+
+/** What a move the person made while a task ran did, in words. */
+function movedWords(status: string): string {
+  switch (status) {
+    case "cancelled":
+      return "cancelled it";
+    case "needs_human":
+      return "paused it";
+    case "failed":
+      return "marked it failed";
+    case "done":
+      return "marked it done";
+    case "in_review":
+      return "sent it to review";
+    case "ready":
+      return "put it back to ready";
+    default:
+      return "moved it";
+  }
+}
+
+/**
+ * The person-level line of an event (design §3.7, §5): one line, names not ids, no markdown,
+ * cut at a word, "could not" for a run that reported it could not do the work. Null for a type
+ * that has no person line of its own (its detail line is used).
+ */
+export function personLine(type: string, p: Payload, chfPerUsd: number): string | null {
+  const s = (k: string) => str(p, k);
+  const n = (k: string) => num(p, k);
+  const chf = (k: string) => chfOf(n(k), chfPerUsd);
+  switch (type) {
+    case "session.started":
+      return s("trigger") === "manual"
+        ? `You started the session with a budget of ${chf("budgetCapUsdMicro")}.`
+        : `The session started with a budget of ${chf("budgetCapUsdMicro")}.`;
+    case "task.started":
+      return `${capital(specialistWho(p))} started ${taskName(p)}${
+        n("estimateUsdMicro") > 0 ? ` (about ${chf("estimateUsdMicro")})` : ""
+      }.`;
+    case "task.files": {
+      const files = list(p, "files").map(String);
+      return files.length ? `Changed ${namedList(files)}.` : "Changed no file.";
+    }
+    case "task.finished": {
+      const outcome = s("outcome");
+      const summary = s("summary");
+      const who = specialistWho(p);
+      const cost = n("costUsdMicro") >= 5_000 ? ` (${chf("costUsdMicro")})` : "";
+      if (outcome === "failed") {
+        const why = reportWords(summary, 100);
+        return `${taskName(p)} failed${why ? `: ${why.replace(/[.\s]+$/, "")}` : ""}.`;
+      }
+      if (outcome === "timeout") return `${taskName(p)} ran out of time.`;
+      if (outcome === "budget_exceeded") return `${taskName(p)} stopped: the budget is used.`;
+      if (outcome === "killed") return `${capital(taskName(p))} was stopped.`;
+      if (outcome === "needs_human")
+        return `${capital(who)} has questions for you about ${taskName(p)} (Inbox).`;
+      const first = reportWords(summary, 200) ?? "";
+      if (COULD_NOT.test(first)) {
+        const why = couldNotReason(summary);
+        return `${capital(who)} could not do ${taskName(p)}${why ? `: "${why.replace(/"/g, "'").replace(/[.\s]+$/, "")}"` : ""}.`;
+      }
+      return `${capital(who)} finished ${taskName(p)}${cost}.`;
+    }
+    case "critic.verdict": {
+      const decision = s("decision");
+      const why = reportWords(s("summary"), 100)
+        ?.replace(/^(sent back for rework|accepted)\s*:\s*/i, "")
+        .replace(/[.\s]+$/, "");
+      if (decision === "accepted") return `The critic accepted ${taskName(p)}.`;
+      if (decision === "human") return `${capital(taskName(p))} needs your decision (Inbox).`;
+      if (decision === "blocked_by_findings")
+        return `${capital(taskName(p))} stays in review: an earlier finding is still open.`;
+      if (decision === "revise" || decision === "retry" || s("verdict") === "revise")
+        return `The critic sent ${taskName(p)} back${why ? `: ${why}` : ""}. Trying again.`;
+      return `The critic reviewed ${taskName(p)}.`;
+    }
+    case "critic.review_failed":
+      return `The review of ${taskName(p)} did not run; it waits in the Inbox.`;
+    case "task.retrying":
+    case "session.stopped":
+      return s("text") ? cutAtWord(plainLine(s("text")), 200) : null;
+    case "session.sandbox_waiting":
+    case "task.sandbox_waiting": {
+      const titles = list(p, "tasks")
+        .map((t) => (t && typeof t === "object" ? str(t as Payload, "title") : ""))
+        .filter(Boolean);
+      if (s("title")) titles.push(s("title"));
+      return titles.length
+        ? `Waiting for Docker: ${namedList(titles.map((t) => quoted(t, 50)))} ${titles.length === 1 ? "needs" : "need"} a full review.`
+        : "Waiting for Docker: a full review needs it.";
+    }
+    case "task.moved_while_running":
+      return p.byPerson === false
+        ? `Another agent moved ${taskName(p)} while it ran; the session goes on.`
+        : `You ${movedWords(s("status"))} while ${taskName(p)} ran; the session goes on.`;
+    case "task.blocked_by_findings":
+      return `${capital(taskName(p))} stays in review: an earlier finding is still open.`;
+    case "session.error": {
+      const msg = plainLine(s("message"));
+      return `The session stopped on an error${msg ? `: ${cutAtWord(msg, 100).replace(/[.\s]+$/, "")}` : ""}.`;
+    }
+    case "session.ended": {
+      const counts = endedCounts(p);
+      const status = sessionStatusText(s("status"), s("stopReason"));
+      const head = status === "Done" ? "Session over" : status;
+      return `${head}: ${counts || "nothing done"}. ${chf("spentUsdMicro")}.`;
+    }
+    case "session.plan_filed":
+      return `The plan waits for your approval in the Inbox${p.changed ? "; it changed since you approved it, so nothing ran" : ""}.`;
+    case "session.plan_approved":
+      return `Running the plan you approved (${plural(n("items"), "task")}).`;
+    case "session.paused":
+      return `Paused${s("reason") ? `: ${plainLine(s("reason"))}` : ""}.`;
+    default:
+      return null;
+  }
+}
 
 /** A USD micro amount as the person reads it: "CHF 1.20". */
 export function chfOf(usdMicro: number, chfPerUsd: number): string {
@@ -122,17 +336,6 @@ function overlapWords(p: Payload): string {
   }
 }
 
-function deliveryWords(p: Payload): string {
-  const parts = list(p, "deliveries")
-    .filter((d): d is Payload => !!d && typeof d === "object")
-    .map(
-      (d) =>
-        `${str(d, "channel")} ${str(d, "status")}${str(d, "reason") ? ` (${str(d, "reason")})` : ""}`,
-    )
-    .filter((t) => t.trim().length > 0);
-  return parts.length ? `: ${parts.join(", ")}` : "";
-}
-
 /** "peers.feed" -> "Peers feed": an unknown type in words. */
 function typeWords(type: string): string {
   const words = type.replace(/[._]+/g, " ").trim();
@@ -173,8 +376,14 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
       return `No status update written: ${s("reason") || "nothing changed"}.`;
     case "docs.status_failed":
       return `The status update was not written: ${s("warning")}`;
+    // Which channels were not set up is not the session's news (design §5, "Notification"):
+    // the line names what was sent, never "telegram skipped (no Telegram chat id)".
     case "notification":
-      return `Notified you: "${s("title")}"${deliveryWords(p)}.`;
+      return `Notified you: "${s("title")}".`;
+    // The engine's step and replan lines carry their own words (`text`).
+    case "task.step":
+    case "session.replanned":
+      return s("text") ? cutAtWord(plainLine(s("text")), 200) : null;
     case "critic.review":
       return `Critic review of the ${s("subject") || "work"} (${reviewLevel(n("tier"))}): ${verdictWords(s("verdict"))}, grade ${n("grade")}, ${plural(n("findings"), "finding")}, ${chfOf(n("costUsdMicro"), chfPerUsd)}.`;
     case "critic.session_review_failed":
@@ -257,5 +466,5 @@ export function fallbackLine(type: string, p: Payload): string {
   const said = ["warning", "message", "reason", "summary", "text"]
     .map((k) => str(p, k))
     .find((v) => v.length > 0);
-  return `${typeWords(type)}${said ? `: ${said.slice(0, 200)}` : "."}`;
+  return `${typeWords(type)}${said ? `: ${cutAtWord(plainLine(said), 200)}` : "."}`;
 }

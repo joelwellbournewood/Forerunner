@@ -90,6 +90,14 @@ export function shortTitle(title: string, max = 40): string {
 const IDS =
   /\s*\((?:request|run|session|task)[ :][^)]*\)|\b(?:request|run|session|task)[ :]?[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
+/** A text without the ids a person never reads (design §5 rule 3), whitespace folded. */
+export function withoutIds(text: string): string {
+  return text
+    .replace(IDS, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
 /**
  * "(s)" plurals as the number says (design §5 rule 6): "2 question(s)" reads "2 questions",
  * "1 changed file(s)" reads "1 changed file"; one with no number before it reads plural.

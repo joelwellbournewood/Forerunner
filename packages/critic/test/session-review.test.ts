@@ -195,7 +195,8 @@ describe("session review (H.6)", () => {
       });
       const descriptions = out.findings.map((f) => f.description);
       expect(descriptions).toContainEqual(
-        expect.stringContaining("Plan estimate USD 1.3000 exceeded the session budget USD 1.0000"),
+        // CHF, as everywhere a person reads money (design §5 rule 7); the default rate here.
+        expect.stringContaining("Plan estimate CHF 1.04 exceeded the session budget CHF 0.80"),
       );
       expect(descriptions).toContainEqual(
         expect.stringContaining("Plan item references a task that does not exist: Ghost"),
@@ -254,9 +255,8 @@ describe("session review (H.6)", () => {
         claimedDone: 2,
       });
       expect(checks.findings.map((f) => f.description)).toEqual([
-        expect.stringMatching(
-          /^Session cost USD 0\.2000 exceeded its estimate USD 0\.1000 by 100%/,
-        ),
+        // CHF at the ledger's rate (1 here), as everywhere a person reads money.
+        expect.stringMatching(/^Session cost CHF 0\.20 exceeded its estimate CHF 0\.10 by 100%/),
       ]);
       expect(checks.verdict).toBe("revise");
       expect(checks.grade).toBe(85);

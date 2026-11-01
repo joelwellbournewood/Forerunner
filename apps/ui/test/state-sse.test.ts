@@ -192,6 +192,7 @@ describe("subscribeStateSessionEvents", () => {
       cost: { usdMicro: 0, chfMicro: 0 },
       at: new Date(NOW_MS).toISOString(),
       level: "info" as const,
+      audience: "person" as const,
     });
     service.state.events.push(event(1), event(2));
     const seen: number[] = [];

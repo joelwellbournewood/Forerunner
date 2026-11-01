@@ -8,6 +8,7 @@ import type {
   SessionView as SessionViewType,
   TaskView as TaskViewType,
 } from "@forerunner/runtime/daemon/api-types";
+import { eventAudience } from "@forerunner/runtime/daemon/event-lines";
 import { priorityLevel } from "@forerunner/runtime/priority";
 import { optionLabel } from "@forerunner/runtime/wiring/request-answers";
 import type {
@@ -197,6 +198,13 @@ export function eventView(e: EventRow, rate: number): EventViewType {
     cost: money(e.cost_usd_micro, rate),
     at: e.created_at,
     level: eventLevel(e.type),
+    // The daemon's split (design §3.7): what a person follows by default, the rest in Details.
+    audience: eventAudience(
+      e.type,
+      e.payload && typeof e.payload === "object" && !Array.isArray(e.payload)
+        ? (e.payload as Record<string, unknown>)
+        : {},
+    ),
   };
 }
 

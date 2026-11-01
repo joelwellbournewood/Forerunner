@@ -390,13 +390,13 @@ describe("Summary tab: queue, peers, decisions", () => {
     );
     expect(within(peer).getByTestId("peer-handoff")).toHaveTextContent("PR #12 waits for review");
     expect(within(peer).getByTestId("peer-files")).toHaveTextContent("src/header.tsx");
-    const decision = await screen.findByTestId("decision");
-    expect(decision).toHaveTextContent("Which search backend should the docs site use?");
-    expect(within(decision).getByTestId("decision-chosen")).toHaveTextContent(
-      "Static index built at deploy time",
+    // Design §3.4, §5 "Decision": "Q? A. (Alice, 18 Oct)", no options not chosen, no id.
+    const decision = (await screen.findAllByTestId("decision"))[0] as HTMLElement;
+    expect(decision).toHaveTextContent(
+      /^Which search backend should the docs site use\? Static index built at deploy time\. \(Alice, 1[78] Oct\)$/,
     );
-    expect(decision).toHaveTextContent("not: Hosted search service");
-    expect(decision).toHaveTextContent("by human_alice");
+    expect(decision).not.toHaveTextContent("not: Hosted search service");
+    expect(decision).not.toHaveTextContent("human_alice");
   });
 
   it("shows empty peers and decisions for a solo project, and a missing queue route", async () => {

@@ -667,12 +667,14 @@ describe("producers", () => {
   });
 
   it("human requests: blocking ones are the urgent kind, both deep-link to the inbox", () => {
-    const open = producers.requestOpened(request(), "h-1");
+    // Design §5, "Notification": the project and what the card asks, never "A decision is
+    // needed"; the body says what to do.
+    const open = producers.requestOpened(request(), "h-1", { projectName: "Quote page" });
     expect(open).toMatchObject({
       kind: "request_opened",
       humanId: "h-1",
-      title: "A decision is needed",
-      body: "Which database?",
+      title: "Quote page: Which database?",
+      body: "Answer it in the Inbox.",
       link: "/inbox",
       projectId: "p-1",
       sessionId: "s-1",
@@ -683,7 +685,29 @@ describe("producers", () => {
       "h-1",
     );
     expect(blocking.kind).toBe("request_blocking");
-    expect(blocking.title).toBe("A credential is needed (work is blocked)");
+    expect(blocking.title).toBe("Which database?");
+    // A task that failed after its tries: the card's title with the project, the specialist's
+    // own words in the body (before: "An approval is needed (work is blocked)").
+    const failed = producers.requestOpened(
+      request({
+        kind: "approval",
+        blocking: true,
+        why: 'Retry ladder exhausted for "Style the page in styles.css" after 4 failed attempt(s) (ceiling opus)',
+        change_card: {
+          key: "critic:signoff",
+          title: '"Style the page in styles.css" failed 4 times',
+          said: "I could not complete this task. The work needs something I do not have here.",
+          said_by: "writer",
+          reason: "failed",
+        },
+      }),
+      "h-1",
+      { projectName: "Quote page", taskTitle: "Style the page in styles.css" },
+    );
+    expect(failed.title).toBe('Quote page: "Style the page in styles.css" failed 4 times');
+    expect(failed.body).toBe(
+      'The writer said: "I could not complete this task. The work needs something I do not have here." Answer it in the Inbox.',
+    );
   });
 
   it("session end: a budget stop becomes the urgent budget_stop kind with the amount", () => {
@@ -691,48 +715,49 @@ describe("producers", () => {
       sessionId: "s-1",
       status: "completed",
       stopReason: "done",
-      summary: "Done: a, b. Next: c.",
+      // The session's result as the runner writes it (design §5, "Session result").
+      summary:
+        '"Style the page" needs your decision (Inbox).\nDid 2 tasks: "Create index.html" and "Write script.js".\n1 task waits on it. CHF 1.88.',
       spentUsdMicro: 2_345_678,
       completed: ["a", "b"],
       needsHuman: ["c"],
       projectId: "p-1",
+      projectName: "Quote page",
       agentName: "Alice",
     };
+    // Design §5, "Notification": the project and what needs you first; the body what happened
+    // and where to answer. Before: "Alice's session completed: 2 done, 1 needs you".
     const ended = producers.sessionEnded("h-1", facts);
     expect(ended).toMatchObject({
       kind: "session_ended",
-      title: "Alice's session completed: 2 done, 1 needs you",
+      title: 'Quote page: "Style the page" needs your decision',
+      body: 'Did 2 tasks: "Create index.html" and "Write script.js". 1 task waits on it. CHF 1.88. Answer it in the Inbox.',
       link: "/sessions/s-1",
       sessionId: "s-1",
       projectId: "p-1",
       dedupeKey: "session:s-1:ended",
     });
-    // U-017: a failed task is named; with none the title stays as it was. U-072: in the
-    // summary's order (done, failed, needs you, sent back, in review, not started).
-    expect(producers.sessionEnded("h-1", { ...facts, failed: ["d"] }).title).toBe(
-      "Alice's session completed: 2 done, 1 failed, 1 needs you",
+    const done = producers.sessionEnded("h-1", {
+      ...facts,
+      needsHuman: [],
+      summary: 'Did 2 tasks: "Create index.html" and "Write script.js". Nothing left. CHF 0.20.',
+    });
+    // A long title shortens the names in it at a word, never what happened.
+    expect(done.title).toBe('Quote page: did 2 tasks: "Create…" and "Write script.js"');
+    expect(done.body).toBe(
+      'Did 2 tasks: "Create index.html" and "Write script.js". Nothing left. CHF 0.20. Open the session for the details.',
     );
-    expect(
-      producers.sessionEnded("h-1", {
-        ...facts,
-        completed: [],
-        needsHuman: [],
-        retried: ["e"],
-        inReview: ["f"],
-        skipped: ["g", "h"],
-      }).title,
-    ).toBe("Alice's session completed: 0 done, 1 sent back, 1 in review, 2 not started");
     const stop = producers.sessionEnded("h-1", { ...facts, stopReason: "budget_exceeded" });
     expect(stop.kind).toBe("budget_stop");
     // CHF (U-074): the ledger's figure when the facts carry it, else the default rate.
-    expect(stop.title).toBe("Alice stopped: budget cap reached (CHF 1.88 spent)");
+    expect(stop.title).toBe("Quote page: stopped, the budget is used (CHF 1.88 spent)");
     expect(
       producers.sessionEnded("h-1", {
         ...facts,
         stopReason: "budget_exceeded",
         spentChfMicro: 2_111_000,
       }).title,
-    ).toBe("Alice stopped: budget cap reached (CHF 2.11 spent)");
+    ).toBe("Quote page: stopped, the budget is used (CHF 2.11 spent)");
     expect(stop.dedupeKey).toBe("session:s-1:budget");
   });
 
@@ -745,14 +770,23 @@ describe("producers", () => {
       session_id: "s-1",
       summary: "Looks right.",
     };
-    const accept = producers.criticVerdict("h-1", review, "p-1");
+    const accept = producers.criticVerdict("h-1", review, "p-1", {
+      projectName: "Quote page",
+      taskTitle: "Add clamp",
+    });
+    // Design §5: what happened to which task, never "Critic: accept (grade 91)".
     expect(accept).toMatchObject({
       kind: "critic_verdict",
-      title: "Critic: accept (grade 91)",
+      title: 'Quote page: the critic accepted "Add clamp"',
+      body: "Looks right. Open Reviews for the details.",
       link: "/projects/p-1/reviews",
       urgency: "info",
       dedupeKey: "review:rv-1",
     });
+    // Without a summary the body is no "Review <id> of task <id>".
+    expect(producers.criticVerdict("h-1", { ...review, summary: "" }).body).toBe(
+      "Open Reviews for the details.",
+    );
     expect(producers.criticVerdict("h-1", { ...review, verdict: "escalate" }).urgency).toBe(
       "normal",
     );
@@ -799,7 +833,7 @@ describe("producers", () => {
     const q = producers.peerMessage("h-1", message, "Bob");
     expect(q).toMatchObject({
       kind: "peer_message",
-      title: "Bob: question",
+      title: "Bob asks you something",
       urgency: "normal",
       dedupeKey: "message:m-1",
       projectId: "p-1",
@@ -808,7 +842,7 @@ describe("producers", () => {
       producers.peerMessage("h-1", { ...message, type: "info", requires_ack: false }).urgency,
     ).toBe("info");
     // Without the sender's name the title says "Another agent", never its id (U-074).
-    expect(producers.peerMessage("h-1", message).title).toBe("Another agent: question");
+    expect(producers.peerMessage("h-1", message).title).toBe("Another agent asks you something");
     expect(producers.updateAvailable("h-1", { version: "1.2.0", channel: "stable" })).toMatchObject(
       {
         kind: "update_available",
@@ -857,21 +891,29 @@ describe("producers", () => {
       scope: { agentId: "alice", sessionId: "s-1" },
     };
     const kill = producers.killSwitch("h-1", report, "tray");
+    // Design §4.9, §5: whose stop and what happens next, no "Kill switch", "(s)" or tokens.
     expect(kill).toMatchObject({
       kind: "kill_switch",
-      title: "Kill switch: one session stopped",
+      title: "A session was stopped",
+      body: "3 runs stopped. Its task is ready again.",
       link: "/sessions/s-1",
       sessionId: "s-1",
       dedupeKey: "kill:alice:s-1",
     });
-    expect(kill.body).toContain("3 run(s) stopped, 1 process(es) killed, 3 token(s) revoked");
     // Without a stopped session the link is the home route (the shell has no "/open" page).
-    const all = producers.killSwitch("h-1", { ...report, scope: "all" }, "ui");
+    const all = producers.killSwitch("h-1", { ...report, scope: "all" }, "ui", "stop_all");
+    expect(all).toMatchObject({
+      title: "Stop all: every session stopped",
+      body: "3 runs stopped. No session starts until you allow it again.",
+    });
     expect(all.dedupeKey).toBe("kill:all");
     expect(all.link).toBe("/");
     expect(all.sessionId).toBeUndefined();
+    expect(
+      producers.killSwitch("h-1", { ...report, scope: "all" }, "Forerunner quit", "quit").title,
+    ).toBe("Forerunner was closed: its work stopped");
     const agent = producers.killSwitch("h-1", { ...report, scope: { agentId: "bob" } }, "ui");
-    expect(agent.title).toBe("Kill switch: one agent stopped");
+    expect(agent.title).toBe("Your agent's work was stopped");
     expect(agent.link).toBe("/");
   });
 

@@ -1690,7 +1690,26 @@ current answer to the same question (matching is case- and whitespace-insensitiv
 `decision.question_normalised`); otherwise it returns the recorded decision and opens nothing.
 The daemon's answer route calls `recordAnswer()` for every answered decision request; a
 different answer to the same question supersedes the older row, the same answer is a no-op.
-`GET /projects/:id/decisions` lists the current decisions for the UI.
+
+A row is one question and the answer in the person's words (design §3.4, §5 "Decision";
+`decisionPairs`): a questions card (`person_questions:<task>`) writes one row per question it
+asked, the question as the card asked it (its step) and the answer as typed; "Go ahead without"
+writes `NO_ANSWER_CHOSEN` for each question; a cancelled task writes nothing. Any other
+decision card writes its first sentence (without ids) and the chosen option's words. Before,
+the row held the card's instructions ("... needs your answers. No specialist works on it:
+answer the questions below ...") as the question and the form's JSON as the answer, and the
+runner's memory lesson made from it was pasted into every specialist's brief. A row from before
+is read as its pairs (`plainRows`) by the view and the runner. The runner's lesson for a
+decision is one sentence (`decisionSentence`): "Decision for Quote page: Where should the page be
+published: ...? Only as a local file for now."
+
+`GET /projects/:id/decisions` (`daemon/decision-views.ts`, `decisionViews`) lists, newest first:
+the answers (`kind: "answer"`) with `decidedByName` (the person's name; "you" for the
+placeholder), the plan the person approved, rejected or asked to change (`kind: "plan"`, from the
+answered intake cards), and the decision records in the project's folder (`kind: "record"`,
+`docs/decisions/*.md` of the first docs root that has them, titled by their first heading,
+`path` the file). The Overview's Decisions show "Q? A. (Robin, 1 Nov)", five at most with
+"All N decisions", and the records as links to Docs.
 
 ### Answers as the person gives them (`src/wiring/request-answers.ts`)
 
@@ -4191,6 +4210,45 @@ specialist approval refusal, the model watch's eval lines, the intake card and t
 calibration and handover reports `chfText` (`src/money-words.ts`, the default rate where no
 day's rate is at hand). The critic reads a "Spent CHF x" claim and checks it against the
 ledger's CHF (`critic.md`).
+
+### Person-level lines and Details (design §3.7, §5)
+
+Every `EventView` carries `audience` (`daemon/event-audience.ts`, no Node, shared with the
+state service's view and the UI's stand-in daemon): `person` for what a person follows a session
+by (`session.started`, `task.started`, `task.files`, `task.finished`, `task.retrying`,
+`critic.verdict`, `session.stopped`, `session.ended`, Docker waits, a person's or another
+agent's move of a running task, merges, budget warnings, errors, chat turns), `detail` for the
+rest (the brief, memory, peers, the queue, each `task.step`, `session.replanned`, the review's
+measurements, the docs status, notifications). A `task.finished` the person's own stop ended is
+a detail: the `session.stopped` line tells it once. The session page shows the person lines and
+puts the rest under **Details**.
+
+A person line comes from `personLine` (`daemon/event-lines.ts`): one line, the task's title in
+quotes (`task.finished`, `critic.verdict`, `critic.review_failed` and `task.blocked_by_findings`
+carry `title`, `task.finished` also `specialist`; `eventViews` fills both in from the task's
+`task.started` line for an event written before), the specialist as the retry card names it
+("the writer" for `writer-marketing`, `saidByName`), no markdown (`plainLine`), cut at a word
+(`cutAtWord`), and "could not do" for a run whose report says it could not do the work although
+its outcome is "done" ("The writer could not do "Style the page": "The work needs something I
+do not have here""). `session.ended` names the counts that happened only ("Session over: 2 done,
+1 needs you. CHF 0.06."; "Stopped: Stop all: nothing done. CHF 0.00."); a task sent back and then
+accepted in the same session counts as done only (the runner's `sentBackNow`). The
+`notification` line names what was sent and never the channels ("telegram skipped (no Telegram
+chat id)": delivery problems are not the session's news). `describeEvent` passes every line
+through `withoutIds` and `plainPlurals` (`daemon/task-words.ts`).
+
+### Reviews view (design §3.5, §5)
+
+`reviewsView` (`daemon/views.ts`, `GET /projects/:id/reviews` and `/tasks/:id/reviews`) gives each
+review its task's status now (`taskStatus`) and counts open findings with `openFindingKeys`: a
+finding the critic files again on each attempt is one (by task and fingerprint, else its
+words), a done or cancelled task has none open, and a session review's findings (the critic's
+self-check of the summary, `task_id` null) are no open work. The verdict counts, the grade trend
+and the average are over the tasks' reviews. `plainEvidence` leaves the critic's audit lines out
+of the evidence (`prompt:`, `run:`, `context:`, `timing:`) and the rest is read without ids and
+with plurals as the number says; the summary too. Before, the header read "17 open findings"
+for three findings filed on four attempts, those of a task accepted since included, and the
+evidence listed the prompt hash and the run id.
 
 ### Session counts (U-072)
 

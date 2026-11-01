@@ -70,7 +70,10 @@ again as soon as the service answers.
 
 ## A project
 
-- **Summary**: one screen the agent keeps current. "Read aloud" speaks it.
+- **Summary**: one screen the agent keeps current. "Read aloud" speaks it. Its **Decisions** read
+  each question you answered with your answer, your name and the day ("Where should the page be
+  published? Only as a local file for now. (Robin, 1 Nov)"), the plan you approved, and the
+  decision records in the project's folder, which open in Docs.
 - **Plan**: milestones and their dependencies.
 - **Tasks**: every task, in the order a session runs them (a task after the tasks it waits for,
   then by priority), with its status in words, who does it, its cost and the critic's call. The
@@ -107,7 +110,11 @@ again as soon as the service answers.
   The filters (status, who does it, a search) stay in the address, so they are still set when
   you come back to the tab.
 - **Docs**: the standard document set the agent maintains.
-- **Reviews**: critic findings and grades over time.
+- **Reviews**: the critic's verdict on each task in words ("accepted", "sent back"), its grade in
+  the verdict's colour, and what is still to fix, counted once per task (a task that is done has
+  nothing open). The critic's evidence is under **Details**; its check of each session's summary
+  is folded under **Session checks**. The "review" link in a task's drawer opens its review
+  highlighted.
 - **Costs**: spend by model, specialist and task, in CHF, with the savings from caching and
   context compression.
 - **Data**: files and datasets the project knows about; agents see metadata and samples, never
@@ -170,9 +177,14 @@ to be asked again.
 ## Sessions
 
 A session starts on a schedule, on a trigger (a pull request comment, CI, an email command) or
-by hand. The live view shows the event stream in plain words, the current task and specialist,
-the step count and the running cost against the cap; escalations are highlighted. Raw output is
-behind a toggle. A session that has ended shows **finished**: its log is complete and the
+by hand. The live view shows the current task and specialist, the step count and the running
+cost against the cap, and a log of what a person follows a session by, one line each: "The coder
+started "Create the page skeleton" (about CHF 0.14).", "Changed index.html.", "The critic
+accepted "Create the page skeleton".", "The designer could not do "Style the page": "The work
+needs something I do not have here"." and how it ended ("Session over: 2 done, 1 needs you. CHF
+0.06."). **Details** adds the internal steps (the brief, memory, each tool call, the notifications
+sent); escalations are highlighted, and raw output is behind a toggle. A session that has ended
+shows **finished**: its log is complete and the
 page no longer waits for events. A session stops cleanly when it reaches 80% of its cap (it finishes the
 current task and starts nothing new), when its wall clock runs out, or when you stop it.
 

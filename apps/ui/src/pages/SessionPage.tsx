@@ -42,6 +42,8 @@ export function SessionPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [filters, setFilters] = useState<Set<Level>>(new Set(LEVELS));
   const [raw, setRaw] = useState(false);
+  /** Design §3.7: the log shows person-level lines; the internals are under Details. */
+  const [details, setDetails] = useState(false);
   const [follow, setFollow] = useState(true);
   const [stopBusy, setStopBusy] = useState(false);
   /** Stop now asks once (design §3.7). */
@@ -139,12 +141,16 @@ export function SessionPage() {
     };
   }, [client, id, appendEvents, streamOptions]);
 
-  const visible = useMemo(() => events.filter((e) => filters.has(e.level)), [events, filters]);
+  const shown = useMemo(
+    () => (details ? events : events.filter((e) => e.audience === "person")),
+    [events, details],
+  );
+  const visible = useMemo(() => shown.filter((e) => filters.has(e.level)), [shown, filters]);
   const counts = useMemo(() => {
     const c: Record<Level, number> = { info: 0, warning: 0, escalation: 0, error: 0 };
-    for (const e of events) c[e.level] += 1;
+    for (const e of shown) c[e.level] += 1;
     return c;
-  }, [events]);
+  }, [shown]);
 
   // Auto-scroll while following; a manual scroll up pauses it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every new visible event
@@ -351,7 +357,19 @@ export function SessionPage() {
             {level} ({counts[level]})
           </button>
         ))}
-        <label className="ml-auto flex items-center gap-1 text-xs">
+        <label
+          className="ml-auto flex items-center gap-1 text-xs"
+          title="Also shows the internal steps: the brief, memory, each tool call, notifications."
+        >
+          <input
+            type="checkbox"
+            checked={details}
+            onChange={(e) => setDetails(e.target.checked)}
+            data-testid="details-toggle"
+          />
+          Details
+        </label>
+        <label className="flex items-center gap-1 text-xs">
           <input
             type="checkbox"
             checked={raw}
@@ -375,7 +393,7 @@ export function SessionPage() {
       >
         {visible.length === 0 ? (
           <p className="p-3 text-neutral-500">
-            {events.length === 0 ? "Waiting for the first event…" : "Nothing matches the filters."}
+            {shown.length === 0 ? "Waiting for the first event…" : "Nothing matches the filters."}
           </p>
         ) : null}
         <ol>
@@ -385,12 +403,19 @@ export function SessionPage() {
               className={`flex flex-col gap-0.5 border-b border-neutral-100 px-2 py-1 dark:border-neutral-900 ${LEVEL_STYLES[e.level]}`}
               data-testid="event-row"
               data-level={e.level}
+              data-audience={e.audience}
               data-seq={e.seq}
             >
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="text-neutral-400">{formatTime(e.at)}</span>
-                <span className="text-neutral-500">#{e.seq}</span>
-                <span className="text-neutral-500">{e.type}</span>
+                {details ? (
+                  <>
+                    <span className="text-neutral-500">#{e.seq}</span>
+                    <span className="text-neutral-500" data-testid="event-type">
+                      {e.type}
+                    </span>
+                  </>
+                ) : null}
                 {e.level !== "info" ? (
                   <Badge tone={e.level === "warning" ? "warn" : "bad"} testId="level-badge">
                     {e.level}

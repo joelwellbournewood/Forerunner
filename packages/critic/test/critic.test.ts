@@ -213,7 +213,7 @@ describe("CriticService: checks run at tier 2+ (H.2)", () => {
       );
       expect(out.verdict).toBe("accept");
       expect(out.evidence).toContain(
-        "checks: 1 command(s) not run at tier 1 (light read); pass checkResults or review at tier 2",
+        "checks: 1 command was not run (a light review reads the work; a full review runs them)",
       );
     } finally {
       await w.close();

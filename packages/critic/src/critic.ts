@@ -389,7 +389,8 @@ export class CriticService {
       preEvidence.push(...ran.map(ranCheckLine));
     } else if (checks.length > 0) {
       preEvidence.push(
-        `checks: ${checks.length} command(s) not run at tier 1 (light read); pass checkResults or review at tier 2`,
+        // Shown under the review's Details (design §5 rule 6): words, no "tier" or "(s)".
+        `checks: ${checks.length === 1 ? "1 command was" : `${checks.length} commands were`} not run (a light review reads the work; a full review runs them)`,
       );
       // The critic is told which commands were not run and that this is the tier's design,
       // so it grades the diff by reading instead of escalating for "missing" check results.

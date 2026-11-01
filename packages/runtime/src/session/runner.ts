@@ -43,6 +43,7 @@ import {
 } from "../loop/ports.ts";
 import { isSandboxNotReady } from "../sandbox/readiness.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
+import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
@@ -1448,6 +1449,9 @@ export class SessionRunner {
             "task.finished",
             {
               taskId: task.id,
+              // The log's line names the task and who did it (design §3.7, §5 rule 3).
+              title: task.title,
+              specialist: item.specialist,
               outcome: result.outcome,
               costUsdMicro: result.costUsdMicro,
               summary: result.summary,
@@ -1589,6 +1593,7 @@ export class SessionRunner {
               }
               await emit("critic.review_failed", {
                 taskId: task.id,
+                title: task.title,
                 warning: `critic review failed: ${reviewed.error}${
                   humanRequestId ? "; asked you to rework, accept or cancel" : ""
                 }`,
@@ -2075,7 +2080,9 @@ export class SessionRunner {
         const all: LessonCandidate[] = [
           ...lessonCandidates,
           ...decisions.map((d) => ({
-            text: `Decision for ${project?.name ?? "the project"}: ${d.question} -> ${d.chosen}${d.rationale ? ` (${d.rationale})` : ""}`,
+            // One sentence a specialist can use (design §5 "Decision"): the question and the
+            // person's answer, never the card's instructions or the form's JSON.
+            text: `Decision for ${project?.name ?? "the project"}: ${decisionSentence(d.question, d.chosen)}${d.rationale ? ` (${d.rationale})` : ""}`,
             tags: ["decision", "human"],
             confidence: 0.8,
             source: `session:${session.id};human:${d.decided_by}`,
@@ -2281,8 +2288,22 @@ export class SessionRunner {
     // summary and the task states are written, since that is what it checks. A session that
     // only filed its plan did no work to review.
     let sessionReview: SessionReviewOutcome | null = null;
+    // A session that ended no task one way or another (stopped in its first seconds, nothing
+    // planned) did no work to grade (design §4.8): before, it read "Session review: accepted
+    // (grade 100)".
+    const endedAnyTask = [
+      completed,
+      inReview,
+      failed,
+      needsHuman,
+      retried,
+      blockedByFindings,
+      cancelled,
+      reviewFailed,
+    ].some((l) => l.length > 0);
     if (
       this.deps.critic &&
+      endedAnyTask &&
       stopReason !== "plan_awaiting_approval" &&
       stopReason !== NOTHING_RUNNABLE
     ) {
@@ -2318,6 +2339,11 @@ export class SessionRunner {
     // task, counted once: sent back, not also "not started" (U-072). It stays in the handoff's
     // `next`, where the next session and the peers read what is left.
     const notStarted = [...new Set(skipped)].filter((id) => !retried.includes(id));
+    // A task sent back and then accepted, failed or handed to the person in this same session
+    // is counted where it ended, once (design §4.3: the rework runs in the session).
+    const sentBackNow = retried.filter(
+      (id) => !completed.includes(id) && !failed.includes(id) && !needsHuman.includes(id),
+    );
     await emit("session.ended", {
       status: finalStatus,
       stopReason,
@@ -2329,7 +2355,7 @@ export class SessionRunner {
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
       skipped: notStarted.length,
-      retried: retried.length,
+      retried: sentBackNow.length,
       blockedByFindings: blockedByFindings.length,
       lessonsRecorded,
       sessionReviewGrade: sessionReview?.grade ?? null,
@@ -2440,6 +2466,7 @@ export class SessionRunner {
       "critic.verdict",
       {
         taskId: request.task.id,
+        title: request.task.title,
         reviewId: outcome.reviewId,
         tier: outcome.tier,
         verdict: outcome.verdict,
@@ -2545,6 +2572,7 @@ export class SessionRunner {
     }
     await input.emit("task.blocked_by_findings", {
       taskId: input.task.id,
+      title: input.task.title,
       path: input.path,
       warning: `cannot close "${input.task.title}": ${findings.length} open critic finding(s) remain${
         humanRequestId ? "; asked you to rework, accept or cancel" : ""
@@ -2712,7 +2740,10 @@ export class SessionRunner {
     sinceIso: string | null,
   ): Promise<{ question: string; chosen: string; rationale: string; decided_by: string }[]> {
     const rows = await this.deps.store.decision.current(projectId);
-    return rows.filter((d) => !sinceIso || d.created_at > sinceIso);
+    // A row from before the per-question rows is read as its plain pairs (`plainRows`).
+    return rows
+      .filter((d) => !sinceIso || d.created_at > sinceIso)
+      .flatMap((d) => plainRows(d).map((pair) => ({ ...d, ...pair })));
   }
 
   /**

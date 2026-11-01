@@ -348,6 +348,7 @@ export const EVENTS: EventView[] = [
     cost: money(0),
     at: "2026-10-19T19:00:00.000Z",
     level: "info",
+    audience: "person",
   },
   {
     id: "ev_2",
@@ -359,6 +360,7 @@ export const EVENTS: EventView[] = [
     cost: money(0),
     at: "2026-10-19T19:00:05.000Z",
     level: "info",
+    audience: "person",
   },
   {
     id: "ev_3",
@@ -370,6 +372,7 @@ export const EVENTS: EventView[] = [
     cost: money(0),
     at: "2026-10-19T20:30:00.000Z",
     level: "warning",
+    audience: "person",
   },
   {
     id: "ev_4",
@@ -381,6 +384,7 @@ export const EVENTS: EventView[] = [
     cost: money(0),
     at: "2026-10-19T20:45:00.000Z",
     level: "escalation",
+    audience: "person",
   },
   {
     id: "ev_5",
@@ -392,6 +396,7 @@ export const EVENTS: EventView[] = [
     cost: money(4_500_000),
     at: "2026-10-19T21:09:00.000Z",
     level: "info",
+    audience: "person",
   },
 ];
 
@@ -700,13 +705,44 @@ export const DECISIONS: DecisionView[] = [
   {
     id: "dec_1",
     projectId: "proj_atlas",
+    kind: "answer",
     question: "Which search backend should the docs site use?",
     options: ["Static index built at deploy time", "Hosted search service"],
     chosen: "Static index built at deploy time",
     decidedBy: "human_alice",
+    decidedByName: "Alice",
     rationale: "No runtime dependency and no per-query cost.",
     supersedes: null,
+    path: null,
     createdAt: "2026-10-18T09:00:00.000Z",
+  },
+  {
+    id: "intake_atlas",
+    projectId: "proj_atlas",
+    kind: "plan",
+    question: "The plan for Atlas",
+    options: [],
+    chosen: "Approved.",
+    decidedBy: "human_alice",
+    decidedByName: "Alice",
+    rationale: "",
+    supersedes: null,
+    path: null,
+    createdAt: "2026-10-17T09:00:00.000Z",
+  },
+  {
+    id: "record:docs/decisions/0001-static-search.md",
+    projectId: "proj_atlas",
+    kind: "record",
+    question: "Static search index",
+    options: [],
+    chosen: "docs/decisions/0001-static-search.md",
+    decidedBy: "",
+    decidedByName: null,
+    rationale: "",
+    supersedes: null,
+    path: "docs/decisions/0001-static-search.md",
+    createdAt: "2026-10-17T08:00:00.000Z",
   },
 ];
 
@@ -1175,13 +1211,17 @@ export const REVIEWS: ReviewView[] = [
     id: "rev_2",
     taskId: "task_2",
     taskTitle: "Add the search box to the header",
+    taskStatus: "ready",
     sessionId: "sess_1",
     criticModel: "sonnet-5.5",
     tier: 1,
     grade: 64,
     confidence: 0.8,
     verdict: "revise",
-    evidence: ["criteria: 1 of 2 met", "checks: tests not run at tier 1"],
+    evidence: [
+      "criteria: 1 of 2 met",
+      "checks: 1 command was not run (a light review reads the work; a full review runs them)",
+    ],
     summary: "The box renders but results take 400 ms; the 200 ms criterion is unmet.",
     findings: [
       {
@@ -1205,13 +1245,14 @@ export const REVIEWS: ReviewView[] = [
     id: "rev_1",
     taskId: "task_1",
     taskTitle: "Index the documentation pages",
+    taskStatus: "done",
     sessionId: "sess_1",
     criticModel: "sonnet-5.5",
     tier: 1,
     grade: 82,
     confidence: 0.9,
     verdict: "accept",
-    evidence: ["criteria: 2 of 2 met", "prompt: critic@1.0.0"],
+    evidence: ["criteria: 2 of 2 met", "ran: npm run build"],
     summary: "The index works; the build is slow but under the limit.",
     findings: [
       {
@@ -1235,6 +1276,7 @@ export const REVIEWS: ReviewView[] = [
     id: "rev_0",
     taskId: null,
     taskTitle: null,
+    taskStatus: null,
     sessionId: "sess_1",
     criticModel: "sonnet-5.5",
     tier: 1,

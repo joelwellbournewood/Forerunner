@@ -54,13 +54,14 @@ describe("session counts (U-072)", () => {
       expect(result.summary).toMatch(
         /^Stopped after the task, as asked\. "Add clamp" is ready to continue\. CHF \d+\.\d{2}\.$/,
       );
-      // The session log's last line, as the live view shows it.
+      // The session log's last line, as the live view shows it: the counts that happened, no
+      // zero counts (design §5 rule 5).
       const ended = (await w.store.event.list(result.sessionId)).find(
         (e) => e.type === "session.ended",
       );
       expect(
         describeEvent("session.ended", (ended?.payload ?? {}) as Record<string, unknown>),
-      ).toContain("0 done, 0 failed, 0 need you, 1 sent back, 0 in review, 0 not started");
+      ).toMatch(/^Stopped after the task, as asked: 1 sent back\. CHF \d+\.\d{2}\.$/);
       // The notification title, built from the run's lists as the daemon builds it.
       const note = sessionEnded("h-1", {
         sessionId: result.sessionId,
@@ -75,9 +76,11 @@ describe("session counts (U-072)", () => {
         inReview: result.inReview,
         skipped: result.skipped,
         agentName: "Alice",
+        projectName: "Clamp",
       });
-      // One task, counted once: sent back, not also "not started" for its rework in the queue.
-      expect(note.title).toBe(`Alice's session ${result.status}: 0 done, 1 sent back`);
+      // Design §5, "Notification": the project and the result's first point, not a count list.
+      expect(note.title).toBe("Clamp: stopped after the task, as asked");
+      expect(note.body).toMatch(/^Stopped after the task, as asked\. .*Open the session/);
       // The session review does not read it as fine.
       expect(result.sessionReview?.grade).toBeLessThan(100);
       expect(result.sessionReview?.findings.map((f) => f.description)).toContain(

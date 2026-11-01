@@ -224,9 +224,10 @@ describe("notifications wired into the daemon", () => {
     const row = await insertRequest({ blocking: false, why: "Which colour for the button?" });
     const record = await pending;
     expect(record).toMatchObject({ urgency: "normal", outcome: "delivered" });
+    // What the card asks and what to do (design §5), not "Information is needed".
     expect(record.notification).toMatchObject({
-      title: "Information is needed",
-      body: "Which colour for the button?",
+      title: "Which colour for the button?",
+      body: "Answer it in the Inbox.",
       link: "/inbox",
       dedupeKey: `request:${row.id}`,
     });
@@ -242,9 +243,54 @@ describe("notifications wired into the daemon", () => {
       "--urgency=normal",
       "--",
     ]);
-    expect(argv?.[4]).toBe("Information is needed");
+    expect(argv?.[4]).toBe("Which colour for the button?");
     const rows = await rt.store.auditLog.list({ tool: "notify.desktop" } as never, { limit: 50 });
     expect(rows.some((r) => r.allowed && r.input_summary.includes(record.id))).toBe(true);
+  });
+
+  it("a card about a task names the project and the task, never an id (design §5, 'Notification')", async () => {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Style the page in styles.css",
+      outcome: "the page is styled",
+      status: "needs_human",
+      author_agent: rt.agent.id,
+    } as never);
+    const pending = nextRecord("request_blocking");
+    await rt.store.humanRequest.insert({
+      human_id: rt.human.id,
+      project_id: projectId,
+      task_id: task.id,
+      session_id: null,
+      kind: "approval",
+      why: `Retry ladder exhausted for "Style the page in styles.css" after 4 failed attempt(s) (ceiling opus) on task ${task.id}`,
+      steps: [],
+      options: ["Try again", "Mark done anyway", "Cancel task"],
+      blocking: true,
+      risk: "high",
+      change_card: {
+        key: "critic:signoff",
+        title: '"Style the page in styles.css" failed 4 times',
+        said: "The work needs something I do not have here.",
+        said_by: "designer",
+        reason: "failed",
+      },
+    });
+    const record = await pending;
+    expect(record.notification.title).toBe('Demo: "Style the page in styles.css" failed 4 times');
+    expect(record.notification.body).toBe(
+      'The designer said: "The work needs something I do not have here." Answer it in the Inbox.',
+    );
+    const recent = (await (await req("/notifications/recent")).json()) as {
+      notifications: { title: string; body: string }[];
+    };
+    for (const n of recent.notifications) {
+      expect(`${n.title} ${n.body}`).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\(s\)|is needed/,
+      );
+      expect(n.title.length).toBeLessThanOrEqual(60);
+      expect(n.body.length).toBeLessThanOrEqual(140);
+    }
   });
 
   it("a blocking human request is urgent (critical on the OS notifier)", async () => {
@@ -252,7 +298,8 @@ describe("notifications wired into the daemon", () => {
     await insertRequest({ blocking: true, why: "Merge to main?", kind: "approval" });
     const record = await pending;
     expect(record).toMatchObject({ urgency: "urgent", outcome: "delivered" });
-    expect(record.notification.title).toBe("An approval is needed (work is blocked)");
+    // What the card asks, not "An approval is needed (work is blocked)" (design §5).
+    expect(record.notification.title).toBe("Merge to main?");
     expect(runs.at(-1)?.[2]).toBe("--urgency=critical");
   });
 
@@ -300,8 +347,8 @@ describe("notifications wired into the daemon", () => {
     expect(data).toMatchObject({
       id: record.id,
       kind: "request_opened",
-      title: "Information is needed",
-      body: "Shell test",
+      title: "Shell test",
+      body: "Answer it in the Inbox.",
       level: "normal",
       route: "/inbox",
       humanId: rt.human.id,
@@ -373,16 +420,20 @@ describe("notifications wired into the daemon", () => {
     expect(record).toMatchObject({ urgency: "normal", outcome: "delivered" });
     const sessionId = record.notification.sessionId;
     expect(sessionId).toBeTruthy();
-    // The summary's categories, done always and the others when any (U-072).
-    expect(record.notification.title).toMatch(
-      /^Alice's session \w+: \d+ done(, \d+ (failed|needs? you|sent back|in review|not started))*$/,
-    );
+    // Design §5, "Notification": the project and the result's first point, at most 60
+    // characters; the body one sentence and where to look, at most 140.
+    expect(record.notification.title).toMatch(/^Demo: \S/);
+    expect(record.notification.title.length).toBeLessThanOrEqual(60);
+    expect(record.notification.body.length).toBeLessThanOrEqual(140);
+    expect(record.notification.body).toMatch(/Open the session for the details\.$/);
     expect(record.notification.link).toBe(`/sessions/${sessionId}`);
     expect(record.notification.projectId).toBe(projectId);
     const events = (await (await req(`/sessions/${sessionId}/events`)).json()) as Json[];
     const logged = events.find((e) => e.type === "notification");
     expect(logged).toBeDefined();
-    expect(str((logged as Json).text)).toContain("session");
+    // The log names what was sent, never the channels (design §5, "Notification").
+    expect(str((logged as Json).text)).toMatch(/^Notified you: "Demo: .+"\.$/);
+    expect((logged as Json).audience).toBe("detail");
   });
 
   it("a critic escalation on the bus is a critic_verdict raised to normal; one that filed a request is left to the request path", async () => {
@@ -402,9 +453,11 @@ describe("notifications wired into the daemon", () => {
     });
     const record = await pending;
     expect(record).toMatchObject({ urgency: "normal", outcome: "delivered" });
+    // Design §5, "Notification": the project and what happened, never "Critic: escalate".
     expect(record.notification).toMatchObject({
       kind: "critic_verdict",
-      title: "Critic: escalate (grade 40)",
+      title: "Demo: a task goes to a stronger model",
+      body: "The tests do not cover the new branch. Open Reviews for the details.",
       link: `/projects/${projectId}/reviews`,
       dedupeKey: "review:review-1",
     });
@@ -511,12 +564,16 @@ describe("notifications wired into the daemon", () => {
     expect(killed.status).toBe(200);
     const record = await pending;
     expect(record).toMatchObject({ urgency: "urgent", outcome: "delivered" });
+    // Design §4.9, §5: whose stop it was and what happens next; the person's own reason is not
+    // echoed back to them, and no "Kill switch", "(s)" or tokens.
     expect(record.notification).toMatchObject({
-      title: "Kill switch: everything stopped",
+      title: "Stop all: every session stopped",
       link: "/",
       dedupeKey: "kill:all",
     });
-    expect(record.notification.body).toContain("Reason: pull the plug");
+    expect(record.notification.body).toMatch(
+      /^(\d+ runs?|0 runs) stopped\. No session starts until you allow it again\.$/,
+    );
     expect(runs.at(-1)?.[2]).toBe("--urgency=critical");
     expect((await post("/kill/resume")).status).toBe(200);
   });

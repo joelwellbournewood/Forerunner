@@ -31,6 +31,40 @@ describe("Live session view", () => {
     expect(screen.queryByTestId("event-raw")).not.toBeInTheDocument();
   });
 
+  it("shows person-level lines without event type names; Details adds the internals (design §3.7)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    // An internal step of the session, as the daemon marks it: under Details only.
+    harness.daemon.state.events.push({
+      id: "ev_6",
+      sessionId: "sess_1",
+      seq: 6,
+      type: "memory.loaded",
+      text: "Memory: 3 lessons, 429 of 1500 tokens.",
+      payload: { lessons: 3, tokens: 429, budget: 1500 },
+      cost: { usdMicro: 0, chfMicro: 0 },
+      at: "2026-10-19T21:10:00.000Z",
+      level: "info",
+      audience: "detail",
+    });
+    renderApp("/sessions/sess_1", harness);
+    const rows = await screen.findAllByTestId("event-row");
+    expect(rows.every((r) => r.getAttribute("data-audience") === "person")).toBe(true);
+    const log = screen.getByTestId("event-log");
+    expect(log).not.toHaveTextContent("Memory: 3 lessons");
+    expect(screen.queryByTestId("event-type")).not.toBeInTheDocument();
+    expect(log).not.toHaveTextContent("session.started");
+
+    await user.click(screen.getByTestId("details-toggle"));
+    await waitFor(() => expect(screen.getAllByTestId("event-row")).toHaveLength(rows.length + 1));
+    expect(log).toHaveTextContent("Memory: 3 lessons, 429 of 1500 tokens.");
+    expect(screen.getAllByTestId("event-type").map((t) => t.textContent)).toContain(
+      "memory.loaded",
+    );
+    await user.click(screen.getByTestId("details-toggle"));
+    await waitFor(() => expect(screen.getAllByTestId("event-row")).toHaveLength(rows.length));
+  });
+
   it("reads the session summary aloud through the daemon", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

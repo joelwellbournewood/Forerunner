@@ -1294,6 +1294,21 @@ describe("the UI client against the real daemon", () => {
         (r) => r.taskId === task.id && r.status === "open",
       ),
     ).toBe(false);
+    // Overview → Decisions (design §3.4, §5 "Decision"): each question with its answer in the
+    // person's words and their name; never the card's instructions, JSON or an id.
+    const decisions = (await client.decisions(projectId)).filter((d) => d.kind === "answer");
+    expect(decisions.map((d) => [d.question, d.chosen, d.decidedByName])).toEqual(
+      expect.arrayContaining([
+        ["Stack: what do you choose?", "TypeScript and Hono", "J"],
+        ["Hosting: what do you choose?", "Cloudflare", "J"],
+      ]),
+    );
+    for (const d of decisions) {
+      expect(`${d.question} ${d.chosen}`).not.toMatch(
+        /[{}]|needs your answers|answer the questions/,
+      );
+      expect(d.options).toEqual([]);
+    }
   });
 
   it("a failed plan from the brief: the project page reads why, and Retry drafts it again (U-046)", async () => {
@@ -2060,6 +2075,82 @@ describe("the UI client against the real daemon: the task drawer after a session
     expect(retried.runs.filter((r) => r.kind === "review" && (r.report || r.files.length))).toEqual(
       [],
     );
+  });
+
+  it("Reviews: a done task's findings are no open work, each review names its task's status, the evidence has no run ids or prompt hashes (design §3.5)", async () => {
+    const project = (await client.projects()).find((p) => p.name === "Drawer");
+    expect(project).toBeDefined();
+    const view = await client.reviews(project?.id ?? "", { limit: 200 });
+    const tasks = await client.tasks(project?.id ?? "");
+    // Both tasks are done (the first case ran them): nothing is open work any more.
+    expect(tasks.every((t) => t.status === "done")).toBe(true);
+    expect(view.openFindings).toBe(0);
+    const taskReviews = view.reviews.filter((r) => r.taskId);
+    expect(taskReviews.length).toBeGreaterThan(0);
+    for (const r of taskReviews) {
+      expect(r.taskStatus).toBe("done");
+      expect(r.openFindings).toBe(0);
+      for (const e of r.evidence)
+        expect(String(e)).not.toMatch(
+          /^(prompt:|run:|context:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
+        );
+    }
+    // The trend and the counts are the tasks' reviews; a session check is not among them.
+    expect(view.gradeTrend.every((p) => p.taskId !== null)).toBe(true);
+  });
+
+  it("the session log: person lines by default with names and no type names, the internals under Details (design §3.7)", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Log words", goal: "A log to read" });
+    await client.createTask(project.id, {
+      title: "Write the notes in notes.md",
+      outcome: "notes.md holds the notes",
+      riskTier: 1,
+    });
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+      30_000,
+    );
+    // The notification of the session's end is written after the end; wait for it.
+    await eventually(
+      async () => (await client.sessionEvents(sessionId)).some((e) => e.type === "notification"),
+      "the end's notification line",
+      async () => (await client.sessionEvents(sessionId)).map((e) => e.type).join(", "),
+      10_000,
+    );
+    const events = await client.sessionEvents(sessionId);
+    expect(events.every((e) => e.audience === "person" || e.audience === "detail")).toBe(true);
+    const person = events.filter((e) => e.audience === "person").map((e) => e.text);
+    const detail = events.filter((e) => e.audience === "detail");
+    // The internals are Details: the brief, memory, each tool step and the notification.
+    expect(detail.map((e) => e.type)).toEqual(
+      expect.arrayContaining(["session.brief", "memory.loaded", "task.step", "notification"]),
+    );
+    for (const line of person) {
+      expect(line, line).not.toMatch(
+        /\b(?:session|task|critic|memory|queue|peers|docs|inbox)\.[a-z_]+/,
+      );
+      expect(line, line).not.toMatch(/\*\*|\(s\)|\bUSD\b|[{}]/);
+      expect(line, line).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
+      );
+      expect(line, line).not.toMatch(/telegram|skipped \(|email skipped|desktop unavailable/i);
+    }
+    expect(person.length).toBeLessThanOrEqual(10);
+    expect(person).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/started "Write the notes in notes\.md"/),
+        expect.stringMatching(/^The critic accepted "Write the notes in notes\.md"\.$/),
+      ]),
+    );
+    expect(person.at(-1)).toMatch(/^Session over: 1 done\. CHF \d+\.\d{2}\.$/);
+    // Even under Details, the notification line names no channel that was not set up.
+    const note = detail.find((e) => e.type === "notification");
+    expect(note?.text).toMatch(/^Notified you: ".+"\.$/);
   });
 });
 

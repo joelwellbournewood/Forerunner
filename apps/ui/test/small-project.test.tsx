@@ -30,9 +30,12 @@ describe("small-project mode (B.6)", () => {
       // The daemon's run order (design §3.5): what a task waits for first, then priority.
     ).toEqual(["task_3", "task_1", "task_2"]);
     expect(flat).toHaveTextContent("Index the documentation pages");
-    expect(flat).toHaveTextContent("tier 1");
+    // The review level in words, never "tier N" (design §2, §5 rule 6).
+    expect(flat).toHaveTextContent("light review");
+    expect(flat).not.toHaveTextContent(/tier \d/);
     expect(screen.getByTestId("small-project-notice")).toHaveTextContent(/one milestone/i);
-    expect(screen.getByTestId("small-project-notice")).toHaveTextContent(/tier 0/);
+    expect(screen.getByTestId("small-project-notice")).toHaveTextContent(/automatic checks only/);
+    expect(screen.getByTestId("small-project-notice")).not.toHaveTextContent(/tier/);
     const milestone = screen.getByTestId("small-project-milestone");
     expect(milestone).toHaveTextContent("Search works");
     expect(milestone).toHaveTextContent("Header search returns results under 200 ms");

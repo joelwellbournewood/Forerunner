@@ -317,6 +317,19 @@ store and persists a `Review` with `session_id` set and `task_id` null:
   A cost claim more than 10% off is medium. An empty summary of a finished session with a plan
   is low.
 
+Money in its findings and evidence is CHF (design §5 rule 7): `sessionChecks` converts at the
+ledger's own rate (`ledgerChfMicro / ledgerUsdMicro`), else `DEFAULT_CHF_PER_USD` ("Session cost
+CHF 0.20 exceeded its estimate CHF 0.10 by 100%"); it said "USD 0.2000". The runner does not
+ask for a session review when the session ended no task (stopped in its first seconds, nothing
+planned): there is no work to grade, and it read "Session review: accepted (grade 100)". The
+Reviews tab folds these session checks under "Session checks" and does not count their findings
+as open work (`runtime.md`, "Reviews view").
+
+The task review's note that a light review ran no command reads "checks: 1 command was not run
+(a light review reads the work; a full review runs them)" (no "tier", no "(s)"). The `prompt:`,
+`run:`, `context:` and `timing:` evidence lines stay on the review row for the audit; the
+daemon's view leaves them out of what a person reads.
+
 Grade is 100 minus a penalty per finding (critical 50, high 30, medium 15, low 5). At tier 1+,
 `CriticService.review({ kind: "session" })` runs the same checks, sends the plan, summary,
 estimate and spend to the model as the Session section, takes the lower of the two grades and
