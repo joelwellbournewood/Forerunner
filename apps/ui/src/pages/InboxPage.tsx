@@ -392,14 +392,21 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
 
   // Design §3.8: after an answer the card is replaced by "Done: <what happens next>" for as
   // long as the page is open; the Answered list keeps it after that.
-  const [done, setDone] = useState<{ id: string; line: string; title: string }[]>([]);
+  const [done, setDone] = useState<
+    { id: string; line: string; title: string; request: HumanRequestView }[]
+  >([]);
   const answer = async (request: HumanRequestView, value: unknown) => {
     const answered = await client.answerRequest(request.id, {
       version: request.version,
       answer: value,
     });
     setDone((prev) => [
-      { id: request.id, title: request.title ?? request.why, line: doneLine(answered, value) },
+      {
+        id: request.id,
+        title: request.title ?? request.why,
+        line: doneLine(answered, value),
+        request: answered,
+      },
       ...prev.filter((d) => d.id !== request.id),
     ]);
     inbox.reload();
@@ -485,6 +492,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
               role="status"
             >
               {d.line}
+              <FollowUp request={d.request} onDone={inbox.reload} />
             </li>
           ))}
         </ul>
@@ -571,6 +579,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
                 ) : null}
                 <p className="text-neutral-700 dark:text-neutral-300">
                   {r.outcome ?? (r.answer !== null ? `You answered: ${answerText(r.answer)}.` : "")}
+                  <FollowUp request={r} onDone={inbox.reload} />
                 </p>
               </li>
             ))}
@@ -578,6 +587,55 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
         </details>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * What can still be done about an answered card (design §3.8): answers that came after their
+ * task had finished offer "Redo with these answers", the task's own Redo (or Reopen, Try
+ * again), so its next attempt reads them.
+ */
+function FollowUp({ request, onDone }: { request: HumanRequestView; onDone: () => void }) {
+  const client = useClient();
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const follow = request.followUp;
+  // Once done, the line stays (the reloaded card offers nothing more: its task moved again).
+  if (said)
+    return (
+      <span className="ml-2 text-xs" data-testid="follow-up-done">
+        {said}
+      </span>
+    );
+  if (!follow || !request.taskId) return null;
+  const taskId = request.taskId;
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { task } = await client.task(taskId);
+      const moved = await client.taskAction(taskId, {
+        version: task.version,
+        action: follow.action,
+        note: "Use the answers the person gave in the Inbox.",
+      });
+      setSaid(moved.change?.sentence ?? "Done.");
+      onDone();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="ml-2 inline-flex flex-wrap items-center gap-2">
+      <Button onClick={() => void run()} disabled={busy} data-testid="follow-up">
+        {follow.label}
+      </Button>
+      <span className="text-xs text-neutral-600 dark:text-neutral-400">{follow.explain}</span>
+      {error ? <span role="alert">{error}</span> : null}
+    </span>
   );
 }
 

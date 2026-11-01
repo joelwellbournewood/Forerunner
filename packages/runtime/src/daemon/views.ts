@@ -491,6 +491,7 @@ export function requestView(
     details: words.details,
     outcome: words.outcome,
     answeredAt: r.answered_at ?? null,
+    followUp: words.followUp ?? null,
   };
 }
 

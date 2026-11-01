@@ -294,6 +294,18 @@ export class CommandExecutor {
       }
       return g.perform();
     }
+    // Design §3.8: an Inbox card answered from chat or voice that needs a device confirmation
+    // (a high-risk card) is not filed again as a second card about the first, which no chat
+    // yes could confirm: the reply points to the card, which is where it is answered.
+    if (g.card.command === "request.answer" && g.decision === "needs_device")
+      return refusal(
+        new ForerunnerError(
+          "approval_required",
+          `Answer it on its card in the Inbox (${g.card.what.replace(/^the request /, "")}): it is open there, and nothing else was filed.`,
+          { details: { reason: "answer_on_card" } },
+        ),
+        g.card,
+      );
     return this.createPending(g.decision, g.card, g.ctx, g.perform, g.redecide);
   }
 

@@ -1957,6 +1957,23 @@ waits on you" while 4 tasks waited on it).
 - **No echoes** (`@forerunner/commands` executor `post`, commands.md): a change the person made
   (Tasks tab, chat, voice, a project switch) is no Inbox Update; the session's Update no longer
   quotes what the person said (`describeHeard` removed).
+- **Person tasks at once**: `isPersonTask` also reads a first-person title ("Confirm the hosting
+  choice with me", "Ask me …"); `POST /projects/:id/tasks` runs `syncApprovals()` after adding a
+  ready person task (New task's "Me: ask me in the Inbox"), so its question card is there when
+  the dialog closes and no session runs it.
+- **Late answers**: a questions card answered after its task finished reads "Your answers came
+  after "X" had finished. They are kept in the decision record." and its view carries
+  `followUp` ("Redo with these answers": the task's Redo, Reopen or Try again; the next brief
+  reads the answers through `answersBlockFor`).
+- **Counts after an Undo**: `POST /changes/:id/undo` sends `inbox` (an undo can bring a withdrawn
+  card back), so the header follows at once.
+- **The Start dialog before the plan is approved**: with no ready task and the plan from the
+  brief pending, start-check's `blocked` reads "Nothing can run yet: the plan from your brief
+  waits for your approval." with **Review the plan** (to the Inbox); while it is drafted, "…
+  is being drafted." with no button.
+- **Chat answering a high-risk card**: `request.answer` whose card needs a device confirmation
+  is refused with a pointer to the card ("Answer it on its card in the Inbox …"), no second card
+  (commands.md).
 - **The Tasks tab** reads which card holds a task (`cardKindOf`, `TaskDisplay.blocker.cardKind`):
   a task waiting on its retry card is "Needs your decision: tried 4 times" and offers Answer, Try
   again (now offered from `needs_human` too; it withdraws the card) and Cancel, never Go ahead

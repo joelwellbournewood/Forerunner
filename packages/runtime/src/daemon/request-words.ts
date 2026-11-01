@@ -56,6 +56,12 @@ export interface RequestWords {
   details: string[];
   /** Once answered or withdrawn: what happened and what is next, in one line; null while open. */
   outcome: string | null;
+  /**
+   * What the person can do next about an answered card, where there is something: answers that
+   * came after their task had finished offer "Redo with these answers" (the task's Redo, Reopen or
+   * Try again; its next brief carries the answers). Null otherwise.
+   */
+  followUp?: { label: string; explain: string; action: "redo" | "reopen" | "try_again" } | null;
 }
 
 /** What the card needs beyond its row, read when it is shown (true now, design §5 rule 4). */
@@ -557,6 +563,27 @@ export function requestWords(
       closedLine(r, ctx) ??
       outcome ??
       (given ? `You answered "${cutWords(given, 80)}".` : "Answered.");
+    // Answers that came after the task had moved on (design §3.8): they can still be used.
+    if (
+      key?.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix) &&
+      card.outcome === "task_moved_on"
+    ) {
+      const action =
+        ctx.taskStatus === "done"
+          ? "redo"
+          : ctx.taskStatus === "cancelled"
+            ? "reopen"
+            : ctx.taskStatus === "failed"
+              ? "try_again"
+              : null;
+      words.followUp = action
+        ? {
+            label: "Redo with these answers",
+            explain: "Opens the task again; its next attempt reads your answers.",
+            action,
+          }
+        : null;
+    }
   }
   return words;
 }

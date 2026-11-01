@@ -90,7 +90,8 @@ export function isPersonQuestionsRequest(row: Pick<HumanRequestRow, "change_card
 // ---------------------------------------------------------------------------------------
 // Which task is the person's
 
-const PERSON = String.raw`(?:the\s+)?(?:human|person|owner|project\s+owner)`;
+// "me": a title the person wrote for themself ("Confirm the hosting choice with me", "Ask me …").
+const PERSON = String.raw`(?:(?:the\s+)?(?:human|person|owner|project\s+owner)|me)`;
 /** 1.0.3 plans: "Confirm stack, hosting and repository with the human". */
 const LEGACY_TITLE = new RegExp(
   String.raw`\b(?:confirm|decide|agree|clarify|choose|settle|discuss|check|align|ask)\b[^.?!]{0,120}?\b(?:with|by|from)\s+${PERSON}\b`,

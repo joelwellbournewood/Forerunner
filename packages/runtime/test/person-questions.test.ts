@@ -45,6 +45,16 @@ describe("which tasks are the person's (U-022)", () => {
     );
   });
 
+  it("a title the person wrote in the first person asks them (walk-needs-me: 'Confirm the hosting choice with me' went to a coder)", () => {
+    for (const title of [
+      "Confirm the hosting choice with me",
+      "Check with me which quotes to use",
+      "Ask me which colours to use",
+      "Decide the domain with me",
+    ])
+      expect(isPersonTask({ title, specialist: null }), title).toBe(true);
+  });
+
   it("work for a specialist is not mistaken for a question", () => {
     for (const title of [
       "Add a user confirmation dialog",
@@ -52,6 +62,8 @@ describe("which tasks are the person's (U-022)", () => {
       "Write the README",
       "Confirm the build passes on Windows",
       "Let a person reset their password",
+      "Add a 'remember me' checkbox",
+      "Write the about me page",
     ])
       expect(isPersonTask({ title, specialist: "coder" }), title).toBe(false);
   });

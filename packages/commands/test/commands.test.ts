@@ -782,13 +782,19 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       human_id: w.human.id,
       risk: "high",
     });
+    const before = await w.store.humanRequest.count();
     const p = await w.executor.execute({
       name: "request.answer",
       params: { request: high.id, answer: "yes" },
       ctx: w.ctx(),
     });
-    expect(p.status).toBe("pending");
-    expect((p as { decision: string }).decision).toBe("needs_device");
+    // A high-risk card still needs more than a chat word: the answer is not applied. Design
+    // §3.8: the reply points to the card itself instead of filing a second card about it.
+    expect(p.status).toBe("refused");
+    expect((p as { code?: string }).code).toBe("approval_required");
+    expect((p as { reason?: string }).reason).toContain("Answer it on its card in the Inbox");
+    expect((await w.store.humanRequest.mustGet(high.id)).status).toBe("open");
+    expect(await w.store.humanRequest.count()).toBe(before);
     await w.store.close();
   });
 

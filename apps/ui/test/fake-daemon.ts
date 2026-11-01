@@ -1454,6 +1454,40 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       sentence,
       reversible: true,
     });
+    // As the daemon: a task only the person can do is a question card at once (design §3.8).
+    if (task.status === "ready" && task.specialist === "person") {
+      task.status = "needs_human";
+      const questions = task.acceptanceCriteria.length ? task.acceptanceCriteria : [task.title];
+      state.requests.push({
+        id: nextId("req"),
+        projectId: id,
+        projectName: project.name,
+        taskId: task.id,
+        taskTitle: task.title,
+        sessionId: null,
+        kind: "decision",
+        why: `"${task.title}" needs your answers.`,
+        steps: questions,
+        options: ["Cancel the task"],
+        blocking: true,
+        risk: "low",
+        changeCard: {
+          key: `person_questions:${task.id}`,
+          task_id: task.id,
+          task_title: task.title,
+          questions,
+          source: "planned",
+          on_answer: "done",
+          context: null,
+          applied_at: null,
+        },
+        status: "open",
+        answer: null,
+        createdAt: new Date().toISOString(),
+        version: 1,
+      });
+      emit("inbox.changed", { blockingCount: blockingCount() });
+    }
     emit("project.changed", { id });
     return c.json(changeOf(task, entry), 201);
   });
@@ -1732,18 +1766,33 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return errorBody(c, 404, "not_found", "no such project");
     }
     const raw = Number(c.req.query("budgetUsdMicro") ?? "");
-    return c.json(
-      fakeStartCheck(
-        state.tasks,
-        id,
-        Number.isInteger(raw) && raw > 0 ? raw : null,
-        state.sandbox,
-        {
-          killActive: state.killActive,
-          busy: (options.startOutcome ?? "started") === "queued",
-        },
-      ),
+    const view = fakeStartCheck(
+      state.tasks,
+      id,
+      Number.isInteger(raw) && raw > 0 ? raw : null,
+      state.sandbox,
+      {
+        killActive: state.killActive,
+        busy: (options.startOutcome ?? "started") === "queued",
+      },
     );
+    // As the daemon: with no task yet because the plan waits (or is drafted), the button is
+    // the plan card (design §3.3, §3.6).
+    const intake = state.intake[id]?.state;
+    const nothing = view.blocked?.kind === "nothing_runnable" && view.ready === 0;
+    if (nothing && intake === "pending")
+      view.blocked = {
+        kind: "nothing_runnable",
+        sentence: "Nothing can run yet: the plan from your brief waits for your approval.",
+        action: { kind: "link", label: "Review the plan", to: "/inbox" },
+      };
+    else if (nothing && intake === "drafting")
+      view.blocked = {
+        kind: "nothing_runnable",
+        sentence: "Nothing can run yet: the plan from your brief is being drafted.",
+        action: null,
+      };
+    return c.json(view);
   });
   app.get("/projects/:id/runs", (c) => {
     const id = c.req.param("id");
@@ -4619,7 +4668,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       };
       return c.json(result);
     }
-    return c.json(performUndo(entry));
+    const undone = performUndo(entry);
+    // As the daemon: an undo may bring a card back; the header's count follows at once.
+    emit("inbox.changed", { blockingCount: blockingCount() });
+    return c.json(undone);
   });
   const performUndo = (entry: ChangeLogView): CommandResultJson => {
     const now = new Date().toISOString();

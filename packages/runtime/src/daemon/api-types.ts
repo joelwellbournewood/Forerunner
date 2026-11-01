@@ -560,6 +560,15 @@ export const HumanRequestView = z.object({
   details: z.array(z.string()).optional(),
   outcome: z.string().nullable().optional(),
   answeredAt: z.string().nullable().optional(),
+  /** Answers that came after their task moved on: "Redo with these answers" (design §3.8). */
+  followUp: z
+    .object({
+      label: z.string(),
+      explain: z.string(),
+      action: z.enum(["redo", "reopen", "try_again"]),
+    })
+    .nullable()
+    .optional(),
 });
 export type HumanRequestView = z.infer<typeof HumanRequestView>;
 

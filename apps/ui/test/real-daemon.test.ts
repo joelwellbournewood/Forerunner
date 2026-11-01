@@ -7,6 +7,7 @@ import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types"
 import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
+import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ScriptedProvider } from "../../../packages/runtime/test/helpers.ts";
@@ -904,11 +905,8 @@ describe("the UI client against the real daemon", () => {
       outcome: "The domain is chosen",
       specialist: "person",
     });
-    t = await rt.store.task.mustGet(mine.id);
-    await rt.store.task.transition(t.id, t.version, "needs_human", "asked the person", {
-      agentId,
-    });
-    await card(mine.id, "Which domain name?");
+    // Its questions are a card at once (design §3.8): it already needs the person's answer.
+    expect(mine.display?.label).toBe("Needs your answer");
     const refused = await client
       .taskAction(mine.id, { version: (await rowOf(mine.id))?.version ?? 0, action: "go_ahead" })
       .then(
@@ -1086,6 +1084,112 @@ describe("the UI client against the real daemon", () => {
     expect((await client.projects()).find((p) => p.id === own.id)?.needsYou?.title).toBe(
       "Confirm the stack",
     );
+  });
+
+  it("an Undo on the Changes page that brings a card back tells the header (inbox.changed), so its count is true at once", async () => {
+    const own = await client.createProject({ name: "Undo count", goal: "The badge follows" });
+    const task = await client.createTask(own.id, { title: "Pick the colours", outcome: "chosen" });
+    const t = await rt.store.task.mustGet(task.id);
+    await rt.store.task.transition(t.id, t.version, "needs_human", "asked the person", { agentId });
+    await rt.store.humanRequest.insert({
+      human_id: humanId,
+      project_id: own.id,
+      task_id: task.id,
+      kind: "decision",
+      why: "Which colours?",
+      options: ["Cancel the task"],
+      blocking: true,
+      risk: "low",
+    });
+    const row = (await client.tasks(own.id)).find((x) => x.id === task.id);
+    const cancelled = await client.taskAction(task.id, {
+      version: row?.version ?? 0,
+      action: "cancel",
+    });
+    let told = 0;
+    const onInbox = () => {
+      told++;
+    };
+    rt.events.on("inbox", onInbox);
+    try {
+      await client.undoChange(cancelled.change?.undoToken ?? "");
+    } finally {
+      rt.events.off("inbox", onInbox);
+    }
+    expect(told).toBeGreaterThan(0);
+  });
+
+  it("answers that came after their task had finished say so and offer Redo with these answers, whose next brief reads them (design §3.8)", async () => {
+    const own = await client.createProject({ name: "Late", goal: "Answers in time" });
+    const created = await client.createTask(own.id, {
+      title: "Pick a quote list",
+      outcome: "chosen",
+    });
+    let t = await rt.store.task.mustGet(created.id);
+    t = await rt.store.task.transition(t.id, t.version, "needs_human", "asks", { agentId });
+    const filed = await rt.store.humanRequest.insert({
+      human_id: humanId,
+      project_id: own.id,
+      task_id: t.id,
+      kind: "decision",
+      why: '"Pick a quote list" needs your answers.',
+      steps: ["Which quotes?"],
+      options: ["Cancel the task"],
+      blocking: true,
+      risk: "low",
+      change_card: {
+        key: `person_questions:${t.id}`,
+        task_id: t.id,
+        task_title: t.title,
+        questions: ["Which quotes?"],
+        source: "specialist",
+        on_answer: "ready",
+        context: null,
+        applied_at: null,
+      },
+    });
+    // The task moved on without the answers (an agent closed it): ready to done.
+    for (const to of ["ready", "claimed", "in_progress", "in_review", "done"] as const) {
+      t = await rt.store.task.mustGet(t.id);
+      t = await rt.store.task.transition(t.id, t.version, to, "moved on", { agentId });
+    }
+    const late = await client.answerRequest(filed.id, {
+      version: filed.version,
+      answer: { answers: [{ question: "Which quotes?", answer: "Only Seneca." }] },
+    });
+    expect(late.outcome).toBe(
+      'Your answers came after "Pick a quote list" had finished. They are kept in the decision record.',
+    );
+    expect(late.followUp).toMatchObject({ label: "Redo with these answers", action: "redo" });
+    const row = (await client.tasks(own.id)).find((x) => x.id === t.id);
+    const redone = await client.taskAction(t.id, { version: row?.version ?? 0, action: "redo" });
+    expect(redone.status).toBe("ready");
+    // The next attempt's brief carries the answers.
+    expect(await answersBlockFor(rt.store, t.id)).toContain("Only Seneca.");
+  });
+
+  it("New task with 'Me: ask me in the Inbox' is a question card at once, and no session runs it (design §3.5, §3.8)", async () => {
+    const own = await client.createProject({ name: "Mine", goal: "A task for me" });
+    const created = await client.createTask(own.id, {
+      title: "Choose the hosting",
+      outcome: "The hosting is chosen",
+      acceptanceCriteria: ["Where should the site be hosted?"],
+      specialist: "person",
+    });
+    // At once: no poll, no session.
+    expect(created.display).toMatchObject({ key: "answer", label: "Needs your answer" });
+    const card = (await client.inbox(humanId)).requests.find(
+      (r) => r.taskId === created.id && r.status === "open",
+    );
+    expect(card?.title).toBe('"Choose the hosting" needs your answers');
+    expect(card?.reply).toBe("form");
+    expect((await client.startCheck(own.id)).runnable).toEqual([]);
+    // A first-person title on the Tasks tab is the person's too.
+    const said = await client.createTask(own.id, {
+      title: "Confirm the domain with me",
+      outcome: "The domain is confirmed",
+    });
+    expect(said.display?.label).toBe("Needs your answer");
   });
 
   it("the Inbox does not echo the person: Tasks tab moves, chat commands and project switches add no Update (design §3.8, §5.11)", async () => {
@@ -2334,6 +2438,12 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
 
   it("Approve and start writes the plan and starts working on it; the card says so", async () => {
     const { project, card } = await planned("Quote page");
+    // Before the approval the Start dialog's button is the plan card, not the Tasks tab.
+    expect((await client.startCheck(project.id)).blocked).toEqual({
+      kind: "nothing_runnable",
+      sentence: "Nothing can run yet: the plan from your brief waits for your approval.",
+      action: { kind: "link", label: "Review the plan", to: "/inbox" },
+    });
     expect(card.title).toMatch(/^Plan for "Quote page": \d+ tasks$/);
     expect(card.choices?.map((c) => c.label)).toEqual([
       "Approve and start",

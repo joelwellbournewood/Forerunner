@@ -488,6 +488,51 @@ describe("Inbox", () => {
     });
   });
 
+  it("answers that came after their task finished: the Answered entry says so and offers Redo with these answers (design §3.8)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    // task_1 is done; its questions were answered after it finished.
+    harness.daemon.state.requests.unshift({
+      id: "req_late",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_1",
+      taskTitle: "Index the documentation pages",
+      sessionId: null,
+      kind: "decision",
+      why: "Which pages first?",
+      steps: ["Which pages first?"],
+      options: ["Cancel the task"],
+      blocking: true,
+      risk: "low",
+      changeCard: {
+        key: "person_questions:task_1",
+        task_id: "task_1",
+        questions: ["Which pages first?"],
+        source: "specialist",
+        on_answer: "ready",
+        applied_at: "2026-10-31T10:00:00.000Z",
+        outcome: "task_moved_on",
+      },
+      status: "answered",
+      answer: { answers: [{ question: "Which pages first?", answer: "The guides." }] },
+      createdAt: "2026-10-31T09:00:00.000Z",
+      version: 2,
+    });
+    renderApp("/inbox", harness);
+    await user.click(await screen.findByText(/^Answered \(\d+\)$/));
+    const entry = (await screen.findAllByTestId("answered-request")).find(
+      (e) => e.getAttribute("data-request-id") === "req_late",
+    ) as HTMLElement;
+    expect(entry).toHaveTextContent(
+      'Your answers came after "Index the documentation pages" had finished.',
+    );
+    await user.click(within(entry).getByTestId("follow-up"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_1/action")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/task_1/action")[0]?.body).toMatchObject({ action: "redo" });
+    expect(await within(entry).findByTestId("follow-up-done")).toBeInTheDocument();
+  });
+
   describe("a task that failed after its tries (design §3.8)", () => {
     /** The retry card the critic files after the last try, as `/inbox` serves it. */
     const retryCard = () => ({

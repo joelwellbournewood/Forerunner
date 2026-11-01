@@ -99,7 +99,9 @@ again as soon as the service answers.
   task that already waits on it). **New task** asks the title, what done looks like, what it
   waits for, the review level ("Light review: the critic reads the work, nothing runs in
   isolation"; "Full review: needs Docker" says when Docker is not running on this computer),
-  who does it (let the agent choose, a specialist, or **Me: ask me in the Inbox**), the
+  who does it (let the agent choose, a specialist, or **Me: ask me in the Inbox**: its questions
+  are a card in the Inbox at once and no session runs it; a title such as "Confirm the hosting
+  with me" counts as yours too), the
   priority (**Low**, **Medium** or **High**; High runs first) and a budget in CHF ("1.50" or
   "1,50"). In Chat say the priority at the end: "add a task: fix the login, priority high".
   The filters (status, who does it, a search) stay in the address, so they are still set when
@@ -239,7 +241,9 @@ Everything that waits on you, and short news. Two lists:
 
 After you answer, the card is replaced by one line saying what happens next ("Done: Trying
 "Style the page" again: a session started."). **Answered** at the bottom lists what you answered
-lately and what came of it, and cards that were closed because you moved their task.
+lately and what came of it, and cards that were closed because you moved their task. If your
+answers came after their task had already finished, the entry says so and offers **Redo with
+these answers**: the task opens again and its next attempt reads them.
 
 The cards you meet most:
 

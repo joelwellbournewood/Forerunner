@@ -36,6 +36,7 @@ import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
+import { isPersonTask } from "../session/person-questions.ts";
 import {
   applyProjectPlan,
   describeMilestoneChange,
@@ -995,6 +996,13 @@ export function createDaemonApp(
     const row = r.changeLogId ? await rt.store.changeLog.get(r.changeLogId) : undefined;
     const taskId = (row?.after as { task_id?: unknown } | undefined)?.task_id;
     if (typeof taskId !== "string") throw new ForerunnerError("internal", "the task was not added");
+    // A task only the person can do ("Me: ask me in the Inbox", or a title such as "… with me")
+    // is a question card at once (design §3.8), not at the next poll, and no session runs it.
+    const added = await rt.store.task.get(taskId);
+    if (added && added.status === "ready" && isPersonTask(added)) {
+      await rt.syncApprovals();
+      rt.events.emit("inbox", {});
+    }
     return c.json(await changeView(taskId, r), 201);
   });
 
@@ -1270,6 +1278,24 @@ export function createDaemonApp(
     const projectId = c.req.param("id");
     const monthLeftUsd = await monthLeftUsdMicro();
     const busy = rt.scheduler.isActive(rt.agent.id);
+    let blocked = startBlocked(r, projectId, busy);
+    // No task yet because the plan from the brief waits for approval (or is being drafted):
+    // the button is the plan card, not the Tasks tab (design §3.3, §3.6).
+    if (blocked?.kind === "nothing_runnable" && r.ready === 0) {
+      const intake = await rt.intake.status(projectId).catch(() => null);
+      if (intake?.state === "pending")
+        blocked = {
+          kind: "nothing_runnable",
+          sentence: "Nothing can run yet: the plan from your brief waits for your approval.",
+          action: { kind: "link", label: "Review the plan", to: "/inbox" },
+        };
+      else if (intake?.state === "drafting")
+        blocked = {
+          kind: "nothing_runnable",
+          sentence: "Nothing can run yet: the plan from your brief is being drafted.",
+          action: null,
+        };
+    }
     const view: StartCheckView = {
       projectId: r.projectId,
       sessionBudget: money(r.sessionBudgetUsdMicro, rate),
@@ -1278,7 +1304,7 @@ export function createDaemonApp(
       runnable: r.runnable.map(named),
       overBudget: r.overBudget.map(named),
       later: r.later.map(named),
-      blocked: startBlocked(r, projectId, busy),
+      blocked,
       busy,
       monthLeft: monthLeftUsd === null ? null : money(monthLeftUsd, rate),
       waiting: r.waiting.map((w) => ({
@@ -2132,7 +2158,11 @@ export function createDaemonApp(
   // (U-061), confirmed like the change it makes (U-057: a raise comes back pending).
   app.post("/changes/:id/undo", async (c) => {
     const turn = await turnFor({ wordsUsed: "undo", source: "ui" });
-    return c.json(commandResult(await rt.commands.undo(c.req.param("id"), turn)));
+    const result = commandResult(await rt.commands.undo(c.req.param("id"), turn));
+    // An undo may bring a withdrawn card back (or take one away): the header's count and the
+    // Inbox follow at once (design §3.8: the counts agree at every step).
+    rt.events.emit("inbox", {});
+    return c.json(result);
   });
 
   app.get("/costs", async (c) =>
