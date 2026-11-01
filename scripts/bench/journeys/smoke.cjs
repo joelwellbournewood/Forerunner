@@ -209,6 +209,12 @@ async function pressStart(page, projectId, n, attempt) {
   const scope = (await dialog.count()) ? dialog : page;
   await clickButton(page, "Start", scope);
   try {
+    // After Start the person stays on the page; the dialog says it started with "Open the
+    // session" (design §3.6), which a person clicks to watch it.
+    const open = page.getByTestId("start-session-open");
+    await open.waitFor({ state: "visible", timeout: 30_000 });
+    await step(page, `session ${n} started in the dialog`);
+    await open.click();
     await page.waitForURL(/\/sessions\/[^/]+/, { timeout: 30_000 });
     return {
       dialogText,
@@ -228,7 +234,10 @@ async function runSession(page, projectId, n) {
   let started = await pressStart(page, projectId, n, 1);
   // Something else holds the agent (on the 1st of a month: the critic calibration). A person
   // would try again; the journey waits until no session runs, then presses Start once more.
-  if (!started.sessionId && /already has an active session/.test(started.refusal)) {
+  if (
+    !started.sessionId &&
+    /already has an active session|is already working in another session/.test(started.refusal)
+  ) {
     const heldBy = /already has an active session (\S+)/.exec(started.refusal)?.[1];
     const holder = heldBy
       ? await api(NAME, "GET", `/sessions/${encodeURIComponent(heldBy)}`).catch(() => null)

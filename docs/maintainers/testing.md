@@ -2420,7 +2420,9 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 real UI dev server, and gives Playwright scripts a recorder (`recorder.cjs`: `openApp`, `step`
 screenshots and visible text, `api`, problems from the console and the network). Usage, the
 failure-injection variables and where everything lands are in `scripts/bench/README.md`; the
-smoke journey is `scripts/bench/journeys/smoke.cjs`. `scripts/bench/journeys/session-engine.cjs
+smoke journey is `scripts/bench/journeys/smoke.cjs` (after Start it clicks the dialog's "Open the
+session", since the Start dialog keeps the person on the project page; one Start runs the whole
+approved plan). `scripts/bench/journeys/session-engine.cjs
 <bench> <label>` walks the session engine's acceptance (core-experience design §4): a 7-task chain
 (`FORERUNNER_BENCH_PLAN=chain`) started once from the Start dialog, then a hard daemon restart
 while a task runs, the session page after it and the next Start; its checks and the session
