@@ -160,6 +160,60 @@ export const ProjectCard = z.object({
    * (U-037). Absent on a card the state service serves.
    */
   repos: z.array(z.string()).optional(),
+  /**
+   * The project's state in one sentence (design §2 "Project status", `project-status.ts`),
+   * computed when read: what waits for the person, the task being worked on, what is stuck,
+   * what is ready, the plan, or done with where the files are. It replaces the stage, health,
+   * status and autonomy badges on the header, the Overview and Home. `action` is the one button
+   * it offers: a link, or `start` (Continue: the Start dialog). Absent on a card the state
+   * service serves.
+   */
+  statusLine: z
+    .object({
+      kind: z.enum([
+        "waiting",
+        "working",
+        "stuck",
+        "docker",
+        "ready",
+        "planning",
+        "planning_failed",
+        "done",
+        "empty",
+        "paused",
+      ]),
+      text: z.string(),
+      action: z
+        .object({
+          kind: z.enum(["link", "start"]),
+          label: z.string(),
+          to: z.string().nullable(),
+        })
+        .nullable(),
+    })
+    .optional(),
+  /** "3 of 7 done": the tasks not cancelled, and the ones done. */
+  progress: z.object({ done: z.number().int(), total: z.number().int() }).optional(),
+  /**
+   * The session working on the project now (design §3.2 "Working now"): its agent, the task in
+   * flight and when it began; null when none runs.
+   */
+  working: z
+    .object({
+      sessionId: z.string(),
+      agentName: z.string().nullable(),
+      taskId: z.string().nullable(),
+      taskTitle: z.string().nullable(),
+      since: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
+  /**
+   * The folder the project's files are in on this computer (design §3.10): its workspace, the
+   * linked local folder, or this install's checkout of its repository; null before anything
+   * was written.
+   */
+  folder: z.string().nullable().optional(),
 });
 export type ProjectCard = z.infer<typeof ProjectCard>;
 
@@ -172,9 +226,18 @@ export const ProjectSummary = z.object({
       endedAt: z.string().nullable(),
       summary: z.string(),
       stopReason: z.string(),
+      /** The files the session's tasks changed (design §3.4 "Your files"). */
+      changedFiles: z.array(z.string()).optional(),
     })
     .nullable(),
+  /** The task titles the last session left for later, as it ended (kept for the chat). */
   nextSteps: z.array(z.string()),
+  /**
+   * Design §3.4 "Next", computed when read: the open tasks in run order with their status in
+   * words ('"Style the page": Waiting for "Create index.html"'), at most three, then "and N
+   * more". Absent from an older daemon.
+   */
+  next: z.array(z.string()).optional(),
   openQuestions: z.number().int(),
   spend: Money,
   /** Plain text for TTS. */

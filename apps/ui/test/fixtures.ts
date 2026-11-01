@@ -135,6 +135,36 @@ export const PROJECTS: ProjectCard[] = [
   },
 ];
 
+/** Where each project's files are (the card's `folder`, design §3.10). */
+export const PROJECT_FOLDERS: Record<string, string> = {
+  proj_atlas: "/home/alice/.local/share/forerunner/worktrees/proj_atlas",
+};
+
+/** What `GET /projects/:id/files` lists and reads, by project (null content: not text). */
+export const PROJECT_FILES: Record<
+  string,
+  { path: string; content: string | null; updatedAt: string }[]
+> = {
+  proj_atlas: [
+    {
+      path: "README.md",
+      content: "# Atlas\n\nThe documentation site.\n",
+      updatedAt: "2026-10-19T21:05:00.000Z",
+    },
+    {
+      path: "site/index.html",
+      content: "<!doctype html>\n<title>Atlas</title>\n<h1>Atlas docs</h1>\n",
+      updatedAt: "2026-10-19T21:06:00.000Z",
+    },
+    {
+      path: "site/search.js",
+      content: "export function search(q) {\n  return [];\n}\n",
+      updatedAt: "2026-10-19T21:08:00.000Z",
+    },
+    { path: "site/logo.png", content: null, updatedAt: "2026-10-18T10:00:00.000Z" },
+  ],
+};
+
 export const SUMMARIES: Record<string, ProjectSummary> = {
   proj_atlas: {
     goal: PROJECTS[0]?.goal ?? "",

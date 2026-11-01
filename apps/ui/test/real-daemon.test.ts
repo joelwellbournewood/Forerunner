@@ -1094,6 +1094,64 @@ describe("the UI client against the real daemon", () => {
     );
   });
 
+  it("project status sentence: Ready to continue, Waiting for you, Done with the folder, and the Overview's Next (design §2, §3.4)", async () => {
+    const own = await client.createProject({ name: "Status line", goal: "One sentence" });
+    const first = await client.createTask(own.id, {
+      title: "Create index.html",
+      outcome: "a page",
+    });
+    const second = await client.createTask(own.id, {
+      title: "Style the page",
+      outcome: "styled",
+      dependsOn: [first.id],
+    });
+    const ready = await client.project(own.id);
+    expect(ready.statusLine).toEqual({
+      kind: "ready",
+      text: "Ready to continue: 1 task ready",
+      action: { kind: "start", label: "Continue", to: null },
+    });
+    expect(ready.progress).toEqual({ done: 0, total: 2 });
+    expect(ready.working).toBeNull();
+    // The list Home reads carries the same sentence.
+    expect((await client.projects()).find((p) => p.id === own.id)?.statusLine?.text).toBe(
+      "Ready to continue: 1 task ready",
+    );
+    // The Overview's Next, computed when read.
+    expect((await client.projectSummary(own.id)).next).toEqual([
+      '"Create index.html": Ready',
+      '"Style the page": Waiting for "Create index.html"',
+    ]);
+    const card = await rt.store.humanRequest.insert({
+      human_id: humanId,
+      project_id: own.id,
+      task_id: null,
+      kind: "decision",
+      why: "Where is it published?",
+      steps: [],
+      options: ["Locally"],
+      blocking: true,
+      risk: "low",
+      change_card: null,
+    });
+    expect((await client.project(own.id)).statusLine).toMatchObject({
+      kind: "waiting",
+      text: "Waiting for you: 1 question",
+    });
+    await rt.store.humanRequest.answer(card.id, card.version, "Locally", humanId);
+    for (const id of [first.id, second.id])
+      for (const to of ["claimed", "in_progress", "in_review", "done"] as const) {
+        const t = await rt.store.task.mustGet(id);
+        await rt.store.task.transition(t.id, t.version, to, "finished", { agentId });
+      }
+    const done = await client.project(own.id);
+    expect(done.statusLine?.kind).toBe("done");
+    expect(done.statusLine?.text).toMatch(/^Done: all 2 tasks\. Your files: /);
+    expect(done.folder).toBeTruthy();
+    expect(done.statusLine?.text).toContain(done.folder ?? "-");
+    expect(done.progress).toEqual({ done: 2, total: 2 });
+  });
+
   it("an Undo on the Changes page that brings a card back tells the header (inbox.changed), so its count is true at once", async () => {
     const own = await client.createProject({ name: "Undo count", goal: "The badge follows" });
     const task = await client.createTask(own.id, { title: "Pick the colours", outcome: "chosen" });

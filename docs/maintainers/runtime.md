@@ -4215,6 +4215,31 @@ open blocking request of the project, or a `needs_human` task with an open reque
 failed tasks, `needsYou` or a non-blocking request open are "attention"; no task is "idle".
 Before, any open request or any `needs_human` task read "blocked" with nothing to answer.
 
+### The project status sentence (design §2, §3.4; `daemon/project-status.ts`)
+
+The screens no longer show `stage`, `health`, `status` or the autonomy level (they stay on the
+card for the phone and the state service). `projectCard` adds, computed when read:
+
+- `statusLine {kind, text, action}` from the pure `projectStatusLine`, first match wins: the
+  plan waiting for approval or an open card ("Waiting for you: approve the plan", 'Waiting for
+  you: "X"', "Waiting for you: 2 questions"; the Docker card asks nothing, `holdsTask`); a
+  session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
+  `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
+  waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready", action `start`:
+  the Start dialog); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
+  files: <folder>"; then paused or draft work. The task words are `taskDisplay`'s, so the
+  sentence and the Tasks tab never disagree.
+- `progress {done, total}` (cancelled tasks not counted), `working {sessionId, agentName,
+  taskId, taskTitle, since}` (`workingOn`: the project's planned, running or paused session and
+  its last `task.started` without a `task.finished`), and `folder`: the first of
+  `ProjectDocs.docsDirsFor` (the linked folder, this install's checkout, the workspace).
+- The server passes `ProjectCardFacts` (`sandboxReady`, the intake's state and error, the
+  folder); `projectSummary` adds `next` (`overviewNext`: open tasks in run order with their
+  status words, running and ready first, at most three lines then "and N more") and
+  `lastSession.changedFiles` (the last session's `task.files` events). The UI fake computes
+  both with the same functions. Tests: `test/project-status.test.ts`, and the real-daemon case
+  "project status sentence" in `apps/ui/test/real-daemon.test.ts`.
+
 ## How to change it
 
 - New limit: add the check to the hook, a `ForerunnerError` code in platform, and a test in

@@ -79,6 +79,11 @@ import {
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
+import {
+  overviewNext,
+  progressOf,
+  projectStatusLine,
+} from "@forerunner/runtime/daemon/project-status";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
@@ -156,6 +161,8 @@ import {
   PAIRING,
   PEERS,
   PERFORMANCE,
+  PROJECT_FILES,
+  PROJECT_FOLDERS,
   PROJECTS,
   PROMOTIONS,
   QUEUE,
@@ -376,6 +383,13 @@ export interface FakeDaemonState {
    * intake (`none`). `POST /projects/:id/intake/retry` moves a failed one to `drafting`.
    */
   intake: Record<string, IntakeStatusView>;
+  /**
+   * Where each project's files are on this computer (design §3.10), as the daemon's card says
+   * (`folder`); a project without an entry has none yet. `files` are what `GET
+   * /projects/:id/files` lists and reads, by project.
+   */
+  folders: Record<string, string>;
+  files: Record<string, { path: string; content: string | null; updatedAt: string }[]>;
   messages: MessageView[];
   killActive: boolean;
   calls: RecordedCall[];
@@ -736,6 +750,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     events: clone(EVENTS),
     requests: clone(REQUESTS),
     intake: {},
+    folders: clone(PROJECT_FOLDERS),
+    files: clone(PROJECT_FILES),
     messages: clone(MESSAGES),
     killActive: false,
     calls: [],
@@ -1180,7 +1196,60 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json({ rows: rows.slice(0, limit) });
   });
 
-  app.get("/projects", (c) => c.json(state.projects));
+  // As the daemon's card (design §2): the status sentence, "n of m done", the session working
+  // on it and its folder, computed when read from the fake's tasks, cards, plan and sessions
+  // with the daemon's own `projectStatusLine`.
+  const projectCardOf = (p: ProjectCard): ProjectCard => {
+    const tasks = projectTaskViews(
+      state.tasks,
+      p.id,
+      state.requests,
+      state.sandbox.ready,
+      state.taskMeta,
+    );
+    const session = state.sessions.find(
+      (s) => s.projectId === p.id && ["planned", "running", "paused"].includes(s.status),
+    );
+    const working = session
+      ? {
+          sessionId: session.id,
+          agentName: session.agentName,
+          taskId: session.currentTask?.id ?? null,
+          taskTitle: session.currentTask?.title ?? null,
+          since: session.startedAt,
+        }
+      : null;
+    const folder = state.folders[p.id] ?? null;
+    const statusLine = projectStatusLine({
+      projectId: p.id,
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status as never,
+        depends_on: t.dependsOn,
+      })),
+      displays: new Map(tasks.flatMap((t) => (t.display ? [[t.id, t.display] as const] : []))),
+      cards: state.requests
+        .filter((r) => r.status === "open" && r.projectId === p.id)
+        .map((r) => ({
+          id: r.id,
+          task_id: r.taskId,
+          change_card: (r.changeCard ?? null) as never,
+        })),
+      plan: state.intake[p.id]?.state ?? null,
+      planError: state.intake[p.id]?.error ?? null,
+      working,
+      folder,
+    });
+    return {
+      ...p,
+      statusLine,
+      progress: progressOf(tasks.map((t) => ({ status: t.status as never }))),
+      working,
+      folder,
+    };
+  };
+  app.get("/projects", (c) => c.json(state.projects.map(projectCardOf)));
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
@@ -1220,11 +1289,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         error: null,
       };
     emit("project.changed", { id: project.id });
-    return c.json(project, 201);
+    return c.json(projectCardOf(project), 201);
   });
   app.get("/projects/:id", (c) => {
     const p = state.projects.find((x) => x.id === c.req.param("id"));
-    return p ? c.json(p) : errorBody(c, 404, "not_found", "no such project");
+    return p ? c.json(projectCardOf(p)) : errorBody(c, 404, "not_found", "no such project");
   });
   // The plan from the brief (U-046), as the daemon's intake status and Retry answer it.
   const intakeOf = (projectId: string): IntakeStatusView =>
@@ -1258,8 +1327,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const id = c.req.param("id");
     const p = state.projects.find((x) => x.id === id);
     if (!p) return errorBody(c, 404, "not_found", "no such project");
-    return c.json(
-      SUMMARIES[id] ?? {
+    // As the daemon: "Next" is computed when read from the tasks as they are now.
+    const next = overviewNext(
+      projectTaskViews(state.tasks, id, state.requests, state.sandbox.ready, state.taskMeta).map(
+        (t) => ({
+          task: { title: t.title, status: t.status as never },
+          display: t.display as NonNullable<TaskView["display"]>,
+        }),
+      ),
+    );
+    return c.json({
+      ...(SUMMARIES[id] ?? {
         goal: p.goal,
         stage: p.stage,
         lastSession: null,
@@ -1267,8 +1345,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         openQuestions: 0,
         spend: p.spend,
         spoken: `${p.name} has not run yet.`,
-      },
-    );
+      }),
+      next,
+    });
   });
   // Read aloud (spec A.6, L.6): the daemon reads a summary through its voice provider. The
   // fake answers `speaking` on the start and `done` on the next read, keeps the sentences
