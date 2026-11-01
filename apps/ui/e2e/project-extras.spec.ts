@@ -9,7 +9,8 @@ test("summary: the next-session queue, the peers feed and the decision log", asy
 }) => {
   await page.goto("/projects/proj_atlas/summary");
   await expect(page.getByTestId("queue-item")).toHaveCount(2);
-  await page.getByTestId("queue-kind").selectOption("idea");
+  // Design §3.4: one box, no type or priority.
+  await expect(page.getByTestId("queue-kind")).toHaveCount(0);
   await page.getByTestId("queue-text").fill("Add a sitemap");
   await page.getByTestId("queue-add").click();
   await expect(page.getByTestId("queue-item")).toHaveCount(3);
@@ -20,8 +21,9 @@ test("summary: the next-session queue, the peers feed and the decision log", asy
   await expect(page.getByTestId("peer-handoff")).toContainText("PR #12 waits for review");
   await expect(page.getByTestId("decision-chosen")).toHaveText("Static index built at deploy time");
   const calls = await recordedCalls(request);
+  // A note for the next session (design §3.4): kind note, the middle priority.
   expect(calls.find((c) => c.path === "/projects/proj_atlas/queue")?.body).toEqual({
-    kind: "idea",
+    kind: "note",
     text: "Add a sitemap",
     priority: 5,
   });

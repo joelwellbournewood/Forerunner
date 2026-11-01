@@ -9,7 +9,10 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
 }) => {
   await page.goto("/settings");
   // The row shows its plain label (U-060); the key stays on the row for tests.
-  const row = page.locator('[data-testid="setting-row"][data-key="project.autonomy"]');
+  // Atlas's row: the daemon lists every project's autonomy (settings-view.ts).
+  const row = page
+    .locator('[data-testid="setting-row"][data-key="project.autonomy"]')
+    .filter({ has: page.getByTestId("setting-scope").getByText("Atlas", { exact: true }) });
   await expect(row.getByTestId("setting-label")).toHaveText("Autonomy");
   await row.getByTestId("setting-change").click();
   const dialog = page.getByTestId("setting-dialog");
@@ -28,7 +31,9 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
     "3 Trusted: asks only for risky actions",
   );
 
-  await page.getByTestId("main-nav").getByText("Changes").click();
+  // Changes is behind More (design §6).
+  await page.getByTestId("main-nav").getByTestId("more-nav").click();
+  await page.getByRole("menuitem", { name: "Changes" }).click();
   await expect(page.getByTestId("change").first().getByTestId("change-sentence")).toHaveText(
     "Set autonomy for Atlas from 2 to 3. Undo.",
   );

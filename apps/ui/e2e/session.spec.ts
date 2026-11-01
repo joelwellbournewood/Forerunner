@@ -37,17 +37,20 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(page.getByTestId("current-task")).toContainText("Decide the versioning scheme");
   await expect(page.getByTestId("current-task")).toContainText("researcher");
   await expect(page.getByTestId("event-row")).toHaveCount(6, { timeout: 10_000 });
-  await expect(page.getByTestId("current-task")).toContainText("no task running");
+  // Ended: no task in flight and nothing to stop (design §3.7).
+  await expect(page.getByTestId("session-status")).toHaveText("Done");
+  await expect(page.getByTestId("current-task")).toHaveCount(0);
+  await expect(page.getByTestId("stop-now")).toHaveCount(0);
   const escalation = page.locator('[data-testid="event-row"][data-level="escalation"]');
   await expect(escalation).toHaveCount(1);
   await expect(escalation.getByTestId("level-badge")).toHaveText("escalation");
-  await expect(page.getByTestId("steps")).toContainText("6 / 200");
+  await expect(page.getByTestId("steps")).toHaveText("6");
   await expect(page.getByTestId("session-spend")).toContainText("CHF 3.60");
-  await expect(page.getByTestId("session-status")).toHaveText("Done");
 
+  // Details: the event types, the level filters and the raw payloads.
+  await page.getByTestId("raw-toggle").check();
   await page.getByTestId("filter-info").click();
   await expect(page.getByTestId("event-row")).toHaveCount(2);
-  await page.getByTestId("raw-toggle").check();
   await expect(page.getByTestId("event-raw")).toHaveCount(2);
 });
 
@@ -62,9 +65,12 @@ test("Stop now asks once, then posts to /sessions/:id/stop", async ({ page, requ
   // The daemon's start answer (U-003): the outcome and the session it began.
   const { session } = (await res.json()) as { session: { id: string } };
   await page.goto(`/sessions/${session.id}`);
-  await expect(page.getByTestId("session-header")).toContainText(`Session ${session.id}`);
+  // Design §3.7: named by its project and when it began, never its id.
+  await expect(page.getByTestId("session-header")).toContainText("Atlas · session at");
+  await expect(page.getByTestId("session-header")).not.toContainText(session.id);
   const stop = page.getByTestId("stop-now");
-  if (await stop.isEnabled()) {
+  // An ended session has no stop buttons at all.
+  if ((await stop.count()) > 0) {
     await stop.click();
     await page.getByTestId("stop-session").click();
     await expect(page.getByTestId("session-status")).toHaveText("Stopped by you");
