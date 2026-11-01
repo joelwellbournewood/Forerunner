@@ -730,6 +730,38 @@ export const StartCheckView = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * Design §3.6: the waiting tasks a session started now would take as they become ready (what
+   * they wait on runs in it), in plan order. Empty from an older daemon.
+   */
+  later: z.array(StartCheckTaskView).default([]),
+  /**
+   * Why a Start now would do nothing (design §3.6), in one sentence with the button that
+   * unblocks it: sessions are stopped (Stop all), no Claude credential, or nothing can run.
+   * Null when a session would work. `action.kind` says what the button does: `resume` (Allow
+   * sessions again), `link` (open `action.to`).
+   */
+  blocked: z
+    .object({
+      kind: z.enum(["stopped", "no_model", "nothing_runnable"]),
+      sentence: z.string(),
+      action: z
+        .object({
+          kind: z.enum(["resume", "link"]),
+          label: z.string(),
+          to: z.string().nullable(),
+        })
+        .nullable(),
+    })
+    .nullable()
+    .default(null),
+  /** What is left of the person's monthly cap this month; a larger session budget is refused. */
+  monthLeft: Money.nullable().default(null),
+  /**
+   * The agent is in a session now: a Start waits for it ("Starts after the current session"),
+   * and what that session finishes makes more tasks ready, so it is never "nothing can run".
+   */
+  busy: z.boolean().default(false),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 

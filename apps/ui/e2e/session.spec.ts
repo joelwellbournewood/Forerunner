@@ -11,10 +11,14 @@ test("start a session from the project page and watch the live view fill over SS
   await page.getByTestId("start-session").click();
   const dialog = page.getByTestId("start-session-dialog");
   await expect(dialog.getByTestId("confirm-start-session")).toBeEnabled();
+  await expect(dialog.getByTestId("start-session-plan")).toContainText("This session runs");
   await dialog.getByLabel(/Session budget/).fill("4");
-  await dialog.getByLabel(/Reason/).fill("browser test");
+  await dialog.getByLabel(/Note for this session/).fill("browser test");
   await dialog.getByTestId("confirm-start-session").click();
 
+  // The person stays where they were (design §3.6); the session opens from the notice.
+  await expect(dialog.getByTestId("start-session-notice")).toContainText("Started:");
+  await dialog.getByTestId("start-session-open").click();
   await expect(page).toHaveURL(/\/sessions\/sess_\d+$/);
   const calls = await recordedCalls(request);
   const started = calls.find((c) => c.path === "/sessions");
@@ -22,7 +26,7 @@ test("start a session from the project page and watch the live view fill over SS
     agentId: "agent_alice",
     projectId: "proj_atlas",
     budgetUsdMicro: 5_000_000,
-    reason: "browser test",
+    note: "browser test",
   });
 
   // Real EventSource in the browser: the view must report "live", not the polling fallback.

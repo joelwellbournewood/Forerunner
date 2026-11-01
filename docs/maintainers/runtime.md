@@ -892,6 +892,17 @@ reason, and the project's stage follows its tasks: `done` when every task is don
 cancelled, `build` once work was done on a project at `planning` or `idea` (no code wrote the
 stage after `create-project.ts`, so a finished project read "planning" for ever).
 
+**The Start dialog's check (`GET /projects/:id/start-check`, design §3.6).** Besides what runs
+now (`runnable`), the check names what follows as it becomes ready (`later`: the waiting tasks
+whose every unfinished dependency runs now, is running, or itself follows; never one behind a
+failed, cancelled, missing or person-held task, nor a full-review task while Docker is not
+ready), why a Start would do nothing (`blocked`: `stopped` while Stop all is on, `no_model`
+without a provider, `nothing_runnable` with the first blocker in one sentence and the button
+that unblocks it; none while the agent is in a session, `busy`, since that session makes more
+tasks ready), and what is left of the monthly cap this month (`monthLeft`, the ledger's UTC
+month as the caps count it). `POST /sessions` refuses a budget above `monthLeft` with that
+sentence (`validation`); 0 and negative budgets never pass its schema.
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

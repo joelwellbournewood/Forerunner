@@ -534,11 +534,15 @@ const FAKE_SESSION_CAP_USD_MICRO = 6_250_000;
  * dependencies are all done priced by their estimate (else budget, else the planner's
  * 500 000), cut to the cap less the 20% review reserve by skipping what does not fit.
  */
+/** What is left of the fixture human's monthly cap (CHF 120 at the fake's rate of 0.8). */
+const FAKE_MONTH_LEFT_USD_MICRO = 150_000_000;
+
 function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
   budgetUsdMicro: number | null,
   sandbox: SandboxStatusView | null = null,
+  opts: { killActive?: boolean; busy?: boolean } = {},
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   // High first, as the daemon's stored numbers order them (U-041).
@@ -575,6 +579,66 @@ function fakeStartCheck(
       total += estimate;
     }
   }
+  // As the daemon (design §3.6): what follows as it becomes ready, and why nothing would run.
+  const comes = new Set(runnable.map((r) => r.taskId));
+  const later: StartCheckView["later"] = [];
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const w of waiting) {
+      if (comes.has(w.taskId) || !w.waitsOn.every((d) => comes.has(d.taskId))) continue;
+      comes.add(w.taskId);
+      const t = byId.get(w.taskId);
+      later.push({
+        taskId: w.taskId,
+        title: w.title,
+        estimate: money(t?.estimate.usdMicro || t?.budget.usdMicro || 500_000),
+      });
+      changed = true;
+    }
+  }
+  const stuckOn = waiting
+    .flatMap((w) => w.waitsOn.map((d) => ({ w, d })))
+    .find(({ d }) => ["failed", "cancelled", "needs_human", null].includes(d.status));
+  const blocked: StartCheckView["blocked"] = opts.killActive
+    ? {
+        kind: "stopped",
+        sentence: "Sessions are stopped (Stop all), so nothing can start.",
+        action: { kind: "resume", label: "Allow sessions again", to: null },
+      }
+    : runnable.length > 0 || opts.busy
+      ? null
+      : stuckOn
+        ? stuckOn.d.status === "needs_human"
+          ? {
+              kind: "nothing_runnable",
+              sentence: `Nothing can run: "${stuckOn.d.title}" needs your answer.`,
+              action: { kind: "link", label: "Open it", to: "/inbox" },
+            }
+          : {
+              kind: "nothing_runnable",
+              sentence: `Nothing can run: "${stuckOn.w.title}" waits on ${stuckOn.d.title ? `"${stuckOn.d.title}"` : "a task that does not exist"}, which ${stuckOn.d.status === "cancelled" ? "was cancelled" : stuckOn.d.status === "failed" ? "failed" : "does not exist"}.`,
+              action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
+            }
+        : sandboxTasks[0]
+          ? {
+              kind: "nothing_runnable",
+              sentence: `Nothing can run: "${sandboxTasks[0].title}" is waiting for Docker.`,
+              action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
+            }
+          : overBudget[0]
+            ? {
+                kind: "nothing_runnable",
+                sentence: `Nothing can run within this budget: "${overBudget[0].title}" needs about CHF ${(overBudget[0].estimate.chfMicro / 1e6).toFixed(2)}.`,
+                action: null,
+              }
+            : {
+                kind: "nothing_runnable",
+                sentence:
+                  ready.length === 0
+                    ? "Nothing can run: no task is ready."
+                    : "Nothing can run: every ready task waits on another one.",
+                action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
+              };
   return {
     projectId,
     sessionBudget: money(cap),
@@ -583,6 +647,10 @@ function fakeStartCheck(
     runnable,
     overBudget,
     waiting,
+    later,
+    blocked,
+    monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
+    busy: opts.busy ?? false,
     waitingForSandbox:
       sandbox && !sandbox.ready && sandboxTasks.length > 0
         ? {
@@ -1305,7 +1373,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const raw = Number(c.req.query("budgetUsdMicro") ?? "");
     return c.json(
-      fakeStartCheck(state.tasks, id, Number.isInteger(raw) && raw > 0 ? raw : null, state.sandbox),
+      fakeStartCheck(
+        state.tasks,
+        id,
+        Number.isInteger(raw) && raw > 0 ? raw : null,
+        state.sandbox,
+        {
+          killActive: state.killActive,
+          busy: (options.startOutcome ?? "started") === "queued",
+        },
+      ),
     );
   });
   app.get("/projects/:id/runs", (c) => {

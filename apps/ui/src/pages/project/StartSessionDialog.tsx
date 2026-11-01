@@ -1,9 +1,15 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 import { describeError, type StartCheckView, type StartSessionView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS, Money } from "../../components/ui.tsx";
-import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
+import {
+  chfMicroToUsdMicro,
+  chfToMicro,
+  formatAmount,
+  formatChf,
+  type MoneyLike,
+} from "../../lib/money.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient, useIdentity } from "../../store/context.tsx";
 import { useIntakeStatus } from "./IntakeBanner.tsx";
@@ -28,17 +34,25 @@ export function startNotice(result: StartSessionView["result"], ahead = 0): stri
         ? `Deferred: it is quiet hours, and ${before} This one starts after them, once the quiet hours end.`
         : "Deferred: it is quiet hours. The session starts when they end.";
     default:
-      return "Starting: the session appears under Sessions in a moment.";
+      return "Started: the session works until nothing more can run, the budget is used, or you stop it.";
   }
 }
 
-/** How the dialog names what a waiting task waits on (U-040). */
+/** How the dialog names what a waiting task waits on (U-040), in plain status words. */
 export function waitsOnText(waitsOn: StartCheckView["waiting"][number]["waitsOn"]): string {
   return waitsOn
     .map((d) =>
       d.title === null
-        ? `a task that does not exist (${d.taskId})`
-        : `"${d.title}" (${d.status === "needs_human" ? "needs you" : d.status})`,
+        ? "a task that does not exist"
+        : `"${d.title}" (${
+            d.status === "needs_human"
+              ? "needs you"
+              : d.status === "in_progress" || d.status === "claimed"
+                ? "running"
+                : d.status === "in_review"
+                  ? "being reviewed"
+                  : d.status
+          })`,
     )
     .join(" and ");
 }
@@ -46,7 +60,11 @@ export function waitsOnText(waitsOn: StartCheckView["waiting"][number]["waitsOn"
 /** True when a waiting task waits on one that never finishes by itself (U-040). */
 function stuck(w: StartCheckView["waiting"][number]): boolean {
   return w.waitsOn.some(
-    (d) => d.status === null || d.status === "cancelled" || d.status === "failed",
+    (d) =>
+      d.status === null ||
+      d.status === "cancelled" ||
+      d.status === "failed" ||
+      d.status === "needs_human",
   );
 }
 
@@ -60,43 +78,101 @@ export function sandboxWaitingText(w: NonNullable<StartCheckView["waitingForSand
   return `${names} ${one ? "needs" : "need"} a full review, which runs in the Docker sandbox, and it is not ready: ${w.headline} Next: ${w.step}. ${one ? "It waits" : "They wait"}; nothing fails and no retry is used.`;
 }
 
+/** "about CHF 0.80" for a sum of estimates. */
+function about(values: readonly { estimate: MoneyLike }[]): string {
+  return `about ${formatChf(values.reduce((s, v) => s + v.estimate.chfMicro, 0))}`;
+}
+
 /**
- * The tasks a session started now would not run (U-040): the ones waiting on another task and
- * the ones that do not fit the work budget, each by title with what holds it back.
+ * What a session started now does (design §3.6): "This session runs "X" (about CHF 0.12) and
+ * continues with up to 6 more as they become ready (about CHF 0.80)." Null when nothing runs.
  */
-function NotInThisSession({ check }: { check: StartCheckView }) {
-  return (
-    <ul className="mt-1 list-disc pl-5">
-      {check.waiting.map((w) => (
-        <li key={w.taskId} data-testid="start-session-waiting">
-          "{w.title}" waits on {waitsOnText(w.waitsOn)}
-          {stuck(w)
-            ? ": that will not be done by itself. Change what it depends on (Tasks tab, Depends on…) or mark the failed task ready again."
-            : "."}
-        </li>
-      ))}
-      {check.overBudget.map((t) => (
-        <li key={t.taskId} data-testid="start-session-over-budget">
-          "{t.title}" needs about <Money value={t.estimate} />, more than this session's work budget
-          of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
-          session a larger budget, or the task a smaller one.
-        </li>
-      ))}
-      {check.waitingForSandbox && check.waitingForSandbox.tasks.length > 0 ? (
-        <li data-testid="start-session-sandbox">
+export function planSentence(check: StartCheckView): string | null {
+  const [first, ...rest] = check.runnable;
+  if (!first) return null;
+  const more = [...rest, ...check.later];
+  const head = `This session runs "${first.title}" (${about([first])})`;
+  if (more.length === 0) return `${head}.`;
+  return `${head} and continues with up to ${more.length} more as they become ready (${about(more)}).`;
+}
+
+/**
+ * The lines that name what holds work back and what to do (design §3.6): a task waiting on a
+ * failed, cancelled or person-held task, a full-review task waiting for Docker, a task larger
+ * than the budget. At most three, then "and N more". Tasks that only wait on this session's own
+ * work are not listed: they run as it goes on.
+ */
+function BlockerLines({ check }: { check: StartCheckView }) {
+  const lines: { key: string; testId: string; node: React.ReactNode }[] = [];
+  for (const w of check.waiting.filter(stuck))
+    lines.push({
+      key: `w-${w.taskId}`,
+      testId: "start-session-waiting",
+      node: (
+        <>
+          "{w.title}" waits on {waitsOnText(w.waitsOn)}: that will not be done by itself. Change
+          what it waits for on the Tasks tab, or try the failed task again.
+        </>
+      ),
+    });
+  if (check.waitingForSandbox && check.waitingForSandbox.tasks.length > 0)
+    lines.push({
+      key: "sandbox",
+      testId: "start-session-sandbox",
+      node: (
+        <>
           {sandboxWaitingText(check.waitingForSandbox)}{" "}
           <Link to="/settings#sandbox" className="text-blue-700 hover:underline dark:text-blue-300">
             Open Settings → Sandbox (Docker)
           </Link>
+        </>
+      ),
+    });
+  for (const t of check.overBudget)
+    lines.push({
+      key: `b-${t.taskId}`,
+      testId: "start-session-over-budget",
+      node: (
+        <>
+          "{t.title}" needs about <Money value={t.estimate} />, more than this session's work budget
+          of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
+          session a larger budget, or the task a smaller one.
+        </>
+      ),
+    });
+  if (lines.length === 0) return null;
+  return (
+    <ul className="mt-1 list-disc pl-5" data-testid="start-session-blockers">
+      {lines.slice(0, 3).map((l) => (
+        <li key={l.key} data-testid={l.testId}>
+          {l.node}
         </li>
+      ))}
+      {lines.length > 3 ? (
+        <li data-testid="start-session-more">and {lines.length - 3} more</li>
       ) : null}
     </ul>
   );
 }
 
+/** The budget field's value refused in words (design §3.6), or null when it can be sent. */
+export function budgetProblem(text: string, monthLeft: MoneyLike | null): string | null {
+  if (!text.trim()) return null;
+  const chf = chfToMicro(text.replace(",", "."));
+  if (chf === null)
+    return text.trim().startsWith("-")
+      ? "The budget must be more than CHF 0."
+      : "The budget must be an amount in CHF, like 5.00.";
+  if (chf <= 0) return "The budget must be more than CHF 0.";
+  if (monthLeft && chf > monthLeft.chfMicro)
+    return `That is more than what is left of your monthly cap (${formatChf(monthLeft.chfMicro)}).`;
+  return null;
+}
+
 /**
- * Start a session for the project -> POST /sessions, then open the live view of the session the
- * start began, or say why there is none yet (queued, deferred, still starting).
+ * Start a session for the project -> POST /sessions. Says first what the session will do, with
+ * the real default budget filled in; refuses a start that would do nothing with the reason and
+ * the button that unblocks it; after Start the person stays where they were (design §3.6).
  */
 export function StartSessionDialog({
   open,
@@ -112,47 +188,49 @@ export function StartSessionDialog({
 }) {
   const client = useClient();
   const identity = useIdentity();
-  const navigate = useNavigate();
   const [budget, setBudget] = useState("");
-  const [reason, setReason] = useState("");
+  const [budgetTouched, setBudgetTouched] = useState(false);
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // A session works only on ready tasks it can run (U-009, U-040): look before the human starts
-  // one for nothing, with the budget typed so far (the project's cap while it is empty).
-  const typedChf = budget.trim() ? chfToMicro(budget) : null;
+  const [startedId, setStartedId] = useState<string | null>(null);
+  const [checkTick, setCheckTick] = useState(0);
+  // What a session would do, with the budget typed so far (the project's default while empty).
+  const typedChf = budgetTouched && budget.trim() ? chfToMicro(budget.replace(",", ".")) : null;
   const budgetUsdMicro =
     typedChf !== null && typedChf > 0 ? chfMicroToUsdMicro(typedChf, reference) : undefined;
   const check = useAsync(
     (signal) =>
       open ? client.startCheck(projectId, { budgetUsdMicro }, signal) : Promise.resolve(null),
-    [client, projectId, open, budgetUsdMicro],
+    [client, projectId, open, budgetUsdMicro, checkTick],
   );
-  const noReadyTask = check.data !== null && check.data.ready === 0;
-  const nothingRuns = check.data !== null && !noReadyTask && check.data.runnable.length === 0;
-  const someLeftOut =
-    check.data !== null &&
-    !noReadyTask &&
-    !nothingRuns &&
-    check.data.waiting.length +
-      check.data.overBudget.length +
-      (check.data.waitingForSandbox?.tasks.length ?? 0) >
-      0;
-  // U-046: the dialog names the plan from the brief only as it really stands: it said a plan
-  // waits in the Inbox when none did (the intake had failed, or was never asked for).
-  const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;
+  const data = check.data;
+  // The real default, filled in once it is known (design §3.6: "CHF 5.00", never a hidden one).
   useEffect(() => {
-    if (!open) setNotice(null);
+    if (open && data && !budgetTouched && !budget)
+      setBudget(formatAmount(data.sessionBudget.chfMicro).replace(/'/g, ""));
+  }, [open, data, budgetTouched, budget]);
+  useEffect(() => {
+    if (!open) {
+      setNotice(null);
+      setStartedId(null);
+      setBudget("");
+      setBudgetTouched(false);
+      setNote("");
+      setError(null);
+    }
   }, [open]);
+  const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;
+  const problem = budgetProblem(budget, data?.monthLeft ?? null);
+  const blocked = data?.blocked ?? null;
+  const plan = data ? planSentence(data) : null;
+  const noReadyTask = data !== null && data.ready === 0 && blocked?.kind === "nothing_runnable";
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy || !identity) return;
-    const chf = budget.trim() ? chfToMicro(budget) : null;
-    if (budget.trim() && chf === null) {
-      setError("Budget must be a number of CHF.");
-      return;
-    }
+    if (busy || !identity || blocked || problem) return;
+    const chf = budget.trim() ? chfToMicro(budget.replace(",", ".")) : null;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -161,17 +239,16 @@ export function StartSessionDialog({
         agentId: identity.agentId,
         projectId,
         trigger: "manual",
-        budgetUsdMicro: chf !== null && chf > 0 ? chfMicroToUsdMicro(chf, reference) : undefined,
-        reason: reason.trim() || undefined,
+        // The default as filled in is the project's own: sent only when the person changed it.
+        budgetUsdMicro:
+          budgetTouched && chf !== null && chf > 0 ? chfMicroToUsdMicro(chf, reference) : undefined,
+        note: note.trim() || undefined,
       });
-      setBudget("");
-      setReason("");
-      if (started.session) {
-        onClose();
-        navigate(`/sessions/${encodeURIComponent(started.session.id)}`);
-      } else {
-        setNotice(startNotice(started.result, started.ahead));
-      }
+      setNote("");
+      // The person stays where they were (design §3.6); the session can be opened from here.
+      setNotice(startNotice(started.result, started.ahead));
+      setStartedId(started.session?.id ?? null);
+      setCheckTick((n) => n + 1);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -179,90 +256,112 @@ export function StartSessionDialog({
     }
   };
 
+  const resume = async () => {
+    try {
+      await client.resume();
+      setCheckTick((n) => n + 1);
+    } catch (err) {
+      setError(describeError(err));
+    }
+  };
+
   return (
     <Dialog open={open} onClose={onClose} title="Start a session" testId="start-session-dialog">
       <form onSubmit={submit} className="space-y-3">
-        <Field
-          label="Session budget (CHF)"
-          hint="Leave empty for the project default. Converted at the day's rate."
-        >
-          <input
-            className={INPUT_CLASS}
-            value={budget}
-            onChange={(e) => setBudget(e.target.value)}
-            inputMode="decimal"
-            placeholder="e.g. 5.00"
-            name="budget"
-          />
-        </Field>
-        <Field label="Reason" hint="Shown in the session log and the handoff.">
-          <input
-            className={INPUT_CLASS}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            name="reason"
-          />
-        </Field>
-        {!identity ? (
-          <p className="text-xs text-neutral-500">Waiting for the daemon to report your agent…</p>
+        {plan ? (
+          <p className="text-sm" data-testid="start-session-plan">
+            {plan}
+          </p>
         ) : null}
-        {noReadyTask ? (
+        {blocked ? (
           <div
             role="note"
             className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
-            data-testid="start-session-no-work"
+            data-testid={noReadyTask ? "start-session-no-work" : "start-session-cannot-run"}
           >
-            <p className="font-medium">No task in this project is ready.</p>
-            <p className="mt-1">
-              A session works only on ready tasks, so it would end at once and spend nothing. Give
-              your agent work first:
+            <p className="font-medium" data-testid="start-session-blocked">
+              {blocked.sentence}
             </p>
-            <ul className="mt-1 list-disc pl-5">
-              <li>add a task in the Tasks tab;</li>
-              <li>or click Mark ready on a draft task there (a session skips drafts);</li>
-              <li>or ask in Chat, for example "add a task: write the README".</li>
-            </ul>
-            {intake === "pending" ? (
+            {blocked.action ? (
+              blocked.action.kind === "resume" ? (
+                <Button onClick={() => void resume()} data-testid="start-session-unblock">
+                  {blocked.action.label}
+                </Button>
+              ) : (
+                <Link
+                  to={blocked.action.to ?? "/"}
+                  className="text-blue-700 hover:underline dark:text-blue-300"
+                  data-testid="start-session-unblock"
+                  onClick={onClose}
+                >
+                  {blocked.action.label}
+                </Link>
+              )
+            ) : null}
+            {noReadyTask ? (
+              <p className="mt-1">
+                Give your agent work first: add a task on the Tasks tab, click Make ready on a draft
+                there, or ask in Chat, for example "add a task: write the README".
+              </p>
+            ) : null}
+            {noReadyTask && intake === "pending" ? (
               <p className="mt-1" data-testid="start-session-intake">
                 The plan from your brief waits for your approval in the Inbox; approving it adds its
                 tasks.
               </p>
-            ) : intake === "drafting" ? (
+            ) : noReadyTask && intake === "drafting" ? (
               <p className="mt-1" data-testid="start-session-intake">
                 The plan from your brief is being drafted; it lands in the Inbox when it is ready.
               </p>
-            ) : intake === "failed" ? (
+            ) : noReadyTask && intake === "failed" ? (
               <p className="mt-1" data-testid="start-session-intake">
                 The plan from your brief could not be drafted; the project page says why and has a
                 Retry.
               </p>
             ) : null}
+            {data ? <BlockerLines check={data} /> : null}
           </div>
+        ) : data && plan ? (
+          <BlockerLines check={data} />
         ) : null}
-        {nothingRuns && check.data ? (
-          <div
-            role="note"
-            className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
-            data-testid="start-session-cannot-run"
+        <Field
+          label="Session budget (CHF)"
+          hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
+            data?.monthLeft ? ` Left this month: ${formatChf(data.monthLeft.chfMicro)}.` : ""
+          }`}
+        >
+          <input
+            className={INPUT_CLASS}
+            value={budget}
+            onChange={(e) => {
+              setBudget(e.target.value);
+              setBudgetTouched(true);
+            }}
+            inputMode="decimal"
+            name="budget"
+          />
+        </Field>
+        {problem ? (
+          <p
+            className="text-sm text-red-700 dark:text-red-300"
+            data-testid="start-session-budget-error"
           >
-            <p className="font-medium">
-              {check.data.ready === 1
-                ? "The ready task cannot run in this session."
-                : `None of the ${check.data.ready} ready tasks can run in this session.`}
-            </p>
-            <p className="mt-1">A session would plan nothing and end at once:</p>
-            <NotInThisSession check={check.data} />
-          </div>
+            {problem}
+          </p>
         ) : null}
-        {someLeftOut && check.data ? (
-          <div
-            role="note"
-            className="rounded border border-blue-200 bg-blue-50 p-2 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
-            data-testid="start-session-left-out"
-          >
-            <p className="font-medium">Not in this session:</p>
-            <NotInThisSession check={check.data} />
-          </div>
+        <Field
+          label="Note for this session (optional)"
+          hint="Goes into the brief of every task this session runs."
+        >
+          <input
+            className={INPUT_CLASS}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            name="note"
+          />
+        </Field>
+        {!identity ? (
+          <p className="text-xs text-neutral-500">Waiting for the daemon to report your agent…</p>
         ) : null}
         {error ? <ErrorBanner message={error} /> : null}
         {notice ? (
@@ -271,15 +370,30 @@ export function StartSessionDialog({
             className="rounded border border-blue-200 bg-blue-50 p-2 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
             data-testid="start-session-notice"
           >
-            {notice}
+            {notice}{" "}
+            {startedId ? (
+              <Link
+                to={`/sessions/${encodeURIComponent(startedId)}`}
+                className="text-blue-700 hover:underline dark:text-blue-300"
+                data-testid="start-session-open"
+                onClick={onClose}
+              >
+                Open the session
+              </Link>
+            ) : null}
           </p>
         ) : null}
+        <p className="text-xs text-neutral-500" data-testid="start-session-explain">
+          {data?.busy
+            ? "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
+            : "Start: works until nothing more can run, the budget is used, or you stop it."}
+        </p>
         <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{notice ? "Close" : "Cancel"}</Button>
           <Button
             variant="primary"
             type="submit"
-            disabled={busy || !identity}
+            disabled={busy || !identity || !!blocked || !!problem}
             data-testid="confirm-start-session"
           >
             {busy ? "Starting…" : "Start"}

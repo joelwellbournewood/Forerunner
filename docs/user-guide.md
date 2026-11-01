@@ -144,6 +144,14 @@ A start while your agent is in another session waits its turn: waiting starts (y
 approved plan's, a CI or pull request trigger) run one after the other in the order they came,
 and none replaces another. **Start session** says how many wait before yours.
 
+**Start** opens a dialog that says what the session will do: "This session runs "Create
+index.html" (about CHF 0.12) and continues with up to 6 more as they become ready". The budget
+is filled in with the project's default; 0, a negative amount or more than is left of your
+monthly cap is refused in words. "Note for this session" goes into the brief of every task the
+session runs. When nothing can run, Start is greyed out and the dialog says why in one sentence
+with the button that fixes it (Allow sessions again, Open it, Open Tasks, Set up Docker,
+Connect Claude). After Start you stay where you were; **Open the session** opens its page.
+
 **One Start keeps going.** A session works until nothing it can run is left: after each task it
 looks again and takes the tasks that just became ready (what they waited for is done), a task
 the critic sent back (the next attempt runs in the same session, up to the retry limit; after

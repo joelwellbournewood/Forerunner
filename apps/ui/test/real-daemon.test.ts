@@ -354,6 +354,63 @@ describe("the UI client against the real daemon", () => {
     expect(["started", "queued"]).toContain(started.result);
   });
 
+  it("start check: what runs and what follows, why nothing would, the default budget, the month left (design §3.6)", async () => {
+    const project = await client.createProject({ name: "Chain", goal: "Steps in order" });
+    const first = await client.createTask(project.id, {
+      title: "Create index.html",
+      outcome: "index.html exists",
+      acceptanceCriteria: [],
+      riskTier: 0,
+      priority: "high",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    await client.createTask(project.id, {
+      title: "Add script.js",
+      outcome: "script.js exists",
+      acceptanceCriteria: [],
+      riskTier: 0,
+      priority: "medium",
+      status: "ready",
+      dependsOn: [first.id],
+      budgetUsdMicro: 0,
+    });
+    const check = await client.startCheck(project.id);
+    expect(check.runnable.map((t) => t.title)).toEqual(["Create index.html"]);
+    expect(check.later.map((t) => t.title)).toEqual(["Add script.js"]);
+    expect(check.blocked).toBeNull();
+    expect(check.sessionBudget.chfMicro).toBeGreaterThan(0);
+    expect(check.monthLeft?.chfMicro).toBeGreaterThan(0);
+    // Stop all: refused before Start with the reason and the button.
+    await client.kill({ scope: "all", reason: "stop all from the UI" });
+    expect((await client.startCheck(project.id)).blocked).toMatchObject({
+      kind: "stopped",
+      sentence: "Sessions are stopped (Stop all), so nothing can start.",
+      action: { kind: "resume", label: "Allow sessions again" },
+    });
+    await client.resume();
+    // A budget above what is left this month is refused in words.
+    const tooMuch = (check.monthLeft?.usdMicro ?? 0) + 1_000_000;
+    const refused = await client
+      .startSession({ agentId, projectId: project.id, trigger: "manual", budgetUsdMicro: tooMuch })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).message).toContain(
+      "That is more than what is left of your monthly cap",
+    );
+    // A project where nothing can run says why.
+    const empty = await client.createProject({ name: "Empty", goal: "Nothing yet" });
+    expect((await client.startCheck(empty.id)).blocked).toMatchObject({
+      kind: "nothing_runnable",
+      sentence: "Nothing can run: no task is ready.",
+      action: { kind: "link", label: "Open Tasks", to: `/projects/${empty.id}/tasks` },
+    });
+  });
+
   it("stop after this task on a session nothing runs: it ends at once, as asked (design §3.7)", async () => {
     let ghost = await rt.store.session.insert({
       agent_id: agentId,
