@@ -4194,7 +4194,11 @@ was improved with the critic's findings below" only when findings follow; a firs
 without findings points to the previous attempt instead. A run that ended on an error is
 named by `failureWords` ("Claude did not answer (model call failed).", the redacted message
 otherwise), never by the text the model wrote before the error, and carries
-`TaskExecutionResult.errorCode`; a timeout keeps its partial output (D.17).
+`TaskExecutionResult.errorCode`; a timeout keeps its partial output (D.17). The constraints say
+"Do not commit, push or open a pull request: Forerunner records your changes after the run":
+the executor commits a workspace's changes (the next run's baseline) or opens the pull request
+itself; live (2026-11-01) a planned outcome asked the coder for a commit it never makes
+(`executor-brief.test.ts`).
 
 ### Injection (`src/injection/scan.ts`)
 

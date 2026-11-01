@@ -214,6 +214,25 @@ describe("what a specialist is told (design §4.6)", () => {
     expect(brief).not.toContain("findings below");
   });
 
+  it("a brief never asks for a commit: it says Forerunner records the changes after the run (live check of 2026-11-01)", async () => {
+    // Live, the planner wrote "committed in the project working tree" into a coder's outcome;
+    // the coder has no commit step of its own ("I did not run git commit") and the critic
+    // flagged it. The executor commits each run's changes (the workspace's baseline, or the
+    // pull request), so the brief says so.
+    w = await world();
+    const task = await add(w, "Build the quote page");
+    const provider = new ScriptedProvider([{ text: "Done." }], w.h.clock);
+    await run(w, task, provider);
+    const brief = provider.calls[0]?.messages[0]?.content as string;
+    const constraints = brief.slice(
+      brief.indexOf("## Constraints"),
+      brief.indexOf("## Acceptance"),
+    );
+    expect(constraints).toContain(
+      "- Do not commit, push or open a pull request: Forerunner records your changes after the run (it commits them in the project's folder, or opens the pull request).",
+    );
+  });
+
   it("a retry carries the previous attempt's error, and no 'findings below' line when none follow", async () => {
     w = await world();
     const task = await add(w, "Style the page in styles.css", { attempt: 1 });
