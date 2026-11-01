@@ -203,6 +203,30 @@ describe("a change card from Chat answered in the Inbox (U-029)", () => {
     expect(await (await d.req("/commands/pending")).json()).toEqual([]);
   });
 
+  it("after a restart a card that kept its commands still waits and its answer runs the change (design §3.9)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-u029-restart-armed-"));
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    const first = await daemon(clock, home, stateUrl);
+    const projectId = await project(first.rt);
+    const reply = await chat(first, "set autonomy for PharmaWatch to 3");
+    const id = reply.pendingConfirmation?.id ?? "";
+    expect(await shown(first, id)).toBeDefined();
+    await first.rt.close();
+
+    // The card kept its commands and who asked: the next daemon arms it again, so the Inbox
+    // button works (before, U-029 expired every card at the next start).
+    const second = await daemon(clock, home, stateUrl);
+    open.push(second.rt);
+    const card = (await shown(second, id)) as HumanRequestView;
+    expect(card).toBeDefined();
+    expect((await click(second, card, card.options[0] as string)).status).toBe(200);
+    await expect
+      .poll(async () => (await second.rt.store.project.mustGet(projectId)).autonomy_level)
+      .toBe(3);
+    await second.rt.close();
+    open.splice(0);
+  });
+
   it("after a restart a card that can no longer run leaves the Inbox and the person is told to ask again", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-u029-restart-"));
     const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
@@ -211,6 +235,17 @@ describe("a change card from Chat answered in the Inbox (U-029)", () => {
     const reply = await chat(first, "set autonomy for PharmaWatch to 3");
     const id = reply.pendingConfirmation?.id ?? "";
     expect(await shown(first, id)).toBeDefined();
+    // A card written before cards kept their commands (or one whose commands no longer plan)
+    // cannot be armed again.
+    const row0 = await first.rt.store.humanRequest.mustGet(id);
+    const {
+      calls: _calls,
+      context: _context,
+      ...older
+    } = row0.change_card as Record<string, unknown>;
+    await first.rt.store.humanRequest.update(row0.id, row0.version, {
+      change_card: older as never,
+    });
     await first.rt.close();
 
     // The change's closure lived in the daemon that stopped; the card must not stay in the

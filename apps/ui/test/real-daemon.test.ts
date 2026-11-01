@@ -2190,7 +2190,7 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
 });
 
 describe("one conversation per project, stored by the daemon (design §3.9)", () => {
-  it("the Chat tab and Talk read the same turns; a waiting card stays after another line; the turns survive a restart", async () => {
+  it("the Chat tab and Talk read the same turns; a waiting card stays after another line; the turns and the card survive a restart", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-ui-real-conversation-"));
     const clock = new SimulatedClock("2026-03-05T08:00:00Z");
     const compose = (replies: { text: string }[]) =>
@@ -2232,17 +2232,32 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     const notes = await client.createProject({ name: "Notes", goal: "A notes tool" });
     const say = (projectId: string, text: string) =>
       client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, source: "text" });
+    const task = (title: string) =>
+      client.createTask(quote.id, {
+        title,
+        outcome: `${title}.`,
+        acceptanceCriteria: [],
+        riskTier: 1,
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+      });
+    const readme = await task("Write the README");
+    const faq = await task("Write the FAQ");
     await say(quote.id, "what is going on?");
     await say(notes.id, "add a task: write the changelog");
-    const card = await say(quote.id, "start a session with 30 francs");
-    expect(card.pendingConfirmation).not.toBeNull();
+    const card = await say(quote.id, "make the FAQ task depend on the README task");
+    expect(card.pendingConfirmation?.readback).toBe(
+      'Make "Write the FAQ" wait for "Write the README"?',
+    );
     await say(quote.id, "how much will it cost?");
 
     const seen = await client.conversation(quote.id);
     expect(seen.projectId).toBe(quote.id);
     expect(seen.turns.map((t) => t.said)).toEqual([
       "what is going on?",
-      "start a session with 30 francs",
+      "make the FAQ task depend on the README task",
       "how much will it cost?",
     ]);
     expect(seen.turns[0]?.reply?.text).toBe("Nothing has run yet: two tasks are ready.");
@@ -2269,6 +2284,14 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     expect(again.turns.map((t) => [t.said, t.reply?.text])).toEqual(
       seen.turns.map((t) => [t.said, t.reply?.text]),
     );
+    // The Yes/No card survived the restart (design §3.9): it still waits, and "yes" runs it.
+    expect(again.waiting?.id).toBe(card.pendingConfirmation?.id);
+    const yes = await say(quote.id, "yes");
+    expect(yes.reply).toBe('"Write the FAQ" now waits for "Write the README".');
+    expect((await client.tasks(quote.id)).find((t) => t.id === faq.id)?.dependsOn).toEqual([
+      readme.id,
+    ]);
+    expect((await client.conversation(quote.id)).waiting).toBeNull();
     await rt.close();
   }, 120_000);
 });

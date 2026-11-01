@@ -556,8 +556,11 @@ Run: `pnpm exec vitest run --project unit packages/commands/test` (13 files, 177
 
 ## Known issues
 
-- The closure of a pending confirmation lives in memory: a restart drops open confirmations.
-  The restarted daemon expires their `human_request` rows and tells the human to ask again
+- A pending confirmation keeps its commands (`change_card.calls`, the validated params) and
+  its context (`change_card.context`: actor, human, agent, project, source, words, device,
+  conversation session) on its `human_request` row; after a restart `restorePending` plans the
+  commands again on the state as it is and the card waits as before (design §3.9). One that no
+  longer plans (or was written before) is expired by the runtime and the human told to ask again
   (`expireOrphanedCards`, runtime.md, U-029). Reverts and undo survive a restart through the
   change log.
 - "and" inside a project name splits the sentence; name the project without it or use the

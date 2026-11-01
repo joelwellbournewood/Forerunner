@@ -2558,10 +2558,15 @@ executor refuses (the risk rose since the card was shown, the desktop row revoke
 row for a high-risk card) is reported through `onRefused` and the card cancelled so no sync
 repeats it: the daemon sends the human a warning message with the reason, the watcher writes
 its `daemon.remote_command` audit row. A `version_conflict` (another answer in flight) is
-retried on the next sync. `expireOrphanedCards` runs once when the daemon starts (services
-on, sync not paused; never in a one-shot, which composes beside a running daemon): an open
-change card of this human that no closure stands behind (the daemon that showed it stopped)
-is expired, so it leaves the Inbox instead of staying as a button that does nothing, and the
+retried on the next sync. At start `CommandLoop.start()` first arms again every open change
+card that kept its commands and who asked (`change_card.calls`, `change_card.context`, written
+by the executor's `createPending`; `CommandExecutor.restorePending` plans them again on the
+state as it is and keeps the card's id, email token and expiry), so a Yes/No card survives a
+restart (design §3.9) and its Inbox button and the chat's "yes" work. `expireOrphanedCards`
+runs once when the daemon starts (services on, sync not paused; never in a one-shot, which
+composes beside a running daemon): an open change card of this human that no closure stands
+behind (one written before cards kept their commands, or whose commands no longer plan) is
+expired, so it leaves the Inbox instead of staying as a button that does nothing, and the
 human gets one warning message that the change was not made and to ask again. One daemon per
 human holds pending cards; a second daemon of the same human on one shared store would
 expire the first one's cards at its start (Known issues). Tests:
@@ -4901,11 +4906,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
-- Change cards (U-029): a pending confirmation's closure lives in the daemon that showed it, so
-  a restart cannot run it; the restarted daemon expires the card and tells the human to ask
-  again. The calls are not stored on the card, so nothing is re-run after a restart. Two
-  daemons of one human on one shared store are not supported: the second to start expires the
-  first one's open cards.
+- Change cards (U-029, design §3.9): a card keeps its commands and context, and the restarted
+  daemon arms it again from them; a card that cannot be planned any more is expired and the
+  human told to ask again. Two daemons of one human on one shared store are not supported: the
+  second to start arms (or expires) the first one's open cards.
 - Fast mode (ADR 0057): the adapter does not read the response's `usage.speed`, so a fast
   request the API served at the standard speed would still be recorded and priced as the
   variant (an over-statement, never an under-statement). Since 2026-10-25 this is a live case

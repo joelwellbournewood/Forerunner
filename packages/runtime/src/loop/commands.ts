@@ -97,11 +97,48 @@ export class CommandLoop implements ConversationCommands {
     this.parser = new IntentParser(this.registry, deps.model ? { model: deps.model } : {});
   }
 
-  /** Persist the command table and re-arm the reverts of temporary changes (after a start). */
-  async start(): Promise<{ commands: number; reverted: number; scheduled: number }> {
+  /**
+   * Persist the command table, re-arm the reverts of temporary changes, and arm again the
+   * change cards still waiting for a yes (design §3.9: a Yes/No card survives a restart; the
+   * daemon's `expireOrphanedCards` then expires only the ones that could not be armed).
+   */
+  async start(): Promise<{
+    commands: number;
+    reverted: number;
+    scheduled: number;
+    cards: number;
+  }> {
     const rows = await this.registry.persist(this.deps.store);
     const resumed = await this.executor.resumeScheduled((row) => this.contextForRow(row));
-    return { commands: rows.length, ...resumed };
+    let cards = 0;
+    try {
+      const open = await this.deps.store.humanRequest.list(
+        { status: "open", kind: "approval" } as never,
+        { limit: 500 },
+      );
+      cards = (
+        await this.executor.restorePending(open, async (stored) => {
+          const human = await this.deps.store.human.get(stored.humanId);
+          return {
+            actor: stored.actor,
+            humanId: stored.humanId,
+            agentId: stored.agentId,
+            activeProjectId: stored.activeProjectId,
+            store: this.deps.store,
+            clock: this.deps.clock,
+            ports: this.deps.ports,
+            source: stored.source,
+            wordsUsed: stored.wordsUsed,
+            timezone: human?.timezone || "UTC",
+            deviceId: stored.deviceId,
+            sessionId: stored.sessionId,
+          };
+        })
+      ).length;
+    } catch (e) {
+      this.logger.warn("waiting change cards not armed again", { error: errorMessage(e) });
+    }
+    return { commands: rows.length, ...resumed, cards };
   }
 
   stop(): void {
