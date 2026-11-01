@@ -1,0 +1,181 @@
+export const meta = {
+  name: 'forerunner-real-walkthrough',
+  description: 'Build a real-app test bench, then walk the core journeys hands-on and synthesize findings into fix areas',
+  phases: [
+    { title: 'Bench', detail: 'real daemon + real UI + role-playing stand-in model + step recorder' },
+    { title: 'Walk', detail: 'testers use the app through the browser to do small real jobs' },
+    { title: 'Synthesize', detail: 'dedupe, root causes, design target, fix areas' },
+  ],
+}
+
+const REPO = '/home/user/Forerunner'
+
+const COMMON = `
+Context: Forerunner (repo at ${REPO}, branch claude/dreamy-johnson-2zfr0m) is a desktop app: a persistent AI project manager that plans work, delegates tasks to specialist agents, has a critic review them, with a React UI (apps/ui) talking to a local daemon (packages/runtime, \`fr daemon\`). The owner reports that "basically nothing works", that the workflows get stuck, that the UI is not intuitive (buttons like "Needs me", "Mark failed", "Cancel", "Depends on" are unexplained; the PR link on the Tasks tab does nothing; the "Not in this session" block is a wall of text; session summaries and decisions are verbose and confusing; the Chat never seems to know anything; it is hard to interact with the system dynamically). Previous rounds fixed ~85 individual bug tickets (docs/status/UPDATE-LOG.md, U-001..U-088) with unit tests against a fake daemon and the app still does not work for a person. This round tests the REAL daemon and the REAL UI in a real browser.
+
+Hard rules for you:
+- Two models are available on the bench: the role-playing stand-in (\`--provider bench\`, deterministic, with failure injection) and, when the session lead says the owner's key works, the real Claude API (\`--provider anthropic\` with the key from the environment variable ANTHROPIC_API_KEY entered through the app's setup assistant or \`fr setup\`; never print, log or commit the key). Use the stand-in for mechanics and planted failures; use the real model for anything whose quality depends on the model (planning, chat answers, what specialists write). Never present stand-in output as real model quality; say which model every observation came from. Keep real-model spend small: short briefs, tiny tasks, a session budget of about CHF 1.
+- The model-call log shows what the app SENDS the model; for the real model, also log it (the bench's logging wrapper) so context problems are visible either way.
+- Do not use the environment's GH_TOKEN, GITHUB_TOKEN or ANTHROPIC_BASE_URL for the app. Do not push, do not commit, do not create pull requests.
+- Never kill processes by name pattern (pkill -f would also kill your own shell and other agents' benches). Kill only the PIDs your own bench recorded.
+- Other agents run their own benches at the same time on other ports and homes. Use only the ports and the home directory assigned to you.
+- Machine: 4 CPUs, 15 GB RAM. Keep at most one bench (one daemon + one UI server + one browser) running at a time, and stop it when you finish.
+- Playwright and Chromium are preinstalled: require('playwright') works (set NODE_PATH=$(npm root -g) if a script outside the repo cannot find it); chromium.launch() needs no options. Do not install Playwright.
+`
+
+phase('Bench')
+const bench = await agent(`${COMMON}
+Your job: build the test bench that lets other agents use the real app hands-on, and prove it works with one end-to-end smoke journey. You are the foundation: be careful and complete.
+
+What exists:
+- \`npx tsx packages/runtime/src/cli/main.ts daemon --provider fake --port <p>\` with FORERUNNER_HOME=<dir> starts the real daemon on an isolated home; the token is in <home>/runtime/daemon.json. The 'fake' provider (packages/runtime/src/daemon/fake-provider-shim.ts) only echoes, so a session cannot plan or write anything.
+- testenv/src/provider/ has a richer FakeProvider with scripted replies matched by predicates (replies.ts, fake-provider.ts) used by tests/e2e scenarios; look at how tests/e2e/scenarios script intake, specialists and the critic for realistic reply shapes.
+- The UI dev server: \`cd apps/ui && VITE_DAEMON_URL=http://127.0.0.1:<p> VITE_DAEMON_TOKEN=<token> npx vite --port <u> --strictPort --host 127.0.0.1\`.
+- A scratch version of a start script is at /tmp/frbench/scripts/start-bench.sh (bash) and a screenshot helper at /tmp/frbench/scripts/look.cjs; use them as a starting point only.
+
+Build, inside the repo (so it can be kept):
+1. A role-playing stand-in model, e.g. testenv/src/bench/role-player.ts, exposed to the daemon as \`--provider bench\` (a dev-only option in packages/runtime/src/cli/main.ts that dynamically imports it from testenv; it must fail with a clear message if testenv is absent, and must not change what the installed app does). It recognises each role from the request (system prompt / tools / registry prompt text) and answers so the REAL flow proceeds:
+   - project intake / planning (the project-manager prompt, see evals/registry and packages/runtime/src/session/intake.ts): a plausible plan for the brief with 3-6 small tasks, realistic titles, specialists that exist in the registry, dependencies between some tasks, the decision doc, whatever the intake parser requires;
+   - specialists (coder, writer, ...): REAL tool calls through the app's real tools (write files with sensible content derived from the task title/brief, read files, maybe run a harmless command), then the final report in the format the executor expects;
+   - critic / reviews: a verdict in the expected format (accept by default);
+   - chat (conversation agent): a short reply that starts with "[stand-in model]" and says in one sentence what context it was given (e.g. number of earlier turns visible, whether a task list was present). For a message like "tool: <name> <json>" it may call that command tool, so testers can exercise chat commands that need a model.
+   - anything unrecognised: a short "[stand-in model] unrecognised role" text, and log it.
+   - Failure injection via environment variables read at daemon start, e.g. FORERUNNER_BENCH_FAIL="<substring of a task title>" makes that task's specialist run fail realistically (e.g. report it could not do the work), FORERUNNER_BENCH_CRITIC_REJECT="<substring>" makes the critic ask for rework, FORERUNNER_BENCH_ASK="<substring>" makes the specialist say it needs the person's answer (if the app has such a path). Document the exact names.
+   - It logs EVERY request it receives as one JSON line in <FORERUNNER_HOME>/bench/model-calls.jsonl: time, detected role, model, the full system prompt, the full messages array, the tool names offered, and its reply. This log is how testers see what the app gives the model.
+   - Live mode: when ANTHROPIC_API_KEY is set, \`--provider bench-live\` wraps the real Anthropic provider with the same request logging (the key never appears in the log), so testers can run real sessions and still see what the app sends. Prove one real call works (a chat turn) before reporting ready, and report its cost.
+2. scripts/bench/start.mjs (Node, works on Windows and Linux; paths via node:path): \`node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u> [--provider bench|fake] [--env KEY=VAL ...]\` starts the daemon (with FORERUNNER_HOME=/tmp/frbench/<n>/home unless --home given) and the UI dev server, waits until both answer, writes /tmp/frbench/<n>/bench.json {daemonUrl, uiUrl, home, token, pids}, prints them. \`node scripts/bench/stop.mjs --name <n>\` stops exactly those PIDs (and their children). Make restart of only the daemon possible (\`node scripts/bench/restart-daemon.mjs --name <n>\`) so testers can test what survives a restart.
+3. scripts/bench/recorder.cjs: a tiny helper testers require from their own Playwright scripts: openApp(name) -> {browser, page}; step(page, label) saves /tmp/frbench/<n>/steps/NN-label.png (full page) and NN-label.txt (visible text) and returns the text; also collects console errors and failed network requests (status >= 400) into /tmp/frbench/<n>/steps/problems.jsonl. Plus api(name, method, path, body) to call the daemon directly (for setup that is not under test, or to inspect state).
+4. scripts/bench/README.md: how to use all of this in 20 lines.
+
+Then prove it with a smoke journey through the UI (a Playwright script under scripts/bench/journeys/smoke.cjs): open the app on a fresh home, get past the setup assistant the way a person without keys would (note what that is like), create a project from a brief "A one-page website that shows a random quote each time it is opened; plain HTML, CSS and JavaScript; no build step", get the plan, approve it where the app asks, start a session, wait until it ends, open the Tasks tab and the Summary, and check that the files the stand-in coder wrote really exist on disk in the project's folder (find out where that is). Take a step() at every screen.
+
+When the real app blocks the journey (an error, a stuck state, a button that does nothing), that is a PRODUCT finding, not a bench failure: record it precisely (steps, screenshot, error text, daemon log lines, root cause with file:line if you can find it). Only if it is needed to let the journey continue, and the fix is small and obviously right, make the minimal fix and list it under product_fixes; otherwise get past it through the daemon API (api()) and continue, so later steps still get exercised. Distinguish clearly between bench problems (yours to fix) and product problems (to report).
+
+Before you finish: run \`pnpm lint\` and \`pnpm typecheck\` for what you added and fix problems in your own files; stop your bench. Do not commit.
+
+Return precise, short instructions other agents can follow (commands, helper API, env vars for failure injection, where the project folder and model-call log are), the smoke result, and every product finding.`, {
+  label: 'bench-builder',
+  phase: 'Bench',
+  schema: {
+    type: 'object',
+    properties: {
+      ready: { type: 'boolean', description: 'true when another agent can start a bench and walk the UI with the role-player' },
+      instructions: { type: 'string', description: 'exact usage for testers: start/stop/restart commands, recorder API, failure-injection env vars, model-call log path, how to find the project folder on disk' },
+      smoke_result: { type: 'string', description: 'what happened at each step of the smoke journey, with step file paths' },
+      product_findings: { type: 'array', items: { type: 'object', properties: {
+        title: { type: 'string' }, severity: { type: 'string', enum: ['blocker', 'major', 'minor', 'polish'] },
+        steps: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' },
+        evidence: { type: 'array', items: { type: 'string' } }, root_cause: { type: 'string' },
+      }, required: ['title', 'severity', 'actual', 'root_cause'] } },
+      product_fixes: { type: 'array', items: { type: 'string' }, description: 'minimal product fixes made to unblock, with files' },
+      files_added_or_changed: { type: 'array', items: { type: 'string' } },
+      limits: { type: 'string', description: 'what the bench cannot test' },
+    },
+    required: ['ready', 'instructions', 'smoke_result', 'product_findings', 'files_added_or_changed', 'limits'],
+  },
+})
+
+if (!bench || !bench.ready) {
+  log('Bench not ready; stopping before the walks.')
+  return { bench }
+}
+log(`Bench ready. Smoke found ${bench.product_findings.length} product finding(s).`)
+
+const JOURNEYS = [
+  { key: 'first-project', title: 'A new person gets a first small project done', task: `You have never seen Forerunner. Open the app on a fresh home and try to get a tiny real thing built: "A one-page website that shows today's date and a greeting; plain HTML". Go through setup as a person without keys would, create the project from a brief, find and approve the plan, start the work, follow progress while it runs, find what was produced (the files on disk, and where the app shows them), and read the summary. Then ask for one small change ("make the greeting say good evening after 6 pm") the way a person would expect to (chat? a new task?) and get it done. Judge it as a first-time user: count clicks, every moment you did not know what to do next, every dead end, every word you did not understand, every place where the app said something was happening and nothing visibly was.` },
+  { key: 'tasks-tab', title: 'Working with tasks by hand, every control', task: `In a project, add 5 small tasks by hand through the UI (e.g. "Create hello.txt containing hi", "Write a README that explains the project", "Add a LICENSE file (MIT)", "Create notes/todo.md with three items", "Translate hello.txt to German in hallo.txt"), make two of them depend on others, start a session and watch. Then exercise EVERY control on the Tasks tab and in its dialogs, on tasks in every state you can reach: Needs me, Mark failed, Cancel, Mark ready, Reopen (if present), Depends on / the dependency picker, New task fields (priority, budget, specialist, risk tier), filters, search, Refresh, the PR link and the review link, and anything else clickable. For each control record: what a person would think it does from its label, what it actually does (state before and after, via the UI and the daemon API), whether it can be undone, and whether the result makes sense. Check specifically: does clicking "PR" open anything (in a plain browser tab AND reason from the code about the desktop shell: apps/desktop/src-tauri/src/windows.rs on_navigation vs links with target=_blank; compare apps/ui/src/components/ExternalLink.tsx)? Find every other link in apps/ui with the same problem.` },
+  { key: 'chain-and-failure', title: 'A chain of dependent tasks, a failure, and recovery', task: `Recreate the owner's situation: a project with a chain of 6-7 dependent tasks (e.g. scaffold -> implement core -> tests -> review -> copy -> audit -> release notes, where each depends on the one before and some depend on two). Use failure injection (bench env vars) so the 3rd task fails. Measure: how many times you must click Start to get through the chain when nothing fails (does a session continue with tasks that became unblocked during that same session, or stop after one layer?); what happens at the failure; what exactly the app tells you (copy the "Not in this session"/waiting text verbatim, the session summary verbatim, the notification text); how a person recovers (retry, reopen, skip, change dependencies) and whether the chain then continues by itself. Also: a session with a small budget that cannot fit a task; a session started while another runs; restart the daemon (bench restart script) in the middle of a session and see whether the work recovers or is stuck (tasks stuck in claimed / in_progress / in_review; sessions stuck "running"). Read packages/runtime/src/session/runner.ts to explain what you see with file:line.` },
+  { key: 'chat-steering', title: 'Talking to it: chat, steering, asking why', task: `Use every chat surface the app has (the project's Chat tab, the side conversation panel / Talk, anything else) to try to steer the work like a person would: ask "what is going on in this project?", "what failed and why?", "what are you working on next?", "add a task: write a FAQ", "make the FAQ task depend on the README task", "skip the LICENSE task", "start working now", "stop", "summarise the last session". Note which phrases the app understands without a model (deterministic commands) and which go to the model. For every turn that reaches the model, open the bench's model-call log and record exactly what the model was given: is there any earlier turn of the conversation? the project's tasks and their states? the last session's result? failures and their reasons? open questions? the files? Judge, for each of the questions above, whether a capable real model COULD answer well from that context, and say what is missing. Read packages/runtime/src/conversation/agent.ts (context(), the messages array) and the chat command tools (packages/commands) to explain. Also check: does the conversation survive switching tabs, reloading, restarting the daemon? Is there one chat or several that disagree?` },
+  { key: 'needs-me', title: 'Things that need the person: finding them, answering, work resuming', task: `Produce every kind of thing that needs the person that you can reach on the bench: plan approval for a new project, the critic asking for rework (bench env var), a failed task, a task that is really a question for the person (e.g. a task titled "Confirm the hosting choice with me"), a task left out for budget, a session-review card, an extension approval, anything else in the Inbox. For each: how does the person find out (header badge, notification, Inbox, project page, task row)? Is it obvious what is asked, why, and what each option will do? Click each option (on separate instances where needed) and verify via the UI and the daemon API that it does exactly what it says AND that the work then continues without further pokes (or that the app clearly says what happens next). Note every card whose text is machine jargon, ids, or longer than needed. Also judge whether "Needs me" (the task button) and the Inbox are the same concept to a person or two different ones.` },
+  { key: 'words-and-structure', title: 'Everything it writes, and how the app is organised', task: `After running two or three sessions in a project (use the bench; include one failure via env var), visit EVERY screen in the main navigation (Home, Inbox, Memory, Extensions, Changes, Performance, Updates, Settings) and EVERY project tab (Summary, Plan, Tasks, Docs, Reviews, Costs, Data, Chat), plus the session page, notifications and the command palette. Collect verbatim every piece of system-written text a person reads: session summaries, the "Last session" box, decisions, notifications, session log lines, status badges, empty states, error messages, Inbox cards. Critique each against: says what happened and what (if anything) the person should do, in at most 2-3 short sentences; names instead of ids; no internal states or jargon (tier, ladder, verdict, claimed, autonomy N, session-end writes...); most important first. Find where each text is generated (file:line). Then critique the information architecture as a product designer: what does a person need for the core loop (give work, see progress, answer what needs them, see results, steer), which screens serve it, which are noise for now, where the same thing lives in two places, what the first screen should show. Be concrete and opinionated; take screenshots.` },
+  { key: 'lifecycle', title: 'Starting, stopping, restarting, settings that matter', task: `Test the controls around running work: Start session dialog (every field and message), Stop all, the kill switch and Resume, pausing/stopping a running session from the session page, a session that is still running when you reload the UI, restarting the daemon (bench restart script) with work in progress, the status indicators in the header ("connected", Talk, Stop all) and whether they tell the truth, and the Settings that change how work runs (budgets, autonomy, models, default settings). For each, record what a person would expect, what happens, and whether anything is left stuck afterwards (verify via the daemon API: sessions, tasks, claims). Also check the setup assistant's "Set up later" path: what works and what silently does not without keys, and whether the app tells the person.` },
+]
+
+phase('Walk')
+const FINDINGS_SCHEMA = {
+  type: 'object',
+  properties: {
+    journey: { type: 'string' },
+    verdict: { type: 'string', description: 'two or three sentences: could a person do this journey today?' },
+    walkthrough: { type: 'string', description: 'what you did, step by step, with step file paths' },
+    findings: { type: 'array', items: { type: 'object', properties: {
+      title: { type: 'string', description: 'what the person sees, in plain words' },
+      severity: { type: 'string', enum: ['blocker', 'major', 'minor', 'polish'] },
+      kind: { type: 'string', enum: ['broken', 'stuck', 'confusing', 'wrong-text', 'missing', 'misleading'] },
+      area: { type: 'string', enum: ['sessions-engine', 'tasks-ui', 'chat', 'inbox-needs-me', 'project-setup-intake', 'system-text', 'navigation-structure', 'lifecycle-settings', 'links-shell', 'other'] },
+      steps: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' },
+      evidence: { type: 'array', items: { type: 'string' }, description: 'step screenshot/text paths, verbatim texts, log lines' },
+      root_cause: { type: 'string', description: 'file:line and why, or "unknown"' },
+      suggested_fix: { type: 'string' },
+    }, required: ['title', 'severity', 'kind', 'area', 'actual', 'root_cause'] } },
+    worked_well: { type: 'array', items: { type: 'string' } },
+    not_testable_here: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['journey', 'verdict', 'walkthrough', 'findings'],
+}
+
+const walks = await pipeline(
+  JOURNEYS,
+  (j, _orig, i) => agent(`${COMMON}
+You are a hands-on tester. Journey: "${j.title}".
+
+Use the test bench another agent built. Its instructions:
+---
+${bench.instructions}
+---
+Limits of the bench: ${bench.limits}
+Product problems the bench builder already found (do not re-report unless you add something new; do reference them): ${JSON.stringify(bench.product_findings.map((f) => f.title))}
+
+Your bench name is "walk-${j.key}", daemon port ${47830 + i}, UI port ${1440 + i}. Use only those.
+
+How to work: write Playwright scripts (in /tmp/frbench/walk-${j.key}/scripts/, NOT in the repo) that drive the UI like a person: click what a person would click, read what is on screen with the recorder's step(), and look at the screenshots you take (use your Read tool on the .png files) — judge what a person SEES, not only the DOM. Use the daemon API directly only to inspect state or to set up something that is not under test, and say when you did. Read the code to explain causes (file:line). Do not modify anything in the repo.
+
+The journey:
+${j.task}
+
+Be genuinely critical, like a demanding product designer and a QA engineer at once. The owner's verdict is "basically nothing works and it is not intuitive"; find out exactly why for this journey. Report every problem you hit with evidence; also note what worked. Stop your bench before you finish.`, { label: `walk:${j.key}`, phase: 'Walk', schema: FINDINGS_SCHEMA }),
+)
+
+const done = walks.filter(Boolean)
+log(`${done.length}/${JOURNEYS.length} walks returned ${done.reduce((n, w) => n + w.findings.length, 0)} findings.`)
+
+phase('Synthesize')
+const synthesis = await agent(`${COMMON}
+You are the lead product designer and engineer for this round. Hands-on testers walked the real app (real daemon, real UI, stand-in model). Their reports, and the bench builder's, are below as JSON.
+
+BENCH BUILDER:
+${JSON.stringify({ smoke: bench.smoke_result, findings: bench.product_findings, fixes: bench.product_fixes, limits: bench.limits })}
+
+WALKS:
+${JSON.stringify(done)}
+
+Do three things:
+1. Merge duplicates and cluster findings into a small number of fix AREAS (aim for 5-7), each owned end to end by one engineer next round, e.g. the session engine (planning, continuing as tasks unblock, recovery after failure/restart), the Tasks screen, chat (context, memory, steering commands), the needs-me loop (Inbox, cards, resuming work), everything the system writes (one voice, length limits), navigation/structure (what is primary, what is hidden), links/shell. For each area: the problems (with evidence paths and severities), the ROOT causes (explain several symptoms at once where possible; verify the important ones yourself in the code, file:line), and a concrete fix scope with the files involved. Mark anything you could not confirm as unconfirmed.
+2. Write the design target to ${REPO}/docs/design/core-experience.md (create docs/design/): the core loop a person uses (give work, see progress, answer what needs them, see results, steer by chat), and for each screen in that loop: its one job, what it shows and must not show, its actions with plain labels and a one-line explanation each, its empty / running / failed / stuck states. Writing rules for every system-written text (max length, names not ids, what needs you first, no internal states or jargon; give before/after examples taken from the testers' verbatim texts). Which screens are primary, which move behind a "More" menu for now (hide, never delete), and why. The session engine's intended behaviour in plain words (e.g. a session keeps going while tasks unblock until budget or a real blocker; a blocker is named once, briefly). Keep it under ~400 lines, concrete, opinionated, in plain English. This document is what the fixes will be judged against.
+3. An ordered fix plan: which areas can be fixed in parallel without touching the same files, which must go first, and for each area the acceptance check a fresh agent will perform on the bench (a journey with expected outcomes).
+
+Do not modify code. Only write docs/design/core-experience.md.`, {
+  label: 'synthesize',
+  phase: 'Synthesize',
+  schema: {
+    type: 'object',
+    properties: {
+      headline: { type: 'string', description: 'the 5-8 most important things wrong, in plain words, for the owner' },
+      areas: { type: 'array', items: { type: 'object', properties: {
+        key: { type: 'string' }, title: { type: 'string' },
+        problems: { type: 'array', items: { type: 'string' } },
+        root_causes: { type: 'array', items: { type: 'string' } },
+        fix_scope: { type: 'string' },
+        files: { type: 'array', items: { type: 'string' } },
+        acceptance: { type: 'string' },
+        depends_on: { type: 'array', items: { type: 'string' } },
+      }, required: ['key', 'title', 'problems', 'root_causes', 'fix_scope', 'files', 'acceptance'] } },
+      parallel_groups: { type: 'array', items: { type: 'array', items: { type: 'string' } }, description: 'area keys that can be fixed at the same time without touching the same files, in order' },
+      design_doc: { type: 'string', description: 'path of the written design doc' },
+      unconfirmed: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['headline', 'areas', 'parallel_groups', 'design_doc'],
+  },
+})
+
+return { bench, walks: done, synthesis }

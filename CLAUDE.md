@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+**Work in progress (2026-11-01):** before anything else, read
+`docs/status/handoff/NEXT-SESSION.md`: the owner-approved plan for the current round, with the
+root causes already found. Remove this paragraph when that round is done.
+
 Read `AGENTS.md` first; it is the single source of working rules for this repository. Its
 Validation section and `docs/maintainers/validation.md` decide when a change is done: read
 them before writing a test or a fix.
