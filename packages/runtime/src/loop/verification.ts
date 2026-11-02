@@ -13,7 +13,8 @@ import type { ReviewTier } from "@forerunner/critic";
  * 3. Work a person will use is also tried as a person would use it (`try-it.ts`): a page is
  *    opened in a headless browser and what a person would see is evidence.
  * 4. Deploys and data migrations keep the full review and the person's sign-off: a specialist's
- *    `risk_tier_floor` in the registry raises the review level (`reviewTierOf`).
+ *    `risk_tier_floor` in the registry raises the review level (`reviewTierOf`), and an accept of
+ *    a deploy or a migration ends with the person's sign-off (`signoffReasonOf`).
  * 5. The person sees "Done" only after the right check, with "Reviewed" or "Reviewed and
  *    tried" and the evidence in the task drawer (`daemon/task-display.ts`).
  */
@@ -30,25 +31,30 @@ export function reviewTierOf(riskTier: number, floor = 0): ReviewTier {
 }
 
 /**
- * Specialists whose work is a deploy or a data migration (the owner's decision 4): the review
- * ends with the person's sign-off whatever the task's tier says.
+ * Specialists whose work is a deploy or a data migration (the owner's decision 4): an accept of
+ * their work ends with the person's sign-off (the critic package's `SIGNOFF_RULE`); rework goes
+ * through the retry ladder as for any task.
  */
-export const SIGNOFF_SPECIALISTS: ReadonlySet<string> = new Set([
-  "ops-deploy",
-  "migration-specialist",
+export const SIGNOFF_SPECIALISTS: ReadonlyMap<string, string> = new Map([
+  ["ops-deploy", "a deploy"],
+  ["migration-specialist", "a data migration"],
 ]);
 
 /**
- * The review level floor of a task's specialist: its registry `risk_tier_floor`, and the
- * sign-off (3) for a deploy or a migration. 0 when the specialist is unknown.
+ * The review level floor of a task's specialist: its registry `risk_tier_floor` (2 for a deploy,
+ * a migration and a science evaluation: the full review). 0 when the specialist is unknown.
  */
 export function reviewFloorOf(
   specialist: string | null | undefined,
   registryFloor?: (name: string) => number | undefined,
 ): number {
   if (!specialist) return 0;
-  if (SIGNOFF_SPECIALISTS.has(specialist)) return 3;
   return registryFloor?.(specialist) ?? 0;
+}
+
+/** Why an accept of this specialist's work still needs the person's sign-off, or undefined. */
+export function signoffReasonOf(specialist: string | null | undefined): string | undefined {
+  return specialist ? SIGNOFF_SPECIALISTS.get(specialist) : undefined;
 }
 
 /**

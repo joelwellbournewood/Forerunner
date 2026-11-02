@@ -16,7 +16,8 @@ import type { ReviewFinding, ReviewTier, RuleAdjustment, Severity, Verdict } fro
  *   3. confidence below LOW_CONFIDENCE never accepts: it escalates (H.4);
  *   4. work whose own report asks the person for something (a "Questions for the person:"
  *      list) never accepts: it goes to the person (ADR 0104);
- *   5. tier 3 always ends with a human sign-off (H.2).
+ *   5. an accepted deploy or data migration ends with the person's sign-off (ADR 0104);
+ *   6. tier 3 always ends with a human sign-off (H.2).
  *
  * Every change is recorded as an adjustment so the review shows what the model said and what
  * the code made of it.
@@ -26,6 +27,8 @@ export const ACCEPT_MIN_GRADE = 70;
 export const ESCALATE_RULE = "escalate_needs_reason";
 /** Work whose report asks the person for something is not accepted (ADR 0104). */
 export const ASKS_PERSON_RULE = "asks_person";
+/** A deploy or a data migration the critic accepts ends with the person's sign-off (ADR 0104). */
+export const SIGNOFF_RULE = "signoff_required";
 export const SEVERITY_ORDER: readonly Severity[] = ["info", "low", "medium", "high", "critical"];
 /** Severities that block accept and keep a task from closing. */
 export const BLOCKING_SEVERITIES: ReadonlySet<Severity> = new Set<Severity>([
@@ -77,6 +80,12 @@ export interface RawVerdict {
    * 0104): work that waits for the person is not done, so it never accepts.
    */
   asksPerson?: number;
+  /**
+   * Why the work needs the person's sign-off before it is done, when it does (a deploy or a
+   * data migration, ADR 0104, the owner's decision 4): an accept becomes `human`; a revise stays
+   * a revise, so rework goes through the retry ladder as for any task.
+   */
+  signoffRequired?: string;
 }
 
 export type EscalationCheck =
@@ -222,6 +231,13 @@ export function applyVerdictRules(raw: RawVerdict, tier: ReviewTier): RuledVerdi
       ASKS_PERSON_RULE,
       "human",
       `the work's report asks the person ${raw.asksPerson === 1 ? "a question" : `${raw.asksPerson} questions`}; work that waits for the person is not done (ADR 0104)`,
+    );
+  }
+  if (verdict === "accept" && raw.signoffRequired) {
+    change(
+      SIGNOFF_RULE,
+      "human",
+      `${raw.signoffRequired}: it is done once you sign it off (ADR 0104)`,
     );
   }
   if (tier === 3) {

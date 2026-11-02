@@ -68,7 +68,7 @@ import {
 } from "./ports.ts";
 import { isCodeChange, notRunWords, projectChecks, projectFileList } from "./project-checks.ts";
 import { pagesToTry, type TryItPort } from "./try-it.ts";
-import { outcomeCriterion, reviewFloorOf, reviewTierOf } from "./verification.ts";
+import { outcomeCriterion, reviewFloorOf, reviewTierOf, signoffReasonOf } from "./verification.ts";
 
 /**
  * The critic in the loop (spec H, phase 3). For every task the runner finished above the
@@ -318,12 +318,12 @@ export class CriticLoop implements CriticPort {
     const { store } = this.deps;
     const { task, session, result } = req;
     // Every task is reviewed by the critic (ADR 0104): a task at tier 0 gets the light review,
-    // the lowest review there is ("automated checks only" no longer closes a task), and a
-    // deploy or a migration ends with the person's sign-off whatever its tier says.
-    const tier = reviewTierOf(
-      task.risk_tier,
-      reviewFloorOf(req.item.specialist || task.specialist, this.deps.specialistFloor),
-    );
+    // the lowest review there is ("automated checks only" no longer closes a task), never below
+    // its specialist's registry floor; an accepted deploy or migration ends with the person's
+    // sign-off whatever its tier says.
+    const specialist = req.item.specialist || task.specialist;
+    const tier = reviewTierOf(task.risk_tier, reviewFloorOf(specialist, this.deps.specialistFloor));
+    const signoff = signoffReasonOf(specialist);
     const project = await store.project.get(task.project_id);
     const settings = project?.settings ?? null;
     const worktree =
@@ -364,6 +364,7 @@ export class CriticLoop implements CriticPort {
       finalReport: report,
       ...(questions.length ? { questionsForPerson: questions } : {}),
       notChecked: ownSkipped ? [ownSkipped] : [],
+      ...(signoff ? { signoffRequired: signoff } : {}),
       ...(diff?.diff ? { diff: diff.diff } : {}),
       ...(changedFiles.length ? { changedFiles } : {}),
       ...(result.prUrl ? { prUrl: result.prUrl } : {}),

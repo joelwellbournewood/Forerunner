@@ -16,7 +16,10 @@ import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { ScriptedProvider } from "../../../packages/runtime/test/helpers.ts";
+import {
+  AcceptingCriticProvider,
+  ScriptedProvider,
+} from "../../../packages/runtime/test/helpers.ts";
 import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
 import {
   type BenchOptions,
@@ -1843,7 +1846,9 @@ async function composeWithWaitingRun(
     clock,
     stateUrl: "sqlite::memory:",
     vault: new MemoryVault(),
-    provider,
+    // The critic reviews every task (ADR 0104), tier 0 too: it accepts here, so the script
+    // (and `provider.calls`) sees only the specialists' calls it was written for.
+    provider: new AcceptingCriticProvider(provider),
     registryDir: REGISTRY,
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.0.0-ui-contract",

@@ -1903,8 +1903,10 @@ and applies the verdict with `applyVerdict`.
 Proportional verification (ADR 0104, `src/loop/verification.ts`, `project-checks.ts`,
 `try-it.ts`):
 - **Review tier** `reviewTierOf(task.risk_tier, reviewFloorOf(specialist, specialistFloor))`:
-  never below 1, never below the specialist's registry `risk_tier_floor`, and 3 (the person's
-  sign-off) for `ops-deploy` and `migration-specialist`.
+  never below 1, never below the specialist's registry `risk_tier_floor` (2 for `ops-deploy`,
+  `migration-specialist`, `science-evaluator`). For `ops-deploy` and `migration-specialist`
+  the evidence carries `signoffRequired` (`signoffReasonOf`): an accept becomes the person's
+  sign-off, a revise goes through the retry ladder.
 - **Checks.** For a code change (`isCodeChange`: anything but docs and notes) the project's
   `settings.checks` plus the `build`, `lint`, `typecheck` and `test` scripts of the folder's
   `package.json` (`projectChecks`: `npm run --silent <name>`; npm's "no test specified" and

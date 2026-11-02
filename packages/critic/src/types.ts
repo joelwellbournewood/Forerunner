@@ -123,6 +123,11 @@ export interface ReviewEvidence {
   /** The work tried as a person would use it (ADR 0104); a try that did not work blocks accept. */
   tried?: TriedEvidence[];
   /**
+   * Why an accept of this work still needs the person's sign-off ("a deploy", "a data
+   * migration"; ADR 0104, the owner's decision 4). Absent for other work.
+   */
+  signoffRequired?: string;
+  /**
    * What the runtime could not run or try for this review, and why, in words ("the page was
    * not tried: no Chromium, Edge or Chrome was found on this computer"). Shown to the critic
    * with the artifacts and kept for the person with the review (ADR 0104).

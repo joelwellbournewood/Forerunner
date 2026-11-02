@@ -789,6 +789,7 @@ export class CriticService {
         escalation: submitted?.escalation ?? null,
         grounds,
         asksPerson: e.questionsForPerson?.length ?? 0,
+        ...(e.signoffRequired ? { signoffRequired: e.signoffRequired } : {}),
       },
       input.tier,
     );

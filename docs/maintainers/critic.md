@@ -103,8 +103,9 @@ Verification (ADR 0104, `types.ts`):
 
 Mandatory tiers (open decision in the spec): anything touching main, security, data, money or
 science claims is reviewed at tier 2 or higher. The runtime reviews every task an agent finished
-at its tier, never below 1 and never below its specialist's registry `risk_tier_floor`, and a
-deploy or a migration at 3 (ADR 0104, `packages/runtime/src/loop/verification.ts`).
+at its tier, never below 1 and never below its specialist's registry `risk_tier_floor`; an accept
+of a deploy or a migration becomes `human` by `rules.ts`'s `SIGNOFF_RULE` (`evidence.signoffRequired`;
+a revise stays a revise) (ADR 0104, `packages/runtime/src/loop/verification.ts`).
 Small-project mode (spec B.6, ADR 0051)
 defaults a new task that names no tier to tier 0 (reviewed as tier 1): that default is chosen in one place, the
 runtime's `defaultRiskTier(project)` (`packages/runtime/src/session/project-plan.ts`), by every

@@ -37,9 +37,12 @@ agentic way".
 
 1. **The critic reviews every task an agent finished** (`SessionRunner`, `CriticLoop`). A task's
    review level is its risk tier, never below the light review (tier 1) and never below its
-   specialist's `risk_tier_floor` from the registry; a task by `ops-deploy` or
-   `migration-specialist` is reviewed at tier 3, which ends with the person's sign-off
-   (`loop/verification.ts`: `reviewTierOf`, `reviewFloorOf`). The mechanical tier-0 close
+   specialist's `risk_tier_floor` from the registry (2, the full review, for `ops-deploy`,
+   `migration-specialist` and `science-evaluator`). An accept of the work of `ops-deploy` or
+   `migration-specialist` ends with the person's sign-off (`signoffRequired`, the critic's
+   `SIGNOFF_RULE`); a revise of it goes through the retry ladder as any task's does, so a task the
+   ladder handed to one of them (U-044) is not turned into a sign-off card by its rework
+   (`loop/verification.ts`: `reviewTierOf`, `reviewFloorOf`, `signoffReasonOf`). The mechanical tier-0 close
    ("automated checks only") remains only for a runner composed without a critic (engine test
    worlds); the daemon always composes one.
 
@@ -114,8 +117,8 @@ agentic way".
   Edge or Chrome as the agent browser does (`resolveChromiumExecutable`).
 - The deploy and migration floor applies to the review; the run itself follows the stored tier,
   so a deploy task a person lowered to a light review runs in the process sandbox and then waits
-  for the person's sign-off. Raising the stored tier at creation is left to the planner and the
-  New task dialog.
+  for the person's sign-off. The Edit dialog offers such a task no light review; raising the
+  stored tier when a task is created is left to the planner.
 
 ## Alternatives considered
 

@@ -388,20 +388,49 @@ describe("verification: nothing is Done without the right check", () => {
     await w2.close();
   });
 
-  it("a deploy is reviewed with the person's sign-off whatever its tier; the brief tells every specialist how its work is checked", async () => {
+  it("a deploy gets the full review and is done only once the person signs it off, whatever its tier; rework still goes through the retry ladder", async () => {
+    // Live (2026-11-02, D): an ops-deploy task edited down to a light review was accepted (86)
+    // with a criterion "not verified" and was Done.
     const w = await loopWorld({
-      replies: [submitReply({ grade: 95 }), closingReply()],
+      replies: [
+        submitReply(
+          { grade: 95 },
+          { when: (req) => firstTurn(req) && !/Fix the deploy/.test(JSON.stringify(req.messages)) },
+        ),
+        submitReply(
+          {
+            grade: 40,
+            verdict: "revise",
+            findings: [{ severity: "major", what: "The rollback was not tested" }],
+          },
+          { when: (req) => firstTurn(req) && /Fix the deploy/.test(JSON.stringify(req.messages)) },
+        ),
+        closingReply(),
+      ],
       critic: { specialistFloor: (name) => (name === "ops-deploy" ? 2 : undefined) },
     });
     const task = await w.addTask("Deploy the site", { risk_tier: 1, specialist: "ops-deploy" });
     const executor = doneExecutor(w);
-    const runner = w.runner({
+    const asDeploy = w.runner({
       execute: (ctx) =>
         executor.execute({ ...ctx, item: { ...ctx.item, specialist: "ops-deploy" } }),
     });
-    const result = await w.start(runner);
-    expect(result.reviews[0]).toMatchObject({ taskId: task.id, tier: 3, decision: "human" });
+    const result = await w.start(asDeploy);
+    // The full review (the registry's floor), and the accept became the person's sign-off.
+    expect(result.reviews[0]).toMatchObject({ taskId: task.id, tier: 2, decision: "human" });
     expect((await w.store.task.mustGet(task.id)).status).toBe("needs_human");
+    const [signoff] = await w.store.humanRequest.list(
+      { task_id: task.id, status: "open" } as never,
+      { limit: 5 },
+    );
+    expect(signoff?.why).toContain("needs your sign-off");
+    // A deploy the critic sends back is reworked as any task is, not handed to the person.
+    const fix = await w.addTask("Fix the deploy", { risk_tier: 1, specialist: "ops-deploy" });
+    const second = await w.start(asDeploy, { budgetCapUsdMicro: 1_500_000 });
+    expect(second.reviews.find((r) => r.taskId === fix.id)).toMatchObject({
+      verdict: "revise",
+      decision: "revise",
+    });
     expect(reviewTierOf(0)).toBe(1);
     expect(reviewTierOf(1, 2)).toBe(2);
     expect(HOW_WORK_IS_CHECKED).toContain("the critic reads your work and the project's files");
