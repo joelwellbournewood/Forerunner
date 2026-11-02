@@ -1,0 +1,2077 @@
+diff --git a/apps/ui/src/lib/task-actions.ts b/apps/ui/src/lib/task-actions.ts
+index bd7e1ed..9caf715 100644
+--- a/apps/ui/src/lib/task-actions.ts
++++ b/apps/ui/src/lib/task-actions.ts
+@@ -60,6 +60,9 @@ export function actionsFor(
+ ): readonly TaskActionKey[] {
+   if (key === "answer" && task?.display?.blocker?.cardKind === "retry")
+     return ["answer", "try_again", "cancel"];
++  // Stopped at its own budget (live walk 2, B2): its card raises the budget; Edit changes it.
++  if (key === "answer" && task?.display?.blocker?.cardKind === "budget")
++    return ["answer", "edit", "cancel"];
+   if (key === "answer" && task?.specialist === WHO_PERSON) return ["answer", "cancel"];
+   switch (key) {
+     case "draft":
+diff --git a/apps/ui/src/pages/project/StartSessionDialog.tsx b/apps/ui/src/pages/project/StartSessionDialog.tsx
+index 6e37886..4b28317 100644
+--- a/apps/ui/src/pages/project/StartSessionDialog.tsx
++++ b/apps/ui/src/pages/project/StartSessionDialog.tsx
+@@ -128,17 +128,29 @@ function BlockerLines({ check }: { check: StartCheckView }) {
+         </>
+       ),
+     });
++  // A task left out is larger than the whole work budget, or (live walk 2, phase C) only does
++  // not fit after the tasks that run first: "needs about CHF 1.20, more than this session's work
++  // budget of CHF 2.40" was untrue for the second kind. Each says which it is.
++  const first = check.runnable.reduce((s, r) => s + r.estimate.chfMicro, 0);
+   for (const t of check.overBudget)
+     lines.push({
+       key: `b-${t.taskId}`,
+       testId: "start-session-over-budget",
+-      node: (
+-        <>
+-          "{t.title}" needs about <Money value={t.estimate} />, more than this session's work budget
+-          of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
+-          session a larger budget, or the task a smaller one.
+-        </>
+-      ),
++      node:
++        t.estimate.usdMicro > check.workBudget.usdMicro ? (
++          <>
++            "{t.title}" needs about <Money value={t.estimate} />, more than this session's work
++            budget of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews).
++            Give the session a larger budget, or the task a smaller one.
++          </>
++        ) : (
++          <>
++            "{t.title}" (about <Money value={t.estimate} />) may be left for next time: the tasks
++            that run first take about {formatChf(first)} of this session's work budget of{" "}
++            <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
++            session a larger budget to be sure it runs.
++          </>
++        ),
+     });
+   if (lines.length === 0) return null;
+   return (
+diff --git a/apps/ui/test/fake-daemon.ts b/apps/ui/test/fake-daemon.ts
+index 77190a3..a1fb02e 100644
+--- a/apps/ui/test/fake-daemon.ts
++++ b/apps/ui/test/fake-daemon.ts
+@@ -100,6 +100,7 @@ import {
+ import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
+ import {
+   acceptsAnswer,
++  budgetStopAnswer,
+   personQuestionsAnswer,
+   signoffAnswer,
+ } from "@forerunner/runtime/wiring/request-answers";
+@@ -589,6 +590,16 @@ const FAKE_SESSION_CAP_USD_MICRO = 6_250_000;
+ /** What is left of the fixture human's monthly cap (CHF 120 at the fake's rate of 0.8). */
+ const FAKE_MONTH_LEFT_USD_MICRO = 150_000_000;
+ 
++/**
++ * A task's price as the daemon's planner gives it: its estimate, else its budget, else the
++ * planner's 500 000, never more than what is left of its own budget (`withinTaskBudget`).
++ */
++function fakePrice(t: TaskView): number {
++  const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
++  if (!(t.budget.usdMicro > 0)) return estimate;
++  return Math.min(estimate, Math.max(0, t.budget.usdMicro - t.actual.usdMicro));
++}
++
+ function fakeStartCheck(
+   tasks: readonly TaskView[],
+   projectId: string,
+@@ -621,7 +632,7 @@ function fakeStartCheck(
+       waiting.push({ taskId: t.id, title: t.title, waitsOn });
+       continue;
+     }
+-    const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
++    const estimate = fakePrice(t);
+     const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
+     // U-079: a full-review task waits while the Docker sandbox is not ready.
+     if (sandbox && !sandbox.ready && t.riskTier >= 2) sandboxTasks.push(named);
+@@ -643,7 +654,7 @@ function fakeStartCheck(
+       later.push({
+         taskId: w.taskId,
+         title: w.title,
+-        estimate: money(t?.estimate.usdMicro || t?.budget.usdMicro || 500_000),
++        estimate: money(t ? fakePrice(t) : 500_000),
+       });
+       changed = true;
+     }
+@@ -2276,6 +2287,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
+         ...(read !== "cancel" ? { start: "started" } : {}),
+       };
+     }
++    // As the daemon's `syncBudgetStopAnswers` (live walk 2, B2): Raise the budget sets the
++    // budget the card named (never lower than the task's own) and a session tries again;
++    // Cancel task cancels it.
++    const budgetCard = r.changeCard as { key?: unknown; raise_to_usd_micro?: unknown } | null;
++    if (budgetCard?.key === "task:budget_stop") {
++      const task = state.tasks.find((t) => t.id === r.taskId);
++      const read = budgetStopAnswer(parsed.data.answer as never);
++      const moved = !task || task.status !== "needs_human";
++      let budget: number | null = null;
++      if (task && !moved && read === "raise") {
++        budget = Math.max(task.budget.usdMicro, Number(budgetCard.raise_to_usd_micro) || 0);
++        task.budget = money(budget);
++        task.cap = money(budget);
++        task.capSource = "task_budget";
++        task.status = "ready";
++        task.reason = `you raised its budget to CHF ${(money(budget).chfMicro / 1e6).toFixed(2)} in the Inbox`;
++        touch(task);
++      } else if (task && !moved && read === "cancel") {
++        task.status = "cancelled";
++        task.reason = "you cancelled it in the Inbox when it stopped at its budget";
++        touch(task);
++      }
++      r.changeCard = {
++        ...budgetCard,
++        applied_at: new Date().toISOString(),
++        outcome: moved ? "task_moved_on" : read,
++        ...(budget !== null ? { budget_usd_micro: budget, start: "started" } : {}),
++      };
++    }
+     if (r.kind === "capability_grant") {
+       const ext = state.extensions.find((e) => `req_${e.id}` === r.id);
+       if (ext && parsed.data.answer === "Approve") approveExtension(ext);
+diff --git a/apps/ui/test/inbox.test.tsx b/apps/ui/test/inbox.test.tsx
+index 5b2c8e5..8b90204 100644
+--- a/apps/ui/test/inbox.test.tsx
++++ b/apps/ui/test/inbox.test.tsx
+@@ -9,7 +9,7 @@ import {
+   sortMessages,
+   sortRequests,
+ } from "../src/pages/InboxPage.tsx";
+-import { MESSAGES, REQUESTS } from "./fixtures.ts";
++import { MESSAGES, money, REQUESTS } from "./fixtures.ts";
+ import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+ 
+ describe("Inbox", () => {
+@@ -860,6 +860,116 @@ describe("Inbox", () => {
+     });
+   });
+ 
++  describe("a task stopped at its budget (live walk 2, B2)", () => {
++    /** The card the runner files when a run stops at the task's own budget, as `/inbox` serves it. */
++    const budgetCard = () => ({
++      id: "req_budget",
++      projectId: "proj_atlas",
++      projectName: "Atlas",
++      taskId: "task_3",
++      taskTitle: "Decide the versioning scheme",
++      sessionId: "sess_1",
++      kind: "approval",
++      why: '"Decide the versioning scheme" stopped at its budget of CHF 0.01.',
++      steps: [],
++      options: ["Raise the budget", "Cancel task"],
++      blocking: true,
++      risk: "medium" as const,
++      changeCard: {
++        key: "task:budget_stop",
++        task_id: "task_3",
++        task_title: "Decide the versioning scheme",
++        title: '"Decide the versioning scheme" stopped at its budget of CHF 0.01',
++        run_id: "run_1",
++        source: "task_budget",
++        specialist: "writer",
++        cap_usd_micro: 12_500,
++        spent_usd_micro: 12_500,
++        raise_to_usd_micro: 500_000,
++        chf_per_usd: 0.8,
++        applied_at: null,
++      },
++      status: "open",
++      answer: null,
++      createdAt: "2026-11-01T09:00:00.000Z",
++      version: 1,
++    });
++    const setUp = () => {
++      const harness = createHarness();
++      harness.daemon.state.requests.unshift(budgetCard());
++      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
++      if (t3) {
++        t3.status = "needs_human";
++        t3.budget = money(12_500);
++        t3.reason = '"Decide the versioning scheme" stopped at its budget of CHF 0.01.';
++      }
++      return harness;
++    };
++    const cardOf = async () =>
++      (await screen.findAllByTestId("request")).find(
++        (r) => r.getAttribute("data-request-id") === "req_budget",
++      ) as HTMLElement;
++
++    it("says in one sentence where it stopped, in CHF; Raise the budget says the amount and what happens", async () => {
++      renderApp("/inbox", setUp());
++      const card = await cardOf();
++      expect(within(card).getByTestId("request-title")).toHaveTextContent(
++        '"Decide the versioning scheme" stopped at its budget of CHF 0.01',
++      );
++      expect(within(card).getByTestId("request-body")).toHaveTextContent(
++        "So far it spent CHF 0.01.",
++      );
++      expect(card).not.toHaveTextContent(/\$|USD/);
++      expect(
++        within(card)
++          .getAllByTestId("option")
++          .map((b) => b.textContent),
++      ).toEqual(["Raise the budget", "Cancel task"]);
++      expect(
++        within(card)
++          .getAllByTestId("option-explain")
++          .map((e) => e.textContent),
++      ).toEqual([
++        "Sets its budget to CHF 0.40 and starts a session that tries again.",
++        "Drops it. Nothing waits on it.",
++      ]);
++      expect(within(card).queryByTestId("free-text")).toBeNull();
++    });
++
++    it("Raise the budget sends the option; the card is replaced by its Done line and the task is ready with the budget raised", async () => {
++      const user = userEvent.setup();
++      const harness = setUp();
++      renderApp("/inbox", harness);
++      const card = await cardOf();
++      await user.click(within(card).getByRole("button", { name: "Raise the budget" }));
++      await waitFor(() =>
++        expect(postedCalls(harness, "/requests/req_budget/answer")[0]?.body).toEqual({
++          version: 1,
++          answer: "Raise the budget",
++        }),
++      );
++      expect(await screen.findByTestId("done-line")).toHaveTextContent(
++        'Done: Raised the budget of "Decide the versioning scheme" to CHF 0.40: a session started.',
++      );
++      const task = harness.daemon.state.tasks.find((t) => t.id === "task_3");
++      expect(task?.status).toBe("ready");
++      expect(task?.budget.usdMicro).toBe(500_000);
++    });
++
++    it("on the Tasks tab the task reads Needs your decision: its budget is used, with Answer, Edit and Cancel", async () => {
++      const harness = setUp();
++      const tasks = await harness.client.tasks("proj_atlas");
++      const row = tasks.find((t) => t.id === "task_3");
++      expect(row?.display).toMatchObject({
++        key: "answer",
++        label: "Needs your decision: its budget is used",
++        detail: "Its card is in the Inbox: raise its budget, or cancel it.",
++        blocker: { kind: "card", requestId: "req_budget", cardKind: "budget" },
++      });
++      expect(actionsFor("answer", row)).toEqual(["answer", "edit", "cancel"]);
++    });
++  });
++
+   it("intakeCardOf reads only intake cards that carry a proposal", () => {
+     expect(intakeCardOf(null)).toBeNull();
+     expect(intakeCardOf({ target: "staging", reversible: true })).toBeNull();
+diff --git a/apps/ui/test/project.test.tsx b/apps/ui/test/project.test.tsx
+index c5cfc95..f9c543d 100644
+--- a/apps/ui/test/project.test.tsx
++++ b/apps/ui/test/project.test.tsx
+@@ -266,6 +266,46 @@ describe("Project page", () => {
+     });
+   });
+ 
++  it("a task that only does not fit after the tasks before it is named as such, priced within its own budget (live walk 2, B3)", async () => {
++    const user = userEvent.setup();
++    const harness = createHarness();
++    const tasks = harness.daemon.state.tasks;
++    const ready = tasks.find((t) => t.id === "task_3");
++    if (!ready) throw new Error("fixture changed");
++    // The default session's work budget is CHF 4.00. Two tasks of about CHF 2.40 each: the
++    // first runs, the second does not fit after it although it is smaller than the budget.
++    ready.estimate = money(3_000_000);
++    tasks.push({
++      ...ready,
++      id: "task_about",
++      title: "About page",
++      estimate: money(3_000_000),
++      priority: "low",
++    });
++    // A task whose own budget (CHF 0.80) is below its estimate costs at most its budget.
++    tasks.push({
++      ...ready,
++      id: "task_small",
++      title: "Contact page",
++      estimate: money(10_000_000),
++      budget: money(1_000_000),
++      priority: "low",
++    });
++    renderApp("/projects/proj_atlas", harness);
++    await screen.findByTestId("summary");
++    await user.click(screen.getByTestId("start-session"));
++    const dialog = await screen.findByTestId("start-session-dialog");
++    expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
++      'This session runs "Decide the versioning scheme" (about CHF 2.40) and continues with up to 1 more as they become ready (about CHF 0.80).',
++    );
++    const left = within(dialog).getByTestId("start-session-over-budget");
++    expect(left).toHaveTextContent(
++      '"About page" (about CHF 2.40) may be left for next time: the tasks that run first take about CHF 3.20 of this session\'s work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure it runs.',
++    );
++    // Not the old sentence, which said 2.40 is more than 4.00.
++    expect(left).not.toHaveTextContent("more than this session's work budget");
++  });
++
+   it("warns when ready tasks exist but none can run: what each waits on, what the budget leaves out (U-040)", async () => {
+     const user = userEvent.setup();
+     const harness = createHarness();
+diff --git a/apps/ui/test/real-daemon.test.ts b/apps/ui/test/real-daemon.test.ts
+index bf801fc..bb62af3 100644
+--- a/apps/ui/test/real-daemon.test.ts
++++ b/apps/ui/test/real-daemon.test.ts
+@@ -8,6 +8,7 @@ import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/comp
+ import { createDaemonApp } from "@forerunner/runtime/daemon/server";
+ import type { ModelRequest } from "@forerunner/runtime/provider/types";
+ import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
++import { fileBudgetStopCard } from "@forerunner/runtime/session/budget-card";
+ import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
+ import { MemoryVault } from "@forerunner/vault";
+ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+@@ -3779,3 +3780,122 @@ describe("a project name another project has (wave 1 handoff)", () => {
+     await rt.close();
+   }, 120_000);
+ });
++
++describe("the UI client against the real daemon: work continues correctly (phase C, continuity)", () => {
++  let rt: RuntimeApp;
++  let client: DaemonClient;
++
++  beforeAll(async () => {
++    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-continuity-"));
++    const clock = new SimulatedClock("2026-11-01T08:00:00Z");
++    rt = await composeRuntime({
++      env: { FORERUNNER_HOME: home },
++      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
++      config: null,
++      clock,
++      stateUrl: "sqlite::memory:",
++      vault: new MemoryVault(),
++      provider: new ScriptedProvider([{ text: "ok" }], clock),
++      registryDir: REGISTRY,
++      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
++      appVersion: "0.0.0-ui-contract",
++      sandboxDetection: NO_ENGINE,
++    });
++    const { app, token } = createDaemonApp(rt);
++    client = createClient(
++      {
++        baseUrl: "http://daemon.test",
++        token,
++        source: "env",
++        installId: null,
++        platform: null,
++        shellVersion: null,
++      },
++      (input, init) => Promise.resolve(app.request(input, init)),
++    );
++  }, 120_000);
++  afterAll(async () => {
++    await rt?.close();
++  });
++
++  it("GET /projects/:id/start-check prices a task at most at what is left of its own budget (live walk 2, B3)", async () => {
++    const project = await client.createProject({ name: "Estimates", goal: "Priced right" });
++    // As New task sends it: a budget of USD 0.20, below what the planner would estimate.
++    await client.createTask(project.id, {
++      title: "About page",
++      outcome: "about.html",
++      acceptanceCriteria: ["about.html exists"],
++      priority: "medium",
++      status: "ready",
++      dependsOn: [],
++      budgetUsdMicro: 200_000,
++      specialist: "coder",
++    });
++    const check = await client.startCheck(project.id, { budgetUsdMicro: 5_000_000 });
++    expect(check.runnable.map((t) => [t.title, t.estimate.usdMicro])).toEqual([
++      ["About page", 200_000],
++    ]);
++  });
++
++  it("a task stopped at its budget: the card and the Tasks tab parse as the screens read them, and Raise the budget makes it ready (live walk 2, B2)", async () => {
++    const project = await client.createProject({ name: "Budget card", goal: "Asked once" });
++    const created = await client.createTask(project.id, {
++      title: "Contact page",
++      outcome: "contact.html",
++      acceptanceCriteria: ["contact.html exists"],
++      priority: "medium",
++      status: "ready",
++      dependsOn: [],
++      budgetUsdMicro: 12_500,
++      specialist: "coder",
++    });
++    // What the runner does when the run stops at the task's own budget.
++    const row = await rt.store.task.mustGet(created.id);
++    const waiting = await rt.store.task.transition(
++      row.id,
++      row.version,
++      "needs_human",
++      '"Contact page" stopped at its budget of CHF 0.01.',
++      { agentId: rt.agent.id },
++    );
++    await fileBudgetStopCard({
++      store: rt.store,
++      task: waiting,
++      session: null,
++      humanId: rt.human.id,
++      agentId: rt.agent.id,
++      runId: null,
++      stop: {
++        capUsdMicro: 12_500,
++        spentUsdMicro: 12_500,
++        source: "task_budget",
++        specialist: "coder",
++      },
++      chfPerUsd: 0.8,
++    });
++    const card = (await client.inbox(rt.human.id)).requests.find(
++      (r) => r.taskId === created.id && r.status === "open",
++    );
++    expect(card?.title).toBe('"Contact page" stopped at its budget of CHF 0.01');
++    expect(card?.choices.map((c) => [c.label, c.explain])).toEqual([
++      // What it spent (USD 0.0125) plus the planner's default of USD 0.50, in steps of USD 0.05.
++      ["Raise the budget", "Sets its budget to CHF 0.44 and starts a session that tries again."],
++      ["Cancel task", "Drops it. Nothing waits on it."],
++    ]);
++    const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
++    expect(view?.display).toMatchObject({
++      label: "Needs your decision: its budget is used",
++      blocker: { kind: "card", requestId: card?.id, cardKind: "budget" },
++    });
++    // The click sends the button's words.
++    await client.answerRequest(card?.id as string, {
++      version: card?.version as number,
++      answer: "Raise the budget",
++    });
++    const after = await rt.store.task.mustGet(created.id);
++    expect(after.status).toBe("ready");
++    expect(after.budget_usd_micro).toBe(550_000);
++    const answered = (await client.inbox(rt.human.id)).requests.find((r) => r.id === card?.id);
++    expect(answered?.outcome).toMatch(/^Raised the budget of "Contact page" to CHF 0\.44/);
++  });
++});
+diff --git a/docs/maintainers/apps.md b/docs/maintainers/apps.md
+index 51bd88e..ad33547 100644
+--- a/docs/maintainers/apps.md
++++ b/docs/maintainers/apps.md
+@@ -93,10 +93,10 @@ apps/ui/
+ | Route | Page | Data |
+ | --- | --- | --- |
+ | `/` | Home (design §3.2, `HomePage.tsx`): **Needs you** (every open card of every project from `GET /inbox`, one line each with Answer to `/inbox#card-<id>`, read again when the header's count moves), **Working now** (the cards' `working`: agent, task, elapsed, Open), then one row per project (`ProjectRow`): name (link, makes it active), the status sentence with its one button (`ProjectStatus` in `components/ProjectState.tsx`: a link, Continue, which opens `StartSessionDialog` for that project, or Try again / Draft a new plan on a failed or rejected plan, which posts `POST /projects/:id/intake/retry` and re-reads the card, so the row says "Drafting the plan…"; a refusal shows beside it), "n of m done" (`progress`). No stage, grade, autonomy, spend or Make active. New project with its one-line explanation (the dialog: a pasted brief sends `intake: true`, so the PM intake drafts the plan, the doc set and the first-session plan in the background and the proposal lands in the inbox; spec A.2, ADR 0055; the Goal is optional with a brief: left empty, `goalFromBrief` sends the brief's first sentence without its full stop, cut at 160 characters at a word, and the field's hint says so; with neither the dialog says "Give a goal or a brief: the agent plans from them." and sends nothing; the Brief's hint says that without a repository a sentence or two gets a small plan of up to three tasks, the condition the intake applies, ADR 0103); empty: "No projects yet. New project". A card without `statusLine` (the state service) falls back to `ProjectStateBadge` | store (`GET /projects`, live), `GET /inbox`, `POST /projects` |
+-| `/projects/:id/:tab?` | Project page (design §3.4, §6); tabs Overview (`summary`, the address it had as Summary; `overview` redirects there), `tasks`, `chat`, `files`, and under More (a `<details>`, open while one of them is shown) `plan`, `docs`, `reviews`, `costs`, `data` (default `summary`); a tab link keeps the address's query, so the Tasks tab's filters survive a look at another tab. The header is the name, the status sentence (`ProjectStatus`; hidden while the plan banner says the same) and Start session, which is **Open running session** (a link to the session) while the card's `working` is set; the card shown is the store's live copy first (`cached ?? project.data`), so it follows `project.changed`, the Inbox and the sessions. No stage, health, status or autonomy badges, no spend bar. The **Overview** (`SummaryTab.tsx`): this project's open cards with Answer, Working now, Last result (`lastSession.summary`, when it ended, Open the session, Read aloud), Next (`ProjectSummary.next`, computed by the daemon when read; re-read when the card's status or progress moves), Your files (`FolderPath`: the card's `folder`, Open folder in the desktop shell through its `open_folder` command, Copy path everywhere; the last session's `changedFiles` linking to Files with `?path=`), Decisions, **Note for the next session** (`QueueSection.tsx`: one box, `POST /projects/:id/queue {kind: "note", priority: 5}`, the queued items with Dismiss; the first-session plan item is not listed) and Peers only when another agent works on it. **Files** (`FilesTab.tsx`, design §3.10): `GET /projects/:id/files` as a tree with sizes and change dates; a file opens inline read-only from `GET /projects/:id/files/:path` (`?path=` in the address); "Nothing written yet" when empty. In-app links with a `#hash` (`/settings#sandbox`, `/inbox#card-<id>`) scroll to it (`lib/use-hash-scroll.ts`). Earlier: opening a project makes it active. Above the tabs, the plan from the brief (`IntakeBanner`, `useIntakeStatus`; U-046): "Drafting the plan from your brief" while the daemon drafts it (read again every 3 s), "waits for your approval in the Inbox" with a link, or, failed, one line "Planning failed: <the daemon's reason in words>." (`planningFailedLine`, design §3.3) with **Try again** (`POST /projects/:id/intake/retry`, which answers `drafting`; a refusal shown under the button; while `/me.provider` is null the button is **Connect Claude** to `/setup`, since the daemon refuses the retry without a model); nothing without an intake or once it was answered. **Create a repository** (`CreateRepoDialog`, U-037, ADR 0097) shows for a project whose card has empty `repos`: name (from the project's), organization (empty: the token's account), Private; Preview runs `repo.create` through `POST /commands/execute` (`source: "ui"`) and shows the daemon's change card, Yes confirms it (`tap`, or this device for a public one), and the project reloads without the button. **Start session** (`StartSessionDialog`, design §3.6, 2026-11-01): first what the session will do (`planSentence`: "This session runs "X" (about CHF 0.12) and continues with up to N more as they become ready (about CHF 0.80)", from the start check's `runnable` and `later`; not shown while the check is `blocked`, where it contradicted the disabled Start under "Claude is not connected" or "Sessions are stopped"); the budget field filled in with the real default (the check's `sessionBudget`; sent only when changed), refused in words when 0, negative or above the check's `monthLeft` (`budgetProblem`); "Note for this session (optional)" sent as `note`, which reaches every brief; Start disabled with the check's `blocked` sentence and its button (`resume`: Allow sessions again, `POST /kill/resume`; `link`: Open it, Open Tasks, Set up Docker, Connect Claude) when sessions are stopped, Claude is not connected or nothing can run; at most three blocker lines (a task stuck on a failed, cancelled or person-held one, the Docker wait, a task over the budget) then "and N more", and none of the tasks that only wait on this session's own work; after Start the person stays on the page: the notice says it started (or is queued) with **Open the session**; while a session runs the line under Start reads "Starts after the current session". Before that redesign: a budget and a reason; when it opens (and as the budget is typed) it reads the start check: with no ready task it says a session would end at once and how to give the agent work (Tasks tab, Mark ready on a draft, "add a task: …" in Chat; U-009), and names the plan from the brief only as it stands: waiting in the Inbox, being drafted, or failed with the project page's Retry (U-046: it named a plan in the Inbox for every project); with ready tasks of which none can run it says so (`start-session-cannot-run`) and names each one waiting on another task, with that task's title and state and what to do when it is cancelled, failed or missing, and each one larger than the work budget, with its estimate and the budget; when some can run, the others are listed under "Not in this session" (`start-session-left-out`; U-040); the full-review tasks (tier 2+) that wait for the Docker sandbox are one line there (`start-session-sandbox`, U-079: their titles, what is wrong, the step from `waitingForSandbox`, "It waits; nothing fails and no retry is used." and a link to Settings → Sandbox (Docker)); a started session opens its live view, a queued or deferred start says so in the dialog (`startNotice`, U-003), with how many waiting starts come before it from the answer's `ahead` ("This one starts when that one ends." only when none does; waiting starts run in order, none replaced, U-043) | `GET /projects/:id` and the tab routes below; `GET /projects/:id/intake`, `POST /projects/:id/intake/retry`; `GET /projects/:id/start-check?budgetUsdMicro=`, `POST /sessions` |
++| `/projects/:id/:tab?` | Project page (design §3.4, §6); tabs Overview (`summary`, the address it had as Summary; `overview` redirects there), `tasks`, `chat`, `files`, and under More (a `<details>`, open while one of them is shown) `plan`, `docs`, `reviews`, `costs`, `data` (default `summary`); a tab link keeps the address's query, so the Tasks tab's filters survive a look at another tab. The header is the name, the status sentence (`ProjectStatus`; hidden while the plan banner says the same) and Start session, which is **Open running session** (a link to the session) while the card's `working` is set; the card shown is the store's live copy first (`cached ?? project.data`), so it follows `project.changed`, the Inbox and the sessions. No stage, health, status or autonomy badges, no spend bar. The **Overview** (`SummaryTab.tsx`): this project's open cards with Answer, Working now, Last result (`lastSession.summary`, when it ended, Open the session, Read aloud), Next (`ProjectSummary.next`, computed by the daemon when read; re-read when the card's status or progress moves), Your files (`FolderPath`: the card's `folder`, Open folder in the desktop shell through its `open_folder` command, Copy path everywhere; the last session's `changedFiles` linking to Files with `?path=`), Decisions, **Note for the next session** (`QueueSection.tsx`: one box, `POST /projects/:id/queue {kind: "note", priority: 5}`, the queued items with Dismiss; the first-session plan item is not listed) and Peers only when another agent works on it. **Files** (`FilesTab.tsx`, design §3.10): `GET /projects/:id/files` as a tree with sizes and change dates; a file opens inline read-only from `GET /projects/:id/files/:path` (`?path=` in the address); "Nothing written yet" when empty. In-app links with a `#hash` (`/settings#sandbox`, `/inbox#card-<id>`) scroll to it (`lib/use-hash-scroll.ts`). Earlier: opening a project makes it active. Above the tabs, the plan from the brief (`IntakeBanner`, `useIntakeStatus`; U-046): "Drafting the plan from your brief" while the daemon drafts it (read again every 3 s), "waits for your approval in the Inbox" with a link, or, failed, one line "Planning failed: <the daemon's reason in words>." (`planningFailedLine`, design §3.3) with **Try again** (`POST /projects/:id/intake/retry`, which answers `drafting`; a refusal shown under the button; while `/me.provider` is null the button is **Connect Claude** to `/setup`, since the daemon refuses the retry without a model); nothing without an intake or once it was answered. **Create a repository** (`CreateRepoDialog`, U-037, ADR 0097) shows for a project whose card has empty `repos`: name (from the project's), organization (empty: the token's account), Private; Preview runs `repo.create` through `POST /commands/execute` (`source: "ui"`) and shows the daemon's change card, Yes confirms it (`tap`, or this device for a public one), and the project reloads without the button. **Start session** (`StartSessionDialog`, design §3.6, 2026-11-01): first what the session will do (`planSentence`: "This session runs "X" (about CHF 0.12) and continues with up to N more as they become ready (about CHF 0.80)", from the start check's `runnable` and `later`; not shown while the check is `blocked`, where it contradicted the disabled Start under "Claude is not connected" or "Sessions are stopped"); the budget field filled in with the real default (the check's `sessionBudget`; sent only when changed), refused in words when 0, negative or above the check's `monthLeft` (`budgetProblem`); "Note for this session (optional)" sent as `note`, which reaches every brief; Start disabled with the check's `blocked` sentence and its button (`resume`: Allow sessions again, `POST /kill/resume`; `link`: Open it, Open Tasks, Set up Docker, Connect Claude) when sessions are stopped, Claude is not connected or nothing can run; at most three blocker lines (a task stuck on a failed, cancelled or person-held one, the Docker wait, a task over the budget: "needs about X, more than this session's work budget of Y" only when the task alone is larger, else, live walk 2 B3, "(about X) may be left for next time: the tasks that run first take about Z of this session's work budget of Y") then "and N more", and none of the tasks that only wait on this session's own work; after Start the person stays on the page: the notice says it started (or is queued) with **Open the session**; while a session runs the line under Start reads "Starts after the current session". Before that redesign: a budget and a reason; when it opens (and as the budget is typed) it reads the start check: with no ready task it says a session would end at once and how to give the agent work (Tasks tab, Mark ready on a draft, "add a task: …" in Chat; U-009), and names the plan from the brief only as it stands: waiting in the Inbox, being drafted, or failed with the project page's Retry (U-046: it named a plan in the Inbox for every project); with ready tasks of which none can run it says so (`start-session-cannot-run`) and names each one waiting on another task, with that task's title and state and what to do when it is cancelled, failed or missing, and each one larger than the work budget, with its estimate and the budget; when some can run, the others are listed under "Not in this session" (`start-session-left-out`; U-040); the full-review tasks (tier 2+) that wait for the Docker sandbox are one line there (`start-session-sandbox`, U-079: their titles, what is wrong, the step from `waitingForSandbox`, "It waits; nothing fails and no retry is used." and a link to Settings → Sandbox (Docker)); a started session opens its live view, a queued or deferred start says so in the dialog (`startNotice`, U-003), with how many waiting starts come before it from the answer's `ahead` ("This one starts when that one ends." only when none does; waiting starts run in order, none replaced, U-043) | `GET /projects/:id` and the tab routes below; `GET /projects/:id/intake`, `POST /projects/:id/intake/retry`; `GET /projects/:id/start-check?budgetUsdMicro=`, `POST /sessions` |
+ | `summary` tab | the cached one-screen summary with Read aloud (the daemon's voice provider reads it, `POST /projects/:id/speak`; the text being read is shown and Stop cancels it; the browser's speech is the fallback on 503); **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed; the line under the title says what the runtime does with an item, U-038: it reaches the brief of the task it names, or every task's brief, and an approved first-session plan decides the first session); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (`DecisionsSection`, design §3.4: "Q? A. (Robin, 1 Nov)" per answered question and for the plan the person approved, newest first, five with "All N decisions", then "Decision record: <title>" links to Docs; no options not chosen, no ids, no JSON) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (served since U-004), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
+ | `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests); in **small-project mode** (spec B.6, the card's `smallProjectMode`) the tab shows instead the one milestone (the open one from the route, or the card's next milestone without it; milestones on file from before the mode are named, not hidden), the tasks as a **flat list** in the daemon's order with no grouping and no timeline, and the graph; every milestone the route served (never a derived one) has **Edit**: a dialog with name, target date, status and success criteria (one per line) with an **optional reason** (U-010; left empty, `DEFAULT_MILESTONE_REASON`, "Milestone edited in the app", is sent, since the daemon keeps a reason on every change), posted with the row's `version` (spec B.5; the daemon's refusal, a stale version or a bad date, stays in the dialog), and the reason of the last change is shown under the milestone | `GET /projects/:id/tasks`, `GET /projects/:id/milestones`, `POST /milestones/:id` |
+-| `tasks` tab | The Tasks tab (design §3.5, ADR 0102; `TasksTab.tsx`, `TaskDrawer.tsx`, `lib/task-actions.ts`). One row per task in the daemon's run order: the title (a button that opens the drawer), the review level in words ("Light review", `reviewLevelName`; never "tier 2") and priority ("High priority", U-041), the PR (`ExternalLink`), the status in words from the daemon's `display` (`displayOf`, design §2: Ready, Waiting for "X", Stuck, Waiting for Docker, Running with the agent's name and minutes, Being reviewed, Needs your answer, Paused by you, Failed: reason, Done, Cancelled; never a raw state or an id), who does it (`whoName`: the specialist, "You" for `person`, "Agent's choice"), the cost with what stops its runs on an open task (`TaskCap`, U-042; nothing on a done or cancelled one), the critic's call in words. The row's buttons are the status's actions (`actionsFor`: Make ready, Pause, Resume, Stop, Try again, Answer (to the Inbox), Go ahead without, Redo, Reopen, Cancel; Edit and Change what it waits for are in the drawer; a task only the person can do, `specialist: person`, offers Answer and Cancel only, never Go ahead without); each has its one-line explanation (`ACTIONS`) as its title and in its dialog: "Pause "X"?", the explanation (Cancel adds the tasks that wait on it: "2 tasks will be stuck: …", `stuckLine`), "Note for the agent (optional): goes into the task's next brief.", then `POST /tasks/:id/action`. Mark failed, Send to review, Mark done and Needs me are gone. After every change one line and one Undo (`task-moved`; the line never says "Undo."), and In Changes; the Undo puts the task back as it was, the Inbox cards the action withdrew included, and re-reads the Inbox count for the header (`GET /inbox`; the undo route sends no `inbox.changed`). A task that changed meanwhile: the dialog says "This task changed: it is now Running." once, updates the row from the 409's `details.task` and offers only what the new status offers. The drawer (`?task=` in the address): status, what done looks like and the criteria, every action with its explanation beside it, what it waits for and what waits on it, its Inbox cards, its runs (who ran it, start, outcome, cost, the report and the files changed of that run; the critic's run reads "Review by the critic" with no report of its own, from the view's `kind`), the critic's review in a sentence with the open findings and a link to the whole review, the PR; Edit in place (title, what done looks like, criteria, review level with Docker's state, priority, budget in CHF with a point or a comma, who does it, a note; `PUT /tasks/:id`). Change what it waits for (`DependencyPicker`: titles with their state in words, "not done yet: …", a warning when a failed task is ticked; a cancelled one is not offered; `POST /tasks/:id/dependencies`, logged with its Undo). New task: title, what done looks like, criteria, waits for, review level ("Light review: the critic reads the work, nothing runs in isolation" / "Full review: needs Docker, not running on this computer" from `GET /sandbox`, `reviewLevelChoices`; a note when a full level is picked without Docker), who does it (`useWhoChoices`: Let the agent choose, the runnable specialists from `GET /settings/models`, "Me: ask me in the Inbox" = `specialist: person`), priority Low/Medium/High, budget (`chfToMicro` takes "1,50"); answers the change with its Undo; the list reloads so the task sits at its place in the run order. Filters (status in words, who does it, a search over title and outcome, never ids) live in the address (`?status=&who=&q=`), so a reload and Back keep them; the project's tab links carry no query, so the tab also keeps the last filters per project for the window (`rememberedFilters`, keyed by the UI store) and puts them back when the person returns to the tab with none in the address. Live: the store's card of the project changes on every `project.changed` (the daemon sends one when a session moves a task), and the rows reload; while a task runs they are read every 5 s too | `GET /projects/:id/tasks`, `/runs`, `GET /tasks/:id`, `POST /projects/:id/tasks`, `POST /tasks/:id/action`, `PUT /tasks/:id`, `POST /tasks/:id/dependencies`, `POST /changes/:id/undo`, `GET /sandbox`, `GET /settings/models` |
++| `tasks` tab | The Tasks tab (design §3.5, ADR 0102; `TasksTab.tsx`, `TaskDrawer.tsx`, `lib/task-actions.ts`). One row per task in the daemon's run order: the title (a button that opens the drawer), the review level in words ("Light review", `reviewLevelName`; never "tier 2") and priority ("High priority", U-041), the PR (`ExternalLink`), the status in words from the daemon's `display` (`displayOf`, design §2: Ready, Waiting for "X", Stuck, Waiting for Docker, Running with the agent's name and minutes, Being reviewed, Needs your answer, Paused by you, Failed: reason, Done, Cancelled; never a raw state or an id), who does it (`whoName`: the specialist, "You" for `person`, "Agent's choice"), the cost with what stops its runs on an open task (`TaskCap`, U-042; nothing on a done or cancelled one), the critic's call in words. The row's buttons are the status's actions (`actionsFor`: Make ready, Pause, Resume, Stop, Try again, Answer (to the Inbox), Go ahead without, Redo, Reopen, Cancel; Edit and Change what it waits for are in the drawer; a task only the person can do, `specialist: person`, offers Answer and Cancel only, never Go ahead without; a task stopped at its own budget, `cardKind: "budget"`, "Needs your decision: its budget is used", offers Answer, Edit and Cancel, live walk 2 B2); each has its one-line explanation (`ACTIONS`) as its title and in its dialog: "Pause "X"?", the explanation (Cancel adds the tasks that wait on it: "2 tasks will be stuck: …", `stuckLine`), "Note for the agent (optional): goes into the task's next brief.", then `POST /tasks/:id/action`. Mark failed, Send to review, Mark done and Needs me are gone. After every change one line and one Undo (`task-moved`; the line never says "Undo."), and In Changes; the Undo puts the task back as it was, the Inbox cards the action withdrew included, and re-reads the Inbox count for the header (`GET /inbox`; the undo route sends no `inbox.changed`). A task that changed meanwhile: the dialog says "This task changed: it is now Running." once, updates the row from the 409's `details.task` and offers only what the new status offers. The drawer (`?task=` in the address): status, what done looks like and the criteria, every action with its explanation beside it, what it waits for and what waits on it, its Inbox cards, its runs (who ran it, start, outcome, cost, the report and the files changed of that run; the critic's run reads "Review by the critic" with no report of its own, from the view's `kind`), the critic's review in a sentence with the open findings and a link to the whole review, the PR; Edit in place (title, what done looks like, criteria, review level with Docker's state, priority, budget in CHF with a point or a comma, who does it, a note; `PUT /tasks/:id`). Change what it waits for (`DependencyPicker`: titles with their state in words, "not done yet: …", a warning when a failed task is ticked; a cancelled one is not offered; `POST /tasks/:id/dependencies`, logged with its Undo). New task: title, what done looks like, criteria, waits for, review level ("Light review: the critic reads the work, nothing runs in isolation" / "Full review: needs Docker, not running on this computer" from `GET /sandbox`, `reviewLevelChoices`; a note when a full level is picked without Docker), who does it (`useWhoChoices`: Let the agent choose, the runnable specialists from `GET /settings/models`, "Me: ask me in the Inbox" = `specialist: person`), priority Low/Medium/High, budget (`chfToMicro` takes "1,50"); answers the change with its Undo; the list reloads so the task sits at its place in the run order. Filters (status in words, who does it, a search over title and outcome, never ids) live in the address (`?status=&who=&q=`), so a reload and Back keep them; the project's tab links carry no query, so the tab also keeps the last filters per project for the window (`rememberedFilters`, keyed by the UI store) and puts them back when the person returns to the tab with none in the address. Live: the store's card of the project changes on every `project.changed` (the daemon sends one when a session moves a task), and the rows reload; while a task runs they are read every 5 s too | `GET /projects/:id/tasks`, `/runs`, `GET /tasks/:id`, `POST /projects/:id/tasks`, `POST /tasks/:id/action`, `PUT /tasks/:id`, `POST /tasks/:id/dependencies`, `POST /changes/:id/undo`, `GET /sandbox`, `GET /settings/models` |
+ | `docs` tab | the standard doc set with present/missing/drift state, size and date, and where each was read (the linked folder, the project folder, or this PC's copy of the repository); a document opens in a reader | `GET /projects/:id/docs`, `GET /projects/:id/docs/:path` (served since U-005) |
+ | `reviews` tab | design §3.5, §5: counts over the tasks' reviews (reviews, open findings counted once per task and finding and none for a done or cancelled task, average grade, results in words), the grade trend with the accept line, each task's review newest first (the grade in the verdict's colour, so a sent-back review is never green; the verdict in words; the task; the summary; findings with severity and "to fix" / "closed: the task is done" / "accepted as it is"), **Details** per review (review level in words, confidence, model, session log, the evidence the daemon keeps for a person), the session self-checks folded under "Session checks (N)", a result filter; `?review=<id>` (the task drawer's link) highlights that review and scrolls to it (`data-highlighted`) | `GET /projects/:id/reviews` |
+ | `costs` tab | totals, by model / specialist / task with accepted share and cost per accepted task, savings apart | `GET /costs?projectId=` |
+diff --git a/docs/maintainers/model-watch.md b/docs/maintainers/model-watch.md
+index 648195a..e8729ec 100644
+--- a/docs/maintainers/model-watch.md
++++ b/docs/maintainers/model-watch.md
+@@ -454,7 +454,9 @@ every eval task (`evalBilling` in `compose.ts`: `planUsageOf` for a subscription
+   looped on a 2x history) and the state after a restart disagrees with the state learned live.
+ - **Wiring** (compose.ts, ADR 0029): `EstimateModel.fromStore(store, { defaults })` with the
+   registry; `new StaticPlanner(500_000, estimates)` prices every plan item through
+-  `planEstimateUsdMicro(port, task)` before `cutPlanToBudget` cuts the plan to the work budget
++  `planEstimateUsdMicro(port, task)`, never above what is left of the task's own budget
++  (`withinTaskBudget`: the budget caps its runs, U-042; live walk 2 counted CHF 1.00 for a task
++  with a CHF 0.80 budget), before `cutPlanToBudget` cuts the plan to the work budget
+   (spec E.3); `SessionRunner.onTaskFinished` feeds the model live (see Known issues: compose
+   still calls `observe` with the plan item's figure; the intended call is
+   `estimates.observeTask(task, { usdMicro: result.costUsdMicro, wallMs: durationMs, at:
+diff --git a/docs/maintainers/runtime.md b/docs/maintainers/runtime.md
+index f1de13f..34bf2cd 100644
+--- a/docs/maintainers/runtime.md
++++ b/docs/maintainers/runtime.md
+@@ -995,7 +995,7 @@ cycle, each 409 conflict with cause `validation` and a message naming the tasks.
+ `GET /projects/:id/start-check?budgetUsdMicro=` (`session/start-check.ts`, `rt.startCheck`)
+ answers what a session started now would plan: the ready count, `runnable`, `overBudget` and
+ `waiting`, priced as the composed planner prices (`planEstimateUsdMicro` over the learned
+-estimates) and cut as the runner cuts (`DEFAULT_RESERVE_SHARE`), with the project's session cap
++estimates, at most what is left of a task's own budget: `withinTaskBudget`) and cut as the runner cuts (`DEFAULT_RESERVE_SHARE`), with the project's session cap
+ when no budget is given. Tests: `task-dependencies.test.ts` (the cut; a large task and two small
+ ones; tasks waiting on a cancelled and a failed one; the routes' refusals with their messages;
+ the start check), `packages/state/test/suite.ts` (`waitingTasks`, `checkDependencies`) and
+@@ -1661,6 +1661,29 @@ at CHF y (coder limit)". Tests: `task-budget-cap.test.ts` (past the estimate wit
+ budget, no budget, the budget reached mid-run, a spent budget, the session's own stop),
+ `real-daemon.test.ts` and `tasks.test.tsx` in `apps/ui`.
+ 
++**A task stopped at its own cap asks the person once (`session/budget-card.ts`; live walk 2,
++B2).** Before, the `needs_human` above had no card: the session's result said '"Contact page"
++needs your decision (Inbox).' while the Inbox said "Nothing needs you", the Tasks tab said
++"Paused" and the reason spoke dollars on a CHF screen. Now the executor's result carries
++`budgetStop` (`BudgetStop`: the cap, what the task spent in all its runs, `task_budget` or
++`specialist_limit`, the specialist) and words its summary in CHF (`LoopTaskExecutorDeps.chfPerUsd`,
++"The run stopped at its budget of CHF 0.01, after spending CHF 0.01."); the runner sets the
++task's reason to the card's sentence ('"Contact page" stopped at its budget of CHF 0.01.') and
++files one blocking card (`fileBudgetStopCard`, key `task:budget_stop`, options **Raise the
++budget** and **Cancel task**, reused while open). `raisedBudgetUsdMicro` is the budget the
++button sets: twice the cap, at least what the task spent plus its estimate (USD 0.50 without
++one), in steps of USD 0.05, stored on the card with the day's rate so its words name the amount
++("Sets its budget to CHF 0.44 and starts a session that tries again."). `syncBudgetStopAnswers`
++(in `RuntimeApp.syncApprovals`) applies the answer once: Raise sets the budget (never lower than
++one set meanwhile with Edit), moves the task to ready and asks for a session of the project
++(`resumeWork`); Cancel task cancels it; a task that moved on is recorded `task_moved_on`. The
++reader is `budgetStopAnswer` (`wiring/request-answers.ts`), the words `budgetCard` in
++`daemon/request-words.ts`, and the Tasks tab reads "Needs your decision: its budget is used"
++(`cardKindOf` → `budget`; the UI offers Answer, Edit and Cancel). Tests:
++`continuity-budget.test.ts` (one card, the result, the Tasks tab and the Inbox agree, CHF only,
++the card across a restart, Raise the budget runs the task to done), `task-budget-cap.test.ts`,
++the phase 1 gate, `inbox.test.tsx` and `real-daemon.test.ts` ("continuity") in `apps/ui`.
++
+ **The Run row.** `LoopTaskExecutor` inserts the task's Run row as `running` before the driver
+ starts (model, effort, prompt version, the billing source the task picked, depth) and patches
+ it with the result afterwards: tokens, cost, `ttft_ms`, `duration_ms`, outcome, `timed_out`,
+@@ -4263,8 +4286,16 @@ criteria, budget, risk tier or specialist with `brief_incomplete` and the list o
+ delegation brief, `LoopTaskExecutor` adds `taskContextBlock`, read from the store when the run
+ starts: `## Project` (name, goal, the person's brief from `summary_cache.brief` as a quoted
+ string, and where `docs/overview.md` and the decision record are), `## Done before this task`
+-(each dependency's title, the first line of its last worker run's report, or its outcome, and
+-the files that run changed from its session's `task.files` event), `## The previous attempt`
++(each dependency's title, the first line of its last worker run's report, and the files that
++run changed from its session's `task.files` event; a dependency without a run says what the
++person did: "the person answered its questions (their answers are below)", "the person chose
++to go ahead without answering…", or "done by the person" for a person task, and only a task
++nobody ran falls back to its planned outcome), `## Answers from the person to "<dependency>"`
++(phase C, live walk 2: the question → answer pairs of every answered `person_questions:` card
++of a dependency, from `personAnswersOn` in `person-questions.ts`, said to be the person's own
++answers with the decision record they are also in, "do not ask the person these questions
++again"; before, the next task's coder asked the same seven questions again because its brief
++held only the plan's promise for the person's task), `## The previous attempt`
+ (the last worker run's report, or "It failed: <the error in words>"), `## The person's note on
+ this task` (the words of the person's newest change-log row naming the task) and `## Note for
+ this session (from the person)` (`SessionStartOptions.note`, from the Start dialog through
+diff --git a/docs/user-guide.md b/docs/user-guide.md
+index 12ab2c6..a4f0724 100644
+--- a/docs/user-guide.md
++++ b/docs/user-guide.md
+@@ -257,6 +257,11 @@ monthly cap is refused in words. "Note for this session" goes into the brief of
+ session runs. When nothing can run, Start is greyed out and the dialog says why in one sentence
+ with the button that fixes it (Allow sessions again, Open it, Open Tasks, Set up Docker,
+ Connect Claude). After Start you stay where you were; **Open the session** opens its page.
++A task that does not fit is named one of two ways: "needs about CHF 3.00, more than this
++session's work budget of CHF 2.40" when it alone is too large, or "(about CHF 1.20) may be left
++for next time: the tasks that run first take about CHF 1.50 of this session's work budget of
++CHF 2.40" when it only does not fit after them. A task with a budget of its own is counted at
++most at what is left of that budget, since its runs never spend more.
+ 
+ **One Start keeps going.** A session works until nothing it can run is left: after each task it
+ looks again and takes the tasks that just became ready (what they waited for is done), a task
+@@ -432,8 +437,12 @@ never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 bud
+ without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
+ run stops at CHF 2.40 (coder limit)"); a done or cancelled task shows no limit. The estimate a
+ plan shows is only a
+-forecast. When a task reaches its budget it waits for you with what it spent: raise the budget
+-and set it back to ready, split it, or cancel it; the session goes on with the other tasks.
++forecast. When a task reaches its budget it waits for you and the session goes on with the
++other tasks. The Inbox gets one card, '"Contact page" stopped at its budget of CHF 0.01', with
++what it spent so far and two buttons: **Raise the budget** (it names the new amount, sets it and
++starts a session that tries again) and **Cancel task**. The Tasks tab reads "Needs your
++decision: its budget is used", with Answer (the card), Edit (set another budget yourself) and
++Cancel.
+ 
+ When a task fails twice, the third attempt goes to another specialist that can do the same
+ work (the coder's to the migration specialist, the tester's to the coder, and so on); the
+diff --git a/packages/capabilities/src/githost/git.ts b/packages/capabilities/src/githost/git.ts
+index 1196992..ddc6019 100644
+--- a/packages/capabilities/src/githost/git.ts
++++ b/packages/capabilities/src/githost/git.ts
+@@ -1,4 +1,4 @@
+-import { existsSync } from "node:fs";
++import { existsSync, rmSync, writeFileSync } from "node:fs";
+ import {
+   errorMessage,
+   ForerunnerError,
+@@ -162,6 +162,7 @@ export function gitConfigEnv(
+ /** The git commands that write a commit, so need an author and a committer. */
+ const COMMIT_MAKERS = new Set([
+   "commit",
++  "commit-tree",
+   "merge",
+   "rebase",
+   "cherry-pick",
+@@ -542,6 +543,64 @@ export class GitOps {
+       });
+   }
+ 
++  /** The subject of the commit at HEAD, or null in a repository with no commit yet. */
++  async headSubject(): Promise<string | null> {
++    const r = await this.git(["log", "-n1", "--pretty=format:%s"]);
++    return r.code === 0 ? r.stdout.trim() : null;
++  }
++
++  /**
++   * Sets the work since HEAD aside (a cancelled task's run, phase C): every change, new and
++   * deleted files included, is kept as one commit under `ref` (HEAD does not move), then the
++   * worktree goes back to HEAD. Ignored files stay as they are. Returns the files set aside;
++   * none, and nothing changed.
++   */
++  async setAside(ref: string, message: string): Promise<string[]> {
++    await this.stageAll();
++    const files = await this.stagedFiles();
++    if (files.length === 0) return [];
++    const tree = this.must(await this.git(["write-tree"]), "write-tree").stdout.trim();
++    const commit = this.must(
++      await this.git(["commit-tree", tree, "-p", "HEAD", "-m", message]),
++      "commit-tree",
++    ).stdout.trim();
++    this.must(await this.git(["update-ref", ref, commit]), "update-ref");
++    this.must(await this.git(["reset", "--hard", "-q", "HEAD"]), "reset --hard");
++    return files;
++  }
++
++  /**
++   * Brings back the work set aside under `ref` (`setAside`), on top of the worktree as it is
++   * now, uncommitted; the ref is removed. `missing` when nothing is set aside there;
++   * `conflict` when the folder changed since in the same places: nothing is applied then (git
++   * apply is all or nothing) and the ref stays.
++   */
++  async bringBack(
++    ref: string,
++  ): Promise<{ result: "restored"; files: string[] } | { result: "missing" | "conflict" }> {
++    if (!(await this.hasRef(ref))) return { result: "missing" };
++    const files = this.must(
++      await this.git(["diff", "--name-only", `${ref}~1`, ref]),
++      "diff --name-only",
++    )
++      .stdout.split(/\r?\n/)
++      .filter(Boolean);
++    const patch = this.must(
++      await this.git(["diff", "--binary", `${ref}~1`, ref]),
++      "diff --binary",
++    ).stdout;
++    const file = join(this.opts.cwd, ".git", "forerunner-bring-back.patch");
++    writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
++    try {
++      const applied = await this.git(["apply", "--binary", "--whitespace=nowarn", file]);
++      if (applied.code !== 0) return { result: "conflict" };
++    } finally {
++      rmSync(file, { force: true });
++    }
++    this.must(await this.git(["update-ref", "-d", ref]), "update-ref -d");
++    return { result: "restored", files };
++  }
++
+   /** Where a worktree for a task should live under a root. */
+   static worktreePath(root: string, taskId: string): string {
+     return join(root, taskId.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 60));
+diff --git a/packages/capabilities/test/phase1-gate.integration.test.ts b/packages/capabilities/test/phase1-gate.integration.test.ts
+index 782433a..2a65c2f 100644
+--- a/packages/capabilities/test/phase1-gate.integration.test.ts
++++ b/packages/capabilities/test/phase1-gate.integration.test.ts
+@@ -381,11 +381,16 @@ describe("phase 1 gate", () => {
+     expect(first?.cost_usd_micro).toBeLessThanOrEqual(60_000);
+     // The person is asked about that task, with what to do; the session did not stop for it.
+     expect(res.needsHuman).toEqual([over.id]);
+-    // What the person reads on the task: what stopped it and what to do.
++    // What the person reads on the task: what stopped it, in CHF (design §5 rule 7), and one
++    // card that asks what to do (live walk 2, B2: before, the task waited with no card and the
++    // reason in dollars told the person to edit the budget, press Resume and Start).
+     const after = await w.store.task.mustGet(over.id);
+     expect(after.status).toBe("needs_human");
+-    expect(after.reason).toContain("this task's budget of $0.06");
+-    expect(after.reason).toContain("Raise the task's budget on the Tasks tab");
++    expect(after.reason).toBe('"Runaway" stopped at its budget of CHF 0.05.');
++    const cards = await w.store.humanRequest.list({ task_id: over.id, status: "open" } as never, {
++      limit: 10,
++    });
++    expect(cards.map((c) => c.options)).toEqual([["Raise the budget", "Cancel task"]]);
+     // The session went on: the next task ran to the end and the session completed.
+     expect(runs.filter((r) => r.task_id !== over.id).map((r) => r.outcome)).toEqual(["completed"]);
+     expect(res.stopReason).toBe("completed");
+diff --git a/packages/runtime/src/daemon/api-types.ts b/packages/runtime/src/daemon/api-types.ts
+index 60192a6..338064a 100644
+--- a/packages/runtime/src/daemon/api-types.ts
++++ b/packages/runtime/src/daemon/api-types.ts
+@@ -302,10 +302,11 @@ export const TaskDisplay = z.object({
+       title: z.string().nullable(),
+       /**
+        * A card's kind (design §3.8): `retry`, the decision after failed tries (Try again, Mark
+-       * done anyway, Cancel task); `questions`, a card that asks (answer, or go ahead without).
+-       * Absent from an older service.
++       * done anyway, Cancel task); `questions`, a card that asks (answer, or go ahead without);
++       * `budget`, a task stopped at its own budget (Raise the budget, Cancel task). Absent from
++       * an older service.
+        */
+-      cardKind: z.enum(["retry", "questions"]).optional(),
++      cardKind: z.enum(["retry", "questions", "budget"]).optional(),
+     })
+     .nullable(),
+ });
+diff --git a/packages/runtime/src/daemon/compose.ts b/packages/runtime/src/daemon/compose.ts
+index b36b6a2..b3c0d98 100644
+--- a/packages/runtime/src/daemon/compose.ts
++++ b/packages/runtime/src/daemon/compose.ts
+@@ -198,6 +198,7 @@ import {
+   sharedSecretNamesFor,
+ } from "../secrets/index.ts";
+ import type { TaskBillingPort } from "../session/billing.ts";
++import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
+ import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
+ import {
+   type BlockedSyncResult,
+@@ -941,6 +942,11 @@ export interface RuntimeApp {
+      */
+     reviewFailed?: BlockedSyncResult;
+     signoffs: SignoffSyncResult;
++    /**
++     * Answered cards of tasks stopped at their own budget (live walk 2, B2). Optional for the
++     * harnesses that compose a partial sync.
++     */
++    budgetStops?: BudgetStopSyncResult;
+     plans: PlanApprovalSyncResult;
+     /**
+      * Hooks approvals answered after their session ended (ADR 0088): the task back at `ready`
+@@ -2025,6 +2031,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
+         ? { pricingFor: (modelId: string) => pricingForProvider(provider, modelId, pricingTable) }
+         : {}),
+       pricingTable: () => pricingTable,
++      // A run's result names amounts in CHF (design §5 rule 7; live walk 2, B2).
++      chfPerUsd,
+       tools,
+       toolsFor: toolsForRun,
+       sandbox: sandboxPort,
+@@ -3120,6 +3128,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
+         agentId: agent.id,
+         ...resumeStart,
+       }),
++      // A task stopped at its own budget (live walk 2, B2): Raise the budget raises it and a
++      // session tries again; Cancel task cancels it.
++      budgetStops: await syncBudgetStopAnswers({
++        store,
++        clock,
++        humanId: human.id,
++        agentId: agent.id,
++        ...resumeStart,
++      }),
+       // A rebase conflict and a reviewed PR left open (U-028): each option does what it says.
+       pullRequests: await syncPrAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
+       // A session review that needed the human (U-033): acknowledge, or correct the summary.
+diff --git a/packages/runtime/src/daemon/request-words.ts b/packages/runtime/src/daemon/request-words.ts
+index 6ddeb88..ba7b124 100644
+--- a/packages/runtime/src/daemon/request-words.ts
++++ b/packages/runtime/src/daemon/request-words.ts
+@@ -2,6 +2,7 @@ import type { HumanRequestRow, JsonObject } from "@forerunner/state";
+ import {
+   ANSWER_CARD_KEYS,
+   blockedFindingsAnswer,
++  budgetStopAnswer,
+   normalAnswer,
+   optionLabel,
+   signoffAnswer,
+@@ -437,6 +438,81 @@ function intakeOutcome(card: JsonObject): string | null {
+   return null;
+ }
+ 
++/** An amount in micro-USD as "CHF 0.40" at the card's rate (design §5 rule 7). */
++function chfAt(usdMicro: unknown, rate: unknown): string | null {
++  if (typeof usdMicro !== "number" || !Number.isFinite(usdMicro)) return null;
++  const r = typeof rate === "number" && rate > 0 ? rate : 0.8;
++  const cents = Math.round(Math.round(Math.max(0, usdMicro) * r) / 10_000);
++  return `CHF ${(cents / 100).toFixed(2)}`;
++}
++
++/**
++ * A task stopped at its own budget (live walk 2, B2; `session/budget-card.ts`): Raise the
++ * budget (to the amount the card names, and a session tries again) or Cancel task.
++ */
++function budgetCard(
++  r: Pick<HumanRequestRow, "why" | "options">,
++  card: JsonObject,
++  ctx: RequestWordsContext,
++): RequestWords {
++  const task = ctx.taskTitle ?? str(card.task_title) ?? "the task";
++  const waiting = ctx.waiting ?? [];
++  const spent = chfAt(card.spent_usd_micro, card.chf_per_usd);
++  const raiseTo = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
++  const body =
++    [spent ? `So far it spent ${spent}.` : null, waitingSentence(waiting)]
++      .filter(Boolean)
++      .join(" ") || null;
++  const choices: RequestChoiceWords[] = [];
++  for (const option of r.options.map(optionLabel)) {
++    const what = budgetStopAnswer(option);
++    if (what === "raise")
++      choices.push({
++        label: option,
++        explain: raiseTo
++          ? `Sets its budget to ${raiseTo} and starts a session that tries again.`
++          : "Raises its budget and starts a session that tries again.",
++        tone: "primary",
++        confirm: null,
++        input: null,
++      });
++    else if (what === "cancel")
++      choices.push({
++        label: option,
++        explain: cancelExplain(waiting),
++        tone: "danger",
++        confirm: cancelConfirm(task, waiting),
++        input: null,
++      });
++  }
++  return {
++    title: str(card.title) ?? firstSentence(r.why),
++    body,
++    choices,
++    links: [],
++    reply: "none",
++    details: [],
++    outcome: null,
++  };
++}
++
++function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
++  const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
++  const started = startWords(card.start);
++  switch (card.outcome) {
++    case "raise": {
++      const to = chfAt(card.budget_usd_micro ?? card.raise_to_usd_micro, card.chf_per_usd);
++      return `Raised the budget of ${task}${to ? ` to ${to}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
++    }
++    case "cancel":
++      return `${task} was cancelled.`;
++    case "task_moved_on":
++      return `${task} had moved on already, so nothing changed.`;
++    default:
++      return null;
++  }
++}
++
+ /** The Docker wait (design §3.8, ADR 0101/0102): per project, Set up Docker, Cancel task. */
+ function dockerCard(
+   r: Pick<HumanRequestRow, "why" | "steps" | "options">,
+@@ -583,6 +659,9 @@ export function requestWords(
+       return a === "rework" ? "revise" : a;
+     });
+     outcome = retryOutcome(card, ctx, false);
++  } else if (key === ANSWER_CARD_KEYS.budgetStop) {
++    words = budgetCard(r, card, ctx);
++    outcome = budgetOutcome(card, ctx);
+   } else if (key?.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix)) {
+     words = questionsCard(card, ctx);
+     outcome = questionsOutcome(card, ctx);
+diff --git a/packages/runtime/src/daemon/task-words.ts b/packages/runtime/src/daemon/task-words.ts
+index 5dba174..023f626 100644
+--- a/packages/runtime/src/daemon/task-words.ts
++++ b/packages/runtime/src/daemon/task-words.ts
+@@ -140,10 +140,14 @@ export function plainReason(reason: string, max = 100): string {
+  * a blocked or failed review); `questions`, anything that asks the person (answer it, or go
+  * ahead without).
+  */
+-export function cardKindOf(card: { change_card?: unknown } | undefined): "retry" | "questions" {
++export function cardKindOf(
++  card: { change_card?: unknown } | undefined,
++): "retry" | "questions" | "budget" {
+   const c = card?.change_card;
+   const key =
+     c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
++  // A task stopped at its own budget (live walk 2, B2): Raise the budget or Cancel task.
++  if (key === "task:budget_stop") return "budget";
+   return key === "critic:signoff" || key === "findings:blocked" || key === "critic:review_failed"
+     ? "retry"
+     : "questions";
+@@ -233,6 +237,18 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
+       });
+     }
+     case "needs_human": {
++      if (card && cardKindOf(card) === "budget")
++        // Live walk 2 (B2): it read "Paused" with no card; the card asks to raise the budget.
++        return display("answer", "Needs your decision: its budget is used", "warn", {
++          detail: "Its card is in the Inbox: raise its budget, or cancel it.",
++          blocker: {
++            kind: "card",
++            taskId: null,
++            requestId: card.id,
++            title: null,
++            cardKind: "budget",
++          },
++        });
+       if (card && cardKindOf(card) === "retry") {
+         // Design §5 "Task row": "Needs your decision: tried 4 times [Answer]".
+         const tried = /^tried \d+ times$/.test(plainReason(task.reason))
+diff --git a/packages/runtime/src/estimates/model.ts b/packages/runtime/src/estimates/model.ts
+index 8c87f22..d077fb1 100644
+--- a/packages/runtime/src/estimates/model.ts
++++ b/packages/runtime/src/estimates/model.ts
+@@ -540,10 +540,28 @@ function round4(n: number): number {
+ 
+ /** Convenience for the planner: the learned estimate for a task row, in micro-USD. */
+ export function planEstimateUsdMicro(port: EstimatePort, task: TaskRow): number {
+-  return port.estimate({
+-    specialist: task.specialist,
+-    risk_tier: task.risk_tier,
+-    est_cost_usd_micro: task.est_cost_usd_micro,
+-    budget_usd_micro: task.budget_usd_micro,
+-  }).usdMicro;
++  return withinTaskBudget(
++    port.estimate({
++      specialist: task.specialist,
++      risk_tier: task.risk_tier,
++      est_cost_usd_micro: task.est_cost_usd_micro,
++      budget_usd_micro: task.budget_usd_micro,
++    }).usdMicro,
++    task,
++  );
++}
++
++/**
++ * An estimate no larger than what is left of the task's own budget (U-042: the budget caps its
++ * runs, so a run never spends more). Live walk 2 (phase C): a task with a budget of CHF 0.80
++ * was estimated at about CHF 1.00, and the Start dialog and the plan counted the larger figure.
++ * A task without a budget keeps the estimate.
++ */
++export function withinTaskBudget(
++  estimateUsdMicro: number,
++  task: Pick<TaskRow, "budget_usd_micro" | "actual_cost_usd_micro">,
++): number {
++  if (!(task.budget_usd_micro > 0)) return estimateUsdMicro;
++  const left = Math.max(0, task.budget_usd_micro - (task.actual_cost_usd_micro ?? 0));
++  return Math.min(estimateUsdMicro, left);
+ }
+diff --git a/packages/runtime/src/session/budget-card.ts b/packages/runtime/src/session/budget-card.ts
+new file mode 100644
+index 0000000..b01ca9d
+--- /dev/null
++++ b/packages/runtime/src/session/budget-card.ts
+@@ -0,0 +1,215 @@
++import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
++import { type Clock, errorMessage, log } from "@forerunner/platform";
++import type {
++  HumanRequestRow,
++  JsonObject,
++  SessionRow,
++  StateStore,
++  TaskRow,
++} from "@forerunner/state";
++import { ANSWER_CARD_KEYS, budgetStopAnswer } from "../wiring/request-answers.ts";
++import { unappliedAnswers } from "./findings.ts";
++import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
++import type { BudgetStop } from "./runner.ts";
++
++/**
++ * A task stopped at its own budget asks the person once (live walk 2, part 3, B2). Before, a
++ * run that reached the task's budget (U-042) moved it to `needs_human` with no card: the
++ * session's result said '"Contact page" needs your decision (Inbox).' while the Inbox said
++ * "Nothing needs you", the Tasks tab said "Paused", the drawer spoke dollars on a CHF screen,
++ * and the only way on was Edit budget, Resume and Start.
++ *
++ * Now the runner files one card for the task (`fileBudgetStopCard`):
++ * '"Contact page" stopped at its budget of CHF 0.01' with **Raise the budget** ("Sets its
++ * budget to CHF 0.40 and starts a session that tries again.") and **Cancel task**. The answer is
++ * applied by `syncBudgetStopAnswers` (run by `RuntimeApp.syncApprovals`): the budget is raised to
++ * the amount the button named (never lowered: an Edit made meanwhile that set more stays), the
++ * task goes back to ready and a session of its project is asked for; Cancel task cancels it.
++ * The card's words are in `daemon/request-words.ts` (`budgetCard`), the task's status on the
++ * Tasks tab in `daemon/task-words.ts` ("Needs your decision: its budget is used").
++ */
++export const BUDGET_STOP_KEY = ANSWER_CARD_KEYS.budgetStop;
++/** The card's options as its buttons say them; `budgetStopAnswer` reads them. */
++export const BUDGET_STOP_OPTIONS = ["Raise the budget", "Cancel task"] as const;
++/** The least a raise adds on top of what the task spent: USD 0.50, the planner's default. */
++const MIN_RAISE_USD_MICRO = 500_000;
++/** Raised budgets are whole steps of USD 0.05, so the CHF amount reads round enough. */
++const RAISE_STEP_USD_MICRO = 50_000;
++
++/**
++ * The budget Raise the budget sets: twice the cap it stopped at, and at least what the task
++ * spent so far plus its planned estimate (USD 0.50 when it has none), since the budget counts
++ * every run of the task (`runCapOf`). Rounded up to a step of USD 0.05.
++ */
++export function raisedBudgetUsdMicro(
++  task: Pick<TaskRow, "est_cost_usd_micro">,
++  stop: Pick<BudgetStop, "capUsdMicro" | "spentUsdMicro">,
++): number {
++  const base = Math.max(
++    stop.capUsdMicro * 2,
++    stop.spentUsdMicro + Math.max(task.est_cost_usd_micro, MIN_RAISE_USD_MICRO),
++  );
++  return Math.ceil(base / RAISE_STEP_USD_MICRO) * RAISE_STEP_USD_MICRO;
++}
++
++const chfText = (usdMicro: number, rate: number) =>
++  formatChf(usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate));
++
++/** '"X" stopped at its budget of CHF 0.01' (the card's title and the task's reason). */
++export function budgetStopTitle(
++  task: Pick<TaskRow, "title">,
++  stop: Pick<BudgetStop, "capUsdMicro" | "source" | "specialist">,
++  rate: number,
++): string {
++  const title = `"${task.title.replace(/\s+/g, " ").trim()}"`;
++  return stop.source === "task_budget"
++    ? `${title} stopped at its budget of ${chfText(stop.capUsdMicro, rate)}`
++    : `${title} stopped at the ${stop.specialist}'s limit of ${chfText(stop.capUsdMicro, rate)} per run`;
++}
++
++export interface BudgetStopCardInput {
++  store: StateStore;
++  /** The task, now `needs_human`. */
++  task: TaskRow;
++  session: Pick<SessionRow, "id"> | null;
++  humanId: string;
++  /** The principal agent that ran the task (author of the card). */
++  agentId: string;
++  runId: string | null;
++  stop: BudgetStop;
++  /** The day's CHF per USD for the amounts on the card. */
++  chfPerUsd?: number;
++}
++
++function keyOf(r: Pick<HumanRequestRow, "change_card">): string | undefined {
++  const key = (r.change_card as JsonObject | null)?.key;
++  return typeof key === "string" ? key : undefined;
++}
++
++/** File (or reuse) the one card of a task stopped at its budget. */
++export async function fileBudgetStopCard(
++  input: BudgetStopCardInput,
++): Promise<{ request: HumanRequestRow; reused: boolean }> {
++  const { store, task, stop } = input;
++  const open = (
++    await store.humanRequest.list({ task_id: task.id, status: "open" } as never, { limit: 50 })
++  ).find((r) => keyOf(r) === BUDGET_STOP_KEY);
++  if (open) return { request: open, reused: true };
++  const rate = input.chfPerUsd ?? DEFAULT_CHF_PER_USD;
++  const raiseTo = raisedBudgetUsdMicro(task, stop);
++  const request = await store.humanRequest.insert({
++    human_id: input.humanId,
++    project_id: task.project_id,
++    task_id: task.id,
++    session_id: input.session?.id ?? null,
++    kind: "approval",
++    // Design §3.8, §5: one sentence; the options say what they do.
++    why: `${budgetStopTitle(task, stop, rate)}.`,
++    steps: [],
++    options: [...BUDGET_STOP_OPTIONS],
++    blocking: true,
++    risk: "medium",
++    change_card: {
++      key: BUDGET_STOP_KEY,
++      task_id: task.id,
++      task_title: task.title,
++      title: budgetStopTitle(task, stop, rate),
++      run_id: input.runId,
++      source: stop.source,
++      specialist: stop.specialist,
++      cap_usd_micro: stop.capUsdMicro,
++      spent_usd_micro: stop.spentUsdMicro,
++      raise_to_usd_micro: raiseTo,
++      chf_per_usd: rate,
++      applied_at: null,
++    },
++    author_agent: input.agentId,
++  });
++  return { request, reused: false };
++}
++
++export interface BudgetStopSyncResult {
++  raised: number;
++  cancelled: number;
++  /** Answered cards whose task had moved on, or whose answer was not one of the options. */
++  skipped: number;
++}
++
++/**
++ * Applies every answered budget card of the person not applied yet. The task must still wait
++ * (`needs_human`); otherwise the answer is recorded as `task_moved_on` and nothing changes.
++ * Each outcome is written on the card (`applied_at`, `outcome`, the budget set), so it is
++ * applied once.
++ */
++export async function syncBudgetStopAnswers(deps: {
++  store: StateStore;
++  clock: Clock;
++  humanId: string;
++  agentId: string;
++  /** Answering resumes work (design §3.8): the daemon's scheduler; absent in a one-shot. */
++  start?: StartPort;
++}): Promise<BudgetStopSyncResult> {
++  const logger = log("budget-card");
++  const { store, clock } = deps;
++  const out: BudgetStopSyncResult = { raised: 0, cancelled: 0, skipped: 0 };
++  for (const row of await unappliedAnswers(store, deps.humanId, BUDGET_STOP_KEY)) {
++    const card = (row.change_card ?? {}) as JsonObject;
++    const finish = (outcome: string, extra: JsonObject = {}) =>
++      store.humanRequest.patch(row.id, {
++        change_card: { ...card, applied_at: clock.nowIso(), outcome, ...extra },
++      });
++    const answer = budgetStopAnswer(row.answer);
++    const task = row.task_id ? await store.task.get(row.task_id) : undefined;
++    if (!answer || !task || task.status !== "needs_human") {
++      out.skipped++;
++      await finish(!answer ? "unrecognized_answer" : "task_moved_on");
++      continue;
++    }
++    const actor = { agentId: deps.agentId, humanId: deps.humanId };
++    try {
++      if (answer === "raise") {
++        const promised = typeof card.raise_to_usd_micro === "number" ? card.raise_to_usd_micro : 0;
++        const budget = Math.max(task.budget_usd_micro, promised);
++        const rate = typeof card.chf_per_usd === "number" ? card.chf_per_usd : DEFAULT_CHF_PER_USD;
++        await store.transaction(async (tx) => {
++          await tx.task.patch(task.id, { budget_usd_micro: budget });
++          const fresh = await tx.task.mustGet(task.id);
++          await tx.task.transition(
++            fresh.id,
++            fresh.version,
++            "ready",
++            `you raised its budget to ${chfText(budget, rate)} in the Inbox`,
++            actor,
++          );
++        });
++        await finish("raise", { budget_usd_micro: budget });
++        out.raised++;
++        await recordStart(
++          store,
++          row.id,
++          await resumeWork(store, deps.start, {
++            agentId: deps.agentId,
++            projectId: task.project_id,
++            reason: `you raised the budget of "${task.title}"`,
++          }),
++        );
++      } else {
++        await store.task.transition(
++          task.id,
++          task.version,
++          "cancelled",
++          `you cancelled it in the Inbox when it stopped at its budget (request ${row.id})`,
++          actor,
++        );
++        await finish("cancel");
++        out.cancelled++;
++      }
++    } catch (e) {
++      logger.warn("budget card answer not applied", {
++        requestId: row.id,
++        error: errorMessage(e),
++      });
++    }
++  }
++  return out;
++}
+diff --git a/packages/runtime/src/session/executor.ts b/packages/runtime/src/session/executor.ts
+index dc206ba..d6e4439 100644
+--- a/packages/runtime/src/session/executor.ts
++++ b/packages/runtime/src/session/executor.ts
+@@ -1,5 +1,12 @@
+ import { mkdirSync } from "node:fs";
+-import { type BillingSource, BUILTIN_PRICING, type PricingTable } from "@forerunner/billing";
++import {
++  type BillingSource,
++  BUILTIN_PRICING,
++  DEFAULT_CHF_PER_USD,
++  formatChf,
++  type PricingTable,
++  usdToChfMicro,
++} from "@forerunner/billing";
+ import {
+   type Clock,
+   errorMessage,
+@@ -314,6 +321,12 @@ export interface LoopTaskExecutorDeps {
+    */
+   memory?: Pick<MemoryPort, "recall">;
+   taskMemoryTokenBudget?: number;
++  /**
++   * The day's CHF per USD, for the amounts a person reads in a run's result (design §5 rule 7:
++   * CHF everywhere; live walk 2 read "stopped at this task's budget of $0.01" on a CHF
++   * screen). Absent: `DEFAULT_CHF_PER_USD`.
++   */
++  chfPerUsd?: () => number;
+ }
+ 
+ /** The constraint lines a brief carries for a retry (spec D.2): the rung and the open findings. */
+@@ -377,7 +390,6 @@ export function runCapOf(
+   return { usdMicro: Math.max(0, specialistLimitUsdMicro), source: "specialist_limit" };
+ }
+ 
+-const usdText = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
+ const capitalFirst = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+ 
+ /** What either driver came back with, in the shape the Run row and the result need. */
+@@ -413,6 +425,12 @@ export class LoopTaskExecutor implements TaskExecutor {
+     return this.runTask(ctx, false);
+   }
+ 
++  /** An amount in micro-USD as a person reads it: "CHF 0.01" at the day's rate. */
++  private chfText(usdMicro: number): string {
++    const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
++    return formatChf(usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate));
++  }
++
+   /** `execute`; `routed` is set on the second pass after a web-routing hand-over (U-044). */
+   private async runTask(
+     ctx: Parameters<TaskExecutor["execute"]>[0],
+@@ -549,10 +567,18 @@ export class LoopTaskExecutor implements TaskExecutor {
+     // per-run limit; then the session token and what the session has left.
+     const cap = runCapOf(task, defaultSpec.maxBudgetUsdMicro);
+     if (cap.source === "task_budget" && cap.usdMicro <= 0) {
++      // Live walk 2 (B2): the stop says it in CHF and the runner files its card (Raise the
++      // budget, Cancel task); before, the task waited with no card and dollar amounts.
+       return {
+         outcome: "needs_human",
+-        summary: `This task's budget of ${usdText(task.budget_usd_micro)} is spent (${usdText(task.actual_cost_usd_micro)} so far), so nothing ran. Raise its budget on the Tasks tab and set it back to ready, or cancel it.`,
++        summary: `Its budget of ${this.chfText(task.budget_usd_micro)} is spent (${this.chfText(task.actual_cost_usd_micro)} so far), so nothing ran.`,
+         costUsdMicro: 0,
++        budgetStop: {
++          capUsdMicro: task.budget_usd_micro,
++          spentUsdMicro: task.actual_cost_usd_micro,
++          source: "task_budget",
++          specialist: defaultSpec.name,
++        },
+       };
+     }
+     const sessionLeftUsdMicro = Math.min(token.claims.budgetUsdMicro, budget.remainingUsdMicro());
+@@ -1041,12 +1067,18 @@ export class LoopTaskExecutor implements TaskExecutor {
+     if (outcome === "budget_exceeded" && cap.usdMicro < sessionLeftUsdMicro) {
+       const what =
+         cap.source === "task_budget"
+-          ? `this task's budget of ${usdText(task.budget_usd_micro)}`
+-          : `the ${spec.name}'s limit of ${usdText(cap.usdMicro)} per run (the task has no budget of its own)`;
++          ? `its budget of ${this.chfText(task.budget_usd_micro)}`
++          : `the ${spec.name}'s limit of ${this.chfText(cap.usdMicro)} per run (it has no budget of its own)`;
+       return {
+         outcome: "needs_human",
+-        summary: `The run stopped at ${what}, after spending ${usdText(result.costUsdMicro)}. Raise the task's budget on the Tasks tab and set it back to ready, split the task, or cancel it.`,
++        summary: `The run stopped at ${what}, after spending ${this.chfText(result.costUsdMicro)}.`,
+         costUsdMicro: result.costUsdMicro,
++        budgetStop: {
++          capUsdMicro: cap.source === "task_budget" ? task.budget_usd_micro : cap.usdMicro,
++          spentUsdMicro: task.actual_cost_usd_micro + result.costUsdMicro,
++          source: cap.source,
++          specialist: spec.name,
++        },
+         checksPassed: false,
+         runId: run.id,
+         ...(worktree ? { worktree } : {}),
+diff --git a/packages/runtime/src/session/person-questions.ts b/packages/runtime/src/session/person-questions.ts
+index e59688f..8c804d7 100644
+--- a/packages/runtime/src/session/person-questions.ts
++++ b/packages/runtime/src/session/person-questions.ts
+@@ -435,6 +435,45 @@ export async function answersBlockFor(
+   ].join("\n");
+ }
+ 
++/** What the person said on a task another task waited on (`personAnswersOn`). */
++export interface PersonAnswersOn {
++  /** The question and answer lines of every answered card, oldest first; empty when none. */
++  pairs: string[];
++  /** The person went ahead without answering (Go ahead without). */
++  without: boolean;
++  /** Where the answers are recorded in the project's folder (`docs/decisions/0001-….md`). */
++  doc: string | null;
++}
++
++/**
++ * The person's answers to the questions asked on a task (its planned questions, or a
++ * specialist's), for the brief of a task that waited on it (live walk 2, phase C). Before, that
++ * brief said only what the plan had promised the person's task would do ("the answers are
++ * recorded in docs/data.md"): the coder of the next task asked the same seven questions again.
++ */
++export async function personAnswersOn(
++  store: Pick<StateStore, "humanRequest">,
++  taskId: string,
++): Promise<PersonAnswersOn> {
++  const rows = (await store.humanRequest.list({ task_id: taskId } as never, { limit: 200 }))
++    .filter((r) => keyOf(r) === personQuestionsKey(taskId) && r.status === "answered")
++    .sort((a, b) => a.created_at.localeCompare(b.created_at));
++  const out: PersonAnswersOn = { pairs: [], without: false, doc: null };
++  for (const row of rows) {
++    const read = personQuestionsAnswer(row.answer);
++    if (read?.kind === "without") out.without = true;
++    if (read?.kind !== "answers") continue;
++    const card = personQuestionsCardOf(row);
++    out.pairs.push(...renderPairs(card?.questions ?? row.steps, read.answers));
++    const doc = (row.change_card as JsonObject | null)?.doc;
++    if (typeof doc === "string" && doc.trim()) {
++      const name = doc.split(/[\\/]/).pop();
++      if (name) out.doc = `${DECISION_DOC_DIR}/${name}`;
++    }
++  }
++  return out;
++}
++
+ function renderPairs(questions: readonly string[], answers: readonly PersonAnswerItem[]): string[] {
+   const out: string[] = [];
+   if (answers.length === 1 && answers[0]?.question === null) {
+diff --git a/packages/runtime/src/session/runner.ts b/packages/runtime/src/session/runner.ts
+index 454fa15..dab2b66 100644
+--- a/packages/runtime/src/session/runner.ts
++++ b/packages/runtime/src/session/runner.ts
+@@ -23,7 +23,7 @@ import type { AutonomyLevel } from "../enforcement/autonomy.ts";
+ import { SessionBudget } from "../enforcement/budget.ts";
+ import type { KillSwitch } from "../enforcement/killswitch.ts";
+ import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
+-import { type EstimatePort, planEstimateUsdMicro } from "../estimates/model.ts";
++import { type EstimatePort, planEstimateUsdMicro, withinTaskBudget } from "../estimates/model.ts";
+ import {
+   type CriticPort,
+   DEFAULT_MEMORY_TOKEN_BUDGET,
+@@ -47,6 +47,7 @@ import type { SchemaSyncPort } from "../update/sync.ts";
+ import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
+ import { BILLING_FALLBACK_EVENT } from "./billing.ts";
+ import { renderStateBrief, type StateBrief } from "./brief.ts";
++import { budgetStopTitle, fileBudgetStopCard } from "./budget-card.ts";
+ import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
+ import {
+   fileBlockedByFindingsRequest,
+@@ -216,6 +217,22 @@ export interface TaskExecutionResult {
+   finalReport?: string;
+   /** Lessons the specialist spelled out ("Lesson: ..."), recorded at session end. */
+   lessons?: LessonCandidate[];
++  /**
++   * Set on a `needs_human` result when the run stopped at the task's own cap (U-042): its
++   * budget, or the specialist's per-run limit when it has none. The runner files the budget
++   * card (`session/budget-card.ts`: Raise the budget, Cancel task; live walk 2, B2).
++   */
++  budgetStop?: BudgetStop;
++}
++
++/** Where a run stopped at its task's own cap, in micro-USD (`TaskExecutionResult.budgetStop`). */
++export interface BudgetStop {
++  /** The cap it stopped at: the task's budget, or the specialist's limit per run. */
++  capUsdMicro: number;
++  /** What the task has spent in all its runs, this one included. */
++  spentUsdMicro: number;
++  source: "task_budget" | "specialist_limit";
++  specialist: string;
+ }
+ 
+ export interface TaskExecutor {
+@@ -1715,14 +1732,38 @@ export class SessionRunner {
+               }
+             }
+           } else if (result.outcome === "needs_human") {
+-            await store.task.transition(
++            const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
++            const waiting = await store.task.transition(
+               task.id,
+               task.version,
+               "needs_human",
+-              result.summary.slice(0, 200),
++              // Live walk 2 (B2): a stop at the task's own budget names it in CHF, as its card.
++              result.budgetStop
++                ? `${budgetStopTitle(task, result.budgetStop, rate)}.`
++                : result.summary.slice(0, 200),
+               { agentId: agent.id },
+             );
+             needsHuman.push(task.id);
++            // Design §3.8, live walk 2 (B2): a task stopped at its budget gets one card (Raise
++            // the budget, Cancel task), so the result's "needs your decision (Inbox)" is true.
++            if (result.budgetStop)
++              try {
++                await fileBudgetStopCard({
++                  store,
++                  task: waiting,
++                  session,
++                  humanId: agent.owner_human_id,
++                  agentId: agent.id,
++                  runId: result.runId ?? null,
++                  stop: result.budgetStop,
++                  chfPerUsd: rate,
++                });
++              } catch (e) {
++                this.logger.warn("budget card not filed", {
++                  taskId: task.id,
++                  error: errorMessage(e),
++                });
++              }
+           } else if (
+             result.outcome === "failed" &&
+             isTransientError(result.errorCode) &&
+@@ -3012,7 +3053,10 @@ export class StaticPlanner implements Planner {
+       specialist: t.specialist ?? "coder",
+       estimateUsdMicro: this.estimates
+         ? planEstimateUsdMicro(this.estimates, t)
+-        : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
++        : withinTaskBudget(
++            t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
++            t,
++          ),
+     }));
+     return {
+       items,
+diff --git a/packages/runtime/src/session/start-check.ts b/packages/runtime/src/session/start-check.ts
+index 438feb3..37545a6 100644
+--- a/packages/runtime/src/session/start-check.ts
++++ b/packages/runtime/src/session/start-check.ts
+@@ -1,5 +1,5 @@
+ import type { StateStore, WaitsOn } from "@forerunner/state";
+-import { type EstimatePort, planEstimateUsdMicro } from "../estimates/model.ts";
++import { type EstimatePort, planEstimateUsdMicro, withinTaskBudget } from "../estimates/model.ts";
+ import { cutPlanToBudget, DEFAULT_RESERVE_SHARE, type PlanItem } from "./runner.ts";
+ import { needsContainerSandbox, type SandboxGate, type SandboxGateAnswer } from "./sandbox-gate.ts";
+ 
+@@ -71,7 +71,7 @@ export async function startCheck(
+   const price = (t: (typeof runnableRows)[number]) =>
+     estimates
+       ? planEstimateUsdMicro(estimates, t)
+-      : t.est_cost_usd_micro || t.budget_usd_micro || fallback;
++      : withinTaskBudget(t.est_cost_usd_micro || t.budget_usd_micro || fallback, t);
+   if (deps.sandbox && runnableRows.some(needsContainerSandbox)) {
+     const answer = await deps.sandbox.check();
+     if (!answer.ready) {
+diff --git a/packages/runtime/src/session/task-context.ts b/packages/runtime/src/session/task-context.ts
+index 3d38628..862b367 100644
+--- a/packages/runtime/src/session/task-context.ts
++++ b/packages/runtime/src/session/task-context.ts
+@@ -1,6 +1,7 @@
+ import type { JsonValue, StateStore, TaskRow } from "@forerunner/state";
+ import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
+ import { TASK_FILES_EVENT } from "./peers.ts";
++import { isPersonTask, personAnswersOn } from "./person-questions.ts";
+ 
+ /**
+  * What a specialist is told beyond its own task (core-experience design §4.6). Before, the
+@@ -13,7 +14,8 @@ import { TASK_FILES_EVENT } from "./peers.ts";
+  * `taskContextBlock` renders the sections that follow the delegation brief, each from the store
+  * as it stands when the run starts: the project (name, goal, the person's brief, where the docs
+  * and the decision record are), what the task waited on (each dependency's title, its result in
+- * one line and the files it changed), the previous attempt (its report, or the error that
++ * one line and the files it changed, and the person's answers to the questions asked on it),
++ * the previous attempt (its report, or the error that
+  * stopped it), the person's latest note on the task and the note for this session. Everything
+  * quoted from the person or an earlier run is data, never instructions.
+  */
+@@ -24,6 +26,8 @@ const MAX_QUOTE_CHARS = 1_500;
+ const MAX_DEPENDENCIES = 6;
+ /** Files named per dependency. */
+ const MAX_FILES = 8;
++/** Longest quote of the person's answers on one task this one waited on. */
++const MAX_ANSWERS_CHARS = 6_000;
+ 
+ /** Words for an error a run ended on (design §5.8): what went wrong, never the exception text. */
+ export function failureWords(error: { code: string; message: string }): string {
+@@ -150,8 +154,11 @@ export async function taskContextBlock(
+       "What the project is and what was decided: docs/overview.md and the decision record in docs/decisions/ (read them when the task touches them).",
+     );
+   }
+-  // What the task waited on: each dependency's result and files.
++  // What the task waited on: each dependency's result and files, and the person's answers to
++  // the questions asked on it (live walk 2: the next task's coder asked the same questions
++  // again, its brief having only the plan's promise for the person's task).
+   const deps: string[] = [];
++  const answered: string[] = [];
+   for (const id of task.depends_on.slice(0, MAX_DEPENDENCIES)) {
+     const dep = await store.task.get(id);
+     if (!dep) continue;
+@@ -160,12 +167,34 @@ export async function taskContextBlock(
+     const files = last?.session_id
+       ? (await filesOf(store, dep.id, last.session_id)).slice(0, MAX_FILES)
+       : [];
+-    const result = note.report ? firstLine(note.report) : dep.outcome;
++    const said = await personAnswersOn(store, dep.id);
++    const persons = isPersonTask(dep);
++    // A task the person did has no run: its result is what they answered, never the outcome
++    // the plan wrote for it (a promise of where the answers would go).
++    const result = note.report
++      ? firstLine(note.report)
++      : said.pairs.length
++        ? "the person answered its questions (their answers are below)."
++        : said.without
++          ? "the person chose to go ahead without answering its questions: decide yourself and say in your report what you assumed."
++          : persons
++            ? "done by the person."
++            : dep.outcome;
+     deps.push(
+       `- "${dep.title}": ${result || "done"}${files.length ? ` Files: ${files.join(", ")}` : ""}`,
+     );
++    if (said.pairs.length)
++      answered.push(
++        `## Answers from the person to "${dep.title}"`,
++        `These are the person's own answers, given in the Inbox for a task this one waited on${
++          said.doc ? ` (also recorded in ${said.doc})` : ""
++        }. Use them; do not ask the person these questions again.`,
++        "",
++        quote(said.pairs.join("\n").trim(), MAX_ANSWERS_CHARS),
++      );
+   }
+   if (deps.length) out.push("## Done before this task", ...deps);
++  if (answered.length) out.push(...answered);
+   // The previous attempt: its own report, or the error that stopped it.
+   const previous = (await workerRuns(store, task.id)).find((r) => r.id !== opts.currentRunId);
+   if (previous) {
+diff --git a/packages/runtime/src/wiring/request-answers.ts b/packages/runtime/src/wiring/request-answers.ts
+index 22e1f89..0d2225c 100644
+--- a/packages/runtime/src/wiring/request-answers.ts
++++ b/packages/runtime/src/wiring/request-answers.ts
+@@ -63,6 +63,11 @@ export const ANSWER_CARD_KEYS = {
+   blockedFindings: "findings:blocked",
+   /** A critic review that failed (U-045): rework, accept or cancel, read as the findings card. */
+   reviewFailed: "critic:review_failed",
++  /**
++   * A task stopped at its own budget (live walk 2, B2; `session/budget-card.ts`): Raise the
++   * budget or Cancel task.
++   */
++  budgetStop: "task:budget_stop",
+   planPrefix: "plan:",
+   intakePrefix: "intake:",
+   specialistPrefix: "specialist:",
+@@ -116,6 +121,19 @@ export function signoffAnswer(answer: JsonValue | null): SignoffAnswer | null {
+   return null;
+ }
+ 
++/**
++ * The answer of a budget card (`session/budget-card.ts`) as one of its options, or null: "Raise
++ * the budget" (or "raise", "try again") raises it and tries again; "Cancel task" cancels it.
++ */
++export function budgetStopAnswer(answer: JsonValue | null): "raise" | "cancel" | null {
++  const v = answerWord(answer);
++  if (v === null) return null;
++  if (/^(raise the budget|raise budget|raise|raise the budget and try again|try again)$/.test(v))
++    return "raise";
++  if (/^(cancel|cancelled|canceled|drop|cancel task|cancel the task)$/.test(v)) return "cancel";
++  return null;
++}
++
+ /**
+  * The person's note sent with a card's option (`{ choice: "Try again", note: "…" }`): what to
+  * change on the next attempt. Null when there is none.
+@@ -372,6 +390,7 @@ const READERS: ReadonlyArray<{
+   { matches: (k) => k === ANSWER_CARD_KEYS.signoff, read: signoffAnswer },
+   { matches: (k) => k === ANSWER_CARD_KEYS.blockedFindings, read: blockedFindingsAnswer },
+   { matches: (k) => k === ANSWER_CARD_KEYS.reviewFailed, read: blockedFindingsAnswer },
++  { matches: (k) => k === ANSWER_CARD_KEYS.budgetStop, read: budgetStopAnswer },
+   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.planPrefix), read: planAnswer },
+   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.intakePrefix), read: intakeAnswer },
+   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.specialistPrefix), read: specialistAnswer },
+diff --git a/packages/runtime/test/continuity-answers.test.ts b/packages/runtime/test/continuity-answers.test.ts
+new file mode 100644
+index 0000000..e2eed7e
+--- /dev/null
++++ b/packages/runtime/test/continuity-answers.test.ts
+@@ -0,0 +1,241 @@
++import { mkdtempSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { appDirs, join, SimulatedClock } from "@forerunner/platform";
++import type { TaskRow } from "@forerunner/state";
++import { FakeProvider, textReply } from "@forerunner/testenv";
++import { MemoryVault } from "@forerunner/vault";
++import { afterAll, beforeAll, describe, expect, it } from "vitest";
++import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
++import { createDaemonApp } from "../src/daemon/server.ts";
++import { taskContextBlock } from "../src/session/task-context.ts";
++import { closingReply, submitReply } from "./loop-helpers.ts";
++
++/**
++ * Live walk 2 (2026-11-01), phase C "continuity": the owner answered seven questions on the
++ * plan's person task "Owner supplies the bakery's real content"; the coder of the task after it
++ * asked all the same questions again, because its brief said only what the plan had promised
++ * for the person's task ("answers are recorded in docs/data.md", which was not true) under
++ * "Done before this task". The answers were on the request and at the end of the decision
++ * record, and no brief carried them.
++ *
++ * Now a task that waited on a task the person answered carries the person's question -> answer
++ * pairs in its brief, said to be the person's own answers, with where they are recorded.
++ */
++const REGISTRY = join(process.cwd(), "evals", "registry");
++type Json = Record<string, unknown>;
++
++const Q_MENU = "What is on the menu, with prices?";
++const Q_HOURS = "What are the opening hours?";
++
++function provider(clock: SimulatedClock) {
++  return new FakeProvider({
++    clock,
++    latency: "none",
++    onNoMatch: "echo",
++    replies: [
++      // The critic's turns first: their messages name the task too.
++      submitReply({}, { times: Number.POSITIVE_INFINITY }),
++      closingReply(),
++      textReply("Filled in the menu and the hours from the person's answers.", {
++        when: { lastUserIncludes: "Replace the placeholders" },
++        times: Number.POSITIVE_INFINITY,
++      }),
++    ],
++  });
++}
++
++async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) {
++  const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
++  const rt = await composeRuntime({
++    env: { FORERUNNER_HOME: home },
++    dirs,
++    config: null,
++    clock,
++    stateUrl: `sqlite:${join(home, "state.sqlite")}`,
++    vault: new MemoryVault(),
++    provider: fake,
++    registryDir: REGISTRY,
++    identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
++    appVersion: "0.1.0-test",
++    sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
++  });
++  const { app, token } = createDaemonApp(rt);
++  const req = (path: string, init: RequestInit = {}) =>
++    app.request(path, {
++      ...init,
++      headers: {
++        authorization: `Bearer ${token}`,
++        "content-type": "application/json",
++        ...(init.headers ?? {}),
++      },
++    });
++  return { rt, req };
++}
++
++/** Polls in real time; the error says what was seen last. */
++async function waitFor<T>(
++  probe: () => Promise<T | undefined>,
++  what: () => Promise<string>,
++  ms = 20_000,
++): Promise<T> {
++  const deadline = Date.now() + ms;
++  for (;;) {
++    const v = await probe();
++    if (v !== undefined) return v;
++    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
++    await new Promise((r) => setTimeout(r, 25));
++  }
++}
++
++describe("the person's answers reach the task that waited on them (phase C, live walk 2 #3)", () => {
++  const clock = new SimulatedClock("2026-11-01T09:00:00Z");
++  const home = mkdtempSync(join(tmpdir(), "fr-continuity-answers-"));
++  const fake = provider(clock);
++  let rt: RuntimeApp;
++  let req: Awaited<ReturnType<typeof compose>>["req"];
++  let projectId = "";
++  let content: TaskRow;
++  let fill: TaskRow;
++
++  beforeAll(async () => {
++    ({ rt, req } = await compose(home, clock, fake));
++    projectId = (
++      await rt.store.project.insert({
++        name: "Bakery",
++        goal: "A website for the bakery",
++        autonomy_level: 2,
++        settings: { members: [rt.agent.id] },
++      })
++    ).id;
++    content = await rt.store.task.insert({
++      project_id: projectId,
++      title: "Owner supplies the bakery's real content",
++      // What the plan promised for the person's task: not where the answers end up.
++      outcome: "The owner's answers are recorded in docs/data.md.",
++      acceptance_criteria: [Q_MENU, Q_HOURS],
++      risk_tier: 1,
++      status: "ready",
++      priority: 9,
++      specialist: "person",
++      reason: "planned by the intake",
++      author_agent: rt.agent.id,
++    } as never);
++    fill = await rt.store.task.insert({
++      project_id: projectId,
++      title: "Replace the placeholders with the real content",
++      outcome: "index.html shows the real menu and hours.",
++      acceptance_criteria: ["No TODO is left in index.html"],
++      risk_tier: 1,
++      status: "ready",
++      priority: 5,
++      specialist: "coder",
++      depends_on: [content.id],
++      budget_usd_micro: 1_000_000,
++      est_cost_usd_micro: 100_000,
++      reason: "planned by the intake",
++      author_agent: rt.agent.id,
++    } as never);
++  }, 120_000);
++  afterAll(async () => {
++    await rt?.close();
++  });
++
++  it("answering the person's card in the Inbox starts the next task, and its brief carries the answers", async () => {
++    await rt.syncApprovals();
++    const inbox = (await (await req("/inbox")).json()) as { requests: Json[] };
++    const card = inbox.requests.find((r) => r.taskId === content.id && r.status === "open");
++    expect(card, "the person task's card is in the Inbox").toBeDefined();
++    // What the Inbox form sends: one answer per question it shows.
++    const answered = await req(`/requests/${String(card?.id)}/answer`, {
++      method: "POST",
++      body: JSON.stringify({
++        version: card?.version,
++        answer: {
++          answers: [
++            { question: Q_MENU, answer: "Zopf CHF 6.50, Nusstorte CHF 4.20" },
++            { question: Q_HOURS, answer: "Tuesday to Saturday, 7:00 to 18:00" },
++          ],
++        },
++      }),
++    });
++    expect(answered.status).toBe(200);
++    expect((await rt.store.task.mustGet(content.id)).status).toBe("done");
++    // Answering resumes work: a session runs the task that waited, and the critic reviews it.
++    const call = await waitFor(
++      async () =>
++        fake.calls.find((c) =>
++          JSON.stringify(c.request.messages).includes("Replace the placeholders"),
++        ),
++      async () =>
++        `the coder's run (task ${(await rt.store.task.mustGet(fill.id)).status}, ${fake.calls.length} calls)`,
++    );
++    const brief = String(
++      (call.request.messages[0] as { content: unknown } | undefined)?.content ?? "",
++    );
++    // The person's answers, question by question, said to be theirs.
++    expect(brief).toContain(
++      '## Answers from the person to "Owner supplies the bakery\'s real content"',
++    );
++    expect(brief).toContain(Q_MENU);
++    expect(brief).toContain("Zopf CHF 6.50, Nusstorte CHF 4.20");
++    expect(brief).toContain(Q_HOURS);
++    expect(brief).toContain("Tuesday to Saturday, 7:00 to 18:00");
++    expect(brief).toContain("These are the person's own answers");
++    expect(brief).toContain("do not ask the person these questions again");
++    expect(brief).toContain("docs/decisions/");
++    // The plan's promise for the person's task is not told as what was done.
++    expect(brief).not.toContain("recorded in docs/data.md");
++    await waitFor(
++      async () => ((await rt.store.task.mustGet(fill.id)).status === "done" ? true : undefined),
++      async () => {
++        const t = await rt.store.task.mustGet(fill.id);
++        return `the task to be done (${t.status}: ${t.reason})`;
++      },
++    );
++    // Nothing asked again: no new card for the task that waited.
++    const after = (await (await req("/inbox")).json()) as { requests: Json[] };
++    expect(after.requests.filter((r) => r.taskId === fill.id && r.status === "open")).toEqual([]);
++  }, 60_000);
++
++  it("Go ahead without on the person's card tells the next task to decide itself, not the plan's promise", async () => {
++    const asked = await rt.store.task.insert({
++      project_id: projectId,
++      title: "Owner picks the colours",
++      outcome: "The colours are recorded in docs/style.md.",
++      acceptance_criteria: ["Which colours should the site use?"],
++      risk_tier: 1,
++      status: "ready",
++      priority: 9,
++      specialist: "person",
++      reason: "planned by the intake",
++      author_agent: rt.agent.id,
++    } as never);
++    const style = await rt.store.task.insert({
++      project_id: projectId,
++      title: "Style the site",
++      outcome: "styles.css",
++      risk_tier: 1,
++      status: "draft",
++      priority: 5,
++      specialist: "designer",
++      depends_on: [asked.id],
++      reason: "planned by the intake",
++      author_agent: rt.agent.id,
++    } as never);
++    await rt.syncApprovals();
++    const inbox = (await (await req("/inbox")).json()) as { requests: Json[] };
++    const card = inbox.requests.find((r) => r.taskId === asked.id && r.status === "open");
++    // The option the Inbox shows for it (design §3.8), as a click sends it.
++    const answered = await req(`/requests/${String(card?.id)}/answer`, {
++      method: "POST",
++      body: JSON.stringify({ version: card?.version, answer: "Go ahead without" }),
++    });
++    expect(answered.status).toBe(200);
++    expect((await rt.store.task.mustGet(asked.id)).status).toBe("done");
++    const brief = await taskContextBlock(rt.store, await rt.store.task.mustGet(style.id));
++    expect(brief).toContain(
++      '- "Owner picks the colours": the person chose to go ahead without answering its questions',
++    );
++    expect(brief).not.toContain("recorded in docs/style.md");
++  });
++});
+diff --git a/packages/runtime/test/continuity-budget.test.ts b/packages/runtime/test/continuity-budget.test.ts
+new file mode 100644
+index 0000000..9e615a0
+--- /dev/null
++++ b/packages/runtime/test/continuity-budget.test.ts
+@@ -0,0 +1,224 @@
++import { mkdtempSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { appDirs, join, SimulatedClock } from "@forerunner/platform";
++import { FakeProvider, textReply, toolReply } from "@forerunner/testenv";
++import { MemoryVault } from "@forerunner/vault";
++import { afterAll, beforeAll, describe, expect, it } from "vitest";
++import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
++import { createDaemonApp } from "../src/daemon/server.ts";
++import { closingReply, submitReply } from "./loop-helpers.ts";
++
++/**
++ * Live walk 2 part 3 (B2, 2026-11-01): a task over its own budget ("Contact page", CHF 0.01)
++ * stopped "after spending $0.00" and became needs_human with no card. The session's result
++ * said '"Contact page" needs your decision (Inbox).' while the Inbox said "Nothing needs you";
++ * the Tasks tab said "Paused"; the drawer spoke USD on a CHF screen and told the person to edit
++ * the budget, press Resume and Start again.
++ *
++ * Now the stop files one Inbox card: '"Contact page" stopped at its budget of CHF 0.01.' with
++ * Raise the budget (which raises it and starts a session that tries again) and Cancel task;
++ * the result, the Tasks tab and the Inbox agree; every amount is in CHF; the card survives a
++ * restart without a second copy.
++ */
++const REGISTRY = join(process.cwd(), "evals", "registry");
++type Json = Record<string, unknown>;
++
++function provider(clock: SimulatedClock) {
++  return new FakeProvider({
++    clock,
++    latency: "none",
++    onNoMatch: "echo",
++    replies: [
++      submitReply({}, { times: Number.POSITIVE_INFINITY }),
++      closingReply(),
++      // The first run spends far past the task's budget on its first call; the hooks stop it
++      // before the second.
++      toolReply("list_dir", { path: "." }, "Looking at the folder first.", {
++        when: { lastUserIncludes: "Contact page" },
++        times: 1,
++        usage: { input_tokens: 2_000_000, output_tokens: 200_000 },
++      }),
++      textReply("Wrote contact.html with the club's address.", {
++        when: { lastUserIncludes: "Contact page" },
++        times: Number.POSITIVE_INFINITY,
++      }),
++    ],
++  });
++}
++
++async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) {
++  const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
++  const rt = await composeRuntime({
++    env: { FORERUNNER_HOME: home },
++    dirs,
++    config: null,
++    clock,
++    stateUrl: `sqlite:${join(home, "state.sqlite")}`,
++    vault: new MemoryVault(),
++    provider: fake,
++    registryDir: REGISTRY,
++    identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
++    appVersion: "0.1.0-test",
++    sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
++  });
++  const { app, token } = createDaemonApp(rt);
++  const req = (path: string, init: RequestInit = {}) =>
++    app.request(path, {
++      ...init,
++      headers: {
++        authorization: `Bearer ${token}`,
++        "content-type": "application/json",
++        ...(init.headers ?? {}),
++      },
++    });
++  return { rt, req };
++}
++
++/** Polls in real time (at least 10 s); the error says what was seen last. */
++async function waitFor<T>(
++  probe: () => Promise<T | undefined>,
++  what: () => Promise<string>,
++  ms = 20_000,
++): Promise<T> {
++  const deadline = Date.now() + ms;
++  for (;;) {
++    const v = await probe();
++    if (v !== undefined) return v;
++    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
++    await new Promise((r) => setTimeout(r, 25));
++  }
++}
++
++describe("a task stopped at its budget asks the person once, in CHF (live walk 2, B2)", () => {
++  const clock = new SimulatedClock("2026-11-01T09:00:00Z");
++  const home = mkdtempSync(join(tmpdir(), "fr-continuity-budget-"));
++  const fake = provider(clock);
++  let rt: RuntimeApp;
++  let req: Awaited<ReturnType<typeof compose>>["req"];
++  let projectId = "";
++  let taskId = "";
++
++  const inbox = async () => (await (await req("/inbox")).json()) as { requests: Json[] };
++  const openCards = async () =>
++    (await inbox()).requests.filter((r) => r.taskId === taskId && r.status === "open");
++  const taskView = async () =>
++    ((await (await req(`/projects/${projectId}/tasks`)).json()) as Json[]).find(
++      (t) => t.id === taskId,
++    ) as Json;
++
++  beforeAll(async () => {
++    ({ rt, req } = await compose(home, clock, fake));
++    projectId = (
++      (await (
++        await req("/projects", {
++          method: "POST",
++          body: JSON.stringify({ name: "Garden club", goal: "A site for the club" }),
++        })
++      ).json()) as Json
++    ).id as string;
++    // What New task sends with a budget of CHF 0.01 (USD 0.0125 at the test's rate of 0.8).
++    const created = await req(`/projects/${projectId}/tasks`, {
++      method: "POST",
++      body: JSON.stringify({
++        title: "Contact page",
++        outcome: "contact.html says how to reach the club.",
++        acceptanceCriteria: ["contact.html exists"],
++        priority: "high",
++        status: "ready",
++        dependsOn: [],
++        budgetUsdMicro: 12_500,
++        specialist: "coder",
++        riskTier: 1,
++      }),
++    });
++    expect(created.status).toBe(201);
++    taskId = ((await created.json()) as Json).id as string;
++  }, 120_000);
++  afterAll(async () => {
++    await rt?.close();
++  });
++
++  it("the stop files one card; the result, the Tasks tab and the Inbox agree, in CHF", async () => {
++    const started = await req("/sessions", {
++      method: "POST",
++      body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
++    });
++    expect(started.status).toBe(202);
++    const sessionId = (((await started.json()) as Json).session as Json).id as string;
++    const ended = await waitFor(
++      async () => {
++        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
++        return ["completed", "stopped", "failed", "killed"].includes(String(s.status))
++          ? s
++          : undefined;
++      },
++      async () => `the session to end (task ${String((await taskView()).status)})`,
++    );
++    const cards = await openCards();
++    expect(cards).toHaveLength(1);
++    const card = cards[0] as Json;
++    expect(card.title).toBe('"Contact page" stopped at its budget of CHF 0.01');
++    expect(card.choices).toEqual([
++      expect.objectContaining({
++        label: "Raise the budget",
++        explain: expect.stringMatching(
++          /^Sets its budget to CHF \d+\.\d\d and starts a session that tries again\.$/,
++        ),
++        tone: "primary",
++      }),
++      expect.objectContaining({ label: "Cancel task", tone: "danger" }),
++    ]);
++    // The session's result points at a card that is there.
++    expect(String(ended.summary)).toContain('"Contact page" needs your decision (Inbox).');
++    // The Tasks tab says the same as the Inbox, with the card to open.
++    const view = await taskView();
++    expect(view.status).toBe("needs_human");
++    expect(view.display).toMatchObject({
++      key: "answer",
++      label: "Needs your decision: its budget is used",
++      blocker: { kind: "card", requestId: card.id, cardKind: "budget" },
++    });
++    // CHF everywhere a person reads it: no dollar amounts.
++    for (const text of [card.title, card.body, view.reason, JSON.stringify(view.display)])
++      expect(String(text)).not.toMatch(/\$|USD/);
++    expect(String(view.reason)).toContain("CHF 0.01");
++  }, 60_000);
++
++  it("the card survives a restart with no second copy", async () => {
++    await rt.close();
++    ({ rt, req } = await compose(home, clock, fake));
++    await rt.syncApprovals();
++    expect(await openCards()).toHaveLength(1);
++    expect((await rt.store.task.mustGet(taskId)).status).toBe("needs_human");
++  }, 120_000);
++
++  it("Raise the budget raises it and starts a session that finishes the task", async () => {
++    const card = (await openCards())[0] as Json;
++    const choice = (card.choices as Json[])[0] as Json;
++    const before = await rt.store.task.mustGet(taskId);
++    const answered = await req(`/requests/${String(card.id)}/answer`, {
++      method: "POST",
++      body: JSON.stringify({ version: card.version, answer: choice.label }),
++    });
++    expect(answered.status).toBe(200);
++    const raised = await rt.store.task.mustGet(taskId);
++    expect(raised.budget_usd_micro).toBeGreaterThan(before.budget_usd_micro);
++    // The amount the button promised is the one set.
++    const promised = /CHF (\d+\.\d\d)/.exec(String(choice.explain))?.[1];
++    expect(promised).toBeDefined();
++    const done = await waitFor(
++      async () => {
++        const t = await rt.store.task.mustGet(taskId);
++        return t.status === "done" ? t : undefined;
++      },
++      async () => {
++        const t = await rt.store.task.mustGet(taskId);
++        return `the task to be done (${t.status}: ${t.reason})`;
++      },
++    );
++    expect(done.status).toBe("done");
++    expect(await openCards()).toEqual([]);
++    const after = (await inbox()).requests.find((r) => r.id === card.id) as Json | undefined;
++    expect(String(after?.outcome)).toMatch(/^Raised the budget of "Contact page" to CHF \d+\.\d\d/);
++  }, 60_000);
++});
+diff --git a/packages/runtime/test/estimates.test.ts b/packages/runtime/test/estimates.test.ts
+index a1b363e..4d2749f 100644
+--- a/packages/runtime/test/estimates.test.ts
++++ b/packages/runtime/test/estimates.test.ts
+@@ -386,7 +386,12 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
+     worlds.push(w);
+     for (let i = 0; i < 20; i++) await finishedTask(w, { estimate: 1_000_000, actual: 3_000_000 });
+     const port: EstimatePort = await EstimateModel.fromStore(w.store, { defaults });
+-    const ready = await finishedTask(w, { estimate: 1_000_000, actual: 0, status: "ready" });
++    const capped = await finishedTask(w, { estimate: 1_000_000, actual: 0, status: "ready" });
++    // A task's own budget (USD 2 here) caps its runs (U-042), so it is never planned above it
++    // (live walk 2, phase C: the Start dialog counted CHF 1.00 for a task with CHF 0.80).
++    expect(planEstimateUsdMicro(port, capped)).toBe(2_000_000);
++    // Without a budget of its own, the learned figure is what the planner gets.
++    const ready = await w.store.task.patch(capped.id, { budget_usd_micro: 0 });
+     const learned = planEstimateUsdMicro(port, ready);
+     expect(learned).toBeGreaterThan(2_000_000);
+     const plan: SessionPlan = {
+diff --git a/packages/runtime/test/task-budget-cap.test.ts b/packages/runtime/test/task-budget-cap.test.ts
+index 73ea8bf..9bdd0ae 100644
+--- a/packages/runtime/test/task-budget-cap.test.ts
++++ b/packages/runtime/test/task-budget-cap.test.ts
+@@ -210,8 +210,16 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
+     // session, which has USD 10) waits for the person with what to do.
+     expect(provider.calls).toHaveLength(1);
+     expect(result.outcome).toBe("needs_human");
+-    expect(result.summary).toContain("The run stopped at this task's budget of $0.50");
+-    expect(result.summary).toContain("Raise the task's budget on the Tasks tab");
++    // In CHF (design §5 rule 7, live walk 2 B2), with what the runner needs to file the card.
++    expect(result.summary).toMatch(
++      /^The run stopped at its budget of CHF 0\.40, after spending CHF 0\.40\.$/,
++    );
++    expect(result.budgetStop).toEqual({
++      capUsdMicro: 500_000,
++      spentUsdMicro: result.costUsdMicro,
++      source: "task_budget",
++      specialist: "coder",
++    });
+     expect(result.costUsdMicro).toBeGreaterThanOrEqual(499_000);
+   });
+ 
+@@ -225,9 +233,14 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
+     expect(provider.calls).toHaveLength(0);
+     expect(result).toEqual({
+       outcome: "needs_human",
+-      summary:
+-        "This task's budget of $0.50 is spent ($0.50 so far), so nothing ran. Raise its budget on the Tasks tab and set it back to ready, or cancel it.",
++      summary: "Its budget of CHF 0.40 is spent (CHF 0.40 so far), so nothing ran.",
+       costUsdMicro: 0,
++      budgetStop: {
++        capUsdMicro: 500_000,
++        spentUsdMicro: 500_000,
++        source: "task_budget",
++        specialist: "coder",
++      },
+     });
+   });
+ 
