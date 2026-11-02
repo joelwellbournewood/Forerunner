@@ -4430,7 +4430,10 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   characters, with no button). `planFailedLine` maps the intake's reasons
   (`intakeFailureWords`, `INTAKE_NEEDS_A_MODEL`, the lost "Change the plan" draft) through
   `PLAN_FAILURE_SHORT` ("Claude did not answer", "it took too long", "Claude's answer was not a
-  plan", ...); a reason nobody worded is its first sentence cut at a word. The button is
+  plan", ...; the reader's words "Claude's plan could not be read." and "Claude's plan was
+  missing …" read "Claude's answer was not a plan" and "Claude's plan was incomplete", with or
+  without " Forerunner asked Claude twice."); a reason nobody worded is its first sentence cut
+  at a word. The button is
   `{kind: "retry", label: "Try again"}` (the UI posts `POST /projects/:id/intake/retry`), or
   **Connect Claude** (a link to `/setup`) when `hasModel` is false: the card facts' `hasModel`
   is `!!rt.provider`, and without a provider the retry route refuses. The missing-key reason

@@ -78,12 +78,19 @@ const PLAN_FAILURE_SHORT: readonly { match: RegExp; short: string; noModel?: tru
   { match: /^Claude did not answer/i, short: "Claude did not answer" },
   { match: /^Claude was busy/i, short: "Claude was busy" },
   { match: /^Claude could not be reached/i, short: "Claude could not be reached" },
-  { match: /took longer than its time limit/i, short: "it took too long" },
+  {
+    match: /took longer than its time limit|did not finish the plan in time/i,
+    short: "it took too long",
+  },
   { match: /used up the budget/i, short: "it used up its budget" },
   { match: /used all the steps/i, short: "it ran out of steps" },
   { match: /was stopped before it finished/i, short: "it was stopped" },
-  { match: /not the JSON plan/i, short: "Claude's answer was not a plan" },
-  { match: /plan was missing parts/i, short: "Claude's plan was incomplete" },
+  // The intake's reader words (fix/intake-live): a reply that is no plan, or a plan without a part.
+  {
+    match: /^Claude's plan could not be read|^Claude's answer had no plan/i,
+    short: "Claude's answer was not a plan",
+  },
+  { match: /^Claude's plan was missing/i, short: "Claude's plan was incomplete" },
   { match: /Forerunner closed before it was done/i, short: "Forerunner closed before it was done" },
 ];
 

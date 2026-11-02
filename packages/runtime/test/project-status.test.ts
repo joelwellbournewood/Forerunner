@@ -3,7 +3,11 @@ import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PlanState, projectStatusLine } from "../src/daemon/project-status.ts";
 import { projectCard, projectSummary } from "../src/daemon/views.ts";
-import { INTAKE_NEEDS_A_MODEL, intakeFailureWords } from "../src/session/intake.ts";
+import {
+  INTAKE_NEEDS_A_MODEL,
+  intakeFailureWords,
+  readIntakeReply,
+} from "../src/session/intake.ts";
 
 /**
  * The project's status sentence (design §2 "Project status"): one sentence replaces the stage,
@@ -291,24 +295,38 @@ describe("project status sentence (design §2)", () => {
       new ForerunnerError("provider_error", "the planning call ended error: model call failed", {
         details: { providerCode },
       });
+    const refused = (reply: string): unknown => {
+      try {
+        readIntakeReply(reply);
+      } catch (e) {
+        if (e instanceof ForerunnerError) e.details.retried = true;
+        return e;
+      }
+      throw new Error(`the intake read ${reply} as a plan`);
+    };
     const cases: [unknown, string][] = [
       [provider("provider_error"), "Planning failed: Claude did not answer"],
       [provider("rate_limited"), "Planning failed: Claude was busy"],
       [provider("network"), "Planning failed: Claude could not be reached"],
       [new ForerunnerError("timeout", "planning timed out"), "Planning failed: it took too long"],
+      // The intake asked twice before it gave up (fix/intake-live's words end with that).
+      [
+        new ForerunnerError("timeout", "planning timed out", { details: { retried: true } }),
+        "Planning failed: it took too long",
+      ],
       [
         new ForerunnerError("budget_exceeded", "over budget"),
         "Planning failed: it used up its budget",
       ],
       [new ForerunnerError("killed", "stopped"), "Planning failed: it was stopped"],
+      // The reader's own errors for a reply that is no plan and a plan without its tasks, as
+      // the intake throws them after its one retry (fix/intake-live words them).
       [
-        new ForerunnerError("validation", "intake: the answer is not a JSON object"),
+        refused("Here is the plan you asked for."),
         "Planning failed: Claude's answer was not a plan",
       ],
-      [
-        new ForerunnerError("validation", "intake: the proposal is malformed: tasks"),
-        "Planning failed: Claude's plan was incomplete",
-      ],
+      [refused("{}"), "Planning failed: Claude's answer was not a plan"],
+      [refused('{"plan":{}}'), "Planning failed: Claude's plan was incomplete"],
     ];
     for (const [error, text] of cases)
       expect(line(intakeFailureWords(error), true)).toEqual({
