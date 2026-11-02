@@ -502,9 +502,26 @@ async function chat(page, projectId) {
       "index.html links styles.css and script.js",
       /styles\.css/.test(html) && /script\.js/.test(html),
     );
-    note(
-      `the project's folder is ${workspace} (a project without a repository works there, U-037); the app does not show this path on the Summary or Tasks tab`,
+    // Design §3.4 "Your files" and §3.10 Files: the app shows where the work is (U-071, U-059).
+    await openProject(page, projectId, "summary");
+    await step(page, "overview with your files");
+    const shownFolder = await page
+      .getByTestId("folder-path")
+      .first()
+      .innerText()
+      .catch(() => "");
+    check(
+      "the Overview shows the project's folder under Your files",
+      shownFolder.trim() === workspace,
+      shownFolder.trim() || "no folder shown",
     );
+    await openProject(page, projectId, "files");
+    await step(page, "files tab");
+    const listed = await page
+      .locator('[data-testid="file-row"][data-path="index.html"]')
+      .count()
+      .catch(() => 0);
+    check("the Files tab lists index.html", listed > 0);
 
     await chat(page, projectId);
   } catch (e) {
