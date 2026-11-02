@@ -435,6 +435,45 @@ export async function answersBlockFor(
   ].join("\n");
 }
 
+/** What the person said on a task another task waited on (`personAnswersOn`). */
+export interface PersonAnswersOn {
+  /** The question and answer lines of every answered card, oldest first; empty when none. */
+  pairs: string[];
+  /** The person went ahead without answering (Go ahead without). */
+  without: boolean;
+  /** Where the answers are recorded in the project's folder (`docs/decisions/0001-….md`). */
+  doc: string | null;
+}
+
+/**
+ * The person's answers to the questions asked on a task (its planned questions, or a
+ * specialist's), for the brief of a task that waited on it (live walk 2, phase C). Before, that
+ * brief said only what the plan had promised the person's task would do ("the answers are
+ * recorded in docs/data.md"): the coder of the next task asked the same seven questions again.
+ */
+export async function personAnswersOn(
+  store: Pick<StateStore, "humanRequest">,
+  taskId: string,
+): Promise<PersonAnswersOn> {
+  const rows = (await store.humanRequest.list({ task_id: taskId } as never, { limit: 200 }))
+    .filter((r) => keyOf(r) === personQuestionsKey(taskId) && r.status === "answered")
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const out: PersonAnswersOn = { pairs: [], without: false, doc: null };
+  for (const row of rows) {
+    const read = personQuestionsAnswer(row.answer);
+    if (read?.kind === "without") out.without = true;
+    if (read?.kind !== "answers") continue;
+    const card = personQuestionsCardOf(row);
+    out.pairs.push(...renderPairs(card?.questions ?? row.steps, read.answers));
+    const doc = (row.change_card as JsonObject | null)?.doc;
+    if (typeof doc === "string" && doc.trim()) {
+      const name = doc.split(/[\\/]/).pop();
+      if (name) out.doc = `${DECISION_DOC_DIR}/${name}`;
+    }
+  }
+  return out;
+}
+
 function renderPairs(questions: readonly string[], answers: readonly PersonAnswerItem[]): string[] {
   const out: string[] = [];
   if (answers.length === 1 && answers[0]?.question === null) {

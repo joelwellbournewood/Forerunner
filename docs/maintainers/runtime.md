@@ -4263,8 +4263,16 @@ criteria, budget, risk tier or specialist with `brief_incomplete` and the list o
 delegation brief, `LoopTaskExecutor` adds `taskContextBlock`, read from the store when the run
 starts: `## Project` (name, goal, the person's brief from `summary_cache.brief` as a quoted
 string, and where `docs/overview.md` and the decision record are), `## Done before this task`
-(each dependency's title, the first line of its last worker run's report, or its outcome, and
-the files that run changed from its session's `task.files` event), `## The previous attempt`
+(each dependency's title, the first line of its last worker run's report, and the files that
+run changed from its session's `task.files` event; a dependency without a run says what the
+person did: "the person answered its questions (their answers are below)", "the person chose
+to go ahead without answering…", or "done by the person" for a person task, and only a task
+nobody ran falls back to its planned outcome), `## Answers from the person to "<dependency>"`
+(phase C, live walk 2: the question → answer pairs of every answered `person_questions:` card
+of a dependency, from `personAnswersOn` in `person-questions.ts`, said to be the person's own
+answers with the decision record they are also in, "do not ask the person these questions
+again"; before, the next task's coder asked the same seven questions again because its brief
+held only the plan's promise for the person's task), `## The previous attempt`
 (the last worker run's report, or "It failed: <the error in words>"), `## The person's note on
 this task` (the words of the person's newest change-log row naming the task) and `## Note for
 this session (from the person)` (`SessionStartOptions.note`, from the Start dialog through

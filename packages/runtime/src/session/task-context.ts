@@ -1,6 +1,7 @@
 import type { JsonValue, StateStore, TaskRow } from "@forerunner/state";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
 import { TASK_FILES_EVENT } from "./peers.ts";
+import { isPersonTask, personAnswersOn } from "./person-questions.ts";
 
 /**
  * What a specialist is told beyond its own task (core-experience design §4.6). Before, the
@@ -13,7 +14,8 @@ import { TASK_FILES_EVENT } from "./peers.ts";
  * `taskContextBlock` renders the sections that follow the delegation brief, each from the store
  * as it stands when the run starts: the project (name, goal, the person's brief, where the docs
  * and the decision record are), what the task waited on (each dependency's title, its result in
- * one line and the files it changed), the previous attempt (its report, or the error that
+ * one line and the files it changed, and the person's answers to the questions asked on it),
+ * the previous attempt (its report, or the error that
  * stopped it), the person's latest note on the task and the note for this session. Everything
  * quoted from the person or an earlier run is data, never instructions.
  */
@@ -24,6 +26,8 @@ const MAX_QUOTE_CHARS = 1_500;
 const MAX_DEPENDENCIES = 6;
 /** Files named per dependency. */
 const MAX_FILES = 8;
+/** Longest quote of the person's answers on one task this one waited on. */
+const MAX_ANSWERS_CHARS = 6_000;
 
 /** Words for an error a run ended on (design §5.8): what went wrong, never the exception text. */
 export function failureWords(error: { code: string; message: string }): string {
@@ -150,8 +154,11 @@ export async function taskContextBlock(
       "What the project is and what was decided: docs/overview.md and the decision record in docs/decisions/ (read them when the task touches them).",
     );
   }
-  // What the task waited on: each dependency's result and files.
+  // What the task waited on: each dependency's result and files, and the person's answers to
+  // the questions asked on it (live walk 2: the next task's coder asked the same questions
+  // again, its brief having only the plan's promise for the person's task).
   const deps: string[] = [];
+  const answered: string[] = [];
   for (const id of task.depends_on.slice(0, MAX_DEPENDENCIES)) {
     const dep = await store.task.get(id);
     if (!dep) continue;
@@ -160,12 +167,34 @@ export async function taskContextBlock(
     const files = last?.session_id
       ? (await filesOf(store, dep.id, last.session_id)).slice(0, MAX_FILES)
       : [];
-    const result = note.report ? firstLine(note.report) : dep.outcome;
+    const said = await personAnswersOn(store, dep.id);
+    const persons = isPersonTask(dep);
+    // A task the person did has no run: its result is what they answered, never the outcome
+    // the plan wrote for it (a promise of where the answers would go).
+    const result = note.report
+      ? firstLine(note.report)
+      : said.pairs.length
+        ? "the person answered its questions (their answers are below)."
+        : said.without
+          ? "the person chose to go ahead without answering its questions: decide yourself and say in your report what you assumed."
+          : persons
+            ? "done by the person."
+            : dep.outcome;
     deps.push(
       `- "${dep.title}": ${result || "done"}${files.length ? ` Files: ${files.join(", ")}` : ""}`,
     );
+    if (said.pairs.length)
+      answered.push(
+        `## Answers from the person to "${dep.title}"`,
+        `These are the person's own answers, given in the Inbox for a task this one waited on${
+          said.doc ? ` (also recorded in ${said.doc})` : ""
+        }. Use them; do not ask the person these questions again.`,
+        "",
+        quote(said.pairs.join("\n").trim(), MAX_ANSWERS_CHARS),
+      );
   }
   if (deps.length) out.push("## Done before this task", ...deps);
+  if (answered.length) out.push(...answered);
   // The previous attempt: its own report, or the error that stopped it.
   const previous = (await workerRuns(store, task.id)).find((r) => r.id !== opts.currentRunId);
   if (previous) {
