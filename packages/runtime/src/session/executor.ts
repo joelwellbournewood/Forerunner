@@ -7,6 +7,7 @@ import {
   type PricingTable,
   usdToChfMicro,
 } from "@forerunner/billing";
+import { NOT_CAUSED_BY_TASK } from "@forerunner/critic";
 import {
   type Clock,
   errorMessage,
@@ -385,9 +386,14 @@ export function retryConstraints(
   openFindings: readonly { severity: string; description: string; required_action: string }[],
 ): string[] {
   const lines: string[] = [];
+  // L-4 (live, 2026-11-02): the critic's notes ([info]) and problems the task did not cause
+  // ("... (not caused by this task)") are not orders. As orders, a retry "resolved" an unrelated
+  // failing test by rewriting code outside its task and ran out of budget unreviewed.
+  const orders = openFindings.filter((f) => !isReviewNote(f));
+  const notes = openFindings.filter(isReviewNote);
   // The "findings below" line only when findings follow (design §4.6): a retry after an error
   // has none, and its brief said so anyway.
-  if (attempt === 1 && openFindings.length === 0) {
+  if (attempt === 1 && orders.length === 0) {
     lines.push(
       "Attempt 2: the previous attempt did not pass; what it said is under The previous attempt.",
     );
@@ -402,12 +408,26 @@ export function retryConstraints(
             : `retry ${attempt} of the ladder`;
     lines.push(`Attempt ${attempt + 1} (${rung}).`);
   }
-  if (openFindings.length) {
+  if (orders.length) {
     lines.push("Critic findings to resolve (each must be addressed with evidence):");
-    for (const f of openFindings.slice(0, 20))
+    for (const f of orders.slice(0, 20))
       lines.push(`- [${f.severity}] ${f.description} -> ${f.required_action}`);
   }
+  if (notes.length) {
+    lines.push(
+      "Notes from the review, for your information only: they are not part of this task. Do not change code for them; if one stops your task, say so under 'Questions for the person:'.",
+    );
+    for (const f of notes.slice(0, 10)) lines.push(`- ${f.description}`);
+  }
   return lines;
+}
+
+/**
+ * A finding that is a note, not an order (L-4): the critic marked it `info`, or the runtime
+ * measured a problem the task's files cannot have caused ("(not caused by this task)").
+ */
+export function isReviewNote(f: { severity: string; description: string }): boolean {
+  return f.severity === "info" || f.description.endsWith(NOT_CAUSED_BY_TASK);
 }
 
 /** Where the cap of a task's run comes from (U-042). */

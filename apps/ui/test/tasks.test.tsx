@@ -945,6 +945,7 @@ describe("Tasks tab (design §3.5)", () => {
       ],
       tried: [
         {
+          kind: "page" as const,
           what: "opened index.html in a browser, 1280 and 390 pixels wide",
           target: "index.html",
           ok: true,
@@ -1000,6 +1001,83 @@ describe("Tasks tab (design §3.5)", () => {
     const shot = await within(evidence).findByTestId("evidence-screenshot");
     expect(shot.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
     expect(shot.getAttribute("alt")).toBe("The page, 1280 pixels wide (a computer)");
+  });
+
+  it("a command line tool and an API are tried too: the drawer says how, and 'See what was checked' shows the command, its sample input and output, and the calls with their replies (ADR 0110)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.reviewEvidence.set("task_1", {
+      checks: [
+        {
+          name: "unittest",
+          passed: true,
+          output: "python3 -m unittest discover -s tests -p test*.py -> exit 0 in 90 ms\nOK",
+        },
+      ],
+      tried: [
+        {
+          kind: "command",
+          what: "ran node wc.js <file> as a person would, with sample input",
+          target: "node wc.js <file>",
+          ok: true,
+          output:
+            "ran node wc.js <file> (from an acceptance criterion) in the process sandbox on this computer, the network off\n<file>: a sample text file written for the try (2 lines, 9 words):\n  the quick brown fox\n  jumps over the lazy dog\nexit 0 in 41 ms\noutput:\n9",
+          screenshots: [],
+        },
+      ],
+      notChecked: [
+        "the project's Python tests were not run: pytest is not installed where the checks run",
+      ],
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("task_1");
+    expect(await within(row).findByTestId("task-check")).toHaveTextContent("Reviewed and tried");
+    await user.click(within(row).getByTestId("task-title"));
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(await within(drawer).findByTestId("drawer-check")).toHaveTextContent(
+      "Reviewed and tried The critic read the work and it was run as you would run it.",
+    );
+    const evidence = within(drawer).getByTestId("review-evidence");
+    await user.click(within(evidence).getByText("See what was checked"));
+    const tried = within(evidence).getByTestId("evidence-tried");
+    expect(tried).toHaveTextContent("node wc.js <file>: worked");
+    expect(tried).toHaveTextContent("a sample text file written for the try (2 lines, 9 words)");
+    expect(tried.querySelector("pre")?.textContent).toMatch(/output:\n9$/);
+    // A command has no screenshot to load.
+    expect(within(evidence).queryByTestId("evidence-screenshot")).not.toBeInTheDocument();
+    expect(within(evidence).getByTestId("evidence-checks")).toHaveTextContent("unittest: passed");
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    // An API: started and called.
+    harness.daemon.state.reviewEvidence.set("task_1", {
+      checks: [],
+      tried: [
+        {
+          kind: "server",
+          what: "started node server.js and called it as a person would",
+          target: "node server.js",
+          ok: false,
+          output:
+            'started node server.js (from the brief) in the task\'s Docker container, the network off; it listened\nGET /health (named in the brief) -> 500 application/json: {"error":"boom"}\nproblem: GET /health answered 500',
+          screenshots: [],
+        },
+      ],
+      notChecked: [],
+    });
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await user.click(within(await rowOf("task_1")).getByTestId("task-title"));
+    const again = await screen.findByTestId("task-drawer");
+    expect(await within(again).findByTestId("drawer-check")).toHaveTextContent(
+      "The critic read the work and it was started and called as you would use it.",
+    );
+    const ev2 = within(again).getByTestId("review-evidence");
+    await user.click(within(ev2).getByText("See what was checked"));
+    expect(within(ev2).getByTestId("evidence-tried")).toHaveTextContent(
+      "node server.js: had a problem",
+    );
+    expect(within(ev2).getByTestId("evidence-tried")).toHaveTextContent(
+      "GET /health (named in the brief) -> 500",
+    );
   });
 
   it("New task offers no Checks only (ADR 0104): the light review is the least a task gets", async () => {

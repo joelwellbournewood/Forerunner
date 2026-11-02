@@ -1,0 +1,327 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, run } from "@forerunner/platform";
+import { afterAll, describe, expect, it } from "vitest";
+import {
+  CHANGED_SCRIPT_SUFFIX,
+  markerChecks,
+  projectChecks,
+  scriptsBefore,
+  untestedFiles,
+} from "../src/loop/project-checks.ts";
+import { commandsIn, planTries, TRY_FOLDER } from "../src/loop/try-plan.ts";
+
+/**
+ * What a task's work is tried as, and which of the project's tests run (ADR 0110; C-1, C-3,
+ * L-5): decided from the brief, the criteria, the README and the files the task made, before
+ * anything runs. The runs themselves are in `verification.test.ts`.
+ */
+const folders: string[] = [];
+afterAll(() => {
+  for (const f of folders) rmSync(f, { recursive: true, force: true });
+});
+
+function folder(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "fr try plan "));
+  folders.push(root);
+  for (const [path, content] of Object.entries(files)) {
+    const abs = join(root, ...path.split("/"));
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, content);
+  }
+  return root;
+}
+
+const WC = `#!/usr/bin/env node
+const fs = require("fs");
+const text = fs.readFileSync(process.argv[2], "utf8");
+console.log(text.split(/\\s+/).filter(Boolean).length);
+`;
+const SERVER = `const http = require("http");
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  if (req.url === "/health") { res.writeHead(200, { "content-type": "application/json" }); return res.end('{"ok":true}'); }
+  if (req.url === "/items") { res.writeHead(200, { "content-type": "application/json" }); return res.end("[]"); }
+  res.writeHead(404); res.end("Not found");
+}).listen(PORT);
+`;
+
+describe("what is tried (C-1)", () => {
+  it("a command line tool the criteria name is run with a sample file for its <file>", () => {
+    const root = folder({ "wc.js": WC });
+    const plan = planTries({
+      changedFiles: ["wc.js"],
+      root,
+      brief: {
+        title: "Write wc.js",
+        outcome: "A command line tool: node wc.js <file> prints the number of words",
+        criteria: ["`node wc.js <file>` prints the number of words in the file"],
+      },
+    });
+    expect(plan.servers).toEqual([]);
+    expect(plan.notTried).toEqual([]);
+    // The criterion and the outcome name the same command: it is run once.
+    expect(plan.commands).toHaveLength(1);
+    expect(plan.commands[0]).toMatchObject({
+      kind: "command",
+      target: "node wc.js <file>",
+      argv: ["node", "wc.js", `${TRY_FOLDER}/sample-1.txt`],
+      source: "an acceptance criterion",
+      expectsError: false,
+    });
+    expect(plan.commands[0]?.samples[0]).toMatchObject({
+      path: `${TRY_FOLDER}/sample-1.txt`,
+      content: "the quick brown fox\njumps over the lazy dog\n",
+      stands: "<file>: a sample text file written for the try (2 lines, 9 words)",
+    });
+  });
+
+  it("commands are read only where their words end: backticks, a README's code, or a sentence that goes on", () => {
+    expect(commandsIn("Run `node greet.js Ada` to greet Ada").map((c) => c.target)).toEqual([
+      "node greet.js Ada",
+    ]);
+    expect(commandsIn("node wc.js <file> prints the count.").map((c) => c.target)).toEqual([
+      "node wc.js <file>",
+    ]);
+    // Where a sentence's command ends is a guess ("Ada" or "Ada prints"?): not run.
+    expect(commandsIn("node greet.js Ada prints a greeting")).toEqual([]);
+    expect(
+      commandsIn("```sh\n$ node wc.js notes.txt\nnpm install\n```").map((c) => c.target),
+    ).toEqual(["node wc.js notes.txt"]);
+    expect(commandsIn('`echo "a b c" | node wc.js`')[0]).toMatchObject({
+      target: 'echo "a b c" | node wc.js',
+      stdin: { text: "a b c\n" },
+    });
+    // Not a command of the work: a test runner, a pipeline the try does not reproduce.
+    expect(commandsIn("`python3 -m pytest` and `node --test`")).toEqual([]);
+    expect(commandsIn("`node wc.js a.txt > out.txt`")).toEqual([]);
+  });
+
+  it("a file the folder does not have becomes a sample of that name; an error the brief expects is no problem", () => {
+    const root = folder({ "wc.js": WC });
+    const plan = planTries({
+      changedFiles: ["wc.js"],
+      root,
+      brief: {
+        title: "Write wc.js",
+        outcome: "Counts words",
+        criteria: [
+          "`node wc.js notes.txt` prints 9",
+          "`node wc.js` with no file exits with code 1",
+        ],
+      },
+    });
+    expect(plan.commands.map((c) => [c.target, c.argv.slice(2), c.expectsError])).toEqual([
+      ["node wc.js notes.txt", [`${TRY_FOLDER}/notes.txt`], false],
+      ["node wc.js", [], true],
+    ]);
+  });
+
+  it("a server the task made is started and its routes called: the ones the brief names first", () => {
+    const root = folder({ "server.js": SERVER });
+    const plan = planTries({
+      changedFiles: ["server.js"],
+      root,
+      brief: {
+        title: "Write server.js",
+        outcome: 'A tiny HTTP API: node server.js listens on PORT; GET /health answers {"ok":true}',
+        criteria: ["GET /health answers 200", "POST /items adds an item"],
+      },
+    });
+    expect(plan.commands).toEqual([]);
+    expect(plan.servers).toEqual([
+      {
+        kind: "server",
+        target: "node server.js",
+        argv: ["node", "server.js"],
+        file: "server.js",
+        ports: [3000],
+        routes: [
+          { path: "/health", documented: true },
+          { path: "/items", documented: false },
+        ],
+        skippedRoutes: ["POST /items"],
+        source: "the brief",
+        expected: true,
+      },
+    ]);
+  });
+
+  it("a server nobody said how to start is started as it is; a library is not started at all", () => {
+    const root = folder({
+      "src/app.py":
+        "from http.server import HTTPServer, BaseHTTPRequestHandler\nHTTPServer(('', 8000), BaseHTTPRequestHandler).serve_forever()\n",
+      "src/clamp.js": "export const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));\n",
+    });
+    const plan = planTries({
+      changedFiles: ["src/app.py", "src/clamp.js"],
+      root,
+      brief: { title: "Add the API and clamp", outcome: "", criteria: [] },
+    });
+    // Nobody asked for it to run: what goes wrong there is told, not held against the task.
+    expect(plan.servers.map((s) => [s.target, s.ports, s.source, s.expected])).toEqual([
+      ["python3 src/app.py", [8000], "its code", false],
+    ]);
+    expect(plan.commands).toEqual([]);
+    expect(plan.notTried).toEqual([]);
+  });
+
+  it("what cannot be tried says why: a tool nobody said how to run, a script that is missing, a web address", () => {
+    const root = folder({ "cli.js": WC });
+    expect(
+      planTries({
+        changedFiles: ["cli.js"],
+        root,
+        brief: { title: "Write cli.js", outcome: "A word counter", criteria: [] },
+      }).notTried,
+    ).toEqual([
+      "cli.js reads its command line, but neither the brief nor a README says how to run it, so it was not tried",
+    ]);
+    expect(
+      planTries({
+        changedFiles: ["cli.js"],
+        root,
+        brief: { title: "x", outcome: "", criteria: ["`node missing.js <file>` prints 3"] },
+      }).notTried[0],
+    ).toBe("node missing.js <file> was not tried: missing.js is not in the task's folder");
+    expect(
+      planTries({
+        changedFiles: ["cli.js"],
+        root,
+        brief: { title: "x", outcome: "", criteria: ["`node cli.js <url>` fetches the page"] },
+      }).notTried[0],
+    ).toBe(
+      "node cli.js <url> was not tried: it needs a web address, and the network is off during the try",
+    );
+  });
+
+  it("a README the task wrote says how to run it: that command is tried", () => {
+    const root = folder({
+      "cli.js": WC,
+      "README.md": "# Words\n\n```\nnode cli.js poem.txt\n```\n",
+    });
+    const plan = planTries({
+      changedFiles: ["cli.js", "README.md"],
+      root,
+      brief: { title: "Write cli.js", outcome: "A word counter", criteria: [] },
+    });
+    expect(plan.commands.map((c) => [c.target, c.source])).toEqual([
+      ["node cli.js poem.txt", "README.md"],
+    ]);
+    expect(plan.notTried).toEqual([]);
+  });
+});
+
+describe("the project's tests whatever the language (C-3)", () => {
+  it("Python: pytest, else unittest for unittest tests; Rust: cargo test offline; Go: go test with the proxy off", () => {
+    const py = folder({
+      "pyproject.toml": '[project]\nname = "calc"\n',
+      "tests/test_calc.py":
+        "import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        pass\n",
+    });
+    const [m] = markerChecks(py);
+    expect(m?.language).toBe("Python");
+    expect(m?.candidates.map((c) => c.argv.join(" "))).toEqual([
+      "python3 -m pytest -q -p no:cacheprovider",
+      "python -m pytest -q -p no:cacheprovider",
+      "python3 -m unittest discover -s tests -p test*.py",
+      "python -m unittest discover -s tests -p test*.py",
+    ]);
+    expect(m?.missing).toBe("Python is not installed where the checks run");
+    // pytest-style tests need pytest: without it they are not run, and the review says so.
+    const pytestOnly = folder({ "test_calc.py": "def test_a():\n    assert 1 + 1 == 2\n" });
+    const [p] = markerChecks(pytestOnly);
+    expect(p?.candidates.map((c) => c.name)).toEqual(["pytest", "pytest"]);
+    expect(p?.missing).toBe("pytest is not installed where the checks run");
+    // A package that is not installed is "not run"; the project's own module missing is a failure.
+    expect(p?.notRunBecause?.("ModuleNotFoundError: No module named 'requests'", pytestOnly)).toBe(
+      "they need the Python package requests, which is not installed where the checks run",
+    );
+    const own = folder({ "calc.py": "", "test_calc.py": "def test_a():\n    pass\n" });
+    expect(markerChecks(own)[0]?.notRunBecause?.("No module named 'calc'", own)).toBeNull();
+    const rust = markerChecks(folder({ "Cargo.toml": '[package]\nname = "x"\n' }));
+    expect(rust.map((r) => [r.name, r.candidates[0]?.argv.join(" "), r.env])).toEqual([
+      ["cargo test", "cargo test --offline", { CARGO_TARGET_DIR: `${TRY_FOLDER}/cargo-target` }],
+    ]);
+    expect(
+      rust[0]?.notRunBecause?.(
+        "error: no matching package named `serde` found\nlocation searched: registry `crates-io`",
+        "",
+      ),
+    ).toBe("their dependencies are not on this computer, and the network is off during the checks");
+    const go = markerChecks(folder({ "go.mod": "module x\n" }));
+    expect(go.map((g) => [g.name, g.candidates[0]?.argv.join(" "), g.env?.GOPROXY])).toEqual([
+      ["go test", "go test ./...", "off"],
+    ]);
+    expect(markerChecks(folder({ "index.html": "<p>hi</p>" }))).toEqual([]);
+  });
+
+  it("test files no check runs are told", () => {
+    expect(
+      untestedFiles(
+        folder({ "package.json": '{"scripts":{}}', "test/clamp.test.js": "", "src/clamp.js": "" }),
+      ),
+    ).toBe(
+      "the project has test files (test/clamp.test.js) that no check ran: its package.json names no test script",
+    );
+    expect(
+      untestedFiles(
+        folder({ "package.json": '{"scripts":{"test":"node --test"}}', "a.test.js": "" }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("the scripts that judge the work are the ones before the task (L-5)", () => {
+  it("a test script the task changed runs as it was; the new one runs beside it, and the critic is told", () => {
+    const root = folder({
+      "package.json": JSON.stringify({ scripts: { test: "node --test test/clamp.test.js" } }),
+    });
+    const c = projectChecks(root, { scripts: { test: "node --test" } });
+    expect(c.checks.map((k) => [k.name, k.argv.join(" "), k.required])).toEqual([
+      ["test", "npm exec -c node --test", true],
+      [`test${CHANGED_SCRIPT_SUFFIX}`, "npm run --silent test", false],
+    ]);
+    expect(c.notes).toEqual([
+      'this task changed the project\'s test script from `node --test` to `node --test test/clamp.test.js`; the check "test" ran it as it was before the task, and "test (as this task changed it)" ran the new one',
+    ]);
+    // Removed: the old one still judges. Added: it runs, and the critic knows it is new.
+    const removed = projectChecks(folder({ "package.json": "{}" }), {
+      scripts: { test: "node --test" },
+    });
+    expect(removed.checks.map((k) => k.argv.join(" "))).toEqual(["npm exec -c node --test"]);
+    const added = projectChecks(folder({ "package.json": '{"scripts":{"test":"node --test"}}' }), {
+      scripts: { test: 'echo "Error: no test specified" && exit 1' },
+    });
+    expect(added.checks.map((k) => k.argv.join(" "))).toEqual(["npm run --silent test"]);
+    expect(added.notes).toEqual(["this task added the project's test script (`node --test`)"]);
+  });
+
+  it("the scripts before the task come from the folder's commit before its first run", async () => {
+    const root = folder({ "package.json": JSON.stringify({ scripts: { test: "node --test" } }) });
+    const git = (args: string[]) =>
+      run(["git", ...args], {
+        cwd: root,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "t",
+          GIT_AUTHOR_EMAIL: "t@x.test",
+          GIT_COMMITTER_NAME: "t",
+          GIT_COMMITTER_EMAIL: "t@x.test",
+        },
+      });
+    await git(["init", "-q", "-b", "main"]);
+    await git(["add", "-A"]);
+    await git(["commit", "-q", "-m", 'Workspace before "Add clamp" (task T-1)']);
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { test: "node --test test/clamp.test.js" } }),
+    );
+    await git(["add", "-A"]);
+    // The retry's baseline: it already holds the first attempt's change.
+    await git(["commit", "-q", "-m", 'Workspace before "Add clamp" (task T-1)']);
+    expect(await scriptsBefore(root, "T-1", run)).toEqual({ scripts: { test: "node --test" } });
+    // Git cannot tell for another task's id here (no commit of it, no origin): unknown.
+    expect(await scriptsBefore(root, "T-2", run)).toBeNull();
+  });
+});

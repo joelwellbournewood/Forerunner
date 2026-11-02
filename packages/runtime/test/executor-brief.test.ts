@@ -277,8 +277,10 @@ describe("what a specialist is told (design §4.6)", () => {
       brief.indexOf("## Constraints"),
       brief.indexOf("## Acceptance"),
     );
+    // ADR 0110: the brief names what is tried (a command line tool, a server, a page) and that
+    // the project's scripts judge the work as they were before the task (L-5).
     expect(constraints).toContain(
-      "- How your work is checked: after your run Forerunner runs the project's own build, lint and tests (its package.json scripts), opens a page you made or changed in a browser, and the critic reads your work and the project's files against each acceptance criterion. Nothing is done on your word alone.",
+      "- How your work is checked: after your run Forerunner runs the project's own build, lint and tests (its package.json scripts as they were before your task, or pytest, cargo test or go test), runs a command line tool you made with the sample input its brief or README names, starts a server you made and calls its routes, opens a page you made or changed in a browser, and the critic reads your work and the project's files against each acceptance criterion. Nothing is done on your word alone. Write the exact command a person runs in backticks in the README, so it can be tried.",
     );
     expect(constraints).toContain("add a test that runs it");
     expect(brief).toContain(
@@ -332,6 +334,99 @@ describe("what a specialist is told (design §4.6)", () => {
         { severity: "major", description: "No test", required_action: "Add one" },
       ])[0],
     ).toContain("the critic's findings below");
+  });
+
+  it("L-4: a retry is not ordered to fix the critic's notes or a problem the task did not cause", async () => {
+    // Live (2026-11-02, the clamp library): the retry brief read "[info] The existing round2
+    // test fails … It is unrelated to this change … -> Resolve it and show the evidence" and
+    // "[info] clamp does not handle lo > hi or NaN. The brief did not ask for either. -> Resolve
+    // it…"; the retry rewrote src/round.js and stopped at its budget unreviewed.
+    w = await world();
+    const task = await add(w, "Add clamp to src/clamp.js", { attempt: 1 });
+    const review = await w.store.review.insert({
+      task_id: task.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 55,
+      confidence: 0.8,
+      verdict: "revise",
+      evidence: [],
+      summary: "The project's test failed.",
+      author_agent: w.agent,
+    });
+    const finding = (
+      severity: string,
+      description: string,
+      required_action: string,
+      fingerprint: string,
+    ) =>
+      w.store.finding.insert({
+        review_id: review.id,
+        task_id: task.id,
+        severity: severity as never,
+        description,
+        required_action,
+        status: "open",
+        fingerprint,
+        author_agent: w.agent,
+      });
+    await finding(
+      "high",
+      "Check failed: test",
+      'Make the check "test" pass; if it failed before this task, say so and why under "Questions for the person:"',
+      "fp-test",
+    );
+    await finding(
+      "info",
+      "The existing round2 test fails: round2(1.005) returns 1 instead of 1.01. It is unrelated to this change.",
+      "Resolve it and show the evidence",
+      "fp-round2",
+    );
+    await finding(
+      "info",
+      "clamp does not handle lo > hi or NaN. The brief did not ask for either.",
+      "Resolve it and show the evidence",
+      "fp-nan",
+    );
+    await finding(
+      "low",
+      "Tried index.html: error on the page: x is not defined (not caused by this task)",
+      "Make index.html work when it is opened as a person would use it",
+      "fp-page",
+    );
+    const provider = new ScriptedProvider([{ text: "Fixed it." }], w.h.clock);
+    await run(w, task, provider);
+    const brief = provider.calls[0]?.messages[0]?.content as string;
+    const orders = brief.slice(
+      brief.indexOf("Critic findings to resolve"),
+      brief.indexOf("Notes from the review"),
+    );
+    // The measured failure stays an order, with the way out when it failed before the task.
+    expect(orders).toContain('- [high] Check failed: test -> Make the check "test" pass');
+    expect(orders).not.toContain("round2");
+    expect(orders).not.toContain("NaN");
+    expect(orders).not.toContain("x is not defined");
+    const notes = brief.slice(brief.indexOf("Notes from the review"));
+    expect(notes).toContain(
+      "Notes from the review, for your information only: they are not part of this task. Do not change code for them; if one stops your task, say so under 'Questions for the person:'.",
+    );
+    expect(notes).toContain(
+      "- The existing round2 test fails: round2(1.005) returns 1 instead of 1.01. It is unrelated to this change.",
+    );
+    expect(notes).toContain(
+      "- clamp does not handle lo > hi or NaN. The brief did not ask for either.",
+    );
+    expect(notes).toContain("x is not defined (not caused by this task)");
+    // A note never carries an order.
+    expect(notes).not.toContain("Resolve it and show the evidence");
+    // Only notes left: no "findings below" promise.
+    expect(
+      retryConstraints(1, [
+        { severity: "info", description: "A note", required_action: "Resolve it" },
+      ])[0],
+    ).toBe(
+      "Attempt 2: the previous attempt did not pass; what it said is under The previous attempt.",
+    );
   });
 });
 

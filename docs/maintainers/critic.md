@@ -85,9 +85,11 @@ Verification (ADR 0104, `types.ts`):
   gets `cwd: root`, up to `READING_REVIEW_TURNS` (12) calls and, without an explicit timeout,
   `READING_REVIEW_TIMEOUT_MS`. `evidence.projectFiles` (the folder's files) is rendered under
   "Project files you can read (read_file, list_dir)".
-- **Tried.** `evidence.tried` (`TriedEvidence[]`: what, target, ok, blocking, output,
-  screenshots, `pageFiles`, `causedByTask`) is rendered under "Tried as a person would use it (by
-  the runtime: verified)". A try that is not ok is a finding `Tried <page>: <first problem>`:
+- **Tried.** `evidence.tried` (`TriedEvidence[]`: `kind` (ADR 0110: "page", "command" or
+  "server"; absent on an older record, a page), what, target, ok, blocking, output, screenshots,
+  `pageFiles`, `causedByTask`) is rendered under "Tried as a person would use it (by the runtime:
+  verified)" with `TRIED_TRUST_LINE` (a page opened, a command run with sample input, a server
+  started and its routes called; judge the output against the criteria). A try that is not ok is a finding `Tried <page>: <first problem>`:
   high when `blocking` (the page did not open or threw an error), low otherwise (a linked file
   that did not load: the critic weighs it against the brief). `causedByTask: false` (the runtime
   found that the task changed none of the files that run on the page) makes it low with the

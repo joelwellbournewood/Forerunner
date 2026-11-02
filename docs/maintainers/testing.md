@@ -2509,7 +2509,7 @@ the runtime's own intake parser, plan writer and critic schema; the live wrapper
 provider), `packages/runtime/test/cli-daemon-provider.test.ts` (the live path end to end
 against a stub of the Messages API: prices, no part of the key), `scripts/bench-scripts.test.ts`
 (calls.mjs, the daemon's and setup's environment, a live start without a key, a daemon that exits,
-the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (one call, so the critic's read path runs on every review), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card.
+the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (one call, so the critic's read path runs on every review), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card. Since ADR 0110 a JavaScript file a brief runs as `node <file> ...` is a working tool (`toolContent` in `role-player.ts`: it counts the words, or the lines, of the file it is given or of standard input, or greets the name it is given: "Hello, Ada!"), and a JavaScript file of a brief that names an HTTP API, a server or a `GET /route` is a server that listens on `PORT` (3000 when unset) and answers each named route with JSON (`/health`: `{"ok":true}`), so the review's tries of a CLI and of an API have something real to run.
 
 Known limits: the stand-in proves mechanics, never model quality; on the stand-in the setup
 assistant and Settings still say no Claude key is connected; the daemon gets a new token on
@@ -2756,13 +2756,18 @@ the script:
    `/health` to say commands run in the container;
 4. creates a project without a repository (it works in its folder, U-037) and one task through
    `POST /projects/:id/tasks`: "Write src/greet.js", tier 2, the coder (`FULL_REVIEW_TASK`, which
-   the route's own schema parses in the unit test);
+   the route's own schema parses in the unit test), with the criterion `` `node src/greet.js Ada`
+   prints Hello, Ada! `` (`TRY_COMMAND`, read by the runtime's own `planTries` in the unit test);
 5. starts a session as Start does (`POST /sessions`) and waits for it to end;
 6. asserts: the session completed and the task is done; the coder's run changed `src/greet.js`;
    the critic reviewed and accepted it, at tier 2 (its calls in the model-call log are labelled
    `critic tier 2 on task <id>`); a container labelled with the task's id was started from the
    image, the coder's `node --check src/greet.js` ran in it (`exec_start`) and exited 0
-   (`exec_die`), and the container was destroyed; no container or network with the task's label
+   (`exec_die`), and the container was destroyed; the review tried the tool in the container
+   (ADR 0110): the engine's `exec_start` of `node src/greet.js Ada` (`triedInContainer`), and the
+   task's `GET /tasks/:id` review evidence has the command try "in the task's Docker container"
+   that exited 0 and printed "Hello, Ada!" (`commandTryOf`), and the task reads "Reviewed and
+   tried"; no container or network with the task's label
    is left (`docker ps -a`, `docker network ls`); `src/greet.js` is in
    `<home>/data/projects/<id>/workspace` and passes `node --check` on the host. Who owns the file
    is not checked: the daemon writes a task's files on the host (`ContainerSandbox.writeFile`),

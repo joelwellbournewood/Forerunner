@@ -71,6 +71,7 @@ export async function loadTaskDisplayContext(
 export function verificationIn(evidence: readonly JsonValue[] | null | undefined): {
   checks: { name: string; passed: boolean; output: string }[];
   tried: {
+    kind: "page" | "command" | "server";
     what: string;
     target: string;
     ok: boolean;
@@ -95,6 +96,8 @@ export function verificationIn(evidence: readonly JsonValue[] | null | undefined
         output: str(c.output),
       })),
       tried: list(v.tried).map((t) => ({
+        // ADR 0110: a try kept before it had no kind; those were pages.
+        kind: t.kind === "command" || t.kind === "server" ? t.kind : ("page" as const),
         what: str(t.what),
         target: str(t.target),
         ok: t.ok === true,

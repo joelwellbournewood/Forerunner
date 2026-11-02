@@ -141,8 +141,16 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   review**), **Cancelled**. A task is **Done** only
   after the critic reviewed it; the row then says how it was checked: **Reviewed** (the critic
   read the work and the project's files against each point, and the project's own build and
-  tests ran when it has them) or **Reviewed and tried** (a page it made was also opened in a
-  browser, as you would open it). Work whose report still asks you something (for example a
+  tests ran when it has them, whatever the language: its package.json scripts, pytest, cargo
+  test or go test) or **Reviewed and tried** (the work was also used as you would use it: a page
+  it made was opened in a browser, a command line tool it made was run with sample input, for
+  example `node wc.js <file>` with a small text file, or a server it made was started and the
+  routes its brief names were called). Tools and servers are tried where the task's commands
+  run: in the Docker container when Docker is ready (always for a full review), otherwise in the
+  process sandbox, with the network off. A tool is tried only when its brief, a criterion or
+  its README says exactly how to run it (in backticks); otherwise **See what was checked** says
+  it was not tried and why. If a task changed the project's test, build or lint script, the
+  check runs the script as it was before the task, and the changed one beside it. Work whose report still asks you something (for example a
   chart whose data file is missing) is never Done: it waits for your answer with a card in the
   Inbox. A project test that failed or a page that threw an error keeps the task from Done until
   a new run of that test passes or the page opens without the error, whatever the next attempt
@@ -168,7 +176,10 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   waits for and what waits on it, its runs (who ran each one, with that run's report and the
   files it changed; the critic's run is marked as the review), the critic's review in words
   with **See what was checked** (the project's checks with their output, each page tried with
-  what it showed and its screenshots, and anything that could not be run or tried, and why),
+  what it showed and its screenshots, each command run with its sample input and output, each
+  server started with the calls and replies, and anything that could not be run or tried, and
+  why, for example "the project's Python tests were not run: pytest is not installed where the
+  checks run"),
   its pull request, and **Edit**
   (the wording, priority, budget, review level and who does it; for example a full-review task
   waiting for Docker can go to a light review, except a deploy or a data migration, which keeps

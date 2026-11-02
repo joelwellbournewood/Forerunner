@@ -2013,8 +2013,8 @@ list; the attempt and the specialist as artifacts), runs `CriticService.review` 
 tier with the project's `critic_ceiling` and `speed_quality_offset` (read from the project row),
 and applies the verdict with `applyVerdict`.
 
-Proportional verification (ADR 0104, `src/loop/verification.ts`, `project-checks.ts`,
-`try-it.ts`):
+Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `project-checks.ts`,
+`try-it.ts`, `try-plan.ts`, `try-run.ts`):
 - **Review tier** `reviewTierOf(task.risk_tier, reviewFloorOf(specialist, specialistFloor))`:
   never below 1, never below the specialist's registry `risk_tier_floor` (2 for `ops-deploy`,
   `migration-specialist`, `science-evaluator`). For `ops-deploy` and `migration-specialist`
@@ -2041,6 +2041,23 @@ Proportional verification (ADR 0104, `src/loop/verification.ts`, `project-checks
   check with "could not start: <reason>" as its output, never a failed review. A lease the port
   refuses means the checks are not run (`evidence.notChecked` says why); without a sandbox port
   (an engine test world) they run as processes in the folder.
+- **The scripts as they were before the task** (L-5, ADR 0110). When the task changed
+  `package.json`, `scriptsBefore` reads its scripts from git (the folder's first `Workspace before
+  … (task <id>)` commit, else the merge base with `origin/HEAD`) and `projectChecks(root, before)`
+  runs a changed or removed `build` / `lint` / `typecheck` / `test` as it was (`npm exec -c
+  "<script>"`, required, under its own name) and the changed one beside it as "<name> (as this
+  task changed it)" (`CHANGED_SCRIPT_SUFFIX`, not required); the notes ("this task changed the
+  project's test script from `…` to `…`") go to the critic with the artifacts.
+- **Other languages' tests** (C-3, ADR 0110). `markerChecks` finds Python test files (`test_*.py`,
+  `*_test.py`: `python3 -m pytest -q -p no:cacheprovider`, else `python3 -m unittest discover`
+  for unittest tests), `Cargo.toml` (`cargo test --offline`, `CARGO_TARGET_DIR` under
+  `.forerunner-try/`) and `go.mod` (`go test ./...`, `GOPROXY=off`). `runMarkerCheck` runs the
+  first candidate whose probe exits 0 in the same lease (else as processes in the folder without
+  a sandbox port); none is "the project's <language> tests were not run: <tool> is not installed
+  where the checks run", a run that could not get its dependencies (`notRunBecause`) or found no
+  tests (exit 5) is not run either, and a run is otherwise a required check (`pytest`,
+  `unittest`, `cargo test`, `go test`) in `evidence.checkResults`. `untestedFiles` tells of
+  JavaScript test files no script runs.
 - **Read access.** `readTools` (default: the runtime's `read_file` and `list_dir`) and the
   folder's file list (`projectFileList`, at most 200) go to the review; the critic's token
   confines them to the task's folder.
@@ -2055,13 +2072,42 @@ Proportional verification (ADR 0104, `src/loop/verification.ts`, `project-checks
   `@forerunner/capabilities` `browser.tryPages` with screenshots under
   `<data>/evidence/<task>/<review key>/` (`evidenceRootOf`), served back by
   `GET /tasks/:id/evidence?file=` (`evidenceFileOf` refuses anything outside the task's folder).
+  A full review's request carries `fullReview` (compose passes `requireBrowserSandbox`: the page
+  is opened only in a Chromium whose own sandbox starts, ADR 0110).
+- **Try a command line tool and a server** (C-1, ADR 0110; `try-plan.ts`, `try-run.ts`).
+  `planTries` reads the brief, the criteria, the README the task wrote and its files: a command
+  written exactly (backticks, a code block, a sentence that goes on after it) whose program is
+  `node`, `python3` or `python` and whose script is in the folder is a `CommandTry` (placeholders
+  become samples under `TRY_FOLDER`, `.forerunner-try/`; `expectsError` when its sentence expects
+  an error); a script that listens, or a file the task wrote that listens, is a `ServerTry` (the
+  ports its code or the brief names, the GET routes the brief names then the ones its code
+  handles, else `/`); a tool that reads its command line but whose usage nobody wrote down, a
+  missing script and a `<url>` are `notTried` lines. At most 3 commands and 1 server. `runTries`
+  runs them in the review's lease (opened for checks or tries; refused: each target "was not
+  tried: the sandbox could not be opened (…)"; no sandbox port: "there is no sandbox to run it
+  in"): a command with its samples written and `PYTHONDONTWRITEBYTECODE=1`, 30 s; a server
+  through `SERVER_DRIVER` (`.forerunner-try/serve.cjs`, input on stdin: argv with `$NODE`, ports,
+  routes, 15 s to listen, 5 s a call), which prints its result after `@@FR-TRY@@`. `node` is the
+  daemon's `process.execPath` in the process sandbox and `node` in the container. The result is
+  `TriedEvidence` with `kind` "command" or "server", `blocking` on a problem (a failing exit, a
+  timeout, a server that stopped before or while it was called, a named route that answered 4xx,
+  any 5xx or no answer); a program or package that is not installed and a server that never
+  listened are `notTried` lines, and so is what goes wrong with a server nobody asked to run
+  (`ServerTry.expected` false: no start command and no route of it in the brief, criteria or
+  README; "… the brief says nothing about running it, so this is not held against the task"). `.forerunner-try/` is removed after the tries and again after the
+  review (a cargo build folder); files the tried work wrote are removed and named in the output.
 - **Questions for the person.** A report with a "Questions for the person:" list is never
   accepted (the critic package's `ASKS_PERSON_RULE`); the loop files the report's questions as
   one card (`askPersonInstead`), quoting the specialist's own words (`quotedWords`), and the
   task waits in `needs_human`.
-- **The brief** says how the work is checked (`HOW_WORK_IS_CHECKED`) and asks for a test with
-  new behaviour (`TESTS_FOR_BEHAVIOUR`); a task with no criteria is held to its outcome
-  (`outcomeCriterion`), in the brief and in the review.
+- **The brief** says how the work is checked (`HOW_WORK_IS_CHECKED`: the scripts as they were
+  before the task, other languages' tests, a tool run with sample input, a server started and
+  called, a page opened, and "Write the exact command a person runs in backticks in the README")
+  and asks for a test with new behaviour (`TESTS_FOR_BEHAVIOUR`); a task with no criteria is held
+  to its outcome (`outcomeCriterion`), in the brief and in the review. A retry's brief
+  (`retryConstraints`) lists the open findings that are orders under "Critic findings to resolve"
+  and the notes (`isReviewNote`: `info`, or a measured problem "(not caused by this task)") under
+  "Notes from the review, for your information only: …", without their required action (L-4).
 
 | Verdict | What the runner sees | Task |
 | --- | --- | --- |

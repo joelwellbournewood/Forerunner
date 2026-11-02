@@ -26,6 +26,11 @@ export interface TryPagesRequest {
   root: string;
   /** Pages to open, relative to `root`. */
   pages: string[];
+  /**
+   * The task gets a full review (ADR 0101, ADR 0110): its pages are opened only in a browser
+   * whose own sandbox runs, never without it.
+   */
+  fullReview?: boolean;
   signal?: AbortSignal;
 }
 

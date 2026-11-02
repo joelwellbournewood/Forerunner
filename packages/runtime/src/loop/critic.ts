@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import {
   applyVerdict,
   type CheckCommand,
@@ -71,8 +71,20 @@ import {
   type TaskReviewOutcome,
   type TaskReviewRequest,
 } from "./ports.ts";
-import { isCodeChange, notRunWords, projectChecks, projectFileList } from "./project-checks.ts";
+import {
+  isCodeChange,
+  type MarkerCheck,
+  markerChecks,
+  notRunWords,
+  PROJECT_CHECK_TIMEOUT_MS,
+  projectChecks,
+  projectFileList,
+  scriptsBefore,
+  untestedFiles,
+} from "./project-checks.ts";
 import { MAX_PAGES_TRIED, pagesToTry, type TryItPort } from "./try-it.ts";
+import { planTries, TRY_FOLDER, type TryPlan } from "./try-plan.ts";
+import { runTries } from "./try-run.ts";
 import { outcomeCriterion, reviewFloorOf, reviewTierOf, signoffReasonOf } from "./verification.ts";
 
 /**
@@ -353,9 +365,31 @@ export class CriticLoop implements CriticPort {
     // commands the project's settings name.
     const root = worktree && existsSync(worktree) ? worktree : undefined;
     const code = isCodeChange(changedFiles) || measured.some((m) => m.kind === "check");
-    const own = code ? projectChecks(root) : { checks: [], skipped: null };
+    // L-5: a task that changed package.json is checked with the scripts as they were before it.
+    const before =
+      code && root && changedFiles.includes("package.json")
+        ? await scriptsBefore(root, task.id, this.deps.run ?? runProcess)
+        : null;
+    const own = code ? projectChecks(root, before) : { checks: [], skipped: null, notes: [] };
     const ownChecks = own.checks.filter((c) => !configured.some((k) => k.name === c.name));
     let checks = [...configured, ...ownChecks];
+    // C-3: the project's tests in other languages, found by their marker files.
+    let markers: MarkerCheck[] = code
+      ? markerChecks(root).filter((m) => !configured.some((k) => k.name === m.name))
+      : [];
+    const untested = code ? untestedFiles(root) : null;
+    // C-1 (ADR 0110): a command line tool is run, a server started and called, in the lease.
+    let plan: TryPlan = code
+      ? planTries({
+          changedFiles,
+          root,
+          brief: {
+            title: task.title,
+            outcome: task.outcome,
+            criteria: task.acceptance_criteria,
+          },
+        })
+      : { commands: [], servers: [], notTried: [] };
     const report = result.finalReport ?? result.summary;
     const questions = listedQuestions(report);
     const evidence: ReviewEvidence = {
@@ -365,7 +399,11 @@ export class CriticLoop implements CriticPort {
       brief: `${task.title}: ${task.outcome}`,
       finalReport: report,
       ...(questions.length ? { questionsForPerson: questions } : {}),
-      notChecked: own.skipped ? [own.skipped] : [],
+      notChecked: [
+        ...(own.skipped ? [own.skipped] : []),
+        ...(untested ? [untested] : []),
+        ...plan.notTried,
+      ],
       ...(signoff ? { signoffRequired: signoff } : {}),
       ...(diff?.diff ? { diff: diff.diff } : {}),
       ...(changedFiles.length ? { changedFiles } : {}),
@@ -379,6 +417,7 @@ export class CriticLoop implements CriticPort {
             ]
           : []),
         ...(invalid ? [`${invalid} malformed check(s) in settings.checks ignored`] : []),
+        ...own.notes,
         ...(result.artifacts ?? []).map((a) => (typeof a === "string" ? a : JSON.stringify(a))),
       ],
     };
@@ -433,6 +472,8 @@ export class CriticLoop implements CriticPort {
           reviewKey: safeSegment(result.runId ?? `attempt-${task.attempt + 1}`),
           root,
           pages,
+          // ADR 0110: a full review's page is opened only with the browser's own sandbox.
+          ...(tier >= 2 ? { fullReview: true } : {}),
           ...(req.signal ? { signal: req.signal } : {}),
         });
         if ("tried" in tried)
@@ -459,13 +500,17 @@ export class CriticLoop implements CriticPort {
     // sandbox below that), never on the host when a sandbox port is wired: a lease the port
     // refuses means the checks are not run, and the review says why.
     let lease: Awaited<ReturnType<RunSandboxPort["open"]>> | null = null;
-    if (checks.length && root && this.deps.sandbox) {
+    const tries = plan.commands.length + plan.servers.length;
+    if ((checks.length || markers.length || tries) && root && this.deps.sandbox) {
       try {
         lease = await this.deps.sandbox.open({
           task,
           worktree: root,
           allowedDomains: [],
-          timeoutMs: checks.reduce((n, c) => n + (c.timeoutMs ?? 120_000), 0),
+          timeoutMs: Math.max(
+            PROJECT_CHECK_TIMEOUT_MS,
+            checks.reduce((n, c) => n + (c.timeoutMs ?? 120_000), 0),
+          ),
           signal: req.signal ?? new AbortController().signal,
         });
       } catch (e) {
@@ -473,11 +518,21 @@ export class CriticLoop implements CriticPort {
           taskId: task.id,
           error: errorMessage(e),
         });
-        evidence.notChecked?.push(
-          `${checks.map((c) => c.name).join(", ")} not run: the sandbox could not be opened (${errorMessage(e).split("\n")[0]?.slice(0, 200)})`,
-        );
+        const why = `the sandbox could not be opened (${errorMessage(e).split("\n")[0]?.slice(0, 200)})`;
+        const names = [...checks.map((c) => c.name), ...markers.map((m) => m.name)];
+        if (names.length) evidence.notChecked?.push(`${names.join(", ")} not run: ${why}`);
+        for (const t of [...plan.commands, ...plan.servers])
+          evidence.notChecked?.push(`${t.target} was not tried: ${why}`);
         checks = [];
+        markers = [];
+        plan = { ...plan, commands: [], servers: [] };
       }
+    } else if (tries && root) {
+      // A runner composed without a sandbox (a test world): nothing the work made is started on
+      // the host.
+      for (const t of [...plan.commands, ...plan.servers])
+        evidence.notChecked?.push(`${t.target} was not tried: there is no sandbox to run it in`);
+      plan = { ...plan, commands: [], servers: [] };
     }
     // The project's scripts need npm where they run (in the lease, whose environment is not
     // the daemon's); without it they are not run, and the review says so instead of failing the
@@ -497,6 +552,41 @@ export class CriticLoop implements CriticPort {
     }
     let output: ReviewOutput;
     try {
+      if (root) {
+        const held = lease;
+        const exec: ExecFn = held
+          ? (argv, o) =>
+              held.sandbox.run(argv, {
+                timeoutMs: o.timeoutMs,
+                maxOutputBytes: 256 * 1024,
+                ...(o.env ? { env: o.env } : {}),
+                ...(req.signal ? { signal: req.signal } : {}),
+              })
+          : (argv, o) =>
+              runProcess(argv, {
+                cwd: root,
+                allowFailure: true,
+                timeoutMs: o.timeoutMs,
+                env: { ...process.env, ...(o.env ?? {}) },
+                ...(req.signal ? { signal: req.signal } : {}),
+              });
+        for (const m of markers) {
+          const r = await runMarkerCheck(m, exec, root);
+          if ("notRun" in r) evidence.notChecked?.push(r.notRun);
+          else evidence.checkResults = [...(evidence.checkResults ?? []), r.result];
+        }
+        if (held && (plan.commands.length || plan.servers.length)) {
+          const ran = await runTries(plan, {
+            sandbox: held.sandbox,
+            root,
+            // The runner image has `node`; the process sandbox starts the daemon's own Node.
+            node: held.sandbox.kind === "process" ? process.execPath : "node",
+            ...(req.signal ? { signal: req.signal } : {}),
+          });
+          if (ran.tried.length) evidence.tried = [...(evidence.tried ?? []), ...ran.tried];
+          evidence.notChecked?.push(...ran.notTried);
+        }
+      }
       output = await (lease
         ? new CriticService({
             ...this.serviceDeps(sessionContext?.pipeline),
@@ -518,6 +608,8 @@ export class CriticLoop implements CriticPort {
       );
     } finally {
       await lease?.sandbox.destroy().catch(() => {});
+      // The try's own files (samples, a build folder of the checks) never stay in the folder.
+      if (root) rmSync(join(root, TRY_FOLDER), { recursive: true, force: true });
     }
 
     // The rung the failed attempt ran on, for the ladder: the Run row's model.
@@ -966,6 +1058,61 @@ function pagesWords(pages: readonly string[]): string {
 
 async function onPath(cmd: string): Promise<boolean> {
   return (await which(cmd).catch(() => null)) !== null;
+}
+
+type ExecFn = (
+  argv: readonly string[],
+  opts: { env?: Record<string, string>; timeoutMs: number },
+) => Promise<RunResult>;
+
+/**
+ * One marker check (C-3): the first candidate whose probe starts runs (pytest, else unittest);
+ * none starting is "not run, because <tool> is not installed where the checks run"; a run that
+ * could not get its dependencies, or found no tests, is not run either. Never a failed review.
+ */
+export async function runMarkerCheck(
+  m: MarkerCheck,
+  exec: ExecFn,
+  root: string,
+): Promise<
+  | { result: { name: string; passed: boolean; output: string; required: boolean } }
+  | { notRun: string }
+> {
+  const notRun = (why: string) => ({
+    notRun: `the project's ${m.language} tests were not run: ${why}`,
+  });
+  for (const c of m.candidates) {
+    const probe = await exec(c.probe, { timeoutMs: 30_000, ...(m.env ? { env: m.env } : {}) })
+      .then((r) => r.code === 0 && !r.timedOut)
+      .catch(() => false);
+    if (!probe) continue;
+    let r: RunResult;
+    try {
+      r = await exec(c.argv, {
+        timeoutMs: PROJECT_CHECK_TIMEOUT_MS,
+        ...(m.env ? { env: m.env } : {}),
+      });
+    } catch (e) {
+      return notRun(
+        `${c.argv[0]} could not start (${errorMessage(e).split("\n")[0]?.slice(0, 200)})`,
+      );
+    }
+    const body = `${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`.trim();
+    const because = m.notRunBecause?.(body, root);
+    if (because) return notRun(because);
+    if (r.code === 5 && !r.timedOut) return notRun(`${c.name} found no tests in them`);
+    const tail = body.length > CHECK_OUTPUT_TAIL ? `...${body.slice(-CHECK_OUTPUT_TAIL)}` : body;
+    const head = `${c.argv.join(" ")} -> ${r.timedOut ? "timeout" : `exit ${r.code}`} in ${r.durationMs} ms`;
+    return {
+      result: {
+        name: c.name,
+        passed: r.code === 0 && !r.timedOut,
+        output: tail ? `${head}\n${tail}` : head,
+        required: true,
+      },
+    };
+  }
+  return notRun(m.missing);
 }
 
 /** Whether a command starts and exits 0 in a sandbox (a probe such as `npm --version`). */
