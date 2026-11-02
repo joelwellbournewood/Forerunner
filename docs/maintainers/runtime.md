@@ -1737,6 +1737,17 @@ the first two describes, and their `real-daemon.test.ts` and `tasks.test.tsx` si
   (`taskDisplay`, `actionsFor`), not "Being reviewed". A move recorded after the run is
   recorded before a Stop now that came with it ends the session, so a cancel's files go as its
   line said.
+- **A Cancel at any moment of "Being reviewed" stops the review at once (L-8).** The review's
+  controller is registered under the task before the task moves to `in_review`, so a Cancel
+  from the first moment the row reads "Being reviewed" finds it (a move between the run's end
+  and that transition is recorded as a move during the run; a refused transition is no
+  longer a session error). The critic port (`loop/critic.ts`) goes no further once its signal
+  is aborted (after the page was opened: no lease, no checks, no critic run), and the critic's
+  own run gets the review's signal (`CriticService`, `critic.md`). Before, a Cancel about
+  0.1 s into the review (while the page was opened) stopped the review's controller, but the
+  critic's run started afterwards on no signal and ran on to an accept, spending CHF 0.03,
+  and the files left the folder only once that review ended (`real-daemon.test.ts`, "Cancel
+  in the first moment of 'Being reviewed'").
 - **Stop now, Stop all or Quit during the review put the task back to Ready.** The critic's
   stopped review throws `killed` (no Review row); with the session's own controller aborted
   and the task still `in_review`, the runner puts it back with `restoreStatus(…, "in_review",

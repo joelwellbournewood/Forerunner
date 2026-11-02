@@ -444,6 +444,10 @@ export class CriticLoop implements CriticPort {
         );
       }
     }
+    // A review stopped while its page was opened (a Cancel in the first moment of "Being
+    // reviewed", Stop now, Quit; L-8) goes no further: no lease, no checks, no critic run.
+    if (req.signal?.aborted)
+      throw new ForerunnerError("killed", "the review was stopped before it began");
     // Read access to the task's folder (ADR 0104): the critic reads what it needs, not only
     // the diff; the list of the folder's files saves it a call.
     const readTools =

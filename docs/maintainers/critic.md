@@ -65,7 +65,12 @@ tier, the rung, the model, the variant, the source and its kind. A calibration r
 (`persist: false`) writes nothing. A review stopped from outside (`ctx.signal` aborted: the
 person cancelled the task while it was reviewed, or stopped the session) writes its Run row and
 throws `killed`: no Review row and no "Critic review did not complete" finding (phase C, ADR
-0105: a cancelled task read "Cancelled · accepted"). A review below the Opus rung, or a project with the flag
+0105: a cancelled task read "Cancelled · accepted"). The critic's own run gets `ctx.signal`
+(`RunRequest.signal`), so a stop that came while the checks ran, or before the run began,
+makes no model call, and `review()` given a signal already aborted throws `killed` before it
+runs a check or writes anything (L-8, live check of phase C: a Cancel in the first moment of
+"Being reviewed" stopped the review, but the critic's run started after the stop on no signal
+and its two calls ran on to an accept, CHF 0.03). A review below the Opus rung, or a project with the flag
 off, is unchanged and writes nothing.
 
 Checks: `ctx.checks` (argv commands, `ctx.cwd` the worktree) are run through the `CheckRunner`

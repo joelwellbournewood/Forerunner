@@ -254,6 +254,10 @@ export class CriticService {
 
   async review(input: ReviewInput, ctx: ReviewContext): Promise<ReviewOutput> {
     validateInput(input);
+    // Stopped before it began (the person cancelled the task while its page was being opened,
+    // L-8): nothing is run, read or recorded, as for a review stopped before it finished.
+    if (ctx.signal?.aborted)
+      throw new ForerunnerError("killed", "the review was stopped before it began");
     const persist = ctx.persist !== false;
     if (input.tier === 0) {
       if (input.subject.kind === "session") {
@@ -485,6 +489,11 @@ export class CriticService {
         effort: pick.effort,
         phase: "review",
         label: `critic tier ${tier} on ${label}`,
+        // The review's stop ends the critic's own run, also one that starts after the stop (L-8,
+        // live check of phase C: a Cancel in the first moment of "Being reviewed" stopped the
+        // review, but the critic's run began after it, under the task's claim on no signal, and
+        // its calls ran on to an accept). A signal already aborted makes no call.
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
         onEvent: ctx.onEvent,
         // ADR 0003: every critic call bypasses the context layer's compression, on the session
         // pipeline when one is wired so its records show the bypass.

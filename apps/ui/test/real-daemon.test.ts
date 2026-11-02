@@ -5021,3 +5021,83 @@ describe("the UI client against the real daemon: Quit during 'Being reviewed', t
     }
   }, 120_000);
 });
+
+describe("the UI client against the real daemon: Cancel in the first moment of 'Being reviewed' (stops, L-8)", () => {
+  it("the review stops at once: no critic call after the Cancel, its files leave the folder, the line is true", async () => {
+    // Live check of phase C (2026-11-02), c9b: Cancel pressed about 0.1 s into "Being
+    // reviewed" (the page was being opened in a browser): the kill switch stopped the review,
+    // yet two critic calls ran after it to an accept (CHF 0.03), and credits.html stayed in
+    // Files about 6 s, until the review ended. 3 s in, it worked. The critic's own run never
+    // got the review's signal: only a run already going was stopped.
+    let release: () => void = () => undefined;
+    let trying = false;
+    const { rt, client, criticCalls } = await composeWithRolePlayer(
+      {},
+      {
+        tryIt: {
+          tryPages: (req) => {
+            trying = true;
+            // Opening the page takes a while; it ends when the test lets it.
+            return new Promise((resolve) => {
+              release = () =>
+                resolve({
+                  tried: req.pages.map((page) => ({
+                    what: `opened ${page} in a browser`,
+                    target: page,
+                    ok: true,
+                    blocking: false,
+                    output: `opened ${page}`,
+                    screenshots: [],
+                  })),
+                });
+            });
+          },
+        },
+      },
+    );
+    try {
+      const project = await client.createProject({ name: "Quote page", goal: "Credits" });
+      const page = await client.createTask(project.id, {
+        title: "Credits page in credits.html",
+        outcome: "credits.html names who made the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === page.id);
+      await eventually(
+        async () => trying && (await row())?.display?.label === "Being reviewed",
+        "the task to read Being reviewed",
+        async () => `${(await row())?.status}`,
+        30_000,
+      );
+      const files = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
+      expect(await files()).toContain("credits.html");
+      // The row's Cancel, as the Tasks tab sends it.
+      const shown = await row();
+      const cancelled = await client.taskAction(page.id, {
+        version: shown?.version ?? 0,
+        action: "cancel",
+      });
+      expect(cancelled.change?.sentence).toMatch(
+        /^Cancelled "Credits page in credits\.html": its review stopped and what it changed is removed/,
+      );
+      // The browser step ends; the review must not go on to the critic's model.
+      release();
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await row())?.status}, ${criticCalls.length} critic calls`,
+        30_000,
+      );
+      expect(criticCalls).toHaveLength(0);
+      expect((await row())?.display?.label).toBe("Cancelled");
+      expect(await files()).not.toContain("credits.html");
+      const detail = await client.task(page.id);
+      expect(detail.review).toBeNull();
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
