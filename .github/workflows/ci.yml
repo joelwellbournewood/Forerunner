@@ -183,3 +183,48 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Smoke-test the image
         run: docker run --rm forerunner-runner:ci node -e "console.log('runner image ok', process.version)"
+
+  # A full-review task in the real Docker sandbox, through the daemon (phase F2;
+  # docs/maintainers/testing.md, "The Docker sandbox check"). The owner's PC runs Docker, so tasks
+  # at risk tier 2 run in the container there; the adapter's own test
+  # (packages/runtime/test/sandbox.integration.test.ts) never ran a task. This builds the image the
+  # daemon uses in a checkout (forerunner-runner:local, from the layers the job above cached),
+  # starts the daemon on the stand-in model, runs one tier-2 task in a session and checks from the
+  # engine's events and the daemon's records that it ran in the container, that the critic
+  # reviewed it at tier 2, that its file landed in the project folder and that no container or
+  # network was left. Every push runs it (a few minutes, beside the other jobs).
+  sandbox-full-review:
+    name: full-review task in the Docker sandbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the sandbox image the daemon uses (forerunner-runner:local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/cloud-runner/Dockerfile
+          push: false
+          load: true
+          tags: forerunner-runner:local
+          # Read only: the job above writes the cache, two writers of one scope would race.
+          cache-from: type=gha
+      - name: A full-review task in the sandbox (scripts/sandbox-full-review.mjs)
+        run: node scripts/sandbox-full-review.mjs --home "$RUNNER_TEMP/sandbox-home" --out "$RUNNER_TEMP/sandbox-check"
+      - name: Upload the check's result and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-full-review
+          path: ${{ runner.temp }}/sandbox-check
+          if-no-files-found: warn

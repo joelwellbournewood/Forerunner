@@ -142,7 +142,7 @@ async fn check(package_info: &tauri::PackageInfo) -> Value {
     }
 
     let before = read_daemon_file(&daemon_file_path(&dirs.runtime)).ok();
-    let mut spawned = match spawn_daemon(&cmd, &dirs.logs) {
+    let mut spawned = match spawn_daemon(&cmd, &dirs.logs, &ProcessEnv) {
         Ok(s) => s,
         Err(e) => return fail("spawn", e, base),
     };

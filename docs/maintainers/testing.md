@@ -2506,3 +2506,135 @@ assistant and Settings still say no Claude key is connected; the daemon gets a n
 every start, so a page open across `restart-daemon.mjs` needs `reconnect(page, name)` (what the
 desktop shell does after its own daemon restarts is not covered); injection counters live in
 the daemon process and start again with it.
+
+## CI checks no local test can make (phase F2)
+
+Two jobs close gaps the bench cannot: every walk drives the UI in Chromium, and no machine of the
+round had Docker. Both run the real daemon on the bench's stand-in model (`--provider bench`,
+above), so they prove mechanics, never model quality. Their drivers are Node scripts with no
+dependency outside Node and the repository; their pure parts have unit tests.
+
+### The desktop window check (Windows)
+
+`scripts/desktop-window-check.mjs`, job `window` of `.github/workflows/desktop.yml` (after
+`build`, on `windows-latest`, every run of that workflow; about 6 to 10 minutes). The desktop
+shell opens links, files and windows its own way, and the owner's "Clicking PR does nothing"
+was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no handler). The job:
+
+1. downloads the MSI the build job uploaded (`desktop-windows-latest`) and installs it into
+   Program Files;
+2. copies the stand-in model (`testenv/package.json`, `testenv/src/bench`, `testenv/src/provider`)
+   into `<install>\runtime\testenv\` (`installStandIn`): `fr daemon --provider bench` loads it
+   from there (`BENCH_ENTRY` in `packages/runtime/src/cli/main.ts`) and refuses to start without
+   it, so an installed app never runs the stand-in unless a test put it there;
+3. starts the installed exe with no arguments, as a person does, on a fresh data folder with a
+   space and non-ASCII letters (`FORERUNNER_HOME`), with `FORERUNNER_DAEMON_PROVIDER=bench` (the
+   shell forwards it as `daemon --provider bench`; `apps.md`, "Desktop shell"),
+   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` (the window's DevTools;
+   with wry's own `--disable-features` list, since WebView2 may use the variable in place of the
+   app's arguments, plus `CalculateNativeWinOcclusion`, so the window still paints and answers
+   the driver's clicks once the system browser opens over it), the vault a file in that folder,
+   `FORERUNNER_SANDBOX_ENGINE=podman` (Docker "not installed", so Settings shows its "Get Docker
+   Desktop" link) and no credential of the runner (`windowEnv`);
+4. waits for `daemon.json` and `/health`, then for the window's page on the DevTools endpoint (a
+   page target on `http://tauri.localhost`, not the splash), and drives it over raw CDP with the
+   Android emulator job's driver (`apps/mobile/e2e/cdp.mjs`, ADR 0054; the page's console is
+   forwarded as `webview:` lines): Set up later, New project with a one-line brief, the plan
+   card in the Inbox (by its title, with its task lines), Approve and start ("Plan approved: N
+   tasks written"), the session to its end, every task done and shown on the Tasks tab;
+5. asserts what the shell did, from its own log (`<home>\logs\desktop-shell.log`; the lines are
+   `windows::handed_to_browser_line` and `folder::handed_to_file_manager_line`, each pinned by a
+   cargo test and read by `parseHandoffs`):
+   - the Tasks tab's PR link: the task's `pr_url` is written into the store first (`seedPrUrl`,
+     `<home>\data\state.sqlite`; no daemon route sets it, the PR executor does), pointing at a page
+     the script serves on 127.0.0.1; the click must give "handed to the system browser (link):
+     <that URL>", and whether the browser then fetched the page is reported as a note (a
+     browser's first run may not load it);
+   - Settings → Sandbox, "Get Docker Desktop": the same line with the docker.com page;
+   - a `target="_blank"` link added to the page: "handed to the system browser (new window)";
+   - a `file:` link added to the page: no hand-off of any kind;
+   - Open folder on the Overview: "handed to the file manager: <folder>", the folder the
+     Overview shows, and no error under the button;
+   - after each, the window still shows the same app page (the shell must not navigate away);
+6. saves a screenshot (`Page.captureScreenshot`) and the visible text of every step and of the
+   page where the journey stopped, when it stopped: also the whole screen then (Windows
+   PowerShell, `desktopScreenshot`, `99-stopped-…-desktop.png`), for a stop before the window's
+   page could be driven or a dialog outside it; both logs, the model-call log and `result.json`
+   (every check), then quits: `POST /shutdown`, then the app's process tree. The job's artifact
+   `desktop-window-check` holds them; the step summary lists every check. Exit 1 when a required
+   check failed.
+
+A dry run of the journey without the shell, against a bench in Chromium (the hand-off checks
+are reported as skipped; in a browser a link opens a tab):
+
+```
+node scripts/bench/start.mjs --name win --daemon-port 48731 --ui-port 1871 --fresh
+chromium --headless=new --remote-debugging-port=9341 --user-data-dir=<tmp> http://127.0.0.1:1871/
+node scripts/desktop-window-check.mjs --attach http://127.0.0.1:9341 --app-origin http://127.0.0.1:1871 \
+  --home /tmp/frbench/win/home --out /tmp/frbench/win/window
+node scripts/bench/stop.mjs --name win
+```
+
+Tests: `scripts/desktop-window-check.test.ts` (the options; the app's environment and that the
+variable and provider name are the ones `supervisor.rs` forwards; the stand-in lands where
+`BENCH_ENTRY` resolves from an installed CLI; the shell's log lines as tauri-plugin-log writes
+them, with the words read from `windows.rs` and `folder.rs`; folders compared as Windows does;
+`seedPrUrl` on a real SQLite file and the column the Tasks tab reads; the page server; the step
+summary; the job's shape in `desktop.yml`). Not covered: notifications (a toast is not in the
+page), the tray and Quit from it, a second window, a deep link; a standard (non-administrator)
+user (U-012).
+
+### The Docker sandbox check (Linux)
+
+`scripts/sandbox-full-review.mjs`, job `sandbox-full-review` of `.github/workflows/ci.yml` (on
+`ubuntu-latest`, every push; a few minutes beside the other jobs). The owner's PC runs Docker, so
+a task at risk tier 2 (a full review) runs in the container there; the adapter's test
+(`packages/runtime/test/sandbox.integration.test.ts`) never ran a task through the daemon. The
+job builds `forerunner-runner:local` from `services/cloud-runner/Dockerfile` (the daemon's image
+in a checkout, `DEFAULT_RUNNER_IMAGE`; the cache the `sandbox-image` job writes, read only), and
+the script:
+
+1. checks Docker answers with Linux containers and has the image;
+2. records the engine's events for sandbox containers (`docker events --filter
+   label=forerunner.sandbox=1`) for the whole run;
+3. starts the daemon from the checkout on a fresh home (`scripts/bench/lib.mjs`'s `startDaemon`,
+   `FORERUNNER_SANDBOX_ENGINE=docker`) and expects `POST /sandbox/check` to answer `ready` and
+   `/health` to say commands run in the container;
+4. creates a project without a repository (it works in its folder, U-037) and one task through
+   `POST /projects/:id/tasks`: "Write src/greet.js", tier 2, the coder (`FULL_REVIEW_TASK`, which
+   the route's own schema parses in the unit test);
+5. starts a session as Start does (`POST /sessions`) and waits for it to end;
+6. asserts: the session completed and the task is done; the coder's run changed `src/greet.js`;
+   the critic reviewed and accepted it, at tier 2 (its calls in the model-call log are labelled
+   `critic tier 2 on task <id>`); a container labelled with the task's id was started from the
+   image, the coder's `node --check src/greet.js` ran in it (`exec_start`) and exited 0
+   (`exec_die`), and the container was destroyed; no container or network with the task's label
+   is left (`docker ps -a`, `docker network ls`); `src/greet.js` is in
+   `<home>/data/projects/<id>/workspace` and passes `node --check` on the host. Who owns the file
+   is not checked: the daemon writes a task's files on the host (`ContainerSandbox.writeFile`),
+   so it is the runner's user whatever user the container ran as, and a check of it could not
+   fail.
+
+`result.json`, the daemon log, the engine's events and the model-call log are the job's artifact
+`sandbox-full-review`; the step summary lists every check. Locally (Docker running):
+
+```
+docker build -t forerunner-runner:local -f services/cloud-runner/Dockerfile .
+node scripts/sandbox-full-review.mjs --out /tmp/frbench/sandbox [--home <dir>] [--image <ref>]
+```
+
+It ran on 2026-11-02 against a Docker 29.9.2 daemon (vfs storage, no bridge) with
+`node:22-bookworm-slim` tagged `forerunner-runner:local` in place of the full image, as root:
+every check passed (container started, `timeout -s KILL 60 node --check src/greet.js` in it, exit
+0, destroyed, critic tier 2, the file in the project folder), again in the independent review
+the same day; without a reachable engine it stops at its first check with exit 1. Tests:
+`scripts/sandbox-full-review.test.ts` (the task against `CreateTaskBody`, the image against
+`DEFAULT_RUNNER_IMAGE` and `ci.yml`, the labels against `buildContainerRunArgv`; the engine's
+events as Docker 29 printed them for that run: started, the command and its exit code,
+destroyed, another task's container ignored, one left behind; the critic's tiers; the summary).
+Not covered: the allowlist network (the task names no domain, so it runs with `--network
+none`; the egress proxy's routes are the adapter test's), Docker Desktop on Windows (the
+`windows_containers` state is a unit test's), the image download (`POST /sandbox/pull`), the
+user the container runs as (the stand-in coder only runs `node --check` in it, which writes
+nothing; the host uid:gid on rootful Docker is `sandbox-factory.test.ts`'s and the adapter's
+integration test's).

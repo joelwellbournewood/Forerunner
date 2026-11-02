@@ -216,7 +216,7 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
                 }
             };
             let log_path = daemon_log_path(&dirs.logs);
-            let mut spawned = match spawn_daemon(&cmd, &dirs.logs) {
+            let mut spawned = match spawn_daemon(&cmd, &dirs.logs, &ProcessEnv) {
                 Ok(s) => s,
                 Err(e) => {
                     fail_dialog(
