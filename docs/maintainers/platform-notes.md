@@ -91,6 +91,22 @@ permissions, so a name another local user could work out from the path alone cou
 by them first and keep this user's daemon from starting. A damaged key file is replaced. The
 socket is per network namespace, which only matters inside containers.
 
+### Plain output (`src/plain-output.ts`)
+
+Command output that a person or a model reads (a review's evidence, "See what was checked", a
+finding, the critic's diff) is plain text. `withoutForcedColour(env)` is the environment for
+such a command: the variables that make a program colour into a pipe removed in any letter case
+(`COLOUR_FORCING_ENV`: `FORCE_COLOR`, which Node, chalk, npm, pytest and rich read, the last two
+for any value, so `FORCE_COLOR=0` is not enough; `CLICOLOR_FORCE`; `PY_COLORS`), a person's own
+`NO_COLOR` replaced, and `NO_COLOR=1` set; the input is never changed. `stripAnsi(text)` removes
+terminal escape sequences a program prints anyway (CSI and its 8-bit form, OSC titles and
+links, DCS/PM/APC strings, two-character escapes) and keeps everything else, line breaks and
+tabs included. Users: the process sandbox's base environment, the project's checks and the
+critic's evidence (sandbox.md, runtime.md, critic.md). Before (CI on c8c16fb, where ci.yml sets
+`FORCE_COLOR=1`; some people set it too) a tried `console.log(9)` reached the evidence as
+`\x1b[33m9\x1b[39m`. Git's own colour is a git setting, not an environment one: the critic's
+diff and a set-aside patch ask for `--no-color` (capabilities.md).
+
 ### Errors (`src/errors.ts`)
 
 `ForerunnerError` carries a stable `code` from the `ErrorCode` union, `details` and `retryable`;
@@ -124,7 +140,10 @@ other credential-like key names, a token nested deeper than eight levels, a thro
 of a connection string with an empty user (`redis://:password@host/0`, `amqp://:pw@h`),
 upper-case `*_KEY` names, the key-name rule in every case (`PRIVATE_KEY`, `Private_Key`,
 `signingKey`, `signingKEY`) with the public-key exception and the plain words (`monkey`,
-`MONKEY`) that stay. `clock.test.ts` covers `SimulatedClock`: timers in order, timers scheduled by
+`MONKEY`) that stay. `plain-output.test.ts` strips each kind of escape sequence, leaves plain
+text as it was, drops each colour-forcing variable in any case, and runs Node with
+`FORCE_COLOR=1` (coloured `9`) and through `withoutForcedColour` (plain `9`).
+`clock.test.ts` covers `SimulatedClock`: timers in order, timers scheduled by
 timers, never backwards, and `nextTimerIn()` (how far away the next timer is, null when none;
 tests that drive a composed runtime step the clock to the next timer and no further, and yield
 real time while nothing is pending, so real IO is never overtaken by simulated time).

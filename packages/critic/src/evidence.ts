@@ -1,3 +1,4 @@
+import { stripAnsi } from "@forerunner/platform";
 import type { CompressionRecord, ContextPipeline } from "@forerunner/runtime";
 import type { FindingRow } from "@forerunner/state";
 import type { ReviewInput, ReviewTier } from "./types.ts";
@@ -13,6 +14,8 @@ import type { ReviewInput, ReviewTier } from "./types.ts";
  * output); when a ContextPipeline is given, every block passes through it with bypass "off" so
  * the session's compression records show the review was not compressed. Blocks are still
  * capped in size (head and tail kept) so a huge diff cannot push the criteria out of context.
+ * Command output (the checks, the tries, the test output) is plain text: terminal escape
+ * sequences a program printed are stripped (`stripAnsi`), whoever ran it.
  *
  * What the evidence must contain (ADR 0042): the brief, the files the worker was given, the
  * diff or the produced files in full up to the cap, the checks the runtime ran with their output
@@ -196,7 +199,7 @@ export function renderEvidence(
           (c) =>
             `- [${c.passed ? "pass" : "FAIL"}]${c.required === false ? " (optional)" : ""} ${c.name}` +
             (c.output
-              ? `\n${fence("text", block(`check output of ${c.name}`, c.output, maxOut))}`
+              ? `\n${fence("text", block(`check output of ${c.name}`, stripAnsi(c.output), maxOut))}`
               : ""),
         )
         .join("\n")}`,
@@ -209,7 +212,9 @@ export function renderEvidence(
         .map(
           (t) =>
             `- [${t.ok ? "worked" : "PROBLEM"}] ${t.what}` +
-            (t.output ? `\n${fence("text", block(`try of ${t.target}`, t.output, maxOut))}` : ""),
+            (t.output
+              ? `\n${fence("text", block(`try of ${t.target}`, stripAnsi(t.output), maxOut))}`
+              : ""),
         )
         .join("\n")}`,
     );
@@ -225,7 +230,7 @@ export function renderEvidence(
   if (e.testOutput)
     section(
       EVIDENCE_SECTIONS.testOutput,
-      fence("text", block("test output", e.testOutput, maxOut)),
+      fence("text", block("test output", stripAnsi(e.testOutput), maxOut)),
     );
   if (e.finalReport) {
     section(

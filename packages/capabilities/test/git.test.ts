@@ -435,4 +435,33 @@ describe("GitOps", { timeout: 120_000 }, () => {
     });
     expect(await git("diff", "HEAD", "--", "docs/decisions.md")).toContain("+Run's note.");
   });
+
+  it("a person whose git colours everything (color.ui=always) still gets a set-aside run back: the patch is plain", async () => {
+    // Sibling of the FORCE_COLOR finding (CI on c8c16fb): with colour forced in the person's
+    // git config, `git diff --binary` wrote escape sequences into the patch and `git apply`
+    // refused it, so a cancelled run's work could not be brought back ("conflict").
+    const cwd = mkdtempSync(join(tmpdir(), "fr-git-colour-"));
+    const g = new GitOps({ cwd, identity });
+    const git = async (...args: string[]) => (await run(["git", ...args], { cwd })).stdout;
+    await g.init("main");
+    writeFileSync(join(cwd, "index.html"), "<h1>Club</h1>\n");
+    await g.commitAll("Workspace before the run");
+    // The repository's config stands in for the person's own (global) one.
+    await git("config", "color.ui", "always");
+    await git("config", "color.diff", "always");
+    writeFileSync(join(cwd, "index.html"), "<h1>Club</h1>\n<p>Run's change.</p>\n");
+    writeFileSync(join(cwd, "about.html"), "<h1>About</h1>\n");
+    expect((await g.setAside("refs/forerunner/set-aside/t1", "set aside")).sort()).toEqual([
+      "about.html",
+      "index.html",
+    ]);
+    expect(await g.bringBack("refs/forerunner/set-aside/t1")).toEqual({
+      result: "restored",
+      files: ["about.html", "index.html"],
+    });
+    expect(await g.changedFiles("HEAD")).toEqual([]);
+    expect((await run(["git", "status", "--porcelain"], { cwd })).stdout).toBe(
+      " M index.html\n?? about.html\n",
+    );
+  });
 });

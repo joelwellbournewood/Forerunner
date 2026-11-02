@@ -34,7 +34,9 @@ import {
   type RunResult,
   run as runProcess,
   safeSegment,
+  stripAnsi,
   which,
+  withoutForcedColour,
 } from "@forerunner/platform";
 import type { JsonObject, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
@@ -269,13 +271,15 @@ export class GitDiffPort implements DiffPort {
       const range = depsBase ? [DEPS_BASE_REF, "HEAD"] : hasOrigin ? ["origin/HEAD...HEAD"] : null;
       const parts: string[] = [];
       const files = new Set<string>();
+      // The diff the critic reads is git's own, plain: a person's `color.ui=always` or external
+      // diff tool in their git config never reaches it.
       if (range) {
-        const committed = await git(["diff", ...range]);
+        const committed = await git(["diff", "--no-color", "--no-ext-diff", ...range]);
         if (committed.code === 0 && committed.stdout.trim()) parts.push(committed.stdout);
         const names = await git(["diff", "--name-only", ...range]);
         for (const f of names.stdout.split(/\r?\n/)) if (f.trim()) files.add(f.trim());
       }
-      const pending = await git(["diff", "HEAD"]);
+      const pending = await git(["diff", "--no-color", "--no-ext-diff", "HEAD"]);
       if (pending.code === 0 && pending.stdout.trim()) parts.push(pending.stdout);
       const pendingNames = await git(["diff", "--name-only", "HEAD"]);
       for (const f of pendingNames.stdout.split(/\r?\n/)) if (f.trim()) files.add(f.trim());
@@ -569,12 +573,13 @@ export class CriticLoop implements CriticPort {
     try {
       if (root) {
         const held = lease;
+        // A check's output is read, not shown in a terminal: no colour (`PLAIN_CHECK_ENV`).
         const exec: ExecFn = held
           ? (argv, o) =>
               held.sandbox.run(argv, {
                 timeoutMs: o.timeoutMs,
                 maxOutputBytes: 256 * 1024,
-                ...(o.env ? { env: o.env } : {}),
+                env: { ...PLAIN_CHECK_ENV, ...(o.env ?? {}) },
                 ...(req.signal ? { signal: req.signal } : {}),
               })
           : (argv, o) =>
@@ -582,7 +587,7 @@ export class CriticLoop implements CriticPort {
                 cwd: root,
                 allowFailure: true,
                 timeoutMs: o.timeoutMs,
-                env: { ...process.env, ...(o.env ?? {}) },
+                env: withoutForcedColour({ ...process.env, ...(o.env ?? {}) }),
                 ...(req.signal ? { signal: req.signal } : {}),
               });
         for (const m of markers) {
@@ -1004,10 +1009,17 @@ export function defaultReadTools(): ToolSpec[] {
 const CHECK_OUTPUT_TAIL = 4000;
 
 /**
+ * What the project's checks run with in a sandbox: their output is read by the critic and the
+ * person, not shown in a terminal, so no colour (the process sandbox also drops the host's
+ * FORCE_COLOR; the container never has it). Colour a test runner prints anyway is stripped.
+ */
+const PLAIN_CHECK_ENV: Record<string, string> = { NO_COLOR: "1" };
+
+/**
  * A check runner over a sandbox lease: the command runs in the task's sandbox, with the same
- * evidence as a process check ("<argv> -> exit <code> in <ms> ms", then the end of the output).
- * A relative `cwd` runs under the worktree; an absolute one is refused by the sandbox, so it
- * runs at the worktree's root.
+ * evidence as a process check ("<argv> -> exit <code> in <ms> ms", then the end of the output,
+ * as plain text). A relative `cwd` runs under the worktree; an absolute one is refused by the
+ * sandbox, so it runs at the worktree's root.
  */
 export function sandboxCheckRunner(sandbox: Sandbox): CheckRunner {
   return {
@@ -1017,6 +1029,7 @@ export function sandboxCheckRunner(sandbox: Sandbox): CheckRunner {
       try {
         r = await sandbox.run(cmd.argv, {
           ...(relative ? { cwd: relative } : {}),
+          env: PLAIN_CHECK_ENV,
           timeoutMs: cmd.timeoutMs ?? 120_000,
           ...(opts.signal ? { signal: opts.signal } : {}),
           maxOutputBytes: 256 * 1024,
@@ -1032,7 +1045,7 @@ export function sandboxCheckRunner(sandbox: Sandbox): CheckRunner {
           required: cmd.required !== false,
         };
       }
-      const body = `${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`.trim();
+      const body = stripAnsi(`${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`).trim();
       const tail = body.length > CHECK_OUTPUT_TAIL ? `...${body.slice(-CHECK_OUTPUT_TAIL)}` : body;
       const head = `${cmd.argv.join(" ")} -> ${r.timedOut ? "timeout" : `exit ${r.code}`} in ${r.durationMs} ms`;
       return {
@@ -1139,7 +1152,7 @@ async function markerCheckIn(m: MarkerCheck, exec: ExecFn, root: string): Promis
         `${c.argv[0]} could not start (${errorMessage(e).split("\n")[0]?.slice(0, 200)})`,
       );
     }
-    const body = `${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`.trim();
+    const body = stripAnsi(`${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`).trim();
     const because = m.notRunBecause?.(body, root);
     if (because) return notRun(because);
     if (r.code === 5 && !r.timedOut) return notRun(`${c.name} found no tests in them`);

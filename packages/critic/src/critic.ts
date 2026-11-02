@@ -1,6 +1,13 @@
 import type { BillingSourceKind, PricingTable } from "@forerunner/billing";
 import { BUILTIN_PRICING } from "@forerunner/billing";
-import { type Clock, errorMessage, ForerunnerError, log, newId } from "@forerunner/platform";
+import {
+  type Clock,
+  errorMessage,
+  ForerunnerError,
+  log,
+  newId,
+  stripAnsi,
+} from "@forerunner/platform";
 import {
   type ContextPipeline,
   decideFastMode,
@@ -1191,9 +1198,9 @@ export function verificationOf(e: ReviewEvidence): VerificationRecord {
       name: c.name,
       passed: c.passed,
       required: c.required !== false,
-      output: c.output.slice(0, 2000),
+      output: stripAnsi(c.output).slice(0, 2000),
     })),
-    tried: (e.tried ?? []).map((t) => ({ ...t, output: t.output.slice(0, 2000) })),
+    tried: (e.tried ?? []).map((t) => ({ ...t, output: stripAnsi(t.output).slice(0, 2000) })),
     notChecked: [...(e.notChecked ?? [])],
   };
 }

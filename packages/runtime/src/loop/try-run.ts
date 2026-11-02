@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { TriedEvidence } from "@forerunner/critic";
-import { errorMessage, ForerunnerError, join } from "@forerunner/platform";
+import { errorMessage, ForerunnerError, join, stripAnsi } from "@forerunner/platform";
 import type { Sandbox } from "../sandbox/types.ts";
 import { type CommandTry, type ServerTry, TRY_FOLDER, type TryPlan } from "./try-plan.ts";
 
@@ -40,8 +40,12 @@ export const SERVER_CALL_MS = 5_000;
 const OUTPUT_CHARS = 1500;
 /** The marker the driver prints its result after. */
 const RESULT_MARK = "@@FR-TRY@@";
-/** A try leaves no Python bytecode caches in the task's folder. */
-const TRY_ENV: Record<string, string> = { PYTHONDONTWRITEBYTECODE: "1" };
+/**
+ * A try leaves no Python bytecode caches in the task's folder, and what it prints is read, not
+ * shown in a terminal: no colour (the container never gets the host's FORCE_COLOR; the process
+ * sandbox drops it). What a program colours anyway is stripped from the evidence (`stripAnsi`).
+ */
+const TRY_ENV: Record<string, string> = { PYTHONDONTWRITEBYTECODE: "1", NO_COLOR: "1" };
 
 /**
  * Where the try ran and how far it was kept off the network, in words for the evidence. The
@@ -133,9 +137,9 @@ async function tryCommand(
       notTried: `${c.target} was not tried: its sample input could not be written (${firstLine(errorMessage(e))})`,
     };
   }
-  let r: Awaited<ReturnType<Sandbox["run"]>>;
+  let ran: Awaited<ReturnType<Sandbox["run"]>>;
   try {
-    r = await ctx.sandbox.run(programArgv(c.argv, ctx.node), {
+    ran = await ctx.sandbox.run(programArgv(c.argv, ctx.node), {
       env: TRY_ENV,
       timeoutMs: c.keepsRunning ? COMMAND_KEEPS_RUNNING_MS : COMMAND_TRY_TIMEOUT_MS,
       maxOutputBytes: 64 * 1024,
@@ -148,6 +152,8 @@ async function tryCommand(
       notTried: `${c.target} was not tried: ${cannotStart(c.argv[0] ?? "", errorMessage(e))}`,
     };
   }
+  // What the person and the critic read of it: plain text, whatever the program printed.
+  const r = { ...ran, stdout: stripAnsi(ran.stdout), stderr: stripAnsi(ran.stderr) };
   const missing = notInstalled(c.argv[0] ?? "", r.code, r.stderr);
   if (missing) return { notTried: `${c.target} was not tried: ${missing}` };
   const dep = missingDependency(`${r.stderr}\n${r.stdout}`, ctx.root);
@@ -250,11 +256,11 @@ async function tryServer(
   if (at < 0 || d.error) {
     const missing = notInstalled("node", r.code, r.stderr);
     return {
-      notTried: `${s.target} was not tried: ${missing ?? `the try did not finish (${firstLine(d.error ?? r.stderr) || (r.timedOut ? "it ran out of time" : `exit ${r.code}`)})`}`,
+      notTried: `${s.target} was not tried: ${missing ?? `the try did not finish (${firstLine(stripAnsi(d.error ?? r.stderr)) || (r.timedOut ? "it ran out of time" : `exit ${r.code}`)})`}`,
     };
   }
   const program = s.argv[0] ?? "node";
-  const log = (d.log ?? "").trim();
+  const log = stripAnsi(d.log ?? "").trim();
   if (!d.started) {
     if (d.spawnError)
       return { notTried: `${s.target} was not tried: ${cannotStart(program, d.spawnError)}` };
@@ -293,11 +299,14 @@ async function tryServer(
     const route = s.routes.find((x) => x.path === call.path);
     const named = route?.documented ? " (named in the brief)" : "";
     if (call.error) {
-      lines.push(`GET ${call.path}${named} -> no answer (${firstLine(call.error)})`);
+      lines.push(`GET ${call.path}${named} -> no answer (${firstLine(stripAnsi(call.error))})`);
       problems.push({ text: `GET ${call.path} did not answer`, blocking: true });
       continue;
     }
-    const body = (call.body ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+    const body = stripAnsi(call.body ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 300);
     const status = call.status ?? 0;
     const judged = route ? judgeAnswer(route, status) : { note: "" };
     lines.push(

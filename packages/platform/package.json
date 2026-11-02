@@ -13,7 +13,8 @@
     "./ids": "./src/ids.ts",
     "./errors": "./src/errors.ts",
     "./log": "./src/log.ts",
-    "./lock": "./src/lock.ts"
+    "./lock": "./src/lock.ts",
+    "./plain-output": "./src/plain-output.ts"
   },
   "scripts": {
     "test": "pnpm -w exec vitest run --project unit packages/platform/test"

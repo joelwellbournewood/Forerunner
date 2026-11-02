@@ -340,6 +340,14 @@ command as a child process with:
   numbered again so the count matches the keys. Before (live, 2026-11-02) the name rule dropped
   every `_KEY_n` and kept the count, and every git command a specialist ran exited 128 "missing
   config key"; the first fix looked at the values only, and a token in a key reached the model;
+- no forced colour: the host's `FORCE_COLOR`, `CLICOLOR_FORCE` and `PY_COLORS` (any letter case)
+  are dropped from the inherited environment and `NO_COLOR=1` is set
+  (`withoutForcedColour`, `@forerunner/platform`), since what a command here prints is read by
+  the model, the critic and the person, never shown in a terminal. Before (CI on c8c16fb, where
+  ci.yml sets `FORCE_COLOR=1`; a person can have it set too) a tried `node wc.js` printed
+  `\x1b[33m9\x1b[39m` into the evidence. A per-run `env` can still set one of them on purpose
+  (`plain-output.test.ts`). The container never had the host's environment; the tries and the
+  checks pass `NO_COLOR=1` to it per run;
 - `cwd` pinned inside the worktree through `containPathReal` (a link leaving the worktree is
   `path_not_allowed`, a missing directory `not_found`);
 - wall-clock and output caps from the platform runner (`killTree` on timeout);

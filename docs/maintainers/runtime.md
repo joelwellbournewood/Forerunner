@@ -2176,7 +2176,9 @@ and the result. The loop assembles the evidence (the diff from the task's worktr
 `GitDiffPort`: the branch against `origin/HEAD` from where they part, or, for a task that builds
 on unmerged work, against `DEPS_BASE_REF` (C-49, ADR 0106: the default branch with its
 dependencies' branches merged in), so the dependencies' files are never reviewed as the task's
-(`test/dependent-branches.test.ts`); or the executor's `changedFiles`; the project's checks; the standard-doc drift at
+(`test/dependent-branches.test.ts`); git's own diff, `--no-color --no-ext-diff`, so a person's
+`color.ui=always` or external diff tool never reaches the critic (`test/plain-output.test.ts`);
+or the executor's `changedFiles`; the project's checks; the standard-doc drift at
 tier 2+ as a non-required check, `docs/status.md` left out when `statusDocManaged` says the PM
 writes it at session end (G.5); the final report as claims and its "Questions for the person:"
 list; the attempt and the specialist as artifacts), runs `CriticService.review` at the review
@@ -2204,7 +2206,8 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   `package.json` (`projectChecks`: `npm run --silent <name>`; npm's "no test specified" and
   empty scripts are skipped; nothing when the scripts need dependencies that are not installed)
   run at every tier, in a lease of the composition's `sandbox` port (`sandboxCheckRunner`),
-  destroyed after the review. npm is looked for where they run: `npm --version` in the lease
+  destroyed after the review; with `NO_COLOR=1`, and their output is kept as plain text
+  (`stripAnsi`), so a test runner's colours never reach the critic or the drawer. npm is looked for where they run: `npm --version` in the lease
   (`startsIn`; the lease's environment is not the daemon's), or `hasCommand("npm")` when a test
   injects it, or the daemon's PATH without a sandbox port; without it the npm scripts are not
   run and `evidence.notChecked` says so. A command that cannot start in the lease is a failed
@@ -2269,7 +2272,11 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   missing script and a `<url>` are `notTried` lines. At most 3 commands and 1 server. `runTries`
   runs them in the review's lease (opened for checks or tries; refused: each target "was not
   tried: the sandbox could not be opened (…)"; no sandbox port: "there is no sandbox to run it
-  in"): a command with its samples written and `PYTHONDONTWRITEBYTECODE=1`, 30 s; a server
+  in"): a command with its samples written, `PYTHONDONTWRITEBYTECODE=1` and `NO_COLOR=1`, 30 s
+  (what it printed is plain text in the evidence: `stripAnsi` from `@forerunner/platform` takes
+  out the escape sequences a program prints anyway, and the process sandbox drops the host's
+  `FORCE_COLOR`, which CI and some people set: before, on CI at c8c16fb, `console.log(9)`
+  reached "See what was checked" and the critic as `\x1b[33m9\x1b[39m`); a server
   through `SERVER_DRIVER` (`.forerunner-try/serve.cjs`, input on stdin: argv with `$NODE`, ports,
   routes, 15 s to listen, 5 s a call), which prints its result after `@@FR-TRY@@`. The driver
   starts the server through a guard (the same file with `--guard`), which leads a process group

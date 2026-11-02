@@ -632,8 +632,10 @@ export class GitOps {
     )
       .stdout.split(/\r?\n/)
       .filter(Boolean);
+    // git's own patch, plain: a person's `color.ui=always` or external diff tool would make
+    // `git apply` refuse it, and the work would not come back.
     const patch = this.must(
-      await this.git(["diff", "--binary", `${ref}~1`, ref]),
+      await this.git(["diff", "--binary", "--no-color", "--no-ext-diff", `${ref}~1`, ref]),
       "diff --binary",
     ).stdout;
     const file = join(this.opts.cwd, ".git", "forerunner-bring-back.patch");

@@ -5,7 +5,9 @@ import {
   type RunResult,
   resolve,
   run as runProcess,
+  stripAnsi,
   systemClock,
+  withoutForcedColour,
 } from "@forerunner/platform";
 import { fingerprintOf } from "./fingerprint.ts";
 import { applyVerdictRules } from "./rules.ts";
@@ -55,7 +57,12 @@ export function checkCwd(cmd: Pick<CheckCommand, "cwd">, reviewCwd?: string): st
   return reviewCwd ? resolve(reviewCwd, cmd.cwd) : resolve(cmd.cwd);
 }
 
-/** Executes check commands in the worktree through platform.run with a timeout. */
+/**
+ * Executes check commands in the worktree through platform.run with a timeout. The output is
+ * read by the critic and the person, never shown in a terminal: the check runs without the
+ * daemon's forced colour (FORCE_COLOR=1, which some people and CI set) and with NO_COLOR=1, and
+ * what it colours anyway is stripped.
+ */
 export class ProcessCheckRunner implements CheckRunner {
   constructor(private readonly exec: ProcessRunner = runProcess) {}
 
@@ -65,12 +72,13 @@ export class ProcessCheckRunner implements CheckRunner {
   ): Promise<CheckResultEvidence> {
     const r = await this.exec(cmd.argv, {
       cwd: checkCwd(cmd, opts.cwd),
+      env: withoutForcedColour(process.env),
       timeoutMs: cmd.timeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS,
       allowFailure: true,
       signal: opts.signal,
     });
     const passed = r.code === 0 && !r.timedOut;
-    const body = `${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`.trim();
+    const body = stripAnsi(`${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`).trim();
     const tail = body.length > OUTPUT_TAIL ? `...${body.slice(-OUTPUT_TAIL)}` : body;
     const head = `${cmd.argv.join(" ")} -> ${r.timedOut ? "timeout" : `exit ${r.code}`} in ${r.durationMs} ms`;
     return {

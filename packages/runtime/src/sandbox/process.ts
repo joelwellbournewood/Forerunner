@@ -7,6 +7,7 @@ import {
   type RunResult,
   resolve,
   systemClock,
+  withoutForcedColour,
 } from "@forerunner/platform";
 import { scrubEnv } from "../agent/sdk.ts";
 import {
@@ -20,7 +21,8 @@ import type { NetworkPolicy, RunFn, Sandbox, SandboxLimits, SandboxRunOptions } 
 
 /**
  * Process sandbox: the stand-in when no container engine is reachable (ADR 0007). A child
- * process with a scrubbed environment (no credential-looking variables, PATH kept), cwd pinned
+ * process with a scrubbed environment (no credential-looking variables, no forced colour, PATH
+ * kept), cwd pinned
  * inside the worktree, wall-clock and output caps from the platform runner, and HTTP(S)_PROXY
  * pointing at an EgressProxy that enforces the task allowlist for well-behaved clients (and
  * denies everything for `{ mode: "none" }`). It is weaker than a container and says so: the
@@ -59,7 +61,13 @@ export class ProcessSandbox implements Sandbox {
     this.limits = opts.limits;
     this.proxy = proxy;
     this.run_ = opts.run ?? platformRun;
-    this.baseEnv = { ...scrubEnv(opts.baseEnv ?? process.env), ...(opts.env ?? {}) };
+    // What a command here prints is read (by the model, the critic, the person in "See what was
+    // checked"), never shown in a terminal: the host's forced colour (FORCE_COLOR=1, which some
+    // people and CI set) does not reach it, and NO_COLOR=1 does.
+    this.baseEnv = {
+      ...withoutForcedColour(scrubEnv(opts.baseEnv ?? process.env)),
+      ...(opts.env ?? {}),
+    };
   }
 
   static async create(opts: ProcessSandboxOptions): Promise<ProcessSandbox> {
