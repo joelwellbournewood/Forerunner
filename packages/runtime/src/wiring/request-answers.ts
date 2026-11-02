@@ -96,6 +96,23 @@ export const ANSWER_CARD_KEYS = {
   optionOnly: ["githost:rebase_conflict", "merge:left_open", "critic:session_review"],
 } as const;
 
+/**
+ * Whether a request is the chat's read-back of an answer to another card (`change_card.chat_only`,
+ * the commands executor's pending `request.answer` from chat or voice; design §3.8, §3.9): the
+ * conversation shows it with Yes and No, and the card it answers stays the one card in the
+ * Inbox. The Inbox, its counts and the chat's list of open cards leave it out (phase E: before,
+ * a medium-risk card answered in chat got a second yes/no card about it).
+ */
+export function isChatOnlyCard(row: { change_card: unknown }): boolean {
+  const card = row.change_card;
+  return (
+    !!card &&
+    typeof card === "object" &&
+    !Array.isArray(card) &&
+    (card as { chat_only?: unknown }).chat_only === true
+  );
+}
+
 /** The word of an inbox answer: the string itself, or the `choice` / `answer` of an object. */
 export function answerWord(answer: JsonValue | null): string | null {
   const raw =

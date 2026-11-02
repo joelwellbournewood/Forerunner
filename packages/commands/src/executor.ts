@@ -383,6 +383,13 @@ export class CommandExecutor {
       deviceId: ctx.deviceId ?? null,
       sessionId: ctx.sessionId ?? null,
     };
+    // Design §3.8, §3.9: an Inbox card answered in chat or voice is read back there, once, and
+    // the yes is said there; the card itself stays the one card about it in the Inbox. Its
+    // read-back is kept as a row (so it survives a restart and its fate is known) marked
+    // `chat_only`, which the Inbox and its counts leave out (`isChatOnlyCard` in the runtime):
+    // before, the Inbox showed a second yes/no card about the first (U-029).
+    const chatOnly =
+      card.command === "request.answer" && (ctx.source === "chat" || ctx.source === "voice");
     const request = await this.store.humanRequest.insert({
       human_id: ctx.humanId,
       project_id: card.projectId,
@@ -399,6 +406,7 @@ export class CommandExecutor {
         email_token: emailToken,
         expires_at: expiresAt,
         words_used: ctx.wordsUsed,
+        ...(chatOnly ? { chat_only: true } : {}),
         ...(calls ? { calls: JSON.parse(JSON.stringify(calls)), context: stored } : {}),
       } as never,
       author_human: ctx.actor.kind === "human" ? ctx.actor.id : null,

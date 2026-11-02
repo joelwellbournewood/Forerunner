@@ -839,6 +839,37 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("request.answer on a medium card from chat: one read-back the Inbox leaves out, and the yes answers the card by its short reference (phase E)", async () => {
+    const w = await world();
+    const plan = await w.store.humanRequest.insert({
+      kind: "approval",
+      why: "Intake for Bakery",
+      options: ["Approve and start", "Change the plan", "Reject"],
+      human_id: w.human.id,
+      risk: "medium",
+    });
+    const ref = plan.id.slice(0, 8);
+    const asked = await w.executor.execute({
+      name: "request.answer",
+      params: { request: ref, answer: "Approve and start" },
+      ctx: { ...w.ctx(), source: "chat" },
+    });
+    expect(asked.status).toBe("pending");
+    const pendingId = (asked as { pendingId: string }).pendingId;
+    // Filed within the same minute, the read-back's id starts like the card's own.
+    expect(pendingId.startsWith(ref)).toBe(true);
+    const row = await w.store.humanRequest.mustGet(pendingId);
+    expect((row.change_card as { chat_only?: unknown }).chat_only).toBe(true);
+    // Without the runtime's words the read-back quotes the card; never "reply yes to the email".
+    expect((asked as { readback: string }).readback).toBe(
+      'Answer "Intake for Bakery" with "Approve and start"?',
+    );
+    const yes = await w.executor.confirmByText(pendingId, "yes", w.ctx().actor);
+    expect(yes.status).toBe("done");
+    expect((await w.store.humanRequest.mustGet(plan.id)).answer).toBe("Approve and start");
+    await w.store.close();
+  });
+
   it("email.mode.set writes the capability row the email module reads, and undo restores the mode", async () => {
     const w = await world();
     const r = done(

@@ -332,6 +332,7 @@ import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
 import { startBlocked as startBlockedReason } from "./start-blocked.ts";
 import { fileTools } from "./tools.ts";
+import { requestViews } from "./views.ts";
 
 /**
  * Composition root for one install: opens the store and the vault, picks the model provider,
@@ -3037,6 +3038,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // U-034: the answer routes' check, so a word a structured card cannot act on is refused
       // in chat and voice too, with the card's options, and the card stays open.
       checkAnswer: (request, answer) => assertAnswerAccepted(request, answer),
+      // Phase E: a card answered in chat or voice is read back in the Inbox's own words (its
+      // title, the option and what it does) and its Done line is the reply once it is applied.
+      cardWords: async (request) => {
+        const [view] = await requestViews(store, [request]);
+        return view
+          ? {
+              title: view.title ?? request.why,
+              choices: (view.choices ?? []).map((c) => ({ label: c.label, explain: c.explain })),
+              outcome: view.outcome ?? null,
+            }
+          : null;
+      },
       // project.create by chat, voice or the palette (spec G.5, ADR 0058): the standard doc
       // set the dashboard's create scaffolds, in the background so the reply does not wait
       // for a clone; the outcome lands on the row (`summary_cache.docs`) as it does there.

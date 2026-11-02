@@ -77,7 +77,7 @@ import {
   voiceTurnView,
 } from "../voice/views.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
-import { assertAnswerAccepted, NOT_AN_OPTION } from "../wiring/request-answers.ts";
+import { assertAnswerAccepted, isChatOnlyCard, NOT_AN_OPTION } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
@@ -1652,13 +1652,19 @@ export function createDaemonApp(
     const asked = c.req.query("humanId");
     if (asked !== undefined && asked !== "" && asked !== humanId)
       return c.json({ ...NOT_YOURS, message: "not your inbox" }, 403);
-    const requests = await rt.store.humanRequest.open({ humanId }, { limit: 200 });
+    // The chat's read-back of an answer to a card is the conversation's, never a second card
+    // about the first (design §3.8, phase E): left out here and from the counts.
+    const requests = (await rt.store.humanRequest.open({ humanId }, { limit: 200 })).filter(
+      (r) => !isChatOnlyCard(r),
+    );
     // Design §3.8 "Answered": what was answered or withdrawn lately, newest first, so the
     // person sees what they answered and what came of it.
-    const answered = await rt.store.humanRequest.list(
-      { human_id: humanId, status: ["answered", "withdrawn"] } as never,
-      { orderBy: [{ column: "updated_at", direction: "desc" }], limit: INBOX_ANSWERED_KEPT },
-    );
+    const answered = (
+      await rt.store.humanRequest.list(
+        { human_id: humanId, status: ["answered", "withdrawn"] } as never,
+        { orderBy: [{ column: "updated_at", direction: "desc" }], limit: INBOX_ANSWERED_KEPT },
+      )
+    ).filter((r) => !isChatOnlyCard(r));
     const messages = await rt.store.message.inbox(
       { humanId },
       { limit: 200, orderBy: [{ column: "created_at", direction: "desc" }] },
@@ -2528,7 +2534,9 @@ export function createDaemonApp(
           });
       };
       const onInbox = async () => {
-        const open = await rt.store.humanRequest.open({ humanId: rt.human.id }, { limit: 500 });
+        const open = (
+          await rt.store.humanRequest.open({ humanId: rt.human.id }, { limit: 500 })
+        ).filter((r) => !isChatOnlyCard(r));
         void stream.writeSSE({
           event: "inbox.changed",
           data: JSON.stringify({

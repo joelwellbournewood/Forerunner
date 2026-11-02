@@ -2260,6 +2260,13 @@ waits on you" while 4 tasks waited on it).
 - **Chat answering a high-risk card**: `request.answer` whose card needs a device confirmation
   is refused with a pointer to the card ("Answer it on its card in the Inbox …"), no second card
   (commands.md).
+- **Chat answering a medium-risk card** (phase E): the read-back is the chat's own, in the card's
+  words (compose wires `cardWords` to `requestViews`); its pending row is `chat_only`
+  (`isChatOnlyCard`, `wiring/request-answers.ts`), which `GET /inbox` (open and Answered), the
+  stream's `inbox.changed` counts and the chat's `open_requests` leave out. The chat refers to a
+  card by `cardReference(id, openIds)` (`conversation/agent.ts`): the shortest start of its id,
+  8 characters or more, that no other open card shares; ids are time-ordered, so cards filed in
+  the same minute (a plan's person cards) shared their first 8 and the answer was refused.
 - **The Tasks tab** reads which card holds a task (`cardKindOf`, `TaskDisplay.blocker.cardKind`):
   a task waiting on its retry card is "Needs your decision: tried 4 times" and offers Answer, Try
   again (now offered from `needs_human` too; it withdraws the card) and Cancel, never Go ahead

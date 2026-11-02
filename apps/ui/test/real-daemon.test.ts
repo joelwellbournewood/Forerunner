@@ -4930,13 +4930,28 @@ describe("the UI client against the real daemon: research on an API key reads th
 describe("the UI client against the real daemon: answers do what the person said (phase E, answers)", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;
+  let chatCalls: ModelRequest[];
 
   beforeAll(async () => {
-    ({ rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_PERSON: "1" }));
+    ({ rt, client, chatCalls } = await composeWithRolePlayer({ FORERUNNER_BENCH_PERSON: "1" }));
   }, 120_000);
   afterAll(async () => {
     await rt?.close();
   });
+
+  /**
+   * The reference the chat's model has for a card, from what its last call was given (the
+   * `open_requests` line: "<reference>: [<project>] <the card in words>").
+   */
+  const referenceIn = (projectName: string): string => {
+    const told = JSON.stringify(chatCalls.at(-1)?.messages ?? []);
+    const found = new RegExp(`([0-9a-f-]{8,36}): \\[${projectName}[\\],]`).exec(told);
+    if (!found?.[1])
+      throw new Error(
+        `no reference for ${projectName} in the chat's context: ${told.slice(0, 1500)}`,
+      );
+    return found[1];
+  };
 
   /** A project planned from a brief, its plan card open in the Inbox. */
   const planned = async (name: string) => {
@@ -5006,5 +5021,94 @@ describe("the UI client against the real daemon: answers do what the person said
     const task = (await client.tasks(project.id)).find((t) => t.id === asked?.taskId);
     expect(task?.status).toBe("needs_human");
     expect(task?.display?.label).toMatch(/^Needs your answer/);
+  }, 60_000);
+
+  it("the plan card answered from the chat: its read-back is the chat's, the Inbox keeps one card, and Yes approves the plan from that card", async () => {
+    const { project, card, me, open, say } = await planned("Bakery chat");
+    const before = (await client.inbox(me.id)).needsYouCount;
+    // The chat's reference to the card, as its model has it: unique among the open cards,
+    // although the person card of the case before was filed within the same minute.
+    await say("what is waiting for me?");
+    const ref = referenceIn("Bakery chat");
+    expect(card.id.startsWith(ref)).toBe(true);
+    const asked = await say(
+      `tool: request_answer {"request": "${ref}", "answer": "Approve and start"}`,
+    );
+    const written = card.choices?.[0]?.explain ?? "";
+    expect(asked.pendingConfirmation?.readback).toBe(
+      `Approve and start (${card.title})? ${written}`,
+    );
+    // One card about the plan: the read-back is not filed as a second card beside it.
+    expect((await open()).map((r) => r.id)).toEqual([card.id]);
+    expect((await client.inbox(me.id)).needsYouCount).toBe(before);
+    const yes = await say("yes");
+    const tasks = await client.tasks(project.id);
+    expect(tasks.length).toBeGreaterThan(0);
+    // The card's Done line (a session of the case before still runs, so the start waits for it).
+    expect(yes.reply).toMatch(new RegExp(`^Plan approved: ${tasks.length} tasks written; `));
+    const inbox = await client.inbox(me.id);
+    const answered = inbox.requests.filter(
+      (r) => r.projectId === project.id && r.status !== "open",
+    );
+    // The Answered list holds the plan card with its Done line, and nothing about the read-back.
+    expect(answered.map((r) => r.id)).toEqual([card.id]);
+    expect(answered[0]?.outcome).toBe(yes.reply);
+  }, 60_000);
+
+  it("a failed task's card answered Try again from the chat: one card, and Yes tries the task again", async () => {
+    const project = await client.createProject({ name: "Review club", goal: "A contact page" });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write the Contact page in contact.html",
+      outcome: "contact.html says how to reach the club",
+      acceptance_criteria: ["contact.html exists"],
+      risk_tier: 1,
+      status: "in_review",
+      priority: 5,
+      specialist: "coder",
+      reason: "Wrote contact.html.",
+    } as never);
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    await fileReviewFailedRequest({
+      store: rt.store,
+      task,
+      session: null,
+      humanId: me.id,
+      agentId,
+      runId: null,
+      error: "the critic's model did not answer",
+    });
+    const open = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    const [card] = await open();
+    if (!card) throw new Error("no card");
+    const option = card.choices?.find((c) => c.label === "Try again");
+    expect(option).toBeDefined();
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    await say("what is waiting for me?");
+    const asked = await say(
+      `tool: request_answer {"request": "${referenceIn("Review club")}", "answer": "Try again"}`,
+    );
+    expect(asked.pendingConfirmation?.readback).toBe(
+      `Try again (${card.title})? ${option?.explain ?? ""}`.trim(),
+    );
+    expect((await open()).map((r) => r.id)).toEqual([card.id]);
+    await say("yes");
+    expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("answered");
+    expect((await open()).map((r) => r.id)).toEqual([]);
+    expect(["ready", "claimed", "in_progress", "in_review", "done"]).toContain(
+      (await rt.store.task.mustGet(task.id)).status,
+    );
   }, 60_000);
 });
