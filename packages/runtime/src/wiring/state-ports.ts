@@ -354,7 +354,20 @@ export class DecisionLog {
     const projectId = typeof input.project_id === "string" ? input.project_id : null;
     const question = typeof input.why === "string" ? input.why : "";
     if (projectId && question) {
-      const decision = await this.store.decision.findAnswered(projectId, question);
+      // Looked up the way `recordAnswer` stores it (phase E: before, by the whole `why`, while
+      // the answer is kept under the card's first sentence, or one row per question of a
+      // person's questions card): every question answered, nothing is asked again.
+      const card = input.change_card as { key?: unknown } | null | undefined;
+      const perQuestion =
+        typeof card?.key === "string" &&
+        card.key.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix) &&
+        (input.steps ?? []).length > 0;
+      const keys = perQuestion ? [...(input.steps ?? [])] : [cardQuestion(question)];
+      let decision: DecisionRow | null = null;
+      for (const key of keys) {
+        decision = (await this.store.decision.findAnswered(projectId, key)) ?? null;
+        if (!decision) break;
+      }
       if (decision) return { request: null, decision };
     }
     const request = await this.store.humanRequest.insert(input);

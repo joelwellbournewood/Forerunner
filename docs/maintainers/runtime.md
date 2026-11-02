@@ -1875,7 +1875,9 @@ calibrate [--force]`, `fr jobs handover <project> [--force]`, `fr jobs reports` 
 
 Answered decisions are recorded per project and never asked again unless superseded (spec
 J). `DecisionLog.ask()` opens a request of kind `decision` only when the project has no
-current answer to the same question (matching is case- and whitespace-insensitive through
+current answer to the same question, looked up as `recordAnswer` keys it (the card's first
+sentence, or every question of a person's questions card; phase E: before, the whole `why`, so a
+question of several sentences was asked again; matching is case- and whitespace-insensitive through
 `decision.question_normalised`); otherwise it returns the recorded decision and opens nothing.
 The daemon's answer route calls `recordAnswer()` for every answered decision request; a
 different answer to the same question supersedes the older row, the same answer is a no-op.
@@ -2708,13 +2710,17 @@ in one project cancelled a task in another. Now:
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
   who does it, the critic's last word and the first thing it still asks for (an open finding's
   required action); `sandboxReady` from the daemon for "Waiting for Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
-  failed with the reason, needs you, not reached, waiting for Docker, why it ended, the spend,
+  failed with the reason, needs you, not reached, waiting for Docker, how it ended in words
+  (`stopWords`: "How it ended: Stopped by you.", nothing when it ran out of work; phase E:
+  before, the raw reason, "Ended because: plan awaiting approval"), the spend,
   and `next_steps`; `# Next` before the first session), `# Working now` (the agent's running
   session: the task in flight and the specialist, minutes, steps, spend), `# Your files` (the
   project's folder: the first of `docsDirs`), and the open cards in full in the `open_requests`
   fact (`cardLine`: project, task, the whole question, a person-questions card's questions and
-  the options; this project's first, eight at most). The system prompt keeps only the projects
-  by name and goal (stage, autonomy and the cut summary are gone). `docs/status.md` is left out
+  the options; this project's first, eight at most; each card named by `cardReference`, which the
+  role prompt says is for `request_answer` only, never said to the person). The system prompt
+  keeps only the projects
+  by name and goal (stage, autonomy, the cut summary and, since phase E, the "[id …]" are gone). `docs/status.md` is left out
   of the doc search: its sections go stale and come in any order.
 - **The plan from the brief** (`planBlock`, from `ConversationDeps.intakeStatus`, which compose
   wires to `IntakeService.status`): `# Plan from the brief`, before the task list it explains:

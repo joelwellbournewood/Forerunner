@@ -352,6 +352,14 @@ describe("the chat sees the project (design §3.9: tasks, the last session, open
     expect(sent).toContain('Failed: "Style the page": the model call failed');
     expect(sent).toContain('Done: "Create the page skeleton"');
     expect(sent).toContain('Next: "Check that the files work together"');
+    // Phase E: how it ended in words, or nothing when it ran out of work; never the raw reason
+    // ("Ended because: nothing runnable", "plan awaiting approval").
+    expect(sent).not.toContain("Ended because");
+    expect(sent).not.toContain("nothing runnable");
+    // No ids reach the model's context: projects are named, never "[id <uuid>]".
+    const system = String(w.provider.calls[0]?.request.system);
+    expect(`${system}\n${sent}`).not.toMatch(/\[id [0-9a-f-]{36}\]/);
+    expect(`${system}\n${sent}`).not.toContain(w.quote);
     // The system prompt no longer carries a cut of it (nor stage and autonomy).
     expect(String(w.provider.calls[0]?.request.system)).not.toContain("Last session:");
     expect(String(w.provider.calls[0]?.request.system)).not.toMatch(/Stage build, autonomy/);

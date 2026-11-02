@@ -283,6 +283,7 @@ describe("what you say during a live session (design §3.9)", () => {
 
     gate.release?.();
     const res = await running;
+    expect(res.status).toBe("completed");
     expect(res.completed).toEqual([first.id, second.id]);
     // The next task's brief carries nothing the person said in the chat.
     expect(given.get(second.id)?.heard).toEqual([]);
@@ -345,7 +346,11 @@ describe("what you say during a live session (design §3.9)", () => {
     const r = await w.chat("stop and tell me what happened", { source: "voice" });
     // The stop ran through the registry at once; the rest of the line is reported, not asked
     // about, not answered by the model and not handed to the session as data.
-    expect(w.kills).toHaveLength(1);
+    // Stop now (design §4.9): that session, never the agent's scope (Stop all's freeze).
+    const live = (await w.store.session.active(w.alice)).find((s) => s.summary !== "conversation");
+    expect(w.kills).toEqual([
+      { scope: { sessionId: live?.id }, reason: expect.stringContaining("via voice") },
+    ]);
     expect(r.actions.map((a) => a.kind)).toEqual(["session.stop"]);
     expect(r.reply).toContain("Stopped");
     expect(r.reply).toContain('I did not act on "tell me what happened".');
@@ -370,7 +375,10 @@ describe("what you say during a live session (design §3.9)", () => {
     const r = await w.chat("stop", { source: "voice" });
     // The stop, not a "no" to the card: the registry's stop ran, the card is gone and its
     // cancellation is in the transcript, the reply says both, nothing reached the session.
-    expect(w.kills).toHaveLength(1);
+    const live = (await w.store.session.active(w.alice)).find((s) => s.summary !== "conversation");
+    expect(w.kills).toEqual([
+      { scope: { sessionId: live?.id }, reason: expect.stringContaining("via voice") },
+    ]);
     expect(r.actions.map((a) => a.kind)).toEqual(["session.stop"]);
     expect(r.pendingConfirmation).toBeNull();
     expect(r.reply).toContain("cancelled");

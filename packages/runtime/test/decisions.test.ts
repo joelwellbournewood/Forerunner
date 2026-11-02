@@ -94,6 +94,55 @@ describe("decision log (spec J)", () => {
     expect((await ask(log)).decision?.chosen).toBe("SQLite");
   });
 
+  it("a question of several sentences is never asked again either: ask looks it up as recordAnswer stores it (phase E)", async () => {
+    // recordAnswer keys a decision by the card's first sentence (`decisionPairs`); before, ask
+    // looked it up by the whole `why`, so a card that explained its question was asked again.
+    const log = new DecisionLog(store);
+    const long = `${question} The service stores about 10,000 rows; both work locally.`;
+    const first = await ask(log, long);
+    const answered = await store.humanRequest.answer(
+      (first.request as { id: string }).id,
+      (first.request as { version: number }).version,
+      "SQLite",
+      human,
+    );
+    const decision = await log.recordAnswer(answered, human);
+    expect(decision?.question).toBe(question);
+    const again = await ask(log, long);
+    expect(again.request).toBeNull();
+    expect(again.decision?.id).toBe(decision?.id);
+    // A person's questions card: asked again only while one of its questions has no answer.
+    const card = (steps: string[]) =>
+      log.ask({
+        human_id: human,
+        project_id: project,
+        kind: "decision",
+        why: '"Owner content" needs your answers. No specialist works on it.',
+        steps,
+        options: ["Cancel the task"],
+        blocking: true,
+        risk: "low",
+        change_card: { key: "person_questions:t1" },
+      });
+    const asked = await card(["What are the opening hours?", "What is on the menu?"]);
+    const replied = await store.humanRequest.answer(
+      (asked.request as { id: string }).id,
+      (asked.request as { version: number }).version,
+      {
+        answers: [
+          { question: "What are the opening hours?", answer: "7 to 18" },
+          { question: "What is on the menu?", answer: "Bread" },
+        ],
+      } as never,
+      human,
+    );
+    await log.recordAnswer(replied, human);
+    expect(
+      (await card(["What are the opening hours?", "What is on the menu?"])).request,
+    ).toBeNull();
+    expect((await card(["What are the opening hours?", "Who delivers?"])).request).not.toBeNull();
+  });
+
   it("records nothing for approvals or unanswered requests", async () => {
     const log = new DecisionLog(store);
     const approval = await store.humanRequest.insert({

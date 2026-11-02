@@ -1231,7 +1231,7 @@ export class ConversationAgent {
     const stable = projects
       .map(
         (p) =>
-          `- ${p.name}${p.id === projectId ? " (active)" : ""}: ${p.goal.replace(/\s+/g, " ").slice(0, 300)} [id ${p.id}]`,
+          `- ${p.name}${p.id === projectId ? " (active)" : ""}: ${p.goal.replace(/\s+/g, " ").slice(0, 300)}`,
       )
       .join("\n");
     const unread = await store.message.inbox({ humanId }, { unreadOnly: true, limit: 5 });
