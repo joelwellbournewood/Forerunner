@@ -159,7 +159,13 @@ with their milestone.
   of the cancel) applies that commit's diff on top of the folder as it is now
   (`GitOps.bringBack`: `git apply`, all or nothing): `restored` with the files, `conflict` when
   the folder changed in the same places since (the ref stays), `missing` when nothing is set
-  aside. Ignored files stay where they are. `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
+  aside. Ignored files stay where they are. `GitOps.commitFile(path, content, message)` commits
+  one file's content on top of HEAD through a temporary index (`GIT_INDEX_FILE`), the files in
+  the worktree untouched, and moves HEAD only if nothing moved it meanwhile; `fileAt(rev, path)`
+  reads a file as a commit holds it. The runtime uses them for the person's answers in a
+  workspace's decision record, so a run going on there never holds them in its change set (a
+  cancel's `setAside` took them out before, phase C review). A variable a caller passes in
+  `env` adds to the ones `GitOps` sets. `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
   and `setRemote` for it and for the repository creation; `createRepo` takes `autoInit` (default
   true, the host's README commit; false: an empty repository for a first push).
 - `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests

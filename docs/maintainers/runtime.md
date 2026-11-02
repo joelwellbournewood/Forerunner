@@ -1711,6 +1711,34 @@ next task's listing without them, no review, the log line; Undo after a restart;
 the commands while the critic reviews: no review row, no critic's call, the files out),
 `tasks.test.tsx` (the Cancel dialog says it) and `real-daemon.test.ts` in `apps/ui`.
 
+The review of the fix found three holes, closed so (`continuity-cancel.test.ts`, the cases after
+the first two describes, and their `real-daemon.test.ts` and `tasks.test.tsx` siblings):
+- **Only a live run or review is set aside, and only then does the cancel say so.** The
+  commands' `stopTask` port answers whether `KillSwitch.stopTask` stopped something
+  (`stoppedRuns > 0`); `moveSentence` gets `work` only then. The runner sets aside only when the
+  move stopped its run or review (`stoppedByMove`: the task's or review's controller was aborted
+  with a reason that is not the session's). A task in review that no session reviews (its
+  review failed or a finding is open, with its card; or Forerunner closed during its review)
+  reads 'Cancelled "X".' and keeps its files; before, the line promised they were removed. Such
+  a task with its retry card reads "Needs your decision" with Answer and Cancel
+  (`taskDisplay`, `actionsFor`), not "Being reviewed". A move recorded after the run is
+  recorded before a Stop now that came with it ends the session, so a cancel's files go as its
+  line said.
+- **Stop now, Stop all or Quit during the review put the task back to Ready.** The critic's
+  stopped review throws `killed` (no Review row); with the session's own controller aborted
+  and the task still `in_review`, the runner puts it back with `restoreStatus(…, "in_review",
+  "Stopped by you")` (to `ready`, no claim, attempt unchanged; the `in_review` move had cleared
+  the claim, so `releaseAll` never reached it), names it in the stop line ('during "X". It is
+  ready again.') and the next session runs it again; its files stay (ADR 0102). Before, it
+  stayed "Being reviewed" for good with no card, and the Start dialog said nothing could run.
+- **The person's answers stay when a run is cancelled.** `writeAnswersToDecisionDoc` also
+  commits the answers into the workspace's git on top of HEAD (`answersIntoBaseline`:
+  `GitOps.commitFile`, HEAD's copy of the record plus the new section, through a temporary
+  index, the files in the folder untouched), so a run going on in that folder, measured
+  against HEAD, never holds them: a cancel's `setAside` leaves them, Undo brings back only the
+  run's files, and the critic's diff no longer reads them as the run's work. A workspace with
+  no git yet is left as it is (the first run's baseline takes the answers in).
+
 **Every task a run leaves waiting has exactly one card (`session/cannot-run-card.ts`; live walk
 4).** Before, a run that could not go on and asked nothing (the researcher refused at once on an
 API key, a specialist name the registry does not know, no other specialist after two failed

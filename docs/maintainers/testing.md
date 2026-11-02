@@ -2482,6 +2482,10 @@ them, the retry's request, which carries the refused reply, getting the plan), s
 the app's own tools, a `submit_review` verdict, a chat reply that says what context it got
 and quotes back the plan's state (`# Plan from the brief`) and the first task line it was told
 (`chatFacts`), so a journey can check that a reply names a task as a real model's would.
+`FORERUNNER_BENCH_DELAY_MS` waits before each reply but the critic's; `criticDelayMs`
+(`FORERUNNER_BENCH_CRITIC_DELAY_MS`, default 0) waits before each of the critic's, abortable
+like the other, so Stop now or Cancel during "Being reviewed" can be walked and tested
+(`real-daemon.test.ts` sets it on its role player for the phase C review case).
 Every request is a line of `<home>/bench/model-calls.jsonl` (`call-log.ts`), which is how a
 tester sees what the app sends a model. `--provider bench-live` wraps the Messages API in the
 same log (`withModelCallLog`, the key replaced whole and in part, every string redacted); it

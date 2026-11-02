@@ -225,6 +225,21 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       });
     }
     case "in_review":
+      // A review that ended without a verdict the work can follow (it failed, U-045, or an
+      // earlier finding is still open) waits on its card: no critic is checking the work, and
+      // only the card moves it (phase C review: it read "Being reviewed", and Cancel promised
+      // to stop a review that was not running).
+      if (card && cardKindOf(card) === "retry")
+        return display("answer", "Needs your decision", "warn", {
+          detail: "Its card is in the Inbox: try again, mark it done anyway, or cancel it.",
+          blocker: {
+            kind: "card",
+            taskId: null,
+            requestId: card.id,
+            title: null,
+            cardKind: "retry",
+          },
+        });
       return display("review", "Being reviewed", "info", {
         detail: "The critic is checking the work.",
       });

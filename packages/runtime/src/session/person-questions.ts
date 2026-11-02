@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { type Clock, errorMessage, join, log } from "@forerunner/platform";
+import { GitOps } from "@forerunner/capabilities/githost/git";
+import { type Clock, errorMessage, join, log, relative, toPosix } from "@forerunner/platform";
 import type {
   HumanRequestRow,
   JsonObject,
@@ -545,12 +547,59 @@ export async function writeAnswersToDecisionDoc(input: {
       input.answers,
     ),
   ].join("\n");
+  await mkdir(join(input.workspace, ...DECISION_DOC_DIR.split("/")), { recursive: true });
+  await writeFile(path, withSection(current, section), "utf8");
+  await answersIntoBaseline(input.workspace, path, input.request.id, section);
+  return path;
+}
+
+/** The decision doc `current` with `section` appended (a title first when it is empty). */
+function withSection(current: string, section: string): string {
   const head = current.trim()
     ? `${current.replace(/\s*$/, "")}\n\n`
     : "# 0001: Project decisions\n\nDecisions about this project, with the answers you gave in the Inbox.\n\n";
-  await mkdir(join(input.workspace, ...DECISION_DOC_DIR.split("/")), { recursive: true });
-  await writeFile(path, `${head}${section.replace(/\s*$/, "")}\n`, "utf8");
-  return path;
+  return `${head}${section.replace(/\s*$/, "")}\n`;
+}
+
+/** Who commits the answers into a workspace (as the executor's own baseline commits). */
+const WORKSPACE_GIT_IDENTITY = { name: "Forerunner", email: "forerunner@localhost" } as const;
+
+/**
+ * The answers join the workspace's baseline as they are written (phase C review). A run going
+ * on in the same folder is measured against HEAD (its "Workspace before ..." commit): the
+ * critic reads `git diff HEAD` as the run's work, and a cancel of the run takes everything
+ * since HEAD out of the folder (ADR 0104). Left uncommitted, answers given while another task
+ * ran were taken out with that run when the person cancelled it, while the person task stayed
+ * done with "the answers are in the decision record". So they are committed on top of HEAD as
+ * the file HEAD holds plus this section, with the files in the folder untouched: the run's own
+ * edits stay its change. A folder that is no git repository yet (no run worked there) is left
+ * as it is: the first run's baseline takes the answers in. A failure is logged; the answers
+ * are in the file either way.
+ */
+async function answersIntoBaseline(
+  workspace: string,
+  path: string,
+  requestId: string,
+  section: string,
+): Promise<void> {
+  if (!existsSync(join(workspace, ".git"))) return;
+  try {
+    const git = new GitOps({ cwd: workspace, identity: WORKSPACE_GIT_IDENTITY });
+    if (!(await git.hasCommits())) return;
+    const rel = toPosix(relative(workspace, path));
+    const before = (await git.fileAt("HEAD", rel)) ?? "";
+    if (before.includes(marker(requestId))) return;
+    await git.commitFile(
+      rel,
+      withSection(before, section),
+      `Answers recorded in ${rel} (request ${requestId})`,
+    );
+  } catch (e) {
+    log("person-questions").warn("the answers were not committed into the workspace", {
+      requestId,
+      error: errorMessage(e),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------------------

@@ -2920,10 +2920,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // message between tasks); its undo withdraws the message (wiring/session-ports.ts).
       ...sessionPausePorts({ store, kill, agentId: agent.id, humanId: human.id }),
       // A pause, stop or cancel of a RUNNING task by chat or voice stops its run at once, as
-      // the Tasks tab's route does (U-039); the session goes on with the rest.
-      stopTask: (taskId, reason) => {
-        kill.stopTask(taskId, reason);
-      },
+      // the Tasks tab's route does (U-039); the session goes on with the rest. Whether a live
+      // run or review was stopped is what a cancel's sentence says of its work (phase C).
+      stopTask: (taskId, reason) => kill.stopTask(taskId, reason).stoppedRuns > 0,
       // Undo of the cancel of a task that ran (phase C): what the session took out of the
       // folder when the person cancelled it goes back in (`PrTaskExecutor.bringBack`).
       bringBackWork: async (taskId) => {

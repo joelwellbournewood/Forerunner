@@ -56,8 +56,12 @@ export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: s
  */
 export function actionsFor(
   key: TaskDisplayKey,
-  task?: Pick<TaskView, "specialist"> & Partial<Pick<TaskView, "display">>,
+  task?: Pick<TaskView, "specialist"> & Partial<Pick<TaskView, "display" | "status">>,
 ): readonly TaskActionKey[] {
+  // A task in review whose card waits (its review failed, or a finding is still open): the
+  // card's own options move it (Try again there sends it back to work); here Answer opens the
+  // card, and Cancel drops it. No review is running, so Cancel stops nothing.
+  if (key === "answer" && task?.status === "in_review") return ["answer", "cancel"];
   if (key === "answer" && task?.display?.blocker?.cardKind === "retry")
     return ["answer", "try_again", "cancel"];
   // Stopped at its own budget (live walk 2, B2): its card raises the budget; Edit changes it.

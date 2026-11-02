@@ -126,8 +126,10 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
   and the row offers **Answer**, **Try again** and **Cancel**), **Needs your decision: its
   budget is used** and **Needs your decision: it could not run** (its card in the Inbox says
-  why; the row offers **Answer** and **Cancel**, and **Edit** is in the task), **Paused by
-  you**, **Failed:
+  why; the row offers **Answer** and **Cancel**, and **Edit** is in the task), **Needs your
+  decision** on a task whose review could not finish or found something still open (its card
+  offers **Try again**, **Mark done anyway** and **Cancel task**; the row offers **Answer** and
+  **Cancel**), **Paused by you**, **Failed:
   why**, **Done** (or **Done: accepted without review**), **Cancelled**. The rows follow a running session
   by themselves. Each task offers what fits its status, each with a line saying what it does:
   **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
@@ -137,8 +139,10 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   **Reopen** (a cancelled task) and **Cancel** (it names the tasks that wait on it and will be
   stuck; on a task that is running or being reviewed its run or review stops at once, and what
   it changed is taken out of the project's folder before the next task starts, so nothing builds
-  on work you dropped; **Undo** puts the files back; a task that already has a pull request
-  keeps it open). Every action asks for an optional **note for the agent**, which goes into the task's
+  on work you dropped; **Undo** puts the files back, and the answers you gave in the Inbox
+  meanwhile stay in the decision record; a task that already has a pull request keeps it open.
+  The line after Cancel says what happened: a task whose review is not running, because its
+  card waits for you, keeps its files and reads only "Cancelled"). Every action asks for an optional **note for the agent**, which goes into the task's
   next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it
@@ -308,7 +312,8 @@ from the critic's session review.
 **Stopping and crashes.** A session's page has two stops. **Stop after this task** (the usual
 one) lets the task in flight finish, starts no other, and ends the session ("Stopped after the
 task, as asked"). **Stop now** asks once, then stops the task at once: it goes back to Ready with
-"Stopped by you", and what it wrote so far stays in the project's folder. The session reads
+"Stopped by you", and what it wrote so far stays in the project's folder. A task the critic was
+reviewing goes back to Ready too, and the next session runs and reviews it again. The session reads
 "Stopped by you", not an error, and the Inbox gets no line about your own click unless the
 session finished something first. **Stop all** in the header (or the tray, `fr kill`, a kill from
 your phone, or "stop everything" typed in Chat) stops every session the same way: they read

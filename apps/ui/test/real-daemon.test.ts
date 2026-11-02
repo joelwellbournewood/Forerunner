@@ -8,6 +8,7 @@ import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/comp
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
+import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -4056,5 +4057,101 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       'Undone: reopened the task "Write the About page in about.html"; it is ready again and a session picks it up. What it changed is back in the folder.',
     );
     expect(await files()).toContain("about.html");
+  });
+
+  it("Stop now while the critic reviews: the task is Ready again with its file and no review, and the next session reviews it (design §4.9, phase C review)", async () => {
+    const project = await client.createProject({ name: "Contact club", goal: "A contact page" });
+    const created = await client.createTask(project.id, {
+      title: "Write the Contact page in contact.html",
+      outcome: "contact.html says how to reach the club",
+      acceptanceCriteria: ["contact.html exists"],
+      priority: "high",
+      status: "ready",
+      dependsOn: [],
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const row = async () => (await client.tasks(project.id)).find((t) => t.id === created.id);
+    const files = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
+    await allEnded();
+    // The stand-in critic takes its time, as the real model's review does.
+    bench.criticDelayMs = 60_000;
+    let sessionId = "";
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      sessionId = (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      await eventually(
+        async () => (await row())?.display?.key === "review",
+        "the critic to review the task",
+        async () => `${(await row())?.display?.label}`,
+        20_000,
+      );
+      // The session page's Stop now.
+      await client.stopSession(sessionId);
+      await allEnded();
+    } finally {
+      bench.criticDelayMs = 0;
+    }
+    const after = await row();
+    expect(after?.status).toBe("ready");
+    expect(after?.display?.label).toBe("Ready");
+    // Stop now keeps what it wrote (ADR 0102); no review was recorded, no card waits.
+    expect(await files()).toContain("contact.html");
+    expect((await client.task(created.id)).runs.filter((r) => r.kind !== "work")).toEqual([]);
+    const me = await client.me();
+    expect(
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === created.id && r.status === "open",
+      ),
+    ).toEqual([]);
+    expect((await client.session(sessionId)).summary).toContain(
+      '"Write the Contact page in contact.html" is ready to continue.',
+    );
+    expect((await client.startCheck(project.id)).runnable.map((t) => t.taskId)).toContain(
+      created.id,
+    );
+    // The next Start runs it again, and the critic reviews it this time.
+    await runSession(project.id);
+    expect((await row())?.status).toBe("done");
+    expect((await client.task(created.id)).runs.some((r) => r.kind !== "work")).toBe(true);
+  });
+
+  it("a task in review whose card waits reads Needs your decision, and Cancel says only that it is cancelled (phase C review)", async () => {
+    const project = await client.createProject({ name: "Review club", goal: "A contact page" });
+    // Its review failed in a session that ended (U-045): in review, with its card; no review runs.
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write the Contact page in contact.html",
+      outcome: "contact.html says how to reach the club",
+      acceptance_criteria: ["contact.html exists"],
+      risk_tier: 1,
+      status: "in_review",
+      priority: 5,
+      specialist: "coder",
+      reason: "Wrote contact.html.",
+    } as never);
+    const me = await client.me();
+    await fileReviewFailedRequest({
+      store: rt.store,
+      task,
+      session: null,
+      humanId: me.id,
+      agentId: (await client.agents())[0]?.id ?? "",
+      runId: null,
+      error: "the critic's model did not answer",
+    });
+    const view = (await client.tasks(project.id)).find((t) => t.id === task.id);
+    expect(view?.display).toMatchObject({
+      key: "answer",
+      label: "Needs your decision",
+      blocker: { kind: "card", cardKind: "retry" },
+    });
+    const cancelled = await client.taskAction(task.id, {
+      version: view?.version ?? 0,
+      action: "cancel",
+    });
+    expect(cancelled.change?.sentence).toBe(
+      'Cancelled "Write the Contact page in contact.html". Its card in the Inbox was withdrawn.',
+    );
   });
 });

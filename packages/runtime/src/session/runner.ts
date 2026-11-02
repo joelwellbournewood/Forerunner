@@ -783,11 +783,24 @@ export class SessionRunner {
       heldClaims.clear();
     };
     /**
+     * Whether a person's move of the task stopped this live run or review (`KillSwitch.stopTask`
+     * aborts the task's own controller), not the session's own stop: a controller the session
+     * aborted carries the session's abort reason.
+     */
+    const stoppedByMove = (c: AbortController) =>
+      c.signal.aborted && c.signal.reason !== controller.signal.reason;
+    /**
      * A task someone else moved while this session held it (U-039: during its run; U-045:
      * during its review): the state set stands, it is counted in the list of that state and
-     * named, and the session goes on.
+     * named, and the session goes on. `stopped`: the move stopped its live run or review
+     * (`stoppedByMove`), which is when the cancel's line promised its work is removed.
      */
-    const recordMove = async (t: TaskRow, outcome: string, during: "run" | "review") => {
+    const recordMove = async (
+      t: TaskRow,
+      outcome: string,
+      during: "run" | "review",
+      stopped: boolean,
+    ) => {
       const moved: MovedWhileRunning = {
         taskId: t.id,
         title: t.title,
@@ -805,10 +818,13 @@ export class SessionRunner {
       (into[t.status] ?? skipped).push(t.id);
       // Cancelled while it ran or was reviewed (phase C, live walk 2 C1): what its run changed
       // is taken out of the folder, kept for Undo of the cancel, before the next task starts,
-      // so no later task builds on work the person dropped. A failure here leaves the files
+      // so no later task builds on work the person dropped. Only when the cancel stopped the
+      // live run or review: then the cancel's line said so (`moveSentence`, from what
+      // `stopTask` stopped); a cancel that came between the run's end and its review stopped
+      // nothing and said nothing about the files, which stay. A failure here leaves the files
       // where they are and says so in the log; it never ends the session.
       let setAside: string[] | null = null;
-      if (t.status === "cancelled" && this.deps.executor.setAside) {
+      if (t.status === "cancelled" && stopped && this.deps.executor.setAside) {
         try {
           setAside = await this.deps.executor.setAside(t);
         } catch (e) {
@@ -1543,14 +1559,19 @@ export class SessionRunner {
           }
           // The task is read again now that the run returned: a state a person set while it ran
           // stands, and the runner never moves the task from it (U-039). A session stopped by
-          // the kill switch still ends as killed.
+          // the kill switch still ends as killed, after a task the person moved meanwhile is
+          // recorded (a cancel's work set aside, as its line said, also when Stop now came
+          // right after it).
+          if (task.status !== "in_progress") {
+            runningTask = null;
+            await recordMove(task, result.outcome, "run", stoppedByMove(taskController));
+            if (controller.signal.aborted && result.outcome === "killed")
+              throw new ForerunnerError("killed", "session stopped during task");
+            continue;
+          }
           if (controller.signal.aborted && result.outcome === "killed")
             throw new ForerunnerError("killed", "session stopped during task");
           runningTask = null;
-          if (task.status !== "in_progress") {
-            await recordMove(task, result.outcome, "run");
-            continue;
-          }
           if (result.outcome === "usage_limit") {
             // U-078, ADR 0100: the credential's usage limit stopped the run. The source rests
             // (the executor did that); the task goes back to ready by its claim's release, not
@@ -1614,9 +1635,11 @@ export class SessionRunner {
             );
             // A task cancelled between its run and its review is never reviewed (phase C, live
             // walk 2 C1: the critic "accepted" a cancelled task).
+            // Nothing live was stopped then (its run had ended, its review had not begun), so
+            // its files stay, as the cancel's line said.
             const toReview = await store.task.mustGet(task.id);
             if (toReview.status !== "in_review") {
-              await recordMove(toReview, result.outcome, "review");
+              await recordMove(toReview, result.outcome, "review", false);
               continue;
             }
             // The review is stopped with the task's run when the person cancels it meanwhile
@@ -1657,15 +1680,35 @@ export class SessionRunner {
             if (!reviewed) {
               inReview.push(task.id);
             } else if ("failed" in reviewed) {
-              // U-045: the review failed (an error, not a verdict). A session stopped meanwhile
-              // ends as killed; a task the person moved meanwhile stays as they set it; else
-              // the task waits in review and the person gets one card whose options act.
-              if (controller.signal.aborted)
-                throw new ForerunnerError("killed", "session stopped during the review");
+              // U-045: the review failed (an error, not a verdict), or was stopped (the critic
+              // records no review then). A task the person moved meanwhile stays as they set it
+              // (a cancel's work set aside when the cancel stopped the review); a session
+              // stopped meanwhile ends as killed; else the task waits in review and the person
+              // gets one card whose options act.
               const now = await store.task.mustGet(task.id);
               if (now.status !== "in_review") {
-                await recordMove(now, "review_failed", "review");
+                await recordMove(now, "review_failed", "review", stoppedByMove(reviewController));
+                if (controller.signal.aborted)
+                  throw new ForerunnerError("killed", "session stopped during the review");
                 continue;
+              }
+              if (controller.signal.aborted) {
+                // Stop now, Stop all, Quit (design §4.9) or the session's own end stopped the
+                // review: the task goes back to Ready, its attempt unchanged and its files
+                // kept, as for a stopped run, and the next session runs it again. Before, it
+                // stayed "Being reviewed" for good: the in_review move had given up its claim,
+                // so the session's release at its end never reached it, no card was filed and
+                // no session plans a task in review (phase C review).
+                const stop = personStopOf(controller.signal.reason);
+                await store.task.restoreStatus(
+                  now.id,
+                  now.version,
+                  "in_review",
+                  stop ? taskReasonForStop(stop) : "the session ended during its review",
+                  { agentId: agent.id },
+                );
+                runningTask = { id: task.id, title: task.title };
+                throw new ForerunnerError("killed", "session stopped during the review");
               }
               inReview.push(task.id);
               reviewFailed.push(task.id);

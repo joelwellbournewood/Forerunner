@@ -120,17 +120,28 @@ export function actionTarget(
   return { to };
 }
 
+/**
+ * Whether the fake models a live run or review of the task, which a person's move stops (the
+ * daemon asks the kill switch): a running task, or one being reviewed with no card waiting
+ * (one whose card waits reads "Needs your decision": no review runs).
+ */
+export function liveWork(view: TaskView): boolean {
+  const key = view.display?.key;
+  return key === "running" || (view.status === "in_review" && key === "review");
+}
+
 /** The sentence the daemon's command writes for a person's action (`moveSentence`). */
 export function actionSentence(
   task: TaskView,
   from: string,
   to: string,
-  extra: { withdrawn?: number; noted?: boolean; stuck?: readonly string[] } = {},
+  extra: { withdrawn?: number; noted?: boolean; stuck?: readonly string[]; live?: boolean } = {},
 ): string {
   const t = `"${task.title}"`;
   let s: string;
-  // A task cancelled while it ran or was reviewed (phase C): what happens to its work.
-  const ran = ["claimed", "in_progress", "in_review"].includes(from);
+  // A task cancelled while it ran or was reviewed (phase C): what happens to its work. As the
+  // daemon, said only when a live run or review was stopped (`liveWork`).
+  const ran = extra.live ?? ["claimed", "in_progress", "in_review"].includes(from);
   const what = from === "in_review" ? "its review" : "its run";
   if (to === "cancelled" && ran)
     s = task.prUrl

@@ -80,6 +80,12 @@ export interface BenchOptions {
    * 250). Not applied to the critic, whose monthly calibration makes some 160 calls.
    */
   delayMs: number;
+  /**
+   * Wait before each reply of the critic (FORERUNNER_BENCH_CRITIC_DELAY_MS, default 0), so a
+   * task can be seen "Being reviewed" and stopped or cancelled then, as with the real model,
+   * whose review takes tens of seconds. Leave it at 0 when the monthly calibration may run.
+   */
+  criticDelayMs?: number;
   clock?: Clock;
 }
 
@@ -112,6 +118,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
   const bad = (env.FORERUNNER_BENCH_INTAKE_BAD ?? "").trim().toLowerCase();
   const rawDelay = (env.FORERUNNER_BENCH_DELAY_MS ?? "").trim();
   const delay = rawDelay ? Number(rawDelay) : 250;
+  const criticDelay = Number((env.FORERUNNER_BENCH_CRITIC_DELAY_MS ?? "").trim() || 0);
   return {
     log,
     plan: {
@@ -132,6 +139,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
     intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
     delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 250,
+    criticDelayMs: Number.isFinite(criticDelay) && criticDelay > 0 ? criticDelay : 0,
   };
 }
 
@@ -244,8 +252,8 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
         });
       yield { type: "message_start", model: req.model };
       try {
-        if (opts.delayMs > 0 && guess.role !== "critic")
-          await clock.sleep(opts.delayMs, req.signal);
+        const wait = guess.role === "critic" ? (opts.criticDelayMs ?? 0) : opts.delayMs;
+        if (wait > 0) await clock.sleep(wait, req.signal);
       } catch {
         logged.stopReason = "aborted";
         record();

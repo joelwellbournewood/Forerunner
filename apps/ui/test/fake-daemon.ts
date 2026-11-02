@@ -131,6 +131,7 @@ import {
   createTaskMeta,
   type FakeTaskMeta,
   fakeTaskDetail,
+  liveWork,
   projectTaskViews,
 } from "./fake-tasks.ts";
 import {
@@ -1726,6 +1727,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if ("refused" in target) return errorBody(c, 409, "conflict", target.refused);
     const from = task.status;
     const { action, note } = parsed.data;
+    // As the daemon: whether the move stops a live run or review (the cancel's sentence and
+    // whether its work is set aside follow it).
+    const live = liveWork(viewOf(task));
+    const setAside = target.to === "cancelled" && live && !task.prUrl;
     // The row as it was, for the undo (as the daemon's change log records it).
     const was = {
       reason: task.reason,
@@ -1794,6 +1799,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...(noteId ? { note_id: noteId } : {}),
         ...(withoutAnswers ? { without_answers_note_id: withoutAnswers } : {}),
         ...(withdrawn ? { withdrawn_requests: withdrawnIds } : {}),
+        // The fake's own mark: the undo says the work is back, as the daemon's does.
+        ...(setAside ? { set_aside: true } : {}),
       },
       scope: "project",
       projectId: task.projectId,
@@ -1804,6 +1811,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         withdrawn,
         noted: noteId !== null,
         stuck,
+        live,
       }),
       reversible: true,
     });
@@ -1831,6 +1839,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         `task: illegal transition ${task.status} -> ${parsed.data.to}`,
       );
     const from = task.status;
+    const live = liveWork(viewOf(task));
+    const setAside = parsed.data.to === "cancelled" && live && !task.prUrl;
     task.status = parsed.data.to;
     task.reason = parsed.data.reason ?? parsed.data.note ?? `Moved by you`;
     if (parsed.data.to === "needs_human") state.taskMeta.pausedByPerson.add(task.id);
@@ -1843,12 +1853,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
       ],
       before: { task_id: task.id, status: from, title: task.title },
-      after: { task_id: task.id, status: parsed.data.to, title: task.title },
+      after: {
+        task_id: task.id,
+        status: parsed.data.to,
+        title: task.title,
+        ...(setAside ? { set_aside: true } : {}),
+      },
       scope: "project",
       projectId: task.projectId,
       source: "ui",
       wordsUsed: parsed.data.reason ?? "",
-      sentence: actionSentence(task, from, parsed.data.to),
+      sentence: actionSentence(task, from, parsed.data.to, { live }),
       reversible: true,
     });
     return c.json(changeOf(task, entry));
@@ -5116,6 +5131,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       note_id?: string;
       without_answers_note_id?: string;
       withdrawn_requests?: string[];
+      set_aside?: boolean;
     };
     const task = state.tasks.find((t) => t.id === after.task_id);
     const words = (s: string) =>
@@ -5168,6 +5184,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         after.status === "cancelled"
           ? `Undone: reopened the task "${task.title}"; it ${again}${back ? ` and ${back}` : ""}.`
           : `Undone: the task "${task.title}" ${again}${back ? `; ${back}` : ""}.`;
+      // As the daemon (phase C): the undo of a cancel that set a run's work aside puts it back.
+      if (after.set_aside) sentence += " What it changed is back in the folder.";
     }
     if (first?.name === "task.update" && task) {
       const fields = ((before as { fields?: Record<string, unknown> } | null)?.fields ??

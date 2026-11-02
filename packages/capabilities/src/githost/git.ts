@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   errorMessage,
   ForerunnerError,
@@ -251,9 +253,10 @@ export class GitOps {
       return await runner([...this.base(), ...name, ...args], {
         cwd: creates ? undefined : this.opts.cwd,
         timeoutMs: this.timeoutMs(),
-        env,
         allowFailure: true,
         ...extra,
+        // A caller's variables (a temporary index, `commitFile`) add to ours, never drop them.
+        env: extra.env ? { ...env, ...extra.env } : env,
       });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") {
@@ -598,6 +601,55 @@ export class GitOps {
     }
     this.must(await this.git(["update-ref", "-d", ref]), "update-ref -d");
     return { result: "restored", files };
+  }
+
+  /** The file `path` (relative, `/`-separated) as the commit `rev` holds it; null when absent. */
+  async fileAt(rev: string, path: string): Promise<string | null> {
+    const r = await this.git(["cat-file", "blob", `${rev}:${path}`]);
+    return r.code === 0 ? r.stdout : null;
+  }
+
+  /**
+   * Commits `content` as the file `path` (relative, `/`-separated) on top of HEAD, leaving the
+   * files in the worktree as they are: an app's own write to a folder a run may be changing at
+   * the same time (the person's answers in the decision record, phase C) joins the baseline the
+   * run's change set is measured against, so that set (`git diff HEAD`, the critic's evidence;
+   * `setAside`, a cancel) holds only the run's own changes. The commit is built in a temporary
+   * index, and HEAD moves only if nothing moved it meanwhile; the worktree's index then takes
+   * the file's new entry. Returns the commit, or null when HEAD already holds that content.
+   */
+  async commitFile(path: string, content: string, message: string): Promise<string | null> {
+    const head = this.must(await this.git(["rev-parse", "HEAD"]), "rev-parse HEAD").stdout.trim();
+    const blob = this.must(
+      await this.git(["hash-object", "-w", "--stdin"], { input: content }),
+      "hash-object",
+    ).stdout.trim();
+    const entry = `100644,${blob},${path}`;
+    const index = join(tmpdir(), `forerunner-index-${randomUUID()}`);
+    const env = { GIT_INDEX_FILE: index };
+    try {
+      this.must(await this.git(["read-tree", head], { env }), "read-tree");
+      this.must(
+        await this.git(["update-index", "--add", "--cacheinfo", entry], { env }),
+        "update-index",
+      );
+      const tree = this.must(await this.git(["write-tree"], { env }), "write-tree").stdout.trim();
+      const before = this.must(
+        await this.git(["rev-parse", `${head}^{tree}`]),
+        "rev-parse tree",
+      ).stdout.trim();
+      if (tree === before) return null;
+      const commit = this.must(
+        await this.git(["commit-tree", tree, "-p", head, "-m", message]),
+        "commit-tree",
+      ).stdout.trim();
+      this.must(await this.git(["update-ref", "HEAD", commit, head]), "update-ref");
+      // Best effort: without it `git status` reads the file as staged back to its old content.
+      await this.git(["update-index", "--add", "--cacheinfo", entry]);
+      return commit;
+    } finally {
+      rmSync(index, { force: true });
+    }
   }
 
   /** Where a worktree for a task should live under a root. */

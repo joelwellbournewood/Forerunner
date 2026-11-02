@@ -327,14 +327,18 @@ async function personMove(
   const noteId = await queueNote(ctx, task, opts.note);
   // A task that is running stops now (U-039), and one being reviewed too (a cancelled task is
   // never reviewed, phase C); the session goes on with the rest.
-  if (RUNNING.includes(from) || from === "in_review")
-    await ctx.ports.stopTask?.(task.id, `${statusWords(to)} by you`);
+  const stopped =
+    RUNNING.includes(from) || from === "in_review"
+      ? await ctx.ports.stopTask?.(task.id, `${statusWords(to)} by you`)
+      : undefined;
   const stuck = to === "cancelled" ? (await waitingOn(ctx, task)).map((t) => t.title) : [];
   // What happens to the work of a task cancelled while it ran or was reviewed: the session's
   // runner takes it out of the folder it ran in once the run stops (phase C); a pull request
-  // already opened stays open.
+  // already opened stays open. Said only when a live run or review was stopped: a task in
+  // review that no session reviews (its card waits, or Forerunner closed during its review)
+  // has nothing taken out, and its line says only that it is cancelled.
   const work =
-    to === "cancelled" && (RUNNING.includes(from) || from === "in_review")
+    to === "cancelled" && stopped === true
       ? task.pr_url
         ? ("pull_request" as const)
         : ("removed" as const)

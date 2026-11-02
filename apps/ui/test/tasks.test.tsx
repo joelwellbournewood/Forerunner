@@ -326,6 +326,34 @@ describe("Tasks tab (design §3.5)", () => {
     );
   });
 
+  it("a task in review whose card waits reads Needs your decision; Cancel promises nothing about its files (phase C review)", async () => {
+    // Its review failed in a session that ended (U-045): no review runs, its card waits. It
+    // read "Being reviewed", and Cancel said its review stops and its work is removed.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_failed_review", "Write the Contact page", { status: "in_review" });
+    harness.daemon.state.requests.push({
+      ...(harness.daemon.state.requests[0] as (typeof harness.daemon.state.requests)[number]),
+      id: "req_review_failed",
+      taskId: "t_failed_review",
+      projectId: "proj_atlas",
+      status: "open",
+      why: '"Write the Contact page" could not be reviewed.',
+      changeCard: { key: "critic:review_failed", task_id: "t_failed_review" },
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("t_failed_review");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent("Needs your decision");
+    expect(actionsOf(row)).toEqual(["Answer", "Cancel"]);
+    await user.click(within(row).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(/^Drops it\.$/);
+    await user.click(within(dialog).getByTestId("confirm-action"));
+    expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+      'Cancelled "Write the Contact page". Its card in the Inbox was withdrawn.',
+    );
+  });
+
   it("Redo on a done task sends what to fix", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
