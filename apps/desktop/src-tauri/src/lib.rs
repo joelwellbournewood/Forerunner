@@ -34,6 +34,8 @@ mod version;
 mod webview_acl;
 mod window_state;
 mod windows;
+#[cfg(test)]
+mod windows_manifest;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
