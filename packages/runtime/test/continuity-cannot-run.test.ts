@@ -20,8 +20,15 @@ import { closingReply, submitReply } from "./loop-helpers.ts";
  * reason in whole sentences, Try again and Cancel task; the Tasks tab offers no Resume; the
  * card survives a restart without a second copy; a task that asked the person keeps its one
  * questions card.
+ *
+ * Since ADR 0107 the researcher reads the web on an API key, so that refusal is gone; the run
+ * here is refused for a specialist this install does not have (a plan can name one, and the
+ * plan card does not flag it), which is still refused before any call.
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
+/** The registry's specialists, as the refusal names them. */
+const SPECIALISTS =
+  "coder, data-analyst, designer, migration-specialist, ops-deploy, researcher, reviewer, science-evaluator, tester, writer-marketing";
 type Json = Record<string, unknown>;
 
 async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) {
@@ -116,17 +123,17 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
         })
       ).json()) as Json
     ).id as string;
-    // What New task sends with "Who does it: researcher".
+    // A task for a specialist the registry does not have, as a plan can name one.
     const created = await req(`/projects/${projectId}/tasks`, {
       method: "POST",
       body: JSON.stringify({
-        title: "Research three other garden clubs",
-        outcome: "docs/research.md lists what three other clubs offer, with links.",
-        acceptanceCriteria: ["docs/research.md names three clubs with a link each"],
+        title: "Draw the club's logo",
+        outcome: "logo.svg shows the club's name over a green leaf.",
+        acceptanceCriteria: ["logo.svg names the club"],
         priority: "high",
         status: "ready",
         dependsOn: [],
-        specialist: "researcher",
+        specialist: "illustrator",
         riskTier: 1,
       }),
     });
@@ -142,9 +149,9 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     const cards = await openCards();
     expect(cards).toHaveLength(1);
     const card = cards[0] as Json;
-    expect(card.title).toBe('"Research three other garden clubs" could not run');
+    expect(card.title).toBe('"Draw the club\'s logo" could not run');
     expect(card.body).toBe(
-      "The researcher works from the web, but runs billed to an API key get no web tools, and no other specialist has them there, so nothing ran. Add a Claude subscription in the setup assistant (its runs have web tools) and try again, or cancel it.",
+      `No specialist is named "illustrator", so nothing ran. The specialists are: ${SPECIALISTS}.`,
     );
     expect(card.choices).toEqual([
       expect.objectContaining({
@@ -156,9 +163,7 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
       expect.objectContaining({ label: "Cancel task", tone: "danger" }),
     ]);
     // The session's result points at a card that is there.
-    expect(String(ended.summary)).toContain(
-      '"Research three other garden clubs" needs your decision (Inbox).',
-    );
+    expect(String(ended.summary)).toContain('"Draw the club\'s logo" needs your decision (Inbox).');
     // The Tasks tab: one sentence that says so and the card to open; no "Paused", no Resume.
     const view = await taskView();
     expect(view.status).toBe("needs_human");
@@ -168,9 +173,7 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
       blocker: { kind: "card", requestId: card.id, cardKind: "cannot_run" },
     });
     // The reason is a whole sentence without tool names (it was cut at 200 characters).
-    expect(view.reason).toBe(
-      "The researcher works from the web, but runs billed to an API key get no web tools, and no other specialist has them there, so nothing ran.",
-    );
+    expect(view.reason).toBe('No specialist is named "illustrator", so nothing ran.');
     for (const text of [card.title, card.body, view.reason, JSON.stringify(view.display)])
       expect(String(text)).not.toMatch(/cc:|Press Resume|Paused/);
     // The Inbox counts it as needing the person.
@@ -215,7 +218,7 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     expect(again[0]?.id).not.toBe(card.id);
     const old = (await inbox()).requests.find((r) => r.id === card.id);
     expect(String(old?.outcome)).toMatch(
-      /^Trying "Research three other garden clubs" again: (a session started|it runs after the current session)\.$/,
+      /^Trying "Draw the club's logo" again: (a session started|it runs after the current session)\.$/,
     );
   }, 60_000);
 

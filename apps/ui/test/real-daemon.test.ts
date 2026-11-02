@@ -4315,17 +4315,18 @@ describe("the UI client against the real daemon: a task that stops waits on one 
 
   it("a task the run refused at once: one card that says why, the Tasks tab offers no Resume, Cancel task cancels it (live walk 4)", async () => {
     const me = await client.me();
-    const project = await client.createProject({ name: "Research club", goal: "Other clubs" });
-    // The researcher works from the web; the stand-in is billed like an API key, which gives
-    // it no web tools and no other specialist has them: the run refuses before any call.
+    const project = await client.createProject({ name: "Logo club", goal: "A logo" });
+    // A specialist this install does not have, as a plan can name one: the run refuses before
+    // any call. (Live walk 4's refusal, the researcher on an API key, is gone since ADR 0107:
+    // the researcher reads the web there now.)
     const created = await client.createTask(project.id, {
-      title: "Research three other garden clubs",
-      outcome: "docs/research.md lists what three other clubs offer",
-      acceptanceCriteria: ["three clubs with a link each"],
+      title: "Draw the club's logo",
+      outcome: "logo.svg shows the club's name",
+      acceptanceCriteria: ["logo.svg names the club"],
       priority: "high",
       status: "ready",
       dependsOn: [],
-      specialist: "researcher",
+      specialist: "illustrator",
       riskTier: 1,
     });
     const session = await runSession(project.id);
@@ -4334,16 +4335,16 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     );
     expect(cards).toHaveLength(1);
     const card = cards[0];
-    expect(card?.title).toBe('"Research three other garden clubs" could not run');
-    expect(card?.body).toMatch(/^The researcher works from the web, .*so nothing ran\./);
+    expect(card?.title).toBe('"Draw the club\'s logo" could not run');
+    expect(card?.body).toMatch(
+      /^No specialist is named "illustrator", so nothing ran\. The specialists are: coder, /,
+    );
     expect(card?.body).not.toMatch(/cc:/);
     expect(card?.choices?.map((c) => [c.label, c.tone])).toEqual([
       ["Try again", "primary"],
       ["Cancel task", "danger"],
     ]);
-    expect(session.summary).toContain(
-      '"Research three other garden clubs" needs your decision (Inbox).',
-    );
+    expect(session.summary).toContain('"Draw the club\'s logo" needs your decision (Inbox).');
     const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
     expect(view?.display).toMatchObject({
       key: "answer",
@@ -4354,7 +4355,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       version: card?.version ?? 0,
       answer: "Cancel task",
     });
-    expect(cancelled.outcome).toBe('"Research three other garden clubs" was cancelled.');
+    expect(cancelled.outcome).toBe('"Draw the club\'s logo" was cancelled.');
     expect((await client.tasks(project.id)).find((t) => t.id === created.id)?.status).toBe(
       "cancelled",
     );
