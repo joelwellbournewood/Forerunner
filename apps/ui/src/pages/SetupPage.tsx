@@ -30,7 +30,12 @@ function localTimezone(): string {
   }
 }
 
-function StepDots({ step }: { step: Step }) {
+/**
+ * The steps along the top. A step behind the current one reads "✓" only when it was done; a
+ * step passed with "Skip for now" (no Claude key, no GitHub token) reads "skipped" (walk
+ * first-project 04: "✓ Claude ✓ GitHub" after skipping both).
+ */
+function StepDots({ step, skipped }: { step: Step; skipped: ReadonlySet<Step> }) {
   const at = STEPS.indexOf(step);
   return (
     <ol className="flex items-center gap-2 text-xs" aria-label="Setup steps">
@@ -41,13 +46,15 @@ function StepDots({ step }: { step: Step }) {
           className={`rounded-full px-2 py-0.5 ${
             i === at
               ? "bg-blue-600 text-white"
-              : i < at
+              : i < at && !skipped.has(s)
                 ? "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-200"
                 : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
           }`}
+          data-testid={`setup-step-${s}`}
         >
-          {i < at ? "✓ " : ""}
+          {i < at && !skipped.has(s) ? "✓ " : ""}
           {s}
+          {i < at && skipped.has(s) ? " (skipped)" : ""}
         </li>
       ))}
     </ol>
@@ -348,6 +355,12 @@ export function SetupPage() {
   if (!status) return <Loading what="setup" />;
   const creds = status.credentials;
   const hasModel = creds.anthropicApiKey || creds.subscription;
+  // What was passed without being set up: Claude without a key or subscription, GitHub without
+  // a token.
+  const skipped = new Set<Step>([
+    ...(hasModel ? [] : (["Claude"] as const)),
+    ...(creds.github ? [] : (["GitHub"] as const)),
+  ]);
 
   return (
     <section
@@ -359,7 +372,7 @@ export function SetupPage() {
         <h1 id="setup-title" className="text-xl font-semibold">
           Set up Forerunner
         </h1>
-        <StepDots step={step} />
+        <StepDots step={step} skipped={skipped} />
       </div>
       {error ? <ErrorBanner message={error} /> : null}
 

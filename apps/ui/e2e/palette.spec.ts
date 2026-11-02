@@ -29,7 +29,13 @@ test("keyboard shortcuts navigate and the theme override applies", async ({ page
   await page.keyboard.press("g");
   await page.keyboard.press("s");
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(page.getByTestId("setting-row")).toHaveCount(16);
+  // The fixture's 16 and Beacon's autonomy (the daemon lists every project's rows), less the
+  // three that change nothing (design §6: not listed).
+  await expect(page.getByTestId("setting-row")).toHaveCount(14);
+  // Settings opens on Basics; the theme is under Advanced (design §6).
+  await expect(page.getByTestId("settings-basics")).toBeVisible();
+  await expect(page.getByTestId("theme-select")).toBeHidden();
+  await page.getByTestId("settings-advanced-summary").click();
   await page.getByTestId("theme-select").selectOption("dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.keyboard.press("Shift+?");

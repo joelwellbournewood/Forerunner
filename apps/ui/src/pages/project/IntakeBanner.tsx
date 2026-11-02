@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { describeError, type IntakeStatusView } from "../../api/client.ts";
 import { Button, buttonClassName } from "../../components/ui.tsx";
 import { useAsync } from "../../lib/use-async.ts";
-import { useClient } from "../../store/context.tsx";
+import { useClient, useUiState } from "../../store/context.tsx";
 
 /** How often the page looks again while the plan is being drafted. */
 export const INTAKE_POLL_MS = 3000;
@@ -46,6 +46,7 @@ export function IntakeBanner({ projectId, pollMs }: { projectId: string; pollMs?
   const status = useIntakeStatus(projectId, pollMs === undefined ? {} : { pollMs });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const noModel = useUiState((s) => s.me?.provider === null);
   const view = status.data;
   if (!view) return null;
 
@@ -87,18 +88,28 @@ export function IntakeBanner({ projectId, pollMs }: { projectId: string; pollMs?
         </Link>
       </div>
     );
-  // Design §3.3: a rejected plan says so, and a new one can be drafted from the brief.
-  const retryButton = (label: string, busyLabel: string) => (
-    <Button
-      className="mt-2"
-      variant="primary"
-      onClick={() => void retry()}
-      disabled={busy}
-      data-testid="intake-retry"
-    >
-      {busy ? busyLabel : label}
-    </Button>
-  );
+  // Design §3.3: a rejected plan says so, and a new one can be drafted from the brief. Without a
+  // Claude credential (`/me.provider` null) the retry is refused, so the button connects Claude.
+  const retryButton = (label: string, busyLabel: string) =>
+    noModel ? (
+      <Link
+        to="/setup"
+        className={`${buttonClassName("primary")} mt-2`}
+        data-testid="intake-connect"
+      >
+        Connect Claude
+      </Link>
+    ) : (
+      <Button
+        className="mt-2"
+        variant="primary"
+        onClick={() => void retry()}
+        disabled={busy}
+        data-testid="intake-retry"
+      >
+        {busy ? busyLabel : label}
+      </Button>
+    );
   if (view.state === "rejected")
     return (
       <div

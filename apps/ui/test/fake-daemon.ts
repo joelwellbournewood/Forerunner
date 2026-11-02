@@ -79,6 +79,11 @@ import {
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
+import {
+  overviewNext,
+  progressOf,
+  projectStatusLine,
+} from "@forerunner/runtime/daemon/project-status";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
@@ -91,7 +96,7 @@ import {
   sandboxNextStep,
   sandboxWords,
 } from "@forerunner/runtime/sandbox/readiness-types";
-import { NO_MODEL_CHAT_REPLY } from "@forerunner/runtime/setup/no-model";
+import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
 import {
   acceptsAnswer,
   personQuestionsAnswer,
@@ -156,6 +161,8 @@ import {
   PAIRING,
   PEERS,
   PERFORMANCE,
+  PROJECT_FILES,
+  PROJECT_FOLDERS,
   PROJECTS,
   PROMOTIONS,
   QUEUE,
@@ -376,6 +383,13 @@ export interface FakeDaemonState {
    * intake (`none`). `POST /projects/:id/intake/retry` moves a failed one to `drafting`.
    */
   intake: Record<string, IntakeStatusView>;
+  /**
+   * Where each project's files are on this computer (design §3.10), as the daemon's card says
+   * (`folder`); a project without an entry has none yet. `files` are what `GET
+   * /projects/:id/files` lists and reads, by project.
+   */
+  folders: Record<string, string>;
+  files: Record<string, { path: string; content: string | null; updatedAt: string }[]>;
   messages: MessageView[];
   killActive: boolean;
   calls: RecordedCall[];
@@ -736,6 +750,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     events: clone(EVENTS),
     requests: clone(REQUESTS),
     intake: {},
+    folders: clone(PROJECT_FOLDERS),
+    files: clone(PROJECT_FILES),
     messages: clone(MESSAGES),
     killActive: false,
     calls: [],
@@ -1180,7 +1196,62 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json({ rows: rows.slice(0, limit) });
   });
 
-  app.get("/projects", (c) => c.json(state.projects));
+  // As the daemon's card (design §2): the status sentence, "n of m done", the session working
+  // on it and its folder, computed when read from the fake's tasks, cards, plan and sessions
+  // with the daemon's own `projectStatusLine`.
+  const projectCardOf = (p: ProjectCard): ProjectCard => {
+    const tasks = projectTaskViews(
+      state.tasks,
+      p.id,
+      state.requests,
+      state.sandbox.ready,
+      state.taskMeta,
+    );
+    const session = state.sessions.find(
+      (s) => s.projectId === p.id && ["planned", "running", "paused"].includes(s.status),
+    );
+    const working = session
+      ? {
+          sessionId: session.id,
+          agentName: session.agentName,
+          taskId: session.currentTask?.id ?? null,
+          taskTitle: session.currentTask?.title ?? null,
+          since: session.startedAt,
+        }
+      : null;
+    const folder = state.folders[p.id] ?? null;
+    const statusLine = projectStatusLine({
+      projectId: p.id,
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status as never,
+        depends_on: t.dependsOn,
+      })),
+      displays: new Map(tasks.flatMap((t) => (t.display ? [[t.id, t.display] as const] : []))),
+      cards: state.requests
+        .filter((r) => r.status === "open" && r.projectId === p.id)
+        .map((r) => ({
+          id: r.id,
+          task_id: r.taskId,
+          change_card: (r.changeCard ?? null) as never,
+        })),
+      plan: state.intake[p.id]?.state ?? null,
+      planError: state.intake[p.id]?.error ?? null,
+      // As the daemon (`!!rt.provider`): `/me`'s provider, unknown when the fixture names none.
+      hasModel: me.provider === undefined ? null : me.provider !== null,
+      working,
+      folder,
+    });
+    return {
+      ...p,
+      statusLine,
+      progress: progressOf(tasks.map((t) => ({ status: t.status as never }))),
+      working,
+      folder,
+    };
+  };
+  app.get("/projects", (c) => c.json(state.projects.map(projectCardOf)));
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
@@ -1220,11 +1291,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         error: null,
       };
     emit("project.changed", { id: project.id });
-    return c.json(project, 201);
+    return c.json(projectCardOf(project), 201);
   });
   app.get("/projects/:id", (c) => {
     const p = state.projects.find((x) => x.id === c.req.param("id"));
-    return p ? c.json(p) : errorBody(c, 404, "not_found", "no such project");
+    return p ? c.json(projectCardOf(p)) : errorBody(c, 404, "not_found", "no such project");
   });
   // The plan from the brief (U-046), as the daemon's intake status and Retry answer it.
   const intakeOf = (projectId: string): IntakeStatusView =>
@@ -1251,15 +1322,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon: a failed, rejected (Draft a new plan) or never run intake is drafted again.
     if (current.state !== "failed" && current.state !== "none" && current.state !== "rejected")
       return c.json(current, 202);
+    // As the daemon: without a model the retry is refused before anything starts.
+    if (me.provider === null)
+      return c.json(
+        {
+          code: "unavailable",
+          message: `Planning from the brief needs a Claude key or subscription. Add one in the app: ${SETUP_ASSISTANT_PATH}, then retry.`,
+        },
+        503,
+      );
     state.intake[id] = { ...current, state: "drafting", requestId: null, error: null };
+    // As the daemon: the screens hear the project changed ("Drafting the plan…").
+    emit("project.changed", { id });
     return c.json(state.intake[id], 202);
   });
   app.get("/projects/:id/summary", (c) => {
     const id = c.req.param("id");
     const p = state.projects.find((x) => x.id === id);
     if (!p) return errorBody(c, 404, "not_found", "no such project");
-    return c.json(
-      SUMMARIES[id] ?? {
+    // As the daemon: "Next" is computed when read from the tasks as they are now.
+    const next = overviewNext(
+      projectTaskViews(state.tasks, id, state.requests, state.sandbox.ready, state.taskMeta).map(
+        (t) => ({
+          task: { title: t.title, status: t.status as never },
+          display: t.display as NonNullable<TaskView["display"]>,
+        }),
+      ),
+    );
+    return c.json({
+      ...(SUMMARIES[id] ?? {
         goal: p.goal,
         stage: p.stage,
         lastSession: null,
@@ -1267,8 +1358,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         openQuestions: 0,
         spend: p.spend,
         spoken: `${p.name} has not run yet.`,
-      },
-    );
+      }),
+      next,
+    });
   });
   // Read aloud (spec A.6, L.6): the daemon reads a summary through its voice provider. The
   // fake answers `speaking` on the start and `done` on the next read, keeps the sentences
@@ -2808,8 +2900,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/settings", (c) => {
     const scope = c.req.query("scope");
     const scopeId = c.req.query("scopeId");
-    // Like the daemon, the project rows read the live project (a command may have changed it).
-    const rows = SETTINGS.map((s) => {
+    // Like the daemon, every project has its rows (settings-view.ts), read from the live project
+    // (a command may have changed it); the fixtures name Atlas's.
+    const projectRows = state.projects
+      .filter((p) => !SETTINGS.some((s) => s.key === "project.autonomy" && s.scopeId === p.id))
+      .map((p): (typeof SETTINGS)[number] => ({
+        key: "project.autonomy",
+        label: "Autonomy",
+        scope: "project",
+        scopeId: p.id,
+        value: p.autonomyLevel,
+        description: `Autonomy for ${p.name}`,
+        risk: "medium",
+      }));
+    const rows = [...SETTINGS, ...projectRows].map((s) => {
       if (s.key === "project.autonomy") {
         const p = state.projects.find((x) => x.id === s.scopeId);
         return p ? { ...s, value: p.autonomyLevel } : s;
@@ -5125,6 +5229,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     if (body.name) setup.name = body.name;
     if (body.timezone) setup.timezone = body.timezone;
+    // As the daemon: the human row too, so `/me` names the person so (Settings → Your name).
+    if (body.name) me.name = body.name;
+    if (body.timezone) me.timezone = body.timezone;
     return c.json(setup);
   });
   app.post("/setup/anthropic", async (c) => {
@@ -5706,6 +5813,53 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const doc = DOC_CONTENTS[c.req.param("path")];
     return doc ? c.json(doc) : errorBody(c, 404, "not_found", "no such doc");
   });
+  // The Files tab (design §3.10), as the daemon's docs-routes.ts answers it: the folder and
+  // its files with every folder on their path, and one file's text; a path that leaves the
+  // folder is 404.
+  app.get("/projects/:id/files", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id))
+      return errorBody(c, 404, "not_found", "no such project");
+    const folder = state.folders[id] ?? null;
+    const files = folder ? (state.files[id] ?? []) : [];
+    const dirs = new Map<string, string>();
+    for (const f of files) {
+      const parts = f.path.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        const dir = parts.slice(0, i).join("/");
+        if (!dirs.has(dir) || (dirs.get(dir) ?? "") < f.updatedAt) dirs.set(dir, f.updatedAt);
+      }
+    }
+    const entries = [
+      ...[...dirs].map(([path, updatedAt]) => ({
+        path,
+        kind: "dir" as const,
+        sizeBytes: 0,
+        updatedAt,
+      })),
+      ...files.map((f) => ({
+        path: f.path,
+        kind: "file" as const,
+        sizeBytes: f.content?.length ?? 2048,
+        updatedAt: f.updatedAt,
+      })),
+    ].sort((a, b) => a.path.localeCompare(b.path));
+    return c.json({ folder, entries, truncated: false });
+  });
+  app.get("/projects/:id/files/:path", (c) => {
+    const id = c.req.param("id");
+    const rel = c.req.param("path");
+    const f = (state.folders[id] ? (state.files[id] ?? []) : []).find((x) => x.path === rel);
+    if (!f) return errorBody(c, 404, "not_found", `${rel} is not a file of this project`);
+    return c.json({
+      path: f.path,
+      content: f.content,
+      sizeBytes: f.content?.length ?? 2048,
+      updatedAt: f.updatedAt,
+      binary: f.content === null,
+      truncated: false,
+    });
+  });
 
   // The daemon's `GET /performance` (runtime daemon/views.ts `performanceView`): the fixture in
   // the runtime shape, with the window and the project of the query; a bad `days` is 400 and an
@@ -5770,6 +5924,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       let open = true;
       const listener: Listener = (event, data) => {
         if (!open) return;
+        // As the daemon's install-wide stream (server.ts `onSession`): what happened in a
+        // session travels as `session.changed` with `{ type, payload }`, never a session view
+        // and never the log line itself (that is the session's own stream).
+        if (event === "session.event") {
+          const ev = data as EventView;
+          void stream.writeSSE({
+            event: "session.changed",
+            data: JSON.stringify({ type: ev.type, payload: ev.payload ?? {} }),
+          });
+          return;
+        }
+        if (event === "session.changed") {
+          const view = data as SessionView;
+          const type = ["completed", "stopped", "failed", "killed"].includes(view.status)
+            ? "session.ended"
+            : view.status === "running"
+              ? "session.started"
+              : "session.updated";
+          void stream.writeSSE({
+            event: "session.changed",
+            data: JSON.stringify({ type, payload: { sessionId: view.id } }),
+          });
+          if (view.projectId)
+            void stream.writeSSE({
+              event: "project.changed",
+              data: JSON.stringify({ id: view.projectId }),
+            });
+          return;
+        }
         void stream.writeSSE({ event, data: JSON.stringify(data) });
       };
       state.listeners.add(listener);
@@ -5821,40 +6004,54 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
 
   /** After POST /sessions: a short scripted run with a warning and an escalation. */
   function scheduleScriptedEvents(session: SessionView) {
-    const script: Array<[string, string, EventView["level"], number]> = [
-      ["session.started", "Session started; reading the state brief", "info", 0],
-      ["task.claimed", "Claimed task_3 Decide the versioning scheme for researcher", "info", 0],
-      ["run.started", "researcher started on sonnet-5.5 (effort high)", "info", 0],
-      ["budget.warning", "Session spend at 80% of the cap", "warning", 2_000_000],
-      ["escalation", "Choice of versioning scheme needs your decision", "escalation", 0],
-      ["run.finished", "researcher finished task_3", "info", 2_500_000],
+    // The real runner's event types and payloads (session/runner.ts): a task begins
+    // (`task.started` with its title and specialist), one `task.step` per tool call with its
+    // line, and ends (`task.finished`).
+    const task = {
+      taskId: "task_3",
+      title: "Decide the versioning scheme",
+      specialist: "researcher",
+    };
+    const script: Array<[string, string, EventView["level"], number, Record<string, unknown>]> = [
+      ["session.started", "Session started", "info", 0, {}],
+      ["task.started", 'Started "Decide the versioning scheme"', "info", 0, task],
+      [
+        "task.step",
+        "read docs/versioning.md",
+        "info",
+        0,
+        { ...task, text: "read docs/versioning.md" },
+      ],
+      ["budget.warning", "Session spend at 80% of the cap", "warning", 2_000_000, {}],
+      ["escalation", "Choice of versioning scheme needs your decision", "escalation", 0, {}],
+      ["task.finished", 'Finished "Decide the versioning scheme"', "info", 2_500_000, task],
     ];
-    script.forEach(([type, text, level, cost], i) => {
+    script.forEach(([type, text, level, cost, extra], i) => {
       later(
         () => {
           // Stop after this task (the real daemon's pause): the task in flight finishes, then
           // the session ends.
-          if (session.status === "paused" && type === "run.finished") {
+          if (session.status === "paused" && type === "task.finished") {
             session.status = "stopped";
             session.endedAt = new Date().toISOString();
             session.currentTask = null;
             session.stopReason = "stopped_after_task";
             session.statusText = "Stopped after the task, as asked";
-            pushEvent(session, type, text, level, { step: session.steps }, cost);
+            pushEvent(session, type, text, level, { step: session.steps, ...extra }, cost);
             emit("session.changed", clone(session));
             return;
           }
           if (session.status !== "running" && session.status !== "paused") return;
           session.steps += 1;
           session.spent = money(session.spent.usdMicro + cost);
-          if (type === "task.claimed") {
+          if (type === "task.started") {
             session.currentTask = {
               id: "task_3",
               title: "Decide the versioning scheme",
               specialist: "researcher",
             };
           }
-          pushEvent(session, type, text, level, { step: session.steps }, cost);
+          pushEvent(session, type, text, level, { step: session.steps, ...extra }, cost);
           emit("session.changed", clone(session));
           if (i === script.length - 1) {
             session.status = "completed";

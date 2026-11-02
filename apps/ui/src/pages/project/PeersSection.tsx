@@ -8,6 +8,9 @@ import { useClient } from "../../store/context.tsx";
 export function PeersSection({ projectId }: { projectId: string }) {
   const client = useClient();
   const feed = useAsync((signal) => client.peers(projectId, signal), [client, projectId]);
+  // Design §3.4: Peers is not shown in solo mode (no other agent works on the project), nor
+  // while the feed has not answered.
+  if (!feed.data || feed.data.peers.length === 0) return null;
 
   return (
     <section data-testid="peers" aria-labelledby="peers-title">

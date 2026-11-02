@@ -2251,6 +2251,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     ...(opts.startServices !== false
       ? { start: (req: StartRequest) => scheduler.requestStart(req) }
       : {}),
+    // The draft ended (filed or failed): the screens re-read the project's status sentence.
+    onDrafted: (projectId) => events.emit("project", { id: projectId }),
   });
 
   // GitHub Projects mirror: the host comes from the vault by the secret reference in the

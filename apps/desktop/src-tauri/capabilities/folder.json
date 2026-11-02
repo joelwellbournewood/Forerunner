@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "folder",
+  "description": "Open a project's folder in the file manager (design §3.4, §3.10): the shell's own open_folder command, which opens only an existing folder. The main window only.",
+  "windows": ["main"],
+  "permissions": ["allow-open-folder"]
+}

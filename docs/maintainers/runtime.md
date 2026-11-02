@@ -1120,8 +1120,11 @@ more; the path can go once no install holds one. Tests: `live-chat.test.ts`.
 minutes and monthly in the human's time zone; message, CI, PR comment, email, remote and manual
 requests; one active session per agent; quiet hours defer non-manual triggers). Starts that
 wait (queued behind the agent's running session, or deferred by quiet hours) are kept per
-agent in the order they came, each as its log entry with its id, and the tick starts the
-first one that may start now when the agent is free (a deferred one keeps its place while the
+agent in the order they came, each as its log entry with its id, and the first one that may
+start now starts as soon as the agent's run ends (`drain` from the run's `finally`, while the
+scheduler runs: a stopped one, as during Quit, starts nothing; before, it waited for the next
+tick, up to 30 s, after "Starts after the current session"), and on every tick when the agent
+is free (a deferred one keeps its place while the
 quiet hours last and holds up no person's start behind it) (U-043: up to 1.0.4 one slot per
 agent held only the newest request, so an approved plan's start or a CI trigger waiting there
 was replaced by the next request without a word, and the Start dialog's "This one starts when
@@ -4214,6 +4217,65 @@ open blocking request of the project, or a `needs_human` task with an open reque
 (`{ taskId, title }`, the first one) and the card reads "needs you: <title>" with a link;
 failed tasks, `needsYou` or a non-blocking request open are "attention"; no task is "idle".
 Before, any open request or any `needs_human` task read "blocked" with nothing to answer.
+
+### The project status sentence (design §2, §3.4; `daemon/project-status.ts`)
+
+The screens no longer show `stage`, `health`, `status` or the autonomy level (they stay on the
+card for the phone and the state service). `projectCard` adds, computed when read:
+
+- `statusLine {kind, text, action}` from the pure `projectStatusLine`, first match wins: the
+  plan waiting for approval or an open card ("Waiting for you: approve the plan", 'Waiting for
+  you: "X"', "Waiting for you: 2 questions"; the Docker card asks nothing, `holdsTask`); a
+  session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
+  `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
+  waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready", action `start`:
+  the Start dialog); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
+  files: <folder>"; then paused or draft work. The task words are `taskDisplay`'s, so the
+  sentence and the Tasks tab never disagree.
+- A failed plan reads "Planning failed: <a few words>" within 80 characters (design §2 item 5,
+  §5.1; review of fix/progress-navigation: Home showed the intake's whole error, about 170
+  characters, with no button). `planFailedLine` maps the intake's reasons
+  (`intakeFailureWords`, `INTAKE_NEEDS_A_MODEL`, the lost "Change the plan" draft) through
+  `PLAN_FAILURE_SHORT` ("Claude did not answer", "it took too long", "Claude's answer was not a
+  plan", ...); a reason nobody worded is its first sentence cut at a word. The button is
+  `{kind: "retry", label: "Try again"}` (the UI posts `POST /projects/:id/intake/retry`), or
+  **Connect Claude** (a link to `/setup`) when `hasModel` is false: the card facts' `hasModel`
+  is `!!rt.provider`, and without a provider the retry route refuses. The missing-key reason
+  reads "Claude is not connected", or "Claude was not connected" once a key is in force. A
+  rejected plan reads "You rejected the plan. Nothing was written." with `retry` "Draft a new
+  plan". The project page's plan banner keeps the reason in full.
+- `IntakeDeps.onDrafted` (compose: `events.emit("project", …)`) announces the end of every
+  background draft, filed or failed, so Home and the header leave "Drafting the plan…"
+  without a reload (before, a failed draft was never announced).
+- `progress {done, total}` (cancelled tasks not counted), `working {sessionId, agentName,
+  taskId, taskTitle, since}` (`workingOn`: the project's planned, running or paused session and
+  its last `task.started` without a `task.finished`), and `folder`: the first of
+  `ProjectDocs.docsDirsFor` (the linked folder, this install's checkout, the workspace).
+- The server passes `ProjectCardFacts` (`sandboxReady`, the intake's state and error, the
+  folder, `hasModel`); `projectSummary` adds `next` (`overviewNext`: open tasks in run order with their
+  status words, running and ready first, at most three lines then "and N more") and
+  `lastSession.changedFiles` (the last session's `task.files` events). The UI fake computes
+  both with the same functions. Tests: `test/project-status.test.ts`, and the real-daemon case
+  "project status sentence" in `apps/ui/test/real-daemon.test.ts`.
+- `/me` names the provider in force (`provider`, null without a model): the shell's "Claude is
+  not connected" bar reads it.
+- `SessionView.statusText` of a session that completed with tasks waiting for the person
+  (`handoff.blocked`: needs an answer or failed) reads "Ended: 1 task needs you", not "Done"
+  (`endedStatusText`, `blockedOfHandoff` in `session/stop-words.ts`;
+  `test/session-status-words.test.ts`).
+
+### The project's files (design §3.10; `daemon/docs-routes.ts`)
+
+`GET /projects/:id/files` lists the project's folder (the first of `docsDirsFor`; `folder`
+null when none exists yet) depth first in name order with sizes and change dates, without
+`.git`, `node_modules` and `.forerunner`, links not followed, at most 2000 entries
+(`truncated`). `GET /projects/:id/files/:path` (the path URL-encoded) answers one file's text
+(cut at 256 KiB; `binary` with `content: null` when its first 8 KiB hold a NUL byte);
+`fileUnder` refuses an absolute path, a drive, an empty, `.` or `..` segment, a skipped folder
+and anything whose real path leaves the folder's real path, as 404. `GET
+/projects/:id/docs/:path` also opens a decision record (`DECISION_RECORD`,
+`docs/decisions/<name>.md`), which the Overview's Decisions link to. Both are read-only; the
+real-daemon case "files: the project's folder" covers them.
 
 ## How to change it
 

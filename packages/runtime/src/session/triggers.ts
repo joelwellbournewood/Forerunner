@@ -350,13 +350,22 @@ export class Scheduler {
     // Drain: an agent that is now free starts its first waiting request that may start now (a
     // start deferred by quiet hours keeps its place while they last and holds up no one behind
     // it); the rest wait their turn. A drained request keeps its id.
-    for (const [agentId, waiting] of [...this.pending]) {
-      if (this.active.has(agentId)) continue;
-      const next = waiting.find((e) => !this.deferredNow(e.req, now));
-      if (!next) continue;
-      this.removePending(agentId, next.id);
-      await this.requestStart(next.req, now, next.id);
-    }
+    for (const agentId of [...this.pending.keys()]) await this.drain(agentId, now);
+  }
+
+  /**
+   * Start the agent's first waiting request that may start now, if the agent is free; the
+   * others keep their place. Returns the started entry.
+   */
+  private async drain(
+    agentId: string,
+    now: number = this.deps.clock.now(),
+  ): Promise<StartEntry | undefined> {
+    if (this.active.has(agentId)) return undefined;
+    const next = this.pending.get(agentId)?.find((e) => !this.deferredNow(e.req, now));
+    if (!next) return undefined;
+    this.removePending(agentId, next.id);
+    return this.requestStart(next.req, now, next.id);
   }
 
   /** True while quiet hours hold a non-manual start back. */
@@ -444,6 +453,13 @@ export class Scheduler {
       .finally(() => {
         this.active.delete(req.agentId);
         if (this.activeStarts.get(req.agentId) === entry) this.activeStarts.delete(req.agentId);
+        // The start waiting behind this one runs now, not on the next tick up to 30 s later
+        // (wave 1 and 2 handoffs: "Starts after the current session" and then nothing for up to
+        // half a minute). Only while the scheduler runs: a stopped one (Quit) starts nothing.
+        if (this.cancel)
+          void this.drain(req.agentId).catch((e: unknown) =>
+            this.logger.error("drain after a session failed", { error: errorMessage(e) }),
+          );
       });
     this.runs.set(id, run);
     for (const old of this.runs.keys()) {

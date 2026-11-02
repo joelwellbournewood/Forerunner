@@ -284,6 +284,52 @@ describe("the UI client against the real daemon", () => {
     expect(content.content).toContain("Contract");
   });
 
+  it("files: the project's folder and what the work wrote, one file's text, nothing outside it; Docs opens a decision record (design §3.10)", async () => {
+    const card = await client.project(projectId);
+    const listed = await client.projectFiles(projectId);
+    // The folder the card names is the one listed: the project's workspace here.
+    expect(listed.folder).toBeTruthy();
+    expect(listed.folder).toBe(card.folder);
+    const folder = listed.folder ?? "";
+    // What a specialist writes there, a folder with a file and a file that is not text.
+    mkdirSync(join(folder, "site"), { recursive: true });
+    writeFileSync(join(folder, "site", "index.html"), "<!doctype html><h1>Quotes</h1>\n");
+    writeFileSync(join(folder, "logo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));
+    mkdirSync(join(folder, "node_modules", "x"), { recursive: true });
+    writeFileSync(join(folder, "node_modules", "x", "index.js"), "skip me");
+    const after = await client.projectFiles(projectId);
+    const paths = after.entries.map((e) => e.path);
+    expect(paths).toEqual(expect.arrayContaining(["README.md", "site", "site/index.html"]));
+    expect(after.entries.find((e) => e.path === "site")?.kind).toBe("dir");
+    expect(paths.some((p) => p.startsWith("node_modules") || p.startsWith(".git"))).toBe(false);
+    const page = await client.projectFile(projectId, "site/index.html");
+    expect(page).toMatchObject({ path: "site/index.html", binary: false });
+    expect(page.content).toContain("<h1>Quotes</h1>");
+    const logo = await client.projectFile(projectId, "logo.png");
+    expect(logo).toMatchObject({ binary: true, content: null });
+    // A path that leaves the folder is refused, whatever its form.
+    for (const outside of [
+      "../daemon.json",
+      "/etc/passwd",
+      "site/../../x",
+      "node_modules/x/index.js",
+    ]) {
+      const refused = await client.projectFile(projectId, outside).catch((e: unknown) => e);
+      expect(refused, outside).toBeInstanceOf(ApiError);
+      expect((refused as ApiError).status, outside).toBe(404);
+    }
+    // Docs opens a decision record, not only the standard set (walk: "not one of the docs").
+    mkdirSync(join(folder, "docs", "decisions"), { recursive: true });
+    writeFileSync(
+      join(folder, "docs", "decisions", "0001-where-it-is-published.md"),
+      "# 0001 Where it is published\n\nOnly as a local file for now.\n",
+    );
+    const record = await client.doc(projectId, "docs/decisions/0001-where-it-is-published.md");
+    expect(record.content).toContain("Only as a local file for now.");
+    const notADoc = await client.doc(projectId, "site/index.html").catch((e: unknown) => e);
+    expect((notADoc as ApiError).status).toBe(404);
+  });
+
   it("rename the agent: Settings' call renames the principal and /me and /agents follow (U-025)", async () => {
     const renamed = await client.renameAgent(agentId, "  Robin  ");
     expect(renamed).toMatchObject({ id: agentId, name: "Robin", ownerHumanId: humanId });
@@ -365,6 +411,16 @@ describe("the UI client against the real daemon", () => {
     // The agent holds no session any more: a start is not refused as "already active".
     const started = await client.startSession({ agentId, projectId, trigger: "manual" });
     expect(["started", "queued"]).toContain(started.result);
+    // Leave nothing running or waiting for the next case: a queued start now runs as soon as
+    // the session before it ends (no scheduler tick needed), so wait until it has run.
+    await eventually(
+      async () =>
+        !rt.scheduler.isActive(agentId) && rt.scheduler.pendingStarts(agentId).length === 0,
+      "the agent to be free",
+      async () =>
+        `active ${rt.scheduler.isActive(agentId)}, ${rt.scheduler.pendingStarts(agentId).length} waiting`,
+      10_000,
+    );
   });
 
   it("start check: what runs and what follows, why nothing would, the default budget, the month left (design §3.6)", async () => {
@@ -1094,6 +1150,66 @@ describe("the UI client against the real daemon", () => {
     );
   });
 
+  it("project status sentence: Ready to continue, Waiting for you, Done with the folder, and the Overview's Next (design §2, §3.4)", async () => {
+    const own = await client.createProject({ name: "Status line", goal: "One sentence" });
+    const first = await client.createTask(own.id, {
+      title: "Create index.html",
+      outcome: "a page",
+    });
+    const second = await client.createTask(own.id, {
+      title: "Style the page",
+      outcome: "styled",
+      dependsOn: [first.id],
+    });
+    const ready = await client.project(own.id);
+    expect(ready.statusLine).toEqual({
+      kind: "ready",
+      text: "Ready to continue: 1 task ready",
+      action: { kind: "start", label: "Continue", to: null },
+    });
+    expect(ready.progress).toEqual({ done: 0, total: 2 });
+    expect(ready.working).toBeNull();
+    // A model is in force here: /me names it, so the header shows no "not connected" bar.
+    expect(typeof (await client.me()).provider).toBe("string");
+    // The list Home reads carries the same sentence.
+    expect((await client.projects()).find((p) => p.id === own.id)?.statusLine?.text).toBe(
+      "Ready to continue: 1 task ready",
+    );
+    // The Overview's Next, computed when read.
+    expect((await client.projectSummary(own.id)).next).toEqual([
+      '"Create index.html": Ready',
+      '"Style the page": Waiting for "Create index.html"',
+    ]);
+    const card = await rt.store.humanRequest.insert({
+      human_id: humanId,
+      project_id: own.id,
+      task_id: null,
+      kind: "decision",
+      why: "Where is it published?",
+      steps: [],
+      options: ["Locally"],
+      blocking: true,
+      risk: "low",
+      change_card: null,
+    });
+    expect((await client.project(own.id)).statusLine).toMatchObject({
+      kind: "waiting",
+      text: "Waiting for you: 1 question",
+    });
+    await rt.store.humanRequest.answer(card.id, card.version, "Locally", humanId);
+    for (const id of [first.id, second.id])
+      for (const to of ["claimed", "in_progress", "in_review", "done"] as const) {
+        const t = await rt.store.task.mustGet(id);
+        await rt.store.task.transition(t.id, t.version, to, "finished", { agentId });
+      }
+    const done = await client.project(own.id);
+    expect(done.statusLine?.kind).toBe("done");
+    expect(done.statusLine?.text).toMatch(/^Done: all 2 tasks\. Your files: /);
+    expect(done.folder).toBeTruthy();
+    expect(done.statusLine?.text).toContain(done.folder ?? "-");
+    expect(done.progress).toEqual({ done: 2, total: 2 });
+  });
+
   it("an Undo on the Changes page that brings a card back tells the header (inbox.changed), so its count is true at once", async () => {
     const own = await client.createProject({ name: "Undo count", goal: "The badge follows" });
     const task = await client.createTask(own.id, { title: "Pick the colours", outcome: "chosen" });
@@ -1235,6 +1351,19 @@ describe("the UI client against the real daemon", () => {
       await rt.store.human.patch(humanId, { name: before.name });
     }
     expect((await client.setupStatus()).name).toBe(before.name);
+  });
+
+  it("Settings → Basics → Your name: the setup assistant's profile route renames you, and /me says so (design §6)", async () => {
+    const before = (await client.me()).name;
+    try {
+      // The body the Basics form sends.
+      const status = await client.setupProfile({ name: "Robin" });
+      expect(status.name).toBe("Robin");
+      expect((await client.me()).name).toBe("Robin");
+    } finally {
+      await client.setupProfile({ name: before });
+    }
+    expect((await client.me()).name).toBe(before);
   });
 
   it("start session under Stop all: 409 with what to do, not a server error (U-077)", async () => {
@@ -1891,6 +2020,70 @@ describe("the UI client against the real daemon: a task a session is running", (
       "the session to end",
     );
     expect((await rowOf())?.display?.label).toBe("Paused by you");
+  });
+});
+
+describe("the UI client against the real daemon: a start waiting behind a session runs when it ends (wave 1-2 handoff)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let provider: ScriptedProvider;
+
+  beforeAll(async () => {
+    ({ rt, client, provider } = await composeWithWaitingRun([WAITING_CALL]));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("'Starts after the current session' is true at once: the waiting start begins when the running one ends, with no scheduler tick", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Queued", goal: "One after the other" });
+    const task = await client.createTask(project.id, {
+      title: "Keeps the agent busy",
+      outcome: "it is done",
+      acceptanceCriteria: [],
+      riskTier: 0,
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+    });
+    const running = await client.startSession({ agentId, projectId: project.id });
+    expect(running.result).toBe("started");
+    await eventually(
+      async () => provider.calls.length >= 1,
+      "the running task's model call",
+      async () => `${provider.calls.length} model call(s)`,
+      10_000,
+    );
+    // The Start dialog's call while it runs: it waits its turn.
+    const waiting = await client.startSession({ agentId, projectId: project.id });
+    expect(waiting).toMatchObject({ result: "queued", ahead: 0, session: null });
+    const sessionsOf = async () => (await client.sessions({ projectId: project.id })).length;
+    expect(await sessionsOf()).toBe(1);
+    // The person cancels the running task: the session ends. The simulated clock does not move,
+    // so no scheduler tick runs; the waiting start begins all the same.
+    const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
+    await client.transitionTask(task.id, {
+      version: row?.version ?? 0,
+      to: "cancelled",
+      reason: "Cancelled in the app",
+    });
+    await eventually(
+      async () => (await sessionsOf()) === 2 && rt.scheduler.pendingStarts(agentId).length === 0,
+      "the waiting start to begin its session",
+      async () =>
+        `${await sessionsOf()} session(s), ${rt.scheduler.pendingStarts(agentId).length} waiting, active ${rt.scheduler.isActive(agentId)}`,
+      10_000,
+    );
+    // Nothing is left running or waiting for the next test: the second session finds nothing
+    // to run and ends.
+    await eventually(
+      async () => !rt.scheduler.isActive(agentId),
+      "the agent to be free",
+      async () => `active ${rt.scheduler.isActive(agentId)}`,
+      10_000,
+    );
   });
 });
 
@@ -2720,6 +2913,12 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     const notes = (await client.queue(project.id)).map((q) => q.text).join("\n");
     expect(notes).toContain("The person rejected the plan");
     expect(notes).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-|T\d\d:\d\d:\d\d/);
+    // Home's row and the header say it in one sentence with the button (design §3.3, §5.1).
+    expect((await client.project(project.id)).statusLine).toEqual({
+      kind: "planning_failed",
+      text: "You rejected the plan. Nothing was written.",
+      action: { kind: "retry", label: "Draft a new plan", to: null },
+    });
     const again = await client.retryIntake(project.id);
     expect(again.state).toBe("drafting");
     await rt.intake.inFlight(project.id);
@@ -2750,6 +2949,12 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(failed.state).toBe("failed");
     // The banner's reason is in words (design §3.3), not the planning call's error text.
     expect(failed.error).toBe("Claude did not answer (model call failed).");
+    // Home's row and the header: a few words and Try again (design §2 item 5, §5.1).
+    expect((await client.project(project.id)).statusLine).toEqual({
+      kind: "planning_failed",
+      text: "Planning failed: Claude did not answer",
+      action: { kind: "retry", label: "Try again", to: null },
+    });
     // Try again (the banner's button): one draft, and it carries the person's words.
     const before = intakeCalls.length;
     const retried = await client.retryIntake(project.id);
@@ -2916,6 +3121,51 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
     expect(start.reply).toBe(
       "Claude is not connected: planning and tasks need it. Connect Claude in Settings.",
     );
+  });
+
+  it("/me says no provider is in force, which the header's no-key bar reads (design §3.1)", async () => {
+    expect((await client.me()).provider).toBeNull();
+  });
+
+  // Review of fix/progress-navigation: Home read "Planning failed: Planning from the brief needs
+  // a Claude key or subscription. Add one in the app: Settings → Accounts and keys → Open the
+  // setup assistant, then retry." (about 170 characters) with no button. Design §2 item 5, §5.1.
+  it("a brief without Claude: the project's card says planning failed in one short sentence with Connect Claude, and the screens hear it", async () => {
+    const heard: Promise<string>[] = [];
+    const onProject = (p: { id: string }) =>
+      heard.push(rt.intake.status(p.id).then((s) => s.state));
+    rt.events.on("project", onProject);
+    try {
+      const created = await client.createProject({
+        name: "No key plan",
+        goal: "One page",
+        brief: "A page that shows a random quote.",
+        intake: true,
+      });
+      expect(created.statusLine?.text).toBe("Drafting the plan…");
+      await rt.intake.inFlight(created.id)?.catch(() => undefined);
+      // The draft's end is announced (`project.changed`), so Home and the header re-read the
+      // card without a reload; before, only the creation was, while the plan was drafting.
+      await eventually(
+        async () => (await Promise.all(heard)).includes("failed"),
+        "a project.changed after the plan failed",
+        async () => (await Promise.all(heard)).join(", "),
+        10_000,
+      );
+      const row = (await client.projects()).find((p) => p.id === created.id);
+      expect(row?.statusLine).toEqual({
+        kind: "planning_failed",
+        text: "Planning failed: Claude is not connected",
+        action: { kind: "link", label: "Connect Claude", to: "/setup" },
+      });
+      expect(row?.statusLine?.text.length).toBeLessThanOrEqual(80);
+      // The project page's plan banner keeps the reason in full, with where to add a key.
+      expect((await client.intakeStatus(created.id)).error).toContain(
+        "Settings → Accounts and keys → Open the setup assistant",
+      );
+    } finally {
+      rt.events.off("project", onProject);
+    }
   });
 
   it("the Start dialog's check says Claude is not connected, with the button that fixes it (design §3.6)", async () => {

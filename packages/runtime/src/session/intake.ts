@@ -354,6 +354,12 @@ export interface IntakeDeps {
    * through the daemon's scheduler. Absent in a one-shot: the plan is written, nothing starts.
    */
   start?: StartPort;
+  /**
+   * A background draft (`enqueue`) ended: its plan was filed, or its failure recorded. The
+   * daemon says the project changed, so Home and the project header re-read its status
+   * sentence ("Drafting the plan…" to "Planning failed: …") without a reload.
+   */
+  onDrafted?: (projectId: string) => void;
 }
 
 /** The planning rule when no specialist reaches the web on this install (U-044). */
@@ -684,6 +690,12 @@ export class IntakeService {
       })
       .finally(() => {
         this.jobs.delete(projectId);
+        // After the delete: the status read on the announcement is no longer "drafting".
+        try {
+          this.deps.onDrafted?.(projectId);
+        } catch (e) {
+          this.logger.warn("intake end not announced", { projectId, error: errorMessage(e) });
+        }
       });
     this.jobs.set(projectId, job);
     // The daemon does not await the job; a rejection it does not observe must not be unhandled.

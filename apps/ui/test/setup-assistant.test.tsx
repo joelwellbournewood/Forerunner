@@ -53,6 +53,25 @@ describe("setup assistant", () => {
     );
   });
 
+  it("a step passed with Skip for now reads 'skipped', not ✓ (walk first-project 04)", async () => {
+    const user = userEvent.setup();
+    renderApp("/", createHarness(FRESH));
+    await screen.findByTestId("setup-page");
+    await user.type(screen.getByTestId("setup-name"), "Robin");
+    await user.click(screen.getByTestId("setup-next"));
+    // Claude: no key, so the button skips it.
+    await waitFor(() => expect(screen.getByTestId("setup-next")).toHaveTextContent("Skip for now"));
+    await user.click(screen.getByTestId("setup-next"));
+    await waitFor(() => expect(screen.getByTestId("setup-next")).toHaveTextContent("Skip for now"));
+    await user.click(screen.getByTestId("setup-next"));
+    await waitFor(() =>
+      expect(screen.getByTestId("setup-step-Claude")).toHaveTextContent("Claude (skipped)"),
+    );
+    expect(screen.getByTestId("setup-step-Claude")).not.toHaveTextContent("✓");
+    expect(screen.getByTestId("setup-step-GitHub")).toHaveTextContent("GitHub (skipped)");
+    expect(screen.getByTestId("setup-step-Welcome")).toHaveTextContent("✓ Welcome");
+  });
+
   it("a set-up install and a daemon without the routes stay where the app opened", async () => {
     renderApp("/settings");
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
@@ -181,7 +200,8 @@ describe("setup assistant", () => {
     expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 200));
     expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("link", { name: "Memory" }));
+    await user.click(screen.getByTestId("more-nav"));
+    await user.click(await screen.findByRole("menuitem", { name: "Memory" }));
     await new Promise((r) => setTimeout(r, 200));
     expect(screen.queryByTestId("setup-page")).not.toBeInTheDocument();
     // Settings → Accounts and keys still opens it.

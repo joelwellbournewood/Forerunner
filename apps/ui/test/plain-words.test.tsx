@@ -112,11 +112,13 @@ describe("plain words (U-074)", () => {
     expect(drawer).not.toHaveTextContent("task_1");
   });
 
-  it("Project: the autonomy level is named and explained, not 'autonomy 2'", async () => {
+  it("Project: the header says the project's status in one sentence, not stage, health or 'autonomy 2' badges (design §2)", async () => {
     renderApp("/projects/proj_atlas/summary");
-    const badge = await screen.findByTestId("project-autonomy");
-    expect(badge).toHaveTextContent("autonomy: Standard (level 2)");
-    expect(badge).toHaveAttribute("title", "routine, reversible actions run; the rest asks you");
+    const header = await screen.findByTestId("project-header");
+    expect(await within(header).findByTestId("project-status")).toHaveTextContent(
+      "Waiting for you: 2 questions",
+    );
+    expect(header).not.toHaveTextContent(/autonomy|level 2|attention|\bbuild\b|\bactive\b/);
   });
 
   it("Memory: a lesson names its project, not its id", async () => {

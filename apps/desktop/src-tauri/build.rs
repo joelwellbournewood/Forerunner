@@ -18,10 +18,8 @@ fn main() {
     println!("cargo:rerun-if-changed=runtime/runtime.json");
     // The app's own commands (the global hotkey, ADR 0064) are listed so each needs an explicit
     // permission in `capabilities/`: only the main window gets them.
-    tauri_build::try_build(
-        tauri_build::Attributes::new().app_manifest(
-            tauri_build::AppManifest::new().commands(&["hotkey_status", "hotkey_set"]),
-        ),
-    )
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&["hotkey_status", "hotkey_set", "open_folder"]),
+    ))
     .expect("failed to run tauri-build");
 }

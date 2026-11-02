@@ -814,11 +814,38 @@ export function createDaemonApp(
     return c.json(agentView(renamed));
   });
 
+  // A project's card with its status sentence (design §2): the sandbox's readiness, the plan
+  // from the brief and the folder its files are in.
+  const sandboxNow = (): boolean | null => {
+    try {
+      const r = rt.sandbox.readiness.current();
+      return r ? r.state === "ready" : null;
+    } catch {
+      return null;
+    }
+  };
+  const projectCardOf = (
+    id: string,
+    plan?: { state: "drafting" | "pending" | null; error: string | null },
+  ) =>
+    projectCard(rt.store, id, chf(), rt.human.id, {
+      sandboxReady: sandboxNow(),
+      plan: async (projectId) => {
+        if (plan) return plan;
+        try {
+          const s = await rt.intake.status(projectId);
+          return { state: s.state, error: s.error };
+        } catch {
+          return { state: null, error: null };
+        }
+      },
+      folder: (project) => rt.docs.docsDirsFor(project)[0] ?? null,
+      // A failed plan's button: Try again while Claude is connected, else Connect Claude.
+      hasModel: !!rt.provider,
+    });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });
-    return c.json(
-      await Promise.all(rows.map((p) => projectCard(rt.store, p.id, chf(), rt.human.id))),
-    );
+    return c.json(await Promise.all(rows.map((p) => projectCardOf(p.id))));
   });
 
   app.post("/projects", async (c) => {
@@ -830,8 +857,14 @@ export function createDaemonApp(
     const p = await createProjectRecord(rt, body);
     // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in
     // the inbox; the card answers now. A failure is recorded on the project (the status route).
+    // The card is read first, saying the plan is being drafted, so the draft starts as the
+    // answer goes out (as before the status sentence) and not after the card's reads.
+    const card = await projectCardOf(
+      p.id,
+      body.intake === true ? { state: "drafting", error: null } : undefined,
+    );
     if (body.intake === true) void rt.intake.enqueue(p.id).catch(() => undefined);
-    return c.json(await projectCard(rt.store, p.id, chf(), rt.human.id), 201);
+    return c.json(card, 201);
   });
 
   // PM intake (spec A.2, ADR 0055): one model call on the planning rung, one blocking approval
@@ -879,11 +912,11 @@ export function createDaemonApp(
     return c.json(intakeStatusView(s), 202);
   });
 
-  app.get("/projects/:id", async (c) =>
-    c.json(await projectCard(rt.store, c.req.param("id"), chf(), rt.human.id)),
-  );
+  app.get("/projects/:id", async (c) => c.json(await projectCardOf(c.req.param("id"))));
   app.get("/projects/:id/summary", async (c) =>
-    c.json(await projectSummary(rt.store, c.req.param("id"), chf())),
+    c.json(
+      await projectSummary(rt.store, c.req.param("id"), chf(), { sandboxReady: sandboxNow() }),
+    ),
   );
 
   // A runnable specialist's per-run limit (registry `max_budget_usd`): a task's cap without a

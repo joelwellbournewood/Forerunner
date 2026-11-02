@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { createClient, type DaemonClient, type FetchLike } from "../src/api/client.ts";
 import type { DaemonConfig } from "../src/api/config.ts";
+import type { StreamOptions } from "../src/api/sse.ts";
 import { type KeyValueStore, memoryStorage } from "../src/lib/storage.ts";
 import { AppRoutes } from "../src/routes.tsx";
 import { AppProvider } from "../src/store/context.tsx";
@@ -46,9 +47,17 @@ export function createHarness(options: FakeDaemonOptions & { token?: string } = 
 }
 
 /** Mount the whole app (shell + routes) at `route` against the harness. */
-export function renderApp(route = "/", harness: Harness = createHarness()) {
+export function renderApp(
+  route = "/",
+  harness: Harness = createHarness(),
+  streamOptions?: StreamOptions,
+) {
   const utils = render(
-    <AppProvider client={harness.client} store={harness.store}>
+    <AppProvider
+      client={harness.client}
+      store={harness.store}
+      {...(streamOptions ? { streamOptions } : {})}
+    >
       <MemoryRouter initialEntries={[route]}>
         <AppRoutes />
       </MemoryRouter>

@@ -1,10 +1,16 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { docFile, STANDARD_DOCS } from "@forerunner/memory";
-import { basename, ForerunnerError, fromPosix, join } from "@forerunner/platform";
+import { basename, ForerunnerError, fromPosix, isInside, join } from "@forerunner/platform";
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import { Hono } from "hono";
 import { WORKSPACE_DIR } from "../loop/docs.ts";
-import type { DocContentView, DocView } from "./api-types.ts";
+import type {
+  DocContentView,
+  DocView,
+  ProjectFileContentView,
+  ProjectFileEntryView,
+  ProjectFilesView,
+} from "./api-types.ts";
 import { ownsProject, type Who } from "./ownership.ts";
 import { reviewsView } from "./views.ts";
 
@@ -67,6 +73,90 @@ function rootLabel(project: ProjectRow, root: string): string {
   return "from this PC's copy of the repository";
 }
 
+/** A decision record of the project (`docs/decisions/0001-title.md`): Docs opens it. */
+export const DECISION_RECORD = /^docs\/decisions\/[A-Za-z0-9][A-Za-z0-9._-]*\.md$/;
+
+/** Folders the Files tab does not list: version control, dependencies, the install marker. */
+export const FILES_SKIPPED = new Set([".git", "node_modules", ".forerunner"]);
+/** At most this many entries are listed (`truncated` says when there were more). */
+export const FILES_MAX_ENTRIES = 2000;
+const FILES_MAX_DEPTH = 8;
+
+/**
+ * The project's files under its folder (design §3.10): every file and folder, depth first in
+ * name order, with sizes and change dates, without following links out of it.
+ */
+export function listProjectFiles(root: string): {
+  entries: ProjectFileEntryView[];
+  truncated: boolean;
+} {
+  const entries: ProjectFileEntryView[] = [];
+  let truncated = false;
+  const walk = (dir: string, prefix: string, depth: number) => {
+    let names: string[];
+    try {
+      names = readdirSync(dir).sort((a, b) => a.localeCompare(b));
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (FILES_SKIPPED.has(name)) continue;
+      if (entries.length >= FILES_MAX_ENTRIES) {
+        truncated = true;
+        return;
+      }
+      const full = join(dir, name);
+      let st: ReturnType<typeof lstatSync>;
+      try {
+        st = lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isSymbolicLink()) continue;
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (st.isDirectory()) {
+        entries.push({ path, kind: "dir", sizeBytes: 0, updatedAt: st.mtime.toISOString() });
+        if (depth < FILES_MAX_DEPTH) walk(full, path, depth + 1);
+      } else if (st.isFile()) {
+        entries.push({
+          path,
+          kind: "file",
+          sizeBytes: st.size,
+          updatedAt: st.mtime.toISOString(),
+        });
+      }
+    }
+  };
+  walk(root, "", 0);
+  return { entries, truncated };
+}
+
+/**
+ * The file a relative path names under the root, or null when the path leaves it: an absolute
+ * path, a drive, a `..` segment, a skipped folder, or a link that resolves outside the root.
+ */
+export function fileUnder(root: string, rel: string): string | null {
+  const parts = rel.replace(/\\/g, "/").split("/");
+  if (
+    rel.length === 0 ||
+    rel.startsWith("/") ||
+    /^[A-Za-z]:/.test(rel) ||
+    parts.some((p) => p === "" || p === "." || p === ".." || FILES_SKIPPED.has(p))
+  )
+    return null;
+  const file = join(root, ...parts);
+  try {
+    const real = realpathSync(file);
+    if (!isInside(realpathSync(root), real)) return null;
+    return real;
+  } catch {
+    return null;
+  }
+}
+
+/** The largest file `GET /projects/:id/files/:path` shows inline; longer ones are cut. */
+export const FILE_CONTENT_MAX_BYTES = 256 * 1024;
+
 export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
   const app = new Hono();
 
@@ -108,8 +198,9 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     const project = await owned(c.req.param("id"));
     if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
     const rel = c.req.param("path");
-    // Only the set's own files: the path is never joined onto a root unchecked.
-    if (!STANDARD_DOCS.some((doc) => docFile(doc) === rel)) {
+    // Only the set's own files and the decision records in docs/decisions (design §3.4:
+    // "all" links to the record): the path is never joined onto a root unchecked.
+    if (!STANDARD_DOCS.some((doc) => docFile(doc) === rel) && !DECISION_RECORD.test(rel)) {
       throw new ForerunnerError("not_found", `${rel} is not one of the project's standard docs`);
     }
     const roots = deps.docsDirsFor(project);
@@ -127,6 +218,45 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
         content += `\n\nDecisions in this folder:\n${adrs.map((n) => `- ${n}`).join("\n")}\n`;
     }
     const view: DocContentView = { path: rel, content, updatedAt: found.updatedAt };
+    return c.json(view);
+  });
+
+  // The project's files (design §3.10): the folder its work is in, listed read-only, and one
+  // file's text. The folder is the first of `docsDirsFor` (the linked folder, this install's
+  // checkout of the repository, the workspace); a path never leaves it.
+  app.get("/projects/:id/files", async (c) => {
+    const project = await owned(c.req.param("id"));
+    if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
+    const root = deps.docsDirsFor(project)[0] ?? null;
+    if (!root) {
+      const view: ProjectFilesView = { folder: null, entries: [], truncated: false };
+      return c.json(view);
+    }
+    const view: ProjectFilesView = { folder: root, ...listProjectFiles(root) };
+    return c.json(view);
+  });
+
+  app.get("/projects/:id/files/:path", async (c) => {
+    const project = await owned(c.req.param("id"));
+    if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
+    const rel = c.req.param("path");
+    const root = deps.docsDirsFor(project)[0] ?? null;
+    const file = root ? fileUnder(root, rel) : null;
+    if (!file) throw new ForerunnerError("not_found", `${rel} is not a file of this project`);
+    const st = statSync(file);
+    if (!st.isFile()) throw new ForerunnerError("not_found", `${rel} is a folder`);
+    const bytes = readFileSync(file);
+    const head = bytes.subarray(0, FILE_CONTENT_MAX_BYTES);
+    // Text is shown inline; a file with a NUL byte in its first 8 KiB is not text.
+    const binary = head.subarray(0, 8192).includes(0);
+    const view: ProjectFileContentView = {
+      path: rel,
+      content: binary ? null : head.toString("utf8"),
+      sizeBytes: st.size,
+      updatedAt: st.mtime.toISOString(),
+      binary,
+      truncated: !binary && bytes.length > FILE_CONTENT_MAX_BYTES,
+    };
     return c.json(view);
   });
 

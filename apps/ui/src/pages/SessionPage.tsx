@@ -13,7 +13,7 @@ import {
   statusTone,
 } from "../components/ui.tsx";
 import { formatTime } from "../lib/time.ts";
-import { useClient, useStreamOptions } from "../store/context.tsx";
+import { useClient, useStreamOptions, useUiState } from "../store/context.tsx";
 
 type Level = EventView["level"];
 const LEVELS: readonly Level[] = ["info", "warning", "escalation", "error"];
@@ -29,7 +29,48 @@ const ACTIVE = new Set(["planned", "running", "paused"]);
 /** A session in one of these has ended: its log is complete and nothing more streams (U-071). */
 export const ENDED = new Set(["completed", "stopped", "failed", "killed"]);
 
-/** Live session view (spec K.3). */
+/** "14:05": when a session began, for its title (design §3.7). */
+export function startedAtWords(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+/** A task step line of the log (`task.step`: "read index.html", "ran node --check: ok"). */
+interface StepLine {
+  seq: number;
+  text: string;
+}
+
+/**
+ * The task in flight and its step lines, from the log as it streams (design §3.7): a
+ * `task.started` begins one, its `task.step` lines follow (at most the last eight), and its
+ * `task.finished` ends it. The session row only says it at the end, so the page reads the log.
+ */
+export function currentFromLog(
+  events: readonly EventView[],
+): { title: string; specialist: string | null; steps: StepLine[] } | null {
+  let current: { title: string; specialist: string | null; steps: StepLine[] } | null = null;
+  for (const e of events) {
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    if (e.type === "task.started") {
+      current = {
+        title: typeof p.title === "string" ? p.title : "a task",
+        specialist: typeof p.specialist === "string" ? p.specialist : null,
+        steps: [],
+      };
+    } else if (e.type === "task.step" && current) {
+      const text = typeof p.text === "string" && p.text ? p.text : e.text;
+      current.steps = [...current.steps, { seq: e.seq, text }].slice(-8);
+    } else if (e.type === "task.finished" || e.type === "session.ended") {
+      current = null;
+    }
+  }
+  return current;
+}
+
+/** Live session view (design §3.7, spec K.3). */
 export function SessionPage() {
   const { id = "" } = useParams();
   const client = useClient();
@@ -42,6 +83,9 @@ export function SessionPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [filters, setFilters] = useState<Set<Level>>(new Set(LEVELS));
   const [raw, setRaw] = useState(false);
+  const projectName = useUiState(
+    (s) => s.projects.find((p) => p.id === session?.projectId)?.name ?? null,
+  );
   const [follow, setFollow] = useState(true);
   const [stopBusy, setStopBusy] = useState(false);
   /** Stop now asks once (design §3.7). */
@@ -190,28 +234,36 @@ export function SessionPage() {
   if (error && !session) return <ErrorBanner message={error} />;
   if (!session) return null;
 
-  const stepsPct =
-    session.stepCap > 0 ? Math.min(100, Math.round((session.steps / session.stepCap) * 100)) : 0;
+  const ended = ENDED.has(session.status);
+  const at = startedAtWords(session.startedAt);
+  // Design §3.7: "Quote page · session at 14:05", never the session's id.
+  const title = `${projectName ?? "Session"}${at ? `${projectName ? " · session" : ""} at ${at}` : ""}`;
+  const live = ended ? null : currentFromLog(events);
+  const current =
+    live ??
+    (session.currentTask && !ended
+      ? { title: session.currentTask.title, specialist: session.currentTask.specialist, steps: [] }
+      : null);
 
   return (
     <section aria-labelledby="session-title" className="flex h-full flex-col gap-3">
       <header className="space-y-2" data-testid="session-header">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 id="session-title" className="text-lg font-semibold">
-            Session {session.id}
+          <h1 id="session-title" className="text-lg font-semibold" title={`session ${session.id}`}>
+            {title}
           </h1>
           <Badge tone={statusTone(session.status)} testId="session-status">
             {session.statusText ?? session.status}
           </Badge>
           <span className="text-sm text-neutral-600 dark:text-neutral-400">
-            {session.agentName} · {session.trigger} · {session.runner}
+            {session.agentName}
           </span>
           {session.projectId ? (
             <Link
               to={`/projects/${encodeURIComponent(session.projectId)}`}
               className="text-sm text-blue-700 hover:underline dark:text-blue-300"
             >
-              project
+              Open the project
             </Link>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
@@ -237,7 +289,7 @@ export function SessionPage() {
                 Stop after this task
               </Button>
             ) : null}
-            {confirmStopNow ? (
+            {ended ? null : confirmStopNow ? (
               <span className="flex items-center gap-1" data-testid="stop-now-confirm">
                 <span className="text-xs text-neutral-600 dark:text-neutral-400">
                   Stops the current task at once. It goes back to Ready; what it wrote so far stays
@@ -273,45 +325,45 @@ export function SessionPage() {
         ) : null}
         {error ? <ErrorBanner message={error} /> : null}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800">
-            <div className="text-xs text-neutral-500">Current task</div>
-            <div data-testid="current-task">
-              {session.currentTask ? (
-                <>
-                  <span className="font-medium">{session.currentTask.title}</span>
-                  <span className="text-neutral-600 dark:text-neutral-400">
-                    {" "}
-                    · {session.currentTask.specialist}
-                  </span>
-                </>
-              ) : (
-                "no task running"
-              )}
+          {ended ? null : (
+            <div className="rounded border border-neutral-200 p-2 text-sm md:col-span-2 dark:border-neutral-800">
+              <div className="text-xs text-neutral-500">Current task</div>
+              <div data-testid="current-task">
+                {current ? (
+                  <>
+                    <span className="font-medium">"{current.title}"</span>
+                    {current.specialist ? (
+                      <span className="text-neutral-600 dark:text-neutral-400">
+                        {" "}
+                        · {current.specialist}
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
+                  "Choosing the next task…"
+                )}
+              </div>
+              {current && current.steps.length > 0 ? (
+                <ul
+                  className="mt-1 space-y-0.5 text-xs text-neutral-700 dark:text-neutral-300"
+                  data-testid="current-steps"
+                >
+                  {current.steps.map((s) => (
+                    <li key={s.seq}>{s.text}</li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
-          </div>
-          <div className="rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800">
+          )}
+          <div className="space-y-2 rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800">
             <div className="flex justify-between text-xs text-neutral-500">
               <span>Steps</span>
-              <span data-testid="steps">
-                {session.steps} / {session.stepCap}
-              </span>
+              <span data-testid="steps">{session.steps}</span>
             </div>
-            <div
-              className="mt-1 h-2 overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800"
-              role="progressbar"
-              aria-label="Steps"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={stepsPct}
-            >
-              <div className="h-full bg-blue-600" style={{ width: `${stepsPct}%` }} />
-            </div>
-          </div>
-          <div className="rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800">
             <SpendBar
               spent={session.spent}
               cap={session.budgetCap}
-              label="Spent vs cap"
+              label="Spent of this session's budget"
               testId="session-spend"
             />
           </div>
@@ -334,8 +386,8 @@ export function SessionPage() {
       </header>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-neutral-500">Show:</span>
-        {LEVELS.map((level) => (
+        {raw ? <span className="text-neutral-500">Show:</span> : null}
+        {(raw ? LEVELS : []).map((level) => (
           <button
             key={level}
             type="button"
@@ -358,7 +410,7 @@ export function SessionPage() {
             onChange={(e) => setRaw(e.target.checked)}
             data-testid="raw-toggle"
           />
-          Raw output
+          Details
         </label>
         <label className="flex items-center gap-1 text-xs">
           <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
@@ -389,8 +441,8 @@ export function SessionPage() {
             >
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="text-neutral-400">{formatTime(e.at)}</span>
-                <span className="text-neutral-500">#{e.seq}</span>
-                <span className="text-neutral-500">{e.type}</span>
+                {raw ? <span className="text-neutral-500">#{e.seq}</span> : null}
+                {raw ? <span className="text-neutral-500">{e.type}</span> : null}
                 {e.level !== "info" ? (
                   <Badge tone={e.level === "warning" ? "warn" : "bad"} testId="level-badge">
                     {e.level}

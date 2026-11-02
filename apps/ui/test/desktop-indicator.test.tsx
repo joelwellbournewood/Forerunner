@@ -144,7 +144,12 @@ describe("desktop control banner (S.32)", () => {
     await screen.findByTestId("desktop-control-banner");
     const nav = screen.getByTestId("main-nav");
     for (const label of ["Inbox", "Memory", "Extensions", "Settings", "Updates", "Home"]) {
-      await user.click(within(nav).getByText(label));
+      // Memory, Extensions and Updates are behind More; Settings is the gear (design §6).
+      if (label === "Settings") await user.click(screen.getByRole("link", { name: "Settings" }));
+      else if (["Memory", "Extensions", "Updates"].includes(label)) {
+        await user.click(within(nav).getByTestId("more-nav"));
+        await user.click(await screen.findByRole("menuitem", { name: label }));
+      } else await user.click(within(nav).getByText(label));
       expect(screen.getByTestId("desktop-control-banner")).toHaveTextContent("code");
     }
     // The session link opens the live session; the banner is still there.

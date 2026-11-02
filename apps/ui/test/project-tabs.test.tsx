@@ -342,36 +342,36 @@ describe("Data tab", () => {
 });
 
 describe("Summary tab: queue, peers, decisions", () => {
-  it("shows the next-session queue by priority, adds an item and dismisses one", async () => {
+  it("Note for the next session: one box, no type or priority; what is queued can be dismissed (design §3.4)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/projects/proj_atlas/summary", harness);
     const queue = await screen.findByTestId("queue");
+    expect(queue).toHaveTextContent("Note for the next session");
     const items = await within(queue).findAllByTestId("queue-item");
     expect(items.map((i) => i.dataset.kind)).toEqual(["correction", "idea"]);
-    expect(within(queue).getByTestId("queue-past")).toHaveTextContent("consumed");
-    // What happens to an item, as the runtime does it (U-038).
+    // What a note does, as the runtime does it (U-038).
     expect(within(queue).getByTestId("queue-explainer")).toHaveTextContent(
-      "Each one reaches the brief of the task it names (by its title or id), or of every task when it names none.",
+      "Goes into the brief of every task the next session runs, or of the task it names.",
     );
-    await user.selectOptions(within(queue).getByTestId("queue-kind"), "task");
-    await user.type(within(queue).getByTestId("queue-text"), "Add a sitemap");
-    await user.clear(within(queue).getByTestId("queue-priority"));
-    await user.type(within(queue).getByTestId("queue-priority"), "8");
+    expect(within(queue).queryByTestId("queue-kind")).toBeNull();
+    expect(within(queue).queryByTestId("queue-priority")).toBeNull();
+    await user.type(within(queue).getByTestId("queue-text"), "Keep the header under 60 px");
     await user.click(within(queue).getByTestId("queue-add"));
     await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/queue")).toHaveLength(1));
     expect(postedCalls(harness, "/projects/proj_atlas/queue")[0]?.body).toEqual({
-      kind: "task",
-      text: "Add a sitemap",
-      priority: 8,
+      kind: "note",
+      text: "Keep the header under 60 px",
+      priority: 5,
     });
-    await waitFor(() => expect(within(queue).getAllByTestId("queue-item")).toHaveLength(3));
-    expect(within(queue).getAllByTestId("queue-item")[0]).toHaveTextContent("Add a sitemap");
-    await user.click(
-      within(within(queue).getAllByTestId("queue-item")[2] as HTMLElement).getByTestId(
-        "queue-dismiss",
-      ),
+    expect(await within(queue).findByTestId("queue-saved")).toHaveTextContent(
+      "Saved. The next session reads it.",
     );
+    await waitFor(() => expect(within(queue).getAllByTestId("queue-item")).toHaveLength(3));
+    const idea = within(queue)
+      .getAllByTestId("queue-item")
+      .find((i) => i.dataset.queueId === "q_2") as HTMLElement;
+    await user.click(within(idea).getByTestId("queue-dismiss"));
     await waitFor(() => expect(postedCalls(harness, "/queue/q_2/dismiss")).toHaveLength(1));
     await waitFor(() => expect(within(queue).getAllByTestId("queue-item")).toHaveLength(2));
   });
@@ -399,12 +399,13 @@ describe("Summary tab: queue, peers, decisions", () => {
     expect(decision).toHaveTextContent("by human_alice");
   });
 
-  it("shows empty peers and decisions for a solo project, and a missing queue route", async () => {
+  it("a solo project shows no Peers (design §3.4), empty decisions, and a missing queue route", async () => {
     renderApp(
       "/projects/proj_beacon/summary",
       createHarness({ missingRoutes: ["/projects/proj_beacon/queue"] }),
     );
-    expect(await screen.findByTestId("peers-empty")).toHaveTextContent("solo mode");
+    await screen.findByTestId("summary");
+    expect(screen.queryByTestId("peers")).toBeNull();
     expect(await screen.findByTestId("decisions-empty")).toBeInTheDocument();
     expect(await screen.findByTestId("route-missing")).toHaveAttribute("data-route", "queue");
   });

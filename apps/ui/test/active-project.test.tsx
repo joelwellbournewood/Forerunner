@@ -59,7 +59,7 @@ describe("one active project for every channel (U-056)", () => {
     await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Beacon"));
   });
 
-  it("switch by chat to Beacon, then Atlas's Chat tab: the task lands in Atlas and the header stays Beacon", async () => {
+  it("switch by chat to Beacon, then Atlas's Chat tab: the task lands in Atlas; the header names Atlas, the project on screen (design §3.1)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/projects/proj_atlas/chat", harness);
@@ -67,8 +67,9 @@ describe("one active project for every channel (U-056)", () => {
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "switch to Beacon");
     await user.click(screen.getByTestId("chat-send"));
-    await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Beacon"));
-    expect(activeOnDaemon(harness)).toBe("proj_beacon");
+    await waitFor(() => expect(activeOnDaemon(harness)).toBe("proj_beacon"));
+    // Design §3.1: the header names the project being viewed, not a hidden "active" one.
+    expect(screen.getByTestId("active-project")).toHaveTextContent("Atlas");
 
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "add a task: write the Atlas README");
@@ -86,16 +87,16 @@ describe("one active project for every channel (U-056)", () => {
     );
     const task = harness.daemon.state.tasks.find((t) => t.title === "write the Atlas README");
     expect(task?.projectId).toBe("proj_atlas");
-    // The header still shows what chat, voice and the phone use.
-    expect(screen.getByTestId("active-project")).toHaveTextContent("Beacon");
+    // The header names the page's project; chat, voice and the phone keep the recorded one.
+    expect(screen.getByTestId("active-project")).toHaveTextContent("Atlas");
     expect(activeOnDaemon(harness)).toBe("proj_beacon");
   });
 
-  it("opening a project page does not switch the active project", async () => {
+  it("opening a project page does not switch the active project; the header names the page's project (design §3.1)", async () => {
     const harness = createHarness();
     renderApp("/projects/proj_beacon/summary", harness);
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Beacon");
-    await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Atlas"));
+    await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Beacon"));
     expect(postedCalls(harness, "/commands/execute")).toHaveLength(0);
     expect(activeOnDaemon(harness)).toBe("proj_atlas");
   });

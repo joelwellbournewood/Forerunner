@@ -33,6 +33,7 @@ import {
 import { browserStorage, type KeyValueStore } from "../lib/storage.ts";
 import { relativeTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
+import { useScrollToHash } from "../lib/use-hash-scroll.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 
 /** Blocking first, then newest first. */
@@ -361,6 +362,8 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
   );
   // "Needs Docker" beside a full-review task of a plan (design §3.3); unknown until it answers.
   const sandbox = useAsync((signal) => client.sandboxStatus(signal), [client]);
+  // Home's and the Overview's "Answer" open `/inbox#card-<id>`: the page goes to that card.
+  useScrollToHash(inbox.data !== null && inbox.data !== undefined);
   const dockerReady = sandbox.data ? sandbox.data.state === "ready" : null;
 
   // Cloud runner unlock (spec S.12, ADR 0068): the key bridge and this device's window record.
@@ -768,6 +771,7 @@ function RequestCard({
           ? "border-amber-300 bg-amber-50/40 dark:border-amber-800 dark:bg-amber-950/20"
           : "border-neutral-200 dark:border-neutral-800"
       }`}
+      id={`card-${request.id}`}
       data-testid="request"
       data-blocking={request.blocking ? "true" : "false"}
       data-request-id={request.id}

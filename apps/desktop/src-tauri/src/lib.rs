@@ -13,6 +13,7 @@ mod deeplink;
 mod dirs;
 mod env;
 mod events;
+mod folder;
 mod hotkey;
 mod hotkey_shell;
 mod inject;
@@ -136,7 +137,8 @@ pub fn run() {
         .plugin(hotkey_shell::plugin())
         .invoke_handler(tauri::generate_handler![
             hotkey_shell::hotkey_status,
-            hotkey_shell::hotkey_set
+            hotkey_shell::hotkey_set,
+            folder::open_folder
         ])
         .register_uri_scheme_protocol(deeplink::SPLASH_SCHEME, splash_response)
         .setup(move |app| {

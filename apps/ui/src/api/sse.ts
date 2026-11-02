@@ -41,6 +41,14 @@ export type DaemonEvent =
   | { event: "session.event"; data: EventView }
   | { event: "inbox.changed"; data: { blockingCount: number; needsYouCount?: number } }
   | { event: "session.changed"; data: SessionView }
+  /**
+   * Something happened in a session (a task began, a step, the session ended): the install-wide
+   * `/events` stream's `session.changed` frame, which carries the event's `{ type, payload }`,
+   * not a session view. The shell re-reads the project cards on a session's start and end.
+   */
+  | { event: "session.activity"; data: SessionActivity }
+  /** Polling only: the sessions running now, read on every poll (a session that ended is gone). */
+  | { event: "sessions.running"; data: SessionView[] }
   | { event: "project.changed"; data: { id: string } }
   /** An agent was renamed (U-025): `/me` and `/agents` are read again. */
   | { event: "agent.changed"; data: { id: string; name: string } }
@@ -51,6 +59,16 @@ export type DaemonEvent =
   /** Something is being read aloud (ADR 0063); a speech player plays `player: "any"` ones. */
   | { event: "speak.started"; data: SpeakStartedView }
   | { event: "heartbeat"; data: { at: string } };
+
+/** What the daemon's `/events` stream says happened in a session (server.ts `onSession`). */
+export interface SessionActivity {
+  type: string;
+  payload: Record<string, unknown>;
+}
+const SessionActivitySchema = z.object({
+  type: z.string(),
+  payload: z.record(z.string(), z.unknown()).default({}),
+});
 
 /** `needsYouCount` (design §3.8: every open card) is absent from an older daemon. */
 const InboxChanged = z.object({
@@ -86,8 +104,13 @@ export function parseDaemonEvent(event: string, rawData: string): DaemonEvent | 
       return p.success ? { event, data: p.data } : null;
     }
     case "session.changed": {
+      // One session's stream (and polling) sends the live view; the install-wide stream sends
+      // what happened, `{ type, payload }`. Before, that frame failed the view's schema and
+      // was dropped, so the shell never heard of a session in SSE mode.
       const p = SessionViewSchema.safeParse(data);
-      return p.success ? { event, data: p.data } : null;
+      if (p.success) return { event, data: p.data };
+      const a = SessionActivitySchema.safeParse(data);
+      return a.success ? { event: "session.activity", data: a.data } : null;
     }
     case "project.changed": {
       const p = ProjectChanged.safeParse(data);
@@ -362,6 +385,7 @@ export function subscribeDaemonEvents(
       });
       const running = await client.sessions({ status: "running" });
       for (const s of running) handlers.onEvent({ event: "session.changed", data: s });
+      handlers.onEvent({ event: "sessions.running", data: running });
       try {
         const desktop = await client.desktopStatus();
         handlers.onEvent({

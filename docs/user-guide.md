@@ -48,20 +48,40 @@ the cloud runner are built and pass their tests, but you are the first to run th
 
 ## Home
 
-Every project is a card: stage, next milestone, health, spend against budget, how many things
-wait on you, and the latest critic grade. "New project" asks for a name, a goal, a short brief
-and a repository link; the project starts at your default autonomy (Settings) and becomes the
-active project.
+The header has **Home**, **Inbox** (with how many cards need you) and **More** (Memory,
+Extensions, Changes, Performance, Updates), and the gear for **Settings**. While a session
+works, a chip says so: **Alice is working on "Style the page" · 2 min ›**; click it to open the
+session. **Stop all (1 running)** shows only while something runs (see "Kill switch").
+Without a Claude key a bar says "Claude is not connected: planning and tasks need it. You can
+still add tasks." with **Connect**.
 
-The active project is always shown in the header. It is one project for every channel: what
-you pick in the header (or the palette's "Switch project", or Make active on Home) is the
-project chat, voice and the phone talk about, and saying "switch to …" in chat or by voice
-changes the header too. Opening a project's page does not change it; that page's **Chat** tab
-always talks about that page's project. Each switch is listed in Changes.
+Home shows, top to bottom:
 
-A project reads **blocked** only while something waits for your answer in the Inbox. A task
-a session left waiting for you without an Inbox card shows as **needs you: <task>**; click it
-to open the project's tasks. A task you paused yourself is not "needs you".
+- **Needs you**: every card waiting for you in any project, one line each with **Answer**
+  (it opens that card in the Inbox).
+- **Working now**: who works on what in which project, for how long, with **Open**.
+- **Projects**: one row each, with the project's status in one sentence, "3 of 7 done", and
+  the one button that fits: **Answer**, **Open running session**, **Continue** (starts a
+  session that works until nothing more can run), **Set up Docker** or **Open Tasks**.
+
+The sentence says, first match first: "Waiting for you: approve the plan" or "Waiting for you:
+2 questions"; 'Working on "Style the page" (3 of 7 done)'; 'Stuck: "Style the page" failed; 2
+tasks wait on it' or "Waiting for Docker: 1 task"; "Ready to continue: 3 tasks ready";
+"Drafting the plan…" or "Planning failed: Claude did not answer" with **Try again** (without a
+Claude key: "Planning failed: Claude is not connected" with **Connect Claude**), or "You
+rejected the plan. Nothing was written." with **Draft a new plan**; "Done: all 7 tasks. Your
+files: <folder>". The project's page has the reason in full. Home and the project pages follow
+the work as it happens: no reload needed.
+
+**New project** asks for a name, a goal, a short brief and a repository link; the agent drafts a
+plan for you to approve. The project starts at your default autonomy (Settings → Basics; each
+project's own autonomy is under Settings → Advanced, by name) and becomes the active project.
+
+The header names the project you are looking at. The active project (the one chat, voice and
+the phone talk about outside a project page) is what you pick in the header's list, the
+palette's "Switch project" or by opening a project from Home; saying "switch to …" in chat or by
+voice changes it too. A project's **Chat** tab always talks about that page's project. Each
+switch is listed in Changes.
 
 The header says **connected** while Forerunner's background service answers. When it stops
 answering (or refuses this window after a restart) the header says **not connected** with a
@@ -70,8 +90,25 @@ again as soon as the service answers.
 
 ## A project
 
-- **Summary**: one screen the agent keeps current. "Read aloud" speaks it.
-- **Plan**: milestones and their dependencies.
+The project's page starts with its name and its status in one sentence with its button (as on
+Home). **Start session** reads **Open running session** while a session works on it. The tabs
+are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **Docs**,
+**Reviews**, **Costs** and **Data**.
+
+- **Overview**: where the project stands and what happens next. The cards of this project that
+  wait for you, each with **Answer**; **Working now** (the task in flight, for how long, with
+  **Open**); **Last result** (the last session's result in at most three lines, with **Open the
+  session** and "Read aloud"); **Next** (the open tasks in the order a session runs them, each
+  with its status, worked out when you look); **Your files** (the project's folder with **Open
+  folder** in the desktop app and **Copy path**, and the files the last session changed);
+  **Decisions**; and **Note for the next session** (one box; see below). Peers appear only when
+  another agent works on the project.
+- **Files**: the project's folder on this computer (its own folder, the folder you linked, or
+  this computer's copy of its repository) as a list with sizes and when each file changed.
+  Click a file to read it here (text files; nothing can be changed from this tab). **Open
+  folder** (desktop app) opens it in your file manager; **Copy path** copies where it is. Until
+  the work writes something it says "Nothing written yet".
+- **Plan** (under More): milestones and their dependencies.
 - **Tasks**: every task, in the order a session runs them (a task after the tasks it waits for,
   then by priority), with its status in words, who does it, its cost and the critic's call. The
   status says what is going on: **Ready**, **Waiting for "Write the README"**, **Stuck: "X"
@@ -106,12 +143,13 @@ again as soon as the service answers.
   "1,50"). In Chat say the priority at the end: "add a task: fix the login, priority high".
   The filters (status, who does it, a search) stay in the address, so they are still set when
   you come back to the tab.
-- **Docs**: the standard document set the agent maintains.
-- **Reviews**: critic findings and grades over time.
-- **Costs**: spend by model, specialist and task, in CHF, with the savings from caching and
-  context compression.
-- **Data**: files and datasets the project knows about; agents see metadata and samples, never
-  whole files.
+- **Docs** (under More): the standard document set the agent maintains, and the decision
+  records in docs/decisions.
+- **Reviews** (under More): critic findings and grades over time.
+- **Costs** (under More): spend by model, specialist and task, in CHF, with the savings from
+  caching and context compression.
+- **Data** (under More): files and datasets the project knows about; agents see metadata and
+  samples, never whole files.
 - **Chat**: ask about this project and change it in words. It knows the conversation so far,
   every task with its status (what it waits for, why it failed), the last session's result, what
   runs now, the cards waiting for you and where the files are, and it can look up a task's runs
@@ -145,13 +183,13 @@ the same. When a session plans code work for such a project, your agent asks in 
 (Autopilot) the agent creates a private repository itself and tells you. A public repository
 always needs your confirmation on this device.
 
-**Next session** on the Summary tab holds notes, tasks, corrections and ideas for the next
-session; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. Each reaches the
-brief of the task it names, by the task's title or id ("Add the login page: reuse the session
-cookie"), or of every task when it names none ("Write in British English"). The session log
-says which task got which. The first-session plan you approve with a new project's setup
-decides the first session: it runs those tasks, in that order, and later sessions go by
-priority.
+**Note for the next session** on the Overview is one box: type what the agent should know
+and **Save note**; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. A note
+reaches the brief of the task it names, by the task's title ("Add the login page: reuse the
+session cookie"), or of every task when it names none ("Write in British English"). The session
+log says which task got which. Notes waiting for the next session are listed under the box with
+**Dismiss**. The first-session plan you approve with a new project's setup decides the first
+session: it runs those tasks, in that order, and later sessions go by priority.
 
 When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox for your
 approval (see "Inbox" below: Approve and start, Change the plan, Reject). Above the project's
@@ -323,7 +361,10 @@ secrets, changing permissions, granting a new capability, sending money, enterin
 third-party sites.
 
 Budgets exist per month, per project, per session, per task and per run. The runtime refuses a
-model call that would cross a cap; it never relies on the agent noticing.
+model call that would cross a cap; it never relies on the agent noticing. In Settings a money
+field takes any amount in CHF with a point or a comma ("12.30", "150.40", "1,50"); 0 or a
+negative amount is refused in words. Closing a change's preview without answering it (the x,
+Escape or Cancel) answers it "no", so no confirmation is left waiting in the Inbox.
 
 On a Claude subscription, Settings → **Claude subscription allowance** says how much
 API-equivalent use your plan covers a month, in CHF. Forerunner cannot see your plan's real
@@ -396,14 +437,17 @@ Undo, and nothing ever says "Undone" when nothing changed.
 
 ## Kill switch
 
-The tray icon and the red button in the header stop every session of one agent or of
-everyone, revoke the run tokens and freeze claims within two seconds. "Everyone" means your
-agents on this computer: on a shared project the other people's sessions keep running, and the
-tasks they hold stay theirs. Nothing starts until you
-click **Resume** (the same button, or the tray) or start a session from the phone; the stop
-lasts across restarts until then. **Stop** on one session, from its page or the phone, ends
-that session only and leaves the kill switch on. Starting a session while Stop all is on says
-so: press **Resume** first.
+**Stop all (1 running)** in the header shows only while a session runs. It asks once ("Stops
+every running session now. No session starts until you allow it again."), then stops every
+session of your agents on this computer, revokes the run tokens and freezes claims within two
+seconds; the tray does the same. On a shared project the other people's sessions keep running,
+and the tasks they hold stay theirs. A bar then says **Sessions are stopped** until you press
+**Allow sessions again** (lets sessions start again) or **Continue where it stopped** (allows
+them and starts a session on every project that has work that can run); the tray, "resume" in
+Chat or a start from the phone allow them too. The stop lasts across restarts until then. A
+session's own page has **Stop after this task** and **Stop now** (see "Sessions"); they end that
+session only and leave the rest running. Starting a session while sessions are stopped says
+so, with **Allow sessions again**.
 
 The command palette opens with **Ctrl+K** (**⌘K** on a Mac) and has **Start session** for the
 active project.
@@ -459,11 +503,17 @@ out your words, each finished sentence of the reply and the end of the reply.
 Each thing has one place. **Settings** is how Forerunner itself works; **Extensions** is what
 your agents may reach beyond their built-in tools.
 
-- **Settings**: your agent's name, the model and its key or subscription (set in the setup)
-  and which is used first, budgets and autonomy, **Voice** (installing local voice, CPU or GPU, and which voice providers
-  the sandbox download), **Email** (your agent's mailbox and mode, on the Email page) and your
-  paired devices.
-  are in force), **Sandbox (Docker)** (whether full-review tasks can run, the step to take,
+- **Settings** opens on **Basics**: your name and your agent's name, whether Claude and GitHub
+  are connected (with **Connect Claude** when Claude is not, and the setup assistant), the
+  budget per session of each project, the monthly cap, the default autonomy by name ("Standard:
+  routine, reversible actions run; the rest asks you"), quiet hours, and **Sandbox (Docker)**
+  (whether full-review tasks can run, the step to take, the sandbox download). Everything else is
+  under **Advanced** (collapsed; click it to open): the subscription allowance, which Claude
+  credential is used first, appearance and shortcuts, the connection to the background service,
+  your paired devices, sources, Opus fast mode, models, **Voice** (installing local voice, CPU or
+  GPU, and which voice providers are in force), the desktop allowlist, **Email** (your agent's
+  mailbox and mode, on the Email page) and the other settings, each project's autonomy among
+  them. Only settings you can change are listed; autonomy is always chosen by its name.
 - **Extensions**: each extra capability with what it is granted (tools, domains, secrets,
   scopes), what it has cost, and an On/Off switch that takes effect at once, also for a session
   that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice
@@ -483,6 +533,8 @@ your agents may reach beyond their built-in tools.
   longer there; the first start of this version removes such a row an earlier version added.
 
 ## Your agent's name
+
+Settings → Basics → **Your name** changes how the app and your agent address you.
 
 Settings → **Your agent**: type a new name (one line, up to 60 characters) and click **Save**. The
 app, notifications, the agent's commits and its email signature use it at once, the phone within

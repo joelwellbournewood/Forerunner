@@ -6,15 +6,31 @@ import { money, PROJECTS, TASKS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Project page", () => {
-  it("redirects to the summary tab, shows the tabs and the cached summary", async () => {
+  it("opens on the Overview: the tabs are Overview, Tasks, Chat, Files and More; Last result, Next computed now, Your files (design §3.4, §6)", async () => {
     renderApp("/projects/proj_atlas");
     const summary = await screen.findByTestId("summary");
     expect(summary).toHaveTextContent("Indexed the docs and opened a PR for the search box.");
-    expect(summary).toHaveTextContent("Review PR #12");
-    expect(summary).toHaveTextContent("1 open question");
-    expect(screen.getByTestId("project-tabs")).toHaveTextContent(
-      "SummaryPlanTasksDocsReviewsCostsDataChat",
+    // Next is the tasks as they are now, not the titles the last session captured.
+    expect(within(summary).getByTestId("next")).toHaveTextContent(
+      '"Add the search box to the header": Being reviewed',
     );
+    expect(summary).not.toHaveTextContent("Review PR #12");
+    expect(within(summary).getByTestId("your-files")).toHaveTextContent(
+      "/home/alice/.local/share/forerunner/worktrees/proj_atlas",
+    );
+    const tabs = screen.getByTestId("project-tabs");
+    const primary = within(tabs)
+      .getAllByRole("link")
+      .filter((l) => !l.closest("details"))
+      .map((l) => l.textContent);
+    expect(primary).toEqual(["Overview", "Tasks", "Chat", "Files"]);
+    expect(
+      within(screen.getByTestId("tab-more"))
+        .getAllByRole("link")
+        .map((l) => l.textContent),
+    ).toEqual(["Plan", "Docs", "Reviews", "Costs", "Data"]);
+    // The Overview's own cards: this project's open ones, each with Answer.
+    expect(await screen.findAllByTestId("overview-card")).toHaveLength(2);
     expect(screen.getByTestId("read-aloud")).toBeEnabled();
     expect(screen.getByTestId("read-aloud")).toHaveTextContent("Read aloud");
   });
@@ -163,6 +179,24 @@ describe("Project page", () => {
       ).toHaveAttribute("href", "/inbox");
     }, 15_000);
 
+    // Sibling of the review of fix/progress-navigation (bench, --provider none): the banner kept
+    // "Try again", which the daemon refuses (503) while no Claude credential is in force.
+    it("without Claude the failed plan's button is Connect Claude, not a Try again that is refused", async () => {
+      const harness = createHarness({ me: { provider: null } });
+      harness.daemon.state.intake.proj_beacon = intake(
+        "failed",
+        "Planning from the brief needs a Claude key or subscription. Add one in the app: Settings → Accounts and keys → Open the setup assistant, then retry.",
+      );
+      renderApp("/projects/proj_beacon", harness);
+      const banner = await screen.findByTestId("intake-banner");
+      expect(banner).toHaveAttribute("data-state", "failed");
+      expect(within(banner).queryByTestId("intake-retry")).toBeNull();
+      expect(within(banner).getByRole("link", { name: "Connect Claude" })).toHaveAttribute(
+        "href",
+        "/setup",
+      );
+    });
+
     it("a rejected plan says so, and Draft a new plan drafts one again from the brief (design §3.3)", async () => {
       const user = userEvent.setup();
       const harness = createHarness();
@@ -193,24 +227,36 @@ describe("Project page", () => {
     });
 
     for (const [state, text] of [
-      ["pending", /plan from your brief waits for your approval in the Inbox/],
-      ["drafting", /plan from your brief is being drafted/],
-      ["failed", /plan from your brief could not be drafted; the project page says why/],
+      ["pending", /^Nothing can run yet: the plan from your brief waits for your approval\.$/],
+      ["drafting", /^Nothing can run yet: the plan from your brief is being drafted\.$/],
     ] as const) {
-      it(`the Start dialog names the plan as it stands: ${state}`, async () => {
+      it(`the Start dialog names the plan as it stands in one sentence, said once: ${state} (wave 2 handoff)`, async () => {
         const user = userEvent.setup();
         const harness = createHarness();
-        harness.daemon.state.intake.proj_beacon = intake(
-          state,
-          state === "failed" ? FAILURE : null,
-        );
+        harness.daemon.state.intake.proj_beacon = intake(state, null);
         renderApp("/projects/proj_beacon", harness);
         await screen.findByTestId("summary");
         await user.click(screen.getByTestId("start-session"));
         const dialog = await screen.findByTestId("start-session-dialog");
-        expect(await within(dialog).findByTestId("start-session-intake")).toHaveTextContent(text);
+        expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(text);
+        // Not again in other words, and not "add a task on the Tasks tab".
+        expect(within(dialog).queryByTestId("start-session-intake")).toBeNull();
+        expect(dialog).not.toHaveTextContent(/Give your agent work first/);
       });
     }
+
+    it("the Start dialog names the plan as it stands: failed", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.intake.proj_beacon = intake("failed", FAILURE);
+      renderApp("/projects/proj_beacon", harness);
+      await screen.findByTestId("summary");
+      await user.click(screen.getByTestId("start-session"));
+      const dialog = await screen.findByTestId("start-session-dialog");
+      expect(await within(dialog).findByTestId("start-session-intake")).toHaveTextContent(
+        /plan from your brief could not be drafted; the project page says why/,
+      );
+    });
   });
 
   it("warns when ready tasks exist but none can run: what each waits on, what the budget leaves out (U-040)", async () => {
@@ -346,10 +392,15 @@ describe("Project page", () => {
     expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
       "Started: the session works until nothing more can run, the budget is used, or you stop it.",
     );
+    // Said once: not also "Starts after the current session" about the session it just began.
+    await waitFor(() => expect(within(dialog).queryByTestId("start-session-explain")).toBeNull());
+    expect(dialog).not.toHaveTextContent("Starts after the current session");
     expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
     await user.click(within(dialog).getByTestId("start-session-open"));
     const header = await screen.findByTestId("session-header");
-    expect(header).toHaveTextContent(/Session sess_/);
+    // Design §3.7: named by its project and when it began, never its id.
+    expect(header).toHaveTextContent(/Atlas · session at /);
+    expect(header).not.toHaveTextContent(/sess_/);
     // The first event arrives over SSE after the session page mounts; CI runners have needed more than 4 s.
     await waitFor(() => expect(screen.getAllByTestId("event-row").length).toBeGreaterThan(0), {
       timeout: 15_000,

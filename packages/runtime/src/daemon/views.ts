@@ -11,6 +11,7 @@ import type {
   LessonRow,
   MessageRow,
   MilestoneRow,
+  ProjectRow,
   ReviewRow,
   RunRow,
   SessionRow,
@@ -37,8 +38,9 @@ import type { EffortLevel } from "../provider/types.ts";
 import type { Registry } from "../registry/types.ts";
 import { countsList } from "../session/counts.ts";
 import { runCapOf } from "../session/executor.ts";
+import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
-import { sessionStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
+import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { optionLabel } from "../wiring/request-answers.ts";
 import type {
@@ -78,7 +80,15 @@ import {
   verdictWords,
 } from "./event-lines.ts";
 import { projectHealth } from "./project-health.ts";
+import {
+  overviewNext,
+  type PlanState,
+  progressOf,
+  projectStatusLine,
+  workingOn,
+} from "./project-status.ts";
 import { type RequestWordsContext, requestWords } from "./request-words.ts";
+import { loadTaskDisplayContext, runOrder, taskDisplay } from "./task-display.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
 export function agentView(a: AgentRow): AgentView {
@@ -106,11 +116,24 @@ export function openMilestone<M extends Pick<MilestoneRow, "status">>(
   return rows.find((m) => m.status === "planned" || m.status === "active");
 }
 
+/**
+ * What the project card's status sentence needs beyond the store (design §2): whether the
+ * Docker sandbox is ready, the plan from the brief, and where the project's files are.
+ */
+export interface ProjectCardFacts {
+  sandboxReady: boolean | null;
+  plan?: (projectId: string) => Promise<{ state: PlanState; error: string | null }>;
+  folder?: (project: ProjectRow) => string | null;
+  /** Whether a Claude credential is in force (a failed plan's button: Try again or Connect). */
+  hasModel?: boolean | null;
+}
+
 export async function projectCard(
   store: StateStore,
   projectId: string,
   chfPerUsd: number,
   humanId: string,
+  facts?: ProjectCardFacts,
 ): Promise<ProjectCard> {
   const p = await store.project.mustGet(projectId);
   const spend = await store.costLedger.sum({ projectId: p.id });
@@ -131,6 +154,27 @@ export async function projectCard(
   const failed = tasks.filter((t) => t.status === "failed").length;
   const { health, needsYou } = await projectHealth(store, p.id, humanId, tasks, failed);
   const last = (p.summary_cache as { last_session?: { ended_at?: string } }).last_session;
+  // The status sentence (design §2), from the tasks, cards, plan and session as they are now.
+  const ctx = await loadTaskDisplayContext(store, tasks, facts?.sandboxReady ?? null);
+  const displays = new Map(tasks.map((t) => [t.id, taskDisplay(t, ctx)]));
+  const cards = await store.humanRequest.list(
+    { status: "open", project_id: p.id, human_id: humanId } as never,
+    { orderBy: [{ column: "created_at" }, { column: "id" }], limit: 1000 },
+  );
+  const plan = facts?.plan ? await facts.plan(p.id) : { state: null, error: null };
+  const folder = facts?.folder ? facts.folder(p) : null;
+  const working = await workingOn(store, p.id);
+  const statusLine = projectStatusLine({
+    projectId: p.id,
+    tasks,
+    displays,
+    cards,
+    plan: plan.state,
+    planError: plan.error,
+    hasModel: facts?.hasModel ?? null,
+    working,
+    folder,
+  });
   return {
     id: p.id,
     name: p.name,
@@ -156,6 +200,10 @@ export async function projectCard(
     smallProjectMode: p.small_project_mode,
     defaultRiskTier: defaultRiskTier(p),
     repos: p.repos,
+    statusLine,
+    progress: progressOf(tasks),
+    working,
+    folder,
   };
 }
 
@@ -181,6 +229,7 @@ export async function projectSummary(
   store: StateStore,
   projectId: string,
   chfPerUsd: number,
+  facts?: Pick<ProjectCardFacts, "sandboxReady">,
 ): Promise<ProjectSummary> {
   const p = await store.project.mustGet(projectId);
   const s = p.summary_cache as {
@@ -192,6 +241,24 @@ export async function projectSummary(
   const next = s.next_steps ?? [];
   // One text for the screen's "Read aloud" and for the `summary.speak` command (spec A.6).
   const spoken = spokenProjectSummary(p, spend.usd_micro, chfPerUsd);
+  // Design §3.4 "Next", computed when shown (§5 rule 4): the open tasks in run order, each
+  // with its status in words, at most three, then "and N more".
+  const tasks = await store.task.list({ project_id: p.id } as never, { limit: 2000 });
+  const ctx = await loadTaskDisplayContext(store, tasks, facts?.sandboxReady ?? null);
+  const nextLines = overviewNext(
+    runOrder(tasks).map((task) => ({ task, display: taskDisplay(task, ctx) })),
+  );
+  // Design §3.4 "Your files": the files the last session changed.
+  const changedFiles: string[] = [];
+  if (s.last_session?.id) {
+    for (const e of await store.event.list(s.last_session.id, 0, 10_000)) {
+      if (e.type !== TASK_FILES_EVENT) continue;
+      const files = (e.payload as { files?: unknown }).files;
+      if (Array.isArray(files))
+        for (const f of files)
+          if (typeof f === "string" && !changedFiles.includes(f)) changedFiles.push(f);
+    }
+  }
   return {
     goal: p.goal,
     stage: p.stage,
@@ -201,9 +268,11 @@ export async function projectSummary(
           endedAt: s.last_session.ended_at,
           summary: s.last_session.summary,
           stopReason: s.last_session.stop_reason,
+          changedFiles,
         }
       : null,
     nextSteps: next,
+    next: nextLines,
     openQuestions: s.open_questions ?? 0,
     spend: money(spend.usd_micro, chfPerUsd),
     spoken,
@@ -311,7 +380,12 @@ export function sessionView(
     runner: s.runner,
     // How it ended, in words (session-engine, design §3.7).
     stopReason: stopReasonOfHandoff(s.handoff),
-    statusText: sessionStatusText(s.status, stopReasonOfHandoff(s.handoff)),
+    // "Ended: 1 task needs you" when it finished with tasks waiting for the person.
+    statusText: endedStatusText(
+      s.status,
+      stopReasonOfHandoff(s.handoff),
+      blockedOfHandoff(s.handoff),
+    ),
   };
 }
 
