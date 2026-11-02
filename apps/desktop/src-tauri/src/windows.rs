@@ -105,7 +105,7 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
             if navigation_allowed(url, &nav_origins) {
                 return true;
             }
-            leave(&nav_app, url, leave_action(url));
+            leave(&nav_app, url, leave_action(url), Via::Link);
             false
         })
         // A `target="_blank"` link or `window.open` (the Tasks tab's PR link was one): without
@@ -116,6 +116,7 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
                 &new_window_app,
                 &url,
                 new_window_action(&url, &new_window_origins),
+                Via::NewWindow,
             );
             tauri::webview::NewWindowResponse::Deny
         })
@@ -178,14 +179,57 @@ pub fn new_window_action(url: &url::Url, app_origins: &[String]) -> LeaveAction 
     leave_action(url)
 }
 
-fn leave(app: &AppHandle, url: &url::Url, action: LeaveAction) {
-    match action {
-        LeaveAction::OpenInBrowser => {
-            if let Err(e) = app.opener().open_url(url.as_str(), None::<&str>) {
-                log::warn!("could not open {} in the browser: {e}", url);
-            }
+/// How a link asked to leave the window: it navigated in place (an `ExternalLink`, the
+/// Tasks tab's PR link) or asked for a new window (`target="_blank"`, `window.open`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Via {
+    Link,
+    NewWindow,
+}
+
+impl Via {
+    fn words(self) -> &'static str {
+        match self {
+            Via::Link => "link",
+            Via::NewWindow => "new window",
         }
-        LeaveAction::Refuse => log::warn!("opening {} from the window refused", url.scheme()),
+    }
+}
+
+/// Start of the shell log line written each time the window hands a web page to the system
+/// browser; the CI window check (`scripts/desktop-window-check.mjs`) asserts on it.
+pub const HANDED_TO_BROWSER: &str = "handed to the system browser";
+
+/// A link as the shell log names it: scheme, host, port and path. The query and the fragment
+/// (where a token could ride) and any user name or password are left out.
+pub fn loggable_url(url: &url::Url) -> String {
+    let mut out = format!("{}{}", url.origin().ascii_serialization(), url.path());
+    if url.query().is_some() || url.fragment().is_some() {
+        out.push_str(" (query not logged)");
+    }
+    out
+}
+
+/// The shell log line for a page handed to the system browser.
+pub fn handed_to_browser_line(url: &url::Url, via: Via) -> String {
+    format!(
+        "{HANDED_TO_BROWSER} ({}): {}",
+        via.words(),
+        loggable_url(url)
+    )
+}
+
+fn leave(app: &AppHandle, url: &url::Url, action: LeaveAction, via: Via) {
+    match action {
+        LeaveAction::OpenInBrowser => match app.opener().open_url(url.as_str(), None::<&str>) {
+            Ok(()) => log::info!("{}", handed_to_browser_line(url, via)),
+            Err(e) => log::warn!("could not open {} in the browser: {e}", loggable_url(url)),
+        },
+        LeaveAction::Refuse => log::warn!(
+            "opening {} from the window refused ({})",
+            url.scheme(),
+            via.words()
+        ),
     }
 }
 
@@ -473,6 +517,27 @@ mod tests {
             new_window_action(&url("http://localhost:1420/projects/p1/tasks"), &origins),
             LeaveAction::Refuse
         );
+    }
+
+    /// The CI window check asserts on this line (`scripts/desktop-window-check.mjs`): it names
+    /// how the link left and where it went, never a query, a fragment or credentials.
+    #[test]
+    fn a_hand_off_to_the_browser_is_logged_without_query_or_credentials() {
+        let url = |s: &str| url::Url::parse(s).unwrap();
+        assert_eq!(
+            handed_to_browser_line(&url("http://127.0.0.1:4100/acme/site/pull/1"), Via::Link),
+            "handed to the system browser (link): http://127.0.0.1:4100/acme/site/pull/1"
+        );
+        assert_eq!(
+            handed_to_browser_line(
+                &url("https://user:secret@example.org/a b?token=abc#frag"),
+                Via::NewWindow
+            ),
+            "handed to the system browser (new window): https://example.org/a%20b (query not logged)"
+        );
+        let line = handed_to_browser_line(&url("https://example.org/x#only-a-fragment"), Via::Link);
+        assert!(line.ends_with("(query not logged)"), "{line}");
+        assert!(!line.contains("only-a-fragment"), "{line}");
     }
 
     #[test]

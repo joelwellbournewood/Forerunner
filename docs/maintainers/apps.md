@@ -1481,6 +1481,27 @@ limit is not a failure (1.0.4 used one 1.5 s client for both, so a kill switch t
 could be reported as failed, and Quit ended a daemon hard that was shutting down). `/events`
 has a 60 s read timeout only.
 
+**Hand-offs in the log.** Each link the window gives to the system browser is one info line,
+`handed to the system browser (link|new window): <scheme://host:port/path>`
+(`windows::handed_to_browser_line`; the query, the fragment and any user name or password are
+never logged, `loggable_url`), and each folder Open folder gives to the file manager is
+`handed to the file manager: <folder>` (`folder::handed_to_file_manager_line`); a refused link
+is `opening <scheme> from the window refused (link|new window)` and a refused folder `open
+folder refused: <why>`. The CI window check (`scripts/desktop-window-check.mjs`, `testing.md`)
+asserts on these lines, so a change to their words changes the check's parser
+(`parseHandoffs`) in the same commit; its unit test reads the constants from these files.
+
+**The daemon on a stand-in model (`FORERUNNER_DAEMON_PROVIDER`, development and CI only).**
+`spawn_daemon` appends `--provider <name>` to `daemon` when this variable names one of
+`supervisor::DAEMON_PROVIDERS` (`fake`, `bench`, `bench-live`, the CLI's stand-ins), nothing when
+it is unset or empty, and refuses any other value with a warning in both logs (the daemon then
+starts as always: an argv entry the shell does not know is never forwarded; `daemon_flags`). A
+daemon started on one says so in `daemon-shell.log`
+(`[shell] the daemon runs on the stand-in model "bench" (FORERUNNER_DAEMON_PROVIDER)`). `bench`
+and `bench-live` load the repository's `testenv/` and refuse to start without it, so on an
+install they run only where a test copied it in (the window check does); a person never sets the
+variable. The self-test forwards it too.
+
 **Logs and secrets.** The shell logs through `tauri-plugin-log` to `<logs>/desktop-shell.log`
 (stdout as well in debug builds). The token is a `Secret` (`Debug`/`Display` print
 `[redacted]`), every error string from the HTTP client passes through `redact()`, and the
@@ -1555,7 +1576,8 @@ without them, malformed refused, control characters and the cap, the status view
 `desktopControl` read the same way); `deeplink` (documented links, rejections,
 safe routes, navigate script, navigation policy); `window_state` (monitor check, minimum size,
 file round trip, a minimised window never remembered, U-077); `windows` (the first-close notice
-marked only once shown, U-077); `actions` (Quit asks from the count `/health` gives when it is
+marked only once shown, U-077; the hand-off line names how a link left and where, never a
+query, a fragment or credentials); `folder` (the hand-off line names the folder); `actions` (Quit asks from the count `/health` gives when it is
 chosen, U-077); `state` (tray view for unreachable, kill/resume, email availability and
 toggle, busy, desktop control on (title, tooltip first line, item, stop enabled) and cleared
 on off, "the desktop" without an app and a new `on` replacing the names, the last report kept
@@ -1564,7 +1586,8 @@ later of two reads winning), when a restart announcement starts the external wat
 opening or starting during
 Quit, a launch during Quit remembered, a spawn that raced Quit not recorded (U-062), `Debug`
 hides the token); `supervisor` (log path, the log rotated above 5 MB keeping one older file
-(U-077), spawn failure logged, the stop argv per OS, the group argv for the shell's own child;
+(U-077), spawn failure logged, `FORERUNNER_DAEMON_PROVIDER` forwarding only a known stand-in
+and nothing without it, and the argv a real spawn gets with, without and with a refused value, the stop argv per OS, the group argv for the shell's own child;
 Quit against real process trees: during the splash with no client, with a hung daemon (a local
 HTTP server that accepts and never answers; the `daemon.json` pid is left alone) and with a daemon
 that answers and goes after `POST /shutdown`, U-062; waiting for a slow daemon ends answered, gone

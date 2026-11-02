@@ -7,6 +7,8 @@
 //! when it does not go; the process the shell started is ended whatever its state, also while
 //! it is still starting or hangs (`end_own_tree`, U-062). A daemon older than the runtime the
 //! app carries (ADR 0092) is ended by `stop_process` so the bundled one can take its place.
+//! `FORERUNNER_DAEMON_PROVIDER` (development and CI only, `daemon_flags`) starts it on a
+//! stand-in model.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -17,6 +19,7 @@ use std::time::{Duration, Instant};
 use crate::daemon::{
     DaemonClient, DaemonFile, Health, HealthError, daemon_file_path, is_fresh, read_daemon_file,
 };
+use crate::env::Env;
 use crate::install::FrCommand;
 
 pub const DAEMON_LOG: &str = "daemon-shell.log";
@@ -83,9 +86,40 @@ pub struct Spawned {
     pub pid: u32,
 }
 
-/// Start `fr daemon`. The argv is `cmd.program cmd.args… daemon`; nothing is interpreted by a
-/// shell on either OS.
-pub fn spawn_daemon(cmd: &FrCommand, logs_dir: &Path) -> Result<Spawned, String> {
+/// The variable that starts the daemon on a stand-in model: `fr daemon --provider <value>`.
+/// For the CI window check and development only (`scripts/desktop-window-check.mjs`); a person
+/// never sets it. Unset or empty, the daemon starts as it always does (the install's own
+/// credentials).
+pub const DAEMON_PROVIDER_ENV: &str = "FORERUNNER_DAEMON_PROVIDER";
+/// The values `DAEMON_PROVIDER_ENV` may name: the CLI's stand-ins (`fr daemon --provider`).
+/// `bench` and `bench-live` load the repository's `testenv/` and refuse to start without it,
+/// so on an install they work only where a test copied it in.
+pub const DAEMON_PROVIDERS: [&str; 3] = ["fake", "bench", "bench-live"];
+
+/// The arguments after `daemon` that `env` asks for: `--provider <name>` when
+/// `DAEMON_PROVIDER_ENV` names one of `DAEMON_PROVIDERS`, nothing when it is unset or empty.
+/// Any other value is refused with the reason (the caller logs it and starts the daemon
+/// without it): an argv entry the shell does not know is never forwarded.
+pub fn daemon_flags(env: &impl Env) -> Result<Vec<String>, String> {
+    let Some(raw) = env.var(DAEMON_PROVIDER_ENV) else {
+        return Ok(Vec::new());
+    };
+    let name = raw.trim();
+    if name.is_empty() {
+        return Ok(Vec::new());
+    }
+    if DAEMON_PROVIDERS.contains(&name) {
+        return Ok(vec!["--provider".to_string(), name.to_string()]);
+    }
+    Err(format!(
+        "{DAEMON_PROVIDER_ENV}={name:?} ignored: it may only name {}; the daemon starts on the install's own model",
+        DAEMON_PROVIDERS.join(", ")
+    ))
+}
+
+/// Start `fr daemon`. The argv is `cmd.program cmd.args… daemon [--provider <name>]` (the
+/// provider only from `daemon_flags(env)`); nothing is interpreted by a shell on either OS.
+pub fn spawn_daemon(cmd: &FrCommand, logs_dir: &Path, env: &impl Env) -> Result<Spawned, String> {
     std::fs::create_dir_all(logs_dir)
         .map_err(|e| format!("could not create {}: {e}", logs_dir.display()))?;
     let log_path = daemon_log_path(logs_dir);
@@ -100,6 +134,21 @@ pub fn spawn_daemon(cmd: &FrCommand, logs_dir: &Path) -> Result<Spawned, String>
         .open(&log_path)
         .map_err(|e| format!("could not open {}: {e}", log_path.display()))?;
     let _ = writeln!(log, "[shell] starting: {}", cmd.describe());
+    let flags = match daemon_flags(env) {
+        Ok(flags) => flags,
+        Err(why) => {
+            log::warn!("{why}");
+            let _ = writeln!(log, "[shell] {why}");
+            Vec::new()
+        }
+    };
+    if let Some(name) = flags.get(1) {
+        log::warn!("the daemon runs on the stand-in model {name:?} ({DAEMON_PROVIDER_ENV})");
+        let _ = writeln!(
+            log,
+            "[shell] the daemon runs on the stand-in model {name:?} ({DAEMON_PROVIDER_ENV})"
+        );
+    }
     let stderr = log
         .try_clone()
         .map_err(|e| format!("could not duplicate the log handle: {e}"))?;
@@ -108,6 +157,7 @@ pub fn spawn_daemon(cmd: &FrCommand, logs_dir: &Path) -> Result<Spawned, String>
     command
         .args(&cmd.args)
         .arg("daemon")
+        .args(&flags)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(stderr));
@@ -462,6 +512,7 @@ pub fn watch_exit(mut child: Child, on_exit: impl FnOnce(Option<i32>) + Send + '
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::env::MapEnv;
 
     #[test]
     fn stopping_uses_an_argv_and_takes_the_process_tree_on_windows() {
@@ -700,7 +751,7 @@ mod tests {
             env: Vec::new(),
             source: crate::install::FrSource::PathLookup,
         };
-        assert!(spawn_daemon(&cmd, &logs).is_err());
+        assert!(spawn_daemon(&cmd, &logs, &MapEnv::default()).is_err());
         assert_eq!(
             std::fs::metadata(&old).expect("rotated").len(),
             DAEMON_LOG_MAX_BYTES + 1,
@@ -731,11 +782,94 @@ mod tests {
             env: Vec::new(),
             source: crate::install::FrSource::PathLookup,
         };
-        let err = spawn_daemon(&cmd, &dir.join("logs")).unwrap_err();
+        let err = spawn_daemon(&cmd, &dir.join("logs"), &MapEnv::default()).unwrap_err();
         assert!(err.contains("could not start"));
         let log = std::fs::read_to_string(daemon_log_path(&dir.join("logs"))).expect("log exists");
         assert!(log.contains("[shell] starting:"));
         assert!(log.contains("definitely-missing-fr"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The CI window check starts the installed app on the stand-in model
+    /// (`scripts/desktop-window-check.mjs`): `FORERUNNER_DAEMON_PROVIDER` names it. Only the
+    /// CLI's stand-ins are forwarded, and nothing at all without the variable, so a person's
+    /// install is unchanged and no other argument can reach the daemon this way.
+    #[test]
+    fn the_daemon_provider_switch_forwards_only_a_known_stand_in() {
+        let with = |v: &str| daemon_flags(&MapEnv::new(&[(DAEMON_PROVIDER_ENV, v)]));
+        assert_eq!(daemon_flags(&MapEnv::default()), Ok(vec![]));
+        assert_eq!(with(""), Ok(vec![]));
+        assert_eq!(with("  "), Ok(vec![]));
+        for name in DAEMON_PROVIDERS {
+            assert_eq!(
+                with(name),
+                Ok(vec!["--provider".to_string(), name.to_string()])
+            );
+        }
+        assert_eq!(
+            with(" bench "),
+            Ok(vec!["--provider".to_string(), "bench".to_string()])
+        );
+        for refused in [
+            "anthropic",
+            "Bench",
+            "--port",
+            "bench --port 1",
+            "bench;calc",
+            "../testenv",
+        ] {
+            let why = with(refused).expect_err(refused);
+            assert!(why.contains(DAEMON_PROVIDER_ENV), "{why}");
+            assert!(why.contains("ignored"), "{why}");
+            assert!(why.contains("fake, bench, bench-live"), "{why}");
+        }
+    }
+
+    /// What `spawn_daemon` actually runs: `daemon --provider bench` with the switch, `daemon`
+    /// alone without it or with a value it refuses (the log says why), each start line in
+    /// `daemon-shell.log`.
+    #[cfg(unix)]
+    #[test]
+    fn the_daemon_is_started_with_the_provider_the_switch_names_and_nothing_else() {
+        let dir = temp_dir("provider-argv");
+        let logs = dir.join("logs");
+        let argv_of = |env: MapEnv| -> String {
+            let out = dir.join(format!("argv-{}.txt", uuid::Uuid::new_v4()));
+            // A stand-in for `fr`: writes the arguments it got, one per line.
+            let cmd = FrCommand {
+                program: PathBuf::from("/bin/sh"),
+                args: vec![
+                    PathBuf::from("-c"),
+                    PathBuf::from(format!("printf '%s\\n' \"$@\" > '{}'", out.display())),
+                    PathBuf::from("fr"),
+                ],
+                cwd: None,
+                env: Vec::new(),
+                source: crate::install::FrSource::PathLookup,
+            };
+            let mut spawned = spawn_daemon(&cmd, &logs, &env).expect("spawn");
+            assert!(spawned.child.wait().expect("wait").success());
+            std::fs::read_to_string(&out).expect("argv written")
+        };
+        assert_eq!(
+            argv_of(MapEnv::new(&[(DAEMON_PROVIDER_ENV, "bench")])),
+            "daemon\n--provider\nbench\n"
+        );
+        assert_eq!(argv_of(MapEnv::default()), "daemon\n");
+        assert_eq!(
+            argv_of(MapEnv::new(&[(DAEMON_PROVIDER_ENV, "--port")])),
+            "daemon\n"
+        );
+        let log = std::fs::read_to_string(daemon_log_path(&logs)).expect("log");
+        assert!(
+            log.contains("[shell] the daemon runs on the stand-in model \"bench\""),
+            "{log}"
+        );
+        assert!(
+            log.contains("FORERUNNER_DAEMON_PROVIDER=\"--port\" ignored"),
+            "{log}"
+        );
+        assert_eq!(log.matches("[shell] starting:").count(), 3, "{log}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

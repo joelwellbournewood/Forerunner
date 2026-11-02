@@ -23,16 +23,29 @@ pub fn folder_to_open(path: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// Start of the shell log line written each time a folder is handed to the file manager;
+/// the CI window check (`scripts/desktop-window-check.mjs`) asserts on it.
+pub const HANDED_TO_FILE_MANAGER: &str = "handed to the file manager";
+
+/// The shell log line for a folder handed to the file manager.
+pub fn handed_to_file_manager_line(folder: &Path) -> String {
+    format!("{HANDED_TO_FILE_MANAGER}: {}", folder.display())
+}
+
 /// `invoke("open_folder", { path })`: the folder in the system's file manager.
 #[tauri::command]
 pub fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
-    let folder = folder_to_open(&path)?;
+    let folder = folder_to_open(&path).inspect_err(|why| {
+        log::warn!("open folder refused: {why}");
+    })?;
     app.opener()
         .open_path(folder.to_string_lossy(), None::<&str>)
         .map_err(|e| {
             log::warn!("could not open folder {}: {e}", folder.display());
             "the file manager did not open it".to_string()
-        })
+        })?;
+    log::info!("{}", handed_to_file_manager_line(&folder));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -51,6 +64,17 @@ mod tests {
         let dir = temp("ok").join("Projekt Zürich");
         std::fs::create_dir_all(&dir).expect("create");
         assert_eq!(folder_to_open(dir.to_str().expect("utf8")), Ok(dir.clone()));
+        let _ = std::fs::remove_dir_all(dir.parent().expect("parent"));
+    }
+
+    /// The CI window check asserts on this line: the folder exactly as it was opened.
+    #[test]
+    fn a_hand_off_to_the_file_manager_names_the_folder() {
+        let dir = temp("logged").join("Projekt Zürich");
+        assert_eq!(
+            handed_to_file_manager_line(&dir),
+            format!("handed to the file manager: {}", dir.display())
+        );
         let _ = std::fs::remove_dir_all(dir.parent().expect("parent"));
     }
 
