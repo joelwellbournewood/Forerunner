@@ -211,8 +211,8 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
     expect(provider.calls).toHaveLength(1);
     expect(result.outcome).toBe("needs_human");
     // In CHF (design §5 rule 7, live walk 2 B2), with what the runner needs to file the card.
-    expect(result.summary).toMatch(
-      /^The run stopped at its budget of CHF 0\.40, after spending CHF 0\.40\.$/,
+    expect(result.summary).toBe(
+      "The run stopped at its budget of CHF 0.40: it spent CHF 0.40, and its next step would have gone over.",
     );
     expect(result.budgetStop).toEqual({
       capUsdMicro: 500_000,

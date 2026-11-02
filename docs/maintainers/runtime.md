@@ -1667,7 +1667,10 @@ needs your decision (Inbox).' while the Inbox said "Nothing needs you", the Task
 "Paused" and the reason spoke dollars on a CHF screen. Now the executor's result carries
 `budgetStop` (`BudgetStop`: the cap, what the task spent in all its runs, `task_budget` or
 `specialist_limit`, the specialist) and words its summary in CHF (`LoopTaskExecutorDeps.chfPerUsd`,
-"The run stopped at its budget of CHF 0.01, after spending CHF 0.01."); the runner sets the
+"The run stopped at its budget of CHF 0.40: it spent CHF 0.40, and its next step would have gone
+over.", since the hooks stop a run before a call that would pass its cap; "after spending" only
+when it spent the whole cap); the card's body says the same ("So far it spent CHF 0.24; its next
+step would have gone over the budget."); the runner sets the
 task's reason to the card's sentence ('"Contact page" stopped at its budget of CHF 0.01.') and
 files one blocking card (`fileBudgetStopCard`, key `task:budget_stop`, options **Raise the
 budget** and **Cancel task**, reused while open). `raisedBudgetUsdMicro` is the budget the

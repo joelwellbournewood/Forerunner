@@ -1071,7 +1071,12 @@ export class LoopTaskExecutor implements TaskExecutor {
           : `the ${spec.name}'s limit of ${this.chfText(cap.usdMicro)} per run (it has no budget of its own)`;
       return {
         outcome: "needs_human",
-        summary: `The run stopped at ${what}, after spending ${this.chfText(result.costUsdMicro)}.`,
+        // The hooks stop a run before a call that would go over its cap: "after spending CHF
+        // 0.00" read as a contradiction on the bench (the stop came before anything was spent).
+        summary:
+          result.costUsdMicro < cap.usdMicro
+            ? `The run stopped at ${what}: it spent ${this.chfText(result.costUsdMicro)}, and its next step would have gone over.`
+            : `The run stopped at ${what}, after spending ${this.chfText(result.costUsdMicro)}.`,
         costUsdMicro: result.costUsdMicro,
         budgetStop: {
           capUsdMicro: cap.source === "task_budget" ? task.budget_usd_micro : cap.usdMicro,

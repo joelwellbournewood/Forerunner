@@ -460,8 +460,22 @@ function budgetCard(
   const waiting = ctx.waiting ?? [];
   const spent = chfAt(card.spent_usd_micro, card.chf_per_usd);
   const raiseTo = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
+  // The hooks stop a run before a call that would go over the cap, so it may have spent less
+  // than the budget: then the next step is what did not fit (the bench read "stopped at its
+  // budget of CHF 0.01. So far it spent CHF 0.00.").
+  const under =
+    typeof card.spent_usd_micro === "number" &&
+    typeof card.cap_usd_micro === "number" &&
+    card.spent_usd_micro < card.cap_usd_micro;
   const body =
-    [spent ? `So far it spent ${spent}.` : null, waitingSentence(waiting)]
+    [
+      spent
+        ? under
+          ? `So far it spent ${spent}; its next step would have gone over the budget.`
+          : `So far it spent ${spent}.`
+        : null,
+      waitingSentence(waiting),
+    ]
       .filter(Boolean)
       .join(" ") || null;
   const choices: RequestChoiceWords[] = [];

@@ -936,6 +936,17 @@ describe("Inbox", () => {
       expect(within(card).queryByTestId("free-text")).toBeNull();
     });
 
+    it("a run stopped before a step that would go over says so, not only what it spent", async () => {
+      const harness = setUp();
+      const card = harness.daemon.state.requests.find((r) => r.id === "req_budget");
+      if (card?.changeCard)
+        Object.assign(card.changeCard, { cap_usd_micro: 500_000, spent_usd_micro: 300_000 });
+      renderApp("/inbox", harness);
+      expect(within(await cardOf()).getByTestId("request-body")).toHaveTextContent(
+        "So far it spent CHF 0.24; its next step would have gone over the budget.",
+      );
+    });
+
     it("Raise the budget sends the option; the card is replaced by its Done line and the task is ready with the budget raised", async () => {
       const user = userEvent.setup();
       const harness = setUp();
