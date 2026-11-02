@@ -179,6 +179,24 @@ describe("Project page", () => {
       ).toHaveAttribute("href", "/inbox");
     }, 15_000);
 
+    // Sibling of the review of fix/progress-navigation (bench, --provider none): the banner kept
+    // "Try again", which the daemon refuses (503) while no Claude credential is in force.
+    it("without Claude the failed plan's button is Connect Claude, not a Try again that is refused", async () => {
+      const harness = createHarness({ me: { provider: null } });
+      harness.daemon.state.intake.proj_beacon = intake(
+        "failed",
+        "Planning from the brief needs a Claude key or subscription. Add one in the app: Settings → Accounts and keys → Open the setup assistant, then retry.",
+      );
+      renderApp("/projects/proj_beacon", harness);
+      const banner = await screen.findByTestId("intake-banner");
+      expect(banner).toHaveAttribute("data-state", "failed");
+      expect(within(banner).queryByTestId("intake-retry")).toBeNull();
+      expect(within(banner).getByRole("link", { name: "Connect Claude" })).toHaveAttribute(
+        "href",
+        "/setup",
+      );
+    });
+
     it("a rejected plan says so, and Draft a new plan drafts one again from the brief (design §3.3)", async () => {
       const user = userEvent.setup();
       const harness = createHarness();
