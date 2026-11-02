@@ -52,5 +52,5 @@ const next = {
 delete next.stoppedAt;
 writeBench(args.name, next);
 console.log(
-  `bench ${args.name}: ${stopped}; new daemon pid ${daemon.pid} at ${daemon.url} (new token in bench.json; call reconnect(page, "${args.name}") in an open page)`,
+  `bench ${args.name}: ${stopped}; new daemon pid ${daemon.pid} at ${daemon.url} (new token in bench.json; pages opened with openApp reload with it, or call reconnect(page, "${args.name}"))`,
 );
