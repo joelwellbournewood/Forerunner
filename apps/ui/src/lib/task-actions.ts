@@ -71,6 +71,9 @@ export function actionsFor(
   if (key === "answer" && (kind === "budget" || kind === "cannot_run"))
     return ["answer", "edit", "cancel"];
   if (key === "answer" && task?.specialist === WHO_PERSON) return ["answer", "cancel"];
+  // Asked again after the person went ahead without answering (live L-3): its card offers no
+  // Go ahead without, which only ran the same ask once more; the row offers what the card does.
+  if (key === "answer" && task?.display?.blocker?.goAhead === false) return ["answer", "cancel"];
   switch (key) {
     case "draft":
       return ["make_ready", "edit", "cancel"];

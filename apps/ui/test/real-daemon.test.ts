@@ -2917,6 +2917,10 @@ describe("the UI client against the real daemon: nothing is Done without the rig
     // In the specialist's own words, never the critic's accept of a chart that was not made.
     expect(card?.body).toContain("data/members.csv is missing");
     expect(card?.body).not.toMatch(/Accepted/);
+    // Go ahead without was chosen already: it is not offered again (live L-3), on the card or
+    // on the Tasks tab, which offers Answer and Cancel.
+    expect(card?.choices?.map((c) => c.label)).toEqual(["Cancel task"]);
+    expect(row?.display?.blocker).toMatchObject({ cardKind: "questions", goAhead: false });
     expect((await client.inbox(me.id)).needsYouCount).toBeGreaterThan(0);
   }, 90_000);
 });

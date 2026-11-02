@@ -161,6 +161,8 @@ describe("task actions over the daemon, across a restart (design §3.5)", () => 
       .filter((m) => m.includes("Write the deploy config"));
     expect(briefs.length).toBeGreaterThan(0);
     expect(briefs[0]).toContain(WITHOUT_ANSWERS_NOTE);
+    // Said once: the queued note is not repeated beside the answers block (live L-3).
+    expect(briefs[0]?.split(WITHOUT_ANSWERS_NOTE).length).toBe(2);
   });
 
   it("Stop on a task that is not running is refused in words; nothing changes", async () => {

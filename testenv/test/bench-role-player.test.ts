@@ -596,6 +596,56 @@ describe("bench role-player: specialists", () => {
     });
     expect(answered.steps.flatMap((s) => s.calls.map((c) => c.name))).toContain("write_file");
   });
+
+  it("FORERUNNER_BENCH_ASK_STYLE=plain works with a placeholder and asks in its report's last lines, one question per line without bullets (live L-2)", async () => {
+    const { p } = player({
+      FORERUNNER_BENCH_ASK: "Home page",
+      FORERUNNER_BENCH_ASK_STYLE: "plain",
+    });
+    const spec = {
+      specialist: "coder",
+      title: "Home page in index.html",
+      outcome: "index.html shows the club's name.",
+      criteria: ["index.html exists"],
+      tools: ["list_dir", "write_file", "ask_person"],
+    };
+    const asked = await runSpecialist(p, spec);
+    const names = asked.steps.flatMap((s) => s.calls.map((c) => c.name));
+    expect(names).toContain("write_file");
+    expect(names).not.toContain("ask_person");
+    const report = asked.last.text;
+    expect(report).toMatch(/^\*\*Summary\*\*: /);
+    expect(report).toContain(
+      '- The name in "Home page in index.html" is a placeholder, because the brief gave no real one.',
+    );
+    expect(report).toContain(
+      '**Questions for the person:**\nWhat is the real name to show in "Home page in index.html"?\nIs there anything this must not change?\n',
+    );
+    // "Go ahead without" in the brief: no question again.
+    const without = await runSpecialist(p, {
+      ...spec,
+      extra:
+        "## Answers from the person\n\nThe person chose to go ahead without answering the questions asked about this task.",
+    });
+    expect(without.last.text).not.toContain("Questions for the person");
+  });
+
+  it("FORERUNNER_BENCH_ASK_STYLE=bullets asks with '- ' items after a '**Summary**:' heading (live L-12)", async () => {
+    const { p } = player({
+      FORERUNNER_BENCH_ASK: "Contact",
+      FORERUNNER_BENCH_ASK_STYLE: "bullets",
+    });
+    const asked = await runSpecialist(p, {
+      specialist: "coder",
+      title: "Contact page in contact.html",
+      outcome: "contact.html gives the address.",
+      criteria: ["contact.html exists"],
+      tools: ["list_dir", "write_file"],
+    });
+    expect(asked.last.text).toContain(
+      '**Questions for the person:**\n- What is the real name to show in "Contact page in contact.html"?\n- Is there anything this must not change?',
+    );
+  });
 });
 
 describe("bench role-player: critic and chat", () => {

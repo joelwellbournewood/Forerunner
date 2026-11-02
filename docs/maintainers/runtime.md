@@ -1441,7 +1441,58 @@ cost per task), never asks a specialist to commit, push or open a pull request (
 records the changes), says Forerunner decides where the files live and keeps them in git so
 the person is never asked either (live2 #14), and says what a small plan is (`SMALL_PLAN_RULES`: one milestone of one to
 three tasks, no reviewer, deploy, marketing or research task unless asked, no person task unless
-the work cannot start, riskTier left out, only README.md and the decision record). (6) **Plan
+the work cannot start or the brief promises the person's content, riskTier left out, only
+README.md and the decision record). **The person's content (live L-11, 2026-11-02).** The prompt
+says content the brief says the human will give (a menu, prices, hours, an address, texts,
+photos, data) is a person task the work using it depends on, never placeholders; the PM prompt
+(`evals/registry/principals/project-manager.md`) says the same. Live, "A one-page website for a
+small bakery in Bern; I will give you the real menu, hours and address" got a coder ("All shop
+facts are placeholders") and a tester, the page was accepted full of PLACEHOLDER markers and the
+person was never asked. `withOwnersContent` (`src/session/intake-content.ts`) holds the rule in
+code on every drafted proposal before its card is filed: `promisedContent` reads the promise
+("I will give you", "I'll send", "we will provide you with", "the owner will supply", in the
+brief, the person's changes or the goal) and keeps its items whose head (the words before a
+preposition: "photos" of "photos of the garden") is content (`CONTENT_WORD`), never a secret (a
+key, a password: secrets go by name) and not feedback or an approval; a promise "for later" or a
+brief that asks for placeholders adds nothing (the person chose to start without it). Only a
+promise to Forerunner counts (`handedToForerunner`; review of 2026-11-02: "we will send
+subscribers a weekly email" got a person task "Give subscribers a weekly email" asking "What is
+the subscribers a weekly email?", and the build waited on it): one that names Forerunner ("give
+you", "send … to you", "share … with you"), or one that names no one else, made by the person
+("I", "we", the owner, the client), not with "can", "share" or ongoing work ("weekly", "every
+day"). A promise to someone else ("send subscribers …", "give them …", "… to members", "provide
+members with …") or by a customer is the project's own work. The person's change wins: once one
+of their "Change the plan" words drops the step or refuses to give
+(`dropsOwnersContent`: "drop", "leave … out", "nothing", "no", "not" with "content", "the first
+task", "asks me", "questions", "give" or an item), the redraft is the model's, as it is; any
+other change ("Make the headings blue") keeps the step, added again when the redraft has none.
+The redraft is told the plan the person read, a line per task with who does it and, for the
+person, the questions (`planRead`, from the answered card, so Try again after a restart has it
+too: `IntakeDraftOptions.read`), so "drop the first task" names a task the model knows, even one
+the code added; the prompt says the person's change wins and what the project sends its own
+people is not such content. A plan with no person task naming those items gets one, "Give <the items as the
+brief wrote them>", for the person, high priority, first in the milestone of the work that uses
+it, one question per item ("What is the menu?", "What are the hours?", "Where are the photos (a
+path in the project's folder, or a link)?"); the tasks that start the work and name an item
+(else every task that waits on nothing) wait on it, an existing person task for the content
+included. On approval the questions are filed at once (`syncPersonQuestions`), and since a
+person task is no work for a session, `resumeWork` does not count it as runnable: no empty
+session starts, and the plan card's Done line reads "Plan approved: 3 tasks written; the work
+starts once you answer its questions in the Inbox." (`intakeOutcome`; before, a session started
+only to file the questions); its Approve and start says so before the press too, "Writes these 3
+tasks; the work starts once you answer its questions in the Inbox." (`workWaitsOnPerson`: every
+task but the person's waits on another), where it said "starts working on them now". The answers
+reach the build's brief as "Answers from the person to …" (`taskContextBlock`). Tests:
+`intake-owner-content.test.ts` (the live reply, `fixtures/intake-live-bakery.json`: the items,
+the questions, the person task and the build's dependency, a plan that asks already, a brief that
+promises nothing, the review's promises to someone else ("we will send subscribers a weekly
+email", "give clients …", "share recipes with members", "provide a REST API with JSON data"),
+the changes that drop the step and those that keep it; through the daemon: the plan card's three
+tasks and its Approve and start words, Approve and start, the questions card, the build waiting,
+no session, the Done line, and Change the plan twice: "Make the headings blue." keeps the step,
+the review's "There is nothing for me to give: drop the task that asks me for content" is a
+two-task plan, each redraft told the plan the person read); `intake.test.ts` (Try again after a
+restart tells the plan read from the answered card). (6) **Plan
 size (ADR 0103).** `intakePlanSize` asks for "Plan size: small (a short brief: see Size in your
 instructions)" when the project has no repository and the brief it is drafted from is short
 (`isShortBrief`: under `SHORT_BRIEF_CHARS`, 200, at most two lines, no list), or the project is in
@@ -1517,13 +1568,26 @@ a sign-off without the questions. One card, three ways in:
   bridge for the runtime's tools: there the brief's constraint asks for a "Questions for the
   person:" list at the end of the report, which the critic path below reads.
 - **Reported to the critic.** `CriticLoop.reviewTask` reads the run's report with
-  `reportedQuestions` (the items under a "Questions for the person:" heading, else, when a
+  `reportedQuestions` (the questions under a "Questions for the person:" heading, else, when a
   sentence says the work needs the person's (or your) answers, decision, confirmation or
-  choice, the lines ending in "?"). A verdict other than accept on such a run withdraws the
-  sign-off the critic filed for a `human` verdict, moves the task `in_review -> needs_human`,
-  files the questions (the report's, else the task's; the critic's summary as context) and
-  returns decision `human`: `applyVerdict` and the ladder do not run, so there is one attempt
-  and one review. An accepting verdict stands.
+  choice, the lines ending in "?"). `listedQuestions` reads the list in any style (live L-2,
+  2026-11-02: the garden club's "Home page" wrote its questions as plain lines, the brief's own
+  "one question per line", only "-", "*", "•" and "1." items were read, and the person got a
+  sign-off with no questions): bulleted or numbered items, plain lines that ask ("…?") or
+  request ("Please …"), bold lines, blank lines between them, a question on the heading's own
+  line; it ends at the lesson line, prose or a heading, after a blank line only a question goes
+  on, and a list that says it asks nothing ("None", "- n/a") asks nothing. A verdict other than
+  accept on such a run (an accept with listed questions is made `human` by the critic's
+  `ASKS_PERSON_RULE`, ADR 0104) withdraws the sign-off the critic filed for a `human` verdict,
+  moves the task `in_review -> needs_human`, files the questions (the report's, else the
+  task's) and returns decision `human`: `applyVerdict` and the ladder do not run, so there is
+  one attempt and one review. The card's `context`, which the Inbox quotes as "The specialist
+  said: …", is why it asks (`questionsReason`, live L-12: the "Contact page" card quoted the
+  report's first words, ': I made no edits this run…', not that the email address was a
+  placeholder): the report's sentence that shares most words with the first question (the next
+  question's when the first shares none), a sentence under "Not done / risks" or one that says
+  something is missing, a placeholder or assumed weighing more; else the report's first
+  sentences (`quotedWords`), else the critic's summary. `ask_person` stores its `why`.
 
 The card: kind `decision`, blocking, risk low, `steps` the questions, the one option
 `CANCEL_TASK_OPTION` ("Cancel the task"), `change_card` `{ key: "person_questions:<task>",
@@ -1541,14 +1605,38 @@ are resolved and it closes along the graph (`needs_human -> ready -> claimed -> 
 in_review -> done`), and a paused one goes `needs_human -> ready` and the scheduler is asked for
 a `message` start of its project (the daemon only, not a one-shot). The next run's first
 message carries "Answers from the person" (`answersBlockFor`: every answered card of the task,
-the questions with the person's words). The decision log records the answer as for any
+the questions with the person's words). **Go ahead without** (design §3.8, §4.6) reaches it the
+same way: `withoutAnswersOn` reads, when the run starts, a card of the task answered "Go ahead
+without" in the Inbox, or the Tasks tab's Go ahead without (the `task.resume` change whose
+`after` records `without_answers_note_id`, not undone, with the questions of the cards it
+withdrew), and the block says `WITHOUT_ANSWERS_NOTE`, the questions left open, and that they
+are not asked again. Live (L-3, 2026-11-02, "Members chart") the person pressed it while the
+session ran another task; the answer queued a note, but a running session reads the queue only
+at its start, so the next run of the chart in that session was not told, asked the same
+question again and the Inbox showed a second card with Go ahead without, a run's cost each
+time. So the Inbox path queues no note (the card is the one place), the executor leaves out a
+queued note that only repeats it (the Tasks tab still queues one), and from then on the task
+is not asked the same way again: `ask_person` answers `ASK_REFUSED_AFTER_WITHOUT` (an error
+result; the run goes on and reports what it assumed, or why it cannot do the work). A report
+that still cannot go on without the person (an input file that is missing) gets one questions
+card in its own words, as the critic path files it, but with `go_ahead: false` on the card
+(`wentAheadWithout`): the Inbox offers Send answers and Cancel task, not Go ahead without
+again, and the Tasks tab row (`display.blocker.goAhead: false`, `task-words.ts`) offers Answer
+and Cancel. (A sign-off there quoted the stand-in critic's "Accepted: …" of a chart that was not
+made.) The decision log records the answer as for any
 `decision` (the answer route). Tests: `person-questions.test.ts` (which tasks, what a report
 asks, the reader, the critic path with a `human` and a `revise` verdict: one attempt, the
-questions and no sign-off), `person-questions-daemon.test.ts` (the composed daemon: planned and
+questions and no sign-off; after Go ahead without one card in the report's words without Go
+ahead without),
+`person-questions-daemon.test.ts` (the composed daemon: planned and
 1.0.3 tasks asked at once with no run and no model call, a restart files no second card, the
 form's answers in the decision doc and the task done, "Cancel the task", a blank answer
 refused, `ask_person` ending the run without a review and the next run's brief carrying the
-answer), `apps/ui/test/inbox.test.tsx` and `real-daemon.test.ts`. Requirement: J.3.
+answer), `go-ahead-without.test.ts` (the composed daemon, the live L-3 case: Go ahead without
+pressed while the session runs another task, the chart's next run in that session told so, its
+second `ask_person` refused, one card; after a restart the refusal holds),
+`task-actions.test.ts` (the Tasks tab's Go ahead without said once in the brief),
+`apps/ui/test/inbox.test.tsx` and `real-daemon.test.ts`. Requirement: J.3.
 
 **Reasons on plan and milestone changes (spec B.5).** Every change to a plan, task or
 milestone is versioned with author and reason, and the store enforces it: `TaskRepo.transition`
@@ -2260,15 +2348,18 @@ waits on you" while 4 tasks waited on it).
   running session, when a task of the project can run (`readyTasks`); nothing runnable starts
   nothing. The same for the blocked-findings and failed-review cards, the person's answers (the
   existing start, now through `resumeWork`) and the questions card's new **Go ahead without**
-  (`personQuestionsAnswer` reads it as `without`: the task goes back to ready with
-  `WITHOUT_ANSWERS_NOTE` queued for its brief; only a specialist's card offers it, phase E: a
-  `without` stored on the person's own card, by a daemon from before, is recorded
-  `unrecognized_answer` and the questions are filed again, never a close on no answers). A planned person task (`on_answer: "done"`,
+  (`personQuestionsAnswer` reads it as `without`: the task goes back to ready, and its next
+  brief says so from the card, `answersBlockFor`; no note is queued since live L-3, see the
+  questions section; only a specialist's card offers it, phase E: a `without` stored on the
+  person's own card, by a daemon from before, is recorded `unrecognized_answer` and the
+  questions are filed again, never a close on no answers). A planned person task (`on_answer: "done"`,
   New task's "Me") that the answers close calls `resumeWork` too, so the task that waited on it
   runs without a Start click (the review of fix/needs-me found it closed the task and started
   nothing; the Done line reads 'Answers saved in the decision record; "X" is done; a session
   started.'). The card records `change_card.start`
-  (`started`, `queued`, `deferred`, `failed`, `nothing_to_run`) for its Done line. compose.ts
+  (`started`, `queued`, `deferred`, `failed`, `nothing_to_run`) for its Done line; a task
+  planned for the person is not runnable for `resumeWork` (its questions go to the Inbox, a
+  session would only make an empty run; live L-11). compose.ts
   passes the scheduler's `requestStart` to these syncs while the services run. A `queued`
   start runs on the scheduler's next tick (30 s) after the session before it ends.
 - **"Failed N times" is true now** (`triedTimes`, `@forerunner/critic`): the retry card counts

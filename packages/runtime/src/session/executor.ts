@@ -118,6 +118,7 @@ import {
   filePersonQuestions,
   isPersonTask,
   questionsAskedByRun,
+  WITHOUT_ANSWERS_NOTE,
 } from "./person-questions.ts";
 import {
   lessonsFromReport,
@@ -995,16 +996,21 @@ export class LoopTaskExecutor implements TaskExecutor {
         type: "warning",
         message: `a line the human said during the session (message ${f.id}) contained instruction-like passages (${f.rules.join(", ")}); passed to the specialist as data`,
       });
+    // U-022: the person's answers to questions asked on this task reach its next run, and so
+    // does a "Go ahead without" (design §4.6, live L-3), read from the store now.
+    const answers = await answersBlockFor(store, task.id);
     // What the person queued for the next session that concerns this task (spec J.2, U-038):
-    // quoted data after the brief, as the heard lines are.
-    const queued = renderQueueNotes(ctx.notes ?? []);
+    // quoted data after the brief, as the heard lines are. The note the Tasks tab's Go ahead
+    // without queues is said by the answers block already: one place per fact (design §5.10).
+    const notes = (ctx.notes ?? []).filter(
+      (n) => !(answers.includes(WITHOUT_ANSWERS_NOTE) && n.text.endsWith(WITHOUT_ANSWERS_NOTE)),
+    );
+    const queued = renderQueueNotes(notes);
     for (const f of queued.flagged)
       this.deps.onEvent?.(task.id, {
         type: "warning",
         message: `a next-session queue item (${f.id}) contained instruction-like passages (${f.rules.join(", ")}); passed to the specialist as data`,
       });
-    // U-022: the person's answers to questions asked on this task reach its next run.
-    const answers = await answersBlockFor(store, task.id);
     // Design §4.6: the project, what the task waited on, the previous attempt, the person's notes.
     const context = await taskContextBlock(store, task, {
       sessionNote: ctx.sessionNote ?? null,

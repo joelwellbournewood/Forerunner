@@ -60,7 +60,8 @@ import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.t
 import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { markAnswer } from "./answer-mark.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
-import { MAX_PERSON_QUESTIONS, MAX_QUESTION_CHARS } from "./person-questions.ts";
+import { withOwnersContent } from "./intake-content.ts";
+import { MAX_PERSON_QUESTIONS, MAX_QUESTION_CHARS, PERSON_SPECIALIST } from "./person-questions.ts";
 import {
   applyProjectPlan,
   isShortBrief,
@@ -325,6 +326,12 @@ export interface IntakeDraftOptions {
   brief?: string;
   /** The person's changes ("Change the plan", design §3.3), in order: they follow the brief. */
   changes?: readonly string[];
+  /**
+   * The plan the person read before their last change, a line per task in order (`planRead`):
+   * the redraft is told it, so "drop the first task" names a task the model knows, even one the
+   * code added (`withOwnersContent`, review of 2026-11-02).
+   */
+  read?: readonly string[];
 }
 
 /** The latest intake of a project, as `GET /projects/:id/intake` serves it. */
@@ -424,7 +431,8 @@ export const SMALL_PLAN_RULES: readonly string[] = [
   'Size. With "Plan size: small" (a short brief, a sentence or two) the plan is small:',
   "one milestone with one to three tasks that build what the brief asks for and check that it",
   "works. No reviewer, deploy (ops-deploy), marketing (writer-marketing) or research task unless",
-  "the brief asks for one. No person task unless the work cannot start without an answer: choose",
+  "the brief asks for one. No person task unless the work cannot start without an answer or the",
+  "brief says the human will give content (the rule above): choose",
   "the simplest setup (plain files in the project's folder, opened or run locally) and say so in",
   "the decision record. Leave riskTier out: Forerunner's critic reviews every task that builds or changes files.",
   "docs: only README.md and the decision record, each under 1500",
@@ -846,14 +854,43 @@ export function intakeFailureWords(e: unknown): string {
   }
 }
 
-/** The brief a plan is drafted from, with the person's changes after it, in order. */
-function briefWithChanges(brief: string, changes: readonly string[]): string {
+/**
+ * The brief a plan is drafted from, with the plan the person read last (`read`, when known) and
+ * the person's changes after it, in order.
+ */
+function briefWithChanges(
+  brief: string,
+  changes: readonly string[],
+  read: readonly string[] = [],
+): string {
   if (changes.length === 0) return brief;
+  const plan = read.length
+    ? `\n\nThe plan the person read${changes.length > 1 ? " last" : ""}, in order:\n${read
+        .map((t, i) => `${i + 1}. ${t}`)
+        .join("\n")}`
+    : "";
   if (changes.length === 1)
-    return `${brief}\n\nThe person read the first plan and asked for this change: ${changes[0]}`;
-  return `${brief}\n\nThe person read the earlier plans and asked for these changes, in order; the later one wins where they differ:\n${changes
+    return `${brief}${plan}\n\nThe person read the first plan and asked for this change: ${changes[0]}`;
+  return `${brief}${plan}\n\nThe person read the earlier plans and asked for these changes, in order; the later one wins where they differ:\n${changes
     .map((c, i) => `${i + 1}. ${c}`)
     .join("\n")}`;
+}
+
+/**
+ * The plan on an intake card as the person read it, a line per task in order: its title and
+ * who does it ("coder"; for the person, the questions they answer). Empty when the card holds
+ * no readable proposal.
+ */
+function planRead(card: JsonObject | null | undefined): string[] {
+  const parsed = IntakeProposalBody.safeParse(card?.proposal);
+  if (!parsed.success) return [];
+  const { plan } = parsed.data;
+  return [...plan.milestones.flatMap((m) => m.tasks), ...plan.tasks].map((t) => {
+    const who = t.specialist ? canonicalSpecialistName(t.specialist) : "coder";
+    return who === PERSON_SPECIALIST
+      ? `${t.title} (the person answers: ${t.acceptanceCriteria.join(" ")})`
+      : `${t.title} (${who})`;
+  });
 }
 
 interface PlanTaskNamed {
@@ -1083,7 +1120,8 @@ export class IntakeService {
         ? await this.deps.store.humanRequest.get(current.requestId)
         : undefined;
     const changes = changesAskedOn(changed?.change_card as JsonObject | undefined);
-    void this.enqueue(projectId, changes.length ? { changes } : {}).catch(() => undefined);
+    const read = planRead(changed?.change_card as JsonObject | undefined);
+    void this.enqueue(projectId, changes.length ? { changes, read } : {}).catch(() => undefined);
     return this.status(projectId);
   }
 
@@ -1154,7 +1192,9 @@ export class IntakeService {
     // The brief is cut, never the person's changes after it; a change without a brief changes
     // the plan drafted from the goal.
     const cutBrief = truncated ? given.slice(0, MAX_BRIEF_CHARS) : given;
-    const brief = changes.length ? briefWithChanges(cutBrief || project.goal, changes) : cutBrief;
+    const brief = changes.length
+      ? briefWithChanges(cutBrief || project.goal, changes, opts.read)
+      : cutBrief;
     const briefText = changes.length ? briefWithChanges(given || project.goal, changes) : given;
     const repo = repoRefOf(project.repos[0]);
     // A short brief asks for a small plan; a plan the person asked to change is never cut down
@@ -1164,7 +1204,15 @@ export class IntakeService {
       size,
       checkSize: size === "small" && changes.length === 0,
     });
-    const proposal = called.proposal;
+    // Content the brief (or the goal, or a change) says the person will give is asked for in a
+    // person task the work waits on, whatever the model planned (live L-11: the bakery's menu,
+    // hours and address became placeholders and the person was never asked); a change of the
+    // person's that drops that step is the plan as the model redrafted it (review of 2026-11-02).
+    const proposal = withOwnersContent(
+      called.proposal,
+      [given, project.goal].filter(Boolean).join("\n"),
+      changes,
+    );
     const plan = proposal.plan;
     // The plan shaped without error in `callModel` (a dependency cycle is a reply problem there,
     // asked for once more). What the request says it will write is the shaped plan: in
@@ -1672,6 +1720,15 @@ export class IntakeService {
       'acceptanceCriteria are the questions, each ending with "?": the human answers them in the',
       "Inbox, no specialist runs, and the answers go into the decision doc. Never give such a",
       "question to another specialist: it cannot ask the human.",
+      // Live (2026-11-02, L-11) "I will give you the real menu, hours and address" got a page
+      // full of placeholders and no step that asked; `withOwnersContent` adds it in code too.
+      "Content the brief says the human will give (a menu, prices, opening hours, an address,",
+      'texts, photos, data) is theirs: plan one task with "specialist": "person" that asks for it',
+      '(its acceptanceCriteria the questions, each ending with "?"), and make every task that uses',
+      "it depend on that task. Never invent such content or build it from placeholders. What",
+      "the project itself sends or gives its own people (a newsletter to subscribers) is the work,",
+      "not such content; and a change from the person that drops that task, or says they have",
+      "nothing to give, wins.",
       "Specialists write files and run commands in the project's folder; Forerunner commits each",
       "task's changes itself (and opens the pull request when the project has a repository). An",
       "outcome or a criterion never asks a specialist to commit, push or open a pull request:",
@@ -1790,7 +1847,7 @@ export class IntakeService {
             input_summary: cut(`intake request ${row.id}: the person asked for changes`),
             result_summary: cut("nothing from the proposal written; a new plan is drafted"),
           });
-          void this.enqueue(project.id, { changes }).catch(() => undefined);
+          void this.enqueue(project.id, { changes, read: planRead(card) }).catch(() => undefined);
           out.rejected++;
         }
         continue;

@@ -431,9 +431,18 @@ The cards you meet most:
   beside a research task on an install that has turned page reading off (New task says the same
   when you pick the researcher), the total and what it covers ("About CHF 1.04
   for 2 of the 3 tasks the agent does; the other one has no estimate yet."), and the decision it
-  records in one or two sentences, with **The full decision record** one click away. **Approve and start** writes the tasks and starts working on
-  them now. **Change the plan** opens a box: say what to change and the agent drafts a new plan
-  for you to approve. Your words are kept: if that draft fails, or Forerunner closes before it
+  records in one or two sentences, with **The full decision record** one click away. When your
+  brief says you will give Forerunner something yourself ("I will give you the real menu, hours
+  and address"), the plan starts with a task for you ("Give the real menu, hours and address",
+  "you: answer its questions") and the work that uses it waits for your answers instead of
+  using placeholders. What your project gives its own people ("we will send subscribers a
+  weekly email") is the work, not something you give. **Approve and start** writes the tasks and
+  starts working on them now (or, when the work waits for your answers first, says so and puts
+  their card in your Inbox: "the work starts once you answer its questions in the Inbox").
+  **Change the plan** opens a box: say what to change and the agent drafts a new plan
+  for you to approve; it is told the plan you read, so "drop the first task" works. To start
+  without the task for you, say so ("drop the task that asks me for content", "I have nothing
+  to give, use placeholders"): the new plan has none, and later changes do not bring it back. Your words are kept: if that draft fails, or Forerunner closes before it
   is done, **Try again** on the project page drafts it with them, and a second change on the
   new plan adds to the first. **Reject** writes nothing; the project page then says "You
   rejected the plan. Nothing was written." with **Draft a new plan**.
@@ -463,8 +472,10 @@ questions, each with its own answer field.
   plan is approved, or when Forerunner starts. No specialist runs and nothing is spent.
 - **A specialist that needs your answer while working** asks you on the same kind of card and
   stops; the task waits.
-- **A run that reports it needs your answers** is not retried: its questions are filed at once,
-  with the critic's note, instead of a sign-off.
+- **A run that reports it needs your answers** is not retried: its questions are filed at once
+  instead of a sign-off, however the report lists them (with or without bullets). The card
+  quotes why the specialist asks ("The specialist said: "The email address is a placeholder,
+  because the brief gave no real one."").
 
 Type your answers and click **Send answers**; leave a question blank if you have no answer yet.
 Your answers are written to the project's decision record (`docs/decisions/0001-…` in the
@@ -472,13 +483,16 @@ project's workspace folder) and the decision log. A task planned for you is then
 done, and if a task was waiting on it, a session starts and works on that task (the card's Done
 line says so); a task a specialist was working on goes back to ready, a session starts, and its
 next run gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
-and say in its report what it assumed; the task goes on in a session. A task planned for you has
-no specialist to decide in your place, so its card has no Go ahead without: "go ahead" typed on
-the phone or said in Chat is refused with "This card needs your answers: type them, or Cancel
-task.", and the card and the task wait (if you have no answer, type what the next task should do
-instead, for example "use placeholder text"). **Cancel task** cancels it instead (asked once,
-naming the tasks that wait on it). You can also answer in your own words from the phone; one
-text then answers all the questions.
+and say in its report what it assumed; the task goes on in a session, also when you press it while
+another task runs. The specialist is not let ask you the same again: if the work cannot be done
+at all without your answer (a file that is missing), you get one card that says why in its own
+words, where you can answer or cancel the task, without a second **Go ahead without**. A task
+planned for you has no specialist to decide in your place, so its card has no Go ahead without:
+"go ahead" typed on the phone or said in Chat is refused with "This card needs your answers:
+type them, or Cancel task.", and the card and the task wait (if you have no answer, type what
+the next task should do instead, for example "use placeholder text"). **Cancel task** cancels it
+instead (asked once, naming the tasks that wait on it). You can also answer in your own words
+from the phone; one text then answers all the questions.
 
 ## Autonomy and budgets
 

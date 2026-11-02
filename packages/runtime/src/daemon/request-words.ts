@@ -316,7 +316,11 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   const waiting = ctx.waiting ?? [];
   // The person's own task: no specialist decides in their place, so no Go ahead without.
   const planned = !offersGoAheadWithout(card);
-  const context = str(card.context);
+  // Why it asks, in its own words (L-12). A card filed before 2026-11-02 may hold the report's
+  // first words with the heading's colon (': I made no edits…'): the quote starts at a word.
+  const context = str(card.context)
+    ?.replace(/^[\s:;,.\-–—*]+/, "")
+    .trim();
   const body =
     [
       planned
@@ -329,7 +333,9 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
       .filter(Boolean)
       .join(" ") || null;
   const choices: RequestChoiceWords[] = [];
-  if (!planned)
+  // Not offered again once the person went ahead without on the task (live L-3): the work then
+  // needs what it asks for (a missing input), and going ahead again only ran the same ask.
+  if (!planned && card.go_ahead !== false)
     choices.push({
       label: "Go ahead without",
       explain: "The specialist decides and says what it assumed.",
@@ -398,7 +404,9 @@ function intakeCard(
     if (/^(approve and start|approve|approved|yes)$/.test(w))
       choices.push({
         label: option === "approve" ? "Approve and start" : option,
-        explain: `Writes ${n} and starts working on them now.`,
+        explain: workWaitsOnPerson(card)
+          ? `Writes ${n}; the work starts once you answer its questions in the Inbox.`
+          : `Writes ${n} and starts working on them now.`,
         tone: "primary",
         confirm: null,
         input: null,
@@ -442,6 +450,43 @@ function intakeCard(
   };
 }
 
+/** The tasks of an intake card's plan, milestones first. */
+function planTasks(card: JsonObject): Record<string, unknown>[] {
+  const proposal = isRecord(card.proposal) ? card.proposal : {};
+  const plan = isRecord(proposal.plan) ? proposal.plan : {};
+  return [
+    ...(Array.isArray(plan.milestones)
+      ? plan.milestones.flatMap((m: unknown) =>
+          isRecord(m) && Array.isArray(m.tasks) ? m.tasks : [],
+        )
+      : []),
+    ...(Array.isArray(plan.tasks) ? plan.tasks : []),
+  ].filter(isRecord);
+}
+
+const isPersonTask = (t: Record<string, unknown>) =>
+  typeof t.specialist === "string" && /^person$/i.test(t.specialist);
+
+/** Whether an approved plan holds a task for the person ("specialist": "person"). */
+function plansPersonTask(card: JsonObject): boolean {
+  return planTasks(card).some(isPersonTask);
+}
+
+/**
+ * Whether all of a plan's work waits on the person's answers: it has a task for the person and
+ * every other task waits on another one (the plan has no cycle, so each chain ends at the
+ * person's). Approve and start then starts nothing (live L-11, the bakery's content step).
+ */
+function workWaitsOnPerson(card: JsonObject): boolean {
+  const tasks = planTasks(card);
+  const work = tasks.filter((t) => !isPersonTask(t));
+  return (
+    tasks.some(isPersonTask) &&
+    work.length > 0 &&
+    work.every((t) => Array.isArray(t.dependsOn) && t.dependsOn.length > 0)
+  );
+}
+
 function intakeOutcome(card: JsonObject): string | null {
   const started = startWords(card.start);
   if (card.outcome === "approved") {
@@ -451,7 +496,11 @@ function intakeOutcome(card: JsonObject): string | null {
         ? "; working on them"
         : started
           ? `; ${started}`
-          : "; press Start on the project to work on them"
+          : // Nothing could run because the work waits on the person's answers (live L-11): Start
+            // would run nothing either.
+            card.start === "nothing_to_run" && plansPersonTask(card)
+            ? "; the work starts once you answer its questions in the Inbox"
+            : "; press Start on the project to work on them"
     }.`;
   }
   if (card.outcome === "rejected")

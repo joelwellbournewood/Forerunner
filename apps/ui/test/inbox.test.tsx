@@ -765,6 +765,40 @@ describe("Inbox", () => {
         'Done: "Index the documentation pages" goes on without your answers: a session started.',
       );
     });
+
+    it("asked again after Go ahead without (the input is missing), the card offers no Go ahead without, here or on the Tasks tab (live L-3)", async () => {
+      const harness = createHarness();
+      const card = questionsCard();
+      harness.daemon.state.requests.unshift({
+        ...card,
+        steps: ["Please add data/members.csv to the project's folder."],
+        changeCard: {
+          ...card.changeCard,
+          questions: ["Please add data/members.csv to the project's folder."],
+          source: "critic",
+          on_answer: "ready",
+          context: "No chart: data/members.csv is missing.",
+          go_ahead: false,
+        },
+      });
+      const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+      if (t1) t1.status = "needs_human";
+      renderApp("/inbox", harness);
+      const form = await screen.findByTestId("person-questions");
+      const request = form.closest('[data-testid="request"]') as HTMLElement;
+      expect(within(request).getByTestId("request-body")).toHaveTextContent(
+        'The specialist said: "No chart: data/members.csv is missing."',
+      );
+      const options = within(request).getAllByTestId("option");
+      expect(options.map((b) => b.textContent)).toEqual(["Cancel task"]);
+      // The Tasks tab offers what the card offers: Answer and Cancel.
+      const row = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_1");
+      expect(row?.display).toMatchObject({
+        key: "answer",
+        blocker: { kind: "card", cardKind: "questions", goAhead: false },
+      });
+      expect(actionsFor("answer", row)).toEqual(["answer", "cancel"]);
+    });
   });
 
   it("answers that came after their task finished: the Answered entry says so and offers Redo with these answers (design §3.8)", async () => {

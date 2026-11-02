@@ -374,4 +374,16 @@ describe("quotedWords: the specialist's own words on a card", () => {
     expect(quotedWords("Styled index.html. Done!")).toBe("Styled index.html. Done!");
     expect(quotedWords("I could not complete this task")).toBe("I could not complete this task");
   });
+
+  it("a heading's colon is not quoted (live 2026-11-02, L-12: 'The specialist said: \": I made no edits this run…\"')", () => {
+    expect(
+      quotedWords(
+        "**Summary**: I made no edits this run. Both pages were already in the worktree, and `git status --short` printed nothing, so they are already committed.",
+      ),
+    ).toBe(
+      "I made no edits this run. Both pages were already in the worktree, and git status --short printed nothing, so they are already committed.",
+    );
+    expect(quotedWords("**Summary:** Wrote index.html.")).toBe("Wrote index.html.");
+    expect(quotedWords("**Report** - Wrote index.html.")).toBe("Wrote index.html.");
+  });
 });
