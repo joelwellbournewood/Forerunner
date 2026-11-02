@@ -1986,7 +1986,10 @@ apps/mobile/
                      guarded misses at one unchanged box the fallback ladder (ADR 0087
                      amendment of 2026-10-25: a mouse click shifted by the reported offset, an
                      Input.dispatchTouchEvent tap, element.click() in the page), each step a
-                     `click fallback:` line on stdout; describePage for the runner's page:
+                     `click fallback:` line on stdout; click({ modifiers: ["Control"] }) holds
+                     the keys through every mouse event (a Ctrl+click; modifierMask) and ends
+                     the ladder after the shifted mouse click, since a tap or element.click()
+                     would drop the key; describePage for the runner's page:
                      lines; cdp.test.ts against a fake endpoint
   e2e/cdp.d.mts      types of cdp.mjs for the test (keep in step); e2e/jsdom.d.ts: the jsdom slice it uses
   src-tauri/
@@ -2409,6 +2412,9 @@ warnings and messages, suppressed inside quiet hours.
   `getAttribute`, `innerText`; `waitFor` timing out on an attached but hidden element,
   resolving only after it is unhidden, and timing out with the locator named; `click` as
   `mouseMoved` / `mousePressed` / `mouseReleased` at the box centre after `scrollIntoView`,
+  a click with `modifiers` carrying the keys' bits on all three (Control 2, Shift 8; an
+  unknown key refused before anything is sent) and, when it keeps missing, failing after the
+  mouse path instead of a tap or `element.click()` that would drop the key,
   landing on the second position when the box moves once after the scroll, strict-mode
   refusal, an intercepting overlay reported; the click guard (ADR 0087, android.yml run
   40000764444): a nav that moves down between the measurement and the press (the base's

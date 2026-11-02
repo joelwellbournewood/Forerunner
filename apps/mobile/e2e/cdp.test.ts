@@ -22,6 +22,9 @@ import {
   describeFailure,
   describePage,
   listTargets,
+  MODIFIER_BITS,
+  type ModifierKey,
+  modifierMask,
   PAGE_TEXT_LINES,
   Page,
   pickPageTarget,
@@ -970,6 +973,62 @@ describe("Page and locators over Runtime.evaluate", () => {
       'click fallback: getByTestId("m-nav").getByText("Inbox") element.click()',
     ]);
     expect(clicks(fake2)).toEqual([]);
+  });
+
+  it("holds the given keys through every mouse event of a click (a Ctrl+click), and refuses an unknown key before sending anything", async () => {
+    // The desktop window check Ctrl- and Shift-clicks links: the browser reads the held keys
+    // from the mouse events' `modifiers` (Alt 1, Control 2, Meta 4, Shift 8).
+    expect(modifierMask(["Control"])).toBe(2);
+    expect(modifierMask(["Control", "Shift"])).toBe(10);
+    expect(modifierMask([])).toBe(0);
+    expect(MODIFIER_BITS).toEqual({ Alt: 1, Control: 2, Meta: 4, Shift: 8 });
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    const approve = page.getByTestId("m-request").first().getByRole("button", { name: "Approve" });
+    await approve.click({ modifiers: ["Control"] });
+    expect(mouse(fake).map((p) => [p.type, p.modifiers])).toEqual([
+      ["mouseMoved", 2],
+      ["mousePressed", 2],
+      ["mouseReleased", 2],
+    ]);
+    expect(clicks(fake)).toEqual(["m-option"]);
+    await approve.click({ modifiers: ["Shift"] });
+    await approve.click();
+    expect(mouse(fake).map((p) => p.modifiers)).toEqual([2, 2, 2, 8, 8, 8, 0, 0, 0]);
+    const sent = fake.calls.length;
+    // A plain-JS caller can name a key the types refuse; the driver refuses it too.
+    const unknown = ["Ctrl"] as unknown as ModifierKey[];
+    expect(await failure(approve.click({ modifiers: unknown }))).toMatchObject({
+      code: "cdp.bad_modifier",
+      message: 'unknown modifier key "Ctrl" (Alt, Control, Meta or Shift)',
+    });
+    expect(fake.calls.length).toBe(sent);
+  });
+
+  it("a click with a key held that keeps missing fails after the shifted mouse click, never as a tap or element.click() that would drop the key", async () => {
+    const fake = await startFakeDevTools({ html: RUN_40013402240 });
+    fakeInputPath(fake, {
+      target: "() => document.getElementById('root')",
+      touchTarget: "(x, y) => document.elementFromPoint(x, y)",
+    });
+    const lines: string[] = [];
+    const page = await openPage(fake, 5_000, (l) => lines.push(l));
+    const error = await failure(
+      page
+        .getByTestId("m-nav")
+        .getByText("Inbox")
+        .click({ modifiers: ["Control"] }),
+    );
+    expect(error).toMatchObject({
+      code: "cdp.click_missed",
+      message: expect.stringMatching(
+        /^getByTestId\("m-nav"\)\.getByText\("Inbox"\): the click never reached it; 3 mouse clicks at \(50, 450\) landed on <div id="root">.*; a click with a key held goes through the mouse path only \(a tap or element\.click\(\) would drop the key\)$/,
+      ),
+    });
+    expect(mouse(fake).every((p) => p.modifiers === 2)).toBe(true);
+    expect(taps(fake)).toEqual([]);
+    expect(lines).toEqual([]);
+    expect(clicks(fake)).toEqual([]);
   });
 
   it("evaluate splices the function source into the expression; the page never evaluates a string (CSP)", async () => {

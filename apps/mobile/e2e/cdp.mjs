@@ -51,6 +51,30 @@ const SETTLE_BUDGET_MS = 10_000;
  */
 const CLEAN_MISSES_BEFORE_FALLBACK = 2;
 
+/** CDP's bit for each key a click can hold (`Input.dispatchMouseEvent`'s `modifiers`). */
+export const MODIFIER_BITS = Object.freeze({ Alt: 1, Control: 2, Meta: 4, Shift: 8 });
+
+/**
+ * The `modifiers` bit field for the keys held during a click, by Playwright's names (`Alt`,
+ * `Control`, `Meta`, `Shift`); an unknown name is `cdp.bad_modifier`.
+ * @param {readonly string[] | undefined} keys
+ * @returns {number}
+ */
+export function modifierMask(keys = []) {
+  let mask = 0;
+  for (const key of keys) {
+    const bit = Object.hasOwn(MODIFIER_BITS, key) ? MODIFIER_BITS[key] : 0;
+    if (!bit) {
+      throw new CdpError(
+        "cdp.bad_modifier",
+        `unknown modifier key ${JSON.stringify(key)} (Alt, Control, Meta or Shift)`,
+      );
+    }
+    mask |= bit;
+  }
+  return mask;
+}
+
 export class CdpError extends Error {
   /**
    * @param {string} code a stable `cdp.*` code
@@ -985,15 +1009,18 @@ export class Page {
     }
   }
 
-  /** One left click at viewport CSS coordinates. */
-  async mouseClick(x, y) {
-    const base = { x, y, button: "left", clickCount: 1, modifiers: 0 };
+  /**
+   * One left click at viewport CSS coordinates; `modifiers` (`modifierMask`) are the keys held
+   * through the move, the press and the release, as a person holds Ctrl for a Ctrl+click.
+   */
+  async mouseClick(x, y, modifiers = 0) {
+    const base = { x, y, button: "left", clickCount: 1, modifiers };
     await this.client.send("Input.dispatchMouseEvent", {
       type: "mouseMoved",
       x,
       y,
       button: "none",
-      modifiers: 0,
+      modifiers,
     });
     await this.client.send("Input.dispatchMouseEvent", { ...base, type: "mousePressed" });
     await this.client.send("Input.dispatchMouseEvent", { ...base, type: "mouseReleased" });
@@ -1209,9 +1236,14 @@ export class Locator {
    * of a click reached the page (never retried: a late event could otherwise click twice).
    * A click that replaced the document (a navigation) counts as landed: the guard went with
    * the old document.
-   * @param {{ timeout?: number }} [options]
+   *
+   * `modifiers` (`["Control"]`, `["Shift"]`, ...) are held through every mouse event of the
+   * click, as a person's Ctrl+click; such a click goes through the mouse path only (a tap or
+   * `element.click()` cannot hold a key), so the ladder stops after the shifted mouse click.
+   * @param {{ timeout?: number, modifiers?: readonly string[] }} [options]
    */
   async click(options = {}) {
+    const modifiers = modifierMask(options.modifiers);
     const timeout = options.timeout ?? this.page.timeoutMs;
     const t0 = this.page.now();
     const remaining = () => Math.max(0, timeout - (this.page.now() - t0));
@@ -1248,7 +1280,7 @@ export class Locator {
         const unchanged = last !== null && sameMeasurement(last, r);
         last = r;
         point = r;
-        await this.page.mouseClick(r.x, r.y);
+        await this.page.mouseClick(r.x, r.y, modifiers);
         const outcome = await this.#clickOutcome();
         if (landed(outcome)) return;
         if (outcome.missed === null) {
@@ -1268,7 +1300,7 @@ export class Locator {
         lastError = "missed";
         cleanMisses = unchanged ? cleanMisses + 1 : 0;
         if (cleanMisses >= CLEAN_MISSES_BEFORE_FALLBACK) {
-          await this.#clickFallbacks(r, misses);
+          await this.#clickFallbacks(r, misses, modifiers);
           return;
         }
       }
@@ -1320,8 +1352,9 @@ export class Locator {
    * that lands returns. The last step failing is `cdp.click_missed` with everything tried.
    * @param {{ x: number, y: number, box: number[] }} point
    * @param {Array<{ x: number, y: number, hit: string, events: string[], client: { x: number, y: number } | null }>} misses
+   * @param {number} [modifiers] keys held (`modifierMask`): the ladder ends after step 1
    */
-  async #clickFallbacks(point, misses) {
+  async #clickFallbacks(point, misses, modifiers = 0) {
     const at = roundPoint(point.x, point.y);
     const n = misses.length;
     const hit = misses[n - 1].hit;
@@ -1337,10 +1370,17 @@ export class Locator {
         `mouse click shifted by (${-delta.dx}, ${-delta.dy}) to ${roundPoint(x, y)}; the page saw ${n} clicks at ${roundPoint(point.x + delta.dx, point.y + delta.dy)} instead of ${at}, on ${hit}`,
       );
       if (await this.#armed()) {
-        await this.page.mouseClick(x, y);
+        await this.page.mouseClick(x, y, modifiers);
         const outcome = await this.#clickOutcome();
         if (landed(outcome)) return;
       }
+    }
+    if (modifiers) {
+      throw new CdpError(
+        "cdp.click_missed",
+        `${this}: the click never reached it; ${where}; a click with a key held goes through the mouse path only (a tap or element.click() would drop the key)`,
+        { hit, events: misses[n - 1].events, box: point.box, attempts: n, modifiers },
+      );
     }
     // 2. A tap, the way a phone clicks.
     let tap = "raised no event in the page";
