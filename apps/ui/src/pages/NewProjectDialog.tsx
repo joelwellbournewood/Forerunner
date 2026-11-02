@@ -5,7 +5,27 @@ import { Dialog } from "../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS } from "../components/ui.tsx";
 import { refreshProjects, switchActiveProject, useClient, useUiStore } from "../store/context.tsx";
 
-/** "New project": name, goal, brief, repo link -> POST /projects, then open the project. */
+/** Longest goal taken from a brief's first sentence. */
+const GOAL_FROM_BRIEF_CHARS = 160;
+
+/**
+ * The goal a brief gives when the Goal is left empty: its first sentence (or first line),
+ * without the closing full stop, cut at a word to `GOAL_FROM_BRIEF_CHARS`. Live (2026-11-01) the
+ * dialog refused a one-line brief until a Goal was typed, often the same words again.
+ */
+export function goalFromBrief(brief: string): string {
+  const first = (brief.trim().split(/\r?\n/)[0] ?? "").trim();
+  const sentence = (/^(.+?[.!?])(?:\s|$)/.exec(first)?.[1] ?? first).replace(/\.$/, "").trim();
+  if (sentence.length <= GOAL_FROM_BRIEF_CHARS) return sentence;
+  const cut = sentence.slice(0, GOAL_FROM_BRIEF_CHARS - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > GOAL_FROM_BRIEF_CHARS / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:]+$/, "")}…`;
+}
+
+/**
+ * "New project": name, goal, brief, repo link -> POST /projects, then open the project. The
+ * Goal is optional when there is a brief: its first sentence is the goal (the dialog says so).
+ */
 export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const client = useClient();
   const store = useUiStore();
@@ -28,6 +48,11 @@ export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: ()
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
+    const goalText = goal.trim() || goalFromBrief(brief);
+    if (!goalText) {
+      setError("Give a goal or a brief: the agent plans from them.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -35,7 +60,7 @@ export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: ()
       // A brief asks for the PM intake (spec A.2): the proposal lands in the inbox.
       const project = await client.createProject({
         name: name.trim(),
-        goal: goal.trim(),
+        goal: goalText,
         brief: brief.trim() || undefined,
         repos,
         ...(brief.trim() ? { intake: true } : {}),
@@ -67,16 +92,21 @@ export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: ()
             name="name"
           />
         </Field>
-        <Field label="Goal" hint="One sentence: what done looks like.">
+        <Field
+          label="Goal"
+          hint="One sentence: what done looks like. Optional: left empty, the first sentence you write below is the goal."
+        >
           <input
             className={INPUT_CLASS}
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
-            required
             name="goal"
           />
         </Field>
-        <Field label="Brief" hint="Paste the brief; the agent plans milestones from it.">
+        <Field
+          label="Brief"
+          hint="What you want, in your words. Without a repository, a sentence or two gets a small plan (up to three tasks); a list of features gets a full one."
+        >
           <textarea
             className={`${INPUT_CLASS} min-h-28`}
             value={brief}

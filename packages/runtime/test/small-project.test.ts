@@ -605,6 +605,26 @@ describe("small-project mode: the daemon (B.6)", () => {
     expect((phased.tasks as Json[]).at(-1)?.milestoneId).toBeNull();
   });
 
+  it("POST /projects/:id/plan takes a reason over 500 characters, shortened at a sentence on every row (ADR 0103)", async () => {
+    // The plan body is the intake's: a long explanation is shortened, never a 409 (before ADR
+    // 0103 this route refused it like the intake did).
+    const normal = await createProject("Long reason", false);
+    const reason = "The plan keeps the work small and checks it at each step. ".repeat(12).trim();
+    expect(reason.length).toBeGreaterThan(500);
+    const res = await req(`/projects/${normal}/plan`, {
+      method: "POST",
+      body: JSON.stringify({ ...PLAN, reason }),
+    });
+    expect(res.status).toBe(201);
+    const view = await json(res);
+    const kept = str((view.tasks as Json[])[0]?.reason);
+    expect(kept.length).toBeLessThanOrEqual(500);
+    expect(kept).toMatch(/step\. …$/);
+    expect(reason.startsWith(kept.slice(0, -2))).toBe(true);
+    expect((view.tasks as Json[]).every((t) => t.reason === kept)).toBe(true);
+    expect((view.milestones as Json[]).every((m) => m.reason === kept)).toBe(true);
+  });
+
   it("POST /projects/:id/plan refuses a bad plan as 409 conflict (ADR 0025) and writes nothing", async () => {
     const small = await createProject("Tiny refused", true);
     const bad = await req(`/projects/${small}/plan`, {

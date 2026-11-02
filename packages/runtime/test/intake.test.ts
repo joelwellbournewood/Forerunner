@@ -13,6 +13,7 @@ import type { StateBrief } from "../src/session/brief.ts";
 import {
   INTAKE_AUDIT_TOOL,
   INTAKE_BUILTIN_PROMPT_VERSION,
+  INTAKE_CALLS,
   IntakeService,
   intakeDocsBranch,
   intakeKey,
@@ -29,6 +30,16 @@ import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
  */
 
 const REGISTRY = join(process.cwd(), "evals", "registry");
+/**
+ * A brief with a list of features: a project created with it is not a small project (a short
+ * brief is, ADR 0103), so the plan keeps its milestones.
+ */
+const LONG_BRIEF = [
+  "Build a small web app for ten users.",
+  "- Sign-in first, then a dashboard.",
+  "- A settings page.",
+  "- An export of the data.",
+].join("\n");
 type Json = Record<string, unknown>;
 const json = async (r: Response): Promise<Json> => (await r.json()) as Json;
 
@@ -191,7 +202,8 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       projectId = await createProject({
         name: "Gamma",
         goal: "Ship the thing",
-        brief: "Build a small web app for ten users. Sign-in first, then a dashboard.",
+        // A brief with a list of features: not a short brief, so not a small project (ADR 0103).
+        brief: LONG_BRIEF,
       });
       replies.push({ text: `\`\`\`json\n${JSON.stringify(proposal())}\n\`\`\`` });
       const callsBefore = provider.calls.length;
@@ -663,7 +675,8 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     await expect(rt.intake.inFlight(id)).rejects.toMatchObject({ code: "validation" });
     const status = await json(await req(`/projects/${id}/intake`));
     expect(status).toMatchObject({ state: "failed" });
-    expect(String(status.error)).toContain("JSON");
+    // The cause in words (design §3.3): the reply could not be read, asked for twice.
+    expect(status.error).toBe("Claude's plan could not be read. Forerunner asked Claude twice.");
   });
 
   it("a failed intake can be retried from the project page: drafting, then the plan waits in the Inbox (U-046)", async () => {
@@ -680,7 +693,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     await expect(rt.intake.inFlight(id)).rejects.toMatchObject({ code: "validation" });
     const failed = await json(await req(`/projects/${id}/intake`));
     expect(failed).toMatchObject({ state: "failed", requestId: null });
-    expect(String(failed.error)).toContain("JSON");
+    expect(failed.error).toBe("Claude's plan could not be read. Forerunner asked Claude twice.");
     // Retry: drafted again in the background, the answer at once.
     replies.push({ text: JSON.stringify(proposal()) });
     const callsBefore = provider.calls.length;
@@ -725,8 +738,9 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const runs = (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).filter(
       (r) => r.prompt_version === INTAKE_BUILTIN_PROMPT_VERSION,
     );
-    expect(runs).toHaveLength(1);
-    expect(runs[0]?.prompt_version).not.toBe("");
+    // The refused reply is asked for once more (INTAKE_CALLS): each call has its Run row.
+    expect(runs).toHaveLength(INTAKE_CALLS);
+    expect(runs.every((r) => r.prompt_version !== "")).toBe(true);
   });
 
   it("with an API key alone the intake is told to plan no web work; with a subscription it is not (U-044)", async () => {
@@ -794,11 +808,13 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       new Set(
         (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).map((r) => r.id),
       );
+    /** The draft's Run rows: the refused reply is asked for once more, each call at the effort. */
     const newRow = async (before: Set<string>) => {
       const rows = (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).filter(
         (r) => !before.has(r.id),
       );
-      expect(rows).toHaveLength(1);
+      expect(rows).toHaveLength(INTAKE_CALLS);
+      expect(new Set(rows.map((r) => r.effort)).size).toBe(1);
       return rows[0];
     };
     let before = await runIdsOf();
@@ -997,7 +1013,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
   });
 
   it("an approval synced by two installs at once is applied by one of them only", async () => {
-    const projectId = await createProject({ name: "Twin", goal: "g", brief: "b" });
+    const projectId = await createProject({ name: "Twin", goal: "g", brief: LONG_BRIEF });
     replies.push({ text: JSON.stringify(proposal()) });
     const res = await json(
       await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" }),
@@ -1332,6 +1348,8 @@ describe("PM intake: Change the plan keeps the person's words until the new plan
       await after.intake.inFlight(projectId);
       expect(second.calls).toHaveLength(1);
       expect(told(second.calls[0])).toContain(asked);
+      // The plan size comes from the brief the project keeps, so it holds across the restart.
+      expect(told(second.calls[0])).toContain("Plan size: small");
       const pending = await req2(`/projects/${projectId}/intake`);
       expect(pending).toMatchObject({ state: "pending", error: null });
       expect(pending.requestId).not.toBe(requestId);

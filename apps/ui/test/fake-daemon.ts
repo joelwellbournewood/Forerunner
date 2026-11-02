@@ -1283,6 +1283,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       latestCriticGrade: null,
       lastSessionAt: null,
       active: false,
+      // As the daemon (ADR 0103): a new project starts outside small-project mode whatever its
+      // brief, so a task that names no tier gets light review (the critic reviews code tasks);
+      // a short brief asks the planner for a small plan instead.
       smallProjectMode: false,
       defaultRiskTier: 1,
       repos: parsed.data.repos ?? [],

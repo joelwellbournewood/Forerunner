@@ -27,6 +27,26 @@ export const DEFAULT_RISK_TIER = 1;
 /** Tier of a new task that names none in small-project mode: checks only, no critic model. */
 export const SMALL_PROJECT_RISK_TIER = 0;
 
+/** A brief shorter than this, on at most two lines and with no list, asks for a small plan. */
+export const SHORT_BRIEF_CHARS = 200;
+/** Most tasks a small plan has (design §3.3: one to three), in one milestone. */
+export const SMALL_PLAN_MAX_TASKS = 3;
+
+/**
+ * Whether a project's brief asks for a small plan (design §3.3: "a one-line brief gets a small
+ * plan"): under `SHORT_BRIEF_CHARS` characters, at most two lines, no bulleted or numbered
+ * list. The intake then asks for one milestone of one to three tasks ("Plan size: small",
+ * `intakePlanSize`, ADR 0103); a one-line brief had got six tasks over three milestones (live
+ * check of 2026-11-01). It does not turn small-project mode on: the mode's tier 0 would take the
+ * critic off the code tasks (the owner's decision of 2026-11-01). No brief at all is not short.
+ */
+export function isShortBrief(brief: string | null | undefined): boolean {
+  const t = (brief ?? "").trim();
+  if (!t || t.length >= SHORT_BRIEF_CHARS) return false;
+  const lines = t.split(/\r?\n/).filter((l) => l.trim());
+  return lines.length <= 2 && !lines.some((l) => /^\s*(?:[-*•]|\d+[.)])\s+/.test(l));
+}
+
 /** The one place a new task's tier is chosen when the task names none. */
 export function defaultRiskTier(project: Pick<ProjectRow, "small_project_mode">): 0 | 1 {
   return project.small_project_mode ? SMALL_PROJECT_RISK_TIER : DEFAULT_RISK_TIER;
@@ -41,10 +61,52 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 const PlanKey = z.string().min(1).max(80);
 
+/** Longest plan reason, task title and milestone name a plan keeps (longer ones are shortened). */
+export const MAX_PROJECT_PLAN_REASON_CHARS = 500;
+export const MAX_PLAN_TITLE_CHARS = 200;
+export const MAX_MILESTONE_NAME_CHARS = 200;
+
+/**
+ * Prose a plan carries, cut to `max` characters at the last whole sentence that fits (followed
+ * by " …"), else at the last word (followed by "…"), else hard. Live, the planning model wrote a
+ * 754-character `plan.reason` against a 500-character limit and the person lost the whole plan
+ * (live check of 2026-11-01): a long explanation is shortened, never a reason to refuse the plan.
+ * Identifiers (keys, specialist names) and counts are never shortened: they are refused.
+ */
+export function shortenProse(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const t = text.trim();
+  if (t.length <= max) return t;
+  // Whole sentences: the last sentence end (".", "!" or "?" before white space) that leaves
+  // room for " …", if it keeps at least half the room.
+  const room = max - 2;
+  let end = -1;
+  for (const m of t.slice(0, room + 1).matchAll(/[.!?](?=\s)/g))
+    if (m.index + 1 <= room) end = m.index + 1;
+  if (end >= room / 2) return `${t.slice(0, end)} …`;
+  const head = dropHalfSurrogate(t.slice(0, max - 1));
+  const space = head.search(/\s\S*$/);
+  const words = space >= (max - 1) / 2 ? head.slice(0, space) : head;
+  return `${words.replace(/[\s,;:(–—-]+$/, "")}…`;
+}
+
+/** A cut never ends inside a character written as two UTF-16 units (an emoji, a rare letter). */
+function dropHalfSurrogate(s: string): string {
+  const last = s.charCodeAt(s.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? s.slice(0, -1) : s;
+}
+
+/** A prose field of a plan: at least `min` characters, shortened to `max` (`shortenProse`). */
+export const planProse = (max: number, min = 1) =>
+  z
+    .string()
+    .min(min)
+    .transform((s) => shortenProse(s, max));
+
 export const PlanTask = z.object({
   /** Name other plan tasks use in `dependsOn`; unique within the plan. */
   key: PlanKey.optional(),
-  title: z.string().min(3).max(200),
+  title: planProse(MAX_PLAN_TITLE_CHARS, 3),
   outcome: z.string().min(3),
   acceptanceCriteria: z.array(z.string().min(1)).max(50).default([]),
   /** Left out, the project's default applies (`defaultRiskTier`). */
@@ -60,7 +122,7 @@ export const PlanTask = z.object({
 export type PlanTask = z.infer<typeof PlanTask>;
 
 export const PlanMilestone = z.object({
-  name: z.string().min(1).max(200),
+  name: planProse(MAX_MILESTONE_NAME_CHARS),
   successCriteria: z.array(z.string().min(1)).max(50).default([]),
   targetDate: z.string().regex(DATE_ONLY, "a calendar date, YYYY-MM-DD").nullable().default(null),
   tasks: z.array(PlanTask).default([]),
@@ -73,8 +135,11 @@ export const ProjectPlanBody = z
     milestones: z.array(PlanMilestone).max(MAX_PLAN_MILESTONES).default([]),
     /** Tasks outside any milestone; small-project mode attaches them to the one milestone. */
     tasks: z.array(PlanTask).default([]),
-    /** Recorded as the reason on every task row the plan writes (spec B.5). */
-    reason: z.string().min(1).max(500).default("planned from the brief"),
+    /**
+     * Recorded as the reason on every task row the plan writes (spec B.5). A longer one is
+     * shortened at a sentence or a word (`shortenProse`), never refused.
+     */
+    reason: planProse(MAX_PROJECT_PLAN_REASON_CHARS).default("planned from the brief"),
   })
   .superRefine((plan, ctx) => {
     const all = [...plan.milestones.flatMap((m) => m.tasks), ...plan.tasks];

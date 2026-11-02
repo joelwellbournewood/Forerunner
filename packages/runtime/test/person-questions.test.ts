@@ -88,6 +88,24 @@ describe("which tasks are the person's (U-022)", () => {
       "Repository: what do you choose?",
     ]);
   });
+
+  it("a question over 500 characters is shortened at a word and stays a question (ADR 0103)", () => {
+    // The planner may write a long question (the limit is in its prompt, not enforced on it).
+    // Before, it was cut mid-word at 500 characters, lost its "?" and stopped being a question.
+    const long = `Which hosting do you want for the page, ${"given that the quotes are bundled and nothing runs on a server, ".repeat(9)}or none at all?`;
+    expect(long.length).toBeGreaterThan(500);
+    const [q, other] = questionsForTask({
+      title: "Decide the hosting",
+      outcome: "",
+      acceptance_criteria: [long, "Which domain?"],
+    });
+    expect(q?.length).toBeLessThanOrEqual(500);
+    expect(q).toMatch(/[a-z]…\?$/);
+    expect(long.startsWith((q ?? "").slice(0, -2))).toBe(true);
+    // Cut at a word: what follows the kept text in the question is a space or a comma.
+    expect(long.charAt((q ?? "").length - 2)).toMatch(/[ ,]/);
+    expect(other).toBe("Which domain?");
+  });
 });
 
 describe("what a run reports (U-022)", () => {

@@ -62,6 +62,9 @@ export async function createProjectRecord(
     summary_cache: body.brief ? { brief: body.brief } : {},
     data_assets: [],
     settings: { members: [deps.agent.id] },
+    // Off at creation, whatever the brief: the mode gives a task that names no tier tier 0 (no
+    // critic), and the critic reviews code tasks (the owner's decision of 2026-11-01). A short
+    // brief asks the intake for a small plan instead (`intakePlanSize`, ADR 0103).
     small_project_mode: false,
     active: true,
     author_human: deps.human.id,

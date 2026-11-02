@@ -20,7 +20,7 @@ import {
 } from "../src/models/ladder.ts";
 import type { EffortLevel } from "../src/provider/types.ts";
 import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
-import { IntakeService } from "../src/session/intake.ts";
+import { INTAKE_CALLS, IntakeService } from "../src/session/intake.ts";
 import { FakeStt, FakeTts } from "../src/voice/pkg.ts";
 import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
 
@@ -269,13 +269,13 @@ describe("chat, voice and planning read the project's slider per turn and per se
   it("a planning (intake) session runs at planning's effort shifted by the slider, from the next session", async () => {
     for (const offset of OFFSETS) {
       await api.slide(projectId, offset);
-      // The fake answers with no proposal, so the intake files nothing and the next one calls
-      // the model again; the call itself is what this checks.
+      // The fake answers with no proposal, so the intake asks once more (INTAKE_CALLS), files
+      // nothing, and the next one calls the model again; each call's effort is what this checks.
       const efforts = await effortsOf(async () => {
         const r = await api.post(`/projects/${projectId}/intake`, {});
         expect(r.status).not.toBe(202);
       });
-      expect(efforts).toEqual([EXPECTED.planning[offset]]);
+      expect(efforts).toEqual(Array(INTAKE_CALLS).fill(EXPECTED.planning[offset]));
     }
   });
 
@@ -301,7 +301,7 @@ describe("chat, voice and planning read the project's slider per turn and per se
     for (const offset of OFFSETS) {
       await api.slide(projectId, offset);
       const efforts = await effortsOf(() => service.propose(projectId).catch(() => undefined));
-      expect(efforts).toEqual([capped[offset]]);
+      expect(efforts).toEqual(Array(INTAKE_CALLS).fill(capped[offset]));
     }
   });
 });

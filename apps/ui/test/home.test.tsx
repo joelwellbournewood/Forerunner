@@ -236,6 +236,57 @@ describe("Home", () => {
     expect(connect).toHaveAttribute("href", "/setup");
   });
 
+  it("a one-line brief without a Goal creates the project: the brief's first sentence is the goal, and the dialog says so (live check of 2026-11-01)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/", harness);
+    await screen.findAllByTestId("project-card");
+    await user.click(screen.getByTestId("new-project"));
+    const dialog = await screen.findByTestId("new-project-dialog");
+    // The dialog says what an empty Goal does and what a short brief gets.
+    expect(dialog).toHaveTextContent(
+      "Optional: left empty, the first sentence you write below is the goal.",
+    );
+    // Only the Brief is labelled "brief": a hint naming it would label the Goal too (the bench's
+    // smoke journey fills the field by its label, case aside).
+    expect(within(dialog).getAllByLabelText(/brief/i)).toHaveLength(1);
+    // The condition the daemon applies is named (design §5.9): with a repository link the plan
+    // is sized from the repository, not the brief.
+    expect(dialog).toHaveTextContent(
+      "Without a repository, a sentence or two gets a small plan (up to three tasks); a list of features gets a full one.",
+    );
+    expect(within(dialog).getAllByLabelText(/Repository link/)).toHaveLength(1);
+    await user.type(within(dialog).getByLabelText("Name"), "Quote page");
+    await user.type(
+      within(dialog).getByLabelText(/Brief/),
+      "A page that shows a random quote. It should look calm.",
+    );
+    await user.click(within(dialog).getByTestId("create-project"));
+    await waitFor(() => expect(postedCalls(harness, "/projects")).toHaveLength(1));
+    expect(postedCalls(harness, "/projects")[0]?.body).toEqual({
+      name: "Quote page",
+      goal: "A page that shows a random quote",
+      brief: "A page that shows a random quote. It should look calm.",
+      intake: true,
+    });
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Quote page");
+  });
+
+  it("New project without a Goal or a Brief says what is missing and sends nothing", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/", harness);
+    await screen.findAllByTestId("project-card");
+    await user.click(screen.getByTestId("new-project"));
+    const dialog = await screen.findByTestId("new-project-dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "Empty");
+    await user.click(within(dialog).getByTestId("create-project"));
+    expect(
+      await within(dialog).findByText("Give a goal or a brief: the agent plans from them."),
+    ).toBeVisible();
+    expect(postedCalls(harness, "/projects")).toHaveLength(0);
+  });
+
   it("shows the not-connected state when the daemon is unreachable; no Stop all while nothing runs (design §3.1)", async () => {
     const harness = createHarness();
     const broken = {

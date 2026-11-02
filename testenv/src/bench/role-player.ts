@@ -68,12 +68,29 @@ export interface BenchOptions {
   /** `ok`, or a planted intake failure (FORERUNNER_BENCH_INTAKE=malformed|error). */
   intake: "ok" | "malformed" | "error";
   /**
+   * The first planning reply of each draft is one the live model sent (FORERUNNER_BENCH_INTAKE_BAD,
+   * live check of 2026-11-01): `reason-too-long` (a 750-character plan.reason), `fenced-docs`
+   * (docs that hold code fences), `missing-tasks` (a milestone with no task), `not-json` (prose),
+   * `too-big` (the full plan when a small one was asked for: the live model's six tasks for a
+   * one-line brief). The intake's one retry (its request carries the refused reply) gets the plan.
+   */
+  intakeBad: IntakeBad;
+  /**
    * Wait before each reply so running states can be seen (FORERUNNER_BENCH_DELAY_MS, default
    * 250). Not applied to the critic, whose monthly calibration makes some 160 calls.
    */
   delayMs: number;
   clock?: Clock;
 }
+
+export const INTAKE_BAD_KINDS = [
+  "reason-too-long",
+  "fenced-docs",
+  "missing-tasks",
+  "not-json",
+  "too-big",
+] as const;
+export type IntakeBad = (typeof INTAKE_BAD_KINDS)[number] | "none";
 
 const list = (v: string | undefined): string[] =>
   (v ?? "")
@@ -92,6 +109,7 @@ const count = (v: string | undefined, fallback: number): number => {
 /** The failure-injection and plan knobs, read once at daemon start. */
 export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): BenchOptions {
   const intake = (env.FORERUNNER_BENCH_INTAKE ?? "").trim().toLowerCase();
+  const bad = (env.FORERUNNER_BENCH_INTAKE_BAD ?? "").trim().toLowerCase();
   const rawDelay = (env.FORERUNNER_BENCH_DELAY_MS ?? "").trim();
   const delay = rawDelay ? Number(rawDelay) : 250;
   return {
@@ -112,6 +130,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     rejectTimes: count(env.FORERUNNER_BENCH_CRITIC_REJECT_TIMES, 1),
     ask: list(env.FORERUNNER_BENCH_ASK),
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
+    intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
     delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 250,
   };
 }
@@ -277,7 +296,8 @@ export function parseIntakeRequest(req: ModelRequest): IntakeInput {
     project: field("Project"),
     goal: field("Goal"),
     brief,
-    smallProject: field("Small-project mode").startsWith("on"),
+    // "Plan size: small (a short brief: …)" asks for one to three tasks (the intake's Size rules).
+    smallProject: field("Plan size").startsWith("small"),
   };
 }
 
@@ -298,7 +318,85 @@ function intakeAnswer(req: ModelRequest, opts: BenchOptions): Answer {
       `${STAND_IN} I think this project needs a website first. Here is my plan: build it, then test it.`,
       "intake=malformed",
     );
-  return text(JSON.stringify(intakeProposal(parseIntakeRequest(req), opts.plan), null, 2));
+  const input = parseIntakeRequest(req);
+  const proposal = intakeProposal(input, opts.plan);
+  // The intake's one retry carries the refused reply and what was wrong with it: the plan.
+  const retry = req.messages.length > 1;
+  if (opts.intakeBad !== "none" && !retry) {
+    if (opts.intakeBad === "too-big")
+      // The full plan although a small one was asked for (the live model's six tasks).
+      return text(
+        JSON.stringify(intakeProposal({ ...input, smallProject: false }, opts.plan), null, 2),
+        "intake-bad=too-big",
+      );
+    return badIntakeReply(proposal, opts.intakeBad);
+  }
+  return text(JSON.stringify(proposal, null, 2));
+}
+
+/** A reason as long as the live model's (754 characters), in whole sentences. */
+const LONG_REASON = [
+  `${STAND_IN} The brief is one line, so this plan chooses the smallest approach that meets it.`,
+  "A static page in plain HTML, CSS and JavaScript needs no backend, no framework and no build step.",
+  "The brief names no hosting, repository, quote source or look, and only the person can settle those,",
+  "so the plan assumes the simplest: files in the project's folder, opened in a browser.",
+  "The work is one build task and one check, so the person sees a working page after the first session.",
+  "No task needs the web, so the quote list is written from what the coder already knows,",
+  "and the decision record says which attributions could not be checked online.",
+  "Anything bigger, a server, user accounts or a shared quote list, would need a new decision first,",
+  "so it is left out of this plan on purpose and can be asked for in a later change.",
+].join(" ");
+
+/** The live model's bad first replies (`FORERUNNER_BENCH_INTAKE_BAD`). */
+function badIntakeReply(
+  proposal: Record<string, unknown>,
+  kind: Exclude<IntakeBad, "none" | "too-big">,
+): Answer {
+  const injected = `intake-bad=${kind}`;
+  const plan = proposal.plan as Record<string, unknown>;
+  switch (kind) {
+    case "reason-too-long":
+      return text(
+        JSON.stringify({ ...proposal, plan: { ...plan, reason: LONG_REASON } }, null, 2),
+        injected,
+      );
+    case "fenced-docs": {
+      const docs = { ...(proposal.docs as Record<string, string>) };
+      docs["README.md"] = [
+        docs["README.md"] ?? "# Project",
+        "## The quote list",
+        "",
+        "Each quote in script.js has this shape:",
+        "",
+        "```json",
+        '[ { "text": "string, non-empty, under 280 characters", "author": "string" } ]',
+        "```",
+        "",
+        "## Check it",
+        "",
+        "```bash",
+        "node --check script.js",
+        "```",
+        "",
+      ].join("\n");
+      return text(JSON.stringify({ ...proposal, docs }, null, 2), injected);
+    }
+    case "missing-tasks": {
+      const milestones = (plan.milestones as Record<string, unknown>[]).map((m) => ({
+        ...m,
+        tasks: [],
+      }));
+      return text(
+        JSON.stringify({ ...proposal, plan: { ...plan, milestones } }, null, 2),
+        injected,
+      );
+    }
+    case "not-json":
+      return text(
+        `${STAND_IN} Here is my plan: first build the page, then check it works. I will write the JSON next.`,
+        injected,
+      );
+  }
 }
 
 // ---------------------------------------------------------------------------------------

@@ -565,6 +565,9 @@ export class LoopTaskExecutor implements TaskExecutor {
       ],
       constraints: [
         "Stay inside the worktree and the allowed tools.",
+        // Live (2026-11-01) a planned outcome asked the coder for a commit it never makes: the
+        // executor records each run's changes itself (the workspace's history, or the PR).
+        "Do not commit, push or open a pull request: Forerunner records your changes after the run (it commits them in the project's folder, or opens the pull request).",
         "Report evidence (commands and output), not claims.",
         "End the report with one line per lesson worth keeping, as 'Lesson: ...'.",
         // U-022: the person is the one who can answer; a specialist never guesses for them.

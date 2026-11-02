@@ -1281,7 +1281,9 @@ project's open milestone instead of adding one. `dependsOn` takes plan keys or i
 project's own tasks and the rows are written dependencies first; an unknown reference, a cycle,
 a duplicate key, an empty plan or one over the caps (`MAX_PLAN_MILESTONES` 20,
 `MAX_PLAN_TASKS` 200) is refused as `validation` (409 `conflict` on the route, ADR 0025) with
-nothing written. Milestone target dates are calendar dates (`YYYY-MM-DD`). The project card
+nothing written; a reason, a task title or a milestone name over its limit is shortened at a
+sentence or a word (`planProse`, ADR 0103), on this route as in the intake
+(`small-project.test.ts`). Milestone target dates are calendar dates (`YYYY-MM-DD`). The project card
 carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither, and its
 `nextMilestone` is the open milestone (`views.ts#openMilestone`: the first `planned` or `active`
 row by order, the one the plan writer joins), so a `done` or `cancelled` row from before the mode
@@ -1296,7 +1298,8 @@ second row at a taken `order_index`, and the next plan joins that one. Tests:
 
 **PM intake (spec A.2, ADR 0055).** `src/session/intake.ts` turns the brief into one proposal
 and writes nothing until the human approves it. `IntakeService.propose(projectId, { brief? })`
-makes one model call on the planning rung (the `planning` mode's tier, effort, timeout and
+makes one model call on the planning rung, and one more when its reply does not validate (below)
+(the `planning` mode's tier, effort, timeout and
 output cap from `resolveRunSettings`: the tables in force under the principal's
 `model_config.modes.planning` override, ADR 0072, the effort shifted by the project's
 speed-versus-quality slider, spec D.16; the registry's `project-manager` prompt plus an intake
@@ -1308,8 +1311,8 @@ the human can make that the brief does not settle is planned as one task with `s
 (U-022, "Questions only the person can answer" below); no tools, `maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or
 `project.settings.intake_budget_usd_micro`) through the loop driver and the hooks on a
 session row of its own (`summary: "intake: <project>"`, `planned -> running -> completed |
-failed`, `plan.intake.deadline` the planning timeout plus `INTAKE_DEADLINE_MARGIN_MS`, which
-is also the token's expiry), so the call is budgeted, billed to the project and audited like
+failed`, `plan.intake.deadline` one planning timeout per call (`INTAKE_CALLS`, 2) plus
+`INTAKE_DEADLINE_MARGIN_MS`, which is also the tokens' expiry), so the call is budgeted, billed to the project and audited like
 any other. The reply must be one JSON object (`parseIntakeReply`, `IntakeProposalBody`):
 `plan` in `ProjectPlanBody`'s shape, `docs` as a map of allowlisted paths (`INTAKE_DOC_PATHS`,
 the standard doc set, plus `docs/decisions/0001-<slug>.md`) to markdown, `firstSession` as
@@ -1366,9 +1369,71 @@ in the background through `enqueue` and answers `drafting` at once; it acts only
 or `none` intake (a plan waiting, a draft running or an answered intake is answered as it
 stands, no call), and without a provider it is refused `unavailable` with
 `INTAKE_NEEDS_A_MODEL` (the setup assistant) before anything starts. The failure is recorded
-in words (`intakeFailureWords`: "Claude did not answer (model call failed).", "Planning took
-longer than its time limit.", "Claude's answer was not the JSON plan Forerunner asks for."),
-not the planning call's error text (design §3.3).
+in words (`intakeFailureWords`, below), not the planning call's error text (design §3.3).
+**Live replies become plan cards (live check of 2026-11-01).** On the real model five of six
+drafts failed: three `plan.reason`s over 500 characters ("plan.reason: Too big", shown as
+"Claude's plan was missing parts Forerunner needs"), and two replies whose docs held markdown
+code fences, read from the first fence anywhere (a doc's snippet) and refused as "not JSON".
+Now: (1) `readIntakeReply` parses the whole reply first; only when that fails does it try each
+block between line-start fences, the longest first (a fence inside a JSON string never starts a
+line), then the span from the first "{" to the last "}", and takes the first object with a
+`plan` (`replyCandidates`, `replyObject`). (2) Prose is shortened, never refused: `planProse`
+(`project-plan.ts`) cuts `plan.reason` (500), a task title (200), a milestone name (200), the
+first-session summary (1000) and an item's rationale (500) at the last whole sentence that fits
+(" …") or the last word ("…") (`shortenProse`), and a doc over `MAX_DOC_CHARS` at a paragraph,
+closing a code fence it cut inside (`shortenDoc`); `shortened` lists what was cut ("plan.reason
+(754 -> 498)", on the card and in the log). Identifiers and counts (a key over 80 characters, more
+than 50 criteria, over 200 tasks) are still refused: shortening a key could join two tasks. The
+intake also refuses a plan with no task (`the plan has no task`). (3) A reply that does not
+validate (not JSON, cut off at `max_tokens`, a part missing, a dependency cycle from
+`checkPlanShape`) is asked for once more in the same session before the person sees "Planning
+failed": the second call carries the brief, the model's own reply and `retryPrompt` (each problem
+from `details.problems`, "plan.milestones[0].tasks[1] (key "build").outcome: …", and "Reply again
+with the whole JSON object…"). Both calls share the session's budget; each has its token, its Run
+row (`intake_<session>` and `intake_<session>_2`) and its ledger rows; the card's `cost_usd_micro`
+is their sum and `model_calls` says 2. A call that did not complete (the provider, the time
+limit, the budget, a stop) is not repeated. (4) The failure words name the cause
+(`details.words` from the reader): "Claude's plan could not be read.", "Claude's plan was cut off
+before it ended.", "Claude's plan was missing its tasks.", "Claude's plan was missing a task's
+outcome.", "Claude's plan had tasks waiting for each other in a circle.", with " Forerunner asked
+Claude twice." after a refused retry; "Claude did not answer (model call failed).", "Your Claude
+usage limit is reached. Try again once it resets." (`provider_usage_limit`), "Claude did not finish
+the plan in time." The words are plain (design §5.6): no JSON key names ("Claude's plan had parts
+Forerunner does not know."), no plan-internal words ("Claude's plan listed the same task twice."
+for a duplicate key), an empty text "left … empty", a number "out of range", an entry of a list
+"one of a task's checks". (5) The prompt states every limit the reader enforces, asks the decision
+record to open with a "Decision: " line in one or two sentences (the plan card shows it), asks for
+an estimate for every task a specialist does (`firstSession.items`, in run order: the card has a
+cost per task), never asks a specialist to commit, push or open a pull request (the executor
+records the changes), and says what a small plan is (`SMALL_PLAN_RULES`: one milestone of one to
+three tasks, no reviewer, deploy, marketing or research task unless asked, no person task unless
+the work cannot start, riskTier left out, only README.md and the decision record). (6) **Plan
+size (ADR 0103).** `intakePlanSize` asks for "Plan size: small (a short brief: see Size in your
+instructions)" when the project has no repository and the brief it is drafted from is short
+(`isShortBrief`: under `SHORT_BRIEF_CHARS`, 200, at most two lines, no list), or the project is in
+small-project mode; otherwise "Plan size: what the brief needs". The size comes from the brief the
+project keeps (`summary_cache.brief`), so Try again after a restart asks the same. A first plan of
+more than `SMALL_PLAN_MAX_TASKS` (3) tasks for a draft from the brief alone is asked for once more
+(`smallPlanProblem`: "Your plan has 6 tasks in 3 milestones, but "Plan size: small" asks for one
+milestone with one to three tasks. …"); the second plan stands whatever its size, and when the
+second reply cannot be used or its call ends other than by a stop, the first plan is filed
+("…, the first plan kept" in the session summary). A draft with the person's changes is never
+checked for size. The project is NOT put in small-project mode (`createProjectRecord` keeps it
+off): the mode's tier 0 took the critic off a one-line brief's coder task (review of
+fix/intake-live), against the owner's decision that the critic always reviews code tasks, so a
+small plan's tasks get the default tier 1 and a critic review after the specialist. Tests:
+`intake-live.test.ts` (the six live replies, `fixtures/intake-live1.json`, each read and each
+refused one a plan card on the first call through the daemon; an approved one writes the
+shortened reason; a reply without tasks and a cyclic one asked for once more with the problems
+in words, two Run rows, the summed cost; the words for each cause after the second try; a
+provider error and the usage limit not repeated; a one-line brief's request asks for a small
+plan, the project stays out of small-project mode and its approved build task is written at tier
+1, a long brief's request asks for what it needs; a too-big small plan asked for once more, the
+second plan standing, the first kept when the second fails, no size check after Change the
+plan), `intake.test.ts` (the plan size across a restart), `effort-offset.test.ts` (every call of
+a draft at the effort); the UI side in `apps/ui/test/real-daemon.test.ts` ("a one-line brief's
+work is reviewed by the critic": the coder's run, then the critic's review, before the task is
+done).
 **Change the plan keeps the person's words (design §3.3).** The answered card keeps the change
 (`change_card.change`) and each plan card the changes it was drafted with (`changes`, in
 order); the new draft is asked with all of them (`IntakeDraftOptions.changes`,
@@ -1404,7 +1469,10 @@ a sign-off without the questions. One card, three ways in:
   them the same way for one that reaches a session anyway and returns `needs_human` at once
   with no Run row and no spend. The questions (`questionsForTask`): the acceptance criteria that
   end in "?", else one per thing the title names ("Stack: what do you choose?"), else the
-  criteria, else the title.
+  criteria, else the title. A question over `MAX_QUESTION_CHARS` (500) is cut at the last word
+  that fits with "…" and keeps its "?" (`clean`, ADR 0103): cut hard mid-word it lost the
+  question mark and was dropped from the card. At most `MAX_PERSON_QUESTIONS` (10) per task are
+  asked; the intake prompt states both limits.
 - **Asked by a specialist.** `askPersonTool` (`ask_person`, action class `read`: asking is free
   at every level) is registered by the daemon beside the file tools; the executor adds it to
   every loop-driver run's allowlist (the session grant carries every registered tool, so the
@@ -4176,7 +4244,11 @@ was improved with the critic's findings below" only when findings follow; a firs
 without findings points to the previous attempt instead. A run that ended on an error is
 named by `failureWords` ("Claude did not answer (model call failed).", the redacted message
 otherwise), never by the text the model wrote before the error, and carries
-`TaskExecutionResult.errorCode`; a timeout keeps its partial output (D.17).
+`TaskExecutionResult.errorCode`; a timeout keeps its partial output (D.17). The constraints say
+"Do not commit, push or open a pull request: Forerunner records your changes after the run":
+the executor commits a workspace's changes (the next run's baseline) or opens the pull request
+itself; live (2026-11-01) a planned outcome asked the coder for a commit it never makes
+(`executor-brief.test.ts`).
 
 ### Injection (`src/injection/scan.ts`)
 
