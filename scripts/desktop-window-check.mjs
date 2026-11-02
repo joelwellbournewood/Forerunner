@@ -10,7 +10,8 @@
 //      runtime: `fr daemon --provider bench` loads it from <runtime>/testenv and refuses to start
 //      without it, so an install never runs the stand-in unless a test put it there;
 //   2. starts the installed exe the way a person does (no arguments) on a fresh data folder, with
-//      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port> (the window's DevTools)
+//      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port> (the window's DevTools;
+//      also wry's disabled features and occlusion tracking off, `WEBVIEW2_DISABLED_FEATURES`)
 //      and FORERUNNER_DAEMON_PROVIDER=bench (the shell starts its daemon on the stand-in model,
 //      apps/desktop/src-tauri/src/supervisor.rs `daemon_flags`);
 //   3. waits for the daemon (daemon.json, /health) and for the window's page on the DevTools
@@ -24,9 +25,10 @@
 //      the browser fetch it), Settings → Sandbox's "Get Docker Desktop" link, a target="_blank"
 //      link (the new-window path), a file: link (must open nothing) and Open folder on the
 //      Overview. After each, the window must still show the app on the same page;
-//   5. saves a screenshot (Page.captureScreenshot) and the visible text of every step, the
-//      shell's and the daemon's logs and result.json under --out; ends the app (POST /shutdown,
-//      then the shell's process tree).
+//   5. saves a screenshot (Page.captureScreenshot) and the visible text of every step, and of
+//      the page where the journey stopped (with `--exe`, the whole screen there too:
+//      `desktopScreenshot`), the shell's and the daemon's logs and result.json under --out;
+//      ends the app (POST /shutdown, then the shell's process tree).
 // Exit 1 when a required check failed. The step summary on GitHub lists every check.
 //
 // `--attach <DevTools URL>` drives a page that is already open instead (a dry run of the journey
@@ -126,6 +128,20 @@ export function parseArgs(argv) {
 }
 
 /**
+ * The features wry turns off in WebView2 when the app names no browser arguments
+ * (wry's webview2/mod.rs), plus `CalculateNativeWinOcclusion`: once the system browser opens
+ * over the window (the PR link), Chromium's occlusion tracking may stop painting the covered
+ * page, and the driver's clicks wait for animation frames. WebView2 may use the variable in
+ * place of the app's own arguments, so wry's list is repeated here.
+ */
+export const WEBVIEW2_DISABLED_FEATURES = Object.freeze([
+  "msWebOOUI",
+  "msPdfOOUI",
+  "msSmartScreenProtection",
+  "CalculateNativeWinOcclusion",
+]);
+
+/**
  * The installed app's environment: a fresh data folder, the stand-in model, the window's
  * DevTools on `cdpPort`, the vault a file in that folder (never this machine's keyring), and
  * no model credential, token or other FORERUNNER_* setting of this machine.
@@ -143,8 +159,42 @@ export function windowEnv(base, { home, cdpPort }) {
   env.FORERUNNER_VAULT_BACKEND = "file";
   env.FORERUNNER_SANDBOX_ENGINE = "podman";
   env.FORERUNNER_BENCH_DELAY_MS = "100";
-  env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = `--remote-debugging-port=${cdpPort}`;
+  env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = `--remote-debugging-port=${cdpPort} --disable-features=${WEBVIEW2_DISABLED_FEATURES.join(",")}`;
   return env;
+}
+
+/** Windows PowerShell: the whole desktop into the PNG named by `FR_SHOT` (.NET's screen copy). */
+const DESKTOP_SHOT_PS = [
+  "$ErrorActionPreference = 'Stop'",
+  "Add-Type -AssemblyName System.Windows.Forms, System.Drawing",
+  "$b = [System.Windows.Forms.SystemInformation]::VirtualScreen",
+  "$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height",
+  "$g = [System.Drawing.Graphics]::FromImage($bmp)",
+  "$g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)",
+  "$bmp.Save($env:FR_SHOT, [System.Drawing.Imaging.ImageFormat]::Png)",
+  "$g.Dispose()",
+  "$bmp.Dispose()",
+].join("; ");
+
+/**
+ * A screenshot of the whole screen where the journey stopped: a stop before the window's page
+ * could be driven (no daemon, no DevTools page) has no page to capture, and a dialog of the
+ * shell's is outside the page. Windows only; the file's path goes in an environment variable,
+ * never into the script text. Returns what happened, in words.
+ * @param {string} file
+ * @param {{ platform?: string, run?: typeof spawnSync }} [deps]
+ */
+export function desktopScreenshot(file, { platform = process.platform, run = spawnSync } = {}) {
+  if (platform !== "win32") return "no desktop screenshot (not Windows)";
+  const r = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", DESKTOP_SHOT_PS], {
+    env: { ...process.env, FR_SHOT: file },
+    encoding: "utf8",
+    timeout: 60_000,
+    windowsHide: true,
+  });
+  if (r.status === 0 && existsSync(file)) return `desktop screenshot: ${file}`;
+  const why = String(r.error?.message ?? r.stderr ?? "").trim();
+  return `desktop screenshot failed: ${why ? oneLine(why) : `exit ${r.status}`}`;
 }
 
 /**
@@ -422,6 +472,8 @@ async function main() {
   let daemon = null;
   let link = null;
   let client = null;
+  /** @type {((label: string) => Promise<string>) | null} set once the window's page is driven */
+  let shot = null;
   const pageErrors = [];
 
   try {
@@ -506,7 +558,7 @@ async function main() {
     await client.send("Page.bringToFront", {}).catch(() => undefined);
 
     let shotNo = 0;
-    const shot = async (label) => {
+    shot = async (label) => {
       shotNo += 1;
       const name = `${String(shotNo).padStart(2, "0")}-${slug(label)}`;
       try {
@@ -737,7 +789,8 @@ async function main() {
         !seen.some((x) => x.kind !== "refused"),
         seen
           .map((x) => (x.kind === "refused" ? `refused ${x.scheme}` : `${x.kind}: ${x.target}`))
-          .join("; ") || "nothing handed off",
+          .join("; ") ||
+          "nothing handed off, and no refusal logged (the webview may stop a file: link before the shell sees it)",
       );
       await stays(beforeFile, "a file: link");
     } else skip("a file: link is handed to no program", "no shell (--attach)");
@@ -829,6 +882,11 @@ async function main() {
         false,
         e instanceof Error ? (e.stack ?? e.message) : String(e),
       );
+    // What the window's page showed at the stop, and on the runner the whole screen too (a
+    // dialog of the shell's, a window that never came, are outside the page).
+    const label = `stopped: ${e instanceof Stop ? e.message : "an error"}`;
+    if (shot) await shot(label).catch((err) => console.log(`no screenshot at the stop: ${err}`));
+    if (shellMode) console.log(desktopScreenshot(path.join(out, `99-${slug(label)}-desktop.png`)));
   } finally {
     try {
       client?.close();

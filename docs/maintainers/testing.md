@@ -2530,10 +2530,12 @@ was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no hand
 3. starts the installed exe with no arguments, as a person does, on a fresh data folder with a
    space and non-ASCII letters (`FORERUNNER_HOME`), with `FORERUNNER_DAEMON_PROVIDER=bench` (the
    shell forwards it as `daemon --provider bench`; `apps.md`, "Desktop shell"),
-   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` (the window's DevTools),
-   the vault a file in that folder, `FORERUNNER_SANDBOX_ENGINE=podman` (Docker "not installed",
-   so Settings shows its "Get Docker Desktop" link) and no credential of the runner
-   (`windowEnv`);
+   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` (the window's DevTools;
+   with wry's own `--disable-features` list, since WebView2 may use the variable in place of the
+   app's arguments, plus `CalculateNativeWinOcclusion`, so the window still paints and answers
+   the driver's clicks once the system browser opens over it), the vault a file in that folder,
+   `FORERUNNER_SANDBOX_ENGINE=podman` (Docker "not installed", so Settings shows its "Get Docker
+   Desktop" link) and no credential of the runner (`windowEnv`);
 4. waits for `daemon.json` and `/health`, then for the window's page on the DevTools endpoint (a
    page target on `http://tauri.localhost`, not the splash), and drives it over raw CDP with the
    Android emulator job's driver (`apps/mobile/e2e/cdp.mjs`, ADR 0054; the page's console is
@@ -2554,10 +2556,13 @@ was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no hand
    - Open folder on the Overview: "handed to the file manager: <folder>", the folder the
      Overview shows, and no error under the button;
    - after each, the window still shows the same app page (the shell must not navigate away);
-6. saves a screenshot (`Page.captureScreenshot`) and the visible text of every step, both logs,
-   the model-call log and `result.json` (every check), then quits: `POST /shutdown`, then the
-   app's process tree. The job's artifact `desktop-window-check` holds them; the step summary
-   lists every check. Exit 1 when a required check failed.
+6. saves a screenshot (`Page.captureScreenshot`) and the visible text of every step and of the
+   page where the journey stopped, when it stopped: also the whole screen then (Windows
+   PowerShell, `desktopScreenshot`, `99-stopped-…-desktop.png`), for a stop before the window's
+   page could be driven or a dialog outside it; both logs, the model-call log and `result.json`
+   (every check), then quits: `POST /shutdown`, then the app's process tree. The job's artifact
+   `desktop-window-check` holds them; the step summary lists every check. Exit 1 when a required
+   check failed.
 
 A dry run of the journey without the shell, against a bench in Chromium (the hand-off checks
 are reported as skipped; in a browser a link opens a tab):
@@ -2605,8 +2610,10 @@ the script:
    image, the coder's `node --check src/greet.js` ran in it (`exec_start`) and exited 0
    (`exec_die`), and the container was destroyed; no container or network with the task's label
    is left (`docker ps -a`, `docker network ls`); `src/greet.js` is in
-   `<home>/data/projects/<id>/workspace`, belongs to the runner's user (the container runs as
-   the host uid on rootful Docker) and passes `node --check` on the host.
+   `<home>/data/projects/<id>/workspace` and passes `node --check` on the host. Who owns the file
+   is not checked: the daemon writes a task's files on the host (`ContainerSandbox.writeFile`),
+   so it is the runner's user whatever user the container ran as, and a check of it could not
+   fail.
 
 `result.json`, the daemon log, the engine's events and the model-call log are the job's artifact
 `sandbox-full-review`; the step summary lists every check. Locally (Docker running):
@@ -2618,13 +2625,16 @@ node scripts/sandbox-full-review.mjs --out /tmp/frbench/sandbox [--home <dir>] [
 
 It ran on 2026-11-02 against a Docker 29.9.2 daemon (vfs storage, no bridge) with
 `node:22-bookworm-slim` tagged `forerunner-runner:local` in place of the full image, as root:
-20 of 20 checks (container started, `timeout -s KILL 60 node --check src/greet.js` in it, exit
-0, destroyed, critic tier 2, the file in the project folder); without a reachable engine it
-stops at its first check with exit 1. Tests:
+every check passed (container started, `timeout -s KILL 60 node --check src/greet.js` in it, exit
+0, destroyed, critic tier 2, the file in the project folder), again in the independent review
+the same day; without a reachable engine it stops at its first check with exit 1. Tests:
 `scripts/sandbox-full-review.test.ts` (the task against `CreateTaskBody`, the image against
 `DEFAULT_RUNNER_IMAGE` and `ci.yml`, the labels against `buildContainerRunArgv`; the engine's
 events as Docker 29 printed them for that run: started, the command and its exit code,
 destroyed, another task's container ignored, one left behind; the critic's tiers; the summary).
 Not covered: the allowlist network (the task names no domain, so it runs with `--network
 none`; the egress proxy's routes are the adapter test's), Docker Desktop on Windows (the
-`windows_containers` state is a unit test's), the image download (`POST /sandbox/pull`).
+`windows_containers` state is a unit test's), the image download (`POST /sandbox/pull`), the
+user the container runs as (the stand-in coder only runs `node --check` in it, which writes
+nothing; the host uid:gid on rootful Docker is `sandbox-factory.test.ts`'s and the adapter's
+integration test's).

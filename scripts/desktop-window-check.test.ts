@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   APP_ORIGINS,
   DOCKER_DESKTOP_URL,
+  desktopScreenshot,
   installStandIn,
   isAppUrl,
   parseArgs,
@@ -15,6 +16,7 @@ import {
   seedPrUrl,
   startLinkServer,
   summaryMarkdown,
+  WEBVIEW2_DISABLED_FEATURES,
   windowEnv,
   // @ts-expect-error plain JS module
 } from "./desktop-window-check.mjs";
@@ -109,8 +111,17 @@ describe("the installed app's environment", () => {
       FORERUNNER_VAULT_BACKEND: "file",
       FORERUNNER_SANDBOX_ENGINE: "podman",
       FORERUNNER_BENCH_DELAY_MS: "100",
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9444",
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
+        "--remote-debugging-port=9444 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion",
     });
+    // wry's own list (the variable may replace the app's arguments) plus occlusion tracking,
+    // which could stop painting the window once the system browser covers it.
+    expect(WEBVIEW2_DISABLED_FEATURES).toEqual([
+      "msWebOOUI",
+      "msPdfOOUI",
+      "msSmartScreenProtection",
+      "CalculateNativeWinOcclusion",
+    ]);
   });
 
   it("uses the variable and the provider name the shell forwards (supervisor.rs)", () => {
@@ -270,6 +281,51 @@ describe("the page the system browser opens", () => {
     } finally {
       await link.close();
     }
+  });
+});
+
+describe("the screen where the journey stopped (Windows runner)", () => {
+  type Call = { cmd: string; args: string[]; opts: { env: Record<string, string> } };
+  it("is copied by Windows PowerShell into the file the check names, the path never in the script", () => {
+    const dir = join(tempDir(), "fr window");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "99-stopped-desktop.png");
+    const calls: Call[] = [];
+    const run = (cmd: string, args: string[], opts: Call["opts"]) => {
+      calls.push({ cmd, args, opts });
+      writeFileSync(opts.env.FR_SHOT as string, "png");
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    expect(desktopScreenshot(file, { platform: "win32", run })).toBe(`desktop screenshot: ${file}`);
+    expect(calls).toHaveLength(1);
+    const [c] = calls as [Call];
+    expect(c.cmd).toBe("powershell.exe");
+    expect(c.args.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-Command"]);
+    expect(c.args[3]).toContain("CopyFromScreen");
+    expect(c.args[3]).toContain("$env:FR_SHOT");
+    expect(c.args[3]).not.toContain(file);
+    expect(c.opts.env.FR_SHOT).toBe(file);
+  });
+
+  it("says why there is none: not Windows, or PowerShell's own words", () => {
+    const calls: unknown[] = [];
+    const never = (...a: unknown[]) => {
+      calls.push(a);
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    expect(desktopScreenshot(join(tempDir(), "a.png"), { platform: "linux", run: never })).toBe(
+      "no desktop screenshot (not Windows)",
+    );
+    expect(calls).toEqual([]);
+    const refused = () => ({ status: 1, stdout: "", stderr: "Add-Type : no desktop\r\n" });
+    expect(desktopScreenshot(join(tempDir(), "b.png"), { platform: "win32", run: refused })).toBe(
+      "desktop screenshot failed: Add-Type : no desktop",
+    );
+    // A zero exit that left no file is no screenshot either.
+    const empty = () => ({ status: 0, stdout: "", stderr: "" });
+    expect(desktopScreenshot(join(tempDir(), "c.png"), { platform: "win32", run: empty })).toBe(
+      "desktop screenshot failed: exit 0",
+    );
   });
 });
 

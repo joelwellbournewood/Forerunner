@@ -16,8 +16,8 @@
 //   5. starts a session the way Start does (POST /sessions) and waits for it to end;
 //   6. asserts: the task is done; a container from the sandbox image was started for that task
 //      and the task's command ran in it (`docker exec`, the coder's `node --check`); the critic
-//      reviewed the task and accepted it; src/greet.js landed in the project folder, owned by
-//      this user; and afterwards no container or network of that task is left.
+//      reviewed the task and accepted it; src/greet.js landed in the project folder and is valid
+//      JavaScript; and afterwards no container or network of that task is left.
 // The result (every check) is <out>/result.json, the step summary on GitHub and the exit code
 // (1 when a check failed). The daemon log, the engine's events and the model-call log are
 // copied to <out>.
@@ -33,7 +33,6 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -517,14 +516,10 @@ async function main() {
       there && text.trim().length > 0,
       there ? `${text.length} characters` : `${file} is missing`,
     );
-    if (there && typeof process.getuid === "function") {
-      const st = statSync(file);
-      check(
-        "the file belongs to this user, not to root",
-        st.uid === process.getuid(),
-        `uid ${st.uid}, this user ${process.getuid()}`,
-      );
-    }
+    // No check of who owns the file: the daemon writes the coder's files on the host
+    // (ContainerSandbox.writeFile), so it is this user's whatever user the container ran as.
+    // The container only runs `node --check`, which writes nothing; its `--user` is pinned by
+    // packages/runtime/test/sandbox-factory.test.ts and the adapter's integration test.
     const node = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
     check(
       `${TASK_FILE} is valid JavaScript (node --check on the host)`,
