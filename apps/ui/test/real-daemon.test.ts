@@ -3840,9 +3840,10 @@ describe("the UI client against the real daemon: work continues correctly (phase
 describe("the UI client against the real daemon: a task that stops waits on one card (phase C, continuity)", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;
+  let bench: BenchOptions;
 
   beforeAll(async () => {
-    ({ rt, client } = await composeWithRolePlayer({}));
+    ({ rt, client, bench } = await composeWithRolePlayer({}));
   }, 120_000);
   afterAll(async () => {
     await rt?.close();
@@ -4000,5 +4001,60 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     expect((await client.tasks(project.id)).find((t) => t.id === created.id)?.status).toBe(
       "cancelled",
     );
+  });
+
+  it("Cancel while the task runs: the reply says its work is removed, its file leaves the folder, Undo brings it back (ADR 0104)", async () => {
+    const project = await client.createProject({ name: "About club", goal: "An about page" });
+    const created = await client.createTask(project.id, {
+      title: "Write the About page in about.html",
+      outcome: "about.html tells the club's story",
+      acceptanceCriteria: ["about.html exists"],
+      priority: "high",
+      status: "ready",
+      dependsOn: [],
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const files = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
+    await allEnded();
+    // Each of the stand-in's replies takes a while, so the run is still going after it wrote.
+    bench.delayMs = 400;
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () =>
+          (await client.tasks(project.id)).find((t) => t.id === created.id)?.status ===
+            "in_progress" && (await files()).includes("about.html"),
+        "the run to write about.html",
+        async () => (await files()).join(", "),
+        20_000,
+      );
+      const row = (await client.tasks(project.id)).find((t) => t.id === created.id);
+      const cancelled = await client.taskAction(created.id, {
+        version: row?.version ?? 0,
+        action: "cancel",
+      });
+      expect(cancelled.change?.sentence).toBe(
+        'Cancelled "Write the About page in about.html": its run stopped and what it changed is removed; Undo brings it back.',
+      );
+      await allEnded();
+    } finally {
+      bench.delayMs = 0;
+    }
+    expect((await client.tasks(project.id)).find((t) => t.id === created.id)?.status).toBe(
+      "cancelled",
+    );
+    expect(await files()).not.toContain("about.html");
+    // Nothing reviewed the cancelled task.
+    expect((await client.task(created.id)).runs.filter((r) => r.kind !== "work")).toEqual([]);
+    const changeId = (await client.changes({ projectId: project.id })).find((c) =>
+      c.sentence.startsWith('Cancelled "Write the About page'),
+    )?.id;
+    const undone = await client.undoChange(changeId ?? "");
+    expect(undone.sentence).toBe(
+      'Undone: reopened the task "Write the About page in about.html"; it is ready again and a session picks it up. What it changed is back in the folder.',
+    );
+    expect(await files()).toContain("about.html");
   });
 });

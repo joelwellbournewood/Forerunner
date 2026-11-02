@@ -129,7 +129,14 @@ export function actionSentence(
 ): string {
   const t = `"${task.title}"`;
   let s: string;
-  if (to === "cancelled") s = `Cancelled ${t}.`;
+  // A task cancelled while it ran or was reviewed (phase C): what happens to its work.
+  const ran = ["claimed", "in_progress", "in_review"].includes(from);
+  const what = from === "in_review" ? "its review" : "its run";
+  if (to === "cancelled" && ran)
+    s = task.prUrl
+      ? `Cancelled ${t}: ${what} stopped; its pull request stays open.`
+      : `Cancelled ${t}: ${what} stopped and what it changed is removed; Undo brings it back.`;
+  else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
     s = ["claimed", "in_progress"].includes(from)
       ? `Stopped ${t}: its run ended and it is paused until you press Resume.`

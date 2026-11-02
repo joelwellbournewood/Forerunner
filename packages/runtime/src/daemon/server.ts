@@ -1112,7 +1112,8 @@ export function createDaemonApp(
       params,
       body.note ?? ACTION_WORDS[body.action],
     );
-    if (["claimed", "in_progress"].includes(task.status))
+    // A task being reviewed is stopped too: a cancelled task is never reviewed (phase C).
+    if (["claimed", "in_progress", "in_review"].includes(task.status))
       rt.kill.stopTask(task.id, `${ACTION_WORDS[body.action]} by you`);
     // A withdrawn card leaves the Inbox: its count and the header follow.
     rt.events.emit("inbox", {});

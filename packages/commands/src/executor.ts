@@ -196,7 +196,8 @@ export class CommandExecutor {
   private readonly ttlMs: number;
   private readonly logger = log("commands");
   private readonly pendings = new Map<string, PendingEntry>();
-  private readonly undoClosures = new Map<string, () => Promise<void>>();
+  /** The undo of a change made in this process; it returns the sentences its steps added. */
+  private readonly undoClosures = new Map<string, () => Promise<string[]>>();
   private readonly revertTimers = new Map<string, () => void>();
   private readonly cards = new Map<string, ChangeCard>();
 
@@ -539,7 +540,7 @@ export class CommandExecutor {
     params: unknown,
     outcome: CommandOutcome,
     ctx: CommandContext,
-  ): Promise<void> {
+  ): Promise<void | string | undefined> {
     if (outcome.undo) return outcome.undo();
     if (def.undo) return def.undo(params, outcome.before, outcome.after, ctx);
     throw new ForerunnerError("not_supported", `${def.name} cannot be undone`);
@@ -587,8 +588,12 @@ export class CommandExecutor {
     if (reversible) {
       const snapshot = [...done];
       this.undoClosures.set(row.id, async () => {
-        for (const d of [...snapshot].reverse())
-          await this.undoStep(d.step.def, d.step.params, d.outcome, ctx);
+        const added: string[] = [];
+        for (const d of [...snapshot].reverse()) {
+          const said = await this.undoStep(d.step.def, d.step.params, d.outcome, ctx);
+          if (typeof said === "string" && said.trim()) added.push(said.trim());
+        }
+        return added;
       });
       if (expiresAt) this.scheduleRevert(row.id, expiresAt, ctx);
     }
@@ -980,10 +985,11 @@ export class CommandExecutor {
     const row = await this.store.changeLog.get(changeLogId);
     const card = this.cards.get(changeLogId) ?? null;
     if (!row) return { status: "refused", card, reason: "no such change", code: "not_found" };
+    let added: string[];
     try {
       const blocked = await this.undoBlockedReason(row, ctx);
       if (blocked) return { status: "refused", card, reason: blocked, code: "validation" };
-      await this.runUndo(row, ctx);
+      added = await this.runUndo(row, ctx);
     } catch (e) {
       return refusal(e, card);
     }
@@ -993,12 +999,14 @@ export class CommandExecutor {
     const steps = stepsOf(row);
     const single = steps.length === 1 ? (steps[0] as UndoStep) : null;
     const own = single ? this.registry.get(single.name)?.undoSentence : undefined;
-    const sentence =
+    const sentence = [
       single && own
         ? own(single.params, single.before, single.after)
         : card
           ? `Undone: ${card.what} is back to ${card.oldValue}.`
-          : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`;
+          : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`,
+      ...added,
+    ].join(" ");
     const undoRow = await this.store.changeLog.record({
       human_id: ctx.humanId,
       agent_id: ctx.agentId,
@@ -1035,10 +1043,12 @@ export class CommandExecutor {
     return { status: "done", card: resultCard, changeLogId: undoRow.id, undoToken: null, sentence };
   }
 
-  private async runUndo(row: ChangeLogRow, ctx: CommandContext): Promise<void> {
+  /** Runs the undo; returns the sentences the undo steps added (`CommandDef.undo`). */
+  private async runUndo(row: ChangeLogRow, ctx: CommandContext): Promise<string[]> {
     const closure = this.undoClosures.get(row.id);
     if (closure) return closure();
     const steps = stepsOf(row);
+    const added: string[] = [];
     for (let i = steps.length - 1; i >= 0; i--) {
       const c = steps[i] as UndoStep;
       const def = this.registry.get(c.name);
@@ -1047,8 +1057,10 @@ export class CommandExecutor {
           details: { command: c.name },
         });
       }
-      await def.undo(c.params, c.before, c.after, ctx);
+      const said = await def.undo(c.params, c.before, c.after, ctx);
+      if (typeof said === "string" && said.trim()) added.push(said.trim());
     }
+    return added;
   }
 
   private scheduleRevert(changeLogId: string, expiresAt: string, ctx: CommandContext): void {

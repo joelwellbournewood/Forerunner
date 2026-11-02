@@ -263,6 +263,12 @@ export interface TaskExecutor {
      */
     onStep?: (step: TaskStep) => void;
   }): Promise<TaskExecutionResult>;
+  /**
+   * A task the person cancelled while it ran or was reviewed (phase C, live walk 2 C1): what
+   * its run changed is taken out of the folder it ran in and kept for Undo of the cancel, so
+   * the next task never builds on it. Returns the files taken out. Absent: the files stay.
+   */
+  setAside?(task: TaskRow): Promise<string[]>;
 }
 
 /** One step of a task's run, as the executor reports it to the runner (`onStep`). */
@@ -797,11 +803,27 @@ export class SessionRunner {
         done: completed,
       };
       (into[t.status] ?? skipped).push(t.id);
+      // Cancelled while it ran or was reviewed (phase C, live walk 2 C1): what its run changed
+      // is taken out of the folder, kept for Undo of the cancel, before the next task starts,
+      // so no later task builds on work the person dropped. A failure here leaves the files
+      // where they are and says so in the log; it never ends the session.
+      let setAside: string[] | null = null;
+      if (t.status === "cancelled" && this.deps.executor.setAside) {
+        try {
+          setAside = await this.deps.executor.setAside(t);
+        } catch (e) {
+          this.logger.warn("the cancelled task's changes were not set aside", {
+            taskId: t.id,
+            error: errorMessage(e),
+          });
+        }
+      }
       await emit("task.moved_while_running", {
         ...moved,
         during,
         reason: t.reason,
         outcome,
+        ...(setAside?.length ? { setAside: setAside.length, files: setAside.slice(0, 20) } : {}),
         warning: `"${t.title}" was moved to ${t.status} while ${
           during === "run" ? "it ran; its run was stopped" : "it was reviewed"
         } and the session goes on`,
@@ -1471,7 +1493,9 @@ export class SessionRunner {
           });
           task = await store.task.mustGet(task.id);
           if (result.prUrl && result.branch) prBranches.push(result.branch);
-          if (result.changedFiles?.length) {
+          // A run the person cancelled changed nothing that stays (`recordMove` sets it aside):
+          // the session's result and the task's files never list it.
+          if (result.changedFiles?.length && task.status !== "cancelled") {
             filesByTask.set(task.id, result.changedFiles);
             await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
           }
@@ -1588,21 +1612,48 @@ export class SessionRunner {
               result.summary.slice(0, 200),
               { agentId: agent.id },
             );
+            // A task cancelled between its run and its review is never reviewed (phase C, live
+            // walk 2 C1: the critic "accepted" a cancelled task).
+            const toReview = await store.task.mustGet(task.id);
+            if (toReview.status !== "in_review") {
+              await recordMove(toReview, result.outcome, "review");
+              continue;
+            }
+            // The review is stopped with the task's run when the person cancels it meanwhile
+            // (`KillSwitch.stopTask`, as for the run, U-039): its own controller, registered
+            // under the task, which a stop of the session aborts too.
+            const reviewController = new AbortController();
+            const onReviewAbort = () => reviewController.abort(controller.signal.reason);
+            if (controller.signal.aborted) onReviewAbort();
+            else controller.signal.addEventListener("abort", onReviewAbort, { once: true });
+            const unregisterReview = this.deps.kill.register({
+              agentId: agent.id,
+              sessionId: session.id,
+              taskId: task.id,
+              controller: reviewController,
+              label: `review of task ${task.id} in session ${session.id}`,
+            });
             // The critic (spec H): every task above tier 0 is reviewed at its tier before it
             // can count as done; the verdict is applied through the state workflow.
-            const reviewed = this.deps.critic
-              ? await this.reviewTask({
-                  task: await store.task.mustGet(task.id),
-                  session,
-                  token,
-                  budget,
-                  item,
-                  result,
-                  agentId: agent.id,
-                  signal: controller.signal,
-                  emit,
-                })
-              : null;
+            let reviewed: Awaited<ReturnType<SessionRunner["reviewTask"]>>;
+            try {
+              reviewed = this.deps.critic
+                ? await this.reviewTask({
+                    task: toReview,
+                    session,
+                    token,
+                    budget,
+                    item,
+                    result,
+                    agentId: agent.id,
+                    signal: reviewController.signal,
+                    emit,
+                  })
+                : null;
+            } finally {
+              unregisterReview();
+              controller.signal.removeEventListener("abort", onReviewAbort);
+            }
             if (!reviewed) {
               inReview.push(task.id);
             } else if ("failed" in reviewed) {

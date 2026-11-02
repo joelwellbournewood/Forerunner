@@ -1688,6 +1688,24 @@ reader is `budgetStopAnswer` (`wiring/request-answers.ts`), the words `budgetCar
 the card across a restart, Raise the budget runs the task to done), `task-budget-cap.test.ts`,
 the phase 1 gate, `inbox.test.tsx` and `real-daemon.test.ts` ("continuity") in `apps/ui`.
 
+**Cancelling a task that runs or is reviewed (phase C, live walk 2 C1, ADR 0104).** Before, the
+run was stopped (U-039) but its files stayed in the project's folder, the next task built on
+them, and a cancel during the review let the critic "accept" the cancelled task. Now the Tasks
+tab route and the commands' person moves call `KillSwitch.stopTask` for a task in `in_review`
+too, and the runner registers the review under the task with its own controller (aborted by
+the session's), so the critic's run stops; a task found cancelled before its review starts is
+never reviewed. `recordMove` of a task the person cancelled calls the executor's optional
+`setAside(task)` (`PrTaskExecutor.setAside`, `@forerunner/capabilities`) before the next task
+starts, so what the run changed is out of the folder, kept for Undo; the run's changed files
+are not listed in the result; the log line reads 'You cancelled it while "X" ran; what it
+changed is removed (Undo brings it back) and the session goes on.' (`setAside` count on
+`task.moved_while_running`). The commands' `bringBackWork` port (`PrTaskExecutor.bringBack`)
+puts it back on Undo of the cancel, also after a restart (the ref is in the folder's own git).
+Tests: `continuity-cancel.test.ts` (Cancel on the Tasks tab while it runs: the files out, the
+next task's listing without them, no review, the log line; Undo after a restart; a cancel from
+the commands while the critic reviews: no review row, no critic's call, the files out),
+`tasks.test.tsx` (the Cancel dialog says it) and `real-daemon.test.ts` in `apps/ui`.
+
 **Every task a run leaves waiting has exactly one card (`session/cannot-run-card.ts`; live walk
 4).** Before, a run that could not go on and asked nothing (the researcher refused at once on an
 API key, a specialist name the registry does not know, no other specialist after two failed

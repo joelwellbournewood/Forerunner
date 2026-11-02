@@ -135,7 +135,10 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   (opens its card in the Inbox) or **Go ahead without** (the specialist decides and says what it
   assumed; not offered on a task only you can do), **Redo** (a done task: say what is wrong),
   **Reopen** (a cancelled task) and **Cancel** (it names the tasks that wait on it and will be
-  stuck). Every action asks for an optional **note for the agent**, which goes into the task's
+  stuck; on a task that is running or being reviewed its run or review stops at once, and what
+  it changed is taken out of the project's folder before the next task starts, so nothing builds
+  on work you dropped; **Undo** puts the files back; a task that already has a pull request
+  keeps it open). Every action asks for an optional **note for the agent**, which goes into the task's
   next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it

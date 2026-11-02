@@ -2924,6 +2924,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       stopTask: (taskId, reason) => {
         kill.stopTask(taskId, reason);
       },
+      // Undo of the cancel of a task that ran (phase C): what the session took out of the
+      // folder when the person cancelled it goes back in (`PrTaskExecutor.bringBack`).
+      bringBackWork: async (taskId) => {
+        const task = await store.task.mustGet(taskId);
+        return (await executor.bringBack(task)).result;
+      },
       // session.resume ("resume", "allow sessions again", design §3.1): Stop all lifted, as
       // POST /kill/resume does (kill.json removed by `onResume`), the header told.
       allowSessions: () => {

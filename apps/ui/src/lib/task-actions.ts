@@ -93,6 +93,23 @@ export function actionsFor(
   }
 }
 
+/**
+ * What Cancel does to the work of a task that runs or is being reviewed (phase C, live walk 2
+ * C1: the cancelled page's files stayed and the next task described it): its run stops, and
+ * what it changed is taken out of the folder, which Undo puts back; a pull request already
+ * opened stays open. Null for a task that is not running.
+ */
+export function cancelWorkLine(
+  task: Pick<TaskView, "status" | "prUrl" | "display" | "reason">,
+): string | null {
+  const key = displayOf(task).key;
+  if (key !== "running" && key !== "review") return null;
+  const what = key === "review" ? "Its review" : "Its run";
+  return task.prUrl
+    ? `${what} stops now; its pull request stays open.`
+    : `${what} stops now and what it changed is removed; Undo brings it back.`;
+}
+
 /** The actions that open a form or a page instead of the confirm dialog. */
 export const FORM_ACTIONS: readonly TaskActionKey[] = ["edit", "dependencies", "answer"];
 

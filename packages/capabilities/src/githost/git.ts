@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import {
   errorMessage,
   ForerunnerError,
@@ -162,6 +162,7 @@ export function gitConfigEnv(
 /** The git commands that write a commit, so need an author and a committer. */
 const COMMIT_MAKERS = new Set([
   "commit",
+  "commit-tree",
   "merge",
   "rebase",
   "cherry-pick",
@@ -540,6 +541,63 @@ export class GitOps {
         const [sha, ...rest] = l.split("\t");
         return { sha: sha ?? "", subject: rest.join("\t") };
       });
+  }
+
+  /**
+   * Sets the work since HEAD aside (a cancelled task's run, phase C): every change, new and
+   * deleted files included, is kept as one commit under `ref` (HEAD does not move), then the
+   * worktree goes back to HEAD. Ignored files stay as they are. Returns the files set aside;
+   * with none, nothing changes and an older commit under `ref` is dropped, so a later
+   * `bringBack` never brings back work from before.
+   */
+  async setAside(ref: string, message: string): Promise<string[]> {
+    await this.stageAll();
+    const files = await this.stagedFiles();
+    if (files.length === 0) {
+      if (await this.hasRef(ref))
+        this.must(await this.git(["update-ref", "-d", ref]), "update-ref -d");
+      return [];
+    }
+    const tree = this.must(await this.git(["write-tree"]), "write-tree").stdout.trim();
+    const commit = this.must(
+      await this.git(["commit-tree", tree, "-p", "HEAD", "-m", message]),
+      "commit-tree",
+    ).stdout.trim();
+    this.must(await this.git(["update-ref", ref, commit]), "update-ref");
+    this.must(await this.git(["reset", "--hard", "-q", "HEAD"]), "reset --hard");
+    return files;
+  }
+
+  /**
+   * Brings back the work set aside under `ref` (`setAside`), on top of the worktree as it is
+   * now, uncommitted; the ref is removed. `missing` when nothing is set aside there;
+   * `conflict` when the folder changed since in the same places: nothing is applied then (git
+   * apply is all or nothing) and the ref stays.
+   */
+  async bringBack(
+    ref: string,
+  ): Promise<{ result: "restored"; files: string[] } | { result: "missing" | "conflict" }> {
+    if (!(await this.hasRef(ref))) return { result: "missing" };
+    const files = this.must(
+      await this.git(["diff", "--name-only", `${ref}~1`, ref]),
+      "diff --name-only",
+    )
+      .stdout.split(/\r?\n/)
+      .filter(Boolean);
+    const patch = this.must(
+      await this.git(["diff", "--binary", `${ref}~1`, ref]),
+      "diff --binary",
+    ).stdout;
+    const file = join(this.opts.cwd, ".git", "forerunner-bring-back.patch");
+    writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
+    try {
+      const applied = await this.git(["apply", "--binary", "--whitespace=nowarn", file]);
+      if (applied.code !== 0) return { result: "conflict" };
+    } finally {
+      rmSync(file, { force: true });
+    }
+    this.must(await this.git(["update-ref", "-d", ref]), "update-ref -d");
+    return { result: "restored", files };
   }
 
   /** Where a worktree for a task should live under a root. */
