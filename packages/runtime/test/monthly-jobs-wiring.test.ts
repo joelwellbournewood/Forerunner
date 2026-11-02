@@ -147,9 +147,16 @@ describe("monthly jobs in the composed daemon", () => {
     });
     const calibrationStarts = () =>
       rt.scheduler.log.filter((l) => l.req.agentId === CALIBRATION_AGENT_ID);
+    // The calibration's eval sets take some 20 s of real time on a quiet machine and well over
+    // 30 s on a loaded one (seen while the whole unit suite ran, 2026-11-02): wait up to 90 s,
+    // and say so when it is still running, rather than reading a notification not raised yet.
     const settle = async () => {
-      for (let i = 0; i < 600 && rt.scheduler.isActive(CALIBRATION_AGENT_ID); i++)
+      for (let i = 0; i < 1800 && rt.scheduler.isActive(CALIBRATION_AGENT_ID); i++)
         await new Promise((r) => setTimeout(r, 50));
+      expect(
+        rt.scheduler.isActive(CALIBRATION_AGENT_ID),
+        "the calibration still runs after 90 s of real time",
+      ).toBe(false);
     };
     // 23 October: first sight after the day, nothing runs this month.
     await rt.scheduler.tick();
