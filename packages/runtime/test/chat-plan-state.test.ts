@@ -41,6 +41,29 @@ describe("the plan from the brief, in the chat's words (planBlock)", () => {
     for (const state of ["none", "approved", "skipped"] as IntakeState[])
       expect(planBlock({ state, error: null })).toBe("");
   });
+
+  it("a cause that already names Try again is not followed by the same sentence again", () => {
+    // A "Change the plan" draft lost to a restart (intake.ts) and a usage limit say Try again
+    // themselves; before, the line went on "... Try again drafts it with your changes. The
+    // person can press Try again on the project page." (the review of 2026-11-02).
+    expect(
+      planBlock({
+        state: "failed",
+        error:
+          "The new plan with your changes was not drafted: Forerunner closed before it was done. Try again drafts it with your changes.",
+      }),
+    ).toBe(
+      "# Plan from the brief\nPlanning failed: The new plan with your changes was not drafted: Forerunner closed before it was done. Try again drafts it with your changes. The Try again button is on the project page.",
+    );
+    expect(
+      planBlock({
+        state: "failed",
+        error: "Your Claude usage limit is reached. Try again once it resets.",
+      }),
+    ).toBe(
+      "# Plan from the brief\nPlanning failed: Your Claude usage limit is reached. Try again once it resets. The Try again button is on the project page.",
+    );
+  });
 });
 
 describe("the chat is told the plan's state on every turn (design §3.9)", () => {
@@ -132,18 +155,38 @@ describe("the chat is told the plan's state on every turn (design §3.9)", () =>
     );
     // The reply rules say what to do with it: no "no tasks yet, I can add tasks".
     expect(w.system).toContain(CHAT_PLAN_RULES);
+    // The empty task list says why it is empty, in the plan's terms, not "(no tasks yet)" (the
+    // live run's reply echoed exactly that).
+    expect(w.sent).toContain(
+      "# Tasks of Quote page\n(none yet: planning failed, so nothing was written)",
+    );
+    expect(w.sent).not.toContain("(no tasks yet)");
   });
 
-  it("drafting and waiting are said in words", async () => {
-    expect((await world("drafting")).sent).toContain("The plan from your brief is being drafted.");
-    expect((await world("pending")).sent).toContain(
+  it("drafting and waiting are said in words, and so is why the task list is empty", async () => {
+    const drafting = await world("drafting");
+    expect(drafting.sent).toContain("The plan from your brief is being drafted.");
+    expect(drafting.sent).toContain(
+      "# Tasks of Quote page\n(none yet: the plan from the brief writes them once it is approved)",
+    );
+    const pending = await world("pending");
+    expect(pending.sent).toContain(
       "The plan from your brief waits for your approval in the Inbox.",
     );
+    expect(pending.sent).toContain(
+      "(none yet: the plan from the brief writes them once it is approved)",
+    );
+    expect((await world("rejected")).sent).toContain(
+      "(none yet: the plan was rejected, so nothing was written)",
+    );
+    for (const w of [drafting, pending]) expect(w.sent).not.toContain("(no tasks yet)");
   });
 
   it("an approved plan adds nothing: the tasks speak for themselves", async () => {
     const w = await world("approved");
     expect(w.sent).not.toContain("# Plan from the brief");
+    // With no plan asked for, an empty project still reads as before.
+    expect((await world("none")).sent).toContain("# Tasks of Quote page\n(no tasks yet)");
   });
 
   it("the reply rules tell the model to use the plan's state and to write plain sentences", () => {

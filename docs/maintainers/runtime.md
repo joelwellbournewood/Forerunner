@@ -2397,8 +2397,15 @@ in one project cancelled a task in another. Now:
   drafting "The plan from your brief is being drafted."; waiting "The plan from your brief waits
   for your approval in the Inbox."; failed "Planning failed: <cause>. The person can press Try
   again on the project page." (the cause is the status's `error`, the words the project page
-  shows); rejected "... They can press Draft a new plan on the project page."; nothing once the
-  plan is approved or when none was asked for. `CHAT_PLAN_RULES` (in the stable system part
+  shows; a cause that says Try again itself, such as a lost "Change the plan" draft or a usage
+  limit, ends "The Try again button is on the project page." instead of the same sentence
+  again); rejected "... They can press Draft a new plan on the project page."; nothing once the
+  plan is approved or when none was asked for. The empty task list below it says why it is
+  empty in the same terms (`emptyTasksLine`): "(none yet: the plan from the brief writes them
+  once it is approved)" while drafted or waiting, "(none yet: planning failed, so nothing was
+  written)", "(none yet: the plan was rejected, so nothing was written)", and "(no tasks yet)"
+  only when no plan was asked for (before, "(no tasks yet)" stood next to the plan block and only
+  the reply rules kept the model from repeating it). `CHAT_PLAN_RULES` (in the stable system part
   after the role prompt, like the retrieval and open-request rules) tells the model to say where
   the plan stands, never "no tasks yet, I can add tasks" while it does, to point to Try again
   after a failure, and to write plain sentences without markdown. Before (the live run of

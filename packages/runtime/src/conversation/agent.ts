@@ -41,6 +41,7 @@ import { cardFate } from "./card-fate.ts";
 import {
   cardLine,
   cardNames,
+  emptyTasksLine,
   filesBlock,
   lastSessionBlock,
   type PlanState,
@@ -1231,11 +1232,14 @@ export class ConversationAgent {
       running_sessions: sessions.filter((s) => s.summary !== "conversation").length,
     });
     const blocks: string[] = [];
-    // Where the plan from the brief stands, before the task list it explains (design §3.3).
+    // Where the plan from the brief stands, before the task list it explains (design §3.3); an
+    // empty list says why it is empty in the same terms.
+    let plan: PlanState | null = null;
     if (project && this.deps.intakeStatus) {
       try {
-        const plan = planBlock(await this.deps.intakeStatus(project.id));
-        if (plan) blocks.push(plan);
+        plan = await this.deps.intakeStatus(project.id);
+        const block = planBlock(plan);
+        if (block) blocks.push(block);
       } catch (e) {
         this.logger.warn("chat plan state not read", { projectId, error: errorMessage(e) });
       }
@@ -1246,6 +1250,7 @@ export class ConversationAgent {
           await tasksBlock(store, project.id, {
             sandboxReady: this.deps.sandboxReady?.() ?? null,
             heading: `# Tasks of ${project.name}`,
+            empty: emptyTasksLine(plan),
           }),
         );
         const last = lastSessionBlock(project, chf);

@@ -2829,6 +2829,9 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(sent).toContain(
       `Planning failed: ${cause}. The person can press Try again on the project page.`,
     );
+    // The empty task list says why it is empty, never the "(no tasks yet)" the live reply echoed.
+    expect(sent).toContain("(none yet: planning failed, so nothing was written)");
+    expect(sent).not.toContain("(no tasks yet)");
     // The stand-in says what it was told about the plan, so the person reads it in the reply.
     expect(reply.reply).toContain(`Planning failed: ${cause}.`);
     // Once the plan waits in the Inbox, the chat is told that instead.
@@ -2844,6 +2847,7 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     });
     const after = JSON.stringify(chatCalls.at(-1)?.messages.at(-1)?.content ?? "");
     expect(after).toContain("The plan from your brief waits for your approval in the Inbox.");
+    expect(after).toContain("(none yet: the plan from the brief writes them once it is approved)");
     expect(after).not.toContain("Planning failed");
   }, 60_000);
 });
