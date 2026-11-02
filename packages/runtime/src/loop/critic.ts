@@ -53,6 +53,7 @@ import { TASK_FILES_EVENT } from "../session/peers.ts";
 import {
   filePersonQuestions,
   listedQuestions,
+  questionsReason,
   reportedQuestions,
 } from "../session/person-questions.ts";
 import { webSourceEvidence } from "../session/web-sources.ts";
@@ -834,8 +835,11 @@ export class CriticLoop implements CriticPort {
       questions: args.questions,
       // The card says what the specialist said (design §3.8): its report's own words. Live
       // (2026-11-02) a report that made no chart was accepted by the critic, and the card
-      // quoted "The critic: Accepted ..." as the specialist's words.
+      // quoted "The critic: Accepted ..." as the specialist's words; and a card quoted the
+      // report's first words (': I made no edits…') instead of why it asks (L-12): the
+      // report's sentence about the questions comes first.
       context:
+        questionsReason(args.result.finalReport ?? args.result.summary, args.questions) ??
         quotedWords(args.result.finalReport ?? args.result.summary) ??
         `The critic: ${output.summary}`,
     });

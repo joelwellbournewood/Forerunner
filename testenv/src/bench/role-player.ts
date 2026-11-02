@@ -69,6 +69,14 @@ export interface BenchOptions {
   /** Task-title substrings whose specialist asks the person first (FORERUNNER_BENCH_ASK). */
   ask: string[];
   /**
+   * How a FORERUNNER_BENCH_ASK specialist asks (FORERUNNER_BENCH_ASK_STYLE): `tool` (default)
+   * calls `ask_person`; `plain` does the work with a placeholder and ends its report with
+   * "**Questions for the person:**" and one question per line without bullets, as the live
+   * garden club "Home page" report did (2026-11-02, L-2); `bullets` does the same with "- "
+   * items, after a "**Summary**:" heading, as the live "Contact page" report did (L-12).
+   */
+  askStyle?: AskStyle;
+  /**
    * Task-title substrings whose input is missing (FORERUNNER_BENCH_MISSING, the live "Members
    * chart" of 2026-11-01): the specialist makes no deliverable, writes a note that says so and
    * ends its report with "Questions for the person:"; the stand-in critic accepts it, as the
@@ -99,6 +107,9 @@ export interface BenchOptions {
   clock?: Clock;
 }
 
+export const ASK_STYLES = ["tool", "plain", "bullets"] as const;
+export type AskStyle = (typeof ASK_STYLES)[number];
+
 export const INTAKE_BAD_KINDS = [
   "reason-too-long",
   "fenced-docs",
@@ -120,6 +131,11 @@ const count = (v: string | undefined, fallback: number): number => {
   if (t === "always" || t === "all" || t === "inf") return Number.POSITIVE_INFINITY;
   const n = Number(t);
   return Number.isInteger(n) && n >= 0 ? n : fallback;
+};
+
+const askStyleOf = (v: string | undefined): AskStyle => {
+  const t = (v ?? "").trim().toLowerCase();
+  return (ASK_STYLES as readonly string[]).includes(t) ? (t as AskStyle) : "tool";
 };
 
 /** The failure-injection and plan knobs, read once at daemon start. */
@@ -146,6 +162,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     reject: list(env.FORERUNNER_BENCH_CRITIC_REJECT),
     rejectTimes: count(env.FORERUNNER_BENCH_CRITIC_REJECT_TIMES, 1),
     ask: list(env.FORERUNNER_BENCH_ASK),
+    askStyle: askStyleOf(env.FORERUNNER_BENCH_ASK_STYLE),
     missing: list(env.FORERUNNER_BENCH_MISSING),
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
     intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
@@ -498,7 +515,12 @@ function specialistAnswer(
   const askHit = matchesAny(brief.title, opts.ask);
   // "Go ahead without" reaches the brief as the person's note, not as answers.
   const wentAhead = /chose to go ahead without answering/i.test(firstUserText(req.messages));
-  if (askHit && !brief.answers && !wentAhead && !did("ask_person")) {
+  // FORERUNNER_BENCH_ASK_STYLE=plain|bullets: it works with a placeholder and asks in its report.
+  const askInReport =
+    askHit && !brief.answers && !wentAhead && (opts.askStyle ?? "tool") !== "tool"
+      ? reportQuestions(brief.title, opts.askStyle === "plain" ? "plain" : "bullets")
+      : null;
+  if (askHit && !askInReport && !brief.answers && !wentAhead && !did("ask_person")) {
     const questions = [
       `For "${brief.title}": which option do you prefer, A (simple) or B (complete)?`,
       "Is there anything this must not change?",
@@ -678,7 +700,36 @@ function specialistAnswer(
     };
 
   // 8. The report, in the shape the registry asks for.
+  if (askInReport) return text(askInReport(report(brief, who, calls, req.tools)), `ask=${askHit}`);
   return text(report(brief, who, calls, req.tools));
+}
+
+/**
+ * A report that asks the person in its last lines, as the live model wrote it (2026-11-02): the
+ * summary under "**Summary**:", the reason under "Not done / risks", then "**Questions for the
+ * person:**" with one question per line, without bullets (the garden club's "Home page", L-2)
+ * or with "- " items (the "Contact page", L-12).
+ */
+function reportQuestions(title: string, style: "plain" | "bullets"): (body: string) => string {
+  const questions = [
+    `What is the real name to show in "${title}"?`,
+    "Is there anything this must not change?",
+  ];
+  return (body) =>
+    [
+      body
+        .replace(/^\*\*Summary\*\* /, "**Summary**: ")
+        .replace(
+          "**Not done / risks**",
+          `**Not done / risks**\n- The name in "${title}" is a placeholder, because the brief gave no real one.`,
+        )
+        .replace(/\n+Lesson: [^\n]*$/, ""),
+      "",
+      "**Questions for the person:**",
+      ...questions.map((q) => (style === "plain" ? q : `- ${q}`)),
+      "",
+      "Lesson: a name only the person knows is asked for, never invented.",
+    ].join("\n");
 }
 
 function report(

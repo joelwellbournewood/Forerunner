@@ -1495,13 +1495,26 @@ a sign-off without the questions. One card, three ways in:
   bridge for the runtime's tools: there the brief's constraint asks for a "Questions for the
   person:" list at the end of the report, which the critic path below reads.
 - **Reported to the critic.** `CriticLoop.reviewTask` reads the run's report with
-  `reportedQuestions` (the items under a "Questions for the person:" heading, else, when a
+  `reportedQuestions` (the questions under a "Questions for the person:" heading, else, when a
   sentence says the work needs the person's (or your) answers, decision, confirmation or
-  choice, the lines ending in "?"). A verdict other than accept on such a run withdraws the
-  sign-off the critic filed for a `human` verdict, moves the task `in_review -> needs_human`,
-  files the questions (the report's, else the task's; the critic's summary as context) and
-  returns decision `human`: `applyVerdict` and the ladder do not run, so there is one attempt
-  and one review. An accepting verdict stands.
+  choice, the lines ending in "?"). `listedQuestions` reads the list in any style (live L-2,
+  2026-11-02: the garden club's "Home page" wrote its questions as plain lines, the brief's own
+  "one question per line", only "-", "*", "•" and "1." items were read, and the person got a
+  sign-off with no questions): bulleted or numbered items, plain lines that ask ("…?") or
+  request ("Please …"), bold lines, blank lines between them, a question on the heading's own
+  line; it ends at the lesson line, prose or a heading, after a blank line only a question goes
+  on, and a list that says it asks nothing ("None", "- n/a") asks nothing. A verdict other than
+  accept on such a run (an accept with listed questions is made `human` by the critic's
+  `ASKS_PERSON_RULE`, ADR 0104) withdraws the sign-off the critic filed for a `human` verdict,
+  moves the task `in_review -> needs_human`, files the questions (the report's, else the
+  task's) and returns decision `human`: `applyVerdict` and the ladder do not run, so there is
+  one attempt and one review. The card's `context`, which the Inbox quotes as "The specialist
+  said: …", is why it asks (`questionsReason`, live L-12: the "Contact page" card quoted the
+  report's first words, ': I made no edits this run…', not that the email address was a
+  placeholder): the report's sentence that shares most words with the first question (the next
+  question's when the first shares none), a sentence under "Not done / risks" or one that says
+  something is missing, a placeholder or assumed weighing more; else the report's first
+  sentences (`quotedWords`), else the critic's summary. `ask_person` stores its `why`.
 
 The card: kind `decision`, blocking, risk low, `steps` the questions, the one option
 `CANCEL_TASK_OPTION` ("Cancel the task"), `change_card` `{ key: "person_questions:<task>",

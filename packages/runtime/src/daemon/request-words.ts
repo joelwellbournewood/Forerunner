@@ -291,7 +291,11 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   const task = ctx.taskTitle ?? str(card.task_title) ?? "the task";
   const waiting = ctx.waiting ?? [];
   const planned = card.source !== "specialist" && card.source !== "critic";
-  const context = str(card.context);
+  // Why it asks, in its own words (L-12). A card filed before 2026-11-02 may hold the report's
+  // first words with the heading's colon (': I made no edits…'): the quote starts at a word.
+  const context = str(card.context)
+    ?.replace(/^[\s:;,.\-–—*]+/, "")
+    .trim();
   const body =
     [
       planned

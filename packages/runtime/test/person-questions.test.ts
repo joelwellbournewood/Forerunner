@@ -1,11 +1,16 @@
+import { readFileSync } from "node:fs";
 import { SIGNOFF_KEY } from "@forerunner/critic";
+import { join } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
+import { requestWords } from "../src/daemon/request-words.ts";
 import {
   isPersonTask,
+  listedQuestions,
   PERSON_QUESTIONS_KEY_PREFIX,
   personQuestionsCardOf,
   questionsForTask,
+  questionsReason,
   reportedQuestions,
 } from "../src/session/person-questions.ts";
 import {
@@ -25,6 +30,11 @@ import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpe
  * sign-off, and the ladder stops at the first verdict). The daemon journey (planned tasks,
  * the specialist's tool, answers in the Inbox, a restart) is `person-questions-daemon.test.ts`.
  */
+
+/** The real model's reports from the phase C live check (2026-11-02): `fixtures/asking-live.json`. */
+const LIVE = JSON.parse(
+  readFileSync(join(import.meta.dirname, "fixtures", "asking-live.json"), "utf8"),
+) as Record<"home_page" | "contact_page", { report: string }>;
 
 describe("which tasks are the person's (U-022)", () => {
   it("the explicit field, and the 1.0.3 plan's title from the owner's data", () => {
@@ -135,6 +145,99 @@ describe("what a run reports (U-022)", () => {
   it("an ordinary report asks nothing", () => {
     expect(reportedQuestions("Done: the clamp has a test. Tests pass.")).toBeNull();
     expect(reportedQuestions("The form validates the user's input before it posts.")).toBeNull();
+  });
+
+  it("questions written one per line without bullets, as the brief asks, are read (live L-2)", () => {
+    // The garden club's "Home page" report (live 2026-11-02, call 24): the person got a sign-off
+    // card with no questions, because only "-", "*", "•" and "1." items were read.
+    expect(listedQuestions(LIVE.home_page.report)).toEqual([
+      "What is the club's official name?",
+      'Is there a description of the club you want under "Who we are"?',
+    ]);
+    expect(reportedQuestions(LIVE.home_page.report)).toEqual({
+      questions: [
+        "What is the club's official name?",
+        'Is there a description of the club you want under "Who we are"?',
+      ],
+    });
+    // The same with "- " items (the "Contact page", call 47) still reads.
+    expect(listedQuestions(LIVE.contact_page.report)).toEqual([
+      "What is the club's real email address?",
+      "Are the meeting place and time (Saturdays at 10:00, Rosengarten, Bern) correct?",
+    ]);
+  });
+
+  it("any list style: plain lines with blank lines between, numbers, bold lines, a question on the heading's line", () => {
+    expect(
+      listedQuestions(
+        "Done.\n\n## Questions for the person\n\nWhich host?\n\nWhich domain?\n\nLesson: ask.",
+      ),
+    ).toEqual(["Which host?", "Which domain?"]);
+    expect(listedQuestions("Questions for you:\n1) Which host?\n2) Which domain?")).toEqual([
+      "Which host?",
+      "Which domain?",
+    ]);
+    expect(listedQuestions("**Questions for the person:**\n**Which host?**\n")).toEqual([
+      "Which host?",
+    ]);
+    expect(listedQuestions("Questions for the person: Which host should it use?")).toEqual([
+      "Which host should it use?",
+    ]);
+    // Prose after the list is not a question; a request line is.
+    expect(
+      listedQuestions(
+        "Questions for the person:\nWhich host?\nPlease add data/members.csv to the folder.\nThe rest is done.",
+      ),
+    ).toEqual(["Which host?", "Please add data/members.csv to the folder."]);
+  });
+
+  it('a list that says there is nothing to ask ("None", "- n/a") asks nothing', () => {
+    for (const none of ["None", "None.", "- None", "- n/a", "No questions.", "* nothing"])
+      expect(listedQuestions(`Done.\n\nQuestions for the person:\n${none}\n`), none).toEqual([]);
+    expect(reportedQuestions("Done.\n\nQuestions for the person:\n- None\n")).toBeNull();
+  });
+});
+
+describe("why the specialist asks, as the card quotes it (live L-12)", () => {
+  it("the report's sentence about what the first question asks, not its summary", () => {
+    // Live, the "Contact page" card read 'The specialist said: ": I made no edits this run…"'.
+    const contact = LIVE.contact_page.report;
+    expect(questionsReason(contact, listedQuestions(contact))).toBe(
+      "The email address info@example.org is a placeholder, because the brief gave no real one.",
+    );
+    const home = LIVE.home_page.report;
+    expect(questionsReason(home, listedQuestions(home))).toBe(
+      "The brief doesn't give the club's real name.",
+    );
+  });
+
+  it("a card filed before the fix, holding ': I made no edits…', is quoted from its first word", () => {
+    const row = {
+      kind: "decision" as const,
+      why: "",
+      steps: ["What is the club's real email address?"],
+      options: [CANCEL_TASK_OPTION],
+      status: "open" as const,
+      answer: null,
+      change_card: {
+        key: `${PERSON_QUESTIONS_KEY_PREFIX}t-1`,
+        task_id: "t-1",
+        task_title: "Contact page in contact.html",
+        questions: ["What is the club's real email address?"],
+        source: "critic",
+        context: ": I made no edits this run.",
+      },
+    };
+    expect(requestWords(row, { taskTitle: "Contact page in contact.html" }).body).toBe(
+      'The specialist said: "I made no edits this run."',
+    );
+  });
+
+  it("no sentence about the questions: none (the card then says the specialist needs answers)", () => {
+    expect(
+      questionsReason("Done.\n\nQuestions for the person:\n- Which host?", ["Which host?"]),
+    ).toBe(null);
+    expect(questionsReason(null, ["Which host?"])).toBe(null);
   });
 });
 
@@ -260,6 +363,50 @@ describe("the critic path: a run that needs the person's answers (U-022)", () =>
       expect(cards.map((r) => r.steps)).toEqual([
         ["Which hosting provider should the site use?", "Which domain should it live on?"],
       ]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("the live 'Home page' report (questions one per line, no bullets) gets its questions card, quoting why, never a sign-off (live L-2, L-12)", async () => {
+    // Live (2026-11-02, calls 24 and 26): the critic chose "human" and the Inbox showed
+    // '"Home page in index.html" needs your sign-off' with Accept the work, Send it back or
+    // Cancel task, and no questions.
+    const w = await loopWorld({
+      replies: [
+        submitReply(
+          {
+            grade: 82,
+            verdict: "human",
+            summary:
+              "Both criteria are met. The worker's report asks the person two questions, so the work waits for the person.",
+          },
+          { times: 2 },
+        ),
+        closingReply(),
+      ],
+    });
+    try {
+      const task = await w.addTask("Home page in index.html");
+      const result = await w.start(
+        w.runner(doneExecutor(w, { finalReport: LIVE.home_page.report })),
+      );
+      expect(result.completed).toEqual([]);
+      expect((await w.store.task.mustGet(task.id)).status).toBe("needs_human");
+      const open = await w.store.humanRequest.open({ humanId: w.human });
+      expect(open.map((r) => (r.change_card as JsonObject | null)?.key)).not.toContain(SIGNOFF_KEY);
+      const card = open.find((r) => personQuestionsCardOf(r) !== null) as HumanRequestRow;
+      expect(card.steps).toEqual([
+        "What is the club's official name?",
+        'Is there a description of the club you want under "Who we are"?',
+      ]);
+      // What the Inbox shows: the questions card, quoting why the specialist asks.
+      const words = requestWords(card, { taskTitle: task.title });
+      expect(words.title).toBe('"Home page in index.html": the specialist asks you');
+      expect(words.body).toBe(
+        "The specialist said: \"The brief doesn't give the club's real name.\"",
+      );
+      expect(words.choices.map((c) => c.label)).toEqual(["Go ahead without", "Cancel task"]);
     } finally {
       await w.close();
     }

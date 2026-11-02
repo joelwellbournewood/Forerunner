@@ -88,14 +88,17 @@ export function signoffCard(input: SignoffCardInput): JsonObject {
  */
 export function quotedWords(text: string | null | undefined, max = 160): string | null {
   if (!text) return null;
+  // A heading's own punctuation goes with it: "**Summary**: I made …" was quoted as ": I made …"
+  // (live 2026-11-02, L-12).
   let t = text
-    .replace(/\*\*(?:summary|criteria|report)\*\*/gi, " ")
+    .replace(/\*\*\s*(?:summary|criteria|report)\s*:?\s*\*\*\s*[:\-–—]?/gi, " ")
     .split(/\n\s*(?:\*\*criteria\*\*|#+\s|criteria:)/i)[0] as string;
   t = t
     .replace(/\[stand-in model\]\s*/gi, "")
     .replace(/[*`#>]+/g, "")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .replace(/^[:;,.\-–—]+\s*/, "");
   if (!t) return null;
   // A sentence ends at ".", "!" or "?" before a space or the end; a dot inside a word (a file
   // name such as "data/members.csv") does not end it (before, the quote began at "csv ...").

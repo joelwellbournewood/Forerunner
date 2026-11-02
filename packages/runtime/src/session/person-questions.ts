@@ -176,38 +176,183 @@ export function questionsForTask(
 // ---------------------------------------------------------------------------------------
 // What a run reports
 
-const HEADING =
-  /^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*(?:open\s+)?(?:questions?\s+for\s+(?:the\s+)?(?:person|human|owner|you)|i\s+need\s+(?:the\s+(?:person|human|owner)'s|your)\s+answers?(?:\s+to(?:\s+these)?)?(?:\s+questions)?)\s*(?:\*\*)?\s*:?\s*(?:\*\*)?\s*$/i;
+const HEAD_WORDS = String.raw`(?:open\s+)?(?:questions?\s+for\s+(?:the\s+)?(?:person|human|owner|you)|i\s+need\s+(?:the\s+(?:person|human|owner)'s|your)\s+answers?(?:\s+to(?:\s+these)?)?(?:\s+questions)?)`;
+const HEADING = new RegExp(
+  String.raw`^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*${HEAD_WORDS}\s*(?:\*\*)?\s*:?\s*(?:\*\*)?\s*$`,
+  "i",
+);
+/** "Questions for the person: Which host should it use?": the heading with its one question. */
+const HEADING_INLINE = new RegExp(
+  String.raw`^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*${HEAD_WORDS}\s*(?:\*\*)?\s*:\s*(?:\*\*)?\s*(\S.*?)\s*$`,
+  "i",
+);
 const ITEM = /^\s*(?:[-*•]|\d+[.)])\s+(.+?)\s*$/;
+/** A list that asks nothing: "None", "- n/a", "No questions." */
+const NOTHING_ASKED =
+  /^(?:none|n\/?a|nothing|no(?:\s+(?:open|further|more|other))?\s+questions?)\b[\s.!]*(?:for\s+now)?[\s.!]*$/i;
+/** A line that ends a list: the report's lesson line. */
+const LESSON_LINE = /^\s*lesson\s*:/i;
+/** A request a plain line makes ("Please add data/members.csv"), which a question list may hold. */
+const REQUEST_LINE = /^please\b/i;
 /** A sentence that says the work waits for the person ("needs the human's decision"). */
 const NEEDS_PERSON =
   /\b(?:need|needs|needed|require|requires|required|waiting\s+(?:on|for)|cannot\s+(?:proceed|continue|finish|decide|be\s+done)\s+without)\b[^.\n]{0,60}?\b(?:(?:the\s+)?(?:person|human|owner)(?:'s)?|your)\s+(?:answers?|decisions?|confirmation|choices?|input)\b/i;
 
+const unbold = (s: string) => s.replace(/^\*\*\s*|\s*\*\*$/g, "").trim();
+
 /**
- * The items under a report's "Questions for the person:" heading (the form the brief asks for),
- * at most `MAX_PERSON_QUESTIONS`; none when it has no such list. Only this explicit list counts
- * when the critic accepted the work (ADR 0104): an accepted report that mentions the person in
- * passing is not a question.
+ * One entry of a question list: a bulleted or numbered item as it is, or a plain line that asks
+ * (ends with "?") or requests ("Please add …"); null for anything else, which ends the list.
+ */
+function listEntry(line: string): string | null {
+  const item = ITEM.exec(line)?.[1];
+  if (item) return unbold(item) || null;
+  const plain = unbold(line.trim());
+  if (!plain || LESSON_LINE.test(plain)) return null;
+  return plain.endsWith("?") || REQUEST_LINE.test(plain) ? plain : null;
+}
+
+/** Where a report's question list starts: its heading's line, and a question on that line. */
+function headingAt(line: string): { inline: string | null } | null {
+  if (HEADING.test(line)) return { inline: null };
+  const m = HEADING_INLINE.exec(line);
+  return m?.[1] ? { inline: unbold(m[1]) } : null;
+}
+
+/**
+ * The questions under a report's "Questions for the person:" heading (the form the brief asks
+ * for: "one question per line"), at most `MAX_PERSON_QUESTIONS`; none when it has no such list.
+ * Any list style reads (live L-2, 2026-11-02: the garden club's "Home page" wrote its two
+ * questions as plain lines, only "-", "*", "•" and "1." items were read, and the person got a
+ * sign-off with no questions): bulleted or numbered items, plain lines that ask ("…?") or
+ * request ("Please …"), blank lines between them, bold lines, a question on the heading's own
+ * line. The list ends at a line that is none of those (the lesson line, prose, a heading); after
+ * a blank line only a question goes on with it. A list that says it asks nothing ("None",
+ * "- n/a") asks nothing. Only this explicit list counts when the critic accepted the work (ADR
+ * 0104): an accepted report that mentions the person in passing is not a question.
  */
 export function listedQuestions(report: string | null | undefined): string[] {
   if (!report) return [];
   const lines = report.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    if (!HEADING.test(lines[i] ?? "")) continue;
+    const head = headingAt(lines[i] ?? "");
+    if (!head) continue;
     const questions: string[] = [];
+    if (head.inline?.endsWith("?")) questions.push(clean(head.inline));
+    let gap = false;
     for (let j = i + 1; j < lines.length; j++) {
       const line = lines[j] ?? "";
-      const item = ITEM.exec(line);
-      if (item?.[1]) {
-        questions.push(clean(item[1].replace(/^\*\*|\*\*$/g, "")));
+      if (!line.trim()) {
+        gap = questions.length > 0;
         continue;
       }
-      if (!line.trim() && questions.length === 0) continue;
-      break;
+      const entry = listEntry(line);
+      if (entry === null || NOTHING_ASKED.test(entry)) break;
+      if (gap && !entry.endsWith("?")) break;
+      questions.push(clean(entry));
+      gap = false;
     }
     if (questions.length) return questions.slice(0, MAX_PERSON_QUESTIONS);
   }
   return [];
+}
+
+// Words that say nothing about what a question asks.
+const COMMON_WORDS = new Set(
+  (
+    "what which where when who whom whose why how that this these those there their them they " +
+    "with from into onto about your yours have has had does doing done will would should could " +
+    "shall must might want need needs like some any more most other than then also just only " +
+    "very each every both such here page task work file files please give tell know make sure " +
+    "used uses using correct right real-time"
+  ).split(" "),
+);
+
+function contentWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/['’]s\b/g, "")
+      .split(/[^a-z0-9@.\-/]+/)
+      .map((w) => w.replace(/^[.\-/]+|[.\-/]+$/g, ""))
+      .filter((w) => w.length >= 4 && !COMMON_WORDS.has(w)),
+  );
+}
+
+/** Words of a sentence that say why something is asked: it is missing, a placeholder, assumed. */
+const REASON_WORDS =
+  /\b(?:because|placeholder|missing|not\s+given|(?:does\s*n[o']t|did\s*n[o']t|does\s+not|did\s+not)\s+(?:give|say|name|include)|gave\s+no|no\s+real|unknown|not\s+known|assum\w*|guess\w*|invent\w*|unclear|not\s+sure|has\s+no|have\s+no)\b/i;
+/** A report section about what is open ("Not done / risks", "Assumptions", "Open points"). */
+const OPEN_SECTION = /not\s+done|risks?|open|blocked|caveats?|assum|limitation|gaps?|unknown/i;
+/** A markdown label at the start of a line: "**Summary**:", "## Risks", "Files changed:". */
+const LABEL = /^\s*(?:#{1,6}\s*)?\*\*([^*]+)\*\*\s*:?\s*/;
+
+/** A report's sentences with the section each is in, without the question list and lessons. */
+function reportSentences(report: string): { text: string; open: boolean }[] {
+  const out: { text: string; open: boolean }[] = [];
+  let open = false;
+  let inQuestions = false;
+  for (const raw of report.split(/\r?\n/)) {
+    if (headingAt(raw)) {
+      inQuestions = true;
+      continue;
+    }
+    if (!raw.trim()) continue;
+    if (inQuestions && listEntry(raw) !== null) continue;
+    inQuestions = false;
+    if (LESSON_LINE.test(raw)) continue;
+    let line = raw;
+    const label = LABEL.exec(line);
+    const heading = /^\s*#{1,6}\s+(.+)$/.exec(line);
+    if (label?.[1]) {
+      open = OPEN_SECTION.test(label[1]);
+      line = line.slice(label[0].length);
+    } else if (heading?.[1]) {
+      open = OPEN_SECTION.test(heading[1]);
+      continue;
+    }
+    const text = line
+      .replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "")
+      .replace(/[`*]+/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) continue;
+    // A dot inside a word (a file name, an address) does not end a sentence.
+    for (const s of text.match(/(?:[^.!?]|[.!?](?=\S))+[.!?]+(?=\s|$)|(?:[^.!?]|[.!?](?=\S))+$/g) ??
+      [])
+      if (s.trim() && !s.trim().endsWith("?")) out.push({ text: s.trim(), open });
+  }
+  return out;
+}
+
+/**
+ * Why the specialist asks, as its questions card quotes it (design §3.8: "in the specialist's
+ * own words"): the report's sentence that says most about what the first question asks (the
+ * words they share), a sentence under "Not done / risks" or one that says something is missing,
+ * a placeholder or assumed weighing more; the next question's when the first shares no word
+ * with any sentence; null when none does. Live (L-12, 2026-11-02) the "Contact page" card
+ * quoted the report's first words, ': I made no edits this run…', not that the email address
+ * was a placeholder.
+ */
+export function questionsReason(
+  report: string | null | undefined,
+  questions: readonly string[],
+): string | null {
+  if (!report) return null;
+  const sentences = reportSentences(report);
+  for (const q of questions) {
+    const asked = contentWords(q);
+    let best: { text: string; score: number } | null = null;
+    for (const s of sentences) {
+      const words = contentWords(s.text);
+      const shared = [...asked].filter((w) => words.has(w)).length;
+      if (shared === 0) continue;
+      const score = shared + (s.open ? 1 : 0) + (REASON_WORDS.test(s.text) ? 1 : 0);
+      if (!best || score > best.score) best = { text: s.text, score };
+    }
+    if (best) return clean(best.text).slice(0, MAX_QUESTION_CHARS);
+  }
+  return null;
 }
 
 /**
