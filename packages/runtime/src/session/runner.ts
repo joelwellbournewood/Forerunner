@@ -1559,19 +1559,19 @@ export class SessionRunner {
           }
           // The task is read again now that the run returned: a state a person set while it ran
           // stands, and the runner never moves the task from it (U-039). A session stopped by
-          // the kill switch still ends as killed, after a task the person moved meanwhile is
-          // recorded (a cancel's work set aside, as its line said, also when Stop now came
-          // right after it).
-          if (task.status !== "in_progress") {
-            runningTask = null;
-            await recordMove(task, result.outcome, "run", stoppedByMove(taskController));
-            if (controller.signal.aborted && result.outcome === "killed")
-              throw new ForerunnerError("killed", "session stopped during task");
-            continue;
-          }
-          if (controller.signal.aborted && result.outcome === "killed")
+          // the kill switch still ends as killed; when the person's move of the task stopped
+          // the run first (a cancel, then Stop now), the move is recorded before, so a
+          // cancel's work is set aside as its line said.
+          const sessionStopped = controller.signal.aborted && result.outcome === "killed";
+          const movedByPerson = task.status !== "in_progress" && stoppedByMove(taskController);
+          if (sessionStopped && !movedByPerson)
             throw new ForerunnerError("killed", "session stopped during task");
           runningTask = null;
+          if (task.status !== "in_progress") {
+            await recordMove(task, result.outcome, "run", movedByPerson);
+            if (sessionStopped) throw new ForerunnerError("killed", "session stopped during task");
+            continue;
+          }
           if (result.outcome === "usage_limit") {
             // U-078, ADR 0100: the credential's usage limit stopped the run. The source rests
             // (the executor did that); the task goes back to ready by its claim's release, not
@@ -1686,29 +1686,32 @@ export class SessionRunner {
               // stopped meanwhile ends as killed; else the task waits in review and the person
               // gets one card whose options act.
               const now = await store.task.mustGet(task.id);
-              if (now.status !== "in_review") {
-                await recordMove(now, "review_failed", "review", stoppedByMove(reviewController));
-                if (controller.signal.aborted)
-                  throw new ForerunnerError("killed", "session stopped during the review");
-                continue;
-              }
-              if (controller.signal.aborted) {
+              const movedByPerson = now.status !== "in_review" && stoppedByMove(reviewController);
+              if (controller.signal.aborted && !movedByPerson) {
                 // Stop now, Stop all, Quit (design §4.9) or the session's own end stopped the
                 // review: the task goes back to Ready, its attempt unchanged and its files
                 // kept, as for a stopped run, and the next session runs it again. Before, it
                 // stayed "Being reviewed" for good: the session's release at its end puts back
                 // only a claimed or running task, no card was filed and no session plans a task
                 // in review (phase C review).
-                const stop = personStopOf(controller.signal.reason);
-                await store.task.restoreStatus(
-                  now.id,
-                  now.version,
-                  "in_review",
-                  stop ? taskReasonForStop(stop) : "the session ended during its review",
-                  { agentId: agent.id },
-                );
-                runningTask = { id: task.id, title: task.title };
+                if (now.status === "in_review") {
+                  const stop = personStopOf(controller.signal.reason);
+                  await store.task.restoreStatus(
+                    now.id,
+                    now.version,
+                    "in_review",
+                    stop ? taskReasonForStop(stop) : "the session ended during its review",
+                    { agentId: agent.id },
+                  );
+                  runningTask = { id: task.id, title: task.title };
+                }
                 throw new ForerunnerError("killed", "session stopped during the review");
+              }
+              if (now.status !== "in_review") {
+                await recordMove(now, "review_failed", "review", movedByPerson);
+                if (controller.signal.aborted)
+                  throw new ForerunnerError("killed", "session stopped during the review");
+                continue;
               }
               inReview.push(task.id);
               reviewFailed.push(task.id);
