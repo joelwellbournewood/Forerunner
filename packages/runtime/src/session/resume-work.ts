@@ -21,7 +21,13 @@ export type ResumeOutcome = "started" | "queued" | "deferred" | "failed" | "noth
 export async function resumeWork(
   store: StateStore,
   start: StartPort | undefined,
-  req: { agentId: string; projectId: string | null; reason: string },
+  req: {
+    agentId: string;
+    projectId: string | null;
+    reason: string;
+    /** The session's budget when the answer named one (C-36); else the project's applies. */
+    budgetUsdMicro?: number;
+  },
 ): Promise<ResumeOutcome | null> {
   if (!start || !req.projectId) return null;
   const runnable = await store.task.readyTasks(req.projectId, { limit: 1 });
@@ -32,6 +38,9 @@ export async function resumeWork(
       projectId: req.projectId,
       trigger: "message",
       reason: req.reason,
+      ...(req.budgetUsdMicro && req.budgetUsdMicro > 0
+        ? { budgetUsdMicro: req.budgetUsdMicro }
+        : {}),
     });
     const result = (entry as { result?: unknown } | null)?.result;
     return result === "queued" || result === "deferred" ? result : "started";

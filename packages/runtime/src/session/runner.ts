@@ -47,7 +47,15 @@ import type { SchemaSyncPort } from "../update/sync.ts";
 import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
-import { budgetStopTitle, fileBudgetStopCard } from "./budget-card.ts";
+import {
+  budgetPerSessionOf,
+  budgetStopTitle,
+  fileBudgetStopCard,
+  fileSessionBudgetCard,
+  SESSION_BUDGET_STOPS_BEFORE_CARD,
+  sessionBudgetStops,
+  sessionBudgetTitle,
+} from "./budget-card.ts";
 import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import {
@@ -1949,11 +1957,59 @@ export class SessionRunner {
             // in needs_human with no card while the result said '"X" needs your decision
             // (Inbox).' over an empty Inbox (phase C, the sibling of live walk 2 B2).
             stopReason = "budget_exceeded";
-            await releaseIfHeld(
-              task.id,
-              "the session's budget was used during its run; the next session continues it",
+            // C-36 (the session lead's default, ADR 0105): the second such stop of the same
+            // task since its last card asks the person once (raise the budget per session,
+            // give it one bigger session, or cancel it) instead of every session running it
+            // again until they notice.
+            const stops = await sessionBudgetStops(store, task.id, result.runId ?? null).catch(
+              (e: unknown) => {
+                this.logger.warn("session-budget stops not counted", {
+                  taskId: task.id,
+                  error: errorMessage(e),
+                });
+                return { count: 0, runIds: [] as string[] };
+              },
             );
-            skipped.push(task.id);
+            if (stops.count >= SESSION_BUDGET_STOPS_BEFORE_CARD) {
+              const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+              const waiting = await store.task.transition(
+                task.id,
+                task.version,
+                "needs_human",
+                `${sessionBudgetTitle(task)}.`,
+                { agentId: agent.id },
+              );
+              needsHuman.push(task.id);
+              try {
+                const project = task.project_id
+                  ? await store.project.get(task.project_id)
+                  : undefined;
+                await fileSessionBudgetCard({
+                  store,
+                  task: waiting,
+                  session,
+                  humanId: agent.owner_human_id,
+                  agentId: agent.id,
+                  runIds: stops.runIds,
+                  projectCapUsdMicro: budgetPerSessionOf(
+                    project?.settings,
+                    session.budget_cap_usd_micro,
+                  ),
+                  chfPerUsd: rate,
+                });
+              } catch (e) {
+                this.logger.warn("card of the task a session's budget stopped not filed", {
+                  taskId: task.id,
+                  error: errorMessage(e),
+                });
+              }
+            } else {
+              await releaseIfHeld(
+                task.id,
+                "the session's budget was used during its run; the next session continues it",
+              );
+              skipped.push(task.id);
+            }
             skipped.push(...queue.map((i) => i.taskId));
             queue.length = 0;
             break;

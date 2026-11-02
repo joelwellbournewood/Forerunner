@@ -324,7 +324,11 @@ the critic sent back (the next attempt runs in the same session, up to the retry
 the last one you get one card), and tasks you made ready meanwhile. So a chain of seven tasks
 is one Start. It stops when nothing more can run, the session's budget is used (a fifth is kept
 for reviews; a task whose run the session's budget stopped is ready again and the next session
-continues it), you stop it, or its time runs out. A run that fails because Claude did not answer
+continues it; if a session's budget stops the same task a second time, it waits for you with one
+card, '"Long report" needs more than a session's budget', and three buttons: **Raise session
+budget** (sets this project's budget per session to the amount it names and starts a session),
+**Raise its budget** (starts one session of that amount for this task; later sessions keep the
+budget they had) and **Cancel task**), you stop it, or its time runs out. A run that fails because Claude did not answer
 (the network, a rate limit) is tried again once at once; if it fails again the task reads
 "Failed:" with what went wrong, never the model's first sentence.
 

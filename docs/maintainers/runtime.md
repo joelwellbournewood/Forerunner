@@ -1700,6 +1700,32 @@ reader is `budgetStopAnswer` (`wiring/request-answers.ts`), the words `budgetCar
 the card across a restart, Raise the budget runs the task to done), `task-budget-cap.test.ts`,
 the phase 1 gate, `inbox.test.tsx` and `real-daemon.test.ts` ("continuity") in `apps/ui`.
 
+**A task a session's own budget stopped twice asks the person (C-36, ADR 0105, the session
+lead's default).** A stop at the session's budget (`budget_exceeded`) releases the task to ready
+with its attempt count unchanged, as before; but the runner first counts the task's stops by a
+session's budget since its last card (`sessionBudgetStops`: its work runs that ended
+`budget_exceeded`, less the run a task-cap card names in `run_id` and the runs a session-budget
+card lists in `run_ids`; the current run once, row or not). At `SESSION_BUDGET_STOPS_BEFORE_CARD`
+(2) the task moves to `needs_human` ('"Long report" needs more than a session\'s budget.') and
+`fileSessionBudgetCard` files one card under the same key (`task:budget_stop`, `source:
+session_budget`, `run_ids`, the session's cap, the project's budget per session,
+`raise_to_usd_micro` = `raisedSessionBudgetUsdMicro`: twice the session's cap, at least USD 0.50,
+steps of USD 0.05) with **Raise session budget** ("Sets this project's budget per session to CHF
+4.00 and starts a session that tries again."), **Raise its budget** ("Starts one session of CHF
+4.00 for it now; later sessions keep CHF 2.00.") and **Cancel task**; the session's result names
+it among the tasks that need the person. `budgetStopAnswer` reads `raise_session` besides
+`raise` and `cancel`; `syncBudgetStopAnswers` applies a session card's answer: Raise session
+budget writes the project's `session_cap_usd_micro` (and `session_cap_chf_micro` at the card's
+rate, the keys of the budget command) and starts a session; Raise its budget sets the task's
+budget to what it spent plus that amount and starts one session of that amount
+(`resumeWork(..., { budgetUsdMicro })`, `StartRequest.budgetUsdMicro`), later sessions keeping
+the project's. The Tasks tab reads "Needs your decision: a session's budget is too small".
+Before, such a task went back to Ready after every stop and every session ran it again until the
+person noticed. Tests: `session-budget-card.test.ts` (the first stop releases, the second files
+one card, the words in CHF, across a restart, Raise its budget runs it to done with a session of
+the named amount, Raise session budget sets the project's budget per session, Cancel task),
+`inbox.test.tsx` in `apps/ui`.
+
 **Cancelling a task that runs or is reviewed (phase C, live walk 2 C1, ADR 0105).** Before, the
 run was stopped (U-039) but its files stayed in the project's folder, the next task built on
 them, and a cancel during the review let the critic "accept" the cancelled task. Now the Tasks

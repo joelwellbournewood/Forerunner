@@ -460,6 +460,7 @@ function budgetCard(
   const waiting = ctx.waiting ?? [];
   const spent = chfAt(card.spent_usd_micro, card.chf_per_usd);
   const raiseTo = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
+  if (card.source === "session_budget") return sessionBudgetCard(r, card, task, waiting);
   // The hooks stop a run before a call that would go over the cap, so it may have spent less
   // than the budget: then the next step is what did not fit (the bench read "stopped at its
   // budget of CHF 0.01. So far it spent CHF 0.00.").
@@ -511,11 +512,85 @@ function budgetCard(
   };
 }
 
+/**
+ * A task a session's own budget stopped twice (C-36, `session/budget-card.ts`): raise the
+ * project's budget per session, give the task one bigger session, or cancel it.
+ */
+function sessionBudgetCard(
+  r: Pick<HumanRequestRow, "why" | "options">,
+  card: JsonObject,
+  task: string,
+  waiting: readonly string[],
+): RequestWords {
+  const sessionCap = chfAt(card.session_cap_usd_micro, card.chf_per_usd);
+  const projectCap = chfAt(card.project_cap_usd_micro, card.chf_per_usd);
+  const spent = chfAt(card.spent_usd_micro, card.chf_per_usd);
+  const raiseTo = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
+  const body =
+    [
+      sessionCap
+        ? `Two sessions of ${sessionCap} stopped while it ran${spent ? `; it spent ${spent} so far` : ""}.`
+        : null,
+      waitingSentence(waiting),
+    ]
+      .filter(Boolean)
+      .join(" ") || null;
+  const choices: RequestChoiceWords[] = [];
+  for (const option of r.options.map(optionLabel)) {
+    const what = budgetStopAnswer(option);
+    if (what === "raise_session")
+      choices.push({
+        label: option,
+        explain: raiseTo
+          ? `Sets this project's budget per session to ${raiseTo} and starts a session that tries again.`
+          : "Raises this project's budget per session and starts a session that tries again.",
+        tone: "primary",
+        confirm: null,
+        input: null,
+      });
+    else if (what === "raise")
+      choices.push({
+        label: option,
+        explain: raiseTo
+          ? `Starts one session of ${raiseTo} for it now${projectCap ? `; later sessions keep ${projectCap}` : ""}.`
+          : "Starts one bigger session for it now.",
+        tone: "secondary",
+        confirm: null,
+        input: null,
+      });
+    else if (what === "cancel")
+      choices.push({
+        label: option,
+        explain: cancelExplain(waiting),
+        tone: "danger",
+        confirm: cancelConfirm(task, waiting),
+        input: null,
+      });
+  }
+  return {
+    title: str(card.title) ?? firstSentence(r.why),
+    body,
+    choices,
+    links: [],
+    reply: "none",
+    details: [],
+    outcome: null,
+  };
+}
+
 function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
   const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
   const started = startWords(card.start);
   switch (card.outcome) {
+    case "raise_session": {
+      const to = chfAt(card.session_cap_usd_micro_set ?? card.raise_to_usd_micro, card.chf_per_usd);
+      return `Raised this project's budget per session${to ? ` to ${to}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
+    }
     case "raise": {
+      if (card.source === "session_budget") {
+        const one = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
+        return `Gave ${task} one session${one ? ` of ${one}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
+      }
       const to = chfAt(card.budget_usd_micro ?? card.raise_to_usd_micro, card.chf_per_usd);
       return `Raised the budget of ${task}${to ? ` to ${to}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
     }

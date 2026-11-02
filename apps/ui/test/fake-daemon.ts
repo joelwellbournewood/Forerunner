@@ -2391,13 +2391,27 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon's `syncBudgetStopAnswers` (live walk 2, B2): Raise the budget sets the
     // budget the card named (never lower than the task's own) and a session tries again;
     // Cancel task cancels it.
-    const budgetCard = r.changeCard as { key?: unknown; raise_to_usd_micro?: unknown } | null;
+    const budgetCard = r.changeCard as {
+      key?: unknown;
+      raise_to_usd_micro?: unknown;
+      source?: unknown;
+    } | null;
     if (budgetCard?.key === "task:budget_stop") {
       const task = state.tasks.find((t) => t.id === r.taskId);
       const read = budgetStopAnswer(parsed.data.answer as never);
       const moved = !task || task.status !== "needs_human";
       let budget: number | null = null;
-      if (task && !moved && read === "raise") {
+      // C-36: the card of a task a session's budget stopped twice. Raise session budget sets
+      // the project's budget per session (the fake keeps no such setting: the card records the
+      // amount, as the daemon's does) and a session tries again.
+      let sessionCap: number | null = null;
+      if (budgetCard.source === "session_budget" && task && !moved && read === "raise_session") {
+        sessionCap = Number(budgetCard.raise_to_usd_micro) || 0;
+        budget = task.budget.usdMicro;
+        task.status = "ready";
+        task.reason = `you raised the budget per session to CHF ${(money(sessionCap).chfMicro / 1e6).toFixed(2)} in the Inbox`;
+        touch(task);
+      } else if (task && !moved && (read === "raise" || read === "raise_session")) {
         budget = Math.max(task.budget.usdMicro, Number(budgetCard.raise_to_usd_micro) || 0);
         task.budget = money(budget);
         task.cap = money(budget);
@@ -2415,6 +2429,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         applied_at: new Date().toISOString(),
         outcome: moved ? "task_moved_on" : read,
         ...(budget !== null ? { budget_usd_micro: budget, start: "started" } : {}),
+        ...(sessionCap !== null ? { session_cap_usd_micro_set: sessionCap } : {}),
       };
     }
     // As the daemon's `syncCannotRunAnswers` (live walk 4): Try again puts the task back to
