@@ -5038,6 +5038,10 @@ describe("the UI client against the real daemon: answers do what the person said
     expect(asked.pendingConfirmation?.readback).toBe(
       `Approve and start (${card.title})? ${written}`,
     );
+    // The model is told the same words, with no id it could repeat to the person.
+    const told = JSON.stringify(chatCalls.at(-1)?.messages ?? []);
+    expect(told).toContain("Needs confirmation. The person is asked: Approve and start (");
+    expect(told).not.toContain(asked.pendingConfirmation?.id ?? "no id");
     // One card about the plan: the read-back is not filed as a second card beside it.
     expect((await open()).map((r) => r.id)).toEqual([card.id]);
     expect((await client.inbox(me.id)).needsYouCount).toBe(before);

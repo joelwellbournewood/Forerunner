@@ -265,7 +265,7 @@ export class CommandLoop implements ConversationCommands {
         });
         onResult(viewOf(r, [call.name]));
         return r.status === "pending"
-          ? { status: "pending", pendingId: r.pendingId, card: r.card }
+          ? { status: "pending", pendingId: r.pendingId, card: r.card, readback: r.readback }
           : r.status === "refused"
             ? { status: "refused", reason: r.reason }
             : r.status === "cancelled"

@@ -138,6 +138,8 @@ export interface ToolOutcome {
   reason?: string;
   card?: { sentence: string } & Parameters<typeof renderChangeCard>[0];
   pendingId?: string;
+  /** The card's one-line read-back, for a pending change: what the person is asked. */
+  readback?: string;
 }
 
 /**

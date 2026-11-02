@@ -358,11 +358,14 @@ export class DecisionLog {
       // the answer is kept under the card's first sentence, or one row per question of a
       // person's questions card): every question answered, nothing is asked again.
       const card = input.change_card as { key?: unknown } | null | undefined;
+      const steps = Array.isArray(input.steps)
+        ? input.steps.filter((s): s is string => typeof s === "string")
+        : [];
       const perQuestion =
         typeof card?.key === "string" &&
         card.key.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix) &&
-        (input.steps ?? []).length > 0;
-      const keys = perQuestion ? [...(input.steps ?? [])] : [cardQuestion(question)];
+        steps.length > 0;
+      const keys = perQuestion ? steps : [cardQuestion(question)];
       let decision: DecisionRow | null = null;
       for (const key of keys) {
         decision = (await this.store.decision.findAnswered(projectId, key)) ?? null;
