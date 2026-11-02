@@ -292,6 +292,43 @@ export function priorityPhrase(text: string): {
   return { text: text.slice(0, hit.index).trim(), priority };
 }
 
+/** The most characters of a task title made from a sentence (`taskTitleOf`). */
+export const TASK_TITLE_MAX = 80;
+
+/** Words a title does not end on once it is cut: it would read as a sentence cut short. */
+const DANGLING =
+  /[\s,;:(–—-]+(?:and|or|but|with|without|the|a|an|of|to|for|in|on|at|by|from|that|which|so|as|its|their|your|und|oder|mit|der|die|das|ein|eine|von|zu|für|im|auf)?$/i;
+
+/**
+ * A task's title from what the person said (live walk 2, part 3 C2): "to write a README that
+ * explains how to open the page and what each section of the page is for" became the title
+ * whole, with its "to", cut at 120 characters mid-word. The first line, without a leading
+ * "to", "please", "can you" or "could you", its first letter capitalised, and cut at a word to
+ * at most `TASK_TITLE_MAX` characters (with "…" when cut); the full words stay the outcome.
+ */
+export function taskTitleOf(said: string): string {
+  let t = (said.split(/\n/)[0] ?? said).replace(/\s+/g, " ").trim();
+  for (;;) {
+    const next = t
+      .replace(/^(?:please|pls|bitte|(?:can|could|would|will)\s+you(?:\s+please)?)[\s,]+/i, "")
+      .replace(/^(?:to|zu)\s+/i, "")
+      .trim();
+    if (next === t) break;
+    t = next;
+  }
+  t = t.replace(/[.!?]+$/, "").trim();
+  if (t.length > TASK_TITLE_MAX) {
+    const head = t.slice(0, TASK_TITLE_MAX);
+    const space = head.lastIndexOf(" ");
+    const cut = (space >= TASK_TITLE_MAX / 2 ? head.slice(0, space) : head.slice(0, -1)).replace(
+      DANGLING,
+      "",
+    );
+    t = `${cut.replace(DANGLING, "").trim()}…`;
+  }
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+}
+
 function clean(clause: string): string {
   return clause
     .trim()
@@ -594,9 +631,11 @@ export class IntentParser {
   }
 
   /**
-   * "add a task: write the README", "new task: …", "neue Aufgabe: …" (U-015). The task is
-   * created ready: asking for it is giving the agent the work, and a session takes only ready
-   * tasks.
+   * "add a task: write the README", "new task: …", "neue Aufgabe: …" (U-015), "add a task to
+   * write the README". The task is created ready: asking for it is giving the agent the work,
+   * and a session takes only ready tasks. Its title is `taskTitleOf` the words (live walk 2:
+   * 'Added "to write a README that explains how to open the page and what each section of t…"'):
+   * the full words stay its outcome.
    */
   private matchAddTask(c: string): Match | null {
     const m =
@@ -608,8 +647,8 @@ export class IntentParser {
     // "…, priority high", "… (high priority)", "…, Priorität hoch" (U-041): the level is a
     // parameter, not part of the title.
     const { text, priority } = priorityPhrase(said);
-    if (text.length < 3) return null;
-    const title = text.split(/\n/)[0]?.slice(0, 120) ?? text.slice(0, 120);
+    const title = taskTitleOf(text);
+    if (title.length < 3) return null;
     return {
       command: {
         name: "task.create",
@@ -631,7 +670,7 @@ export class IntentParser {
         question: { text: "Which message should become a task? Say its title.", options: [] },
       };
     }
-    const title = last.split(/\n/)[0]?.slice(0, 120) ?? last.slice(0, 120);
+    const title = taskTitleOf(last);
     // Ready, not draft (U-016, ADR 0093): asking for a task is giving the agent the work.
     return { command: { name: "task.create", params: { title, outcome: last, status: "ready" } } };
   }

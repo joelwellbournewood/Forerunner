@@ -10,6 +10,7 @@ import {
   isStopLine,
   type ModelIntentPort,
   parseWhen,
+  taskTitleOf,
 } from "../src/index.ts";
 import { START, TOMORROW_0600, TZ } from "./helpers.ts";
 
@@ -229,7 +230,7 @@ describe("IntentParser: English and German phrases", () => {
     expect(r.commands).toEqual([
       {
         name: "task.create",
-        params: { title: "write the README", outcome: "write the README", status: "ready" },
+        params: { title: "Write the README", outcome: "write the README", status: "ready" },
       },
     ]);
     for (const line of [
@@ -244,6 +245,31 @@ describe("IntentParser: English and German phrases", () => {
     expect((await parser.parse("set up CI and deploy", ctx())).commands).toEqual([]);
   });
 
+  it("a task said in a sentence gets a title: no leading 'to' or 'please', cut at a word under 80 characters, the full words its outcome (phase E, live walk 2 C2)", async () => {
+    const said =
+      "to write a README that explains how to open the page and what each section of the page is for, with screenshots";
+    const r = await parser.parse(`Add a task ${said}`, ctx());
+    const title = "Write a README that explains how to open the page and what each section…";
+    expect(r.commands).toEqual([
+      { name: "task.create", params: { title, outcome: said, status: "ready" } },
+    ]);
+    expect(title.length).toBeLessThanOrEqual(80);
+    for (const [line, expected] of [
+      ["add a task: please write the FAQ", "Write the FAQ"],
+      ["add a task: can you write the FAQ?", "Write the FAQ"],
+      [
+        // Live walk 2 #8: the title was this sentence cut at 80 characters mid-word.
+        "Please add a task: make a 404.html 'page not found' page in the same style as the others, with a link home",
+        "Make a 404.html 'page not found' page in the same style as the others…",
+      ],
+    ] as const) {
+      const m = await parser.parse(line, ctx());
+      expect(m.commands[0]?.params.title, line).toBe(expected);
+    }
+    expect(taskTitleOf("to do it")).toBe("Do it");
+    expect(taskTitleOf("x".repeat(120))).toBe(`X${"x".repeat(78)}…`);
+  });
+
   it("'add a task: …, priority high' sets the level, never as part of the title (U-041)", async () => {
     for (const [line, title, priority] of [
       ["add a task: fix the login, priority high", "fix the login", "high"],
@@ -254,14 +280,19 @@ describe("IntentParser: English and German phrases", () => {
       ["neue Aufgabe: Doku aufräumen mit niedriger Priorität", "Doku aufräumen", "low"],
     ] as const) {
       const r = await parser.parse(line, ctx());
+      // The title as a title (phase E: capitalised), the words as said its outcome.
+      const named = title.charAt(0).toUpperCase() + title.slice(1);
       expect(r.commands, line).toEqual([
-        { name: "task.create", params: { title, outcome: title, status: "ready", priority } },
+        {
+          name: "task.create",
+          params: { title: named, outcome: title, status: "ready", priority },
+        },
       ]);
     }
     // Without a level the command takes its default (medium); "priority" inside a title stays.
     const plain = await parser.parse("add a task: decide the priority of the backlog", ctx());
     expect(plain.commands[0]?.params).toEqual({
-      title: "decide the priority of the backlog",
+      title: "Decide the priority of the backlog",
       outcome: "decide the priority of the backlog",
       status: "ready",
     });

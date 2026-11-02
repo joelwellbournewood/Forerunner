@@ -432,8 +432,8 @@ and each clause goes through the patterns, in English and German:
 | remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
 | note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |
 | read me the summary [of X] [aloud], speak the project summary for X, summary, lies mir die Zusammenfassung [von X] vor | `summary.speak` (the active project unless one is named; "Which project?" when neither) |
-| add a task: ..., create a [new] task: ..., new task: ..., neue Aufgabe: ... | `task.create` with status `ready` (U-015: the app told people to say it, and nothing matched it); a level said at the end ("…, priority high", "… (low priority)", "… with medium priority", "…, Priorität hoch", "… mit niedriger Priorität"; `priorityPhrase`) is the `priority` parameter and is cut from the title (U-041) |
-| make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage`, status `ready` (U-016, ADR 0093) |
+| add a task: ..., create a [new] task: ..., new task: ..., neue Aufgabe: ... | `task.create` with status `ready` (U-015: the app told people to say it, and nothing matched it); a level said at the end ("…, priority high", "… (low priority)", "… with medium priority", "…, Priorität hoch", "… mit niedriger Priorität"; `priorityPhrase`) is the `priority` parameter and is cut from the title (U-041); the title is `taskTitleOf` the words (phase E, live walk 2 C2): the first line without a leading "to", "please", "can you" or "could you", capitalised, cut at a word to at most 80 characters with "…" (never on "of", "and", "with" and the like), while the words as said stay the outcome; "add a task to write the README" matches too |
+| make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage`, status `ready` (U-016, ADR 0093), titled by `taskTitleOf` |
 
 A lesson ("remember that", "lesson:") is matched before a note, so "remember that X" records X
 in memory while "remember to X" and "note that X" stay next-session notes (ADR 0061). The nouns
