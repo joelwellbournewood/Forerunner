@@ -137,8 +137,8 @@ async function approve(page, projectId) {
   }
   check(
     "the plan card shows the plan's tasks by title",
-    new RegExp(`Plan for "${PROJECT}": \\d+ tasks`).test(text) &&
-      /Create the page skeleton in index\.html/.test(text),
+    // The brief is short, so the plan is small (ADR 0103): its build task names index.html.
+    new RegExp(`Plan for "${PROJECT}": \\d+ tasks?`).test(text) && /index\.html/.test(text),
   );
   check(
     "the plan card has no change-card JSON or risk badges",
@@ -165,7 +165,7 @@ async function approve(page, projectId) {
     1000,
     "the approved plan's tasks",
   ).catch(() => []);
-  check("approving writes the plan's tasks", tasks.length >= 3, `${tasks.length} task(s)`);
+  check("approving writes the plan's tasks", tasks.length >= 1, `${tasks.length} task(s)`);
   // Approve and start starts a session of the project without a Start click (design §3.3).
   const started = await until(
     async () =>
