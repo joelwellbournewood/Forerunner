@@ -257,6 +257,11 @@ monthly cap is refused in words. "Note for this session" goes into the brief of 
 session runs. When nothing can run, Start is greyed out and the dialog says why in one sentence
 with the button that fixes it (Allow sessions again, Open it, Open Tasks, Set up Docker,
 Connect Claude). After Start you stay where you were; **Open the session** opens its page.
+A task that does not fit is named one of two ways: "needs about CHF 3.00, more than this
+session's work budget of CHF 2.40" when it alone is too large, or "(about CHF 1.20) may be left
+for next time: the tasks that run first take about CHF 1.50 of this session's work budget of
+CHF 2.40" when it only does not fit after them. A task with a budget of its own is counted at
+most at what is left of that budget, since its runs never spend more.
 
 **One Start keeps going.** A session works until nothing it can run is left: after each task it
 looks again and takes the tasks that just became ready (what they waited for is done), a task

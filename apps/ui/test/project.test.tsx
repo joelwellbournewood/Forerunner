@@ -266,6 +266,46 @@ describe("Project page", () => {
     });
   });
 
+  it("a task that only does not fit after the tasks before it is named as such, priced within its own budget (live walk 2, B3)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const tasks = harness.daemon.state.tasks;
+    const ready = tasks.find((t) => t.id === "task_3");
+    if (!ready) throw new Error("fixture changed");
+    // The default session's work budget is CHF 4.00. Two tasks of about CHF 2.40 each: the
+    // first runs, the second does not fit after it although it is smaller than the budget.
+    ready.estimate = money(3_000_000);
+    tasks.push({
+      ...ready,
+      id: "task_about",
+      title: "About page",
+      estimate: money(3_000_000),
+      priority: "low",
+    });
+    // A task whose own budget (CHF 0.80) is below its estimate costs at most its budget.
+    tasks.push({
+      ...ready,
+      id: "task_small",
+      title: "Contact page",
+      estimate: money(10_000_000),
+      budget: money(1_000_000),
+      priority: "low",
+    });
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
+      'This session runs "Decide the versioning scheme" (about CHF 2.40) and continues with up to 1 more as they become ready (about CHF 0.80).',
+    );
+    const left = within(dialog).getByTestId("start-session-over-budget");
+    expect(left).toHaveTextContent(
+      '"About page" (about CHF 2.40) may be left for next time: the tasks that run first take about CHF 3.20 of this session\'s work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure it runs.',
+    );
+    // Not the old sentence, which said 2.40 is more than 4.00.
+    expect(left).not.toHaveTextContent("more than this session's work budget");
+  });
+
   it("warns when ready tasks exist but none can run: what each waits on, what the budget leaves out (U-040)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

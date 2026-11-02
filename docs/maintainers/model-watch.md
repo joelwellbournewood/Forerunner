@@ -454,7 +454,9 @@ every eval task (`evalBilling` in `compose.ts`: `planUsageOf` for a subscription
   looped on a 2x history) and the state after a restart disagrees with the state learned live.
 - **Wiring** (compose.ts, ADR 0029): `EstimateModel.fromStore(store, { defaults })` with the
   registry; `new StaticPlanner(500_000, estimates)` prices every plan item through
-  `planEstimateUsdMicro(port, task)` before `cutPlanToBudget` cuts the plan to the work budget
+  `planEstimateUsdMicro(port, task)`, never above what is left of the task's own budget
+  (`withinTaskBudget`: the budget caps its runs, U-042; live walk 2 counted CHF 1.00 for a task
+  with a CHF 0.80 budget), before `cutPlanToBudget` cuts the plan to the work budget
   (spec E.3); `SessionRunner.onTaskFinished` feeds the model live (see Known issues: compose
   still calls `observe` with the plan item's figure; the intended call is
   `estimates.observeTask(task, { usdMicro: result.costUsdMicro, wallMs: durationMs, at:

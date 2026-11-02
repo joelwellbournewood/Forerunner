@@ -589,6 +589,16 @@ const FAKE_SESSION_CAP_USD_MICRO = 6_250_000;
 /** What is left of the fixture human's monthly cap (CHF 120 at the fake's rate of 0.8). */
 const FAKE_MONTH_LEFT_USD_MICRO = 150_000_000;
 
+/**
+ * A task's price as the daemon's planner gives it: its estimate, else its budget, else the
+ * planner's 500 000, never more than what is left of its own budget (`withinTaskBudget`).
+ */
+function fakePrice(t: TaskView): number {
+  const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
+  if (!(t.budget.usdMicro > 0)) return estimate;
+  return Math.min(estimate, Math.max(0, t.budget.usdMicro - t.actual.usdMicro));
+}
+
 function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
@@ -621,7 +631,7 @@ function fakeStartCheck(
       waiting.push({ taskId: t.id, title: t.title, waitsOn });
       continue;
     }
-    const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
+    const estimate = fakePrice(t);
     const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
     // U-079: a full-review task waits while the Docker sandbox is not ready.
     if (sandbox && !sandbox.ready && t.riskTier >= 2) sandboxTasks.push(named);
@@ -643,7 +653,7 @@ function fakeStartCheck(
       later.push({
         taskId: w.taskId,
         title: w.title,
-        estimate: money(t?.estimate.usdMicro || t?.budget.usdMicro || 500_000),
+        estimate: money(t ? fakePrice(t) : 500_000),
       });
       changed = true;
     }

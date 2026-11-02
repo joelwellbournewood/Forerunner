@@ -995,7 +995,7 @@ cycle, each 409 conflict with cause `validation` and a message naming the tasks.
 `GET /projects/:id/start-check?budgetUsdMicro=` (`session/start-check.ts`, `rt.startCheck`)
 answers what a session started now would plan: the ready count, `runnable`, `overBudget` and
 `waiting`, priced as the composed planner prices (`planEstimateUsdMicro` over the learned
-estimates) and cut as the runner cuts (`DEFAULT_RESERVE_SHARE`), with the project's session cap
+estimates, at most what is left of a task's own budget: `withinTaskBudget`) and cut as the runner cuts (`DEFAULT_RESERVE_SHARE`), with the project's session cap
 when no budget is given. Tests: `task-dependencies.test.ts` (the cut; a large task and two small
 ones; tasks waiting on a cancelled and a failed one; the routes' refusals with their messages;
 the start check), `packages/state/test/suite.ts` (`waitingTasks`, `checkDependencies`) and

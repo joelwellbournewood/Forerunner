@@ -386,7 +386,12 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
     worlds.push(w);
     for (let i = 0; i < 20; i++) await finishedTask(w, { estimate: 1_000_000, actual: 3_000_000 });
     const port: EstimatePort = await EstimateModel.fromStore(w.store, { defaults });
-    const ready = await finishedTask(w, { estimate: 1_000_000, actual: 0, status: "ready" });
+    const capped = await finishedTask(w, { estimate: 1_000_000, actual: 0, status: "ready" });
+    // A task's own budget (USD 2 here) caps its runs (U-042), so it is never planned above it
+    // (live walk 2, phase C: the Start dialog counted CHF 1.00 for a task with CHF 0.80).
+    expect(planEstimateUsdMicro(port, capped)).toBe(2_000_000);
+    // Without a budget of its own, the learned figure is what the planner gets.
+    const ready = await w.store.task.patch(capped.id, { budget_usd_micro: 0 });
     const learned = planEstimateUsdMicro(port, ready);
     expect(learned).toBeGreaterThan(2_000_000);
     const plan: SessionPlan = {

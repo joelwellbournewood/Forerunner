@@ -3779,3 +3779,60 @@ describe("a project name another project has (wave 1 handoff)", () => {
     await rt.close();
   }, 120_000);
 });
+
+describe("the UI client against the real daemon: work continues correctly (phase C, continuity)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-continuity-"));
+    const clock = new SimulatedClock("2026-11-01T08:00:00Z");
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "ok" }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("GET /projects/:id/start-check prices a task at most at what is left of its own budget (live walk 2, B3)", async () => {
+    const project = await client.createProject({ name: "Estimates", goal: "Priced right" });
+    // As New task sends it: a budget of USD 0.20, below what the planner would estimate.
+    await client.createTask(project.id, {
+      title: "About page",
+      outcome: "about.html",
+      acceptanceCriteria: ["about.html exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 200_000,
+      specialist: "coder",
+    });
+    const check = await client.startCheck(project.id, { budgetUsdMicro: 5_000_000 });
+    expect(check.runnable.map((t) => [t.title, t.estimate.usdMicro])).toEqual([
+      ["About page", 200_000],
+    ]);
+  });
+});

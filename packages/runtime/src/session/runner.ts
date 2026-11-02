@@ -23,7 +23,7 @@ import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
-import { type EstimatePort, planEstimateUsdMicro } from "../estimates/model.ts";
+import { type EstimatePort, planEstimateUsdMicro, withinTaskBudget } from "../estimates/model.ts";
 import {
   type CriticPort,
   DEFAULT_MEMORY_TOKEN_BUDGET,
@@ -3012,7 +3012,10 @@ export class StaticPlanner implements Planner {
       specialist: t.specialist ?? "coder",
       estimateUsdMicro: this.estimates
         ? planEstimateUsdMicro(this.estimates, t)
-        : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
+        : withinTaskBudget(
+            t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
+            t,
+          ),
     }));
     return {
       items,

@@ -128,17 +128,29 @@ function BlockerLines({ check }: { check: StartCheckView }) {
         </>
       ),
     });
+  // A task left out is larger than the whole work budget, or (live walk 2, phase C) only does
+  // not fit after the tasks that run first: "needs about CHF 1.20, more than this session's work
+  // budget of CHF 2.40" was untrue for the second kind. Each says which it is.
+  const first = check.runnable.reduce((s, r) => s + r.estimate.chfMicro, 0);
   for (const t of check.overBudget)
     lines.push({
       key: `b-${t.taskId}`,
       testId: "start-session-over-budget",
-      node: (
-        <>
-          "{t.title}" needs about <Money value={t.estimate} />, more than this session's work budget
-          of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
-          session a larger budget, or the task a smaller one.
-        </>
-      ),
+      node:
+        t.estimate.usdMicro > check.workBudget.usdMicro ? (
+          <>
+            "{t.title}" needs about <Money value={t.estimate} />, more than this session's work
+            budget of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews).
+            Give the session a larger budget, or the task a smaller one.
+          </>
+        ) : (
+          <>
+            "{t.title}" (about <Money value={t.estimate} />) may be left for next time: the tasks
+            that run first take about {formatChf(first)} of this session's work budget of{" "}
+            <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
+            session a larger budget to be sure it runs.
+          </>
+        ),
     });
   if (lines.length === 0) return null;
   return (
