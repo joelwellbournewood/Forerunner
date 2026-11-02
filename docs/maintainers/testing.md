@@ -1040,9 +1040,9 @@ undo's start part is a no-op, the kill switch stays open, no Resume is pressed);
 phone's quick chat answered on the PC; Saturday a medium card asked by chat and answered "yes"
 in the phone's inbox, applied by the PC's drain. The report (`formatPhase5`) is printed and
 written to `FORERUNNER_E2E_REPORT_DIR` as `phase5-week.txt`. Each morning J reads the session's
-one-line Update (design §3.8: "<Project>: did 1 task: …", or "<Project>: the session ended
-without finishing a task." when a card is its only news); when none is there the gate's message
-names the session's result and the Inbox's lines.
+one-line Update (design §3.8: "<Project>: did 1 task: …"; a session whose only news is a card
+posts none, the card is the news); when none is there the gate's message names the session's
+result and the Inbox's lines.
 
 Measured on 2026-10-20 (fake provider, Linux, about 50 s with the daemons' approvals poll
 every simulated minute; 49.8 s, 51.8 s and 51.6 s for the file in the three runs below): 12

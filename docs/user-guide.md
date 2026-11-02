@@ -332,6 +332,14 @@ tasks: ...), then how it ended and what is next ("Nothing left.", "Left for next
 "2 tasks wait on it.") with the cost in CHF. The Inbox gets one line per session naming the
 project; the full result is on the project.
 
+**You hear about each thing once.** A task that needs your answer, failed after its retries or
+waits for Docker has its card in the Inbox, and the card's notification is the one you get
+about it: the tries inside the session are not announced, and the session's own notification
+and its Inbox line say only what the cards do not (for example "did 2 tasks: …"). A session
+whose only news is a card sends nothing of its own. When you press **Stop now** yourself, no
+notification comes back to tell you; the session page says "Stopped by you". Stop all, Quit
+and a session that used up its budget are still announced.
+
 **Full-review tasks wait for Docker.** A task with a full review runs its tests and builds in
 the Docker sandbox, isolated from your computer, so the critic sees real results. While the
 sandbox is not ready (Docker not installed or not started, Docker Desktop on Windows

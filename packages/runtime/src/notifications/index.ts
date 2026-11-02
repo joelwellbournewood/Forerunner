@@ -9,6 +9,12 @@ export * from "./emitter.ts";
 export * from "./notifier.ts";
 export * from "./prefs.ts";
 export * as producers from "./producers.ts";
-export { bindProducers, type NotifierLike, type ProducerHooks } from "./producers.ts";
+export {
+  bindProducers,
+  type NotifierLike,
+  type ProducerHooks,
+  type SessionEndFacts,
+  sessionEndIsNews,
+} from "./producers.ts";
 export * from "./routes.ts";
 export * from "./types.ts";

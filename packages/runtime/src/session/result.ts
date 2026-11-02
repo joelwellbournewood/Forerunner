@@ -102,13 +102,38 @@ export function stopWords(stopReason: string): string {
   }
 }
 
-/** The result's lines (at most three). */
-export function sessionResultLines(f: ResultFacts): string[] {
-  const o = f.outcome;
+/**
+ * What an open Inbox card already says (design §4.3, §5.10: the person hears once): the tasks
+ * a card holds, whether the project's Docker card is open, and whether the plan waits on its
+ * card. Each card was notified when it was filed.
+ */
+export interface ToldByCards {
+  /** Ids of the tasks an open card is about (`holdsTask`). */
+  tasks?: ReadonlySet<string>;
+  /** The project's Docker card ("sandbox.not_ready") is open. */
+  docker?: boolean;
+  /** The plan waits for approval on its own card. */
+  plan?: boolean;
+}
+
+/**
+ * The result's lines (at most three). With `told`, what an open card already says is left out:
+ * the news the session-end notification and the Inbox Update carry (the session page and the
+ * Overview keep the whole result).
+ */
+export function sessionResultLines(f: ResultFacts, told?: ToldByCards): string[] {
+  const o: LastSessionOutcome = told
+    ? {
+        ...f.outcome,
+        needsYou: f.outcome.needsYou.filter((t) => !told.tasks?.has(t.id)),
+        failed: f.outcome.failed.filter((t) => !told.tasks?.has(t.id)),
+        waitingForDocker: told.docker ? [] : f.outcome.waitingForDocker,
+      }
+    : f.outcome;
   const lines: string[] = [];
   // 1. What needs the person.
   const asks: string[] = [];
-  if (o.stopReason === "plan_awaiting_approval")
+  if (o.stopReason === "plan_awaiting_approval" && !told?.plan)
     asks.push("The plan waits for your approval in the Inbox; nothing ran.");
   if (o.needsYou.length) asks.push(needsYouSentence(titlesOf(o.needsYou)));
   if (o.failed.length === 1 && o.failed[0]) {
@@ -132,7 +157,8 @@ export function sessionResultLines(f: ResultFacts): string[] {
     );
   if (f.mergedPrs)
     did.push(`Merged ${f.mergedPrs} ${plural(f.mergedPrs, "pull request", "pull requests")}.`);
-  if (!did.length && o.stopReason === "nothing_runnable" && !o.waitingForDocker.length) {
+  // A wait for Docker is the reason nothing ran, whether or not its card already said so.
+  if (!did.length && o.stopReason === "nothing_runnable" && !f.outcome.waitingForDocker.length) {
     const w = o.waiting[0];
     did.push(
       w
@@ -191,6 +217,15 @@ export function needsYouSentence(titles: readonly string[]): string {
 const NOT_NEWS =
   /^(?:(?:CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.)\s*)+$/;
 
+/**
+ * Whether a result line is news on its own (design §3.8, §5.10): more than money, how the
+ * session ended and what waits. The Update and the session-end notification go only for news.
+ */
+export function isNewsLine(line: string): boolean {
+  const l = line.trim();
+  return l.length > 0 && !NOT_NEWS.test(l);
+}
+
 /** The longest gist an Update carries before it is cut at a word. */
 const UPDATE_GIST_MAX = 160;
 
@@ -212,9 +247,12 @@ function cutGist(text: string, max: number): string {
  * The one-line Update the Inbox gets for a session (design §3.8): the project and the gist, or
  * null when there is no news. A decision that waits is the card's to say, not the Update's
  * (`needsYou`: the titles of the tasks the result says need the person, whose sentence is
- * removed as written, so a title with a dot or a quote in it is never cut), and a session that
- * did nothing but what a card or the person's own stop says posts nothing (wave 1:
- * "<Project>: CHF 0.00." after the person stopped its only task).
+ * removed as written, so a title with a dot or a quote in it is never cut; the runner passes
+ * the lines without what any open card says, `sessionResultLines(f, told)`), and a session
+ * that did nothing but what a card or the person's own stop says posts nothing: the card is
+ * the one place for its news (design §4.3, §5.10). Before: "<Project>: CHF 0.00." after the
+ * person stopped its only task (wave 1), and "<Project>: the session ended without finishing a
+ * task." right under the card it did not name (phase E, C-32).
  */
 export function sessionUpdateLine(
   projectName: string | null,
@@ -224,15 +262,8 @@ export function sessionUpdateLine(
   const card = needsYou.length ? needsYouSentence(needsYou) : null;
   const withoutCard = (l: string) =>
     (card ? l.split(card).join(" ") : l).replace(/\s{2,}/g, " ").trim();
-  const head = lines.map(withoutCard).find((l) => l.length > 0 && !NOT_NEWS.test(l));
-  if (!head) {
-    // A session whose only news is a card still has its one line (design §3.8), worded so it
-    // stays true once the card is answered.
-    const cardOnly = card !== null && lines.some((l) => l.includes(card));
-    if (!cardOnly) return null;
-    const line = "the session ended without finishing a task.";
-    return projectName ? `${projectName}: ${line}` : `The ${line.slice(4)}`;
-  }
+  const head = lines.map(withoutCard).find(isNewsLine);
+  if (!head) return null;
   const gist = cutGist(head, UPDATE_GIST_MAX);
   return projectName ? `${projectName}: ${lowerFirstIfDid(gist)}` : gist;
 }

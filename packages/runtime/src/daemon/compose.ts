@@ -155,7 +155,9 @@ import {
   notificationConfigFrom,
   type ProducerHooks,
   producers,
+  type SessionEndFacts,
   SignalChannel,
+  sessionEndIsNews,
   speakThrough,
   TelegramChannel,
   type TelegramFetch,
@@ -2652,10 +2654,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       `update ${r.reason}`,
     );
   });
-  // A critic escalation that filed no request of its own (a retry one rung up, a session
-  // review the critic hands to the human) is raised to normal so it does not wait for the digest.
-  // The bus event names no session; the review row the critic wrote does, so the delivery is
-  // logged on the session it came from (as the session-end notification is).
+  // A critic escalation that hands work to the person and filed no request of its own (the
+  // request's notification is the one otherwise) is raised to normal so it does not wait for
+  // the digest. A retry one rung up is an attempt inside the session, not news (design §4.3:
+  // "the person hears once, not once per attempt"; phase E #87: one failing task sent "the
+  // critic sent it back", then its card, then the session end). The bus event names no
+  // session; the review row the critic wrote does, so the delivery is logged on the session it
+  // came from (as the session-end notification is).
   const escalate = async (e: SessionBusEvent, p: Record<string, unknown>): Promise<void> => {
     const verdict = typeof p.verdict === "string" ? p.verdict : "";
     if (!isReviewVerdict(verdict)) return;
@@ -2685,6 +2690,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     const p = e.payload;
     if (p?.escalation !== true || p.humanRequestId) return;
     if (e.type !== "critic.verdict" && e.type !== "critic.session_review") return;
+    if (e.type === "critic.verdict" && p.decision !== "human" && p.verdict !== "human") return;
     notifyLater(escalate(e, p), `escalation ${String(p.reviewId ?? e.type)}`);
   });
   // Prompt injection seen and ignored (spec S.2, S.25; ADR 0047): every `injection_flagged`
@@ -2892,30 +2898,35 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         onEvent: (type, payload) =>
           events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
       });
-      // Session end (spec E.5 "notify human"): the outcome, the counts and the summary; a
+      // Session end (spec E.5 "notify human"): what the result says beyond the open cards; a
       // budget stop becomes the urgent `budget_stop` (the producer decides by `stopReason`).
-      notifyLater(
-        notifications.sessionEnded(human.id, {
-          sessionId: result.sessionId,
-          status: result.status,
-          stopReason: result.stopReason,
-          summary: result.summary,
-          spentUsdMicro: result.spentUsdMicro,
-          ...(result.spentChfMicro !== undefined ? { spentChfMicro: result.spentChfMicro } : {}),
-          completed: result.completed,
-          needsHuman: result.needsHuman,
-          failed: result.failed,
-          retried: result.retried,
-          inReview: result.inReview,
-          skipped: result.skipped,
-          projectId: req.projectId ?? null,
-          projectName: req.projectId
-            ? ((await store.project.get(req.projectId))?.name ?? null)
-            : null,
-          agentName: await agentNameOf(req.agentId),
-        }),
-        `session ${result.sessionId} ended`,
-      );
+      // One notification per outcome (design §4.3, §5.10, §5.11): a card was told when it was
+      // filed, so a session whose only news is its cards, or the person's own stop, sends none.
+      const ended: SessionEndFacts = {
+        sessionId: result.sessionId,
+        status: result.status,
+        stopReason: result.stopReason,
+        summary: result.summary,
+        news: result.news,
+        spentUsdMicro: result.spentUsdMicro,
+        ...(result.spentChfMicro !== undefined ? { spentChfMicro: result.spentChfMicro } : {}),
+        completed: result.completed,
+        needsHuman: result.needsHuman,
+        failed: result.failed,
+        retried: result.retried,
+        inReview: result.inReview,
+        skipped: result.skipped,
+        projectId: req.projectId ?? null,
+        projectName: req.projectId
+          ? ((await store.project.get(req.projectId))?.name ?? null)
+          : null,
+        agentName: await agentNameOf(req.agentId),
+      };
+      if (sessionEndIsNews(ended))
+        notifyLater(
+          notifications.sessionEnded(human.id, ended),
+          `session ${result.sessionId} ended`,
+        );
       // An answer that came while the session ran, for a call it did not re-make (a task it
       // had already moved past), is late now (ADR 0088): apply it at once rather than at the
       // next answer or poll. The result stands whatever the sync does.

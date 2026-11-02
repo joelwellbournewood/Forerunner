@@ -43,7 +43,7 @@ names a session appends a `notification` event to that session's log.
 | --- | --- | --- | --- |
 | `request_opened` | normal | `producers.requestOpened` for a non-blocking human request | `/inbox` |
 | `request_blocking` | **urgent** | `producers.requestOpened` when `blocking` is true | `/inbox` |
-| `session_ended` | normal | `producers.sessionEnded` from the session runner; the title is the project and the session result's first point ('Quote page: "Style the page" needs your decision', "Quote page: did 2 tasks: …"), the body the rest of the result and "Answer it in the Inbox." or "Open the session for the details." (design §5); a budget stop's title says the spend in CHF (`spentChfMicro`, the ledger's figure; the default rate without it; U-074), as does the calibration report's cost line | `/sessions/<id>` |
+| `session_ended` | normal | `producers.sessionEnded` from the session runner, only when `sessionEndIsNews` says the end is news (see "Hearing once" below); the title is the project and the first point of the result's news ("Quote page: did 2 tasks: …"), the body the rest, never the title's sentence again, and "Open the session for the details." (or "Answer it in the Inbox." when the words ask the person) (design §5); a budget stop's title says the spend in CHF (`spentChfMicro`, the ledger's figure; the default rate without it; U-074), as does the calibration report's cost line | `/sessions/<id>` |
 | `budget_stop` | **urgent** | `producers.sessionEnded` when `stopReason === "budget_exceeded"` (or `producers.budgetStop`) | `/sessions/<id>` |
 | `critic_verdict` | info (`escalate` and `human` verdicts: normal) | `producers.criticVerdict` | `/projects/<id>/reviews` or `/inbox` |
 | `injection_flagged` | **urgent** | `producers.injectionFlagged` with an `InjectionReport` | `/sessions/<id>` or `/inbox` |
@@ -226,15 +226,50 @@ a body of at most `NOTIFICATION_BODY_MAX` (140) that is one sentence and what to
 card's own title from `requestWords` ('Quote page: "Style the page" failed 4 times'; a card
 with one sentence has it as its title) and its body ('The designer said: "…" Answer it in the
 Inbox.'); compose reads the names when the request is inserted. `sessionEnded` takes the
-result's first point for the title ("Quote page: did 2 tasks: …", 'Quote page: "Style the page"
-needs your decision') and the rest for the body; `SessionEndFacts.projectName` carries the
-project. `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
+first sentence of the result's news for the title ("Quote page: did 2 tasks: …") and only the
+rest for the body (a sentence ends at ". " outside quotes, so a title with "index.html" in it is
+not cut): a body never repeats its title (phase E #89: a one-line result was said in the title
+and again in the body). `SessionEndFacts.news` is the runner's `SessionResult.news` (the result
+without what an open card says); without it the summary's lines are used, and
+`SessionEndFacts.projectName` carries the project. `budgetStop`'s body leaves out "The
+session's budget is used" and the money, which its title says. `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
 critic sent "X" back'), never "Critic: revise (grade 35)" or "Review <id> of task <id>".
 `killSwitch(…, by)` says whose stop it was ("Stop all: every session stopped", "Forerunner was
 closed: its work stopped") and what happens next, without the run, process and token counts.
 A long title shortens the quoted names in it first, at a word (`fit`). Before, a task that had
 failed four times read "An approval is needed (work is blocked)", a session "Alice's session
 completed: 0 done" with no project, and the body was the whole session paragraph.
+
+#### Hearing once (design §4.3, §5.10, §5.11)
+
+One notification per outcome. Before (phase E #87, #88), one task that failed after its retries
+sent three: "the critic sent X back" (a retry one rung up), the card's '"X" failed 4 times' and
+the session end's '"X" needs your decision'; and the person's own Stop now sent "Quote page:
+stopped by you" back to them. Now:
+
+- **A card speaks for its task.** Every card is told once, when it is filed
+  (`requestOpened`). The runner's `SessionResult.news` is the result computed with
+  `sessionResultLines(f, told)`: the tasks an open card holds, the project's Docker card and the
+  plan card are left out. The session end tells only that news, and `sessionEndIsNews(facts)`
+  is false when nothing in it is news (`isNewsLine`: more than money, how it ended and what
+  waits), so a session whose only news is its cards sends nothing of its own. The Inbox Update
+  is built from the same lines (`runtime.md`, "The session's Update").
+- **An attempt is not news.** compose tells a `critic.verdict` escalation only when it hands the
+  task to the person (`decision` or `verdict` "human") and no request was filed; a retry one
+  rung up is not told. The runner's `critic.session_review` event carries the
+  `humanRequestId` of the card the session review filed, so that card is the one notification
+  (before, the id was dropped and "a task needs your decision" came beside the card).
+- **The person's stop is not echoed.** `sessionEndIsNews` is false for the stop reasons `you`
+  (Stop now: the session page says "Stopped by you"; `KillSwitch.onStop` already skips
+  `by === "you"`), `stop_all` and `quit` (the kill switch's urgent notification is the one).
+  A budget stop is always told (`budget_stop`, urgent).
+
+Tests: `test/notifications-hear-once.test.ts` composes the daemon with the bench's
+role-playing stand-in and its failure injection and reads `GET /notifications/recent`,
+`/inbox` and the session log: a task that fails after its retries is one notification (its
+card), with no session end and no Update; a session that also did work tells the work, not the
+card, in a body that does not repeat its title; Stop now on a task in flight sends no
+session-end and no kill-switch notification, and the session log says the stop once.
 
 ### Configuration (`config.ts`)
 
@@ -282,11 +317,12 @@ All of it is in `packages/runtime/src/daemon/compose.ts` ("Notifications") and
 5. `bindProducers(notifier)` is exposed as `RuntimeApp.notifications` and called from the real
    sources: every `store.humanRequest.insert` for this human (`requestOpened`, blocking →
    urgent; the wrap also emits `inbox` on the bus), the runner's result in `startSession`
-   (`sessionEnded`, a budget stop → `budget_stop`), `KillSwitch.onStop` (`killSwitch`, with
-   the reason), the restarter's `restart` event (`updateApplied`), and `critic.verdict` /
-   `critic.session_review` bus events with `escalation: true` and no `humanRequestId`
-   (`criticVerdict` raised to normal; the session id comes from the review row `reviewId`
-   names, so the delivery is logged on that session), and the loop's `injection_flagged` run
+   (`sessionEnded` when `sessionEndIsNews`, a budget stop → `budget_stop`), `KillSwitch.onStop`
+   (`killSwitch`, with the reason; not for the person's own Stop now), the restarter's `restart`
+   event (`updateApplied`), and `critic.verdict` (only a decision that hands the task to the
+   person) / `critic.session_review` bus events with `escalation: true` and no
+   `humanRequestId` (`criticVerdict` raised to normal; the session id comes from the review row
+   `reviewId` names, so the delivery is logged on that session), and the loop's `injection_flagged` run
    event (`injectionFlagged`, with an `injection.flagged` audit row, ADR 0047).
    `peerMessage` and `emailCommandReceived` have no daemon source yet (Known issues).
 
@@ -374,8 +410,9 @@ Signal tests injected `run` and `which`, the voice tests the voice package's `Fa
   shell and the OS notifier still runs, `client=shell` declares one, `X-Forerunner-Client: ui`
   opts out, and `rt.shells.count()` returns to 0 when the streams close; a finished session →
   `session_ended` with the outcome, the `/sessions/<id>` link and a `notification` event in
-  the session log; a critic escalation on the bus → normal, one with a `humanRequestId` →
-  nothing extra, one whose review row names a session → logged on that session; the kill
+  the session log; a critic escalation on the bus that hands the task to the person → normal,
+  a retry one rung up → nothing, one with a `humanRequestId` → nothing extra, one whose review
+  row names a session → logged on that session; the kill
   switch → urgent with the reason; Telegram with a chat id and no token in the vault → "bot
   token not set" in the prefs view, skipped (not failed) in a delivery and in a test send, no
   request sent, configured again once the token is stored; an

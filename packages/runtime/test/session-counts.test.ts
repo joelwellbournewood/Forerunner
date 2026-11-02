@@ -80,7 +80,10 @@ describe("session counts (U-072)", () => {
       });
       // Design §5, "Notification": the project and the result's first point, not a count list.
       expect(note.title).toBe("Clamp: stopped after the task, as asked");
-      expect(note.body).toMatch(/^Stopped after the task, as asked\. .*Open the session/);
+      // The body says what the title does not (phase E #89: it repeated the title's sentence).
+      expect(note.body).toMatch(
+        /^"Add clamp" is ready to continue\. CHF \d+\.\d{2}\. Open the session for the details\.$/,
+      );
       // The session review does not read it as fine.
       expect(result.sessionReview?.grade).toBeLessThan(100);
       expect(result.sessionReview?.findings.map((f) => f.description)).toContain(

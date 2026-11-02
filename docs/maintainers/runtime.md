@@ -3231,10 +3231,14 @@ Producers are bound to the real sources in `compose.ts`: `store.humanRequest.ins
 once, so every request this human receives (the hooks' approvals, the extension registry, the
 mirror, the Cloudflare deployer, the critic, the updater) raises `requestOpened` (urgent when
 blocking) and `inbox` on the bus; `startSession` reports the runner's result through
-`sessionEnded` (a budget stop becomes `budget_stop`); `KillSwitch.onStop` passes the report and
+`sessionEnded` when `sessionEndIsNews` (its `news`: the result without what an open card says;
+not after the person's own stop; a budget stop becomes `budget_stop` and is always told;
+`notifications.md`, "Hearing once"); `KillSwitch.onStop` passes the report and
 the reason to `killSwitch`; the restarter's `restart` event raises `updateApplied` for an update
-or a rollback; `critic.verdict` and `critic.session_review` bus events with `escalation: true`
-and no `humanRequestId` raise `criticVerdict` at normal urgency, with the session id (and the
+or a rollback; `critic.verdict` events that hand the task to the person and
+`critic.session_review` bus events with `escalation: true`
+and no `humanRequestId` raise `criticVerdict` at normal urgency (a retry one rung up is not
+told: design §4.3), with the session id (and the
 task id, grade and summary when the payload lacks them) from the review row `reviewId` names,
 so the delivery is logged on that session like the session-end one. Failures to notify are
 logged (`notification not sent`) and never fail the producing operation. Routes, mounted at the
@@ -4604,7 +4608,11 @@ carry `title`, `task.finished` also `specialist`; `eventViews` fills both in fro
 (`cutAtWord`), and "could not do" for a run whose report says it could not do the work although
 its outcome is "done" ("The writer could not do "Style the page": "The work needs something I
 do not have here""). `session.ended` names the counts that happened only ("Session over: 2 done,
-1 needs you. CHF 0.06."; "Stopped: Stop all: nothing done. CHF 0.00."); a task sent back and then
+1 needs you. CHF 0.06."; "Stopped: Stop all: nothing done. CHF 0.00."); after a stop the
+person made, whose own `session.stopped` line came just before (the runner sets `stopSaid`), it
+says only what it adds ("Session over: 1 done. CHF 0.02.", "Session over. CHF 0.00."): before
+(phase E, C-42) 'Stopped by you during "X". It is ready again.' was followed by "Stopped by
+you: nothing done. CHF 0.00.". A task sent back and then
 accepted in the same session counts as done only (the runner's `sentBackNow`). The
 `notification` line names what was sent and never the channels ("telegram skipped (no Telegram
 chat id)": delivery problems are not the session's news). `describeEvent` passes every line
@@ -4626,13 +4634,18 @@ evidence listed the prompt hash and the run id.
 ### The session's Update (design §3.8, §5.10, §5.11)
 
 `sessionUpdateLine` (`session/result.ts`) gives the Inbox one line of news per session, or
-null: a decision waiting in the Inbox is the card's to say (its sentence is left out, so the
-Update neither repeats the card beside it nor goes stale once it is answered), and a line that
-is only money, how the session ended or what waits is no news. A session whose only news is a
-card still has its line, worded to stay true once the card is answered ("Quote page: the
-session ended without finishing a task."); one whose only task the person stopped posts no
-Update (before: "<Project>: CHF 0.00." and '"X" needs your decision (Inbox).' beside the
-card). The card's sentence is removed as written: the runner passes the titles of the tasks
+null: what an open card says is the card's to say, and a line that is only money, how the
+session ended or what waits is no news (`isNewsLine`). The runner builds the Update from
+`SessionResult.news`, the result computed with `sessionResultLines(f, told)` where `told`
+holds the tasks an open card is about (`holdsTask`), whether the project's Docker card is open
+and the plan card: a waiting decision, a failed task with its card and a Docker wait with its
+card are left out, so the Update neither repeats the card beside it nor goes stale once it is
+answered. The session-end notification tells the same news (`notifications.md`, "Hearing
+once"). A session whose only news is its cards posts no Update: before (phase E, C-32) it read
+"Quote page: the session ended without finishing a task." right under the card it did not
+name. One whose only task the person stopped posts none either (before: "<Project>: CHF
+0.00." and '"X" needs your decision (Inbox).' beside the card). The card's sentence is also
+removed as written from lines given directly: the runner passes the titles of the tasks
 that need the person and `needsYouSentence` builds the exact sentence the result has. A regex
 up to the previous dot cut it at the dot of a file name in the title, and the Update read
 'Quote page: "Style the page in styles.' (review of fix/system-text). A gist over 160
