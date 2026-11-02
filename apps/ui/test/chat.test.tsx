@@ -121,6 +121,7 @@ describe("Quick chat", () => {
     expect(confirmation.textContent?.match(/CHF \d/g)).toHaveLength(1);
     // Shown once: the reply's own text does not repeat the read-back (the walk saw it twice).
     expect(screen.getAllByText(/You want to start a session/)).toHaveLength(1);
+    const sessionsBefore = harness.daemon.state.sessions.length;
     await user.click(within(confirmation).getByTestId("confirm-yes"));
     await waitFor(() => expect(postedCalls(harness, "/chat/stream")).toHaveLength(2));
     const second = postedCalls(harness, "/chat/stream")[1]?.body as { text?: string } | undefined;
@@ -135,10 +136,12 @@ describe("Quick chat", () => {
     expect(agents[1]).not.toHaveTextContent(/session_start|session\.start:/);
     // The answered read-back says what became of it.
     expect(screen.getByTestId("readback-closed")).toHaveTextContent("(you said yes)");
-    // The turn links the session the start began (phase E), as the daemon's conversation does.
+    // The turn links the session the start began (phase E), as the daemon's conversation does
+    // (the fake's scripted session may have ended by now: its status is not the point).
+    expect(harness.daemon.state.sessions).toHaveLength(sessionsBefore + 1);
     const started = harness.daemon.state.sessions.at(-1);
     expect(started?.projectId).toBe("proj_atlas");
-    expect(started?.status).toBe("running");
+    expect(started?.trigger).toBe("manual");
     const link = await screen.findByTestId("chat-session-link");
     expect(link).toHaveTextContent("Open the session");
     expect(link).toHaveAttribute("href", `/sessions/${started?.id}`);
