@@ -121,3 +121,11 @@ promised more than the code kept:
   ("a cancel between a run's end and its review's start stops nothing") now holds only for the
   moment before that registration, which a person cannot see: the task still reads "Running"
   then.
+
+## Amendment (2026-11-02, phase E wave 7, area "budget-stop": ADR 0111)
+
+A stop at any budget is now a pause ([ADR 0111](0111-a-budget-stop-is-a-clean-pause.md), the
+owner's decision of 2026-11-02): a run that a budget stopped, or that heard the wrap-up and
+listed work left, is never reviewed and counts no try; its report is kept. Point 8 above still
+applies to a pause at the session's own budget (its paused runs count among the stops) until the
+'budget-resume' area files the same budget card at the first stop of any kind.
