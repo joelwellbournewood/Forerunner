@@ -1,6 +1,7 @@
 import { ForerunnerError } from "@forerunner/platform";
 import type {
   HumanRequestStatus,
+  MergeRecordState,
   QueueStatus,
   ReleaseStatus,
   RemoteCommandStatus,
@@ -87,6 +88,21 @@ export const SECRET_GRANT_TRANSITIONS: Graph<SecretGrantStatus> = {
   revoked: [],
 };
 
+/**
+ * ADR 0111: a reviewed pull request's merge. queued -> merging -> merged is the course; an
+ * attempt whose checks still run goes to waiting_checks (the watcher retries it), one the
+ * person must act on to left_to_you (with its sentence); a crash leaves merging, which the
+ * daemon's start resumes (merged on the host, or back to waiting). A new accept, or the
+ * person's Merge, queues it again. Merged is final.
+ */
+export const MERGE_RECORD_TRANSITIONS: Graph<MergeRecordState> = {
+  queued: ["merging", "waiting_checks", "left_to_you", "merged"],
+  merging: ["merged", "waiting_checks", "left_to_you", "queued"],
+  waiting_checks: ["merging", "left_to_you", "merged", "queued"],
+  left_to_you: ["queued", "merging", "waiting_checks", "merged"],
+  merged: [],
+};
+
 /** Every graph, keyed by "<table>.<column>", for the generated doc. */
 export const STATUS_GRAPHS: Readonly<Record<string, Graph<string>>> = {
   "task.status": TASK_TRANSITIONS,
@@ -96,6 +112,7 @@ export const STATUS_GRAPHS: Readonly<Record<string, Graph<string>>> = {
   "queue_item.status": QUEUE_ITEM_TRANSITIONS,
   "release.status": RELEASE_TRANSITIONS,
   "secret_grant.status": SECRET_GRANT_TRANSITIONS,
+  "merge_record.state": MERGE_RECORD_TRANSITIONS,
 };
 
 export function canTransition<S extends string>(graph: Graph<S>, from: S, to: S): boolean {

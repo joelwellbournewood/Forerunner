@@ -143,6 +143,14 @@ below 80% of the cap, `warn80` from 80%, `stopped` at 100%; a cap of 0 means no 
 - `expired` -> (terminal)
 - `withdrawn` -> (terminal)
 
+`merge_record.state`:
+
+- `queued` -> `merging`, `waiting_checks`, `left_to_you`, `merged`
+- `merging` -> `merged`, `waiting_checks`, `left_to_you`, `queued`
+- `waiting_checks` -> `merging`, `left_to_you`, `merged`, `queued`
+- `left_to_you` -> `queued`, `merging`, `waiting_checks`, `merged`
+- `merged` -> (terminal)
+
 `queue_item.status`:
 
 - `queued` -> `consumed`, `dismissed`
@@ -570,6 +578,36 @@ Indexes:
 - index on (`scope`, `owner_agent_id`)
 - index on (`project_id`)
 - index on (`status`)
+
+### merge_record
+
+The merge of one task's reviewed pull request (ADR 0111): the commit the critic accepted, pinned at the accept, and what became of the merge. Owned by the install's agent that made it; only that agent's daemon retries it.
+
+Carries the common columns (see Invariants).
+
+| Column | Type | Nullable | Default | References | Description |
+| --- | --- | --- | --- | --- | --- |
+| `task_id` | text | no |  | `task.id` | The task whose pull request it is (one record per task). |
+| `project_id` | text | yes |  | `project.id` | The task's project. |
+| `agent_id` | text | no |  | `agent.id` | The install's agent that owns the record and retries it. |
+| `pr_number` | int | no |  |  | The pull request's number on the host. |
+| `pr_url` | text | no |  |  | The pull request's web URL. |
+| `reviewed_head_sha` | text | no |  |  | The commit the critic accepted, or a later head that keeps exactly its change; every merge is pinned to it. |
+| `reviewed_base_sha` | text | yes |  |  | The base branch's head the task worktree had at the accept. |
+| `own_change_id` | text | yes |  |  | Patch id of the task's own change (git patch-id of its diff). |
+| `state` | text (`queued`, `merging`, `waiting_checks`, `merged`, `left_to_you`) | no | `"queued"` |  | Where the merge is. |
+| `approval` | text (`none`, `mode`, `person`) | no | `"none"` |  | What freed the merge: nothing yet, the project's setting, the person. |
+| `approved_by` | text | yes |  |  | The human id or the setting that approved it. |
+| `merge_sha` | text | yes |  |  | The merge commit on the base branch. |
+| `method` | text (`merge`, `squash`, `rebase`) | yes |  |  | How it was merged. |
+| `attempts` | int | no | `0` |  | Merge attempts so far. |
+| `sentence` | text | no | `""` |  | One sentence for the person: why it waits, or what happened. |
+| `last_outcome` | text | yes |  |  | The last attempt's outcome (merged, checks_pending, conflict, ...). |
+
+Indexes:
+
+- unique on (`task_id`)
+- index on (`agent_id`, `state`)
 
 ### message
 

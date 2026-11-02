@@ -2426,6 +2426,67 @@ export function defineStateSuite(target: SuiteTarget): void {
       });
     });
 
+    describe("merge records (ADR 0111)", () => {
+      const pinFor = (taskId: string, agentId: string, sha: string) =>
+        store.mergeRecord.pin({
+          task_id: taskId,
+          project_id: s.project.id,
+          agent_id: agentId,
+          pr_number: 4,
+          pr_url: "https://github.com/o/r/pull/4",
+          reviewed_head_sha: sha,
+          reviewed_base_sha: "b".repeat(40),
+          own_change_id: "c".repeat(40),
+        });
+
+      it("pins the reviewed commit once per task; a new accept moves an unmerged record and queues it, a merged one stays", async () => {
+        const t = await store.task.insert({ project_id: s.project.id, title: "Add the page" });
+        const first = await pinFor(t.id, s.alice.id, "a".repeat(40));
+        expect(first).toMatchObject({ state: "queued", approval: "none", attempts: 0 });
+        const left = await store.mergeRecord.move(first.id, "left_to_you", {
+          sentence: "#4 conflicts with main: merge it on GitHub.",
+          last_outcome: "conflict",
+        });
+        expect(left.sentence).toContain("conflicts");
+        const again = await pinFor(t.id, s.alice.id, "d".repeat(40));
+        expect(again).toMatchObject({
+          id: first.id,
+          state: "queued",
+          reviewed_head_sha: "d".repeat(40),
+          sentence: "",
+          last_outcome: null,
+        });
+        expect(await store.mergeRecord.count({ task_id: t.id })).toBe(1);
+        await store.mergeRecord.move(first.id, "merged", { merge_sha: "e".repeat(40) });
+        expect((await pinFor(t.id, s.alice.id, "f".repeat(40))).reviewed_head_sha).toBe(
+          "d".repeat(40),
+        );
+      });
+
+      it("claim takes a record once; the retry lists only the owning agent's waiting records", async () => {
+        const t1 = await store.task.insert({ project_id: s.project.id, title: "One" });
+        const t2 = await store.task.insert({ project_id: s.project.id, title: "Two" });
+        const mine = await pinFor(t1.id, s.alice.id, "a".repeat(40));
+        const theirs = await pinFor(t2.id, s.bob.id, "a".repeat(40));
+        const claimed = await store.mergeRecord.claim(mine);
+        expect(claimed).toMatchObject({ state: "merging", attempts: 1, version: mine.version + 1 });
+        expect(await store.mergeRecord.claim(mine)).toBeNull();
+        await store.mergeRecord.move(mine.id, "waiting_checks");
+        await store.mergeRecord.move(theirs.id, "waiting_checks");
+        expect(
+          (await store.mergeRecord.forAgent(s.alice.id, ["waiting_checks", "queued"])).map(
+            (r) => r.task_id,
+          ),
+        ).toEqual([t1.id]);
+        const merged = await store.mergeRecord.move(mine.id, "merged", {
+          merge_sha: "e".repeat(40),
+          method: "merge",
+        });
+        expect(merged).toMatchObject({ state: "merged", method: "merge" });
+        await expectCode(store.mergeRecord.move(mine.id, "waiting_checks"), "validation");
+      });
+    });
+
     describe("transactions", () => {
       it("rolls back everything written through the transactional store when the callback throws", async () => {
         const before = await store.task.count();
