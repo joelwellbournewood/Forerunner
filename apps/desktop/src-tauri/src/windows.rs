@@ -1,7 +1,8 @@
 //! The main window (the shared UI with the injection script), the splash shown while the
 //! daemon starts (served by the shell's own `frshell://` protocol), window-state persistence
 //! and deep-link navigation. Closing the main window hides it; the tray brings it back, and the
-//! first close says so in a notification (U-018, ADR 0094).
+//! first close says so in a notification (U-018, ADR 0094). Every window is built by
+//! `new_window`, with the same WebView2 arguments (`devtools.rs`).
 
 use std::time::{Duration, Instant};
 
@@ -10,6 +11,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::actions::shared;
 use crate::deeplink::{SPLASH_SCHEME, navigate_script, navigation_allowed, route_for_deep_link};
+use crate::devtools::WebviewArgs;
 use crate::inject::{Injection, app_origins, initialization_script};
 use crate::state::{OpenAction, defer_launch_during_quit, lock, open_action};
 use crate::window_state::{self, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH, Rect};
@@ -75,6 +77,25 @@ async fn wait_until_closed(app: &AppHandle, label: &str, budget: Duration) -> bo
     true
 }
 
+/// Every window of the app starts here, so each gets the same WebView2 arguments: WebView2
+/// refuses a second environment on one data folder with other options. They are wry's own
+/// default unless `FORERUNNER_WEBVIEW_DEVTOOLS_PORT` turned the DevTools port on
+/// (`devtools::resolve`, read once at start into the managed `WebviewArgs`).
+fn new_window<'a>(
+    app: &'a AppHandle,
+    label: &str,
+    url: WebviewUrl,
+) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
+    let builder = WebviewWindowBuilder::new(app, label, url);
+    let args = app
+        .try_state::<WebviewArgs>()
+        .and_then(|s| s.additional.clone());
+    match args {
+        Some(args) => builder.additional_browser_args(&args),
+        None => builder,
+    }
+}
+
 fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
     let origins = app_origins(app.config().build.dev_url.as_ref(), tauri::is_dev());
     let script = initialization_script(injection, &origins);
@@ -85,7 +106,7 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
     let media_origins = origins.clone();
     let page = crate::media::CurrentPage::default();
     let loaded = page.clone();
-    let window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::default())
+    let window = new_window(app, MAIN, WebviewUrl::default())
         .title("Forerunner")
         .inner_size(f64::from(DEFAULT_WIDTH), f64::from(DEFAULT_HEIGHT))
         .min_inner_size(f64::from(MIN_WIDTH), f64::from(MIN_HEIGHT))
@@ -391,7 +412,7 @@ pub fn show_splash(app: &AppHandle, message: &str) {
             return;
         }
     };
-    match WebviewWindowBuilder::new(app, SPLASH, WebviewUrl::CustomProtocol(url))
+    match new_window(app, SPLASH, WebviewUrl::CustomProtocol(url))
         .title("Forerunner")
         .inner_size(480.0, 240.0)
         .resizable(false)

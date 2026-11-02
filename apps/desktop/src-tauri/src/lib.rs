@@ -10,6 +10,7 @@
 mod actions;
 mod daemon;
 mod deeplink;
+mod devtools;
 mod dirs;
 mod env;
 mod events;
@@ -157,6 +158,12 @@ pub fn run() {
                 shell_version,
             )));
             app.manage(state);
+            // Before any window: every window gets these WebView2 arguments (`devtools.rs`).
+            let (webview_args, said) = devtools::resolve(&ProcessEnv, cfg!(windows));
+            if let Some(line) = said {
+                log::warn!("{line}");
+            }
+            app.manage(webview_args);
 
             let handle = app.handle().clone();
             tray::install(&handle)?;
