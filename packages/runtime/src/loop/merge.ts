@@ -639,6 +639,8 @@ export interface ReviewedPrMergeDeps extends MergePrToolDeps {
   allowedDomains?: readonly string[];
   /** The gate (`mayMerge` by default; tests and 'merge-in-app' pass their own). */
   gate?: typeof mayMerge;
+  /** True while the kill switch holds this agent's work (Stop all): the retry pass waits. */
+  stopped?: (agentId: string) => boolean;
 }
 
 /** What a merge in a session brings: its token, budget and stop. */
@@ -759,6 +761,8 @@ export class ReviewedPrMerge implements MergePort {
   async retryWaiting(): Promise<MergeOutcome[]> {
     const out: MergeOutcome[] = [];
     for (const agentId of this.deps.agentIds ?? []) {
+      // Stop all holds the merges too: nothing is tried (or audited) until work may run again.
+      if (this.deps.stopped?.(agentId)) continue;
       const waiting = await this.deps.store.mergeRecord.forAgent(agentId, [
         "waiting_checks",
         "queued",
@@ -917,17 +921,16 @@ export class ReviewedPrMerge implements MergePort {
       }
       return await this.finish(record, task, session, owner, gate, a);
     } catch (e) {
-      // A stop is the session's, never the level's refusal: the record waits as it was, and the
-      // retry merges it once work may run again.
-      if (e instanceof ForerunnerError && e.code === "killed") {
-        const now = await store.mergeRecord.get(record.id);
-        if (now?.state === "merging")
-          await store.mergeRecord
-            .move(record.id, "waiting_checks", {
-              sentence: `${prName(record.pr_number)} merges when its checks pass.`,
-            })
-            .catch(() => undefined);
-      }
+      // A stop is the session's, never the level's refusal; a stop or anything unexpected leaves
+      // the record waiting as it was (never `merging` for good), and the retry tries it again
+      // once work may run.
+      const now = await store.mergeRecord.get(record.id).catch(() => undefined);
+      if (now?.state === "merging")
+        await store.mergeRecord
+          .move(record.id, "waiting_checks", {
+            sentence: `${prName(record.pr_number)} merges when its checks pass.`,
+          })
+          .catch(() => undefined);
       throw e;
     } finally {
       if (!session) tokens.revoke(token.claims.id);

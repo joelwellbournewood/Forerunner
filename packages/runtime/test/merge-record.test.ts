@@ -155,6 +155,7 @@ async function recordWorld(opts: { level: 2 | 3; checksWaitMs?: number }): Promi
     identity,
     agentIds: [w.alice],
     allowedDomains: ["127.0.0.1"],
+    stopped: (agentId) => w.kill.isFrozen({ agentId }),
     checksWaitMs: opts.checksWaitMs ?? 0,
   });
   const m: RecordWorld = {
@@ -363,6 +364,25 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
       state: "waiting_checks",
       attempts: 0,
     });
+  });
+
+  it("(c) Stop all holds the retry: nothing is tried or audited while it holds, and the retry merges once work may run again", async () => {
+    const m = await recordWorld({ level: 3 });
+    const t = await m.runTask("Add feature", {
+      afterPr: (pr) => m.check(pr.headSha, "ci/test", "in_progress"),
+    });
+    const pr = await m.pr(t.id);
+    await m.check(pr.head.sha, "ci/test", "completed", "success");
+    await m.w.kill.stop("all", "Stop all");
+    const rowsBefore = mergeRows(m.audit).length;
+    expect(await m.merge.retryWaiting()).toEqual([]);
+    expect(mergeRows(m.audit)).toHaveLength(rowsBefore);
+    expect(await m.record(t.id)).toMatchObject({ state: "waiting_checks", attempts: 1 });
+    expect((await m.pr(t.id)).merged).toBe(false);
+    m.w.kill.resume();
+    await m.merge.retryWaiting();
+    expect(await m.pr(t.id)).toMatchObject({ merged: true });
+    expect((await m.record(t.id)).state).toBe("merged");
   });
 
   it("(d) the gate reads the level at every call: a record made at level 3, the level then lowered to 2, is not merged by the retry", async () => {

@@ -2253,6 +2253,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     identity: gitIdentity,
     agentIds: [agent.id],
     allowedDomains: [hostOf(config?.githubApiBase ?? "https://api.github.com"), "github.com"],
+    // Stop all holds the retries too.
+    stopped: (agentId) => kill.isFrozen({ agentId }),
     ...(env.FORERUNNER_MERGE_CHECKS_WAIT_MS?.trim() &&
     Number.isFinite(mergeWaitEnv) &&
     mergeWaitEnv >= 0

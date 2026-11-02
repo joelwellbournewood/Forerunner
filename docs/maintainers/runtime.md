@@ -2594,7 +2594,10 @@ store never merge one PR twice), and one `merge_pr` call goes through the hooks 
 worktree only, budget 0); outside one on its own narrow token (`tokens.issue`: `merge_pr` only,
 the worktree only, the PR's host only when it is the git host's (`allowedDomains`), no secret,
 budget 0, ten minutes, the project's level as it is now, `sessionId` `merge-<record id>`),
-revoked after the call. The hooks' `beforeToolCall` and its audit row are unchanged. A record
+revoked after the call. The hooks' `beforeToolCall` and its audit row are unchanged. While Stop all
+holds the agent (`stopped`, the daemon's `kill.isFrozen`) the retry pass tries nothing and writes
+no row; a stop or an unexpected error during an attempt puts the record back to
+`waiting_checks`, never `merging` for good. A record
 whose PR head moved to a commit that keeps exactly the reviewed change (`ownChangeId` of the new
 head equals the record's: the base merged in by a crashed earlier attempt or GitHub's Update
 branch) moves to that head and is tried again; any other moved head is `head_moved`.
