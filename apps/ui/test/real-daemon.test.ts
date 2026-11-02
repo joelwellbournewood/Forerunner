@@ -4926,3 +4926,117 @@ describe("the UI client against the real daemon: research on an API key reads th
     }
   }, 120_000);
 });
+
+describe("the UI client against the real daemon: a task that waits for unmerged work builds on it (C-49, ADR 0106)", () => {
+  // Live (2026-11-02, forerunner-sandbox): the tester of a two-task plan branched from main
+  // while the coder's pull request was still open, found nothing to check and failed. Here a
+  // session on the stand-in model runs both tasks of a repository project on a local host.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let criticCalls: ModelRequest[] = [];
+  let bare = "";
+  const host = new MemoryGitHost("alice");
+  const repo = { owner: "o", name: "chain" };
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-chain-"));
+    bare = join(home, "chain.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(home, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(home, "seed", "README.md"), "# chain\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ ...repo, private: true, cloneUrl: bare });
+    ({ rt, client, criticCalls } = await composeWithRolePlayer(
+      {},
+      { gitHost: host, tryIt: false },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("B starts from A's open pull request; B's PR targets main and names A's; B's files and review are its own", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({
+      name: "Chain",
+      goal: "Notes and their summary",
+      repos: ["o/chain"],
+    });
+    const a = await client.createTask(project.id, {
+      title: "Write the notes in notes.md",
+      outcome: "notes.md holds the meeting notes",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const b = await client.createTask(project.id, {
+      title: "Write the summary in summary.md",
+      outcome: "summary.md sums up the meeting in three lines",
+      riskTier: 1,
+      specialist: "coder",
+      dependsOn: [a.id],
+    });
+    const statuses = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, await statuses()).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      statuses,
+      60_000,
+    );
+    expect(await statuses()).toBe(
+      "Write the notes in notes.md=done, Write the summary in summary.md=done",
+    );
+    const taskA = await rt.store.task.mustGet(a.id);
+    const taskB = await rt.store.task.mustGet(b.id);
+    // B's branch holds A's file, which is not on main yet (level 2 merges nothing).
+    const onBranch = await run([
+      "git",
+      "--git-dir",
+      bare,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      taskB.branch ?? "",
+    ]);
+    expect(onBranch.stdout.split(/\r?\n/)).toEqual(
+      expect.arrayContaining(["notes.md", "summary.md"]),
+    );
+    const onMain = await run(["git", "--git-dir", bare, "ls-tree", "-r", "--name-only", "main"]);
+    expect(onMain.stdout).not.toContain("notes.md");
+    // B's pull request targets main and says it carries A's unmerged work.
+    const open = await host.listPullRequests(repo, { state: "open" });
+    const prA = open.find((p) => p.head.ref === taskA.branch);
+    const prB = open.find((p) => p.head.ref === taskB.branch);
+    expect(prB?.base.ref).toBe("main");
+    expect(prB?.body).toContain(
+      `Builds on #${prA?.number} ("Write the notes in notes.md"), not merged yet`,
+    );
+    // The Overview lists both as waiting for the person.
+    const waiting = await client.projectPullRequests(project.id);
+    expect(waiting.waiting.filter((w) => w.kind === "task").map((w) => w.number)).toEqual([
+      prA?.number,
+      prB?.number,
+    ]);
+    // The drawer's files for B are B's alone, and so is the diff the critic reviewed.
+    const drawer = await client.task(b.id);
+    expect(drawer.runs.filter((r) => r.kind === "work").flatMap((r) => r.files)).toEqual([
+      "summary.md",
+    ]);
+    const reviewOfB = criticCalls
+      .map((c) => JSON.stringify(c.messages))
+      .filter((m) => m.includes("Write the summary in summary.md"));
+    expect(reviewOfB.length).toBeGreaterThan(0);
+    for (const m of reviewOfB) {
+      expect(m).toContain("diff --git a/summary.md");
+      expect(m).not.toContain("diff --git a/notes.md");
+    }
+  }, 120_000);
+});

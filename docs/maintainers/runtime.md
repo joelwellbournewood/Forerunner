@@ -2006,7 +2006,10 @@ fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/lo
 returns `done` or `in_review` for any task (tier 0 included, ADR 0104), the runner moves it to
 `in_review` and calls `reviewTask` with the task, the session token and budget, the plan item
 and the result. The loop assembles the evidence (the diff from the task's worktree through
-`GitDiffPort`, or the executor's `changedFiles`; the project's checks; the standard-doc drift at
+`GitDiffPort`: the branch against `origin/HEAD` from where they part, or, for a task that builds
+on unmerged work, against `DEPS_BASE_REF` (C-49, ADR 0106: the default branch with its
+dependencies' branches merged in), so the dependencies' files are never reviewed as the task's
+(`test/dependent-branches.test.ts`); or the executor's `changedFiles`; the project's checks; the standard-doc drift at
 tier 2+ as a non-required check, `docs/status.md` left out when `statusDocManaged` says the PM
 writes it at session end (G.5); the final report as claims and its "Questions for the person:"
 list; the attempt and the specialist as artifacts), runs `CriticService.review` at the review

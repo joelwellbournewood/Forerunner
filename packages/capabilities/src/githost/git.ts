@@ -489,8 +489,12 @@ export class GitOps {
     };
   }
 
-  async mergeFrom(ref: string): Promise<RebaseResult> {
-    const r = await this.git(["merge", "--no-edit", ref]);
+  /**
+   * Merge `ref` into the current branch (a fast-forward when it can be; `message` names a merge
+   * commit); on conflicts, abort and report the files.
+   */
+  async mergeFrom(ref: string, message?: string): Promise<RebaseResult> {
+    const r = await this.git(["merge", "--no-edit", ...(message ? ["-m", message] : []), ref]);
     if (r.code === 0) return { ok: true, conflicts: [], detail: r.stdout.trim() };
     const conflicts = (await this.git(["diff", "--name-only", "--diff-filter=U"])).stdout
       .split(/\r?\n/)
@@ -541,6 +545,32 @@ export class GitOps {
     // Any other exit is git failing (an unknown ref): reported, never read as "not an ancestor".
     this.must(r, `merge-base --is-ancestor ${ancestor} ${of}`);
     return false;
+  }
+
+  /** Point `ref` (`refs/...`) at `rev`; null removes it (nothing when it does not exist). */
+  async setRef(ref: string, rev: string | null): Promise<void> {
+    if (rev !== null) {
+      this.must(await this.git(["update-ref", ref, rev]), `update-ref ${ref}`);
+      return;
+    }
+    if (await this.hasRef(ref))
+      this.must(await this.git(["update-ref", "-d", ref]), "update-ref -d");
+  }
+
+  /** Whether `base..head` holds a merge commit (a branch that brought other work in by merging). */
+  async hasMergesSince(base: string, head = "HEAD"): Promise<boolean> {
+    const r = this.must(
+      await this.git(["rev-list", "--merges", "--max-count=1", `${base}..${head}`]),
+      "rev-list --merges",
+    );
+    return r.stdout.trim() !== "";
+  }
+
+  /** The files whose content differs between the commits `from` and `to` (tree to tree). */
+  async filesBetween(from: string, to = "HEAD"): Promise<string[]> {
+    return this.must(await this.git(["diff", "--name-only", from, to]), "diff")
+      .stdout.split(/\r?\n/)
+      .filter(Boolean);
   }
 
   /** The files `head` (default HEAD) changes since it left `base`. */

@@ -234,6 +234,14 @@ that cannot be done, the task says so ("… is empty and Forerunner could not ma
 …") and what to do. The project's status file (`docs/status.md`) goes in a pull request of its
 own, "docs: project status", which each session adds to; it never goes into a task's reviewed
 pull request. Docs that wait in a pull request say so on the Docs tab, with the link.
+A task that waits for another whose pull request you have not merged yet starts from that work:
+its branch includes it, so a check finds the page it checks. Its own pull request still goes to
+the default branch and says so in its first lines ("Builds on #4 ("Add index.html"), not merged
+yet: this pull request includes its changes, so merging it merges them too. Merge in any
+order."). The critic reviews only what the task itself changed, and its files in the task
+drawer are its own. If the work it builds on conflicts (two pull requests change the same
+lines), it does not start: its card says which pull requests and files, and you merge them on
+GitHub, resolving the conflict, then press **Try again**.
 
 **A project without a repository** works in its own folder on this computer (where its docs
 are): the agents read and write there, and the critic reviews what each task changed. At the
