@@ -26,6 +26,8 @@ import {
   parseHandoffs,
   parseShellDevtools,
   parseSwitches,
+  powerShellReport,
+  powerShellWords,
   REPO,
   runCaptured,
   sameFolder,
@@ -38,6 +40,7 @@ import {
   viaWords,
   WEBVIEW_DIAG_PS,
   WEBVIEW2_DISABLED_FEATURES,
+  WRY_AUTOPLAY_POLICY,
   windowEnv,
   // @ts-expect-error plain JS module
 } from "./desktop-window-check.mjs";
@@ -137,7 +140,7 @@ describe("the installed app's environment", () => {
       FORERUNNER_WEBVIEW_DEVTOOLS_PORT: "9444",
       // ... and WebView2's variable on the next, so the port that answers says which worked.
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
-        "--remote-debugging-port=9445 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --enable-logging",
+        "--remote-debugging-port=9445 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --autoplay-policy=no-user-gesture-required --enable-logging",
     });
     // wry's own list (the variable may replace the app's arguments) plus occlusion tracking,
     // which could stop painting the window once the system browser covers it.
@@ -147,6 +150,9 @@ describe("the installed app's environment", () => {
       "msSmartScreenProtection",
       "CalculateNativeWinOcclusion",
     ]);
+    // ... and the rest of wry's default, so a spoken alert plays without a click as it does in
+    // the shipped app, whichever way's arguments the window got.
+    expect(WRY_AUTOPLAY_POLICY).toBe("--autoplay-policy=no-user-gesture-required");
   });
 
   it("uses the variable and the provider name the shell forwards (supervisor.rs)", () => {
@@ -155,9 +161,10 @@ describe("the installed app's environment", () => {
     expect(rust).toMatch(/pub const DAEMON_PROVIDERS: \[&str; \d\] = \[[^\]]*"bench"/);
   });
 
-  it("uses the shell's DevTools variable, and the shell turns off the same features (devtools.rs)", () => {
+  it("uses the shell's DevTools variable, and the shell repeats the same wry default (devtools.rs)", () => {
     const rust = shellSource("devtools.rs");
     expect(rust).toContain(`pub const DEVTOOLS_PORT_ENV: &str = "${DEVTOOLS_PORT_ENV}";`);
+    expect(rust).toContain(`pub const WRY_AUTOPLAY_POLICY: &str = "${WRY_AUTOPLAY_POLICY}";`);
     const list = (name: string) =>
       [
         ...(
@@ -185,11 +192,11 @@ describe("the installed app's environment", () => {
     expect(rust).toContain('pub const DEVTOOLS_ON: &str = "WebView2 DevTools on port";');
     const log = [
       "[2026-11-02][10:13:00][forerunner_desktop_lib][INFO] Forerunner desktop shell 1.0.4 on windows",
-      "[2026-11-02][10:13:00][forerunner_desktop_lib][WARN] WebView2 DevTools on port 9333 for every window (FORERUNNER_WEBVIEW_DEVTOOLS_PORT, development and CI only): --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --remote-debugging-port=9333",
+      "[2026-11-02][10:13:00][forerunner_desktop_lib][WARN] WebView2 DevTools on port 9333 for every window (FORERUNNER_WEBVIEW_DEVTOOLS_PORT, development and CI only): --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --autoplay-policy=no-user-gesture-required --remote-debugging-port=9333",
     ].join("\r\n");
     expect(parseShellDevtools(log)).toEqual({
       port: 9333,
-      args: "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --remote-debugging-port=9333",
+      args: "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --autoplay-policy=no-user-gesture-required --remote-debugging-port=9333",
     });
     expect(
       parseShellDevtools(
@@ -267,9 +274,9 @@ const UDD = String.raw`C:\Users\runneradmin\AppData\Local\app.forerunner.desktop
 const browserLine = (args: string) =>
   `${EXE} --embedded-browser-webview=1 --webview-exe-name=Forerunner.exe --webview-exe-version=1.0.4 --user-data-dir="${UDD}" --noerrdialogs --embedded-browser-webview-dpi-awareness=2 ${args} --lang=en-US --mojo-named-platform-channel-pipe=3272.8840.1517262455`;
 const APP_ARGS =
-  "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --remote-debugging-port=9333";
+  "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --autoplay-policy=no-user-gesture-required --remote-debugging-port=9333";
 const ENV_ARGS =
-  "--remote-debugging-port=9334 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --enable-logging";
+  "--remote-debugging-port=9334 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --autoplay-policy=no-user-gesture-required --enable-logging";
 const PORTS = { shell: 9333, env: 9334 };
 const CTX = {
   ports: PORTS,
@@ -371,21 +378,24 @@ describe("what WebView2 did with the DevTools switch (Windows diagnostics)", () 
 
   it("the switch never reached msedgewebview2.exe", () => {
     const d = diagnoseWebview(
-      raw("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"),
+      raw(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required",
+      ),
       CTX,
     );
     expect(d.processCount).toBe(2);
     expect(d.browsers).toHaveLength(1);
     expect(d.ours.map((b: { pid: number }) => b.pid)).toEqual([5100]);
     expect(d.ours[0].userDataDir).toBe(UDD);
-    // wry's default only: both ways' arguments were dropped whole.
+    // wry's default only (its autoplay policy too, which both ways repeat and so cannot tell
+    // them apart): both ways' arguments were dropped whole.
     expect(devtoolsVerdict(d)).toBe(
       "the switch never reached msedgewebview2.exe: neither FORERUNNER_WEBVIEW_DEVTOOLS_PORT (the shell's) nor WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is on its command line; nor did the rest of either way's arguments (--enable-logging, CalculateNativeWinOcclusion), so they were dropped whole",
     );
     // The rest arrived without the port: the port switch alone was removed.
     const stripped = diagnoseWebview(
       raw(
-        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --enable-logging",
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --autoplay-policy=no-user-gesture-required --enable-logging",
       ),
       CTX,
     );
@@ -627,14 +637,18 @@ describe("the Windows diagnostics' PowerShell", () => {
       await collectWebviewDiagnostics(file, [9333, Number.NaN], { platform: "win32", run: never }),
     ).toMatchObject({ ok: false, why: "not ports: 9333,NaN" });
     expect(calls).toEqual([]);
-    const slow = async () => ({ status: null, stdout: "", stderr: "", timedOut: true });
+    const slow = async () => ({ status: null, stdout: "half", stderr: "", timedOut: true });
     expect(
       await collectWebviewDiagnostics(file, [9333, 9334], {
         platform: "win32",
         run: slow,
         timeoutMs: 5_000,
       }),
-    ).toEqual({ ok: false, why: "PowerShell did not finish within 5 s" });
+    ).toEqual({
+      ok: false,
+      why: "PowerShell did not finish within 5 s",
+      output: { status: null, timedOut: true, stdout: "half", stderr: "" },
+    });
     const refused = async () => ({
       status: 1,
       stdout: "",
@@ -646,7 +660,18 @@ describe("the Windows diagnostics' PowerShell", () => {
     ).toEqual({
       ok: false,
       why: "PowerShell exit 1: Get-CimInstance : Access denied",
+      output: {
+        status: 1,
+        timedOut: false,
+        stdout: "",
+        stderr: "Get-CimInstance : Access denied\r\n",
+      },
     });
+    // Nothing on stderr: what it wrote on stdout.
+    const quiet = async () => ({ status: 1, stdout: "a word\r\n", stderr: "", timedOut: false });
+    expect(
+      (await collectWebviewDiagnostics(file, [9333, 9334], { platform: "win32", run: quiet })).why,
+    ).toBe("PowerShell exit 1: a word");
     const garbled = async (_c: string, _a: string[], o: { env: Record<string, string> }) => {
       writeFileSync(o.env.FR_DIAG_OUT as string, "not json");
       return { status: 0, stdout: "", stderr: "", timedOut: false };
@@ -659,6 +684,68 @@ describe("the Windows diagnostics' PowerShell", () => {
         })
       ).why,
     ).toMatch(/^its output is not JSON/);
+  });
+
+  /**
+   * Windows PowerShell 5.1 started with -EncodedCommand and its output redirected writes its
+   * error stream as CLIXML: the header, a progress record, then one <S S="Error"> per line, with
+   * line breaks and other characters escaped. Cut at a few hundred characters, that is mostly
+   * header.
+   */
+  const CLIXML = [
+    "#< CLIXML",
+    '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj>' +
+      '<S S="Error">At line:4 char:12_x000D__x000A_</S>' +
+      '<S S="Error">+ $ports = @($env:FR_DEVTOOLS_PORTS -split &apos;,&apos; | Where-Object { $_ -match ..._x000D__x000A_</S>' +
+      '<S S="Error">+            ~_x000D__x000A_</S>' +
+      '<S S="Error">Missing closing &apos;)&apos; in expression &lt;here&gt; &amp; _x005F_x0041_ _x00FC_._x000D__x000A_</S>' +
+      '<S S="Error">    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException_x000D__x000A_</S>' +
+      '<S S="Error">    + FullyQualifiedErrorId : MissingEndParenthesisInExpression_x000D__x000A_</S>' +
+      '<S S="Error"> _x000D__x000A_</S></Objs>',
+  ].join("\r\n");
+
+  it("reads Windows PowerShell's errors written as CLIXML, and keeps all it said for the artifact", async () => {
+    const words = powerShellWords(CLIXML);
+    expect(words).toContain(
+      "At line:4 char:12\r\n+ $ports = @($env:FR_DEVTOOLS_PORTS -split ',' | Where-Object",
+    );
+    // Entities and _xHHHH_ escapes undone, an escaped underscore kept as written.
+    expect(words).toContain("Missing closing ')' in expression <here> & _x0041_ ü.\r\n");
+    expect(words).toContain("FullyQualifiedErrorId : MissingEndParenthesisInExpression");
+    for (const noise of ["CLIXML", "<Objs", "<S ", "Preparing modules", "_x000D_"])
+      expect(words).not.toContain(noise);
+    // Plain text, and CLIXML without an error record, stay as they came.
+    expect(powerShellWords("Get-CimInstance : Access denied\r\n")).toBe(
+      "Get-CimInstance : Access denied\r\n",
+    );
+    expect(powerShellWords("")).toBe("");
+    const progressOnly = `#< CLIXML\r\n<Objs Version="1.1.0.1"><Obj S="progress" RefId="0"></Obj></Objs>`;
+    expect(powerShellWords(progressOnly)).toBe(progressOnly);
+    // Text before the header is kept in front of the errors.
+    expect(powerShellWords(`warning first\r\n${CLIXML}`)).toMatch(/^warning first\r\nAt line:4/);
+
+    const failed = async () => ({ status: 1, stdout: "", stderr: CLIXML, timedOut: false });
+    const r = await collectWebviewDiagnostics(join(tempDir(), "x.json"), [9333, 9334], {
+      platform: "win32",
+      run: failed,
+    });
+    expect(r.ok).toBe(false);
+    // The error itself, not the XML header, and long enough to hold the parser's reason.
+    expect(r.why).toMatch(/^PowerShell exit 1: At line:4 char:12 \+ \$ports = /);
+    expect(r.why).toContain("Missing closing ')' in expression");
+    expect(r.why).toContain("MissingEndParenthesisInExpression");
+    expect(r.why).not.toContain("CLIXML");
+    // Everything it wrote, as it came, for devtools-<label>.ps.txt in the artifact.
+    expect(r.output).toEqual({ status: 1, timedOut: false, stdout: "", stderr: CLIXML });
+    const text = powerShellReport(r.output);
+    expect(text).toContain("exit: 1\n");
+    expect(text).toContain("timed out: no\n");
+    expect(text).toContain("--- stdout ---\n(nothing)\n");
+    expect(text).toContain(`--- stderr ---\n${CLIXML}\n`);
+    expect(text).toContain("--- stderr, the errors as text ---\nAt line:4 char:12");
+    expect(powerShellReport({ status: null, timedOut: true, stdout: "half", stderr: "" })).toBe(
+      "exit: none\ntimed out: yes\n--- stdout ---\nhalf\n--- stderr ---\n(nothing)\n",
+    );
   });
 
   it("runs a program with an argv array and gives up at its time limit", async () => {
@@ -872,6 +959,16 @@ describe("the screen where the journey stopped (Windows runner)", () => {
     const refused = () => ({ status: 1, stdout: "", stderr: "Add-Type : no desktop\r\n" });
     expect(desktopScreenshot(join(tempDir(), "b.png"), { platform: "win32", run: refused })).toBe(
       "desktop screenshot failed: Add-Type : no desktop",
+    );
+    // Errors written as CLIXML are read as text.
+    const clixml = () => ({
+      status: 1,
+      stdout: "",
+      stderr:
+        '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">Exception calling &quot;CopyFromScreen&quot;: The handle is invalid_x000D__x000A_</S></Objs>',
+    });
+    expect(desktopScreenshot(join(tempDir(), "d.png"), { platform: "win32", run: clixml })).toBe(
+      'desktop screenshot failed: Exception calling "CopyFromScreen": The handle is invalid',
     );
     // A zero exit that left no file is no screenshot either.
     const empty = () => ({ status: 0, stdout: "", stderr: "" });

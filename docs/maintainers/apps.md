@@ -1512,9 +1512,14 @@ decimal port from 1024 to 65535 is accepted (surrounding spaces ignored; no sign
 zero, nothing after it); anything else is refused with a warning naming the value (escaped, cut
 at 32 characters) and never reaches WebView2. Accepted on Windows, every window gets the WebView2
 arguments `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion
---remote-debugging-port=<port>`: wry's own default list (naming arguments replaces wry's default,
-so it is repeated, `WRY_DISABLED_FEATURES`), occlusion tracking off so a window driven over
-DevTools keeps painting while the system browser covers it, and the port. The shell log says so
+--autoplay-policy=no-user-gesture-required --remote-debugging-port=<port>`: the whole of wry's
+own default, which naming arguments replaces and so is repeated (its feature list,
+`WRY_DISABLED_FEATURES`, and its autoplay policy, `WRY_AUTOPLAY_POLICY`: wry adds it because its
+`autoplay` attribute is on by default and Tauri never turns it off, and without it a spoken alert
+waits for a click), plus occlusion tracking off so a window driven over DevTools keeps painting
+while the system browser covers it, and the port. Both were read from wry 0.57.0, and a test
+(`the_repeated_wry_default_is_from_the_wry_in_cargo_lock`) fails when Cargo.lock names another
+wry until its default is read again (`WRY_DEFAULTS_READ_FROM`). The shell log says so
 in a warning: `WebView2 DevTools on port <port> for every window
 (FORERUNNER_WEBVIEW_DEVTOOLS_PORT, development and CI only): <arguments>`. Off Windows nothing
 changes (WebKitGTK has no such port) and the log says the variable was ignored; unset or empty,
@@ -1530,11 +1535,13 @@ Why it is safe to ship: a DevTools port lets any local process drive the window,
 holds the daemon token (`inject.rs`). The variable gives nothing that a process able to set the
 app's environment does not already have: such a process can set
 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<n>`, which the WebView2 loader is
-documented to honour for every WebView2 app, or start the app under a debugger. It is never set by the
-installer, the shell, the daemon or the UI; a person never sets it. Chromium binds the port on
-127.0.0.1 only and, without `--remote-allow-origins` (never added), refuses DevTools WebSocket
-connections that carry a web page's Origin, so a page in the system browser cannot drive the
-window through it. Development and CI only, like `FORERUNNER_DAEMON_PROVIDER`.
+documented to honour for every WebView2 app, or start the app under a debugger; and a process of
+the same user can already read the token itself from `<home>/runtime/daemon.json` (`url`,
+`token`; ADR 0011). It is never set by the installer, the shell, the daemon or the UI; a person
+never sets it. Chromium binds the port on 127.0.0.1 only and, without `--remote-allow-origins`
+(never added), refuses DevTools WebSocket connections that carry a web page's Origin, so a page
+in the system browser cannot drive the window through it. Development and CI only, like
+`FORERUNNER_DAEMON_PROVIDER`.
 
 **Logs and secrets.** The shell logs through `tauri-plugin-log` to `<logs>/desktop-shell.log`
 (stdout as well in debug builds). The token is a `Secret` (`Debug`/`Display` print
@@ -1613,7 +1620,8 @@ file round trip, a minimised window never remembered, U-077); `windows` (the fir
 marked only once shown, U-077; the hand-off line names how a link left and where, never a
 query, a fragment or credentials); `devtools` (FORERUNNER_WEBVIEW_DEVTOOLS_PORT accepts only a
 decimal port from 1024 to 65535 and refuses the rest in an escaped, shortened warning; the
-arguments keep wry's features and add the port, on Windows only; every window is built by
+arguments keep wry's whole default, its features and its autoplay policy, and add the port, on
+Windows only; that default is from the wry Cargo.lock names; every window is built by
 `windows::new_window`); `folder` (the hand-off line names the folder); `actions` (Quit asks from the count `/health` gives when it is
 chosen, U-077); `state` (tray view for unreachable, kill/resume, email availability and
 toggle, busy, desktop control on (title, tooltip first line, item, stop enabled) and cleared

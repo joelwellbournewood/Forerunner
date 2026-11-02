@@ -2536,16 +2536,19 @@ was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no hand
    checked free on 127.0.0.1 (`freePort`: a port another process holds, or one in a range
    Windows reserves, is replaced by one the system hands out, and the result says so):
    - the shell's own switch, `FORERUNNER_WEBVIEW_DEVTOOLS_PORT=9333` (`apps.md`, "The windows'
-     DevTools port"): the shell puts `--remote-debugging-port=9333` with wry's
-     `--disable-features` list and `CalculateNativeWinOcclusion` into the arguments it gives
-     WebView2 for every window, and logs `WebView2 DevTools on port 9333 for every window
-     (...)`, which the check requires (`parseShellDevtools`);
+     DevTools port"): the shell puts `--remote-debugging-port=9333` with wry's whole default
+     (its `--disable-features` list and `--autoplay-policy=no-user-gesture-required`, so the
+     driven window plays audio without a click as the shipped app does) and
+     `CalculateNativeWinOcclusion` into the arguments it gives WebView2 for every window, and
+     logs `WebView2 DevTools on port 9333 for every window (...)`, which the check requires
+     (`parseShellDevtools`);
    - WebView2's own variable, `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9334
      --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion
-     --enable-logging` (read by the WebView2 loader; wry's list repeated in case WebView2 uses
-     the variable in place of the app's arguments; occlusion tracking off so the window still
-     paints and answers the driver's clicks once the system browser opens over it;
-     `--enable-logging` so the browser writes `chrome_debug.log` in its data folder);
+     --autoplay-policy=no-user-gesture-required --enable-logging` (read by the WebView2 loader;
+     wry's whole default repeated in case WebView2 uses the variable in place of the app's
+     arguments, `WEBVIEW2_DISABLED_FEATURES` and `WRY_AUTOPLAY_POLICY`; occlusion tracking off
+     so the window still paints and answers the driver's clicks once the system browser opens
+     over it; `--enable-logging` so the browser writes `chrome_debug.log` in its data folder);
 4. waits for `daemon.json` and `/health`, then up to 180 s for the window's page on either port
    (a page target on `http://tauri.localhost`, `https://tauri.localhost` or `tauri://localhost`;
    the splash is `http://frshell.localhost/splash` and never matches). The port that answers
@@ -2584,7 +2587,9 @@ was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no hand
    (every check, and under `devtools` the ports, which answered, the probes and each diagnosis),
    then quits: `POST /shutdown`, then the app's process tree. The job's artifact
    `desktop-window-check` holds them, with `devtools-<attached|unreachable>.json` (the diagnosis,
-   its lines and verdict), PowerShell's own `devtools-*.raw.json` and the browser's log
+   its lines and verdict), PowerShell's own `devtools-*.raw.json`, everything PowerShell wrote
+   when it gave no JSON (`devtools-*.ps.txt`: its exit, stdout and stderr as they came, and the
+   errors as text) and the browser's log
    (`webview-*-chrome_debug.log`, its last 2 MB) when there is one; the step summary lists every
    check, then the diagnostics' lines. Exit 1 when a required check failed.
 
@@ -2634,7 +2639,10 @@ had painted and the daemon ran on the stand-in, so the app's environment had arr
   - "... but DevTools opened elsewhere: <address:port>" (another port, or `::1` only): the check
     tries there once more and, if the window's page answers, goes on, with the endpoint named.
   - "no msedgewebview2.exe browser process ..." or "no WebView2 diagnostics: <PowerShell's
-    words>": the diagnostics' own failure, with the original failure still standing.
+    words>": the diagnostics' own failure, with the original failure still standing. Windows
+    PowerShell started with `-EncodedCommand` and its output redirected may write its errors
+    as CLIXML (`#< CLIXML <Objs ...>`); the words are its error lines read out of that
+    (`powerShellWords`), and `devtools-unreachable.ps.txt` in the artifact has all it wrote.
 
 A dry run of the journey without the shell, against a bench in Chromium (the hand-off checks
 are reported as skipped; in a browser a link opens a tab):
@@ -2649,9 +2657,9 @@ node scripts/bench/stop.mjs --name win
 
 Tests: `scripts/desktop-window-check.test.ts` (the options, `--cdp-port` within what the shell
 accepts; the app's environment with both DevTools switches on two ports, and that the variables,
-the provider name, the shell's feature lists and its log line are the ones `supervisor.rs` and
-`devtools.rs` use; a port that cannot be bound replaced and the other switch's never handed out
-twice; a TCP probe accepted and refused; the endpoints' answers in words; the WebView2
+the provider name, the shell's feature lists, wry's autoplay policy (both ways carry wry's whole
+default) and the shell's log line are the ones `supervisor.rs` and `devtools.rs` use; a port
+that cannot be bound replaced and the other switch's never handed out twice; a TCP probe accepted and refused; the endpoints' answers in words; the WebView2
 diagnostics on command lines and PowerShell output shaped as on the runner: switches with quoted
 values, which way the switch came, the netsh ranges, lists in every form Windows PowerShell's
 ConvertTo-Json writes, this app's browser found by parent, data folder or exe name and no other
@@ -2659,14 +2667,15 @@ program's, each verdict (never reached, the arguments dropped whole or the port 
 removed; reached with a policy, a held and an excluded port and
 the browser's log line; listening; opened elsewhere, with the endpoints to try), the
 `DevToolsActivePort` file and the log lines; the PowerShell script fixed, given only the ports
-and the output file in variables and passed encoded, its failures and time-out in words, nothing
-run off Windows; the time limit of the program runner; the stand-in lands where
+and the output file in variables and passed encoded, its failures and time-out in words (errors
+written as CLIXML read as text) with all it wrote kept for the artifact, nothing run off
+Windows; the time limit of the program runner; the stand-in lands where
 `BENCH_ENTRY` resolves from an installed CLI; the shell's log lines as tauri-plugin-log writes
 them, with the words read from `windows.rs` and `folder.rs`; folders compared as Windows does;
 `seedPrUrl` on a real SQLite file and the column the Tasks tab reads; the page server; the whole
 screen at a stop (`desktopScreenshot`: Windows PowerShell with the file's path only in `FR_SHOT`,
-nothing off Windows, a failure in PowerShell's words); the step summary, with the diagnostics'
-lines after the checks; the job's shape in `desktop.yml`). The shell's side is
+nothing off Windows, a failure in PowerShell's words, CLIXML too); the step summary, with the
+diagnostics' lines after the checks; the job's shape in `desktop.yml`). The shell's side is
 `devtools.rs`'s cargo tests (`apps.md`). Not covered: notifications (a toast is not in the
 page), the tray and Quit from it, a second window, a deep link; a standard (non-administrator)
 user (U-012). Not run anywhere but a Windows runner: the PowerShell script itself (no PowerShell

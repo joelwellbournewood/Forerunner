@@ -13,9 +13,10 @@
 //      the window's DevTools asked for two ways, on two ports (`windowEnv`): the shell's own
 //      switch FORERUNNER_WEBVIEW_DEVTOOLS_PORT=<port> (apps/desktop/src-tauri/src/devtools.rs)
 //      and WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port + 1> (also wry's
-//      disabled features and occlusion tracking off, `WEBVIEW2_DISABLED_FEATURES`, and
-//      --enable-logging), and FORERUNNER_DAEMON_PROVIDER=bench (the shell starts its daemon on
-//      the stand-in model, apps/desktop/src-tauri/src/supervisor.rs `daemon_flags`);
+//      default, its disabled features and autoplay policy, with occlusion tracking off,
+//      `WEBVIEW2_DISABLED_FEATURES` and `WRY_AUTOPLAY_POLICY`, and --enable-logging), and
+//      FORERUNNER_DAEMON_PROVIDER=bench (the shell starts its daemon on the stand-in model,
+//      apps/desktop/src-tauri/src/supervisor.rs `daemon_flags`);
 //   3. waits for the daemon (daemon.json, /health) and for the window's page on either DevTools
 //      port (the one that answers says which way worked; if neither does, the Windows
 //      diagnostics say what WebView2 did with the switch: `diagnoseWebview`), and drives that
@@ -140,8 +141,8 @@ export function parseArgs(argv) {
  * (wry's webview2/mod.rs), plus `CalculateNativeWinOcclusion`: once the system browser opens
  * over the window (the PR link), Chromium's occlusion tracking may stop painting the covered
  * page, and the driver's clicks wait for animation frames. WebView2 may use the variable in
- * place of the app's own arguments, so wry's list is repeated here. The shell's own switch
- * (`devtools.rs`) turns off the same four.
+ * place of the app's own arguments, so wry's list is repeated here, with `WRY_AUTOPLAY_POLICY`.
+ * The shell's own switch (`devtools.rs`) turns off the same four.
  */
 export const WEBVIEW2_DISABLED_FEATURES = Object.freeze([
   "msWebOOUI",
@@ -149,6 +150,14 @@ export const WEBVIEW2_DISABLED_FEATURES = Object.freeze([
   "msSmartScreenProtection",
   "CalculateNativeWinOcclusion",
 ]);
+
+/**
+ * The rest of wry's default WebView2 arguments (wry's webview2/mod.rs; its autoplay attribute
+ * is on by default and Tauri never turns it off): media plays without a click, so a spoken
+ * alert does in the driven window as it does in the shipped app. Repeated with the features
+ * for the same reason; the shell's switch carries it too (`devtools.rs`).
+ */
+export const WRY_AUTOPLAY_POLICY = "--autoplay-policy=no-user-gesture-required";
 
 /**
  * The shell's own DevTools switch (apps/desktop/src-tauri/src/devtools.rs): a port from 1024
@@ -182,7 +191,7 @@ export function windowEnv(base, { home, shellPort, envPort }) {
   env.FORERUNNER_SANDBOX_ENGINE = "podman";
   env.FORERUNNER_BENCH_DELAY_MS = "100";
   env[DEVTOOLS_PORT_ENV] = String(shellPort);
-  env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = `--remote-debugging-port=${envPort} --disable-features=${WEBVIEW2_DISABLED_FEATURES.join(",")} --enable-logging`;
+  env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = `--remote-debugging-port=${envPort} --disable-features=${WEBVIEW2_DISABLED_FEATURES.join(",")} ${WRY_AUTOPLAY_POLICY} --enable-logging`;
   return env;
 }
 
@@ -643,6 +652,51 @@ $json = ConvertTo-Json -InputObject $out -Depth 6 -Compress
 [System.IO.File]::WriteAllText($env:FR_DIAG_OUT, $json, (New-Object System.Text.UTF8Encoding $false))
 `;
 
+/**
+ * What Windows PowerShell said on stderr, as text. Started with -EncodedCommand and its output
+ * redirected, it may write its error stream as CLIXML (`#< CLIXML`, then `<Objs>` with progress
+ * records and one `<S S="Error">` per line, line breaks escaped as `_x000D__x000A_`): cut to a
+ * few hundred characters, that is mostly header. Returns the error lines unescaped, after any
+ * text before the header; anything else (plain text, CLIXML without an error) as it came.
+ * @param {string} text
+ */
+export function powerShellWords(text) {
+  const s = String(text ?? "");
+  const at = s.indexOf("#< CLIXML");
+  if (at < 0) return s;
+  const errors = [...s.slice(at).matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map((m) =>
+    m[1]
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(Number.parseInt(h, 16)))
+      .replace(/&#([0-9]+);/g, (_, d) => String.fromCodePoint(Number(d)))
+      .replace(/&amp;/g, "&")
+      .replace(/_x([0-9a-f]{4})_/gi, (_, h) => String.fromCharCode(Number.parseInt(h, 16))),
+  );
+  if (!errors.length) return s;
+  return `${s.slice(0, at)}${errors.join("")}`;
+}
+
+/**
+ * Everything a PowerShell run wrote, for the artifact (`devtools-<label>.ps.txt`): its exit,
+ * whether it timed out, stdout and stderr as they came, and stderr's errors as text when they
+ * were CLIXML.
+ * @param {{ status: number | null, timedOut: boolean, stdout: string, stderr: string }} o
+ */
+export function powerShellReport(o) {
+  const shown = (t) => (t ? (t.endsWith("\n") ? t : `${t}\n`) : "(nothing)\n");
+  const words = powerShellWords(o.stderr);
+  return [
+    `exit: ${o.status ?? "none"}\n`,
+    `timed out: ${o.timedOut ? "yes" : "no"}\n`,
+    `--- stdout ---\n${shown(o.stdout)}`,
+    `--- stderr ---\n${shown(o.stderr)}`,
+    words !== o.stderr ? `--- stderr, the errors as text ---\n${shown(words)}` : "",
+  ].join("");
+}
+
 /** PowerShell's -EncodedCommand form of a script (UTF-16LE, base64): no quoting of any kind. */
 export function encodePowerShell(script) {
   return Buffer.from(script, "utf16le").toString("base64");
@@ -721,11 +775,30 @@ export async function collectWebviewDiagnostics(
   } catch (e) {
     return { ok: false, why: `PowerShell did not start: ${e?.message ?? e}` };
   }
+  // All it wrote goes into the artifact when there is no JSON (`powerShellReport`).
+  const output = {
+    status: r.status,
+    timedOut: !!r.timedOut,
+    stdout: String(r.stdout ?? ""),
+    stderr: String(r.stderr ?? ""),
+  };
   if (r.timedOut)
-    return { ok: false, why: `PowerShell did not finish within ${Math.round(timeoutMs / 1000)} s` };
+    return {
+      ok: false,
+      why: `PowerShell did not finish within ${Math.round(timeoutMs / 1000)} s`,
+      output,
+    };
   if (r.status !== 0 || !existsSync(file)) {
-    const said = String(r.error?.message ?? r.stderr ?? "").trim();
-    return { ok: false, why: `PowerShell exit ${r.status}${said ? `: ${oneLine(said)}` : ""}` };
+    const said = (
+      r.error?.message ||
+      powerShellWords(output.stderr).trim() ||
+      output.stdout.trim()
+    ).trim();
+    return {
+      ok: false,
+      why: `PowerShell exit ${r.status}${said ? `: ${oneLine(said, 600)}` : ""}`,
+      output,
+    };
   }
   try {
     return { ok: true, raw: JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, "")) };
@@ -843,7 +916,17 @@ async function webviewDiagnostics({ out, label, ports, appPid, identifier, exeNa
   ]);
   if (!collected.ok) {
     const words = `no WebView2 diagnostics: ${collected.why}`;
-    return { lines: [words], verdict: words, mechanism: null, fallbacks: [] };
+    const lines = [words];
+    if (collected.output) {
+      const file = path.join(out, `devtools-${label}.ps.txt`);
+      try {
+        writeFileSync(file, powerShellReport(collected.output));
+        lines.push(`all PowerShell wrote: ${file}`);
+      } catch (e) {
+        lines.push(`could not save what PowerShell wrote: ${e.message}`);
+      }
+    }
+    return { lines, verdict: words, mechanism: null, fallbacks: [] };
   }
   const d = diagnoseWebview(collected.raw, { ports, appPid, identifier, exeName });
   const clues = {};
@@ -899,7 +982,7 @@ export function desktopScreenshot(file, { platform = process.platform, run = spa
     windowsHide: true,
   });
   if (r.status === 0 && existsSync(file)) return `desktop screenshot: ${file}`;
-  const why = String(r.error?.message ?? r.stderr ?? "").trim();
+  const why = (r.error?.message || powerShellWords(r.stderr ?? "")).trim();
   return `desktop screenshot failed: ${why ? oneLine(why) : `exit ${r.status}`}`;
 }
 

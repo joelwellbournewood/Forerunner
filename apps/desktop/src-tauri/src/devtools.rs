@@ -8,18 +8,31 @@
 //! The variable is read once, from the process environment only (like
 //! `FORERUNNER_DAEMON_PROVIDER` in `supervisor.rs`). Only a decimal port from 1024 to 65535 is
 //! accepted; anything else is refused with a warning and never reaches WebView2. Accepted on
-//! Windows, every window gets `--remote-debugging-port=<port>` with wry's own
-//! `--disable-features` list (naming arguments replaces wry's default, so the list is repeated
-//! here); off Windows nothing changes (WebKitGTK has no such port).
+//! Windows, every window gets `--remote-debugging-port=<port>` with the whole of wry's own
+//! default, its `--disable-features` list and its autoplay policy (naming arguments replaces
+//! wry's default, so it is repeated here); off Windows nothing changes (WebKitGTK has no such
+//! port).
 
 use crate::env::Env;
 
 pub const DEVTOOLS_PORT_ENV: &str = "FORERUNNER_WEBVIEW_DEVTOOLS_PORT";
 
+/// The wry whose default arguments `WRY_DISABLED_FEATURES` and `WRY_AUTOPLAY_POLICY` repeat; a
+/// test fails when Cargo.lock names another, until they are read again.
+#[cfg(test)]
+const WRY_DEFAULTS_READ_FROM: &str = "0.57.0";
+
 /// The features wry turns off when the app names no browser arguments (wry 0.57,
 /// `src/webview2/mod.rs`, `create_environment`: the "mini menu", the PDF "mini menu" and
 /// SmartScreen).
 pub const WRY_DISABLED_FEATURES: [&str; 3] = ["msWebOOUI", "msPdfOOUI", "msSmartScreenProtection"];
+
+/// The rest of wry's default when the app names no browser arguments: `create_environment`
+/// adds it because `WebViewAttributes::autoplay` defaults to true (wry 0.57, `src/lib.rs`) and
+/// Tauri never turns it off. Without it a page's audio waits for a click, so a spoken alert
+/// (`speak.started` on /events, ADR 0063) stays silent in a window the CI check drives while
+/// the shipped app's speaks.
+pub const WRY_AUTOPLAY_POLICY: &str = "--autoplay-policy=no-user-gesture-required";
 
 /// Also off while the DevTools port is on: a window driven over DevTools must keep painting
 /// while another window covers it (the CI check clicks a link that opens the system browser
@@ -62,8 +75,8 @@ pub fn devtools_port(env: &impl Env) -> Result<Option<u16>, String> {
     }
 }
 
-/// The additional browser arguments with the DevTools port on: wry's features, occlusion
-/// tracking off, and the port.
+/// The additional browser arguments with the DevTools port on: wry's whole default (its
+/// features, with occlusion tracking off too, and its autoplay policy), then the port.
 pub fn browser_args(port: u16) -> String {
     let features: Vec<&str> = WRY_DISABLED_FEATURES
         .iter()
@@ -71,7 +84,7 @@ pub fn browser_args(port: u16) -> String {
         .copied()
         .collect();
     format!(
-        "--disable-features={} --remote-debugging-port={port}",
+        "--disable-features={} {WRY_AUTOPLAY_POLICY} --remote-debugging-port={port}",
         features.join(",")
     )
 }
@@ -153,13 +166,15 @@ mod tests {
         assert!(!why.contains(&"x".repeat(40)), "{why}");
     }
 
-    /// The arguments keep wry's own feature list (naming arguments replaces wry's default) and
-    /// add the port; on Windows only, and the log line names the variable.
+    /// The arguments keep the whole of wry's own default (naming arguments replaces it): its
+    /// feature list and its autoplay policy, so a window driven over DevTools plays a spoken
+    /// alert without a click as the shipped app does. Then the port; on Windows only, and the
+    /// log line names the variable.
     #[test]
-    fn every_window_gets_wrys_features_and_the_port_on_windows_only() {
+    fn every_window_gets_wrys_default_and_the_port_on_windows_only() {
         assert_eq!(
             browser_args(9333),
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --remote-debugging-port=9333"
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --autoplay-policy=no-user-gesture-required --remote-debugging-port=9333"
         );
         let env = MapEnv::new(&[(DEVTOOLS_PORT_ENV, "9333")]);
         let (args, line) = resolve(&env, true);
@@ -187,6 +202,42 @@ mod tests {
         let (args, line) = resolve(&MapEnv::new(&[(DEVTOOLS_PORT_ENV, "80")]), true);
         assert_eq!(args, WebviewArgs::default());
         assert!(line.expect("a log line").contains("ignored"));
+    }
+
+    /// What `browser_args` repeats was read from wry 0.57.0's `create_environment`
+    /// (`src/webview2/mod.rs`): `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`,
+    /// then ` --autoplay-policy=no-user-gesture-required` because `WebViewAttributes::autoplay`
+    /// defaults to true (`src/lib.rs`), then a proxy switch only when a proxy is set (the shell
+    /// sets none). Another wry may give another default: this fails when Cargo.lock names
+    /// another wry, until its default is read again and `WRY_DEFAULTS_READ_FROM` follows.
+    #[test]
+    fn the_repeated_wry_default_is_from_the_wry_in_cargo_lock() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("Cargo.lock");
+        let versions: Vec<&str> = lock
+            .split("[[package]]")
+            .filter(|p| p.lines().any(|l| l.trim() == "name = \"wry\""))
+            .filter_map(|p| {
+                p.lines()
+                    .find_map(|l| l.trim().strip_prefix("version = \""))
+                    .and_then(|v| v.strip_suffix('"'))
+            })
+            .collect();
+        assert_eq!(
+            versions,
+            [WRY_DEFAULTS_READ_FROM],
+            "Cargo.lock's wry is not the one whose default devtools.rs repeats: read its \
+             create_environment (src/webview2/mod.rs) and WebViewAttributes' defaults \
+             (src/lib.rs), make WRY_DISABLED_FEATURES and WRY_AUTOPLAY_POLICY match, then \
+             update WRY_DEFAULTS_READ_FROM"
+        );
+        // No window is given a proxy, so wry's proxy switch is not part of its default here.
+        let windows =
+            std::fs::read_to_string(root.join("src").join("windows.rs")).expect("windows");
+        assert!(
+            !windows.contains(".proxy_url("),
+            "a window with a proxy: browser_args must repeat wry's --proxy-server too"
+        );
     }
 
     /// WebView2 refuses a second environment on the same data folder with other options, so
