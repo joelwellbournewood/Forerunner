@@ -29,12 +29,56 @@ export interface SpendSnapshot {
   warnedAt80: boolean;
 }
 
+/** The share of a run's cap kept to wrap up (ADR 0111): about a fifth. */
+export const WRAP_UP_SHARE = 0.2;
+/** ...or the worst case of this many calls, when that is more (ADR 0111). */
+export const WRAP_UP_CALLS = 2;
+
+/**
+ * A run's wrap-up line (ADR 0111, the owner's decision of 2026-11-02), fixed at its first call.
+ * The reserve is the larger of a fifth of the run's cap and the worst case of two calls (the
+ * first call's estimate, from the shared estimate function, twice); the line is the cap less
+ * the reserve. The call that would take the run past the line brings the wrap-up message, once.
+ * `saveOnly`: the line is at or below the first call's worst case (a tiny budget: the reserve
+ * is at least the cap, or leaves no room for one call), so no wrap-up is sent and the run
+ * pauses at its budget with the code-side save only.
+ */
+export interface RunWrapUpLine {
+  capUsdMicro: number;
+  reserveUsdMicro: number;
+  lineUsdMicro: number;
+  saveOnly: boolean;
+}
+
+/** The wrap-up line of a run with this cap whose first call's worst case is `firstCallUsdMicro`. */
+export function wrapUpLineOf(capUsdMicro: number, firstCallUsdMicro: number): RunWrapUpLine {
+  const reserve = Math.max(
+    Math.ceil(capUsdMicro * WRAP_UP_SHARE),
+    WRAP_UP_CALLS * Math.max(0, firstCallUsdMicro),
+  );
+  const line = Math.max(0, capUsdMicro - reserve);
+  return {
+    capUsdMicro,
+    reserveUsdMicro: reserve,
+    lineUsdMicro: line,
+    saveOnly: line <= firstCallUsdMicro,
+  };
+}
+
+/** What `precheck` decided for one call. `line`: the run's wrap-up line, on its first call only. */
+export interface PrecheckDecision {
+  decision: "allow" | "finish_current" | "wrap_up";
+  line?: RunWrapUpLine;
+}
+
 export class SessionBudget {
   private spentBySession = 0;
   private spentByRun = new Map<string, number>();
   private stepCount = 0;
   private _noNewWork = false;
   private _warned80 = false;
+  /** Each work run's wrap-up line and whether its wrap-up was given (ADR 0111). */
+  private readonly runLines = new Map<string, RunWrapUpLine & { wrapped: boolean }>();
 
   constructor(readonly limits: SessionLimits) {
     // Negated comparisons so NaN fails each check instead of slipping through every one.
@@ -98,16 +142,62 @@ export class SessionBudget {
 
   /**
    * Decide whether a call with the given estimate may start. Order: run cap, then session cap.
-   * At 80% of the session cap: finish current task, no new work. At 100%: stop.
+   * At 80% of the session cap: finish current task, no new work. At 100%: stop. For a work run,
+   * the call that would take it past its wrap-up line (`RunWrapUpLine`, set at its first call)
+   * answers `wrap_up`, once; a save-only line never does. The run's first call carries its line.
    */
   precheck(
     runId: string,
     runCapUsdMicro: number,
     estimateUsdMicro: number,
     phase: "work" | "review",
-  ): {
-    decision: "allow" | "finish_current";
-  } {
+  ): PrecheckDecision {
+    const local = this.precheckCaps(runId, runCapUsdMicro, estimateUsdMicro, phase);
+    if (phase !== "work") return local;
+    const runSpent = this.spentByRunId(runId);
+    let first: RunWrapUpLine | undefined;
+    let line = this.runLines.get(runId);
+    // The line is fixed at the run's first call, from that call's estimate. A run first seen
+    // with spend already booked (never in the drivers, which check before every call) has none.
+    if (!line && runSpent === 0) {
+      first = wrapUpLineOf(runCapUsdMicro, estimateUsdMicro);
+      line = { ...first, wrapped: false };
+      this.runLines.set(runId, line);
+    }
+    const wrap =
+      !!line && !line.saveOnly && !line.wrapped && runSpent + estimateUsdMicro > line.lineUsdMicro;
+    if (wrap && line) line.wrapped = true;
+    return {
+      decision: wrap ? "wrap_up" : local.decision,
+      ...(first ? { line: first } : {}),
+    };
+  }
+
+  /** The run's wrap-up line, once its first call set it (ADR 0111). */
+  wrapUpLineOf(runId: string): RunWrapUpLine | undefined {
+    const line = this.runLines.get(runId);
+    if (!line) return undefined;
+    const { wrapped: _wrapped, ...rest } = line;
+    return rest;
+  }
+
+  /**
+   * What is left of the session's work budget: its cap less the review reserve
+   * (`reserveShare`), less what was spent. A task's run is capped at it (ADR 0111), so the
+   * share kept for reviews stays for reviews. Never negative.
+   */
+  workRemainingUsdMicro(): number {
+    const work = Math.floor(this.limits.budgetUsdMicro * (1 - this.limits.reserveShare));
+    return Math.max(0, work - this.spentBySession);
+  }
+
+  /** `precheck` without the run's wrap-up line: the run cap, the session cap and its lines. */
+  private precheckCaps(
+    runId: string,
+    runCapUsdMicro: number,
+    estimateUsdMicro: number,
+    phase: "work" | "review",
+  ): { decision: "allow" | "finish_current" } {
     checkAmount(estimateUsdMicro, "budget estimate");
     const runSpent = this.spentByRunId(runId);
     // At or over the cap nothing more runs, whatever the estimate says.

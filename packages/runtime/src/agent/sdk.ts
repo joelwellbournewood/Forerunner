@@ -56,6 +56,11 @@ export interface SdkRunRequest {
    * like the kill switch does (`killed`), and a signal already aborted ends it at once.
    */
   signal?: AbortSignal;
+  /**
+   * A task's run: the text it hears once, as PostToolUse's `additionalContext`, after its next
+   * call would take it past its wrap-up line (`WRAP_UP_TEXT`, ADR 0111).
+   */
+  wrapUp?: string;
 }
 
 export interface SdkRunResult {
@@ -77,6 +82,15 @@ export interface SdkRunResult {
    * executor names the limit that stopped it (ADR 0111).
    */
   error?: { code: string; message: string; resetAt?: string; level?: string; source?: string };
+  /** The run was told to wrap up (`SdkRunRequest.wrapUp`, ADR 0111). */
+  wrapUpSent: boolean;
+}
+
+/** The wrap-up of one SDK run: due once the hooks said so, given by the next PostToolUse. */
+interface WrapUpState {
+  text?: string;
+  due: boolean;
+  sent: boolean;
 }
 
 export interface SdkDriverDeps {
@@ -196,6 +210,16 @@ export class SdkAgentDriver {
     // tool calls share one id and one usage, and a streamed message's output count is a
     // placeholder, which the result's totals correct.
     const counted = new Set<string>();
+    // The wrap-up (ADR 0111): due when the hooks answer `wrap_up`, given once by PostToolUse.
+    const wrap: WrapUpState = {
+      ...(req.wrapUp ? { text: req.wrapUp } : {}),
+      due: false,
+      sent: false,
+    };
+    const decided = (d: Awaited<ReturnType<EnforcementHooks["beforeModelCall"]>>) => {
+      if (d.line) emit({ type: "budget_line", ...d.line });
+      if (d.decision === "wrap_up" && wrap.text && !wrap.sent) wrap.due = true;
+    };
 
     /** Book one share of usage: the ledger row and the session's spend (the hooks). */
     const book = async (turnUsage: Usage, stopReason: string): Promise<Usage> => {
@@ -255,9 +279,11 @@ export class SdkAgentDriver {
           const turnUsage = await book(usageOf(u), "turn");
           // Enforce before the SDK makes its next call.
           if (enforce)
-            await this.deps.hooks.beforeModelCall(
-              ctx,
-              req.pricing.estimate(turnUsage.input_tokens, 4096),
+            decided(
+              await this.deps.hooks.beforeModelCall(
+                ctx,
+                req.pricing.estimate(turnUsage.input_tokens, 4096),
+              ),
             );
         }
       }
@@ -307,11 +333,12 @@ export class SdkAgentDriver {
     try {
       // Pre-flight: the first model call is accounted like any other; the SDK then reports usage
       // per assistant message, which we account turn by turn.
-      await this.deps.hooks.beforeModelCall(
+      const preflight = await this.deps.hooks.beforeModelCall(
         ctx,
         req.pricing.estimate(ctx.budget.limits.stepCap, 4096),
       );
       emit({ type: "run_start", runId: claims.runId, model: req.model });
+      decided(preflight);
 
       const queryFn = this.deps.queryImpl ?? (await loadSdkQuery());
       // The subscription's token only (refused above otherwise); the session's extra variables
@@ -322,7 +349,7 @@ export class SdkAgentDriver {
         ...(req.baseURL ? { ANTHROPIC_BASE_URL: req.baseURL } : {}),
         ...withoutClaudeCodeAuth(req.env ?? {}),
       };
-      const hooks = this.sdkHooks(ctx, req.tools, emit);
+      const hooks = this.sdkHooks(ctx, req.tools, emit, wrap);
       const options: Record<string, unknown> = {
         abortController: controller,
         cwd: req.cwd,
@@ -449,6 +476,7 @@ export class SdkAgentDriver {
       ttftMs,
       sessionId,
       error,
+      wrapUpSent: wrap.sent,
     };
   }
 
@@ -516,7 +544,12 @@ export class SdkAgentDriver {
   }
 
   /** Map our hooks onto the SDK's PreToolUse / PostToolUse. */
-  private sdkHooks(ctx: RunContext, tools: ToolRegistry, emit: (ev: RunEvent) => void) {
+  private sdkHooks(
+    ctx: RunContext,
+    tools: ToolRegistry,
+    emit: (ev: RunEvent) => void,
+    wrap: WrapUpState = { due: false, sent: false },
+  ) {
     // PostToolUse reports the input the tool ran with, which is the `updatedInput` PreToolUse
     // returned: the resolved secret values. The audit row must carry the model's input (the
     // `secret:<name>` references), so it is kept per tool_use_id between the two hooks.
@@ -624,8 +657,27 @@ export class SdkAgentDriver {
       // the data envelope where the source is untrusted. The SDK applies the replacement to
       // MCP tool outputs; for the web tools it is handed over as before. A built-in file tool's
       // output cannot be rewritten from a hook: its read is scanned and flagged, not changed.
-      return untrusted || isMcpTool(toolName)
-        ? { hookSpecificOutput: { hookEventName: "PostToolUse", updatedMCPToolOutput: r.content } }
+      // The wrap-up (ADR 0111) goes with the first result after the hooks said so, once, as
+      // context beside the result, never inside it.
+      const wrapUp = wrap.due && wrap.text && !wrap.sent ? wrap.text : undefined;
+      if (wrapUp) {
+        wrap.due = false;
+        wrap.sent = true;
+        emit({
+          type: "wrap_up_sent",
+          spentUsdMicro: ctx.budget.spentByRunId(ctx.token.claims.runId),
+          capUsdMicro: ctx.token.claims.budgetUsdMicro,
+        });
+      }
+      const replaced = untrusted || isMcpTool(toolName) ? { updatedMCPToolOutput: r.content } : {};
+      return wrapUp || "updatedMCPToolOutput" in replaced
+        ? {
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              ...replaced,
+              ...(wrapUp ? { additionalContext: wrapUp } : {}),
+            },
+          }
         : {};
     };
     return {

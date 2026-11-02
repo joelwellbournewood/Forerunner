@@ -37,6 +37,15 @@ export const DEFAULT_MAX_TOKENS_PER_CALL = 4096;
 export const CUT_OFF_RETRIES = 2;
 export const CUT_OFF_MAX_TOKENS = 32_000;
 
+/**
+ * What a task's run hears once at its wrap-up line (ADR 0111, the owner's decision of
+ * 2026-11-02): one text block after the last tool results of the next request on the loop
+ * driver, PostToolUse's `additionalContext` on the Agent SDK path. The brief says what the two
+ * headings are for (`session/executor.ts`).
+ */
+export const WRAP_UP_TEXT =
+  "About a fifth of this task's budget is left. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: as a list.";
+
 export interface RunPricing {
   estimate(inputTokens: number, maxOutputTokens: number): number;
   cost(usage: Usage): number;
@@ -120,6 +129,11 @@ export interface RunRequest {
   compression?: "default" | "off";
   /** Whether the session routed this run's calls through the Headroom proxy (recorded on the Run). */
   headroomUsed?: boolean;
+  /**
+   * A task's run: the text it hears once when its next call would take it past its wrap-up
+   * line (`WRAP_UP_TEXT`, ADR 0111). Absent (chat, planning, reviews): it never hears one.
+   */
+  wrapUp?: string;
 }
 
 /** Per-run context-layer measurement, recorded on the Run row (ADR 0003 section 3). */
@@ -175,6 +189,19 @@ export type RunEvent =
       transforms: string[];
     }
   | { type: "warning"; message: string }
+  /**
+   * The run's wrap-up line, at its first call (ADR 0111): its cap, the reserve and the line;
+   * `saveOnly` when the budget is too small to wrap up. Both drivers emit it.
+   */
+  | {
+      type: "budget_line";
+      capUsdMicro: number;
+      reserveUsdMicro: number;
+      lineUsdMicro: number;
+      saveOnly: boolean;
+    }
+  /** The run was told to wrap up (ADR 0111), once; `spentUsdMicro` is what it had spent then. */
+  | { type: "wrap_up_sent"; spentUsdMicro: number; capUsdMicro: number }
   | { type: "run_end"; outcome: RunOutcome; costUsdMicro: number; steps: number };
 
 export interface RunResult {
@@ -210,6 +237,8 @@ export interface RunResult {
   injectionReports: InjectionReport[];
   /** True when the loop stopped because the session says finish current, no new work. */
   finishCurrent: boolean;
+  /** The run was told to wrap up (`RunRequest.wrapUp`, ADR 0111). */
+  wrapUpSent: boolean;
   context: RunContextStats;
 }
 
@@ -306,6 +335,7 @@ export class LoopAgentDriver {
     let error: RunResult["error"];
     let pending: string | undefined;
     let finishCurrent = false;
+    let wrapUpSent = false;
     const emit = (ev: RunEvent) => req.onEvent?.(ev);
     const toolDefs = req.tools.definitions(
       claims.allowedTools,
@@ -369,11 +399,24 @@ export class LoopAgentDriver {
             : floor;
         const estimate = req.pricing.estimate(inputTokens, maxOut);
         const pre = await this.deps.hooks.beforeModelCall(ctx, estimate);
+        if (pre.line) emit({ type: "budget_line", ...pre.line });
         if (pre.decision === "finish_current" && !finishCurrent) {
           finishCurrent = true;
           emit({
             type: "warning",
             message: "budget at 80% or reserve reached: finish the current task, start nothing new",
+          });
+        }
+        // ADR 0111: the call that takes a task's run past its wrap-up line carries the wrap-up,
+        // once, as a text block after the last tool results (never inside one).
+        if (pre.decision === "wrap_up" && req.wrapUp && !wrapUpSent) {
+          wrapUpSent = true;
+          finishCurrent = true;
+          appendText(messages, req.wrapUp);
+          emit({
+            type: "wrap_up_sent",
+            spentUsdMicro: req.budget.spentByRunId(claims.runId),
+            capUsdMicro: claims.budgetUsdMicro,
           });
         }
         emit({ type: "model_call_start", turn, estimateUsdMicro: estimate });
@@ -664,6 +707,7 @@ export class LoopAgentDriver {
       pending,
       injectionReports: reports,
       finishCurrent,
+      wrapUpSent,
       billingSourceId: ctx.billingSourceId,
     };
   }
@@ -775,6 +819,30 @@ export function fitMaxTokens(
     else hi = mid;
   }
   return lo;
+}
+
+/**
+ * Add a text block to the conversation's last message, a user message (the tool results of the
+ * last step, or the brief on a first call asked again): after its blocks, never inside a tool
+ * result (ADR 0111).
+ */
+function appendText(messages: ChatMessage[], text: string): void {
+  const last = messages.at(-1);
+  if (!last || last.role !== "user") {
+    messages.push({ role: "user", content: [{ type: "text", text }] });
+    return;
+  }
+  // A new message object: the caller's own (the brief) is never changed.
+  messages[messages.length - 1] = {
+    ...last,
+    content:
+      typeof last.content === "string"
+        ? [
+            { type: "text", text: last.content },
+            { type: "text", text },
+          ]
+        : [...last.content, { type: "text", text }],
+  };
 }
 
 function addUsage(total: Usage, u: Usage): void {
