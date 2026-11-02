@@ -1487,6 +1487,12 @@ export const ModelSettingsView = z.object({
       description: z.string(),
       maxEffort: z.string(),
       overridesAgentId: z.string(),
+      /**
+       * What this specialist cannot do on this install, in words (ADR 0107: "Cannot read the web
+       * on this computer" when it works from the web and the install has no web access); null
+       * when nothing is missing. The plan card and New task show it.
+       */
+      limitation: z.string().nullable().default(null),
       settings: RunSettingsView,
     }),
   ),
@@ -2605,7 +2611,7 @@ export const DAEMON_ROUTES = {
     "GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv (spec S.9: the audit log as a file download, streamed in pages; the install's human's rows and their agents' with the summaries as stored; Content-Disposition names the file; 404 for another human's agent, 400 for a bad format, timestamp or window)",
   settings: "GET /settings?scope=&scopeId=",
   modelSettings:
-    "GET /settings/models (ModelSettingsView, spec D.4: per agent mode and per specialist the model, effort, max tokens, speed mode and timeout in force with the effort-table or registry default and the source; temperature only when the provider's acceptsTemperature flag is true; changed through POST /commands/execute with model.settings.set)",
+    "GET /settings/models (ModelSettingsView, spec D.4: per agent mode and per specialist the model, effort, max tokens, speed mode and timeout in force with the effort-table or registry default and the source; temperature only when the provider's acceptsTemperature flag is true; per specialist its limitation on this install in words, e.g. Cannot read the web on this computer when it works from the web and the install has no web access, ADR 0107, else null; changed through POST /commands/execute with model.settings.set)",
   updateProjectSettings:
     "PUT /projects/:id/settings { version, settings } (merged; mirror schedule follows)",
   mirrorSync:

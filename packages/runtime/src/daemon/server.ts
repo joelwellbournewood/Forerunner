@@ -2293,6 +2293,7 @@ export function createDaemonApp(
         principal,
         others: [{ id: rt.criticAgent.id, name: rt.criticAgent.name, kind: "critic" }],
         specialists: rt.registry.runnableSpecialists(),
+        webAccess: rt.webAccess(),
       }),
     );
   });

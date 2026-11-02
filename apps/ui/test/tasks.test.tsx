@@ -551,6 +551,38 @@ describe("Tasks tab (design §3.5)", () => {
     );
   });
 
+  it("New task says what a specialist cannot do on this install when it is chosen, in the daemon's words (ADR 0107)", async () => {
+    const user = userEvent.setup();
+    // An install with no web access (no subscription, the page reader off): the daemon names
+    // the researcher's limitation in its specialists list.
+    const harness = createHarness({ noWebAccess: true });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const who = within(dialog).getByTestId("task-who") as HTMLSelectElement;
+    await waitFor(() =>
+      expect([...who.options].map((o) => o.value)).toEqual(
+        expect.arrayContaining(["coder", "researcher"]),
+      ),
+    );
+    await user.selectOptions(who, "coder");
+    expect(within(dialog).queryByTestId("task-who-note")).toBeNull();
+    await user.selectOptions(who, "researcher");
+    expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
+      "Cannot read the web on this computer: the researcher works only from the project's files.",
+    );
+    // Nothing is refused: the task is created for the researcher as chosen.
+    await user.type(within(dialog).getByTestId("task-title"), "Summarise the notes");
+    await user.type(within(dialog).getByTestId("task-outcome"), "docs/summary.md exists");
+    await user.click(within(dialog).getByTestId("create-task"));
+    await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(1));
+    expect(postedCalls(harness, "/projects/proj_atlas/tasks")[0]?.body).toMatchObject({
+      title: "Summarise the notes",
+      specialist: "researcher",
+    });
+  });
+
   it("rows follow the work without Refresh: a session's project.changed reloads them (design §3.5)", async () => {
     const harness = createHarness();
     render(

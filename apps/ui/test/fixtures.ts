@@ -2571,6 +2571,7 @@ export const MODEL_SETTINGS: ModelSettingsView = {
       description: "Implements a scoped code change with tests.",
       maxEffort: "high",
       overridesAgentId: "agent_alice",
+      limitation: null,
       settings: {
         mode: "coder",
         model: "fake-sonnet",
@@ -2593,6 +2594,7 @@ export const MODEL_SETTINGS: ModelSettingsView = {
       description: "Finds and summarises sources.",
       maxEffort: "max",
       overridesAgentId: "agent_alice",
+      limitation: null,
       settings: {
         mode: "researcher",
         model: "fake-sonnet",

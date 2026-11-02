@@ -282,6 +282,101 @@ describe("Inbox", () => {
     expect(screen.getAllByTestId("intake-card")).toHaveLength(1);
   });
 
+  it("the plan card names a task this install cannot run as planned, in the daemon's words (phase C, ADR 0107)", async () => {
+    const withPlan = (harness: ReturnType<typeof createHarness>) => {
+      harness.daemon.state.requests.unshift({
+        id: "req_intake_web",
+        projectId: "proj_atlas",
+        projectName: "Atlas",
+        taskId: null,
+        taskTitle: null,
+        sessionId: null,
+        kind: "approval",
+        why: 'Intake for "Atlas": 1 milestone(s), 2 task(s), 1 doc(s) and a first-session plan.',
+        steps: [],
+        options: ["approve", "reject"],
+        blocking: true,
+        risk: "medium",
+        changeCard: {
+          key: "intake:proj_atlas",
+          project_id: "proj_atlas",
+          docs_target: "workspace",
+          cost_usd_micro: 0,
+          applied_at: null,
+          proposal: {
+            plan: {
+              reason: "planned from the brief",
+              milestones: [
+                {
+                  name: "Pick a generator",
+                  successCriteria: ["a choice"],
+                  targetDate: null,
+                  tasks: [
+                    {
+                      key: "research",
+                      title: "Compare two static site generators",
+                      outcome: "docs/research.md",
+                      acceptanceCriteria: [],
+                      priority: "high",
+                      dependsOn: [],
+                      specialist: "researcher",
+                    },
+                    {
+                      key: "build",
+                      title: "Build the docs site",
+                      outcome: "index.html",
+                      acceptanceCriteria: [],
+                      priority: "medium",
+                      dependsOn: ["research"],
+                      specialist: "coder",
+                    },
+                  ],
+                },
+              ],
+              tasks: [],
+            },
+            docs: { "README.md": "# Atlas\n" },
+            firstSession: {
+              summary: "Research first.",
+              items: [
+                { key: "research", estimateUsdMicro: 500_000 },
+                { key: "build", estimateUsdMicro: 500_000 },
+              ],
+            },
+          },
+        },
+        status: "open",
+        answer: null,
+        createdAt: "2026-10-19T22:00:00.000Z",
+        version: 1,
+      });
+      return harness;
+    };
+    // An install without web access (no subscription, the page reader turned off).
+    const view = renderApp("/inbox", withPlan(createHarness({ noWebAccess: true })));
+    let card = await screen.findByTestId("intake-card");
+    await waitFor(() =>
+      expect(
+        within(card)
+          .getAllByTestId("intake-task")
+          .map((t) => t.textContent),
+      ).toEqual([
+        "Compare two static site generators · researcher · about CHF 0.40 · Cannot read the web on this computer",
+        'Build the docs site · coder · about CHF 0.40 · after "Compare two static site generators"',
+      ]),
+    );
+    // The usual install reads the web (ADR 0107): nothing is said.
+    view.unmount();
+    renderApp("/inbox", withPlan(createHarness()));
+    card = await screen.findByTestId("intake-card");
+    await waitFor(() =>
+      expect(within(card).getAllByTestId("intake-task")[0]?.textContent).toBe(
+        "Compare two static site generators · researcher · about CHF 0.40",
+      ),
+    );
+    expect(within(card).queryByTestId("intake-task-cannot-run")).toBeNull();
+  });
+
   it("the plan card shows the drafted decision as text, never raw markdown, before you approve (U-073, design §3.3)", async () => {
     const harness = createHarness();
     const decision =

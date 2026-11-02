@@ -4279,7 +4279,12 @@ overrides; `temperature` is present only when the provider accepts one. Each row
 runs (U-059): `speedModeApplies` is false for chat and planning (they always run standard, no
 fast-mode price), and `ceiling { tier, raisable, note }` names the highest model it runs at:
 chat opus, raised by nothing; planning, the specialists and the critic the project's highest
-model (`critic_ceiling`, opus unless set), which Settings shows per project as "Highest model". The command's ports
+model (`critic_ceiling`, opus unless set), which Settings shows per project as "Highest model".
+Each specialist also carries `limitation` (ADR 0107): what it cannot do on this install, in
+words, or null. The route passes `RuntimeApp.webAccess()` (a subscription or the web page
+reader); without either, an entry that names a web tool gets `NO_WEB_LIMITATION` ("Cannot read
+the web on this computer"), which the plan card shows beside its tasks and New task beside the
+choice. The command's ports
 (`CommandPorts.modelSettings`) are the runnable specialists' names and the provider's flags.
 
 ### Briefs (`src/brief.ts`)

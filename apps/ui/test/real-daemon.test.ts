@@ -2615,7 +2615,11 @@ describe("the UI client against the real daemon: Settings → Sandbox (Docker) (
  * The UI client against a real daemon whose model is the bench's role-playing stand-in, with
  * its failure injection (`FORERUNNER_BENCH_*`), on a clock that moves as in the app.
  */
-async function composeWithRolePlayer(env: Record<string, string>): Promise<{
+async function composeWithRolePlayer(
+  env: Record<string, string>,
+  /** The daemon's own environment beside its home (`FORERUNNER_WEB_FETCH=off`, ...). */
+  daemonEnv: Record<string, string> = {},
+): Promise<{
   rt: RuntimeApp;
   client: DaemonClient;
   /** The stand-in's knobs, read at each call: a case can plant a failure for one step. */
@@ -2646,7 +2650,7 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
     return stream(req);
   };
   const rt = await composeRuntime({
-    env: { FORERUNNER_HOME: home },
+    env: { FORERUNNER_HOME: home, ...daemonEnv },
     dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
     config: null,
     clock: new ShiftedClock("2026-03-05T08:00:00Z"),
@@ -3881,5 +3885,47 @@ describe("the UI client against the real daemon: research on an API key reads th
     expect(shown).toContain("web page not read: http://10.0.0.7/admin (");
     expect((await client.task(refused.id)).task.status, await states()).toBe("done");
     expect(hits.every((h) => h === "GET /ssg.html")).toBe(true);
+    // This install reads the web: Settings' specialists list says nothing is missing.
+    const models = await client.modelSettings();
+    expect(models.specialists.find((x) => x.name === "researcher")?.limitation).toBeNull();
+  }, 120_000);
+
+  it("an install without web access says so for the researcher, and its task still runs from the project's files", async () => {
+    // The page reader turned off and no subscription: no specialist reads the web.
+    const off = await composeWithRolePlayer({}, { FORERUNNER_WEB_FETCH: "off" });
+    try {
+      const models = await off.client.modelSettings();
+      const limits = Object.fromEntries(models.specialists.map((x) => [x.name, x.limitation]));
+      expect(limits.researcher).toBe("Cannot read the web on this computer");
+      expect(limits["science-evaluator"]).toBe("Cannot read the web on this computer");
+      expect(limits.coder).toBeNull();
+      const agentId = (await off.client.agents())[0]?.id ?? "";
+      const project = await off.client.createProject({ name: "Notes", goal: "Summaries" });
+      const task = await off.client.createTask(project.id, {
+        title: "Summarise the notes",
+        outcome: `docs/summary.md says what ${pageUrl} and the notes say`,
+        riskTier: 1,
+        specialist: "researcher",
+      });
+      const started = await off.client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => (await off.client.session(sessionId)).status !== "running",
+        "the session to end",
+        async () => (await off.client.tasks(project.id)).map((t) => t.status).join(", "),
+        60_000,
+      );
+      // Never handed to the person for a missing tool: the researcher ran and was reviewed.
+      const done = await off.client.task(task.id);
+      expect(done.task.status).toBe("done");
+      expect(done.runs.map((r) => [r.kind, r.specialist])).toEqual([
+        ["review", "critic"],
+        ["work", "researcher"],
+      ]);
+      expect((await off.client.projectFile(project.id, "docs/summary.md")).content).toBeTruthy();
+      expect(hits.filter((h) => h !== "GET /ssg.html")).toEqual([]);
+    } finally {
+      await off.rt.close();
+    }
   }, 120_000);
 });

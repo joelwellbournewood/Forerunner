@@ -333,7 +333,9 @@ The cards you meet most:
 
 - **The plan** from a new project's brief: the tasks in order, who does each, about what each
   costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a task that
-  needs a full review while Docker is not running, the total and what it covers ("About CHF 1.04
+  needs a full review while Docker is not running, "Cannot read the web on this computer"
+  beside a research task on an install that has turned page reading off (New task says the same
+  when you pick the researcher), the total and what it covers ("About CHF 1.04
   for 2 of the 3 tasks the agent does; the other one has no estimate yet."), and the decision it
   records in one or two sentences, with **The full decision record** one click away. **Approve and start** writes the tasks and starts working on
   them now. **Change the plan** opens a box: say what to change and the agent drafts a new plan

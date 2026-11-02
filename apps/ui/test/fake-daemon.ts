@@ -80,6 +80,7 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
+import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
   overviewNext,
   progressOf,
@@ -221,6 +222,13 @@ export interface FakeDaemonOptions {
    * with `NO_MODEL_CHAT_REPLY`, which names the setup assistant; nothing is refused with 503.
    */
   noModel?: boolean;
+  /**
+   * The install has no web access (ADR 0107: no Claude subscription and the web page reader
+   * turned off, `FORERUNNER_WEB_FETCH=off`): `GET /settings/models` names the researcher's and
+   * the science-evaluator's limitation, as the daemon's `buildModelSettingsView` does for every
+   * entry that works from the web. Default: the install reads the web, no limitation.
+   */
+  noWebAccess?: boolean;
   /**
    * Cloud runner vault keys the fake's "OS keyring" holds, runner id -> base64 of 32 bytes
    * (spec S.12, ADR 0068). `/runner-unlock/wrap` wraps them as the daemon does.
@@ -736,6 +744,16 @@ function initialVoiceStatus(options: FakeDaemonOptions): VoiceStatusView {
   };
 }
 
+/** The specialists of the fixture that work from the web (the registry's researcher and science-evaluator). */
+const WEB_SPECIALISTS = new Set(["researcher", "science-evaluator"]);
+
+/** `GET /settings/models` as the daemon answers it with or without web access (ADR 0107). */
+function withWebAccess(view: ModelSettingsView, web: boolean): ModelSettingsView {
+  for (const s of view.specialists)
+    s.limitation = !web && WEB_SPECIALISTS.has(s.name) ? NO_WEB_LIMITATION : null;
+  return view;
+}
+
 export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const token = options.token ?? randomBytes(16).toString("hex");
   const eventDelayMs = options.eventDelayMs ?? 150;
@@ -799,7 +817,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     speedQuality: {},
     settingValues: {},
     desktopAllowlist: [{ app: "code" }],
-    modelSettings: clone(MODEL_SETTINGS),
+    modelSettings: withWebAccess(clone(MODEL_SETTINGS), !options.noWebAccess),
     acceptsTemperature: options.acceptsTemperature ?? true,
     voiceSessions: new Map(),
     nextVoiceLine: null,

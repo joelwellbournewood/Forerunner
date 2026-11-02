@@ -670,6 +670,13 @@ export interface RuntimeApp {
    * `specialistDriver`, or for the driver named as the second argument.
    */
   specialists: (name: string, driver?: SpecialistDriver) => SpecialistSpec | undefined;
+  /**
+   * Whether a specialist can read the web on this install (ADR 0107): a Claude subscription
+   * (the Agent SDK's web tools) or the web page reader (`web_fetch`, unless
+   * `FORERUNNER_WEB_FETCH=off`). False: the intake plans no web work, and Settings and the plan
+   * card say which specialists cannot do their work here.
+   */
+  webAccess: () => boolean;
   tools: ToolRegistry;
   executor: TaskExecutor;
   runner: SessionRunner;
@@ -3699,6 +3706,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     registry,
     specialistDriver,
     specialists,
+    webAccess: () => hasOauth || webFetchOn,
     tools,
     executor,
     runner,
