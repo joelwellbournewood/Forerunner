@@ -421,6 +421,24 @@ function intakeCard(
   };
 }
 
+/** Whether an approved plan holds a task for the person ("specialist": "person"). */
+function plansPersonTask(card: JsonObject): boolean {
+  const proposal = isRecord(card.proposal) ? card.proposal : {};
+  const plan = isRecord(proposal.plan) ? proposal.plan : {};
+  const tasks = [
+    ...(Array.isArray(plan.tasks) ? plan.tasks : []),
+    ...(Array.isArray(plan.milestones)
+      ? plan.milestones.flatMap((m: unknown) =>
+          isRecord(m) && Array.isArray(m.tasks) ? m.tasks : [],
+        )
+      : []),
+  ];
+  return tasks.some(
+    (t: unknown) =>
+      isRecord(t) && typeof t.specialist === "string" && /^person$/i.test(t.specialist),
+  );
+}
+
 function intakeOutcome(card: JsonObject): string | null {
   const started = startWords(card.start);
   if (card.outcome === "approved") {
@@ -430,7 +448,11 @@ function intakeOutcome(card: JsonObject): string | null {
         ? "; working on them"
         : started
           ? `; ${started}`
-          : "; press Start on the project to work on them"
+          : // Nothing could run because the work waits on the person's answers (live L-11): Start
+            // would run nothing either.
+            card.start === "nothing_to_run" && plansPersonTask(card)
+            ? "; the work starts once you answer its questions in the Inbox"
+            : "; press Start on the project to work on them"
     }.`;
   }
   if (card.outcome === "rejected")

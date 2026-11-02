@@ -1,5 +1,6 @@
 import { errorMessage, log } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, StateStore } from "@forerunner/state";
+import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import type { StartRequest } from "./triggers.ts";
 
 /**
@@ -24,7 +25,12 @@ export async function resumeWork(
   req: { agentId: string; projectId: string | null; reason: string },
 ): Promise<ResumeOutcome | null> {
   if (!start || !req.projectId) return null;
-  const runnable = await store.task.readyTasks(req.projectId, { limit: 1 });
+  // A task planned for the person is no work for a session: its questions are filed in the
+  // Inbox by the sync, and a session started for it only made an empty run (live L-11: the
+  // bakery plan's "Give the real menu, hours and address" after Approve and start).
+  const runnable = (await store.task.readyTasks(req.projectId)).filter(
+    (t) => !t.specialist || canonicalSpecialistName(t.specialist) !== "person",
+  );
   if (runnable.length === 0) return "nothing_to_run";
   try {
     const entry = await start({

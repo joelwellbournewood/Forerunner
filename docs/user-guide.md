@@ -391,8 +391,13 @@ The cards you meet most:
   beside a research task on an install that has turned page reading off (New task says the same
   when you pick the researcher), the total and what it covers ("About CHF 1.04
   for 2 of the 3 tasks the agent does; the other one has no estimate yet."), and the decision it
-  records in one or two sentences, with **The full decision record** one click away. **Approve and start** writes the tasks and starts working on
-  them now. **Change the plan** opens a box: say what to change and the agent drafts a new plan
+  records in one or two sentences, with **The full decision record** one click away. When your
+  brief says you will give something yourself ("I will give you the real menu, hours and
+  address"), the plan starts with a task for you ("Give the real menu, hours and address",
+  "you: answer its questions") and the work that uses it waits for your answers instead of
+  using placeholders. **Approve and start** writes the tasks and starts working on
+  them now (or, when the work waits for your answers first, puts their card in your Inbox:
+  "the work starts once you answer its questions"). **Change the plan** opens a box: say what to change and the agent drafts a new plan
   for you to approve. Your words are kept: if that draft fails, or Forerunner closes before it
   is done, **Try again** on the project page drafts it with them, and a second change on the
   new plan adds to the first. **Reject** writes nothing; the project page then says "You

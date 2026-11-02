@@ -1419,7 +1419,34 @@ cost per task), never asks a specialist to commit, push or open a pull request (
 records the changes), says Forerunner decides where the files live and keeps them in git so
 the person is never asked either (live2 #14), and says what a small plan is (`SMALL_PLAN_RULES`: one milestone of one to
 three tasks, no reviewer, deploy, marketing or research task unless asked, no person task unless
-the work cannot start, riskTier left out, only README.md and the decision record). (6) **Plan
+the work cannot start or the brief promises the person's content, riskTier left out, only
+README.md and the decision record). **The person's content (live L-11, 2026-11-02).** The prompt
+says content the brief says the human will give (a menu, prices, hours, an address, texts,
+photos, data) is a person task the work using it depends on, never placeholders; the PM prompt
+(`evals/registry/principals/project-manager.md`) says the same. Live, "A one-page website for a
+small bakery in Bern; I will give you the real menu, hours and address" got a coder ("All shop
+facts are placeholders") and a tester, the page was accepted full of PLACEHOLDER markers and the
+person was never asked. `withOwnersContent` (`src/session/intake-content.ts`) holds the rule in
+code on every drafted proposal before its card is filed: `promisedContent` reads the promise
+("I will give you", "I'll send", "we will provide you with", "the owner will supply", in the
+brief, the person's changes or the goal) and keeps its items that are content (`CONTENT_WORD`),
+never a secret (a key, a password: secrets go by name) and not feedback or an approval; a
+promise "for later" or a brief that asks for placeholders adds nothing (the person chose to start
+without it). A plan with no person task naming those items gets one, "Give <the items as the
+brief wrote them>", for the person, high priority, first in the milestone of the work that uses
+it, one question per item ("What is the menu?", "What are the hours?", "Where are the photos (a
+path in the project's folder, or a link)?"); the tasks that start the work and name an item
+(else every task that waits on nothing) wait on it, an existing person task for the content
+included. On approval the questions are filed at once (`syncPersonQuestions`), and since a
+person task is no work for a session, `resumeWork` does not count it as runnable: no empty
+session starts, and the plan card's Done line reads "Plan approved: 3 tasks written; the work
+starts once you answer its questions in the Inbox." (`intakeOutcome`; before, a session started
+only to file the questions). The answers reach the build's brief as "Answers from the person to
+…" (`taskContextBlock`). Tests: `intake-owner-content.test.ts` (the live reply,
+`fixtures/intake-live-bakery.json`: the items, the questions, the person task and the build's
+dependency, a plan that asks already, a brief that promises nothing; through the daemon: the
+plan card's three tasks, Approve and start, the questions card, the build waiting, no session,
+the Done line). (6) **Plan
 size (ADR 0103).** `intakePlanSize` asks for "Plan size: small (a short brief: see Size in your
 instructions)" when the project has no repository and the brief it is drafted from is short
 (`isShortBrief`: under `SHORT_BRIEF_CHARS`, 200, at most two lines, no list), or the project is in
@@ -2223,7 +2250,9 @@ waits on you" while 4 tasks waited on it).
   runs without a Start click (the review of fix/needs-me found it closed the task and started
   nothing; the Done line reads 'Answers saved in the decision record; "X" is done; a session
   started.'). The card records `change_card.start`
-  (`started`, `queued`, `deferred`, `failed`, `nothing_to_run`) for its Done line. compose.ts
+  (`started`, `queued`, `deferred`, `failed`, `nothing_to_run`) for its Done line; a task
+  planned for the person is not runnable for `resumeWork` (its questions go to the Inbox, a
+  session would only make an empty run; live L-11). compose.ts
   passes the scheduler's `requestStart` to these syncs while the services run. A `queued`
   start runs on the scheduler's next tick (30 s) after the session before it ends.
 - **"Failed N times" is true now** (`triedTimes`, `@forerunner/critic`): the retry card counts

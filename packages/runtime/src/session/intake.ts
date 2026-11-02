@@ -60,6 +60,7 @@ import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.t
 import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { markAnswer } from "./answer-mark.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
+import { withOwnersContent } from "./intake-content.ts";
 import { MAX_PERSON_QUESTIONS, MAX_QUESTION_CHARS } from "./person-questions.ts";
 import {
   applyProjectPlan,
@@ -424,7 +425,8 @@ export const SMALL_PLAN_RULES: readonly string[] = [
   'Size. With "Plan size: small" (a short brief, a sentence or two) the plan is small:',
   "one milestone with one to three tasks that build what the brief asks for and check that it",
   "works. No reviewer, deploy (ops-deploy), marketing (writer-marketing) or research task unless",
-  "the brief asks for one. No person task unless the work cannot start without an answer: choose",
+  "the brief asks for one. No person task unless the work cannot start without an answer or the",
+  "brief says the human will give content (the rule above): choose",
   "the simplest setup (plain files in the project's folder, opened or run locally) and say so in",
   "the decision record. Leave riskTier out: Forerunner's critic reviews every task that builds or changes files.",
   "docs: only README.md and the decision record, each under 1500",
@@ -1164,7 +1166,10 @@ export class IntakeService {
       size,
       checkSize: size === "small" && changes.length === 0,
     });
-    const proposal = called.proposal;
+    // Content the brief (or the goal, or a change) says the person will give is asked for in a
+    // person task the work waits on, whatever the model planned (live L-11: the bakery's menu,
+    // hours and address became placeholders and the person was never asked).
+    const proposal = withOwnersContent(called.proposal, `${briefText}\n${project.goal}`);
     const plan = proposal.plan;
     // The plan shaped without error in `callModel` (a dependency cycle is a reply problem there,
     // asked for once more). What the request says it will write is the shaped plan: in
@@ -1672,6 +1677,12 @@ export class IntakeService {
       'acceptanceCriteria are the questions, each ending with "?": the human answers them in the',
       "Inbox, no specialist runs, and the answers go into the decision doc. Never give such a",
       "question to another specialist: it cannot ask the human.",
+      // Live (2026-11-02, L-11) "I will give you the real menu, hours and address" got a page
+      // full of placeholders and no step that asked; `withOwnersContent` adds it in code too.
+      "Content the brief says the human will give (a menu, prices, opening hours, an address,",
+      'texts, photos, data) is theirs: plan one task with "specialist": "person" that asks for it',
+      '(its acceptanceCriteria the questions, each ending with "?"), and make every task that uses',
+      "it depend on that task. Never invent such content or build it from placeholders.",
       "Specialists write files and run commands in the project's folder; Forerunner commits each",
       "task's changes itself (and opens the pull request when the project has a repository). An",
       "outcome or a criterion never asks a specialist to commit, push or open a pull request:",
