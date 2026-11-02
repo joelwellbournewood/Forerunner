@@ -158,5 +158,8 @@ is a candidate for the next work:
   with the PR link, a web link, a new-window link, a `file:` link and Open folder. Still missing:
   a standard user, an Inbox question answered, Quit from the tray with nothing left running,
   upgrade and uninstall after a journey (`installed-check.ps1` does those around `--self-test`).
+- A full-review task in the real Docker sandbox runs in CI on Linux since 2026-11-02 (the
+  `sandbox-full-review` job, `scripts/sandbox-full-review.mjs`); Docker Desktop on Windows, the
+  owner's setup, is still the owner's run-through.
 - The Windows installed-app check still runs as administrator (U-012).
 - No check that the planner only plans work the assigned specialist can do (U-022).
