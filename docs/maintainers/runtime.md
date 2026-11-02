@@ -2335,7 +2335,17 @@ The budget is enforced in code twice (the package cuts to it, the runner drops a
 it: `memory.over_budget`). `LoopTaskExecutor` loads lessons for the task text under
 `settings.task_memory_token_budget` (default 400) into the specialist's brief, tagged with
 the specialist's name. At session end `record` stores, in the agent's private memory, the
-`Lesson: ...` lines of the specialists' reports (`lessonsFromReport`), the critic findings
+`Lesson: ...` lines of the specialists' final messages (`lessonsFromReport` reads the run's
+final text, never a file). The brief says so in one line (`LESSONS_CONSTRAINT` in
+`session/executor.ts`): "Lessons go only in your final message, never in a file … Leave no
+scratch notes in the project: every file you leave there is part of the work." Before (phase
+E #95, live walk 4), "End the report with one line per lesson" made the data-analyst and the
+science-evaluator, whose deliverable is a report, end report.md and evaluation.md with
+"Lesson:" lines, and the writer-marketing registry entry asked for a `notes.md` beside the
+copy (it now asks for those notes in its final report). `test/lessons-out-of-deliverables.test.ts`
+runs a data-analyst and a writer on the bench's stand-in, which reads the brief as the live
+model did, and asserts the Files tab's report.md and docs/copy.md hold no "Lesson:" line, no
+notes.md is left and the lesson is in memory. Also stored: the critic findings
 the rework resolved (the finding row's description and required action), and the decisions
 the human answered since the last session; the package merges near duplicates. Every
 candidate first passes the injection gate (`src/session/lessons.ts`, `screenLessons`: the

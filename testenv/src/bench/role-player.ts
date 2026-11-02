@@ -639,27 +639,42 @@ function specialistAnswer(
   // 6. Write the work.
   if (!did("write_file") && offered(req.tools, "write_file")) {
     const ran = calls.filter((c) => c.name === "run_command");
-    const writes = targets.map((path) => ({
-      name: "write_file",
-      input: {
-        path,
-        content: checker
-          ? [
-              `# Check: ${brief.title}`,
-              "",
-              ...ran.map(
-                (c) =>
-                  `- \`${((c.input.argv as string[]) ?? []).join(" ")}\`: ${c.isError ? "failed" : "passed"}`,
-              ),
-              ...brief.criteria.map((c) => `- ${c}: checked by reading the files`),
-              "",
-            ].join("\n")
-          : pages.length && path.endsWith(".md")
-            ? researchContent(brief, pages, STAND_IN)
-            : contentFor(path, brief, seen, [...files, ...targets]),
-      },
-    }));
-    return { text: `Writing ${targets.join(", ")}.`, toolCalls: writes };
+    const literal = briefAsRead(firstUserText(req.messages), who);
+    const writes = targets.map((path) => {
+      const content = checker
+        ? [
+            `# Check: ${brief.title}`,
+            "",
+            ...ran.map(
+              (c) =>
+                `- \`${((c.input.argv as string[]) ?? []).join(" ")}\`: ${c.isError ? "failed" : "passed"}`,
+            ),
+            ...brief.criteria.map((c) => `- ${c}: checked by reading the files`),
+            "",
+          ].join("\n")
+        : pages.length && path.endsWith(".md")
+          ? researchContent(brief, pages, STAND_IN)
+          : contentFor(path, brief, seen, [...files, ...targets]);
+      return {
+        name: "write_file",
+        input: {
+          path,
+          content:
+            !checker && literal.lessonsInReportFile && isReportFile(path)
+              ? `${content.replace(/\n*$/, "\n")}\n${lessonLine(who)}\n`
+              : content,
+        },
+      };
+    });
+    if (!checker && literal.scratchNotes && writes.some((w) => w.input.path.endsWith(".md")))
+      writes.push({
+        name: "write_file",
+        input: {
+          path: "notes.md",
+          content: `# Scratch notes\n\n${STAND_IN} working notes for "${brief.title}".\n`,
+        },
+      });
+    return { text: `Writing ${writes.map((w) => w.input.path).join(", ")}.`, toolCalls: writes };
   }
 
   // 7. Makers check the JavaScript they wrote.
@@ -738,9 +753,38 @@ function report(
       : ["- no write tool was offered on this run, so nothing could be written"]),
     "- This report was written by the bench's stand-in model, not a real model.",
     "",
-    `Lesson: ${who} tasks in this project are small; one file per task keeps reviews quick.`,
+    lessonLine(who),
   ];
   return lines.join("\n");
+}
+
+/** The lesson the stand-in keeps, as its final message's last line. */
+function lessonLine(who: string): string {
+  return `Lesson: ${who} tasks in this project are small; one file per task keeps reviews quick.`;
+}
+
+/** A deliverable that is itself a report (the data-analyst's report.md, an evaluation.md). */
+function isReportFile(path: string): boolean {
+  return /\.md$/i.test(path) && /(report|evaluation|analysis|findings)/i.test(path);
+}
+
+/**
+ * How the live model read two lines of the brief (live walk 4, 2026-11-02), so the bench shows
+ * what the brief causes rather than passing by construction (phase E #95):
+ * - "End the report with one line per lesson worth keeping" made the data-analyst and the
+ *   science-evaluator, whose deliverable is a report, end that file with "Lesson:" lines.
+ *   The brief now says lessons go only in the final message; the stand-in then keeps them out.
+ * - Nothing said scratch notes stay out of the project: the writer-marketing left a notes.md
+ *   at the root. A brief that says so ("scratch notes") gets none.
+ */
+function briefAsRead(
+  user: string,
+  who: string,
+): { lessonsInReportFile: boolean; scratchNotes: boolean } {
+  return {
+    lessonsInReportFile: /End the report with one line per lesson/i.test(user),
+    scratchNotes: who.startsWith("writer") && !/scratch notes/i.test(user),
+  };
 }
 
 // ---------------------------------------------------------------------------------------
