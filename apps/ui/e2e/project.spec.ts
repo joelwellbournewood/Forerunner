@@ -76,6 +76,7 @@ test("the plan tab shows the timeline, milestones and graph; the reviews tab is 
   await expect(page.getByTestId("cost-total")).toHaveText("CHF 25.00");
   await expect(page.getByTestId("cost-savings")).toContainText("Savings (not spend)");
   await page.getByTestId("tab-reviews").click();
-  await expect(page.getByTestId("reviews-count")).toHaveText("3 reviews");
+  // The tasks' reviews (design §3.5); the session's self-check is folded away.
+  await expect(page.getByTestId("reviews-count")).toHaveText("2 reviews");
   await expect(page.getByTestId("placeholder")).toHaveCount(0);
 });
