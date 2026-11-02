@@ -303,6 +303,22 @@ an exception. The runtime's critic loop calls it through `TryItPort` (compose: s
 `<data>/evidence/<task>/<review key>/`). Test: `test/try-page.integration.test.ts` (a real
 Chromium, skipped with the reason without one).
 
+Chromium's own sandbox (C-17, ADR 0110): `launchBrowser` starts it with `chromiumSandbox: true`
+(Playwright's default turns it off and adds `--no-sandbox`). Where it cannot start with it
+(Linux as root, no user namespaces) a light review's page is opened without it and every try's
+output ends "the browser ran without its own sandbox: it could not start with it on this
+computer (<the browser's line>)" (`NO_BROWSER_SANDBOX`); with `requireBrowserSandbox` (a full
+review's page) it is `{ unavailable: "the browser could not start with its own sandbox on this
+computer (…), and a page of a full-review task is only opened with it" }`. The launch is followed
+at once by the `try` whose `finally` closes the browser and the server (R-1): a folder that
+cannot be served (`the task's folder could not be served to the browser (…)`) or screenshots
+that cannot be stored (`the screenshots could not be stored (…)`) are `unavailable`, with nothing
+left running. `launch` and `serve` are seams for tests (`test/try-page.test.ts`: a launcher that
+refuses the sandbox as root does, a server that throws). Every `PageTry` has `kind: "page"`; a
+command and a server are tried by the runtime in the task's sandbox (`try-run.ts`). The agent
+browser (`profile.ts`) still launches with Playwright's default; it browses only its allowlist,
+and turning its sandbox on is open (`docs/status/handoff`, phase E verification report).
+
 ## How to change it
 
 - **A new guard kind**: add it to `GuardKind` and `GUARD_RULES` with the action class that
