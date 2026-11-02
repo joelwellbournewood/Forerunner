@@ -5083,8 +5083,8 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
     const runs = (await client.task(task.id)).runs;
     const review = runs.find((r) => r.kind === "review");
     expect(review, JSON.stringify(runs)).toMatchObject({
-      outcome: "Stopped before a verdict",
-      report: "The review stopped before a verdict: you stopped the session.",
+      outcome: "Review stopped",
+      report: "The review stopped before the critic decided: you stopped the session.",
     });
   }, 120_000);
 
@@ -5208,6 +5208,66 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
     );
     expect(mine("task.finished").at(-1)?.payload).toMatchObject({ specialist: third?.specialist });
   }, 120_000);
+
+  it("after a hand-over, the stand-in's own failed attempt is told as the stand-in's: its 'could not do' line names who ran it (U-044, review of later #75)", async () => {
+    // Before: the critic's line about the stand-in's run named the plan's specialist, right
+    // under "The migration specialist takes over …": "The coder could not do …. Trying again."
+    const project = await client.createProject({ name: "Third ladder", goal: "Name who ran" });
+    const task = await client.createTask(project.id, {
+      title: "Third ladder: write notes/third.md",
+      outcome: "notes/third.md lists the steps",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    bench.fail = ["Third ladder"];
+    bench.failTimes = 3;
+    try {
+      for (let i = 0; i < 4; i++) {
+        const now = (await client.tasks(project.id)).find((t) => t.id === task.id);
+        if (now?.status !== "ready" && now?.status !== "failed") break;
+        if (now.status === "failed")
+          await client.taskAction(task.id, { version: now.version, action: "try_again" });
+        await runSession(project.id);
+      }
+    } finally {
+      bench.fail = [];
+      bench.failTimes = Number.POSITIVE_INFINITY;
+    }
+    const work = (await client.task(task.id)).runs.filter((r) => r.kind === "work");
+    const said: string[] = [];
+    let handOver: {
+      who: string;
+      specialist: string;
+      verdict?: Awaited<ReturnType<DaemonClient["sessionEvents"]>>[number];
+    } | null = null;
+    for (const sessionId of [...new Set(work.map((r) => r.sessionId ?? ""))]) {
+      const log = (await client.sessionEvents(sessionId)).filter(
+        (e) => (e.payload as { taskId?: string }).taskId === task.id,
+      );
+      said.push(...log.filter((e) => e.audience === "person").map((e) => e.text));
+      const at = log.findIndex(
+        (e) => e.type === "task.started" && !!(e.payload as { handedFrom?: string }).handedFrom,
+      );
+      const started = log[at];
+      if (!started) continue;
+      handOver = {
+        who: started.text.split(" takes over ")[0] ?? "",
+        specialist: String((started.payload as { specialist?: string }).specialist),
+        verdict: log.slice(at + 1).find((e) => e.type === "critic.verdict"),
+      };
+    }
+    expect(handOver, JSON.stringify(said)).not.toBeNull();
+    expect(handOver?.specialist).not.toBe("coder");
+    // The stand-in's own attempt failed too (the third planted failure): the critic's line
+    // about it names the stand-in, as the line above it did.
+    expect(handOver?.verdict?.payload, JSON.stringify(said)).toMatchObject({
+      specialist: handOver?.specialist,
+      couldNot: expect.any(String),
+    });
+    expect(handOver?.verdict?.text, JSON.stringify(said)).toMatch(
+      new RegExp(`^${handOver?.who} could not do "Third ladder: write notes/third\\.md"`),
+    );
+  }, 180_000);
 
   it("GET /projects/:id/summary: a task the session left for the person reads what it is now once it moved on (C-54)", async () => {
     // Before: after Mark done anyway the Overview kept the session's '"X" needs your decision
@@ -5427,5 +5487,161 @@ describe("the UI client against the real daemon: Continue where it stopped start
     } finally {
       await second.rt.close();
     }
+  }, 60_000);
+
+  it("a session the person undid is not started again: POST /kill/resume names only what Stop all stopped (review of later #60)", async () => {
+    // Before: the undo of the chat's start stops its session with the freeze on, so the kill
+    // switch counted it as stopped by Stop all; the next Stop all and Continue where it stopped
+    // started the undone project again, and it spent.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-continue-undo-"));
+    const { rt, client, provider } = await compose(home);
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = (n: string) =>
+        client.createProject({ name: n, goal: "One page", autonomyLevel: 2 });
+      const undone = await project("Undone start");
+      const other = await project("Victor notes");
+      for (const p of [undone, other])
+        await client.createTask(p.id, {
+          title: `Write ${p.name}.html`,
+          outcome: "the page exists",
+          riskTier: 0,
+        });
+      const sessionOf = async (projectId: string) =>
+        (await client.sessions()).find(
+          (s) => s.projectId === projectId && ["running", "paused", "planned"].includes(s.status),
+        );
+
+      // The chat starts a session on the first project, and its run begins.
+      let calls = provider.calls.length;
+      const asked = await client.executeCommands({
+        commands: [{ name: "session.start", params: { project: undone.id, budgetChf: 5 } }],
+        wordsUsed: "start a session on Undone start",
+        source: "text",
+        projectId: undone.id,
+      });
+      const started =
+        asked.status === "pending" && asked.pendingId
+          ? await client.confirmCommand(asked.pendingId, { answer: "tap" })
+          : asked;
+      expect(started.status, JSON.stringify(started)).toBe("done");
+      await eventually(
+        async () => provider.calls.length > calls,
+        "the chat's session to run its task",
+        async () => `session ${(await sessionOf(undone.id))?.status ?? "none"}`,
+        15_000,
+      );
+      const undoneSession = (await sessionOf(undone.id))?.id ?? "";
+      expect(undoneSession).not.toBe("");
+
+      // Changes → Undo stops it.
+      await client.undoChange(started.changeLogId ?? "");
+      await eventually(
+        async () => (await client.session(undoneSession)).stopReason === "you",
+        "the undone session to end, stopped by you",
+        async () => JSON.stringify(await client.session(undoneSession)),
+        15_000,
+      );
+
+      // A session on the other project, then Stop all.
+      calls = provider.calls.length;
+      const second = await client.startSession({ agentId, projectId: other.id });
+      const otherSession = second.session?.id ?? "";
+      await eventually(
+        async () => provider.calls.length > calls,
+        "the other project's run",
+        async () => `session ${(await client.session(otherSession)).status}`,
+        15_000,
+      );
+      await client.kill({ scope: "all", reason: "stop all from the UI" });
+      await eventually(
+        async () => (await client.session(otherSession)).stopReason === "stop_all",
+        "the other session to end by Stop all",
+        async () => `session ${(await client.session(otherSession)).status}`,
+        15_000,
+      );
+      expect((await client.resume()).stoppedProjects).toEqual([other.id]);
+    } finally {
+      await rt.close();
+    }
+  }, 90_000);
+});
+
+describe("the UI client against the real daemon: a start on a project with nothing to run while another project's session runs (phase E, screens, later #38)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let provider: ScriptedProvider;
+
+  beforeAll(async () => {
+    ({ rt, client, provider } = await composeWithWaitingRun([WAITING_CALL]));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("POST /sessions, the Start dialog and the chat refuse it in the start check's words; no session is queued for it", async () => {
+    // Before: a running session of the agent made every start wait for it (`busy`), so the
+    // start on the empty project was queued and became a session that ended with "Nothing
+    // could run: no task is ready."; its Start dialog offered an enabled Start, "Starts after
+    // the current session". Another project's work makes none of this project's tasks ready.
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const me = await client.me();
+    const busy = await client.createProject({ name: "Busy one", goal: "Keeps the agent busy" });
+    await client.createTask(busy.id, {
+      title: "Write the busy page",
+      outcome: "it is done",
+      riskTier: 0,
+    });
+    const empty = await client.createProject({ name: "Empty one", goal: "Nothing to do yet" });
+    const running = await client.startSession({ agentId, projectId: busy.id });
+    const runningId = running.session?.id ?? "";
+    expect(runningId).not.toBe("");
+    try {
+      await eventually(
+        async () => provider.calls.length >= 1,
+        "the busy project's model call",
+        async () => `${provider.calls.length} model call(s)`,
+        10_000,
+      );
+      const check = await client.startCheck(empty.id);
+      expect(check.busy).toBe(true);
+      expect(check.blocked).toMatchObject({
+        kind: "nothing_runnable",
+        sentence: "Nothing can run: no task is ready.",
+      });
+      const refused = await client.startSession({ agentId, projectId: empty.id }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      expect(refused, JSON.stringify(refused)).toMatchObject({
+        code: "conflict",
+        status: 409,
+        message: "Nothing can run: no task is ready.",
+      });
+      const reply = await client.chat({
+        humanId: me.id,
+        agentId: rt.agent.id,
+        projectId: empty.id,
+        projectTab: true,
+        text: "start a session",
+        source: "text",
+      });
+      expect(reply.reply).toMatch(/^Nothing can run: no task is ready\./);
+      expect(reply.pendingConfirmation).toBeNull();
+      expect(rt.scheduler.pendingStarts(agentId)).toEqual([]);
+      // The busy project's own Start still waits its turn: that session's work is its own.
+      expect((await client.startCheck(busy.id)).blocked).toBeNull();
+    } finally {
+      await client.stopSession(runningId, "stopped from the live view");
+      await eventually(
+        async () =>
+          !rt.scheduler.isActive(agentId) && rt.scheduler.pendingStarts(agentId).length === 0,
+        "the agent to be free, with nothing waiting",
+        async () =>
+          `active ${rt.scheduler.isActive(agentId)}, ${rt.scheduler.pendingStarts(agentId).length} waiting`,
+        10_000,
+      );
+    }
+    expect(await client.sessions({ projectId: empty.id })).toEqual([]);
   }, 60_000);
 });

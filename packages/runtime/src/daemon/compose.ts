@@ -330,7 +330,7 @@ import {
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
-import { startBlocked as startBlockedReason } from "./start-blocked.ts";
+import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
 import { fileTools } from "./tools.ts";
 
 /**
@@ -3006,7 +3006,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         const blocked = startBlockedReason(check, {
           stopped: kill.isFrozen({ agentId: agent.id }),
           hasModel: !!provider,
-          busy: scheduler.isActive(agent.id),
+          busy: busyHere(scheduler.activeStart(agent.id), project.id),
           projectId: project.id,
           chfPerUsd: chfPerUsd(),
           plan: plan === "pending" || plan === "drafting" ? plan : null,

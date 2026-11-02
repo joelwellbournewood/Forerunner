@@ -158,7 +158,7 @@ import { sandboxHealth } from "./sandbox-port.ts";
 import { createSandboxRoutes } from "./sandbox-routes.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
-import { startBlocked as startBlockedReason } from "./start-blocked.ts";
+import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -1266,11 +1266,15 @@ export function createDaemonApp(
     ).usd_micro;
     return Math.max(0, cap - spent);
   };
-  /** Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same). */
+  /**
+   * Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same).
+   * `agentId`'s running session makes a start wait rather than refuse only when it can make
+   * this project's tasks ready (`busyHere`, later #38).
+   */
   const startBlocked = async (
     r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
     projectId: string,
-    busy: boolean,
+    agentId: string,
   ): Promise<StartCheckView["blocked"]> => {
     // No task yet because the plan from the brief waits for approval (or is being drafted):
     // the button is the plan card, not the Tasks tab (design §3.3, §3.6).
@@ -1278,7 +1282,7 @@ export function createDaemonApp(
     return startBlockedReason(r, {
       stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
       hasModel: !!rt.provider,
-      busy,
+      busy: busyHere(rt.scheduler.activeStart(agentId), projectId),
       projectId,
       chfPerUsd: chf(),
       plan: intake?.state === "pending" || intake?.state === "drafting" ? intake.state : null,
@@ -1296,8 +1300,10 @@ export function createDaemonApp(
     });
     const projectId = c.req.param("id");
     const monthLeftUsd = await monthLeftUsdMicro();
+    // Busy: a Start waits for the running session ("Starts after the current session"), on
+    // whichever project it runs; whether that is a reason to wait or to refuse is the blocker's.
     const busy = rt.scheduler.isActive(rt.agent.id);
-    const blocked = await startBlocked(r, projectId, busy);
+    const blocked = await startBlocked(r, projectId, rt.agent.id);
     const view: StartCheckView = {
       projectId: r.projectId,
       sessionBudget: money(r.sessionBudgetUsdMicro, rate),
@@ -1400,11 +1406,7 @@ export function createDaemonApp(
     // (later #38). Stop all and a missing Claude key keep their own answers below.
     if (body.projectId) {
       const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
-      const blocked = await startBlocked(
-        check,
-        body.projectId,
-        rt.scheduler.isActive(body.agentId),
-      );
+      const blocked = await startBlocked(check, body.projectId, body.agentId);
       if (blocked?.kind === "nothing_runnable")
         throw new ForerunnerError("validation", blocked.sentence, {
           details: { blocked },

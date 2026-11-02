@@ -14,12 +14,18 @@ import { useClient, useUiState } from "../store/context.tsx";
  * daemon says the Undo would work now (`undoable`, which already weighs the window and each
  * command's own check), "Undone", "Reverted" (a timed change that went back by itself), else
  * "Cannot be undone". Before, the badge showed the stored `undo_state`, so a row whose Undo the
- * daemon refused ("Cannot be undone now: …") still read "undoable".
+ * daemon refused ("Cannot be undone now: …") still read "undoable". A row that is itself an
+ * Undo ("Undone: quiet hours is back to off.") has no badge: "Cannot be undone" with no reason
+ * read like a refusal of something the person never asked.
  */
-export function undoBadge(c: Pick<ChangeLogView, "undoable" | "undoState">): {
+export function undoBadge(
+  c: Pick<ChangeLogView, "undoable" | "undoState"> & { commands?: unknown[] },
+): {
   label: string;
   tone: Tone;
-} {
+} | null {
+  const names = c.commands ? commandNames(c.commands) : [];
+  if (!c.undoable && names.length > 0 && names.every((n) => n === "undo")) return null;
   if (c.undoable) return { label: "Can be undone", tone: "good" };
   if (c.undoState === "undone") return { label: "Undone", tone: "info" };
   if (c.undoState === "expired") return { label: "Reverted", tone: "neutral" };
@@ -219,9 +225,14 @@ export function ChangesPage() {
                   {projectName(c.projectId)}
                 </Link>
               ) : null}
-              <Badge tone={undoBadge(c).tone} testId="change-undo-state">
-                {undoBadge(c).label}
-              </Badge>
+              {(() => {
+                const badge = undoBadge(c);
+                return badge ? (
+                  <Badge tone={badge.tone} testId="change-undo-state">
+                    {badge.label}
+                  </Badge>
+                ) : null;
+              })()}
               <span className="ml-auto text-xs text-neutral-500">
                 {humanName(c.humanId) ?? c.agentId ?? "agent"} · {formatDateTime(c.createdAt)}
               </span>

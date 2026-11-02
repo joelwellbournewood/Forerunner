@@ -395,10 +395,12 @@ export function StartSessionDialog({
         ) : null}
         {/* After Start the notice says what happened; the line about what Start would do goes
             (wave 1 handoff: "Started: …" stood above "Starts after the current session", read
-            again from the start check the new session itself made busy). */}
+            again from the start check the new session itself made busy). A refused start
+            waits for nothing: another project's session makes nothing here runnable (later
+            #38), so it never reads "Starts after the current session". */}
         {notice ? null : (
           <p className="text-xs text-neutral-500" data-testid="start-session-explain">
-            {data?.busy
+            {data?.busy && !blocked
               ? "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
               : "Start: works until nothing more can run, the budget is used, or you stop it."}
           </p>

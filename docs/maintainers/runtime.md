@@ -934,8 +934,13 @@ whose every unfinished dependency runs now, is running, or itself follows; never
 failed, cancelled, missing or person-held task, nor a full-review task while Docker is not
 ready), why a Start would do nothing (`blocked`: `stopped` while Stop all is on, `no_model`
 without a provider, `nothing_runnable` with the first blocker in one sentence and the button
-that unblocks it; none while the agent is in a session, `busy`, since that session makes more
-tasks ready), and what is left of the monthly cap this month (`monthLeft`, the ledger's UTC
+that unblocks it; none while the agent is in a session on this project, or one tied to no
+project, since that session makes more tasks ready: `busyHere`, the scheduler's `activeStart`;
+another project's session makes none of these ready, a task waits only on tasks of its own
+project, so the blocker stands and `POST /sessions` and the chat refuse too, later #38; before,
+such a start was queued and became a session that ran nothing), whether the agent is in any
+session (`busy`: the dialog's "Starts after the current session", never shown with a blocker),
+and what is left of the monthly cap this month (`monthLeft`, the ledger's UTC
 month as the caps count it). `POST /sessions` refuses a budget above `monthLeft` with that
 sentence (`validation`); 0 and negative budgets never pass its schema.
 
@@ -2087,9 +2092,14 @@ The choice is made before the run is announced (ADR 0108, phase E later #75):
 stand-in, `ladderStandIn`) is what the runner asks before it writes `task.started`, which names
 that specialist with `handedFrom` the one that ran the task last (`lastWorkSpecialist`, in this
 session or an earlier one; the person line "The migration specialist takes over "X" from the
-coder."), and `execute` passes it on; `task.finished` and `critic.review_failed` name
-`TaskExecutionResult.specialist` (set by `execute`, and by the web routing). Before, both lines
-named the plan item's specialist for the stand-in's work. Wrappers forward it
+coder."), and `execute` passes it on; `task.finished`, `critic.review_failed` and
+`critic.verdict` (its "The migration specialist could not do … Trying again." line, the
+`ranBy` of `reviewTask`) name `TaskExecutionResult.specialist` (set by `execute`, and by the web
+routing), as does the lesson of a resolved finding. Before, these lines named the plan item's
+specialist for the stand-in's work; the verdict's line still did after `task.started` was fixed
+(review of later #75: "takes over … from the coder." then "The coder could not do …" for the
+stand-in's own failed attempt). The review itself keeps the plan item (its level and sign-off,
+ADR 0108). Wrappers forward it
 (`PrTaskExecutor.chooseSpecialist`; compose's and the e2e worlds' `inner`).
 Only a runner composed without a critic (an engine test world) closes a tier 0 task on its
 run ("tier 0: automated checks only"); the daemon always composes one, so every task is
@@ -4012,7 +4022,8 @@ lines it follows while the task runs); a report cut to six lines carries the who
 most 80 lines) as `fullReport`; a run that read web pages lists them from its Run row's
 `webSources` artifact (`runWebSources`: address, title, and why one was not read; never the
 page text, ADR 0107, C-72); and a critic's run stopped from outside (`killed`, `stopped`) reads
-"Stopped before a verdict" with "The review stopped before a verdict: <who>." as its report
+"Review stopped" with "The review stopped before the critic decided: <who>." as its report
+(plain words: never "verdict", design §2, §5 rule 6)
 (`reviewStopWords`: the cancel of the task, else the session's `handoff.stop_reason`, C-41).
 Results are
 `CommandResultViewSchema`; `/me.activeProjectId` is the registry's record, the one active
@@ -5256,8 +5267,11 @@ run tokens, releases its task claims back to `ready`, freezes new registrations 
 and leaves the other agent's run, token and claim untouched; `scope: "all"` releases every
 agent's claims; `/kill/resume` lifts the freeze and a revoked token stays revoked (S.8).
 
-What Stop all stopped (phase E, later #60): the kill switch keeps the sessions a freezing stop
-ended since the last `resume()` (`KillSwitch.stoppedSessions()`), `POST /kill` writes them into
+What Stop all stopped (phase E, later #60): the kill switch keeps the sessions Stop all (a stop
+`by: "stop_all"`: the header, the tray, `fr kill`, the phone's kill, the chat's stop of the
+agent) ended since the last `resume()` (`KillSwitch.stoppedSessions()`); another stop that
+freezes, such as the undo of a chat's start (by you), Quit or one that names no one, is never
+counted, so an undone session is not started again (review of later #60). `POST /kill` writes them into
 `kill.json` (`KillRequest.sessions`), and `POST /kill/resume` answers `stoppedProjects`: the
 projects of those sessions (in this process, or from `kill.json` after a restart; the
 conversation and the plan's intake session left out), read before the resume forgets them. The
@@ -5265,7 +5279,9 @@ stopped bar's Continue where it stopped starts those, and no other project.
 
 `POST /sessions` refuses a start the start check says would do nothing (`startBlocked` kind
 `nothing_runnable`: 409 `conflict` with the Start dialog's sentence, "Nothing can run: no task is
-ready.", `details.blocked`), as the chat's `session.start` does; Stop all and a missing Claude key
+ready.", `details.blocked`), as the chat's `session.start` does, also while another project's
+session runs (`busyHere`: only a session on this project, or on none, makes a start wait); Stop
+all and a missing Claude key
 keep their own answers (U-077, U-047). Before (later #38), only the month's money was checked,
 so Continue where it stopped, the phone and the API started sessions that ran nothing.
 

@@ -292,7 +292,8 @@ started "Create the page skeleton" (about CHF 0.14).", "Changed index.html.", "T
 accepted "Create the page skeleton".", "The designer could not do "Style the page": "The work
 needs something I do not have here". Trying again." and how it ended ("Session over: 2 done, 1
 needs you. CHF 0.06."). A task the critic sends back is tried again in the same session; each
-try is one line, and "The writer takes over …" says when another specialist tries it. **Details**
+try is one line, and "The writer takes over …" says when another specialist tries it; the lines
+after it name that specialist, including "The writer could not do …" when its own try fails too. **Details**
 adds the internal steps (the brief, memory, each tool call, each start and finish of a retry, the
 notifications sent), each line's event type, the level filters and the raw output; escalations
 are highlighted. A session
@@ -303,7 +304,9 @@ current task and starts nothing new), when its wall clock runs out, or when you 
 
 A start while your agent is in another session waits its turn: waiting starts (yours, an
 approved plan's, a CI or pull request trigger) run one after the other in the order they came,
-and none replaces another. **Start session** says how many wait before yours.
+and none replaces another. **Start session** says how many wait before yours. A project with
+nothing to run is refused even then: another project's session makes none of its tasks ready,
+so its start would only end at once.
 
 **Start** opens a dialog that says what the session will do: "This session runs "Create
 index.html" (about CHF 0.12) and continues with up to 6 more as they become ready". The budget
@@ -555,7 +558,8 @@ email mode; undoing a raise acts at once. When an undo cannot work any more (the
 finished since, a session already read the note, the session a start began has ended), the
 change reads **Cannot be undone** and says why instead of offering Undo, and nothing ever says
 "Undone" when nothing changed. Each change says **Can be undone**, **Undone**, **Reverted** (a
-change for tonight that went back by itself) or **Cannot be undone**. "Said:" shows the words you
+change for tonight that went back by itself) or **Cannot be undone**; the line an Undo itself
+leaves ("Undone: …") has no such badge. "Said:" shows the words you
 typed in chat, said aloud or wrote in an email; a click in the app has none.
 
 ## Kill switch
@@ -567,7 +571,7 @@ seconds; the tray does the same. On a shared project the other people's sessions
 and the tasks they hold stay theirs. A bar then says **Sessions are stopped** until you press
 **Allow sessions again** (lets sessions start again) or **Continue where it stopped** (allows
 them and starts a session again on the projects Stop all stopped, if they still have work that
-can run; other projects are left alone); the tray, "resume" in
+can run; other projects are left alone, and so is a session you stopped or undid yourself); the tray, "resume" in
 Chat or a start from the phone allow them too. The stop lasts across restarts until then. A
 session's own page has **Stop after this task** and **Stop now** (see "Sessions"); they end that
 session only and leave the rest running. Starting a session while sessions are stopped says

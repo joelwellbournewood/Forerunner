@@ -284,12 +284,6 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
-   * A task cancelled while it ran or was reviewed (phase C, live walk 2 C1): what its run
-   * changed since its baseline ("Workspace before …", or the branch's last commit) is taken out
-   * of the folder and kept under `setAsideRef(task)`, so the next task never builds on it and
-   * Undo of the cancel brings it back (`bringBack`). Returns the files taken out.
-   */
-  /**
    * The specialist the next attempt runs with (U-044): the inner executor decides it (the
    * retry ladder's stand-in), so the runner's log names who runs before the run begins.
    */
@@ -299,6 +293,12 @@ export class PrTaskExecutor implements TaskExecutor {
     return (await this.deps.inner.chooseSpecialist?.(ctx)) ?? null;
   }
 
+  /**
+   * A task cancelled while it ran or was reviewed (phase C, live walk 2 C1): what its run
+   * changed since its baseline ("Workspace before …", or the branch's last commit) is taken out
+   * of the folder and kept under `setAsideRef(task)`, so the next task never builds on it and
+   * Undo of the cancel brings it back (`bringBack`). Returns the files taken out.
+   */
   async setAside(task: TaskRow): Promise<string[]> {
     const git = await this.changedFolderOf(task);
     if (!git) return [];

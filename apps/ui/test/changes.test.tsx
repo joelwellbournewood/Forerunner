@@ -27,6 +27,15 @@ describe("Change log", () => {
       label: "Cannot be undone",
       tone: "warn",
     });
+    // A row that is itself an Undo ("Undone: quiet hours is back to off.") is no change that
+    // cannot be undone: it has no badge, rather than one that reads like a refusal.
+    expect(
+      undoBadge({
+        undoable: false,
+        undoState: "irreversible",
+        commands: [{ name: "undo", params: { change_log_id: "chg_1" } }],
+      }),
+    ).toBeNull();
   });
 
   it("lists every change with who asked, the words said, the commands, before/after and the source", async () => {

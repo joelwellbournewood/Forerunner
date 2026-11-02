@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isWindows, join } from "@forerunner/platform";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { fileUnder, listProjectFiles } from "../src/daemon/docs-routes.ts";
 
 /**
@@ -10,8 +10,19 @@ import { fileUnder, listProjectFiles } from "../src/daemon/docs-routes.ts";
  * `listProjectFiles` lists the folder. Validation rule 5: spaces, non-ASCII letters, links, and
  * the Windows forms (a drive-relative path, an alternate data stream, a reserved device name).
  */
+/** The temporary folders made here, removed when the file's tests end. */
+const made: string[] = [];
+function temp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+afterAll(() => {
+  for (const dir of made) rmSync(dir, { recursive: true, force: true });
+});
+
 function folder(): string {
-  const root = mkdtempSync(join(tmpdir(), "fr files ü-"));
+  const root = temp("fr files ü-");
   mkdirSync(join(root, "notes"), { recursive: true });
   writeFileSync(join(root, "notes", "Über uns.md"), "# Über uns\n");
   writeFileSync(join(root, "my page.html"), "<p>hi</p>\n");
@@ -51,7 +62,7 @@ describe("the project's files as the Files tab reads them (later #65)", () => {
 
   it("follows a link only while it stays inside the folder", () => {
     const root = folder();
-    const outside = mkdtempSync(join(tmpdir(), "fr-outside-"));
+    const outside = temp("fr-outside-");
     writeFileSync(join(outside, "secret.txt"), "secret\n");
     let linked = true;
     try {

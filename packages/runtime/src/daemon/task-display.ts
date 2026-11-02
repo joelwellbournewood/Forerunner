@@ -256,9 +256,12 @@ function reportText(text: string, lines = 6): string | null {
 
 /** Run outcomes of a run stopped from outside (Stop now, Stop all, Quit, a cancel). */
 const STOPPED_OUTCOMES = new Set(["killed", "stopped"]);
-/** A critic's run that was stopped before it gave a verdict (C-41). */
-const REVIEW_STOPPED = "Stopped before a verdict";
-const REVIEW_STOPPED_SENTENCE = "The review stopped before a verdict";
+/**
+ * A critic's run stopped before the critic decided (C-41), in plain words: never "verdict"
+ * (design §2, §5 rule 6).
+ */
+const REVIEW_STOPPED = "Review stopped";
+const REVIEW_STOPPED_SENTENCE = "The review stopped before the critic decided";
 
 /**
  * Who or what stopped a review before its verdict, in words (C-41): the cancel of the task, or

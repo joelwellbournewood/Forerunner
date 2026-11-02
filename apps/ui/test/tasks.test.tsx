@@ -1144,7 +1144,7 @@ describe("the task drawer's runs lead somewhere (phase E screens, later #46, C-4
     expect(within(drawer).getByTestId("drawer-steps")).toHaveTextContent("read index.html");
   });
 
-  it("a review stopped before its verdict says so and who stopped it, never a bare 'Stopped' (C-41)", async () => {
+  it("a review stopped before the critic decided says so and who stopped it, never a bare 'Stopped' (C-41)", async () => {
     const harness = createHarness();
     const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
     harness.daemon.state.runs.unshift({
@@ -1162,9 +1162,11 @@ describe("the task drawer's runs lead somewhere (phase E screens, later #46, C-4
     const review = (await within(drawer).findAllByTestId("drawer-run")).find(
       (r) => r.getAttribute("data-kind") === "review",
     ) as HTMLElement;
-    expect(review).toHaveTextContent(/^Review by the critic · .* · Stopped before a verdict/);
+    expect(review).toHaveTextContent(/^Review by the critic · .* · Review stopped/);
+    // Plain words (design §2, §5 rule 6): never "verdict".
+    expect(review).not.toHaveTextContent(/verdict/i);
     expect(review).toHaveTextContent(
-      "The review stopped before a verdict: you stopped the session.",
+      "The review stopped before the critic decided: you stopped the session.",
     );
   });
 

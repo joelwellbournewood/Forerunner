@@ -228,6 +228,32 @@ describe("kill switch", () => {
     expect(ks.stoppedSessions()).toEqual([]);
   });
 
+  it("never remembers a session that a stop other than Stop all ended, freezing or not: the undo of a start, Quit, a stop that names no one (review of later #60)", async () => {
+    // Before: every freezing stop counted. The undo of the chat's start stops its session with
+    // the freeze on, by you; the next Stop all and Continue where it stopped started it again.
+    const ks = new KillSwitch();
+    const run = (sessionId: string) =>
+      ks.register({
+        agentId: "alice",
+        sessionId,
+        controller: new AbortController(),
+        label: sessionId,
+      });
+    run("s-undone");
+    await ks.stop({ agentId: "alice", sessionId: "s-undone" }, "undo of session.start", {
+      by: "you",
+    });
+    run("s-error");
+    await ks.stop({ agentId: "alice", sessionId: "s-error" }, "kill switch");
+    expect(ks.stoppedSessions()).toEqual([]);
+    run("s-all");
+    await ks.stop("all", "kill switch from the app", { by: "stop_all" });
+    expect(ks.stoppedSessions()).toEqual(["s-all"]);
+    run("s-quit");
+    await ks.stop("all", "the app quits", { by: "quit" });
+    expect(ks.stoppedSessions()).toEqual(["s-all"]);
+  });
+
   it("the kill file keeps the sessions a Stop all ended, and drops anything that is not one", async () => {
     const { parseKillRequest } = await import("../src/enforcement/killfile.ts");
     expect(

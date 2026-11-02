@@ -90,8 +90,10 @@ export class KillSwitch {
    */
   private frozen: (KillScope | "all")[] = [];
   /**
-   * The sessions whose runs a freezing stop (Stop all) ended since the last `resume()`: what
-   * "Continue where it stopped" starts again (later #60), and nothing else.
+   * The sessions whose runs Stop all (a stop `by: "stop_all"`) ended since the last `resume()`:
+   * what "Continue where it stopped" starts again (later #60), and nothing else. Only Stop all's
+   * own stops count, never another freezing one: the undo of a start stops its session by you
+   * with the freeze on, and that session must not come back (review of later #60).
    */
   private stoppedByFreeze = new Set<string>();
   private listeners = new Set<(report: KillReport, reason: string, by: StopBy | null) => void>();
@@ -155,8 +157,8 @@ export class KillSwitch {
   }
 
   /**
-   * The sessions a freezing stop (Stop all) ended since the last `resume()`, in the order they
-   * were stopped. Read before `resume()`, which forgets them.
+   * The sessions Stop all ended since the last `resume()`, in the order they were stopped.
+   * Read before `resume()`, which forgets them.
    */
   stoppedSessions(): string[] {
     return [...this.stoppedByFreeze];
@@ -180,7 +182,7 @@ export class KillSwitch {
       if (r.controller && !r.controller.signal.aborted) {
         r.controller.abort(new KillSwitchStop(reason, by));
         stoppedRuns++;
-        if (opts.freeze !== false) this.stoppedByFreeze.add(r.sessionId);
+        if (by === "stop_all" && opts.freeze !== false) this.stoppedByFreeze.add(r.sessionId);
       }
       if (r.child && r.child.exitCode === null && !r.child.killed) {
         killTree(r.child);

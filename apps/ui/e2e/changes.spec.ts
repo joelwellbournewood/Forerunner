@@ -54,6 +54,11 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
     "data-undo-state",
     "irreversible",
   );
+  // The Undo's own row has no badge: "Cannot be undone" with no reason read like a refusal.
+  await expect(page.getByTestId("change").first().getByTestId("change-undo-state")).toHaveCount(0);
+  await expect(page.getByTestId("change").nth(1).getByTestId("change-undo-state")).toHaveText(
+    "Undone",
+  );
   const calls = await recordedCalls(request);
   expect(calls.find((c) => c.path === "/commands/execute")?.body).toEqual({
     commands: [{ name: "autonomy.set", params: { level: 3, project: "proj_atlas" } }],

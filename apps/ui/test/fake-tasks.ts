@@ -236,12 +236,12 @@ export function fakeTaskDetail(
         durationMs: r.durationMs,
         cost: r.cost,
         outcome: stoppedReview
-          ? "Stopped before a verdict"
+          ? "Review stopped"
           : r.outcome === "success"
             ? "Finished"
             : r.outcome,
         report: stoppedReview
-          ? `The review stopped before a verdict: ${r.stoppedBecause ?? "it was stopped"}.`
+          ? `The review stopped before the critic decided: ${r.stoppedBecause ?? "it was stopped"}.`
           : review
             ? null
             : (r.report ?? "Wrote the page and checked it loads."),

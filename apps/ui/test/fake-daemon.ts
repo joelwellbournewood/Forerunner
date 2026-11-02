@@ -221,6 +221,12 @@ export interface FakeDaemonOptions {
    * default) carries the new session; `queued` and `deferred` carry none.
    */
   startOutcome?: "started" | "queued" | "deferred";
+  /**
+   * With `startOutcome: "queued"`: the project the agent's other session works on. A start on
+   * it with nothing ready waits for that session; on any other project it is refused, as the
+   * daemon's `busyHere` decides (later #38). Unset: a project none of the tests start.
+   */
+  busyProjectId?: string;
   /** Heartbeat cadence on /events; 1 s by default. */
   heartbeatMs?: number;
   /** Delay between streamed chat tokens; 5 ms by default. */
@@ -657,7 +663,17 @@ function fakeStartCheck(
   projectId: string,
   budgetUsdMicro: number | null,
   sandbox: SandboxStatusView | null = null,
-  opts: { killActive?: boolean; busy?: boolean } = {},
+  opts: {
+    killActive?: boolean;
+    /** The agent is in another session: a start is queued ("Starts after the current session"). */
+    busy?: boolean;
+    /**
+     * That session works on this project, so its work can make tasks ready here and a start
+     * waits for it rather than being refused. As the daemon's `busyHere` (later #38): another
+     * project's session makes none of this project's tasks ready.
+     */
+    busyHere?: boolean;
+  } = {},
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   // High first, as the daemon's stored numbers order them (U-041).
@@ -720,7 +736,7 @@ function fakeStartCheck(
         sentence: "Sessions are stopped (Stop all), so nothing can start.",
         action: { kind: "resume", label: "Allow sessions again", to: null },
       }
-    : runnable.length > 0 || opts.busy
+    : runnable.length > 0 || (opts.busy && opts.busyHere)
       ? null
       : stuckOn
         ? stuckOn.d.status === "needs_human"
@@ -2036,6 +2052,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       {
         killActive: state.killActive,
         busy: (options.startOutcome ?? "started") === "queued",
+        busyHere: options.busyProjectId === id,
       },
     );
     // As the daemon: with no task yet because the plan waits (or is drafted), the button is
@@ -2106,7 +2123,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         parsed.data.projectId,
         parsed.data.budgetUsdMicro ?? null,
         state.sandbox,
-        { killActive: false, busy: (options.startOutcome ?? "started") === "queued" },
+        {
+          killActive: false,
+          busy: (options.startOutcome ?? "started") === "queued",
+          busyHere: options.busyProjectId === parsed.data.projectId,
+        },
       );
       if (check.blocked?.kind === "nothing_runnable")
         return errorBody(c, 409, "conflict", check.blocked.sentence);
