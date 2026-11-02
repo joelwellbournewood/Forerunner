@@ -2153,6 +2153,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       host: gitHost,
       inner: {
         execute: (ctx) => makeLoop(undefined, withMemory).execute(ctx),
+        // Who runs the next attempt, before the log says who started (U-044, later #75).
+        chooseSpecialist: (ctx) => makeLoop(undefined, withMemory).chooseSpecialist(ctx),
         withWorktree: (dir) => makeLoop(dir, withMemory),
       },
       repoFor: async (task) => {

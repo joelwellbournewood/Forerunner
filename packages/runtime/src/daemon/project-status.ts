@@ -363,3 +363,37 @@ export async function workingOn(
     since: s.started_at ?? s.created_at,
   };
 }
+
+/** The task ids a session's handoff left waiting for the person (`handoff.blocked`). */
+export function blockedTaskIds(handoff: unknown): string[] {
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return [];
+  const b = (handoff as { blocked?: unknown }).blocked;
+  return Array.isArray(b) ? b.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** Display keys of a task that still waits for the person as the session left it. */
+const STILL_WAITS_ON_PERSON = new Set<TaskDisplay["key"]>(["answer", "failed"]);
+
+/**
+ * 'Since then: "Write the README" is done.' for each task the last session left waiting for
+ * the person that has moved on, at most three, then "and N more" (C-54). A task still waiting
+ * (its card open, still failed) or gone says nothing: the summary already says it.
+ */
+export function sinceLines<T extends Pick<TaskRow, "id" | "title">>(
+  blocked: readonly string[],
+  tasks: ReadonlyMap<string, T>,
+  displayOf: (t: T) => TaskDisplay,
+): string[] {
+  const moved: string[] = [];
+  for (const id of new Set(blocked)) {
+    const t = tasks.get(id);
+    if (!t) continue;
+    const d = displayOf(t);
+    if (STILL_WAITS_ON_PERSON.has(d.key)) continue;
+    const label = d.label.charAt(0).toLowerCase() + d.label.slice(1);
+    moved.push(`Since then: "${shortTitle(t.title, 60)}" is ${label}.`);
+  }
+  return moved.length > NEXT_LINES
+    ? [...moved.slice(0, NEXT_LINES), `and ${moved.length - NEXT_LINES} more`]
+    : moved;
+}

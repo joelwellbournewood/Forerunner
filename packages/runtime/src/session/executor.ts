@@ -472,7 +472,75 @@ export class LoopTaskExecutor implements TaskExecutor {
   constructor(private readonly deps: LoopTaskExecutorDeps) {}
 
   async execute(ctx: Parameters<TaskExecutor["execute"]>[0]): Promise<TaskExecutionResult> {
-    return this.runTask(ctx, false);
+    // The specialist that runs, decided as the runner's `chooseSpecialist` decides it (the
+    // runner usually asked already, and then this keeps its choice); the result names it.
+    const decided = await this.decideSpecialist(ctx.task, ctx.item);
+    if (!decided) return this.runTask(ctx, false);
+    if (decided.handedFrom)
+      this.deps.onEvent?.(ctx.task.id, {
+        type: "warning",
+        message: `after ${ctx.task.attempt} failed attempts by the ${decided.handedFrom}, the retry ladder hands this task to the ${decided.name} (split or change specialist)`,
+      });
+    const r = await this.runTask(
+      { ...ctx, item: { ...ctx.item, specialist: decided.name } },
+      false,
+    );
+    return { ...r, specialist: r.specialist ?? decided.name };
+  }
+
+  /** `chooseSpecialist`, with the specialist the ladder took the task from when it did. */
+  private async decideSpecialist(
+    task: TaskRow,
+    item: Parameters<TaskExecutor["execute"]>[0]["item"],
+  ): Promise<{ name: string; handedFrom?: string } | null> {
+    if (isPersonTask(task, item.specialist)) return null;
+    const named = item.specialist;
+    const spec =
+      this.deps.specialists(named) ?? this.deps.specialists(canonicalSpecialistName(named));
+    if (!spec) return null;
+    const next = await this.ladderStandIn(task, spec);
+    if (next && next !== "none") return { name: next.name, handedFrom: spec.name };
+    return spec.name === named ? null : { name: spec.name };
+  }
+
+  /**
+   * The specialist the task's next attempt runs with, when it is not the plan item's (U-044):
+   * the registry's name for the plan's ("ops" is `ops-deploy`), and after two failed attempts
+   * by it the retry ladder's stand-in (`ladderStandIn`). The runner asks before it writes
+   * `task.started`, so the log names the specialist that runs; `runTask` then finds the stand-in
+   * untried and keeps it. Null: the item's specialist runs (or nothing would: a person task, an
+   * unknown name, a ladder with no stand-in, which `runTask` answers).
+   */
+  async chooseSpecialist({
+    task,
+    item,
+  }: {
+    task: TaskRow;
+    item: Parameters<TaskExecutor["execute"]>[0]["item"];
+  }): Promise<string | null> {
+    return (await this.decideSpecialist(task, item))?.name ?? null;
+  }
+
+  /**
+   * The ladder's second rung (spec D.2, U-044), "split or change specialist": after two failed
+   * attempts the next one goes to another specialist that can do what `spec` can (the
+   * registry's tools and the driver's), closest in kind to the task, never to one that already
+   * ran it. Null when the rung does not apply or `spec` has not run the task (a specialist the
+   * person gave it to after the failures keeps it); "none" when no stand-in fits.
+   */
+  private async ladderStandIn(
+    task: TaskRow,
+    spec: SpecialistSpec,
+  ): Promise<SpecialistSpec | "none" | null> {
+    if (!(task.attempt > 0 && retryAction(task.attempt, "sonnet") === "split_or_change_specialist"))
+      return null;
+    const tried = new Set((await this.deps.store.run.forTask(task.id)).map((r) => r.specialist));
+    if (!tried.has(spec.name)) return null;
+    const pick = alternateSpecialist(profileOf(spec), this.profiles(), {
+      exclude: tried,
+      task: { title: task.title, outcome: task.outcome },
+    });
+    return (pick ? this.deps.specialists(pick.name) : undefined) ?? "none";
   }
 
   /** An amount in micro-USD as a person reads it: "CHF 0.01" at the day's rate. */
@@ -528,27 +596,23 @@ export class LoopTaskExecutor implements TaskExecutor {
     // gave the task to after those attempts (no run of it yet) keeps it. With no stand-in the
     // task waits for the person: a third run of the same brief by the same specialist could
     // only spend money.
-    if (task.attempt > 0 && retryAction(task.attempt, "sonnet") === "split_or_change_specialist") {
-      const tried = new Set((await store.run.forTask(task.id)).map((r) => r.specialist));
-      if (tried.has(defaultSpec.name)) {
-        const pick = alternateSpecialist(profileOf(defaultSpec), this.profiles(), {
-          exclude: tried,
-        });
-        const next = pick ? this.deps.specialists(pick.name) : undefined;
-        if (!next) {
-          return {
-            outcome: "needs_human",
-            summary: `${task.attempt} attempts by the ${defaultSpec.name} failed, and the retry ladder now hands the task to another specialist, but none can do what the ${defaultSpec.name} does, so nothing ran. Split the task into smaller tasks (New task on the Tasks tab) and cancel this one, or cancel it.`,
-            costUsdMicro: 0,
-          };
-        }
-        this.deps.onEvent?.(task.id, {
-          type: "warning",
-          message: `after ${task.attempt} failed attempts by the ${defaultSpec.name}, the retry ladder hands this task to the ${next.name} (split or change specialist)`,
-        });
-        item = { ...item, specialist: next.name };
-        defaultSpec = next;
-      }
+    // The runner usually asked first (`chooseSpecialist`) and gave the stand-in already; then
+    // the stand-in has not run the task and keeps it.
+    const standIn = await this.ladderStandIn(task, defaultSpec);
+    if (standIn === "none") {
+      return {
+        outcome: "needs_human",
+        summary: `${task.attempt} attempts by the ${defaultSpec.name} failed, and the retry ladder now hands the task to another specialist, but none can do what the ${defaultSpec.name} does, so nothing ran. Split the task into smaller tasks (New task on the Tasks tab) and cancel this one, or cancel it.`,
+        costUsdMicro: 0,
+      };
+    }
+    if (standIn) {
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `after ${task.attempt} failed attempts by the ${defaultSpec.name}, the retry ladder hands this task to the ${standIn.name} (split or change specialist)`,
+      });
+      item = { ...item, specialist: standIn.name };
+      defaultSpec = standIn;
     }
 
     // Retry ladder (spec D.2): the open findings of the task become constraints of the brief
@@ -710,7 +774,9 @@ export class LoopTaskExecutor implements TaskExecutor {
           type: "warning",
           message: `the ${spec.name} gets no web tools on this run (${lost.join(", ")}); the ${pick.name}, which has them, takes the task`,
         });
-        return this.runTask({ ...ctx, item: { ...item, specialist: pick.name } }, true);
+        // The result names who ran it, so the log's finished line says so (U-044).
+        const r = await this.runTask({ ...ctx, item: { ...item, specialist: pick.name } }, true);
+        return { ...r, specialist: r.specialist ?? pick.name };
       }
       this.deps.onEvent?.(task.id, {
         type: "warning",

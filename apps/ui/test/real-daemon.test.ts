@@ -5129,6 +5129,99 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
     expect((await client.sessions()).length).toBe(before);
   });
 
+  it("the session log names the specialist that runs: after two failed attempts '… takes over … from the coder', and the finished line and the drawer name the same one (later #75, U-044)", async () => {
+    // Before: the runner wrote task.started and task.finished with the plan's specialist, while
+    // the executor handed the third attempt to another one inside its run ("The coder started …"
+    // and "The coder finished …" for the migration specialist's work), with no "takes over".
+    const project = await client.createProject({ name: "Ladder", goal: "Name who runs" });
+    const task = await client.createTask(project.id, {
+      title: "Ladder notes: write notes/ladder.md",
+      outcome: "notes/ladder.md lists the steps",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    bench.fail = ["Ladder notes"];
+    bench.failTimes = 2;
+    try {
+      for (let i = 0; i < 4; i++) {
+        const now = (await client.tasks(project.id)).find((t) => t.id === task.id);
+        if (now?.status === "done") break;
+        if (now?.status !== "ready" && now?.status !== "failed") break;
+        if (now.status === "failed")
+          await client.taskAction(task.id, { version: now.version, action: "try_again" });
+        await runSession(project.id);
+      }
+    } finally {
+      bench.fail = [];
+      bench.failTimes = Number.POSITIVE_INFINITY;
+    }
+    const detail = await client.task(task.id);
+    const work = detail.runs.filter((r) => r.kind === "work");
+    const states = JSON.stringify(work.map((r) => [r.specialist, r.outcome]));
+    expect(work.length, states).toBeGreaterThanOrEqual(3);
+    const third = work[0];
+    expect(third?.specialist, states).not.toBe("coder");
+    const events = (
+      await Promise.all(
+        [...new Set(work.map((r) => r.sessionId ?? ""))].map((id) => client.sessionEvents(id)),
+      )
+    ).flat();
+    const mine = (type: string) =>
+      events.filter(
+        (e) => e.type === type && (e.payload as { taskId?: string }).taskId === task.id,
+      );
+    const lastStart = mine("task.started").at(-1);
+    expect(
+      lastStart?.payload,
+      JSON.stringify(mine("task.started").map((e) => e.payload)),
+    ).toMatchObject({
+      specialist: third?.specialist,
+      handedFrom: "coder",
+    });
+    expect(lastStart?.audience).toBe("person");
+    expect(lastStart?.text).toMatch(
+      / takes over "Ladder notes: write notes\/ladder\.md" from the coder\.$/,
+    );
+    expect(mine("task.finished").at(-1)?.payload).toMatchObject({ specialist: third?.specialist });
+  }, 120_000);
+
+  it("GET /projects/:id/summary: a task the session left for the person reads what it is now once it moved on (C-54)", async () => {
+    // Before: after Mark done anyway the Overview kept the session's '"X" needs your decision
+    // (Inbox).' while the header said done and the Inbox had no such card.
+    const me = await client.me();
+    const project = await client.createProject({ name: "Since then", goal: "True now" });
+    const task = await client.createTask(project.id, {
+      title: "Write docs/plan.md",
+      outcome: "docs/plan.md lists the steps",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    bench.fail = ["Write docs/plan.md"];
+    try {
+      await runSession(project.id);
+    } finally {
+      bench.fail = [];
+    }
+    const before = await client.projectSummary(project.id);
+    expect(before.lastSession?.summary, JSON.stringify(before.lastSession)).toMatch(
+      /needs your decision/,
+    );
+    expect(before.lastSession?.since).toBeUndefined();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.taskId === task.id && r.status === "open",
+    );
+    expect(card, "the failed task's card").toBeDefined();
+    await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Mark done anyway",
+    });
+    const after = await client.projectSummary(project.id);
+    expect(after.lastSession?.summary).toBe(before.lastSession?.summary);
+    expect(after.lastSession?.since).toEqual([
+      'Since then: "Write docs/plan.md" is done: accepted without review.',
+    ]);
+  }, 120_000);
+
   it("GET /projects: under Stop all a project with ready work offers no Continue the Start dialog would refuse (later #62, #49)", async () => {
     const project = await client.createProject({ name: "Ready under Stop all", goal: "Wait" });
     await client.createTask(project.id, {

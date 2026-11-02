@@ -155,6 +155,39 @@ describe("the stand-in for a specialist (U-044)", () => {
       alternateSpecialist(profile("coder"), loop, { exclude: new Set(["migration-specialist"]) }),
     ).toBeNull();
   });
+
+  it("ranks the ones that fit by what the task is: a page task goes to the designer before the migration specialist (later #75)", () => {
+    // Before, the stand-in was picked by tool coverage and the replaced specialist's words only,
+    // never by what the task is. Here both fit (same tools as the coder's).
+    const coder = profile("coder");
+    const sameTools = (name: string) => ({
+      ...profile(name),
+      registryTools: coder.registryTools,
+      driverTools: coder.driverTools,
+    });
+    const candidates = [sameTools("migration-specialist"), sameTools("designer")];
+    // Without the task: the migration specialist, closest to the coder's own words.
+    expect(alternateSpecialist(coder, candidates)?.name).toBe("migration-specialist");
+    const page = {
+      title: "Write the page's markup in index.html",
+      outcome: "index.html holds the page's markup and links styles.css",
+    };
+    expect(alternateSpecialist(coder, candidates, { task: page })?.name).toBe("designer");
+    // A data-format task still goes to the migration specialist.
+    const schema = {
+      title: "Move the notes to the new data format",
+      outcome: "Every note is in the new schema, with a rollback",
+    };
+    expect(alternateSpecialist(coder, candidates, { task: schema })?.name).toBe(
+      "migration-specialist",
+    );
+    // Which ones fit is still the tools: a designer without the coder's tools never gets it.
+    expect(
+      alternateSpecialist(coder, [sameTools("migration-specialist"), profile("designer")], {
+        task: page,
+      })?.name,
+    ).toBe("migration-specialist");
+  });
 });
 
 describe("the retry ladder's second rung changes the specialist (U-044)", () => {

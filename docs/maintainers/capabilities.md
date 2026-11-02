@@ -148,7 +148,9 @@ with their milestone.
   runner cuts a task's reason at 200 characters, so these stay under it for a usual name.
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
   head)` takes a head other than HEAD.
-- `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone
+- `PrTaskExecutor` (`pr-executor.ts`) forwards `chooseSpecialist` to its inner executor (the
+  specialist the next attempt runs with, which the runner names on `task.started`; ADR 0108) and
+  wraps any task executor in the branch-and-PR flow: clone
   or fetch into a per-task worktree (`ensureBaseBranch` for an empty repository), branch from
   the base (or the existing PR branch), run the
   inner executor inside the worktree, commit, rebase onto the base, push and open a pull

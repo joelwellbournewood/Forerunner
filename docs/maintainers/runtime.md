@@ -2082,6 +2082,15 @@ the run to `alternateSpecialist` (`src/registry/alternates.ts`, below), patches 
 stand-in the task returns `needs_human` ("none can do what the coder does ... split the task
 or cancel it") and nothing runs. A specialist the person gave the task to after the failures
 (no run of it yet) keeps it. Before U-044 the same specialist ran the same brief again.
+The choice is made before the run is announced (ADR 0108, phase E later #75):
+`LoopTaskExecutor.chooseSpecialist` (the registry's name for the plan's, then the ladder's
+stand-in, `ladderStandIn`) is what the runner asks before it writes `task.started`, which names
+that specialist with `handedFrom` the one that ran the task last (`lastWorkSpecialist`, in this
+session or an earlier one; the person line "The migration specialist takes over "X" from the
+coder."), and `execute` passes it on; `task.finished` and `critic.review_failed` name
+`TaskExecutionResult.specialist` (set by `execute`, and by the web routing). Before, both lines
+named the plan item's specialist for the stand-in's work. Wrappers forward it
+(`PrTaskExecutor.chooseSpecialist`; compose's and the e2e worlds' `inner`).
 Only a runner composed without a critic (an engine test world) closes a tier 0 task on its
 run ("tier 0: automated checks only"); the daemon always composes one, so every task is
 reviewed (ADR 0104). The store still refuses to close a task with an open finding and the
@@ -4271,10 +4280,11 @@ every new specialist goes through review. The composition root turns registry en
 `adding-a-specialist.md` for the file format and the golden eval sets under `evals/registry/`.
 
 **Stand-ins and web work (`alternates.ts`, U-044).** `alternateSpecialist(from, candidates,
-{ exclude, requireWeb })` names the specialist that takes a task over: one whose registry tools
-cover `from`'s and whose tools on the run's driver cover `from`'s there, ranked by the words its
-description shares with `from`'s less the tools it has on top, then fewer extra tools, then the
-name; null when none fits. As shipped: coder and migration-specialist stand in for each other,
+{ exclude, requireWeb, task })` names the specialist that takes a task over: one whose registry
+tools cover `from`'s and whose tools on the run's driver cover `from`'s there, ranked by the words
+its description shares with the task's title and outcome (twice, matched without a plural "s";
+ADR 0108) and with `from`'s, less the tools it has on top, then fewer extra tools, then the
+name; null when none fits. Only the ranking reads the task: which specialists fit is the tools. As shipped: coder and migration-specialist stand in for each other,
 tester goes to coder, designer and writer-marketing to each other, data-analyst to
 science-evaluator; researcher and science-evaluator have none. `SpecialistSpec` carries the
 entry's `description` and `registryTools` (`allowed_tools` as written) for it. The executor
@@ -4743,8 +4753,11 @@ card for the phone and the state service). `projectCard` adds, computed when rea
 - The server passes `ProjectCardFacts` (`sandboxReady`, the intake's state and error, the
   folder, `hasModel`); `projectSummary` adds `next` (`overviewNext`: open tasks in run order with their
   status words, running and ready first, at most three lines then "and N more") and
-  `lastSession.changedFiles` (the last session's `task.files` events). The UI fake computes
-  both with the same functions. Tests: `test/project-status.test.ts`, and the real-daemon case
+  `lastSession.changedFiles` (the last session's `task.files` events), and `lastSession.since`
+  (C-54, design §5 rule 4: for each task the session's `handoff.blocked` left for the person
+  that has moved on since, 'Since then: "X" is done: accepted without review.', at most three
+  then "and N more"; `blockedTaskIds` and `sinceLines` in `project-status.ts`; the summary stays
+  the record of the session's end). The UI fake computes them with the same functions. Tests: `test/project-status.test.ts`, and the real-daemon case
   "project status sentence" in `apps/ui/test/real-daemon.test.ts`.
 - `/me` names the provider in force (`provider`, null without a model): the shell's "Claude is
   not connected" bar reads it.
@@ -4761,7 +4774,11 @@ null when none exists yet) depth first in name order with sizes and change dates
 (`truncated`). `GET /projects/:id/files/:path` (the path URL-encoded) answers one file's text
 (cut at 256 KiB; `binary` with `content: null` when its first 8 KiB hold a NUL byte);
 `fileUnder` refuses an absolute path, a drive, an empty, `.` or `..` segment, a skipped folder
-and anything whose real path leaves the folder's real path, as 404. `GET
+and anything whose real path leaves the folder's real path, as 404; on Windows also a segment
+with a colon (an alternate data stream, "a.txt:hidden") or a device name ("CON", "nul.txt",
+`notAWindowsFileName`). `test/docs-routes-files.test.ts` (phase E, later #65) covers spaces,
+non-ASCII names, links in and out of the folder and those Windows forms; the task drawer's file
+links go through it. `GET
 /projects/:id/docs/:path` also opens a decision record (`DECISION_RECORD`,
 `docs/decisions/<name>.md`), which the Overview's Decisions link to. Both are read-only; the
 real-daemon case "files: the project's folder" covers them.

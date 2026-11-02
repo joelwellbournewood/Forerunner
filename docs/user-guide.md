@@ -106,7 +106,8 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
 - **Overview**: where the project stands and what happens next. The cards of this project that
   wait for you, each with **Answer**; **Working now** (the task in flight, for how long, with
   **Open**); **Last result** (the last session's result in at most three lines, with **Open the
-  session** and "Read aloud"); **Next** (the open tasks in the order a session runs them, each
+  session** and "Read aloud"; when something it left for you has moved on since, a line says what
+  it is now, such as 'Since then: "Write the README" is done.'); **Next** (the open tasks in the order a session runs them, each
   with its status, worked out when you look); **Your files** (the project's folder with **Open
   folder** in the desktop app and **Copy path**, and the files the last session changed; for a
   project linked to a GitHub repository instead: the repository with its link, and **Waiting for

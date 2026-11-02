@@ -289,6 +289,16 @@ export class PrTaskExecutor implements TaskExecutor {
    * of the folder and kept under `setAsideRef(task)`, so the next task never builds on it and
    * Undo of the cancel brings it back (`bringBack`). Returns the files taken out.
    */
+  /**
+   * The specialist the next attempt runs with (U-044): the inner executor decides it (the
+   * retry ladder's stand-in), so the runner's log names who runs before the run begins.
+   */
+  async chooseSpecialist(
+    ctx: Parameters<NonNullable<TaskExecutor["chooseSpecialist"]>>[0],
+  ): Promise<string | null> {
+    return (await this.deps.inner.chooseSpecialist?.(ctx)) ?? null;
+  }
+
   async setAside(task: TaskRow): Promise<string[]> {
     const git = await this.changedFolderOf(task);
     if (!git) return [];

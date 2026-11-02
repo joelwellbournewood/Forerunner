@@ -85,9 +85,11 @@ import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-proj
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
+  blockedTaskIds,
   overviewNext,
   progressOf,
   projectStatusLine,
+  sinceLines,
 } from "@forerunner/runtime/daemon/project-status";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
@@ -1445,16 +1447,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         }),
       ),
     );
+    const base = SUMMARIES[id] ?? {
+      goal: p.goal,
+      stage: p.stage,
+      lastSession: null,
+      nextSteps: [],
+      openQuestions: 0,
+      spend: p.spend,
+      spoken: `${p.name} has not run yet.`,
+    };
+    // As the daemon (C-54): what became of the tasks the last session left for the person.
+    const last = base.lastSession;
+    const views = projectTaskViews(
+      state.tasks,
+      id,
+      state.requests,
+      state.sandbox.ready,
+      state.taskMeta,
+    );
+    const since = last
+      ? sinceLines(
+          blockedTaskIds(state.sessions.find((s) => s.id === last.id)?.handoff),
+          new Map(views.map((t) => [t.id, t])),
+          (t) => t.display as NonNullable<TaskView["display"]>,
+        )
+      : [];
     return c.json({
-      ...(SUMMARIES[id] ?? {
-        goal: p.goal,
-        stage: p.stage,
-        lastSession: null,
-        nextSteps: [],
-        openQuestions: 0,
-        spend: p.spend,
-        spoken: `${p.name} has not run yet.`,
-      }),
+      ...base,
+      ...(last ? { lastSession: { ...last, ...(since.length ? { since } : {}) } } : {}),
       next,
     });
   });

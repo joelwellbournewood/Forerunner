@@ -231,6 +231,13 @@ export const ProjectSummary = z.object({
       stopReason: z.string(),
       /** The files the session's tasks changed (design §3.4 "Your files"). */
       changedFiles: z.array(z.string()).optional(),
+      /**
+       * What became of the tasks the session left waiting for the person, computed when read
+       * (design §5 rule 4; C-54): 'Since then: "Write the README" is Done.' for each that moved
+       * on, at most three, then "and N more". The summary stays the record of the session's
+       * end. Absent when none moved on, and from an older service.
+       */
+      since: z.array(z.string()).optional(),
     })
     .nullable(),
   /** The task titles the last session left for later, as it ended (kept for the chat). */

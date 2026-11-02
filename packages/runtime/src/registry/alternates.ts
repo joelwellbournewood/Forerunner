@@ -111,17 +111,43 @@ function covers(have: readonly string[], need: readonly string[]): boolean {
   return need.every((t) => have.includes(t));
 }
 
+/** A word without its plural or third-person "s" ("designs", "styles"), for the task's words. */
+function stem(w: string): string {
+  return w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w;
+}
+
+/** The stems of the words a task and a description share. */
+function sharedStems(task: ReadonlySet<string>, description: ReadonlySet<string>): number {
+  const theirs = new Set([...description].map(stem));
+  let n = 0;
+  for (const w of task) if (theirs.has(stem(w))) n++;
+  return n;
+}
+
+/**
+ * What the task is about weighs more than what the replaced specialist was about: a page task
+ * goes to the stand-in whose description speaks of pages and markup (later #75).
+ */
+const TASK_WORD_WEIGHT = 2;
+
 /**
  * The specialist that takes the task over from `from`, or null when none fits. `exclude` names
  * the specialists that must not get it (those that already ran it); `requireWeb` asks for one
- * that reaches the web on the driver in use.
+ * that reaches the web on the driver in use; `task` (its title and what done looks like) ranks
+ * the ones that fit by the kind of work the task is, before the kind `from` does. Only the
+ * ranking reads the task: which specialists fit is still the tools alone (spec D.2).
  */
 export function alternateSpecialist(
   from: SpecialistProfile,
   candidates: readonly SpecialistProfile[],
-  opts: { exclude?: ReadonlySet<string>; requireWeb?: boolean } = {},
+  opts: {
+    exclude?: ReadonlySet<string>;
+    requireWeb?: boolean;
+    task?: { title: string; outcome?: string | null };
+  } = {},
 ): SpecialistProfile | null {
   const own = words(from.description);
+  const taskWords = opts.task ? words(`${opts.task.title} ${opts.task.outcome ?? ""}`) : null;
   const ranked = candidates
     .filter(
       (c) =>
@@ -138,6 +164,7 @@ export function alternateSpecialist(
       const theirs = words(c.description);
       let shared = 0;
       for (const w of own) if (theirs.has(w)) shared++;
+      if (taskWords) shared += TASK_WORD_WEIGHT * sharedStems(taskWords, theirs);
       const extra = c.registryTools.filter((t) => !from.registryTools.includes(t)).length;
       return { c, shared, extra };
     })

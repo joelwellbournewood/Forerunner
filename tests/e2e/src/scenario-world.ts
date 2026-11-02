@@ -772,6 +772,8 @@ export async function scenarioWorld(opts: ScenarioWorldOptions = {}): Promise<Sc
     };
     const inner: TaskExecutor & { withWorktree: (dir: string) => TaskExecutor } = {
       execute: (ctx) => new LoopTaskExecutor(loopDeps).execute(ctx),
+      // As compose wires it (U-044): who runs is known before the log says who started.
+      chooseSpecialist: (ctx) => new LoopTaskExecutor(loopDeps).chooseSpecialist(ctx),
       withWorktree: (dir) => new LoopTaskExecutor({ ...loopDeps, worktreeFor: async () => dir }),
     };
     const executor = new PrTaskExecutor({

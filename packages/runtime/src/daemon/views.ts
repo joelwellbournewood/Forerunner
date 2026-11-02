@@ -86,10 +86,12 @@ import {
 } from "./event-lines.ts";
 import { projectHealth } from "./project-health.ts";
 import {
+  blockedTaskIds,
   overviewNext,
   type PlanState,
   progressOf,
   projectStatusLine,
+  sinceLines,
   workingOn,
 } from "./project-status.ts";
 import { type RequestWordsContext, requestWords } from "./request-words.ts";
@@ -274,6 +276,16 @@ export async function projectSummary(
           if (typeof f === "string" && !changedFiles.includes(f)) changedFiles.push(f);
     }
   }
+  // What became of the tasks the session left waiting for the person (C-54, design §5 rule 4):
+  // the summary is the record of the end ("… needs your decision (Inbox)"); once such a task
+  // moved on (its card answered, Mark done anyway, a cancel), one line says what it is now.
+  const since = s.last_session?.id
+    ? sinceLines(
+        blockedTaskIds((await store.session.get(s.last_session.id))?.handoff),
+        new Map(tasks.map((t) => [t.id, t])),
+        (t) => taskDisplay(t, ctx),
+      )
+    : [];
   return {
     goal: p.goal,
     stage: p.stage,
@@ -284,6 +296,7 @@ export async function projectSummary(
           summary: s.last_session.summary,
           stopReason: s.last_session.stop_reason,
           changedFiles,
+          ...(since.length ? { since } : {}),
         }
       : null,
     nextSteps: next,
