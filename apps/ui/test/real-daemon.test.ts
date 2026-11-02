@@ -5160,13 +5160,16 @@ describe("the UI client against the real daemon: 'Skip the … task' in Chat can
   }, 120_000);
 });
 
-describe("the UI client against the real daemon: Cancel promises a removal only while a run or review goes on (stops, L-7)", () => {
-  it("the task views say whether its run or review goes on here; the chat's read-back and the line follow it", async () => {
+describe("the UI client against the real daemon: Cancel promises a removal only while a review goes on (stops, L-7)", () => {
+  it("a task being reviewed says whether its review goes on here; the chat's read-back and the line follow it", async () => {
     // Live check of phase C (2026-11-02): a task left "Being reviewed" with no review going
     // on (Forerunner had closed during it) got the Cancel dialog "Drops it. Its review stops
     // now and what it changed is removed; Undo brings it back." and nothing was removed. The
-    // dialog was worded from the status, while only a run or review going on is stopped.
-    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_DELAY_MS: "60000" });
+    // dialog was worded from the status, while only a review going on is stopped.
+    // The critic's replies wait a minute: one task's review goes on while the test looks.
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_CRITIC_DELAY_MS: "60000",
+    });
     try {
       const me = await client.me();
       const agentId = (await client.agents())[0]?.id ?? "";
@@ -5194,18 +5197,19 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
       const started = await client.startSession({ agentId, projectId: project.id });
       const view = async (id: string) => (await client.tasks(project.id)).find((t) => t.id === id);
       await eventually(
-        async () => (await view(running.id))?.display?.label === "Running",
-        "the About page to run",
+        async () => (await view(running.id))?.display?.label === "Being reviewed",
+        "the About page's review to begin",
         async () => `${(await view(running.id))?.status}`,
         30_000,
       );
+      // Its review goes on here; the other one's does not.
       expect((await view(running.id))?.display?.live).toBe(true);
       const idle = await view(left.id);
       expect(idle?.display?.label).toBe("Being reviewed");
       expect(idle?.display?.live).toBe(false);
       // The drawer reads the same view.
       expect((await client.task(left.id)).task.display?.live).toBe(false);
-      // Chat's read-back promises nothing about its files; the running one says its run stops.
+      // Chat's read-back promises nothing about its files; the reviewed one says its review stops.
       const say = (text: string) =>
         client.chat({
           humanId: me.id,
@@ -5220,7 +5224,7 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
       );
       expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
       expect((await say("cancel the About page task")).pendingConfirmation?.readback).toBe(
-        'Cancel "About page in about.html"? It is dropped; its run stops now and what it changed is removed.',
+        'Cancel "About page in about.html"? It is dropped; its review stops now and what it changed is removed.',
       );
       expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
       // The row's Cancel on the one with nothing going on: the line says only that.
@@ -5229,6 +5233,7 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
         action: "cancel",
       });
       expect(cancelled.change?.sentence).toBe('Cancelled "Contact page in contact.html".');
+      // Stop now during the review: the task is Ready again, with nothing going on for it.
       await client.stopSession(started.session?.id ?? "");
       await eventually(
         async () => (await client.session(started.session?.id ?? "")).status !== "running",
@@ -5236,8 +5241,9 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
         async () => `${(await view(running.id))?.status}`,
         30_000,
       );
-      // Its run ended: nothing goes on for it any more.
-      expect((await view(running.id))?.display?.live ?? false).toBe(false);
+      const after = await view(running.id);
+      expect(after?.display?.label).toBe("Ready");
+      expect(after?.display?.live).toBeUndefined();
     } finally {
       await rt.close();
     }

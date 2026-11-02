@@ -97,9 +97,10 @@ promised more than the code kept:
   three-way merge of the set-aside changes was not chosen: a rewritten file conflicts anyway,
   and conflict markers in the person's files are worse than a redo.
 - **A promise with nothing to stop (L-7).** Point 6 made the line true; the dialog and the
-  chat's read-back were still worded from the stored status. The task's view now says whether
-  a run or review of it goes on in the app (`display.live`, from the kill switch), and the
-  dialog and the read-back say the work is removed only then.
+  chat's read-back were still worded from the stored status. A task being reviewed now says
+  on its view whether its review goes on in the app (`display.live`, from the kill switch), and
+  the dialog and the read-back say the work is removed only then. A running task keeps the
+  words: its run stops wherever it runs, and its runner sets its work aside.
 - **A cancel in the first moment of a review (L-8).** The critic's own run now gets the
   review's signal, and the review's controller is registered before the task reads "Being
   reviewed", so a cancel at any moment of the review stops it at once; the consequence above

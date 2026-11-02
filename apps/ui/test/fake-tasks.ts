@@ -29,9 +29,9 @@ export interface FakeTaskMeta {
   /** The order tasks were added, for the run order's "older first". */
   added: Map<string, number>;
   /**
-   * Running or reviewed tasks whose run or review does not go on in the app (the daemon asks
-   * its kill switch, `display.live`; L-7): a task left in review by a quit, another computer's
-   * run. A test adds them; every other running or reviewed task has its run or review going.
+   * Tasks in review whose review does not go on in the app (the daemon asks its kill switch,
+   * `display.live`; L-7): a task left in review by a quit, another computer's review. A test
+   * adds them; every other task in review has its review going.
    */
   notLive: Set<string>;
 }

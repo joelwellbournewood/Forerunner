@@ -229,17 +229,14 @@ export function moveAsk(
 ): string {
   const t = quote(task.title);
   if (to === "cancelled") {
-    // As the row's Cancel dialog (L-10): what happens to a run or a review going on, said
-    // only when one goes on (L-7: a task left "Being reviewed" by a quit was promised a
+    // As the row's Cancel dialog (L-10): what happens to a run or a review going on; a review
+    // only when one goes on here (L-7: a task left "Being reviewed" by a quit was promised a
     // removal that never came).
-    const going = live ?? RUNNING.includes(from);
-    const work = !going
-      ? ""
-      : RUNNING.includes(from)
-        ? "; its run stops now and what it changed is removed"
-        : from === "in_review"
-          ? "; its review stops now and what it changed is removed"
-          : "";
+    const work = RUNNING.includes(from)
+      ? "; its run stops now and what it changed is removed"
+      : from === "in_review" && live === true
+        ? "; its review stops now and what it changed is removed"
+        : "";
     return `Cancel ${t}? It is dropped${work}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
   }
   if (to === "needs_human")

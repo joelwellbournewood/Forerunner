@@ -1738,13 +1738,16 @@ the first two describes, and their `real-daemon.test.ts` and `tasks.test.tsx` si
   (`taskDisplay`, `actionsFor`), not "Being reviewed". A move recorded after the run is
   recorded before a Stop now that came with it ends the session, so a cancel's files go as its
   line said.
-- **What Stop and Cancel would stop is on the task's view (L-7).** `KillSwitch.hasTask(id)`
-  says whether a registration of the task that is not stopped exists (what `stopTask` would
-  stop); `projectTaskViews` (server.ts) gives `taskDisplay` a `live` predicate from it, and a
-  running or reviewed task's `display.live` says it, so the Tasks tab's Cancel dialog promises
-  its work is removed only then, and the commands' `liveWork` port words the chat's read-back
-  the same way. Before, a task left "Being reviewed" with no review going on got "Its review
-  stops now and what it changed is removed; Undo brings it back." and nothing was removed.
+- **Whether a review goes on is on the task's view (L-7).** `KillSwitch.hasTask(id)` says
+  whether a registration of the task that is not stopped exists (what `stopTask` would stop);
+  `projectTaskViews` (server.ts) gives `taskDisplay` a `live` predicate from it, and a task
+  being reviewed carries `display.live`, so the Tasks tab's Cancel dialog promises its work is
+  removed only while its review goes on here, and the commands' `liveWork` port words the
+  chat's read-back the same way. Before, a task left "Being reviewed" with no review going on
+  got "Its review stops now and what it changed is removed; Undo brings it back." and nothing
+  was removed. A running task is not asked: its run stops wherever it runs (a run on another
+  computer stops once its runner's watch of the task sees the move, and that runner sets its
+  work aside).
 - **A Cancel at any moment of "Being reviewed" stops the review at once (L-8).** The review's
   controller is registered under the task before the task moves to `in_review`, so a Cancel
   from the first moment the row reads "Being reviewed" finds it (a move between the run's end

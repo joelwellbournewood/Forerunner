@@ -330,10 +330,11 @@ a move out of `claimed` or `in_progress` stops the run. The sentence says so onl
 `stopTask` answers `true` (a live run or review was stopped; the session sets aside exactly
 those): a task in review that no session reviews (its card waits, or Forerunner closed during
 its review) reads 'Cancelled "X".', and its files stay (phase C review). The chat's read-back
-of a cancel (`moveAsk`) says "its run stops now and what it changed is removed" (or "its
-review") only when the `liveWork` port answers that a run or review of the task goes on here
-(the daemon: `KillSwitch.hasTask`; without the port a running task is taken to run, a task in
-review to have no review going on; L-7). Every person's move of a task can be undone (design §3.5: "every
+of a cancel (`moveAsk`) says "its run stops now and what it changed is removed" for a running
+task, and "its review stops now ..." for a task in review only when the `liveWork` port answers
+that its review goes on here (the daemon: `KillSwitch.hasTask`; without the port a task in
+review to have no review going on; a running task's read-back always says its run stops;
+L-7). Every person's move of a task can be undone (design §3.5: "every
 action has one Undo right after it"): the undo puts the task back as it was. The move's
 `before` records the row's `status`, `reason`, `author_human`, `author_agent` and `attempt`;
 the undo restores them through `TaskRepo.restoreStatus` (a status only an agent sets comes

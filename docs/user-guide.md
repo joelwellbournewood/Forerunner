@@ -162,8 +162,8 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   files changed since (a session that goes on often changes them within seconds: then Undo says
   so and the task's next run does the work again), and the answers you gave in the Inbox
   meanwhile stay in the decision record; a task that already has a pull request keeps it open.
-  The dialog and the line after Cancel say what happens: a task with no run or review going on
-  in the app, because its card waits for you or another computer reviews it, keeps its files,
+  The dialog and the line after Cancel say what happens: a task in review with no review going
+  on in the app, because its card waits for you or another computer reviews it, keeps its files,
   its dialog says only "Drops it." and the line only "Cancelled". A Cancel from the first moment
   a task reads **Being reviewed** stops the review at once: the critic makes no further call).
   If you quit Forerunner while a task is **Being reviewed**, it reads **Ready** when you open it

@@ -82,8 +82,10 @@ export interface TaskDisplayContext {
    */
   reviews?: ReadonlyMap<string, Pick<ReviewRow, "verdict" | "evidence">>;
   /**
-   * Whether a run or review of the task goes on in this app now (the kill switch holds it):
-   * a running or reviewed task's `live` (L-7). Absent: not said.
+   * Whether a review of the task goes on in this app now (the kill switch holds it): a task
+   * being reviewed's `live` (L-7). Absent: not said. A running task is not asked: its run goes
+   * on wherever it was claimed, and a run on another computer stops on its own once it sees the
+   * move (the runner's watch of the task), so a Cancel takes its work out there too.
    */
   live?: (taskId: string) => boolean;
 }
@@ -263,7 +265,6 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       return display("running", "Running", "info", {
         agentName,
         since: run?.created_at ?? task.updated_at,
-        ...(ctx.live ? { live: ctx.live(task.id) } : {}),
         ...(run?.specialist ? { detail: `The ${run.specialist} is working on it.` } : {}),
       });
     }

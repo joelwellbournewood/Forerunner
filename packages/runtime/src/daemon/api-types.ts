@@ -313,10 +313,10 @@ export const TaskDisplay = z.object({
     })
     .nullable(),
   /**
-   * Running and Being reviewed: whether its run or review goes on in this app now, which Stop
-   * and Cancel stop at once (a Cancel then takes its work out of the folder). False for a task
-   * left in review with no review going on (L-7: the Cancel dialog promised a removal that
-   * never came). Absent for the other statuses and from an older service.
+   * Being reviewed: whether its review goes on in this app now, which Cancel stops at once
+   * (and then takes its work out of the folder). False for a task left in review with no review
+   * going on (L-7: the Cancel dialog promised a removal that never came). Absent for the other
+   * statuses (a running task's run stops wherever it runs) and from an older service.
    */
   live: z.boolean().optional(),
 });

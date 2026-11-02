@@ -235,8 +235,9 @@ export interface CommandPorts {
   stopTask?(taskId: string, reason: string): Promise<boolean | undefined> | boolean | undefined;
   /**
    * Whether a run or review of the task goes on in this app now (what `stopTask` would stop):
-   * a cancel's read-back says its run or review stops and its work is removed only then (L-7).
-   * Absent: a running task is taken to have its run going, a task in review no review.
+   * a cancel's read-back of a task in review says its review stops and its work is removed
+   * only then (L-7). A running task's read-back always says its run stops (a run on another
+   * computer stops once its runner sees the move). Absent: a task in review has no review.
    */
   liveWork?(taskId: string): boolean;
   /**
