@@ -17,7 +17,8 @@ import {
   type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
-import { isPausedByPerson } from "../daemon/task-words.ts";
+import { couldNotWords } from "../daemon/event-lines.ts";
+import { holdsTask, isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -43,6 +44,7 @@ import {
 } from "../loop/ports.ts";
 import { isSandboxNotReady } from "../sandbox/readiness.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
+import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
@@ -1092,6 +1094,12 @@ export class SessionRunner {
         const queue: PlanItem[] = [...plan.items];
         /** Runs per task in this session: a guard against a task that keeps coming back. */
         const runsOf = new Map<string, number>();
+        /**
+         * The specialist each task last started with in this session: a later start is a retry
+         * (`again`), and one with another specialist a hand-over (`handedFrom`). The session log
+         * tells a retry by what came of it (design §3.7, `eventAudience`).
+         */
+        const startedWith = new Map<string, string>();
         /** Tasks not to take again in this session (a peer holds it, the sandbox, a limit). */
         const notAgain = new Set<string>();
         /** At levels 0 and 1 only what the person approved runs (its retries included). */
@@ -1294,11 +1302,16 @@ export class SessionRunner {
               `session ${session.id} started work`,
               { agentId: agent.id },
             );
+          const before = startedWith.get(task.id);
+          const again = before !== undefined;
+          startedWith.set(task.id, item.specialist);
           await emit("task.started", {
             taskId: task.id,
             title: task.title,
             specialist: item.specialist,
             estimateUsdMicro: item.estimateUsdMicro,
+            ...(again ? { again: true } : {}),
+            ...(again && before !== item.specialist ? { handedFrom: before } : {}),
           });
           runningTask = { id: task.id, title: task.title };
           // The claim is renewed every sixth of its TTL for as long as the task runs: a
@@ -1444,13 +1457,31 @@ export class SessionRunner {
             filesByTask.set(task.id, result.changedFiles);
             await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
           }
+          // What the session log needs to tell the run once (design §3.7, `eventAudience`):
+          // whether the critic reviews it next (the branches below), and the words of a run
+          // that said it could not do the work, which the critic's line then quotes.
+          const toCritic =
+            !!this.deps.critic &&
+            task.status === "in_progress" &&
+            (result.outcome === "done" || result.outcome === "in_review") &&
+            !(result.outcome === "done" && task.risk_tier === 0 && result.checksPassed);
+          const couldNot =
+            result.outcome === "done" || result.outcome === "in_review"
+              ? couldNotWords(result.summary)
+              : null;
           await emit(
             "task.finished",
             {
               taskId: task.id,
+              // The log's line names the task and who did it (design §3.7, §5 rule 3).
+              title: task.title,
+              specialist: item.specialist,
               outcome: result.outcome,
               costUsdMicro: result.costUsdMicro,
               summary: result.summary,
+              ...(toCritic ? { review: true } : {}),
+              ...(couldNot !== null ? { couldNot } : {}),
+              ...(again ? { again: true } : {}),
             },
             result.costUsdMicro,
           );
@@ -1589,6 +1620,9 @@ export class SessionRunner {
               }
               await emit("critic.review_failed", {
                 taskId: task.id,
+                title: task.title,
+                specialist: item.specialist,
+                ...(couldNot !== null ? { couldNot } : {}),
                 warning: `critic review failed: ${reviewed.error}${
                   humanRequestId ? "; asked you to rework, accept or cancel" : ""
                 }`,
@@ -1905,6 +1939,9 @@ export class SessionRunner {
               limit: 1000,
             })
           )
+            // A card that asks nothing of its task (the project's Docker card) does not hold
+            // it: a task the person paused while one was open is "Paused by you" (wave 2).
+            .filter((r) => holdsTask(r))
             .map((r) => r.task_id)
             .filter((id): id is string => Boolean(id))
         : [],
@@ -2075,7 +2112,9 @@ export class SessionRunner {
         const all: LessonCandidate[] = [
           ...lessonCandidates,
           ...decisions.map((d) => ({
-            text: `Decision for ${project?.name ?? "the project"}: ${d.question} -> ${d.chosen}${d.rationale ? ` (${d.rationale})` : ""}`,
+            // One sentence a specialist can use (design §5 "Decision"): the question and the
+            // person's answer, never the card's instructions or the form's JSON.
+            text: `Decision for ${project?.name ?? "the project"}: ${decisionSentence(d.question, d.chosen)}${d.rationale ? ` (${d.rationale})` : ""}`,
             tags: ["decision", "human"],
             confidence: 0.8,
             source: `session:${session.id};human:${d.decided_by}`,
@@ -2226,7 +2265,13 @@ export class SessionRunner {
       !outcome.failed.length &&
       !outcome.needsYou.length &&
       !inReviewNow.length;
+    const update = sessionUpdateLine(
+      project?.name ?? null,
+      resultLines,
+      outcome.needsYou.map((t) => t.title),
+    );
     if (
+      update &&
       stopReason !== "plan_awaiting_approval" &&
       stopReason !== NOTHING_RUNNABLE &&
       !onlyTheirStop
@@ -2236,7 +2281,7 @@ export class SessionRunner {
         to_human_id: agent.owner_human_id,
         project_id: project?.id ?? null,
         type: "info",
-        body: sessionUpdateLine(project?.name ?? null, resultLines),
+        body: update,
         requires_ack: false,
         author_agent: agent.id,
       });
@@ -2281,8 +2326,22 @@ export class SessionRunner {
     // summary and the task states are written, since that is what it checks. A session that
     // only filed its plan did no work to review.
     let sessionReview: SessionReviewOutcome | null = null;
+    // A session that ended no task one way or another (stopped in its first seconds, nothing
+    // planned) did no work to grade (design §4.8): before, it read "Session review: accepted
+    // (grade 100)".
+    const endedAnyTask = [
+      completed,
+      inReview,
+      failed,
+      needsHuman,
+      retried,
+      blockedByFindings,
+      cancelled,
+      reviewFailed,
+    ].some((l) => l.length > 0);
     if (
       this.deps.critic &&
+      endedAnyTask &&
       stopReason !== "plan_awaiting_approval" &&
       stopReason !== NOTHING_RUNNABLE
     ) {
@@ -2318,6 +2377,11 @@ export class SessionRunner {
     // task, counted once: sent back, not also "not started" (U-072). It stays in the handoff's
     // `next`, where the next session and the peers read what is left.
     const notStarted = [...new Set(skipped)].filter((id) => !retried.includes(id));
+    // A task sent back and then accepted, failed or handed to the person in this same session
+    // is counted where it ended, once (design §4.3: the rework runs in the session).
+    const sentBackNow = retried.filter(
+      (id) => !completed.includes(id) && !failed.includes(id) && !needsHuman.includes(id),
+    );
     await emit("session.ended", {
       status: finalStatus,
       stopReason,
@@ -2325,11 +2389,13 @@ export class SessionRunner {
       completed: completed.length,
       inReview: inReview.length,
       failed: failed.length,
-      needsHuman: needsHuman.length,
+      // What needs the person now, as the result says it: a task the person paused is theirs,
+      // not "needs you" (design §2).
+      needsHuman: needsYouNow.length,
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
       skipped: notStarted.length,
-      retried: retried.length,
+      retried: sentBackNow.length,
       blockedByFindings: blockedByFindings.length,
       lessonsRecorded,
       sessionReviewGrade: sessionReview?.grade ?? null,
@@ -2436,10 +2502,19 @@ export class SessionRunner {
       // The caller files the card and reports it (U-045).
       return { failed: true, error: errorMessage(e) };
     }
+    // A run that said it could not do the work: the verdict's line quotes it, so the session log
+    // tells the attempt in one line (design §5, "Log line").
+    const couldNot =
+      request.result.outcome === "done" || request.result.outcome === "in_review"
+        ? couldNotWords(request.result.summary)
+        : null;
     await emit(
       "critic.verdict",
       {
         taskId: request.task.id,
+        title: request.task.title,
+        specialist: request.item.specialist,
+        ...(couldNot !== null ? { couldNot } : {}),
         reviewId: outcome.reviewId,
         tier: outcome.tier,
         verdict: outcome.verdict,
@@ -2545,6 +2620,7 @@ export class SessionRunner {
     }
     await input.emit("task.blocked_by_findings", {
       taskId: input.task.id,
+      title: input.task.title,
       path: input.path,
       warning: `cannot close "${input.task.title}": ${findings.length} open critic finding(s) remain${
         humanRequestId ? "; asked you to rework, accept or cancel" : ""
@@ -2712,7 +2788,10 @@ export class SessionRunner {
     sinceIso: string | null,
   ): Promise<{ question: string; chosen: string; rationale: string; decided_by: string }[]> {
     const rows = await this.deps.store.decision.current(projectId);
-    return rows.filter((d) => !sinceIso || d.created_at > sinceIso);
+    // A row from before the per-question rows is read as its plain pairs (`plainRows`).
+    return rows
+      .filter((d) => !sinceIso || d.created_at > sinceIso)
+      .flatMap((d) => plainRows(d).map((pair) => ({ ...d, ...pair })));
   }
 
   /**

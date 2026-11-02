@@ -2546,7 +2546,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   store.humanRequest.insert = async (input) => {
     const row = await insertHumanRequest(input);
     if (row.human_id === human.id) {
-      notifyLater(notifications.requestOpened(row, row.human_id), `request ${row.id}`);
+      // The notification names the project and the task (design §5, "Notification"). The
+      // names are read before the insert returns, so the notification is recorded by then, as
+      // it was before it named them.
+      const names = { projectName: null as string | null, taskTitle: null as string | null };
+      try {
+        if (row.project_id)
+          names.projectName = (await store.project.get(row.project_id))?.name ?? null;
+        if (row.task_id) names.taskTitle = (await store.task.get(row.task_id))?.title ?? null;
+      } catch {
+        // without the names the notification still goes, titled by the card alone
+      }
+      notifyLater(notifications.requestOpened(row, human.id, names), `request ${row.id}`);
       events.emit("inbox", {});
     }
     return row;
@@ -2560,7 +2571,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // A person's own Stop now on one session is their click, not news (design §5.11): the
     // session says "Stopped by you"; Stop all and Quit are still told.
     if (by === "you") return;
-    notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch");
+    notifyLater(notifications.killSwitch(human.id, report, reason, by ?? undefined), "kill switch");
   });
   events.on("restart", (r: RestartRequestFile) => {
     // A restart after the setup assistant stored a credential is no update (ADR 0092).
@@ -2596,6 +2607,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         summary: typeof p.summary === "string" ? p.summary : (review?.summary ?? ""),
       },
       e.projectId ?? null,
+      {
+        projectName: e.projectId ? ((await store.project.get(e.projectId))?.name ?? null) : null,
+        taskTitle: taskId ? ((await store.task.get(taskId))?.title ?? null) : null,
+      },
     );
     await notifier.notify({ ...n, urgency: "normal" });
   };
@@ -2827,6 +2842,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           inReview: result.inReview,
           skipped: result.skipped,
           projectId: req.projectId ?? null,
+          projectName: req.projectId
+            ? ((await store.project.get(req.projectId))?.name ?? null)
+            : null,
           agentName: await agentNameOf(req.agentId),
         }),
         `session ${result.sessionId} ended`,

@@ -1,10 +1,18 @@
 import type { CostView } from "../../api/client.ts";
 import { Badge, ErrorBanner, Loading, Money } from "../../components/ui.tsx";
-import { formatDateTime } from "../../lib/time.ts";
+import { formatDayMonth } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 
 type Bucket = CostView["byModel"][number];
+
+/** The period the figures cover, in words (design §5): "1 Nov to 3 Nov", "on 1 Nov". */
+export function periodWords(from: string, to: string): string {
+  if (!from && !to) return "Nothing spent yet";
+  const a = formatDayMonth(from || to);
+  const b = formatDayMonth(to || from);
+  return a === b ? `On ${a}` : `${a} to ${b}`;
+}
 
 /** Cost per accepted task (spec I.6); null when nothing was accepted or acceptance is not tracked. */
 export function costPerAccepted(bucket: Bucket): Bucket["cost"] | null {
@@ -90,8 +98,8 @@ export function CostsTab({ projectId }: { projectId: string }) {
             plan usage {Math.round(data.planUsageShare * 100)}% (est. API-equivalent shown)
           </Badge>
         ) : null}
-        <span className="text-xs text-neutral-500">
-          {formatDateTime(data.from)} → {formatDateTime(data.to)}
+        <span className="text-xs text-neutral-500" data-testid="cost-period">
+          {periodWords(data.from, data.to)}
         </span>
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

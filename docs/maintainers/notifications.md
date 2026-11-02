@@ -43,7 +43,7 @@ names a session appends a `notification` event to that session's log.
 | --- | --- | --- | --- |
 | `request_opened` | normal | `producers.requestOpened` for a non-blocking human request | `/inbox` |
 | `request_blocking` | **urgent** | `producers.requestOpened` when `blocking` is true | `/inbox` |
-| `session_ended` | normal | `producers.sessionEnded` from the session runner; the title counts the summary's categories in its order (done, failed, needs you, sent back, in review, not started; `countsBrief` in `session/counts.ts`), done always and the others when any: "0 done, 1 sent back" (U-017, U-072); `SessionEndFacts` carries `retried`, `inReview` and `skipped` for it; a budget stop's title says the spend in CHF (`spentChfMicro`, the ledger's figure; the default rate without it; U-074), as does the calibration report's cost line | `/sessions/<id>` |
+| `session_ended` | normal | `producers.sessionEnded` from the session runner; the title is the project and the session result's first point ('Quote page: "Style the page" needs your decision', "Quote page: did 2 tasks: …"), the body the rest of the result and "Answer it in the Inbox." or "Open the session for the details." (design §5); a budget stop's title says the spend in CHF (`spentChfMicro`, the ledger's figure; the default rate without it; U-074), as does the calibration report's cost line | `/sessions/<id>` |
 | `budget_stop` | **urgent** | `producers.sessionEnded` when `stopReason === "budget_exceeded"` (or `producers.budgetStop`) | `/sessions/<id>` |
 | `critic_verdict` | info (`escalate` and `human` verdicts: normal) | `producers.criticVerdict` | `/projects/<id>/reviews` or `/inbox` |
 | `injection_flagged` | **urgent** | `producers.injectionFlagged` with an `InjectionReport` | `/sessions/<id>` or `/inbox` |
@@ -217,7 +217,24 @@ Pure builders (one per kind, see the table above) and `bindProducers(notifier)`,
 the same functions bound to a notifier so the orchestrator hands the session runner, the human
 request path, the kill switch, the critic, the updater, the email command handler and the inbox
 one hook each: `hooks.sessionEnded(humanId, facts)`, `hooks.requestOpened(req, humanId)`,
-`hooks.killSwitch(humanId, report, reason)`, ... Each resolves with the record.
+`hooks.killSwitch(humanId, report, reason, by)`, ... Each resolves with the record.
+
+What they say follows the writing rules (design §5, "Notification"): a title of at most
+`NOTIFICATION_TITLE_MAX` (60) characters that names the project and the task and what happened,
+a body of at most `NOTIFICATION_BODY_MAX` (140) that is one sentence and what to do, no ids, no
+"(s)", no raw verdicts. `requestOpened(req, humanId, { projectName, taskTitle })` takes the
+card's own title from `requestWords` ('Quote page: "Style the page" failed 4 times'; a card
+with one sentence has it as its title) and its body ('The designer said: "…" Answer it in the
+Inbox.'); compose reads the names when the request is inserted. `sessionEnded` takes the
+result's first point for the title ("Quote page: did 2 tasks: …", 'Quote page: "Style the page"
+needs your decision') and the rest for the body; `SessionEndFacts.projectName` carries the
+project. `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
+critic sent "X" back'), never "Critic: revise (grade 35)" or "Review <id> of task <id>".
+`killSwitch(…, by)` says whose stop it was ("Stop all: every session stopped", "Forerunner was
+closed: its work stopped") and what happens next, without the run, process and token counts.
+A long title shortens the quoted names in it first, at a word (`fit`). Before, a task that had
+failed four times read "An approval is needed (work is blocked)", a session "Alice's session
+completed: 0 done" with no project, and the body was the whole session paragraph.
 
 ### Configuration (`config.ts`)
 

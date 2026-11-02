@@ -1062,7 +1062,10 @@ export class LoopTaskExecutor implements TaskExecutor {
       outcome,
       ...(result.error ? { errorCode: result.error.code } : {}),
       summary: askedPerson
-        ? `Waiting for your answers in the Inbox (${askedPerson.steps.length} question(s) from ${spec.name}).`
+        ? // Design §5 rule 6: plurals as the number says, the specialist as a person names it.
+          `The ${spec.name.split(/[-_]/)[0]} asked you ${
+            askedPerson.steps.length === 1 ? "a question" : `${askedPerson.steps.length} questions`
+          }; the task waits for your answers in the Inbox.`
         : failedOn ||
           finalText.slice(0, 2000) ||
           (result.error ? redact(result.error.message) : "") ||

@@ -48,7 +48,7 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(page.getByTestId("session-spend")).toContainText("CHF 3.60");
 
   // Details: the event types, the level filters and the raw payloads.
-  await page.getByTestId("raw-toggle").check();
+  await page.getByTestId("details-toggle").check();
   await page.getByTestId("filter-info").click();
   await expect(page.getByTestId("event-row")).toHaveCount(2);
   await expect(page.getByTestId("event-raw")).toHaveCount(2);

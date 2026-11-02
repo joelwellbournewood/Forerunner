@@ -1,5 +1,6 @@
 import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
+import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import { namesOf } from "./recovery.ts";
 
 /**
@@ -109,13 +110,12 @@ export function sessionResultLines(f: ResultFacts): string[] {
   const asks: string[] = [];
   if (o.stopReason === "plan_awaiting_approval")
     asks.push("The plan waits for your approval in the Inbox; nothing ran.");
-  if (o.needsYou.length)
-    asks.push(
-      `${namesOf(titlesOf(o.needsYou))} ${plural(o.needsYou.length, "needs", "need")} your decision (Inbox).`,
-    );
+  if (o.needsYou.length) asks.push(needsYouSentence(titlesOf(o.needsYou)));
   if (o.failed.length === 1 && o.failed[0]) {
     const f0 = o.failed[0];
-    asks.push(`"${f0.title}" failed: ${lowerFirst(noDot(f0.reason)) || "no reason given"}.`);
+    // The stored reason may carry a run id or "(s)" (writing rules §5: neither is shown).
+    const reason = plainPlurals(withoutIds(f0.reason)).replace(/\s*\(\s*\)/g, "");
+    asks.push(`"${f0.title}" failed: ${lowerFirst(noDot(reason)) || "no reason given"}.`);
   } else if (o.failed.length > 1) asks.push(`${namesOf(titlesOf(o.failed))} failed.`);
   if (o.waitingForDocker.length)
     asks.push(`Waiting for Docker: ${namesOf(titlesOf(o.waitingForDocker))}.`);
@@ -174,10 +174,62 @@ export function sessionResultLines(f: ResultFacts): string[] {
   return lines.slice(0, 3);
 }
 
-/** The one-line Update the Inbox gets for a session (design §3.8): the project and the gist. */
-export function sessionUpdateLine(projectName: string | null, lines: readonly string[]): string {
-  const head = lines[0] ?? "";
-  const gist = head.length > 160 ? `${head.slice(0, 157).replace(/\s+\S*$/, "")}…` : head;
+/**
+ * The result's sentence for the tasks that wait on the person's decision: '"Style the page in
+ * styles.css" needs your decision (Inbox).' A card in the Needs you list says the same (design
+ * §5.10: one place per fact), so the Update removes this exact sentence.
+ */
+export function needsYouSentence(titles: readonly string[]): string {
+  return `${namesOf(titles)} ${plural(titles.length, "needs", "need")} your decision (Inbox).`;
+}
+
+/** Money, how the session ended and what waits: not news on their own in an Update. */
+const NOT_NEWS =
+  /^(?:(?:CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.)\s*)+$/;
+
+/** The longest gist an Update carries before it is cut at a word. */
+const UPDATE_GIST_MAX = 160;
+
+/**
+ * A gist longer than `max` cut at a word with "…"; a cut inside a quoted name closes the quote
+ * ('… and "Style the page in…"'), so the line never reads as a broken fragment.
+ */
+function cutGist(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text
+    .slice(0, max - 2)
+    .replace(/\s+\S*$/, "")
+    .replace(/[\s,;:.]+$/, "");
+  const open = (cut.match(/"/g) ?? []).length % 2 === 1;
+  return open ? `${cut}…"` : `${cut}…`;
+}
+
+/**
+ * The one-line Update the Inbox gets for a session (design §3.8): the project and the gist, or
+ * null when there is no news. A decision that waits is the card's to say, not the Update's
+ * (`needsYou`: the titles of the tasks the result says need the person, whose sentence is
+ * removed as written, so a title with a dot or a quote in it is never cut), and a session that
+ * did nothing but what a card or the person's own stop says posts nothing (wave 1:
+ * "<Project>: CHF 0.00." after the person stopped its only task).
+ */
+export function sessionUpdateLine(
+  projectName: string | null,
+  lines: readonly string[],
+  needsYou: readonly string[],
+): string | null {
+  const card = needsYou.length ? needsYouSentence(needsYou) : null;
+  const withoutCard = (l: string) =>
+    (card ? l.split(card).join(" ") : l).replace(/\s{2,}/g, " ").trim();
+  const head = lines.map(withoutCard).find((l) => l.length > 0 && !NOT_NEWS.test(l));
+  if (!head) {
+    // A session whose only news is a card still has its one line (design §3.8), worded so it
+    // stays true once the card is answered.
+    const cardOnly = card !== null && lines.some((l) => l.includes(card));
+    if (!cardOnly) return null;
+    const line = "the session ended without finishing a task.";
+    return projectName ? `${projectName}: ${line}` : `The ${line.slice(4)}`;
+  }
+  const gist = cutGist(head, UPDATE_GIST_MAX);
   return projectName ? `${projectName}: ${lowerFirstIfDid(gist)}` : gist;
 }
 

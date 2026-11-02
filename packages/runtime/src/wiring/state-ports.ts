@@ -11,6 +11,7 @@ import type {
   LedgerEntry,
   LedgerPort,
 } from "../enforcement/ports.ts";
+import { ANSWER_CARD_KEYS, optionLabel, personQuestionsAnswer } from "./request-answers.ts";
 
 /**
  * Adapters from the state store to the enforcement ports. The runtime never talks to the
@@ -228,6 +229,113 @@ export function statePorts(
   };
 }
 
+/** One question of a decision card and the person's answer, as the decision log keeps it. */
+export interface DecisionPair {
+  question: string;
+  chosen: string;
+  options: string[];
+}
+
+/** What the person chose when they went on without answering a question. */
+export const NO_ANSWER_CHOSEN = "No answer: the specialist decides and says what it assumed.";
+
+/** The first sentence of a card's text, without ids: the question a card with no steps asked. */
+function cardQuestion(why: string): string {
+  const t = why
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const m = /^(.+?[.!?])(\s|$)/.exec(t);
+  return (m?.[1] ?? t).slice(0, 300);
+}
+
+/** An answer as the person gave it, in words: a choice's label, a text; never JSON. */
+function answerText(answer: unknown): string | null {
+  if (typeof answer === "string") return answer.trim() || null;
+  if (answer && typeof answer === "object" && !Array.isArray(answer)) {
+    const o = answer as Record<string, unknown>;
+    for (const k of ["choice", "option", "answer", "decision", "text"]) {
+      const v = o[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * The decision log's rows for an answered decision card (design §3.4, §5 "Decision"): one per
+ * question, the question as the card asked it and the answer in the person's words. Before,
+ * the row held the card's instructions ("... needs your answers. No specialist works on it:
+ * answer the questions below ...") as the question and the form's JSON as the answer, and the
+ * same text became a memory lesson pasted into every specialist's brief. A questions card
+ * answered with "Go ahead without" records that the specialist decides; a cancelled task
+ * decided nothing and records no row.
+ */
+export function decisionPairs(
+  r: Pick<HumanRequestRow, "why" | "steps" | "options" | "answer" | "change_card">,
+): DecisionPair[] {
+  const card = (r.change_card ?? {}) as Record<string, unknown>;
+  const key = typeof card.key === "string" ? card.key : "";
+  if (key.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix)) {
+    const read = personQuestionsAnswer(r.answer);
+    if (!read || read.kind === "cancel") return [];
+    if (read.kind === "without")
+      return r.steps.map((question) => ({ question, chosen: NO_ANSWER_CHOSEN, options: [] }));
+    return read.answers.map((a, i) => ({
+      question: a.question ?? r.steps[i] ?? cardQuestion(r.why),
+      chosen: a.answer,
+      options: [],
+    }));
+  }
+  const chosen = answerText(r.answer);
+  if (!chosen) return [];
+  return [{ question: cardQuestion(r.why), chosen, options: r.options.map(optionLabel) }];
+}
+
+/**
+ * A stored decision as plain pairs. A row from before the per-question rows held the questions
+ * card's form as JSON (`{"answers":[{question, answer}]}`) and the card's text as the question:
+ * it is read as one pair per answered question, so old projects and the lessons from them read
+ * the same as new ones.
+ */
+export function plainRows(d: Pick<DecisionRow, "question" | "chosen">): {
+  question: string;
+  chosen: string;
+}[] {
+  const parsed = parseJson(d.chosen);
+  if (parsed !== undefined) {
+    const pairs = decisionPairs({
+      why: d.question,
+      steps: [],
+      options: [],
+      answer: parsed as never,
+      change_card: Array.isArray((parsed as { answers?: unknown } | null)?.answers)
+        ? { key: ANSWER_CARD_KEYS.personQuestionsPrefix }
+        : null,
+    });
+    if (pairs.length) return pairs.map(({ question, chosen }) => ({ question, chosen }));
+  }
+  return [{ question: d.question, chosen: d.chosen }];
+}
+
+function parseJson(text: string): unknown {
+  const t = text.trim();
+  if (!t.startsWith("{") && !t.startsWith('"')) return undefined;
+  try {
+    return JSON.parse(t) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/** "Where is it published? Only as a local file." — a decision as one sentence (a lesson). */
+export function decisionSentence(question: string, chosen: string): string {
+  const q = question.trim();
+  const a = chosen.trim();
+  const joined = /[?.!:]$/.test(q) ? `${q} ${a}` : `${q}: ${a}`;
+  return /[.!?]$/.test(joined) ? joined : `${joined}.`;
+}
+
 /**
  * Decision log (spec J): an answered decision is recorded per project and the same question
  * is never asked again unless a newer answer supersedes it. Callers that need a decision go
@@ -253,7 +361,11 @@ export class DecisionLog {
     return { request, decision: null };
   }
 
-  /** Record the answer of an answered request of kind "decision"; supersedes an older answer. */
+  /**
+   * Record the answer of an answered request of kind "decision", one row per question it
+   * asked (`decisionPairs`); each supersedes an older answer to the same question. Returns the
+   * last row written, or null when the answer decided nothing (the task was cancelled).
+   */
   async recordAnswer(
     request: HumanRequestRow,
     decidedBy: string,
@@ -261,23 +373,26 @@ export class DecisionLog {
   ): Promise<DecisionRow | null> {
     if (request.kind !== "decision" || request.status !== "answered" || !request.project_id)
       return null;
-    const chosen =
-      typeof request.answer === "string" ? request.answer : JSON.stringify(request.answer ?? "");
-    const input = {
-      project_id: request.project_id,
-      question: request.why,
-      options: request.options,
-      chosen,
-      decided_by: decidedBy,
-      rationale,
-      author_human: decidedBy,
-    };
-    const existing = await this.store.decision.findAnswered(request.project_id, request.why);
-    if (existing) {
-      if (existing.chosen === chosen) return existing;
-      return this.store.decision.supersede(existing.id, input as never);
+    let last: DecisionRow | null = null;
+    for (const pair of decisionPairs(request)) {
+      const input = {
+        project_id: request.project_id,
+        question: pair.question,
+        options: pair.options,
+        chosen: pair.chosen,
+        decided_by: decidedBy,
+        rationale,
+        author_human: decidedBy,
+      };
+      const existing = await this.store.decision.findAnswered(request.project_id, pair.question);
+      if (existing) {
+        last =
+          existing.chosen === pair.chosen
+            ? existing
+            : await this.store.decision.supersede(existing.id, input as never);
+      } else last = await this.store.decision.record(input as never);
     }
-    return this.store.decision.record(input as never);
+    return last;
   }
 
   current(projectId: string): Promise<DecisionRow[]> {

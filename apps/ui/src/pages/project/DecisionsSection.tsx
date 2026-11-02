@@ -1,23 +1,41 @@
-import { Badge, ErrorBanner, Loading } from "../../components/ui.tsx";
-import { formatDateTime } from "../../lib/time.ts";
+import { useState } from "react";
+import { Link } from "react-router";
+import type { DecisionView } from "../../api/client.ts";
+import { ErrorBanner, Loading } from "../../components/ui.tsx";
+import { formatDayMonth } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 
-/** Decision log (spec J.4): answered decisions, never asked again unless superseded. */
+/** How many decisions the Overview shows before "all" (design §3.4). */
+export const DECISIONS_SHOWN = 5;
+
+/** "Q? A." with the question's own end mark, or a colon where it has none. */
+function sentence(d: DecisionView): string {
+  const q = d.question.trim();
+  const a = d.chosen.trim();
+  const joined = /[?.!:]$/.test(q) ? `${q} ${a}` : `${q}: ${a}`;
+  return /[.!?]$/.test(joined) ? joined : `${joined}.`;
+}
+
+/**
+ * The project's decisions (spec J.4; design §3.4, §5 "Decision"): plain question and answer
+ * pairs, "Q? A. (Robin, 1 Nov)", newest first, at most five with "all" for the rest, the plan
+ * the person approved, and the decision records in the project's folder, which open in Docs.
+ */
 export function DecisionsSection({ projectId }: { projectId: string }) {
   const client = useClient();
   const decisions = useAsync((signal) => client.decisions(projectId, signal), [client, projectId]);
+  const [all, setAll] = useState(false);
   const rows = [...(decisions.data ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const superseded = new Set(rows.map((d) => d.supersedes).filter((s): s is string => s !== null));
+  const answers = rows.filter((d) => d.kind !== "record");
+  const records = rows.filter((d) => d.kind === "record");
+  const shown = all ? answers : answers.slice(0, DECISIONS_SHOWN);
 
   return (
     <section data-testid="decisions" aria-labelledby="decisions-title">
       <h2 id="decisions-title" className="font-semibold">
         Decisions
       </h2>
-      <p className="text-xs text-neutral-500">
-        Answered questions are recorded here and not asked again unless superseded.
-      </p>
       {decisions.loading && !decisions.data ? <Loading what="decisions" /> : null}
       {decisions.error && !decisions.data ? (
         <ErrorBanner message={decisions.error} onRetry={decisions.reload} />
@@ -27,39 +45,50 @@ export function DecisionsSection({ projectId }: { projectId: string }) {
           No decisions yet.
         </p>
       ) : null}
-      <ul className="mt-1 space-y-2">
-        {rows.map((d) => (
+      <ul className="mt-1 space-y-1">
+        {shown.map((d) => (
           <li
             key={d.id}
-            className="rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800"
+            className="text-sm"
             data-testid="decision"
             data-decision-id={d.id}
-            data-superseded={superseded.has(d.id) ? "true" : "false"}
+            data-kind={d.kind}
           >
-            <p className="font-medium">{d.question}</p>
-            <p className="mt-1">
-              <span className="font-semibold" data-testid="decision-chosen">
-                {d.chosen}
-              </span>
-              {d.options.filter((o) => o !== d.chosen).length > 0 ? (
-                <span className="text-xs text-neutral-500">
-                  {" "}
-                  (not: {d.options.filter((o) => o !== d.chosen).join(", ")})
-                </span>
-              ) : null}
-            </p>
-            {d.rationale ? (
-              <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">{d.rationale}</p>
-            ) : null}
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-              <span>by {d.decidedBy}</span>
-              <span>{formatDateTime(d.createdAt)}</span>
-              {d.supersedes ? <Badge tone="info">supersedes {d.supersedes}</Badge> : null}
-              {superseded.has(d.id) ? <Badge tone="warn">superseded</Badge> : null}
-            </div>
+            <span data-testid="decision-text">{sentence(d)}</span>{" "}
+            <span className="text-neutral-500" data-testid="decision-by">
+              ({d.decidedByName ?? "you"}, {formatDayMonth(d.createdAt)})
+            </span>
           </li>
         ))}
       </ul>
+      {answers.length > DECISIONS_SHOWN ? (
+        <button
+          type="button"
+          className="mt-1 text-xs text-blue-700 hover:underline dark:text-blue-300"
+          onClick={() => setAll((v) => !v)}
+          data-testid="decisions-all"
+        >
+          {all ? "Show fewer" : `All ${answers.length} decisions`}
+        </button>
+      ) : null}
+      {records.length > 0 ? (
+        <p className="mt-2 text-sm" data-testid="decision-records">
+          {records.length === 1 ? "Decision record: " : "Decision records: "}
+          {records.map((r, i) => (
+            <span key={r.id}>
+              {i > 0 ? ", " : ""}
+              <Link
+                to={`/projects/${encodeURIComponent(projectId)}/docs`}
+                className="text-blue-700 hover:underline dark:text-blue-300"
+                title={r.path ?? undefined}
+                data-testid="decision-record"
+              >
+                {r.question}
+              </Link>
+            </span>
+          ))}
+        </p>
+      ) : null}
     </section>
   );
 }

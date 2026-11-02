@@ -584,9 +584,10 @@ describe("voice alerts wired into the daemon", () => {
       "desktop:delivered:shell",
       "voice:delivered:spoken: 2 sentence(s), 4 chunk(s) via fake-tts",
     ]);
+    // The card's sentence is the title; the body says what to do (design §5, "Notification").
     expect(tts.calls.map((c) => c.text)).toEqual([
-      `${record.notification.title.replace(/[.!?]+$/, "")}.`,
       "Deploy to production needs your approval.",
+      "Answer it in the Inbox.",
     ]);
     // A non-blocking request is normal: the toast only, nothing spoken.
     const normal = nextRecord("request_opened");

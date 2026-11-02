@@ -97,7 +97,8 @@ describe("CommandExecutor", () => {
       }),
     );
     expect(p.decision).toBe("needs_yes");
-    expect(p.readback).toContain("Say yes to confirm");
+    // One question (design §3.9, §5), not the rendered card with "Risk:" and "Say yes".
+    expect(p.readback).toBe("Raise the session budget for PharmaWatch to CHF 20?");
     expect(p.emailToken).toMatch(/^FR-/);
     const req = await w.store.humanRequest.mustGet(p.pendingId);
     expect(req).toMatchObject({

@@ -553,6 +553,12 @@ export const EventView = z.object({
   at: z.string(),
   /** Escalations and warnings are highlighted. */
   level: z.enum(["info", "warning", "escalation", "error"]),
+  /**
+   * Who the line is for (design §3.7): `person` lines are the session's log by default (a
+   * task started, what it changed, how it ended, what the critic said, what needs you);
+   * `detail` lines (the brief, memory, peers, each tool step, notifications) are under Details.
+   */
+  audience: z.enum(["person", "detail"]),
 });
 export type EventView = z.infer<typeof EventView>;
 
@@ -1492,12 +1498,22 @@ export type ModelSettingsView = z.infer<typeof ModelSettingsView>;
 export const DecisionView = z.object({
   id: z.string(),
   projectId: z.string(),
+  /**
+   * `answer`: a question the person answered (`question`, `chosen` in their words); `plan`: the
+   * plan they approved or turned down; `record`: a decision record in the project's folder
+   * (`question` its title, `path` the file). Design §3.4: "Q? A. (Robin, 1 Nov)".
+   */
+  kind: z.enum(["answer", "plan", "record"]),
   question: z.string(),
   options: z.array(z.string()),
   chosen: z.string(),
   decidedBy: z.string(),
+  /** The person's name ("Robin"; "you" when the install knows none), null for a record. */
+  decidedByName: z.string().nullable(),
   rationale: z.string(),
   supersedes: z.string().nullable(),
+  /** A record's file, relative to the project's folder; null otherwise. */
+  path: z.string().nullable(),
   createdAt: z.string(),
 });
 export type DecisionView = z.infer<typeof DecisionView>;
@@ -1558,6 +1574,11 @@ export const ReviewView = z.object({
   id: z.string(),
   taskId: z.string().nullable(),
   taskTitle: z.string().nullable(),
+  /**
+   * The reviewed task's status now (null for a session review): a done or cancelled task's
+   * findings are no open work (design §3.5); `openFindings` counts each finding once per task.
+   */
+  taskStatus: z.string().nullable(),
   sessionId: z.string().nullable(),
   criticModel: z.string(),
   tier: z.number().int().min(0).max(3),

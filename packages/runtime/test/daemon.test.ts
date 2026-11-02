@@ -205,8 +205,9 @@ describe("local daemon", () => {
     const s = sessions[0] as Json;
     expect(["completed", "running", "stopped"]).toContain(str(s.status));
     const events = await jsonList(await req(`/sessions/${str(s.id)}/events`));
-    expect(events[0]).toMatchObject({ type: "session.started", level: "info" });
-    expect(str((events[0] as Json).text)).toContain("Session started");
+    // A person-level line (design §3.7): who started it and the budget.
+    expect(events[0]).toMatchObject({ type: "session.started", level: "info", audience: "person" });
+    expect(str((events[0] as Json).text)).toMatch(/^You started the session with a budget of CHF/);
     const detail = await json(await req(`/sessions/${str(s.id)}`));
     expect(detail).toMatchObject({ id: s.id, agentName: "Alice" });
     const kill = await json(

@@ -7,30 +7,114 @@
 
 import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
 import type { HumanRequestRow, MessageRow, ReviewRow } from "@forerunner/state";
+import { requestWords } from "../daemon/request-words.ts";
+import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
 import type { InjectionReport } from "../injection/scan.ts";
-import { countsBrief, countsOf } from "../session/counts.ts";
 import type { Notification, NotificationRecord } from "./types.ts";
+
+/*
+ * What a notification says (core-experience design §5: title at most 60 characters, body at
+ * most 140, names not ids). Before, a card read "An approval is needed (work is blocked)" for a
+ * task that had failed four times, a verdict "Critic: revise (grade 35)", a session "Alice's
+ * session completed: 0 done" with no project, and a body could be "Review <uuid> of task
+ * <uuid>". Now the title names the project and the task and what happened; the body is one
+ * sentence and what to do.
+ */
+
+/** The limits of design §5 rule 1. */
+export const NOTIFICATION_TITLE_MAX = 60;
+export const NOTIFICATION_BODY_MAX = 140;
 
 function cut(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
-  return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
+  if (t.length <= max) return t;
+  const head = t.slice(0, max - 1);
+  const space = head.lastIndexOf(" ");
+  return `${(space > max / 2 ? head.slice(0, space) : head).replace(/[\s,;:.]+$/, "")}…`;
 }
 
-const REQUEST_LABEL: Record<HumanRequestRow["kind"], string> = {
-  decision: "A decision is needed",
-  credential: "A credential is needed",
-  approval: "An approval is needed",
-  info: "Information is needed",
-};
+/** A line as the writing rules want it: no ids, plurals as the number says, no markdown. */
+function plain(s: string): string {
+  return plainPlurals(withoutIds(s))
+    .replace(/\[stand-in model\]\s*/gi, "")
+    .replace(/\*\*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-/** A human request was opened; blocking requests are urgent (ADR 0017). */
-export function requestOpened(req: HumanRequestRow, humanId: string): Notification {
+/**
+ * A text within `max`: the quoted names in it are shortened first (a task's title, cut at a
+ * word), so what happened stays whole; only then the text itself is cut.
+ */
+function fit(text: string, max: number): string {
+  let t = text;
+  // The longest quoted name is shortened first, by what is over, never below 12 characters.
+  for (let i = 0; i < 6 && t.length > max; i++) {
+    const longest = [...t.matchAll(/"([^"]+)"/g)]
+      .map((m) => m[1] as string)
+      .sort((a, b) => b.length - a.length)[0];
+    if (!longest || longest.length <= 12) break;
+    const target = Math.max(12, longest.length - (t.length - max) - 1);
+    // A name is cut at a word, however short that leaves it ("Create…", never "Create inde…").
+    const head = longest.slice(0, target - 1);
+    const space = head.lastIndexOf(" ");
+    const short = `${(space > 0 ? head.slice(0, space) : head).replace(/[\s,;:.]+$/, "")}…`;
+    t = t.replace(`"${longest}"`, `"${short}"`);
+  }
+  return t.length <= max ? t : cut(t, max);
+}
+
+const capitalFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/** "Quote page: <what>", the project's name first when the words do not name it already. */
+function titled(projectName: string | null | undefined, what: string): string {
+  const w = plain(what).replace(/[.\s]+$/, "");
+  const name = projectName?.trim();
+  if (!name || w.includes(name)) return fit(capitalFirst(w), NOTIFICATION_TITLE_MAX);
+  return fit(`${name}: ${w}`, NOTIFICATION_TITLE_MAX);
+}
+
+/** A text and what to do, within the body's limit; a quote cut short is closed again. */
+function bodyOf(text: string | null | undefined, action: string): string {
+  const t = capitalFirst(plain(text ?? ""));
+  if (!t) return action;
+  const room = NOTIFICATION_BODY_MAX - action.length - 1;
+  // Names (two or more quoted titles) are shortened first; one quotation is cut at its end.
+  const shorten = (s: string, max: number) =>
+    (s.match(/"[^"]+"/g)?.length ?? 0) >= 2 ? fit(s, max) : cut(s, max);
+  let said = shorten(t, room);
+  if ((said.match(/"/g)?.length ?? 0) % 2 === 1) said = `${shorten(t, room - 1)}"`;
+  if (!/[.!?"…]$/.test(said)) said = `${said}.`;
+  return `${said} ${action}`;
+}
+
+/** What a notification about a card needs beyond its row: the names it gives. */
+export interface RequestNames {
+  projectName?: string | null;
+  taskTitle?: string | null;
+}
+
+/**
+ * A human request was opened; blocking requests are urgent (ADR 0017). The title is the card's
+ * own title with the project's name ('Quote page: "Style the page" failed 4 times'), the body
+ * its first sentence and "Answer it in the Inbox."
+ */
+export function requestOpened(
+  req: HumanRequestRow,
+  humanId: string,
+  names: RequestNames = {},
+): Notification {
+  const words = requestWords(req, {
+    projectName: names.projectName ?? null,
+    taskTitle: names.taskTitle ?? null,
+  });
   return {
     kind: req.blocking ? "request_blocking" : "request_opened",
     humanId,
-    title: `${REQUEST_LABEL[req.kind]}${req.blocking ? " (work is blocked)" : ""}`,
-    body: cut(req.why, 500),
+    title: titled(names.projectName, words.title),
+    // A card whose text is one sentence has it as its title: the body only says what to do.
+    body: bodyOf(words.body, "Answer it in the Inbox."),
     link: "/inbox",
     projectId: req.project_id ?? undefined,
     sessionId: req.session_id ?? undefined,
@@ -55,6 +139,8 @@ export interface SessionEndFacts {
   inReview?: string[];
   skipped?: string[];
   projectId?: string | null;
+  /** The project's name: the title starts with it (design §5, "Notification"). */
+  projectName?: string | null;
   agentName?: string;
 }
 
@@ -63,17 +149,39 @@ function chfMicroOf(usdMicro: number, rate: number = DEFAULT_CHF_PER_USD): numbe
   return usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate);
 }
 
-/** Session end (spec E.5 "notify human"); a budget stop becomes the urgent `budget_stop`. */
+/**
+ * What a session's result says first, short, for the title: its first line ("\"Style the page\"
+ * needs your decision (Inbox).", "Did 2 tasks: ...", "Stopped by you.") without the Inbox
+ * pointer, which the body says.
+ */
+function resultGist(summary: string): string {
+  const first = (summary.split("\n").find((l) => l.trim()) ?? "").trim();
+  const gist = /^(.+?[.!?])(\s|$)/.exec(first)?.[1] ?? first;
+  const g = gist.replace(/\s*\(Inbox\)/g, "").replace(/[.\s]+$/, "");
+  return /^(Did|Nothing|Stopped|The)\b/.test(g) ? g.charAt(0).toLowerCase() + g.slice(1) : g;
+}
+
+/**
+ * Session end (spec E.5 "notify human"); a budget stop becomes the urgent `budget_stop`. The
+ * title is the project and the result's first point ("Quote page: did 2 tasks: …"); the body the
+ * result's next sentence and where to look.
+ */
 export function sessionEnded(humanId: string, r: SessionEndFacts): Notification {
   if (r.stopReason === "budget_exceeded") return budgetStop(humanId, r);
-  const who = r.agentName ? `${r.agentName}'s session` : "Session";
+  const needsYou = r.needsHuman.length > 0 || (r.failed?.length ?? 0) > 0;
+  const lines = r.summary
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const gist = resultGist(r.summary) || (r.completed.length ? "session done" : "session ended");
   return {
     kind: "session_ended",
     humanId,
-    // The summary's categories, those that happened (U-072): a session whose only task was
-    // sent back reads "0 done, 1 sent back", not "0 done, 0 need you".
-    title: `${who} ${r.status}: ${countsBrief(countsOf(r))}`,
-    body: cut(r.summary, 1000),
+    title: titled(r.projectName, gist),
+    body: bodyOf(
+      lines.slice(1).join(" ") || lines[0] || "",
+      needsYou ? "Answer it in the Inbox." : "Open the session for the details.",
+    ),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,
     sessionId: r.sessionId,
@@ -87,8 +195,8 @@ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
   return {
     kind: "budget_stop",
     humanId,
-    title: `${r.agentName ? `${r.agentName} ` : ""}stopped: budget cap reached (${formatChf(chf)} spent)`,
-    body: cut(r.summary, 1000),
+    title: titled(r.projectName, `stopped, the budget is used (${formatChf(chf)} spent)`),
+    body: bodyOf(r.summary.split("\n")[0] ?? "", "Start a session with a larger budget to go on."),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,
     sessionId: r.sessionId,
@@ -96,20 +204,39 @@ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
   };
 }
 
+/** What a verdict did, as a title says it. */
+function verdictTitle(verdict: string, task: string): string {
+  switch (verdict) {
+    case "accept":
+      return `the critic accepted ${task}`;
+    case "revise":
+      return `the critic sent ${task} back`;
+    case "escalate":
+      return `${task} goes to a stronger model`;
+    case "human":
+      return `${task} needs your decision`;
+    default:
+      return `the critic reviewed ${task}`;
+  }
+}
+
 /** Critic verdict; `escalate` and `human` are raised to normal so they do not wait for the digest. */
 export function criticVerdict(
   humanId: string,
   review: Pick<ReviewRow, "id" | "verdict" | "grade" | "task_id" | "session_id" | "summary">,
   projectId?: string | null,
+  names: RequestNames = {},
 ): Notification {
   const needsAttention = review.verdict === "escalate" || review.verdict === "human";
+  const task = names.taskTitle ? `"${cut(names.taskTitle, 40)}"` : "a task";
+  const said = plain(review.summary).replace(/^(sent back for rework|accepted)\s*:\s*/i, "");
   return {
     kind: "critic_verdict",
     humanId,
-    title: `Critic: ${review.verdict} (grade ${review.grade})`,
-    body: cut(
-      review.summary || `Review ${review.id}${review.task_id ? ` of task ${review.task_id}` : ""}`,
-      500,
+    title: titled(names.projectName, verdictTitle(review.verdict, task)),
+    body: bodyOf(
+      said || null,
+      review.verdict === "human" ? "Answer it in the Inbox." : "Open Reviews for the details.",
     ),
     link: projectId ? `/projects/${projectId}/reviews` : "/inbox",
     projectId: projectId ?? undefined,
@@ -241,6 +368,15 @@ export function emailCommandsOff(
   };
 }
 
+/** A message's type as a title says it ("Bob asks you something"). */
+const MESSAGE_WORDS: Record<string, string> = {
+  question: "asks you something",
+  request: "asks you to do something",
+  warning: "warns you",
+  info: "sent you a note",
+  ack: "replied",
+};
+
 /** A message from an agent to the human (spec F); questions, requests and acks are normal. */
 export function peerMessage(humanId: string, m: MessageRow, fromName?: string): Notification {
   const attention =
@@ -248,9 +384,9 @@ export function peerMessage(humanId: string, m: MessageRow, fromName?: string): 
   return {
     kind: "peer_message",
     humanId,
-    // A name, never the agent's id (U-074).
-    title: `${fromName ?? "Another agent"}: ${m.type}`,
-    body: cut(m.body, 500),
+    // A name, never the agent's id (U-074); what kind of message it is in words.
+    title: cut(`${fromName ?? "Another agent"} ${MESSAGE_WORDS[m.type] ?? "sent you a note"}`, 60),
+    body: cut(plain(m.body), NOTIFICATION_BODY_MAX),
     link: "/inbox",
     projectId: m.project_id ?? undefined,
     dedupeKey: `message:${m.id}`,
@@ -268,18 +404,34 @@ function scopeKey(scope: KillScope | "all"): string {
  * session when there is one, else the home route "/" (the shell opens "/" and the UI roots
  * only; `deepLinkFor("/")` is `fr://open`).
  */
-export function killSwitch(humanId: string, report: KillReport, reason: string): Notification {
-  const scope =
-    report.scope === "all" ? "everything" : report.scope.sessionId ? "one session" : "one agent";
+export function killSwitch(
+  humanId: string,
+  report: KillReport,
+  _reason: string,
+  by?: string,
+): Notification {
   const sessionId = report.scope !== "all" ? report.scope.sessionId : undefined;
+  // Whose stop it was (design §4.9): Stop all, Quit, a stop from the phone or the chat.
+  const title =
+    by === "quit"
+      ? "Forerunner was closed: its work stopped"
+      : report.scope === "all" || by === "stop_all"
+        ? "Stop all: every session stopped"
+        : report.scope.sessionId
+          ? "A session was stopped"
+          : "Your agent's work was stopped";
+  const runs = report.stoppedRuns === 1 ? "1 run" : `${report.stoppedRuns} runs`;
+  const next =
+    by === "quit"
+      ? "The next start goes on where it stopped."
+      : report.scope === "all" || by === "stop_all"
+        ? "No session starts until you allow it again."
+        : "Its task is ready again.";
   return {
     kind: "kill_switch",
     humanId,
-    title: `Kill switch: ${scope} stopped`,
-    body: cut(
-      `${report.stoppedRuns} run(s) stopped, ${report.killedProcesses} process(es) killed, ${report.revokedTokens} token(s) revoked in ${report.durationMs} ms. Reason: ${reason}`,
-      500,
-    ),
+    title,
+    body: cut(`${runs} stopped. ${next}`, NOTIFICATION_BODY_MAX),
     link: sessionId ? `/sessions/${sessionId}` : "/",
     sessionId,
     dedupeKey: `kill:${scopeKey(report.scope)}`,
@@ -404,8 +556,8 @@ export interface NotifierLike {
  */
 export function bindProducers(notifier: NotifierLike) {
   return {
-    requestOpened: (req: HumanRequestRow, humanId: string) =>
-      notifier.notify(requestOpened(req, humanId)),
+    requestOpened: (req: HumanRequestRow, humanId: string, names?: RequestNames) =>
+      notifier.notify(requestOpened(req, humanId, names)),
     sessionEnded: (humanId: string, r: SessionEndFacts) =>
       notifier.notify(sessionEnded(humanId, r)),
     budgetStop: (humanId: string, r: SessionEndFacts) => notifier.notify(budgetStop(humanId, r)),
@@ -413,7 +565,8 @@ export function bindProducers(notifier: NotifierLike) {
       humanId: string,
       review: Parameters<typeof criticVerdict>[1],
       projectId?: string | null,
-    ) => notifier.notify(criticVerdict(humanId, review, projectId)),
+      names?: RequestNames,
+    ) => notifier.notify(criticVerdict(humanId, review, projectId, names)),
     injectionFlagged: (
       humanId: string,
       report: InjectionReport,
@@ -429,8 +582,8 @@ export function bindProducers(notifier: NotifierLike) {
       notifier.notify(emailCommandsOff(humanId, e)),
     peerMessage: (humanId: string, m: MessageRow, fromName?: string) =>
       notifier.notify(peerMessage(humanId, m, fromName)),
-    killSwitch: (humanId: string, report: KillReport, reason: string) =>
-      notifier.notify(killSwitch(humanId, report, reason)),
+    killSwitch: (humanId: string, report: KillReport, reason: string, by?: string) =>
+      notifier.notify(killSwitch(humanId, report, reason, by)),
     criticCalibration: (humanId: string, f: CalibrationFacts) =>
       notifier.notify(criticCalibration(humanId, f)),
     handoverReport: (humanId: string, f: HandoverFacts) =>

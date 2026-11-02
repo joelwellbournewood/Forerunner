@@ -104,9 +104,17 @@ async function findTask(
   const matches = tasks.filter((t) => t.title.toLowerCase().includes(needle));
   if (matches.length === 1) return matches[0] as TaskRow;
   if (matches.length > 1) {
-    throw new ForerunnerError("validation", `several tasks match ${quote(params.task)}`, {
-      details: { candidates: matches.map((m) => m.title) },
-    });
+    // Design §5 rule 8: what went wrong and what to do. The matches by name, up to three, and
+    // the words that pick one (wave 2: 'several tasks match "style"' said neither).
+    const named = matches.slice(0, 3).map((m) => quote(m.title));
+    const more = matches.length > 3 ? ` and ${matches.length - 3} more` : "";
+    const list =
+      named.length === 2 && !more ? `${named[0]} and ${named[1]}` : `${named.join(", ")}${more}`;
+    throw new ForerunnerError(
+      "validation",
+      `${matches.length} tasks match ${quote(params.task)}: ${list}. Say more of the title, for example ${named[0]}`,
+      { details: { candidates: matches.map((m) => m.title) } },
+    );
   }
   throw new ForerunnerError(
     "not_found",

@@ -1423,6 +1423,21 @@ describe("the UI client against the real daemon", () => {
         (r) => r.taskId === task.id && r.status === "open",
       ),
     ).toBe(false);
+    // Overview → Decisions (design §3.4, §5 "Decision"): each question with its answer in the
+    // person's words and their name; never the card's instructions, JSON or an id.
+    const decisions = (await client.decisions(projectId)).filter((d) => d.kind === "answer");
+    expect(decisions.map((d) => [d.question, d.chosen, d.decidedByName])).toEqual(
+      expect.arrayContaining([
+        ["Stack: what do you choose?", "TypeScript and Hono", "J"],
+        ["Hosting: what do you choose?", "Cloudflare", "J"],
+      ]),
+    );
+    for (const d of decisions) {
+      expect(`${d.question} ${d.chosen}`).not.toMatch(
+        /[{}]|needs your answers|answer the questions/,
+      );
+      expect(d.options).toEqual([]);
+    }
   });
 
   it("a failed plan from the brief: the project page reads why, and Retry drafts it again (U-046)", async () => {
@@ -1675,6 +1690,21 @@ describe("the UI client against the real daemon", () => {
       confirm: "tap",
     });
     expect(set.status).toBe("done");
+    // The level by its name (design §2), and the same change again is refused in words, with
+    // nothing written to Changes (the walks: "from 3 to 3" was accepted and logged).
+    expect(set.sentence).toMatch(/to Trusted \(level 3\)\. Undo\.$/);
+    const changesBefore = (await client.changes()).length;
+    const again = await client.executeCommands({
+      commands: [{ name: "settings.set", params: { key: "default_autonomy", value: 3 } }],
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(again).toMatchObject({
+      status: "refused",
+      code: "validation",
+      reason: "The default autonomy for new projects is already Trusted (level 3).",
+    });
+    expect((await client.changes()).length).toBe(changesBefore);
     const created = await client.createProject({ name: "At three", goal: "Default autonomy" });
     expect(created.autonomyLevel).toBe(3);
   });
@@ -1758,6 +1788,8 @@ describe("the UI client against the real daemon", () => {
       source: "ui",
     });
     expect(quiet.status).toBe("done");
+    // Times in words, never JSON (design §5; before: 'unset → {"start":"22:00",…}').
+    expect(quiet.sentence).toBe("Set quiet hours from off to 22:00–07:00. Undo.");
     expect((await client.settings()).find((s) => s.key === "human.quiet_hours")?.value).toEqual({
       start: "22:00",
       end: "07:00",
@@ -2254,6 +2286,103 @@ describe("the UI client against the real daemon: the task drawer after a session
       [],
     );
   });
+
+  it("Reviews: a done task's findings are no open work, each review names its task's status, the evidence has no run ids or prompt hashes (design §3.5)", async () => {
+    const project = (await client.projects()).find((p) => p.name === "Drawer");
+    expect(project).toBeDefined();
+    const view = await client.reviews(project?.id ?? "", { limit: 200 });
+    const tasks = await client.tasks(project?.id ?? "");
+    // Both tasks are done (the first case ran them): nothing is open work any more.
+    expect(tasks.every((t) => t.status === "done")).toBe(true);
+    expect(view.openFindings).toBe(0);
+    const taskReviews = view.reviews.filter((r) => r.taskId);
+    expect(taskReviews.length).toBeGreaterThan(0);
+    for (const r of taskReviews) {
+      expect(r.taskStatus).toBe("done");
+      expect(r.openFindings).toBe(0);
+      for (const e of r.evidence)
+        expect(String(e)).not.toMatch(
+          /^(prompt:|run:|context:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
+        );
+    }
+    // The trend and the counts are the tasks' reviews; a session check is not among them.
+    expect(view.gradeTrend.every((p) => p.taskId !== null)).toBe(true);
+  });
+
+  it("Costs: tasks by title, the work by specialist with the runs the critic accepted, and the period (design §5)", async () => {
+    const project = (await client.projects()).find((p) => p.name === "Drawer");
+    const costs = await client.costs({ projectId: project?.id ?? "" });
+    const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+    expect(costs.byTask.map((b) => b.label)).toEqual(
+      expect.arrayContaining(["Add a LICENSE file (MIT)", "Broken page check"]),
+    );
+    for (const b of costs.byTask) expect(b.label).not.toMatch(uuid);
+    // Before: one "(none)" row for every specialist, nothing accepted.
+    const coder = costs.bySpecialist.find((b) => b.key === "coder");
+    expect(coder?.accepted).toBeGreaterThanOrEqual(2);
+    expect(costs.bySpecialist.some((b) => b.key === "(none)" && b.runs > 1)).toBe(false);
+    const licence = costs.byTask.find((b) => b.label === "Add a LICENSE file (MIT)");
+    // Runs are the task's work runs (one), not the ledger's entries per model call.
+    expect(licence).toMatchObject({ runs: 1, accepted: 1 });
+    const broken = costs.byTask.find((b) => b.label === "Broken page check");
+    expect(broken).toMatchObject({ runs: 2, accepted: 1 });
+    expect(costs.from).not.toBe("");
+    expect(costs.to >= costs.from).toBe(true);
+  });
+
+  it("the session log: person lines by default with names and no type names, the internals under Details (design §3.7)", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Log words", goal: "A log to read" });
+    await client.createTask(project.id, {
+      title: "Write the notes in notes.md",
+      outcome: "notes.md holds the notes",
+      riskTier: 1,
+    });
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+      30_000,
+    );
+    // The notification of the session's end is written after the end; wait for it.
+    await eventually(
+      async () => (await client.sessionEvents(sessionId)).some((e) => e.type === "notification"),
+      "the end's notification line",
+      async () => (await client.sessionEvents(sessionId)).map((e) => e.type).join(", "),
+      10_000,
+    );
+    const events = await client.sessionEvents(sessionId);
+    expect(events.every((e) => e.audience === "person" || e.audience === "detail")).toBe(true);
+    const person = events.filter((e) => e.audience === "person").map((e) => e.text);
+    const detail = events.filter((e) => e.audience === "detail");
+    // The internals are Details: the brief, memory, each tool step and the notification.
+    expect(detail.map((e) => e.type)).toEqual(
+      expect.arrayContaining(["session.brief", "memory.loaded", "task.step", "notification"]),
+    );
+    for (const line of person) {
+      expect(line, line).not.toMatch(
+        /\b(?:session|task|critic|memory|queue|peers|docs|inbox)\.[a-z_]+/,
+      );
+      expect(line, line).not.toMatch(/\*\*|\(s\)|\bUSD\b|[{}]/);
+      expect(line, line).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
+      );
+      expect(line, line).not.toMatch(/telegram|skipped \(|email skipped|desktop unavailable/i);
+    }
+    expect(person.length).toBeLessThanOrEqual(10);
+    expect(person).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/started "Write the notes in notes\.md"/),
+        expect.stringMatching(/^The critic accepted "Write the notes in notes\.md"\.$/),
+      ]),
+    );
+    expect(person.at(-1)).toMatch(/^Session over: 1 done\. CHF \d+\.\d{2}\.$/);
+    // Even under Details, the notification line names no channel that was not set up.
+    const note = detail.find((e) => e.type === "notification");
+    expect(note?.text).toMatch(/^Notified you: ".+"\.$/);
+  });
 });
 
 describe("the UI client against the real daemon: Stop all and the chat's stop while a task runs", () => {
@@ -2564,6 +2693,28 @@ describe("the UI client against the real daemon: a task that fails gets one card
     const first = await client.startSession({ agentId, projectId: project.id });
     expect(first.session?.id).toBeTruthy();
     await eventually(ended, "the session to end", async () => "", 60_000);
+
+    // The session page's log (design §3.7, §5 "Log line"): at most about eight lines for the
+    // task over all its attempts; each attempt is one line with the specialist's words and
+    // what comes next, and no critic line says again that it could not (the walk read 12).
+    const log = (await client.sessionEvents(first.session?.id ?? "")).filter(
+      (e) => e.audience === "person",
+    );
+    const ofScope = log
+      .filter((e) => (e.payload as { taskId?: string } | null)?.taskId === scope.id)
+      .map((e) => e.text);
+    expect(ofScope.length, ofScope.join("\n")).toBeLessThanOrEqual(8);
+    const attempts = ofScope.filter((l) =>
+      /could not do "Write the scope in docs\/scope\.md": "[^"]+"\. (Trying again|It needs your decision \(Inbox\))\.$/.test(
+        l,
+      ),
+    );
+    expect(attempts.length, ofScope.join("\n")).toBe(
+      (await client.task(scope.id)).runs.filter((r) => r.kind === "work").length,
+    );
+    expect(ofScope.at(-1), ofScope.join("\n")).toMatch(/It needs your decision \(Inbox\)\.$/);
+    expect(ofScope.some((l) => /^The critic sent/.test(l))).toBe(false);
+    expect(ofScope.filter((l) => / started "Write the scope/.test(l))).toHaveLength(1);
 
     // Exactly one card, after the retries inside the session (design §4.3).
     const cardsOf = async () =>
@@ -3379,7 +3530,16 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     // §3.8, §3.9), not the change card's object ('the task "Write the FAQ"').
     expect(card?.title).toBe('Resume "Write the FAQ"?');
     expect(card?.body).toBe("It is ready again; the next session can run it.");
-    await client.answerRequest(id, { version: card?.version ?? 0, answer: card?.options[1] ?? "" });
+    // Its buttons say Yes and No with what each does (wave 2: "yes"/"no" with no line).
+    expect(card?.choices?.map((c) => [c.label, c.explain])).toEqual([
+      ["Yes", "It is ready again; the next session can run it."],
+      ["No", "Nothing changes."],
+    ]);
+    // The answer is what the No button sends.
+    await client.answerRequest(id, {
+      version: card?.version ?? 0,
+      answer: card?.choices?.[1]?.label ?? "",
+    });
     expect(await status()).toBe("Paused by you");
     expect((await say("yes")).reply).toBe(
       "You already answered the change I asked about in the Inbox: you said no. Nothing else is waiting for your yes.",

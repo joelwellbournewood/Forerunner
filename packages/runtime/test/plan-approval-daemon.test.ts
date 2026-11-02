@@ -181,7 +181,7 @@ describe("plan approval on the desktop daemon", () => {
     // The session view of the follow-up names the approved plan in plain words.
     const view = (await (await req(`/sessions/${follow.id}/events`)).json()) as Json[];
     expect(
-      view.some((e) => String(e.text).startsWith("Running the plan you approved (1 item(s)")),
+      view.some((e) => String(e.text).startsWith("Running the plan you approved (1 task)")),
     ).toBe(true);
   });
 

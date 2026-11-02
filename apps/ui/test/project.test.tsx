@@ -97,6 +97,10 @@ describe("Project page", () => {
     );
     expect(screen.getByTestId("cost-savings")).toHaveTextContent("Savings (not spend)");
     expect(screen.getByTestId("cost-savings")).toHaveTextContent("CHF 2.30");
+    // The period in words (design §5), never "— → —" or an ISO time.
+    expect(screen.getByTestId("cost-period")).toHaveTextContent(
+      /^\d{1,2} (Sept?|Oct) to \d{1,2} Oct$/,
+    );
   });
 
   it("fills every tab: docs, reviews and data are no longer placeholders", async () => {
@@ -151,9 +155,12 @@ describe("Project page", () => {
       renderApp("/projects/proj_beacon", harness);
       const banner = await screen.findByTestId("intake-banner");
       expect(banner).toHaveAttribute("data-state", "failed");
-      // Design §3.3: "Planning failed: <reason in words>. [Try again]".
-      expect(banner).toHaveTextContent("Planning failed. Nothing was written.");
-      expect(within(banner).getByTestId("intake-error")).toHaveTextContent(FAILURE);
+      // Design §3.3: "Planning failed: <reason in words>. [Try again]", one line (wave 2: the
+      // reason stood on a line of its own under "Planning failed. Nothing was written.").
+      expect(within(banner).getByTestId("intake-error")).toHaveTextContent(
+        /^Planning failed: the model's reply was not a plan: no JSON object in it\.$/,
+      );
+      expect(banner).not.toHaveTextContent("Nothing was written");
       expect(within(banner).getByTestId("intake-retry")).toHaveTextContent("Try again");
       await user.click(within(banner).getByTestId("intake-retry"));
       await waitFor(() =>

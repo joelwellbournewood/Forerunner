@@ -152,7 +152,6 @@ export async function loadSessionReviewData(
   };
 }
 
-const usd = (micro: number): string => `USD ${(micro / 1_000_000).toFixed(4)}`;
 const chfText = (micro: number): string => `CHF ${(micro / 1_000_000).toFixed(2)}`;
 
 /**
@@ -200,6 +199,12 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     findings.push({ severity, description, requiredAction, fingerprint, where });
   };
   let honestyBroken = false;
+  // What a person reads is CHF (design §5 rule 7): the ledger's own rate, else the default.
+  const rate =
+    data.ledgerUsdMicro && data.ledgerChfMicro
+      ? data.ledgerChfMicro / data.ledgerUsdMicro
+      : DEFAULT_CHF_PER_USD;
+  const money = (usdMicro: number): string => chfText(Math.round(usdMicro * rate));
 
   // Plan quality.
   const estimate = data.planEstimateUsdMicro;
@@ -207,7 +212,7 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   if (cap > 0 && estimate > cap) {
     add(
       "medium",
-      `Plan estimate ${usd(estimate)} exceeded the session budget ${usd(cap)}`,
+      `Plan estimate ${money(estimate)} exceeded the session budget ${money(cap)}`,
       "Plan within the budget: cut or defer items until the estimate fits",
       `plan estimate ${estimate} > cap ${cap}`,
     );
@@ -239,12 +244,12 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   if (planItems.length === 0 && actual > 0) {
     add(
       "medium",
-      `Session spent ${usd(actual)} without a plan`,
+      `Session spent ${money(actual)} without a plan`,
       "Write the plan before spending; the human approves it at autonomy 1",
     );
   }
   evidence.push(
-    `plan: ${planItems.length} item(s), estimate ${usd(estimate)}, budget ${usd(cap)}${cap > 0 && estimate > cap ? " (over)" : ""}`,
+    `plan: ${planItems.length} item(s), estimate ${money(estimate)}, budget ${money(cap)}${cap > 0 && estimate > cap ? " (over)" : ""}`,
   );
 
   // Cost efficiency. Done is counted over every task the session planned or ran.
@@ -260,21 +265,21 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     const pct = Math.round(((actual - estimate) / estimate) * 100);
     add(
       "medium",
-      `Session cost ${usd(actual)} exceeded its estimate ${usd(estimate)} by ${pct}%`,
+      `Session cost ${money(actual)} exceeded its estimate ${money(estimate)} by ${pct}%`,
       "Record the overrun against the estimate so the next plan is calibrated; split the work that overran",
     );
   }
   if (cap > 0 && actual > cap) {
     add(
       "high",
-      `Session cost ${usd(actual)} exceeded its cap ${usd(cap)}`,
+      `Session cost ${money(actual)} exceeded its cap ${money(cap)}`,
       "The runtime caps must have stopped the session; check the ledger and the hooks",
     );
   }
   if (actual > 0 && planItems.length > 0 && doneTasks === 0 && session.status === "completed") {
     add(
       "medium",
-      `Session spent ${usd(actual)} and no task reached done`,
+      `Session spent ${money(actual)} and no task reached done`,
       "Say in the summary what the spend bought and what blocks the tasks",
     );
   }
@@ -305,7 +310,7 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   }
   const costPerDone = doneTasks > 0 ? Math.round(actual / doneTasks) : null;
   evidence.push(
-    `cost: actual ${usd(actual)} (${data.ledgerUsdMicro === null ? "session counter" : "ledger"}), estimate ${usd(estimate)}, ${doneTasks} done task(s)${costPerDone !== null ? `, ${usd(costPerDone)} per done task` : ""}`,
+    `cost: actual ${money(actual)} (${data.ledgerUsdMicro === null ? "session counter" : "ledger"}), estimate ${money(estimate)}, ${doneTasks} done task(s)${costPerDone !== null ? `, ${money(costPerDone)} per done task` : ""}`,
   );
 
   // Honesty of the summary.
@@ -348,7 +353,7 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   ) {
     add(
       "medium",
-      `Summary claims a cost of ${usd(claims.costUsdMicro)} but the ledger shows ${usd(actual)}`,
+      `Summary claims a cost of ${money(claims.costUsdMicro)} but the ledger shows ${money(actual)}`,
       "Report the cost from the ledger",
       `summary ${claims.costUsdMicro} vs ledger ${actual}`,
     );

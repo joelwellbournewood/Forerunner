@@ -79,6 +79,7 @@ import {
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
+import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import {
   overviewNext,
   progressOf,
@@ -508,6 +509,14 @@ interface PendingCommand {
 }
 
 const clone = <T>(value: T): T => structuredClone(value);
+
+/** The stand-in's scripted session lines that stand for what a person follows (design §3.7). */
+const SCRIPTED_PERSON_TYPES = new Set([
+  "task.claimed",
+  "run.started",
+  "run.finished",
+  "escalation",
+]);
 
 function errorBody(c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) {
   return c.json({ code, message }, status);
@@ -3695,13 +3704,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     filter: { projectId?: string; taskId?: string },
   ): ReviewsView => {
     const sorted = [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // As the daemon counts (design §3.5): the tasks' reviews only; each open finding once per
+    // task and finding; none for a done or cancelled task.
     const verdicts: Record<string, number> = {};
-    let openFindings = 0;
+    const open = new Set<string>();
     for (const r of sorted) {
+      if (!r.taskId) continue;
       verdicts[r.verdict] = (verdicts[r.verdict] ?? 0) + 1;
-      openFindings += r.openFindings;
+      if (r.taskStatus === "done" || r.taskStatus === "cancelled") continue;
+      for (const f of r.findings)
+        if (f.status === "open") open.add(`${r.taskId}:${f.fingerprint || f.description}`);
     }
-    const trend = [...sorted]
+    const openFindings = open.size;
+    const trend = sorted
+      .filter((r) => r.taskId !== null)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
       .map((r) => ({
         at: r.createdAt,
@@ -4420,6 +4436,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           },
         };
       }
+      // The daemon's words for these values (`quietHoursWords`, `autonomyLevelWords` in
+      // @forerunner/commands): times and names, never JSON; the same value again is refused.
+      const AUTONOMY = ["Advisor", "Assisted", "Standard", "Trusted", "Autopilot"];
+      const shown = (v: unknown): string => {
+        if (key === "quiet_hours") {
+          const o = v as { start?: unknown; end?: unknown } | null;
+          return o && typeof o.start === "string" && typeof o.end === "string"
+            ? `${o.start}–${o.end}`
+            : "off";
+        }
+        if (key === "default_autonomy" && typeof v === "number")
+          return `${AUTONOMY[v] ?? "level"} (level ${v})`;
+        return v === undefined || v === null ? "unset" : JSON.stringify(v);
+      };
+      const currentValue =
+        key === "default_autonomy"
+          ? me.defaultAutonomy
+          : (state.settingValues[
+              settingSlot(key, PROJECT_KEYS.has(key) ? (project?.id ?? null) : null)
+            ] ?? null);
+      if (
+        (key === "quiet_hours" || key === "default_autonomy") &&
+        JSON.stringify(currentValue ?? null) === JSON.stringify(params.value ?? null)
+      ) {
+        const label =
+          key === "quiet_hours" ? "Quiet hours" : "The default autonomy for new projects";
+        return refuse(`${label} is already ${shown(currentValue)}.`);
+      }
       return {
         name,
         params,
@@ -4428,10 +4472,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           {
             command: name,
             what: `${key}${project ? ` for ${project.name}` : ""}`,
-            oldValue: "unset",
-            newValue: JSON.stringify(params.value),
+            oldValue: shown(currentValue),
+            newValue: shown(params.value),
             scope: "project",
-            sentence: `Set ${key}${project ? ` for ${project.name}` : ""} to ${JSON.stringify(params.value)}. Undo.`,
+            sentence: `Set ${key}${project ? ` for ${project.name}` : ""} to ${shown(params.value)}. Undo.`,
             projectId: project?.id ?? null,
             projectName: project?.name ?? null,
             usesActiveProject: projectRef === undefined,
@@ -5996,6 +6040,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       cost: money(costUsdMicro),
       at: new Date().toISOString(),
       level,
+      // The daemon's split (design §3.7); the stand-in's scripted lines (`task.claimed`,
+      // `run.*`, `escalation`) stand for what a person follows, so they are person lines too.
+      audience:
+        eventAudience(type) === "person" || SCRIPTED_PERSON_TYPES.has(type) ? "person" : "detail",
     };
     state.events.push(event);
     emit("session.event", event);

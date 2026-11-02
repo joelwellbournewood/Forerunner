@@ -101,8 +101,11 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   session** and "Read aloud"); **Next** (the open tasks in the order a session runs them, each
   with its status, worked out when you look); **Your files** (the project's folder with **Open
   folder** in the desktop app and **Copy path**, and the files the last session changed);
-  **Decisions**; and **Note for the next session** (one box; see below). Peers appear only when
-  another agent works on the project.
+  **Decisions** (each question you answered with your answer, your name and the day: "Where
+  should the page be published? Only as a local file for now. (Robin, 1 Nov)", the plan you
+  approved, and the decision records in the project's folder, which open in Docs); and **Note
+  for the next session** (one box; see below). Peers appear only when another agent works on the
+  project.
 - **Files**: the project's folder on this computer (its own folder, the folder you linked, or
   this computer's copy of its repository) as a list with sizes and when each file changed.
   Click a file to read it here (text files; nothing can be changed from this tab). **Open
@@ -145,7 +148,11 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   you come back to the tab.
 - **Docs** (under More): the standard document set the agent maintains, and the decision
   records in docs/decisions.
-- **Reviews** (under More): critic findings and grades over time.
+- **Reviews** (under More): the critic's verdict on each task in words ("accepted", "sent
+  back"), its grade in the verdict's colour, and what is still to fix, counted once per task (a
+  task that is done has nothing open). The critic's evidence is under **Details**; its check of
+  each session's summary is folded under **Session checks**. The "review" link in a task's
+  drawer opens its review highlighted.
 - **Costs** (under More): spend by model, specialist and task, in CHF, with the savings from
   caching and context compression.
 - **Data** (under More): files and datasets the project knows about; agents see metadata and
@@ -208,9 +215,18 @@ to be asked again.
 ## Sessions
 
 A session starts on a schedule, on a trigger (a pull request comment, CI, an email command) or
-by hand. The live view shows the event stream in plain words, the current task and specialist,
-the step count and the running cost against the cap; escalations are highlighted. Raw output is
-behind a toggle. A session that has ended shows **finished**: its log is complete and the
+by hand. The live view shows the current task and specialist, the step count and the running
+cost against the cap, and a log of what a person follows a session by, one line each: "The coder
+started "Create the page skeleton" (about CHF 0.14).", "Changed index.html.", "The critic
+accepted "Create the page skeleton".", "The designer could not do "Style the page": "The work
+needs something I do not have here". Trying again." and how it ended ("Session over: 2 done, 1
+needs you. CHF 0.06."). A task the critic sends back is tried again in the same session; each
+try is one line, and "The writer takes over …" says when another specialist tries it. **Details**
+adds the internal steps (the brief, memory, each tool call, each start and finish of a retry, the
+notifications sent), each line's event type, the level filters and the raw output; escalations
+are highlighted. A session
+that has ended
+shows **finished**: its log is complete and the
 page no longer waits for events. A session stops cleanly when it reaches 80% of its cap (it finishes the
 current task and starts nothing new), when its wall clock runs out, or when you stop it.
 

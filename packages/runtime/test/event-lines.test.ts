@@ -6,7 +6,7 @@ import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpe
 describe("session log lines", () => {
   it("says when a session put claimed tasks back to ready (U-013)", () => {
     expect(describeEvent("task.claims_released", { count: 2 })).toBe(
-      "Put 2 task(s) back to ready: their claim had lapsed or no agent held it.",
+      "Put 2 tasks back to ready: their claim had lapsed or no agent held it.",
     );
   });
 
@@ -21,7 +21,7 @@ describe("session log lines", () => {
         },
       }),
     ).toBe(
-      "Session review measured: 0 of 1 planned task(s) done, CHF 0.00 spent of a CHF 0.16 estimate.",
+      "Session review measured: 0 of 1 planned task done, CHF 0.00 spent of a CHF 0.16 estimate.",
     );
   });
 });
@@ -193,7 +193,8 @@ describe("session log lines in plain words (U-074)", () => {
         title: "Alice's session completed: 1 done",
         deliveries: [{ channel: "desktop", status: "sent" }],
       }),
-    ).toBe('Notified you: "Alice\'s session completed: 1 done": desktop sent.');
+      // Which channels sent it is not the session's news (design §5, "Notification").
+    ).toBe('Notified you: "Alice\'s session completed: 1 done".');
     expect(line("inbox.message", { type: "request", from: "agent_bob", fromName: "Bob" })).toBe(
       "Read a request message from Bob.",
     );
@@ -207,9 +208,11 @@ describe("session log lines in plain words (U-074)", () => {
         stepCap: 200,
         autonomy: 2,
       }),
-    ).toBe("Session started (manual), budget CHF 4.00, 200 steps, autonomy Standard (level 2).");
+      // A person-level line (design §3.7): the steps and the autonomy level are Details.
+    ).toBe("You started the session with a budget of CHF 4.00.");
     expect(
       line("critic.verdict", {
+        title: "Add clamp",
         verdict: "revise",
         grade: 40,
         findings: 1,
@@ -218,9 +221,7 @@ describe("session log lines in plain words (U-074)", () => {
         retry: "improve_brief",
         summary: "No test.",
       }),
-    ).toBe(
-      "Critic: sent back for changes (grade 40, 1 finding(s), 1 open): the task goes back for another attempt, again with a clearer brief. No test.",
-    );
+    ).toBe('The critic sent "Add clamp" back: No test. Trying again.');
     expect(line("critic.review_started", { tier: 1, attempt: 0 })).toBe(
       "The critic started a light review (attempt 1).",
     );

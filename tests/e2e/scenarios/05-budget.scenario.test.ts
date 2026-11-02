@@ -164,10 +164,11 @@ describe("scenario 5: budget", () => {
         /^The session's budget is used\. "Docs page" is ready to continue\. CHF \d+\.\d{2}\.$/,
       ),
     ]);
-    // J's Inbox gets one line for the session, naming the project (design §3.8).
+    // J's Inbox gets one line for the session, naming the project (design §3.8); the decision
+    // that waits is its card's to say (§5.10).
     const summary = (await w.inbox(w.j)).find((m) => m.type === "info");
     const projectName = (await w.store.project.mustGet(w.project.id)).name;
-    expect(summary?.body).toBe(`${projectName}: "Metrics exporter" needs your decision (Inbox).`);
+    expect(summary?.body).toBe(`${projectName}: did 1 task: "Config loader".`);
     expect(await w.store.task.claimedBy(w.alice.agent.id)).toEqual([]);
     expect(await w.store.session.active(w.alice.agent.id)).toEqual([]);
     const prs = await w.pullRequests({ state: "all" });

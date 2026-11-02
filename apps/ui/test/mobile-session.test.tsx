@@ -42,6 +42,7 @@ function eventFixture(
     cost: money(0),
     at: `2026-10-20T09:5${seq}:00.000Z`,
     level,
+    audience: "person",
   };
 }
 

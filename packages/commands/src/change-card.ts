@@ -82,6 +82,11 @@ export interface CardInput {
   costChfMicro?: number;
   /** The read-back as one question (`ChangeCard.ask`). */
   ask?: string;
+  /**
+   * The scope in words when the scope's own label would say less than the truth: a project's
+   * per-session cap holds for "every session of Quote page", not "this session".
+   */
+  scopeLabel?: string;
 }
 
 export function buildCard(input: CardInput): ChangeCard {
@@ -99,7 +104,7 @@ export function buildCard(input: CardInput): ChangeCard {
     oldValue: input.oldValue,
     newValue: input.newValue,
     scope: input.scope,
-    scopeLabel: SCOPE_LABELS[input.scope],
+    scopeLabel: input.scopeLabel ?? SCOPE_LABELS[input.scope],
     duration,
     impact,
     undoHint: input.reversible ? UNDO_HINT : NO_UNDO_HINT,
@@ -197,10 +202,12 @@ export function renderChangeCard(card: ChangeCard, opts: RenderOptions = {}): st
     lines.push(`Change: ${card.what}.`);
     lines.push(`From ${card.oldValue} to ${card.newValue}.`);
   }
+  // A scope that names the project already ("every session of Quote page") says it once.
+  const named = card.projectName ? card.scopeLabel.includes(card.projectName) : false;
   const scope =
     card.usesActiveProject && card.projectName
-      ? `Scope: ${card.scopeLabel} (${card.projectName}, the active project).`
-      : card.projectName
+      ? `Scope: ${card.scopeLabel} (${named ? "" : `${card.projectName}, `}the active project).`
+      : card.projectName && !named
         ? `Scope: ${card.scopeLabel} (${card.projectName}).`
         : `Scope: ${card.scopeLabel}.`;
   lines.push(scope);

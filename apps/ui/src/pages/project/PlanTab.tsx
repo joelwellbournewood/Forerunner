@@ -721,8 +721,8 @@ function SmallProjectPlan({
         className="rounded border border-neutral-200 p-2 text-sm text-neutral-700 dark:border-neutral-800 dark:text-neutral-300"
         data-testid="small-project-notice"
       >
-        Small-project mode: one milestone and a flat task list. A new task that names no tier is
-        reviewed at critic tier 0.
+        Small-project mode: one milestone and a flat task list. A new task gets the automatic checks
+        only, unless you choose a review level.
       </p>
 
       <section>

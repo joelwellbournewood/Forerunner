@@ -82,7 +82,11 @@ export function SessionPage() {
   const [mode, setMode] = useState<StreamMode>("connecting");
   const [notice, setNotice] = useState<string | null>(null);
   const [filters, setFilters] = useState<Set<Level>>(new Set(LEVELS));
-  const [raw, setRaw] = useState(false);
+  /**
+   * Design §3.7: the log shows person-level lines; Details adds the internal events, their
+   * type names and numbers, the level filters and the raw payloads.
+   */
+  const [details, setDetails] = useState(false);
   const projectName = useUiState(
     (s) => s.projects.find((p) => p.id === session?.projectId)?.name ?? null,
   );
@@ -183,19 +187,28 @@ export function SessionPage() {
     };
   }, [client, id, appendEvents, streamOptions]);
 
-  const visible = useMemo(() => events.filter((e) => filters.has(e.level)), [events, filters]);
+  const shown = useMemo(
+    () => (details ? events : events.filter((e) => e.audience === "person")),
+    [events, details],
+  );
+  // The level filters live under Details: with Details off, a filter switched off there hides
+  // nothing.
+  const visible = useMemo(
+    () => (details ? shown.filter((e) => filters.has(e.level)) : shown),
+    [shown, filters, details],
+  );
   const counts = useMemo(() => {
     const c: Record<Level, number> = { info: 0, warning: 0, escalation: 0, error: 0 };
-    for (const e of events) c[e.level] += 1;
+    for (const e of shown) c[e.level] += 1;
     return c;
-  }, [events]);
+  }, [shown]);
 
   // Auto-scroll while following; a manual scroll up pauses it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every new visible event
   useEffect(() => {
     if (!follow || !logRef.current) return;
     logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [visible.length, follow, raw]);
+  }, [visible.length, follow, details]);
 
   const onScroll = () => {
     const el = logRef.current;
@@ -386,8 +399,8 @@ export function SessionPage() {
       </header>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        {raw ? <span className="text-neutral-500">Show:</span> : null}
-        {(raw ? LEVELS : []).map((level) => (
+        {details ? <span className="text-neutral-500">Show:</span> : null}
+        {(details ? LEVELS : []).map((level) => (
           <button
             key={level}
             type="button"
@@ -403,12 +416,15 @@ export function SessionPage() {
             {level} ({counts[level]})
           </button>
         ))}
-        <label className="ml-auto flex items-center gap-1 text-xs">
+        <label
+          className="ml-auto flex items-center gap-1 text-xs"
+          title="Also shows the internal steps: the brief, memory, each tool call, notifications."
+        >
           <input
             type="checkbox"
-            checked={raw}
-            onChange={(e) => setRaw(e.target.checked)}
-            data-testid="raw-toggle"
+            checked={details}
+            onChange={(e) => setDetails(e.target.checked)}
+            data-testid="details-toggle"
           />
           Details
         </label>
@@ -427,7 +443,7 @@ export function SessionPage() {
       >
         {visible.length === 0 ? (
           <p className="p-3 text-neutral-500">
-            {events.length === 0 ? "Waiting for the first event…" : "Nothing matches the filters."}
+            {shown.length === 0 ? "Waiting for the first event…" : "Nothing matches the filters."}
           </p>
         ) : null}
         <ol>
@@ -437,12 +453,19 @@ export function SessionPage() {
               className={`flex flex-col gap-0.5 border-b border-neutral-100 px-2 py-1 dark:border-neutral-900 ${LEVEL_STYLES[e.level]}`}
               data-testid="event-row"
               data-level={e.level}
+              data-audience={e.audience}
               data-seq={e.seq}
             >
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="text-neutral-400">{formatTime(e.at)}</span>
-                {raw ? <span className="text-neutral-500">#{e.seq}</span> : null}
-                {raw ? <span className="text-neutral-500">{e.type}</span> : null}
+                {details ? (
+                  <>
+                    <span className="text-neutral-500">#{e.seq}</span>
+                    <span className="text-neutral-500" data-testid="event-type">
+                      {e.type}
+                    </span>
+                  </>
+                ) : null}
                 {e.level !== "info" ? (
                   <Badge tone={e.level === "warning" ? "warn" : "bad"} testId="level-badge">
                     {e.level}
@@ -453,7 +476,7 @@ export function SessionPage() {
                   <Money value={e.cost} className="ml-auto text-neutral-500" />
                 ) : null}
               </div>
-              {raw ? (
+              {details ? (
                 <pre
                   className="overflow-auto rounded bg-neutral-100 p-1 text-[11px] dark:bg-neutral-900"
                   data-testid="event-raw"

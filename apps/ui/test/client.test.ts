@@ -190,8 +190,14 @@ describe("daemon client", () => {
     const daemon = createFakeDaemon({ token: "tok" });
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
     const decisions = await client.decisions("proj_atlas");
-    expect(decisions.map((d) => d.id)).toEqual(["dec_1"]);
+    // The answers, the approved plan and the decision record (design §3.4).
+    expect(decisions.map((d) => [d.id, d.kind])).toEqual([
+      ["dec_1", "answer"],
+      ["intake_atlas", "plan"],
+      ["record:docs/decisions/0001-static-search.md", "record"],
+    ]);
     expect(decisions[0]?.chosen).toBe("Static index built at deploy time");
+    expect(decisions[0]?.decidedByName).toBe("Alice");
     expect(await client.decisions("proj_beacon")).toEqual([]);
     const peers = await client.peers("proj_atlas");
     expect(peers.projectId).toBe("proj_atlas");
@@ -310,9 +316,10 @@ describe("daemon client", () => {
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
     const reviews = await client.reviews("proj_atlas", { limit: 10 });
     expect(reviews.reviews.map((r) => r.id)).toEqual(["rev_0", "rev_2", "rev_1"]);
-    expect(reviews.gradeTrend.map((p) => p.grade)).toEqual([82, 64, 75]);
+    // The trend and the counts are the tasks' reviews; the session check is not one (§3.5).
+    expect(reviews.gradeTrend.map((p) => p.grade)).toEqual([82, 64]);
     expect(reviews.openFindings).toBe(1);
-    expect(reviews.verdicts).toEqual({ accept: 2, revise: 1 });
+    expect(reviews.verdicts).toEqual({ accept: 1, revise: 1 });
     expect((await client.taskReviews("task_2")).reviews.map((r) => r.id)).toEqual(["rev_2"]);
     const badReviews = createClient(testConfig(), async () =>
       jsonResponse({ projectId: "p", reviews: [{ id: "r" }], openFindings: 0 }),

@@ -145,6 +145,7 @@ import { createBillingOrderRoutes } from "./billing-order-routes.ts";
 import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
+import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
@@ -171,6 +172,7 @@ import {
   costView,
   effortCapsOf,
   eventView,
+  eventViews,
   lessonView,
   messageView,
   milestoneView,
@@ -1443,7 +1445,8 @@ export function createDaemonApp(
     const accept = c.req.header("accept") ?? "";
     if (!accept.includes("text/event-stream")) {
       const rows = await rt.store.event.list(id, afterSeq, 2000);
-      return c.json(rows.map((e) => eventView(e, chf())));
+      // Lines name their task (design §5): an older line takes it from its task's start line.
+      return c.json(eventViews(rows, chf()));
     }
     return streamSSE(c, async (stream) => {
       let seq = afterSeq;
@@ -1744,18 +1747,14 @@ export function createDaemonApp(
   });
 
   app.get("/projects/:id/decisions", async (c) => {
-    const rows = await new DecisionLog(rt.store).current(c.req.param("id"));
-    const views: DecisionView[] = rows.map((d) => ({
-      id: d.id,
-      projectId: d.project_id,
-      question: d.question,
-      options: (d.options as unknown as string[]) ?? [],
-      chosen: d.chosen,
-      decidedBy: d.decided_by,
-      rationale: d.rationale,
-      supersedes: d.supersedes ?? null,
-      createdAt: d.created_at,
-    }));
+    // Design §3.4: plain question and answer pairs with who and when, the approved plan and
+    // the decision records in the project's folder (`daemon/decision-views.ts`).
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const views: DecisionView[] = await decisionViews(
+      rt.store,
+      project,
+      rt.docs.docsDirsFor(project),
+    );
     return c.json(views);
   });
 

@@ -344,7 +344,10 @@ describe("voice routes on the composed daemon", () => {
     );
     const card = ask.pending;
     expect(card).toMatchObject({ decision: "needs_yes", commands: ["budget.set"] });
-    expect(card?.readback).toContain("Say yes to confirm");
+    // One question and the words to answer it (design §3.9, §5).
+    expect(card?.readback).toMatch(
+      /^Raise .+session budget for .+ to CHF 20 until .+\? Say yes or no\.$/,
+    );
     // He heard the whole read-back, once, and nothing else; nothing ran.
     expect(ask.heard).toBe(card?.readback);
     expect(ask.reply?.actions).toEqual([]);

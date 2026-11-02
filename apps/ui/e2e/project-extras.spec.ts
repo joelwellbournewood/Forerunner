@@ -19,7 +19,11 @@ test("summary: the next-session queue, the peers feed and the decision log", asy
   await expect(page.getByTestId("peer")).toHaveAttribute("data-online", "true");
   await expect(page.getByTestId("peer-claim")).toContainText("Add the search box to the header");
   await expect(page.getByTestId("peer-handoff")).toContainText("PR #12 waits for review");
-  await expect(page.getByTestId("decision-chosen")).toHaveText("Static index built at deploy time");
+  // Design §3.4: "Q? A. (Alice, 18 Oct)", the approved plan, and the record linked to Docs.
+  await expect(page.getByTestId("decision-text").first()).toHaveText(
+    "Which search backend should the docs site use? Static index built at deploy time.",
+  );
+  await expect(page.getByTestId("decision-records")).toContainText("Static search index");
   const calls = await recordedCalls(request);
   // A note for the next session (design §3.4): kind note, the middle priority.
   expect(calls.find((c) => c.path === "/projects/proj_atlas/queue")?.body).toEqual({

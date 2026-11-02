@@ -124,16 +124,14 @@ describe("scenario 3: voice", () => {
     const card = ask.reply?.pendingConfirmation;
     expect(card).toMatchObject({ decision: "needs_yes", commands: ["budget.set"] });
     expect(card?.costUsdMicro).toBe(18_750_000); // CHF 15 more at 0.8 CHF per USD
-    expect(card?.readback).toContain("Change: tonight's session budget for Sample service.");
-    expect(card?.readback).toContain("From CHF 5 to CHF 20.");
-    // The parser named the active project in the command, so the card scopes it by name.
-    expect(card?.readback).toContain("Scope: this session (Sample service).");
-    expect(card?.readback).toContain("How long: until 06:00.");
-    expect(card?.readback).toContain("Risk: medium. Spend impact: +CHF 15.");
-    expect(card?.readback).toContain("Say yes to confirm");
+    // The read-back is one question (design §3.9, §5): what changes, to what, until when, by
+    // name; no "Risk:" or "Scope:" lines. The parser named the active project in the command.
+    expect(card?.readback).toBe(
+      "Raise tonight's session budget for Sample service to CHF 20 until 06:00? Say yes or no.",
+    );
     // He heard the whole read-back, once, and nothing else.
     expect(ask.heard).toBe(card?.readback);
-    expect(ask.heard.split("Say yes to confirm")).toHaveLength(2);
+    expect(ask.heard.split("Say yes or no")).toHaveLength(2);
     expect(ask.reply?.actions).toEqual([]);
     // The registry filed the card as a pending request in the inbox and waits; nothing changed.
     const pendingRows = (await w.humanRequests(w.j, { status: "open" })).filter(

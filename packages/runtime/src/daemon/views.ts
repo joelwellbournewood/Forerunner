@@ -71,9 +71,13 @@ import { PERFORMANCE_DEFAULT_DAYS, PERFORMANCE_MAX_DAYS } from "./api-types.ts";
 import {
   autonomyWords,
   chfOf,
+  cutAtWord,
   decisionWords,
+  eventAudience,
   fallbackLine,
   moreEventLines,
+  personLine,
+  plainLine,
   retryWords,
   reviewLevel,
   skipReason,
@@ -89,6 +93,7 @@ import {
 } from "./project-status.ts";
 import { type RequestWordsContext, requestWords } from "./request-words.ts";
 import { loadTaskDisplayContext, runOrder, taskDisplay } from "./task-display.ts";
+import { plainPlurals, withoutIds } from "./task-words.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
 export function agentView(a: AgentRow): AgentView {
@@ -389,6 +394,36 @@ export function sessionView(
   };
 }
 
+/**
+ * The views of a session's events, in order. A line about a task names it (design §5 rule 3):
+ * events written before they carried the task's title and specialist (`task.finished`,
+ * `critic.verdict` from before the core-experience round) take them from the task's
+ * `task.started` line in the same log.
+ */
+export function eventViews(rows: readonly EventRow[], chfPerUsd: number): EventView[] {
+  const named = new Map<string, { title: string; specialist: string }>();
+  return rows.map((e) => {
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    const taskId = typeof p.taskId === "string" ? p.taskId : null;
+    if (e.type === "task.started" && taskId && typeof p.title === "string")
+      named.set(taskId, {
+        title: p.title,
+        specialist: typeof p.specialist === "string" ? p.specialist : "",
+      });
+    const known = taskId ? named.get(taskId) : undefined;
+    if (!known || (typeof p.title === "string" && (p.specialist || e.type !== "task.finished")))
+      return eventView(e, chfPerUsd);
+    const filled = {
+      ...p,
+      title: typeof p.title === "string" ? p.title : known.title,
+      ...(e.type === "task.finished" && !p.specialist && known.specialist
+        ? { specialist: known.specialist }
+        : {}),
+    };
+    return { ...eventView(e, chfPerUsd), text: describeEvent(e.type, filled, chfPerUsd) };
+  });
+}
+
 export function eventView(e: EventRow, chfPerUsd: number): EventView {
   const payload = (e.payload ?? {}) as Record<string, unknown>;
   const level: EventView["level"] = /error|failed/.test(e.type)
@@ -409,45 +444,59 @@ export function eventView(e: EventRow, chfPerUsd: number): EventView {
     cost: money(e.cost_usd_micro, chfPerUsd),
     at: e.created_at,
     level,
+    audience: eventAudience(e.type, payload),
   };
 }
 
 /**
- * The session log's sentence for an event (spec K.3): plain words, money in CHF at
- * `chfPerUsd` (U-074). Types without a line here are worded by `moreEventLines`
- * (`event-lines.ts`), and an unknown type by `fallbackLine`: never raw JSON.
+ * The session log's sentence for an event (spec K.3; design §3.7, §5): plain words, money in
+ * CHF at `chfPerUsd` (U-074). A person-level event (`eventAudience`) reads the way a person
+ * follows a session (`personLine`); the rest are worded here or by `moreEventLines`
+ * (`event-lines.ts`) for Details, and an unknown type by `fallbackLine`: never raw JSON, never
+ * "(s)", never a notification channel that was not set up.
  */
 export function describeEvent(
   type: string,
   p: Record<string, unknown>,
   chfPerUsd: number = DEFAULT_CHF_PER_USD,
 ): string {
+  // Whatever a line quotes (a warning, a reason the runner wrote) is read without ids and
+  // with plurals as the number says.
+  return plainPlurals(withoutIds(lineOf(type, p, chfPerUsd)));
+}
+
+function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): string {
+  if (eventAudience(type, p) === "person") {
+    const line = personLine(type, p, chfPerUsd);
+    if (line) return line;
+  }
   const s = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "");
   const n = (k: string) => (typeof p[k] === "number" ? (p[k] as number) : 0);
   const chf = (k: string) => chfOf(n(k), chfPerUsd);
+  const count = (k: string, one: string, many = `${one}s`) => `${n(k)} ${n(k) === 1 ? one : many}`;
   switch (type) {
     case "session.started":
       return `Session started (${s("trigger")}), budget ${chf("budgetCapUsdMicro")}, ${n("stepCap")} steps, autonomy ${autonomyWords(n("autonomy"))}.`;
     case "session.brief":
-      return `State brief ready: ${n("unread")} unread, ${n("ready")} ready task(s)${Array.isArray(p.warnings) && p.warnings.length ? `, warnings: ${(p.warnings as string[]).join("; ")}` : ""}.`;
+      return `State brief ready: ${n("unread")} unread, ${count("ready", "ready task")}${Array.isArray(p.warnings) && p.warnings.length ? `, warnings: ${(p.warnings as string[]).join("; ")}` : ""}.`;
     case "session.planned":
-      return `Plan: ${n("items")} item(s), estimate ${chf("estimateUsdMicro")}. ${s("summary")}`;
+      return `Plan: ${count("items", "task")}, about ${chf("estimateUsdMicro")}.${s("summary") ? ` ${cutAtWord(plainLine(s("summary")), 120)}` : ""}`;
     case "session.paused":
       return `Paused: ${s("reason")}.`;
     case "session.plan_filed":
-      return `Plan filed for your approval in the Inbox (${n("items")} item(s))${p.changed ? "; it changed since the plan you approved, nothing ran" : ""}.`;
+      return `Plan filed for your approval in the Inbox (${count("items", "task")})${p.changed ? "; it changed since the plan you approved, nothing ran" : ""}.`;
     case "session.plan_approved":
-      return `Running the plan you approved (${n("items")} item(s)).`;
+      return `Running the plan you approved (${count("items", "task")}).`;
     case "task.started":
-      return `Started "${s("title")}" with ${s("specialist")} (estimate ${chf("estimateUsdMicro")}).`;
+      return `Started "${s("title")}" with ${s("specialist")} (about ${chf("estimateUsdMicro")}).`;
     case "task.finished":
-      return `Finished task: ${s("outcome").replace(/_/g, " ")} (${chf("costUsdMicro")}). ${s("summary").slice(0, 200)}`;
+      return `Finished "${s("title") || "the task"}": ${s("outcome").replace(/_/g, " ")} (${chf("costUsdMicro")}). ${cutAtWord(plainLine(s("summary")), 200)}`;
     case "task.claims_released":
-      return `Put ${n("count")} task(s) back to ready: their claim had lapsed or no agent held it.`;
+      return `Put ${count("count", "task")} back to ready: their claim had lapsed or no agent held it.`;
     case "task.skipped":
       return `Skipped a task: ${skipReason(s("reason"))}.`;
     case "task.notes":
-      return `Gave ${n("count")} item(s) from the next-session queue to "${s("title")}".`;
+      return `Gave ${count("count", "note")} for the next session to "${s("title")}".`;
     case "inbox.message":
       // A name, never an id (U-074): the runner adds `fromName`; older rows say "another agent".
       return `Read a ${s("type") || "new"} message from ${s("fromName") || "another agent"}.`;
@@ -478,26 +527,26 @@ export function describeEvent(
     case "critic.review_started":
       return `The critic started ${reviewLevel(n("tier"))} (attempt ${n("attempt") + 1}).`;
     case "critic.verdict":
-      return `Critic: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${n("findings")} finding(s), ${n("openFindings")} open): ${criticNext(s("decision"), s("retry"), s("nextTier"))}. ${s("summary")}`;
+      return `Critic: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${count("findings", "finding")}, ${n("openFindings")} open): ${criticNext(s("decision"), s("retry"), s("nextTier"))}. ${cutAtWord(plainLine(s("summary")), 200)}`;
     case "critic.review_failed":
       return `Critic review failed: ${s("warning")}`;
     case "critic.session_review_metrics": {
       const m = (p.metrics ?? {}) as Record<string, unknown>;
       const k = (key: string) => (typeof m[key] === "number" ? (m[key] as number) : 0);
-      return `Session review measured: ${k("plannedDoneTasks")} of ${k("plannedTasks")} planned task(s) done, ${chfOf(k("actualUsdMicro"), chfPerUsd)} spent of a ${chfOf(k("estimateUsdMicro"), chfPerUsd)} estimate.`;
+      return `Session review measured: ${k("plannedDoneTasks")} of ${k("plannedTasks")} planned ${k("plannedTasks") === 1 ? "task" : "tasks"} done, ${chfOf(k("actualUsdMicro"), chfPerUsd)} spent of a ${chfOf(k("estimateUsdMicro"), chfPerUsd)} estimate.`;
     }
     case "critic.session_review":
-      return `Session review: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${n("findings")} finding(s)). ${s("summary")}`;
+      return `Session review: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${count("findings", "finding")}).`;
     case "task.blocked_by_findings":
       return `Cannot close the task: ${s("warning")}`;
     case "memory.loaded":
-      return `Memory: ${n("lessons")} lesson(s), ${n("tokens")} of ${n("budget")} tokens.`;
+      return `Memory: ${count("lessons", "lesson")}, ${n("tokens")} of ${n("budget")} tokens.`;
     case "memory.over_budget":
     case "memory.load_failed":
     case "memory.record_failed":
       return `Memory: ${s("warning")}`;
     case "memory.recorded":
-      return `Memory: recorded ${n("recorded")} lesson(s) (${n("merged")} merged, ${n("rejected")} rejected).`;
+      return `Memory: recorded ${count("recorded", "lesson")} (${n("merged")} merged, ${n("rejected")} rejected).`;
     default:
       return moreEventLines(type, p, chfPerUsd) ?? fallbackLine(type, p);
   }
@@ -665,16 +714,48 @@ export async function costView(
         label: b.key ?? "(none)",
         cost: money(b.usd_micro, chfPerUsd),
         runs: b.entries ?? b.count ?? 0,
-        accepted: null,
+        accepted: null as number | null,
       }),
     );
   };
-  const [byModel, bySpecialist, byTask, byProject] = await Promise.all([
+  const [byModel, ledgerBySpecialist, byTask, byProject] = await Promise.all([
     bucket("model"),
     bucket("specialist"),
     bucket("task_id"),
     bucket("project_id"),
   ]);
+  // Design §5 rule 3 (names, not ids): the tasks by their titles and the work by the
+  // specialist that ran it, with the runs the critic accepted. The ledger's entries name a run;
+  // the run names its specialist (the ledger's own column is not filled), and a task's accepted
+  // run is its last work run before an accepting review.
+  const facts = await costFacts(store, f);
+  const bySpecialist = facts.bySpecialist.length
+    ? facts.bySpecialist.map((s) => ({
+        key: s.key,
+        label: s.label,
+        cost: money(s.usdMicro, chfPerUsd),
+        runs: s.runs,
+        accepted: s.accepted,
+      }))
+    : ledgerBySpecialist;
+  // "Runs" counts runs, not ledger entries (one per model call): "1 / 3 accepted" compares
+  // like with like.
+  for (const b of byTask) {
+    const t = facts.tasks.get(b.key);
+    if (t) {
+      b.label = t.title;
+      b.runs = facts.runsByTask.get(b.key) ?? b.runs;
+      b.accepted = facts.acceptedRunsByTask.get(b.key) ?? 0;
+    } else if (b.key === "(none)") b.label = "Planning and chat";
+  }
+  for (const b of byModel) {
+    b.runs = facts.runsByModel.get(b.key) ?? b.runs;
+    b.accepted = facts.acceptedRunsByModel.get(b.key) ?? null;
+  }
+  for (const b of byProject) {
+    const name = b.key === "(none)" ? null : (await store.project.get(b.key))?.name;
+    if (name) b.label = name;
+  }
   // Savings (ADR 0003 section 3): read from the Run rows and priced at read time by the billing
   // ledger; "estimated" for compression, "measured" for cache reads, never netted against spend.
   const savings = await (ledger ?? savingsLedger(store, chfPerUsd)).savings({
@@ -699,8 +780,126 @@ export async function costView(
       },
       cache: { usdMicro: savings.cache.usd_micro, chfMicro: savings.cache.chf_micro },
     },
-    from: filter.from ?? "",
-    to: filter.to ?? "",
+    // The period the figures cover: the filter's, else the first and the last entry's.
+    from: filter.from ?? facts.first ?? "",
+    to: filter.to ?? facts.last ?? "",
+  };
+}
+
+/** What the cost view adds to the ledger's sums: names, specialists, accepted runs, period. */
+async function costFacts(
+  store: StateStore,
+  f: { projectId?: string; from?: string; to?: string; humanId?: string },
+): Promise<{
+  tasks: Map<string, TaskRow>;
+  bySpecialist: {
+    key: string;
+    label: string;
+    usdMicro: number;
+    runs: number;
+    accepted: number | null;
+  }[];
+  acceptedRunsByTask: Map<string, number>;
+  acceptedRunsByModel: Map<string, number>;
+  runsByTask: Map<string, number>;
+  runsByModel: Map<string, number>;
+  first: string | null;
+  last: string | null;
+}> {
+  const where: Record<string, unknown> = {};
+  if (f.projectId) where.project_id = f.projectId;
+  if (f.humanId) where.human_id = f.humanId;
+  const entries = (await store.costLedger.list(where as never, { limit: 20_000 })).filter(
+    (e) => (!f.from || e.occurred_at >= f.from) && (!f.to || e.occurred_at < f.to),
+  );
+  const runIds = [...new Set(entries.map((e) => e.run_id).filter((x): x is string => !!x))];
+  const runs = new Map<string, RunRow>();
+  for (const id of runIds) {
+    const r = await store.run.get(id);
+    if (r) runs.set(id, r);
+  }
+  const taskIds = [...new Set(entries.map((e) => e.task_id).filter((x): x is string => !!x))];
+  const tasks = new Map<string, TaskRow>();
+  for (const id of taskIds) {
+    const t = await store.task.get(id);
+    if (t) tasks.set(id, t);
+  }
+  // A task's accepted run: its last work run before each accepting review.
+  const accepted = new Set<string>();
+  for (const id of taskIds) {
+    const reviews = (await store.review.forTask(id, { limit: 200 })).filter(
+      (r) => r.verdict === "accept",
+    );
+    if (!reviews.length) continue;
+    const work = (await store.run.forTask(id))
+      .filter((r) => r.specialist !== "critic")
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    for (const rv of reviews) {
+      const before = work.filter((r) => r.created_at <= rv.created_at).at(-1);
+      if (before) accepted.add(before.id);
+    }
+  }
+  const acceptedRunsByTask = new Map<string, number>();
+  const acceptedRunsByModel = new Map<string, number>();
+  for (const id of accepted) {
+    const r = runs.get(id) ?? (await store.run.get(id));
+    if (!r) continue;
+    if (r.task_id) acceptedRunsByTask.set(r.task_id, (acceptedRunsByTask.get(r.task_id) ?? 0) + 1);
+    acceptedRunsByModel.set(r.model, (acceptedRunsByModel.get(r.model) ?? 0) + 1);
+  }
+  const specialists = new Map<
+    string,
+    { usdMicro: number; runs: Set<string>; entries: number; accepted: number }
+  >();
+  for (const e of entries) {
+    const run = e.run_id ? runs.get(e.run_id) : undefined;
+    const key = e.specialist ?? run?.specialist ?? "(none)";
+    const s = specialists.get(key) ?? { usdMicro: 0, runs: new Set(), entries: 0, accepted: 0 };
+    s.usdMicro += e.usd_micro;
+    s.entries += 1;
+    if (e.run_id && !s.runs.has(e.run_id)) {
+      s.runs.add(e.run_id);
+      if (accepted.has(e.run_id)) s.accepted += 1;
+    }
+    specialists.set(key, s);
+  }
+  const runsByTask = new Map<string, number>();
+  const runsByModel = new Map<string, number>();
+  for (const r of runs.values()) {
+    // A task's runs are its work runs; the critic's reviews of it are not attempts.
+    if (r.task_id && r.specialist !== "critic")
+      runsByTask.set(r.task_id, (runsByTask.get(r.task_id) ?? 0) + 1);
+    runsByModel.set(r.model, (runsByModel.get(r.model) ?? 0) + 1);
+  }
+  // The planning run and the critic's reviews are no work for the critic to accept.
+  const notWork = (key: string) =>
+    key === "critic" || key === "(none)" || key === INTAKE_RUN_SPECIALIST;
+  const bySpecialist = [...specialists.entries()]
+    .map(([key, s]) => ({
+      key,
+      label:
+        key === "(none)"
+          ? "Planning and chat"
+          : key === "critic"
+            ? "the critic"
+            : key === INTAKE_RUN_SPECIALIST
+              ? "planning"
+              : key,
+      usdMicro: s.usdMicro,
+      runs: s.runs.size || s.entries,
+      accepted: notWork(key) ? null : s.accepted,
+    }))
+    .sort((a, b) => b.usdMicro - a.usdMicro || a.key.localeCompare(b.key));
+  const times = entries.map((e) => e.occurred_at).sort();
+  return {
+    tasks,
+    bySpecialist,
+    acceptedRunsByTask,
+    acceptedRunsByModel,
+    runsByTask,
+    runsByModel,
+    first: times[0] ?? null,
+    last: times.at(-1) ?? null,
   };
 }
 
@@ -736,25 +935,64 @@ export function findingView(f: FindingRow): FindingView {
   };
 }
 
+/**
+ * Evidence lines that are records for the critic's own audit, not for a person (design §5 rule
+ * 3: no run ids, prompt hashes or internals): the prompt version, the run id, the context
+ * compression note, the timing. They stay on the review row; the view leaves them out.
+ */
+const INTERNAL_EVIDENCE = /^(?:prompt:|run:|context:|timing:)/;
+
+/** A review's evidence as a person reads it under Details: no ids, no "(s)", no internals. */
+export function plainEvidence(evidence: readonly unknown[]): string[] {
+  return evidence
+    .map((e) => (typeof e === "string" ? e : JSON.stringify(e)))
+    .filter((e) => !INTERNAL_EVIDENCE.test(e.trim()))
+    .map((e) => plainPlurals(withoutIds(e.replace(/\[stand-in model\]\s*/gi, ""))))
+    .filter((e) => e.length > 0);
+}
+
+/** A task's findings stop being open work when the task is done or cancelled (design §3.5). */
+const CLOSED_TASK = new Set(["done", "cancelled"]);
+
+/**
+ * The open findings of task reviews counted once per task and finding (design §3.5, "Reviews"):
+ * a finding the critic files again on each attempt is one finding, a done or cancelled task has
+ * none open, and a session review's findings are the critic's self-check, not work.
+ */
+export function openFindingKeys(
+  findings: readonly Pick<FindingRow, "task_id" | "status" | "fingerprint" | "description">[],
+  taskStatus: (taskId: string) => string | null,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const f of findings) {
+    if (f.status !== "open" || !f.task_id) continue;
+    if (CLOSED_TASK.has(taskStatus(f.task_id) ?? "")) continue;
+    keys.add(`${f.task_id}:${f.fingerprint || f.description.trim().toLowerCase()}`);
+  }
+  return keys;
+}
+
 export function reviewView(
   r: ReviewRow,
   findings: FindingRow[],
   taskTitle: string | null,
+  taskStatus: string | null = null,
 ): ReviewView {
   return {
     id: r.id,
     taskId: r.task_id,
     taskTitle,
+    taskStatus,
     sessionId: r.session_id,
     criticModel: r.critic_model,
     tier: Math.min(3, Math.max(0, r.tier)) as 0 | 1 | 2 | 3,
     grade: Math.min(100, Math.max(0, Math.round(r.grade))),
     confidence: Math.min(1, Math.max(0, r.confidence)),
     verdict: r.verdict,
-    evidence: r.evidence,
-    summary: r.summary,
+    evidence: plainEvidence(r.evidence),
+    summary: plainPlurals(withoutIds(r.summary.replace(/\[stand-in model\]\s*/gi, ""))),
     findings: findings.map(findingView),
-    openFindings: findings.filter((f) => f.status === "open").length,
+    openFindings: openFindingKeys(findings, () => taskStatus).size,
     createdAt: r.created_at,
   };
 }
@@ -770,13 +1008,20 @@ export async function reviewsView(
   const limit = filter.limit ?? 200;
   let rows: ReviewRow[];
   const titles = new Map<string, string>();
+  const statuses = new Map<string, string>();
   if (filter.taskId) {
     rows = await store.review.forTask(filter.taskId, { limit });
     const t = await store.task.get(filter.taskId);
-    if (t) titles.set(t.id, t.title);
+    if (t) {
+      titles.set(t.id, t.title);
+      statuses.set(t.id, t.status);
+    }
   } else if (filter.projectId) {
     const tasks = await store.task.list({ project_id: filter.projectId } as never, { limit: 5000 });
-    for (const t of tasks) titles.set(t.id, t.title);
+    for (const t of tasks) {
+      titles.set(t.id, t.title);
+      statuses.set(t.id, t.status);
+    }
     const sessions = await store.session.list({ project_id: filter.projectId } as never, {
       limit: 5000,
     });
@@ -800,21 +1045,33 @@ export async function reviewsView(
     for (const r of rows) {
       if (r.task_id && !titles.has(r.task_id)) {
         const t = await store.task.get(r.task_id);
-        if (t) titles.set(t.id, t.title);
+        if (t) {
+          titles.set(t.id, t.title);
+          statuses.set(t.id, t.status);
+        }
       }
     }
   }
   const reviews: ReviewView[] = [];
   const verdicts: Record<string, number> = {};
-  let openFindings = 0;
+  const allFindings: FindingRow[] = [];
   for (const r of rows) {
     const findings = await store.finding.forReview(r.id);
-    const v = reviewView(r, findings, r.task_id ? (titles.get(r.task_id) ?? null) : null);
+    allFindings.push(...findings);
+    const v = reviewView(
+      r,
+      findings,
+      r.task_id ? (titles.get(r.task_id) ?? null) : null,
+      r.task_id ? (statuses.get(r.task_id) ?? null) : null,
+    );
     reviews.push(v);
-    verdicts[v.verdict] = (verdicts[v.verdict] ?? 0) + 1;
-    openFindings += v.openFindings;
+    // The verdicts, the trend and the average are the tasks' reviews: the session review is
+    // the critic's self-check of the summary, not a grade of the work (design §3.5).
+    if (v.taskId) verdicts[v.verdict] = (verdicts[v.verdict] ?? 0) + 1;
   }
-  const trend = [...reviews]
+  const openFindings = openFindingKeys(allFindings, (id) => statuses.get(id) ?? null).size;
+  const trend = reviews
+    .filter((r) => r.taskId !== null)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
     .map((r) => ({
       at: r.createdAt,
