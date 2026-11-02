@@ -76,7 +76,9 @@ agentic way".
    stylesheet a later task writes is not this task's fault). No Chromium: the review says the page
    was not tried, and the person sees "Reviewed", not "Reviewed and tried". The try runs on the
    host for every level in this version, with the network off; trying inside the Docker sandbox
-   and trying a CLI or an API are later work.
+   and trying a CLI or an API are later work. (Done in ADR 0110: a command line tool is run and
+   an API is called in the task's sandbox lease, a page is opened with Chromium's own sandbox
+   on, the project's tests run whatever the language.)
 
 5. **Work that waits for the person is never Done.** A report that ends with "Questions for the
    person:" is shown to the critic as such, and the code turns an accept into a `human` verdict

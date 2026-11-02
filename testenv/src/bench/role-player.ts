@@ -446,7 +446,7 @@ function badIntakeReply(
 // Specialists
 // ---------------------------------------------------------------------------------------
 
-interface BriefParts {
+export interface BriefParts {
   title: string;
   outcome: string;
   criteria: string[];
@@ -691,7 +691,7 @@ function specialistAnswer(
             ].join("\n")
           : pages.length && path.endsWith(".md")
             ? researchContent(brief, pages, STAND_IN)
-            : contentFor(path, brief, seen, [...files, ...targets]);
+            : (toolContent(path, brief) ?? contentFor(path, brief, seen, [...files, ...targets]));
       return {
         name: "write_file",
         input: {
@@ -760,6 +760,76 @@ function reportQuestions(title: string, style: "plain" | "bullets"): (body: stri
       "",
       "Lesson: a name only the person knows is asked for, never invented.",
     ].join("\n");
+}
+
+/**
+ * A command line tool or a tiny HTTP API that works (ADR 0110: the review runs a tool with
+ * sample input and starts a server and calls it, so the stand-in's must do what the brief
+ * says): a JavaScript file the brief runs as `node <file> ...` becomes a tool that counts the
+ * words or lines of its file (or standard input), or greets the name it is given; a JavaScript
+ * file of a brief that names an HTTP API, a server or a `GET /route` becomes a server that
+ * listens on PORT (3000 when unset) and answers each route the brief names with JSON.
+ * Anything else: null (the plan's content).
+ */
+export function toolContent(path: string, brief: BriefParts): string | null {
+  if (!/\.(m?js|cjs)$/i.test(path) || /test/i.test(path)) return null;
+  const about = `${brief.title}\n${brief.outcome}\n${brief.criteria.join("\n")}`;
+  const runs = new RegExp(`\\bnode\\s+${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(
+    about,
+  );
+  const routes = [...about.matchAll(/\bGET\s+(\/[\w\-./]*)/g)].map((m) => m[1] ?? "/");
+  const api = routes.length > 0 || /\b(http api|api|server)\b/i.test(about);
+  if (api && (runs || /server|api|app/i.test(path))) {
+    const answers = (routes.length ? [...new Set(routes)] : ["/"]).map((r) => {
+      const body = /health/i.test(r) ? { ok: true } : { path: r, from: "the stand-in model" };
+      return `  if (url === ${JSON.stringify(r)}) return send(200, ${JSON.stringify(body)});`;
+    });
+    return [
+      `// ${STAND_IN} ${brief.title}`,
+      'const http = require("http");',
+      "const PORT = Number(process.env.PORT) || 3000;",
+      "function handle(req, res) {",
+      "  const send = (status, body) => {",
+      '    res.writeHead(status, { "content-type": "application/json" });',
+      "    res.end(JSON.stringify(body));",
+      "  };",
+      '  const url = (req.url || "/").split("?")[0];',
+      ...answers,
+      '  return send(404, { error: "not found" });',
+      "}",
+      "if (require.main === module) {",
+      '  http.createServer(handle).listen(PORT, () => console.log("listening on " + PORT));',
+      "}",
+      "module.exports = { handle };",
+      "",
+    ].join("\n");
+  }
+  if (!runs) return null;
+  const greet = /\bgreet|greeting|hello\b/i.test(about);
+  const lines = /\blines?\b/i.test(about) && !/\bwords?\b/i.test(about);
+  if (greet)
+    return [
+      `// ${STAND_IN} ${brief.title}`,
+      "function greet(name) {",
+      '  return "Hello, " + name + "!";',
+      "}",
+      "module.exports = { greet };",
+      "if (require.main === module) {",
+      '  console.log(greet(process.argv[2] || "world"));',
+      "}",
+      "",
+    ].join("\n");
+  return [
+    "#!/usr/bin/env node",
+    `// ${STAND_IN} ${brief.title}`,
+    'const fs = require("fs");',
+    "const file = process.argv[2];",
+    'const text = file ? fs.readFileSync(file, "utf8") : fs.readFileSync(0, "utf8");',
+    lines
+      ? 'console.log(text.split("\\n").filter((l) => l.length > 0).length);'
+      : "console.log(text.split(/\\s+/).filter(Boolean).length);",
+    "",
+  ].join("\n");
 }
 
 function report(

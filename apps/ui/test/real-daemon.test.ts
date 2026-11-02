@@ -3092,6 +3092,159 @@ describe("the UI client against the real daemon: what was checked survives a res
   }, 90_000);
 });
 
+describe("the UI client against the real daemon: a command line tool and an API are tried in the task's sandbox (ADR 0110)", () => {
+  // The daemon as composed, on the stand-in model, without Docker: a light review's tries run in
+  // the process sandbox. No browser stand-in: nothing here is a page.
+  const runSession = async (client: DaemonClient, projectId: string) => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+      30_000,
+    );
+  };
+
+  it("a word-count tool: Done · Reviewed and tried, the drawer's evidence shows the command, its sample file and its output, also after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-cli-"));
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    const first = await composeWithRolePlayer({}, { env, dirs, stateUrl, tryIt: false });
+    let taskId = "";
+    let projectId = "";
+    try {
+      const project = await first.client.createProject({
+        name: "Word count",
+        goal: "A command that counts the words in a file",
+      });
+      projectId = project.id;
+      const task = await first.client.createTask(project.id, {
+        title: "Write wc.js",
+        outcome: "A command line tool that counts the words in a file",
+        acceptanceCriteria: ["`node wc.js <file>` prints the number of words in the file"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      taskId = task.id;
+      await runSession(first.client, project.id);
+      const row = (await first.client.tasks(project.id)).find((t) => t.id === task.id);
+      expect(row?.status).toBe("done");
+      expect(row?.check).toEqual({ label: "Reviewed and tried", tried: true });
+      const detail = await first.client.task(task.id);
+      expect(detail.review?.check).toEqual({ label: "Reviewed and tried", tried: true });
+      const tried = detail.review?.evidence?.tried ?? [];
+      expect(tried.map((t) => [t.kind, t.target, t.ok])).toEqual([
+        ["command", "node wc.js <file>", true],
+      ]);
+      expect(tried[0]?.screenshots).toEqual([]);
+      const out = tried[0]?.output ?? "";
+      expect(out).toContain(
+        "ran node wc.js <file> (from an acceptance criterion) on this computer, not in a container (a program that ignores proxy settings can still reach the network)",
+      );
+      expect(out).toContain("<file>: a sample text file written for the try (2 lines, 9 words):");
+      // The stand-in's tool counted the sample's words, in the sandbox, as a person would.
+      expect(out).toMatch(/exit 0 in \d+ ms\noutput:\n9(\n|$)/);
+      // The try's own files left the project's folder.
+      const listed = await first.client.projectFiles(project.id);
+      expect(JSON.stringify(listed)).not.toContain(".forerunner-try");
+    } finally {
+      await first.rt.close();
+    }
+    // The daemon starts again on the same home: the same words and the same evidence.
+    const second = await composeWithRolePlayer({}, { env, dirs, stateUrl, tryIt: false });
+    try {
+      const row = (await second.client.tasks(projectId)).find((t) => t.id === taskId);
+      expect(row?.check).toEqual({ label: "Reviewed and tried", tried: true });
+      const tried = (await second.client.task(taskId)).review?.evidence?.tried ?? [];
+      expect(tried.map((t) => [t.kind, t.target])).toEqual([["command", "node wc.js <file>"]]);
+    } finally {
+      await second.rt.close();
+    }
+  }, 90_000);
+
+  it("a tiny HTTP API: it is started and the route the brief names is called; the reply is the evidence", async () => {
+    const { rt, client } = await composeWithRolePlayer({}, { tryIt: false });
+    try {
+      const project = await client.createProject({ name: "Tiny API", goal: "A health route" });
+      const task = await client.createTask(project.id, {
+        title: "Write server.js",
+        outcome:
+          'A tiny HTTP API: `node server.js` listens on PORT (3000 when unset); GET /health answers {"ok":true}',
+        acceptanceCriteria: ['GET /health answers 200 with {"ok":true}'],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await runSession(client, project.id);
+      const detail = await client.task(task.id);
+      expect(detail.task.status).toBe("done");
+      expect(detail.review?.check).toEqual({ label: "Reviewed and tried", tried: true });
+      const tried = detail.review?.evidence?.tried ?? [];
+      expect(tried.map((t) => [t.kind, t.target, t.ok])).toEqual([
+        ["server", "node server.js", true],
+      ]);
+      expect(tried[0]?.output).toContain(
+        "started node server.js (from the brief) on this computer, not in a container (a program that ignores proxy settings can still reach the network); it listened",
+      );
+      expect(tried[0]?.output).toContain(
+        'GET /health (named in the brief) -> 200 application/json: {"ok":true}',
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 90_000);
+
+  it("a full-review task's tool is tried in the task's container when Docker is ready (the engine is a stand-in; CI's sandbox-full-review job runs the real one)", async () => {
+    const IMAGE = "registry.example/forerunner-runner:ui-contract";
+    const engine = new FakeContainerEngine({ images: [IMAGE] });
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        tryIt: false,
+        sandboxDetection: undefined,
+        sandboxRun: engine.run,
+        sandboxWhich: engine.which,
+      },
+      { FORERUNNER_RUNNER_IMAGE: IMAGE },
+    );
+    try {
+      expect((await client.sandboxStatus()).state).toBe("ready");
+      const project = await client.createProject({ name: "Greeting", goal: "A greeting tool" });
+      const task = await client.createTask(project.id, {
+        title: "Write src/greet.js",
+        outcome: "src/greet.js greets the name it is given",
+        acceptanceCriteria: ["`node src/greet.js Ada` prints Hello, Ada!"],
+        riskTier: 2,
+        specialist: "coder",
+      });
+      await runSession(client, project.id);
+      const detail = await client.task(task.id);
+      expect(detail.task.status).toBe("done");
+      expect(detail.review?.check).toEqual({ label: "Reviewed and tried", tried: true });
+      const tried = detail.review?.evidence?.tried ?? [];
+      expect(tried.map((t) => [t.kind, t.target, t.ok])).toEqual([
+        ["command", "node src/greet.js Ada", true],
+      ]);
+      expect(tried[0]?.output).toContain(
+        "ran node src/greet.js Ada (from an acceptance criterion) in the task's Docker container, the network off",
+      );
+      expect(tried[0]?.output).toMatch(/output:\nHello, Ada!/);
+      // The engine was asked to run the try inside the task's container, never on the host.
+      const execs = engine.calls.filter((c) => c[1] === "exec").map((c) => c.join(" "));
+      expect(execs.some((c) => / timeout -s KILL \d+ node src\/greet\.js Ada$/.test(c))).toBe(true);
+      // The review's container had no network.
+      const runs = engine.calls.filter((c) => c[1] === "run").map((c) => c.join(" "));
+      expect(runs.length).toBeGreaterThan(0);
+      expect(runs.every((c) => c.includes("--network none"))).toBe(true);
+    } finally {
+      await rt.close();
+    }
+  }, 90_000);
+});
+
 describe("the UI client against the real daemon: a task that fails gets one card, and answering it resumes work (design §3.8)", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;

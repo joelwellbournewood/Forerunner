@@ -16,8 +16,11 @@
 //   5. starts a session the way Start does (POST /sessions) and waits for it to end;
 //   6. asserts: the task is done; a container from the sandbox image was started for that task
 //      and the task's command ran in it (`docker exec`, the coder's `node --check`); the critic
-//      reviewed the task and accepted it; src/greet.js landed in the project folder and is valid
-//      JavaScript; and afterwards no container or network of that task is left.
+//      reviewed the task and accepted it; the review tried the tool as a person would, inside the
+//      container (ADR 0110: `node src/greet.js Ada`, its exit and its output "Hello, Ada!" as the
+//      drawer's "See what was checked" shows them, and the task reads "Reviewed and tried");
+//      src/greet.js landed in the project folder and is valid JavaScript; and afterwards no
+//      container or network of that task is left.
 // The result (every check) is <out>/result.json, the step summary on GitHub and the exit code
 // (1 when a check failed). The daemon log, the engine's events and the model-call log are
 // copied to <out>.
@@ -50,14 +53,55 @@ export const TASK_LABEL = "forerunner.task";
 /** The file the task names: the stand-in coder writes it and checks it with `node --check`. */
 export const TASK_FILE = "src/greet.js";
 
-/** The one task: a full review (risk tier 2), for the coder, naming the file it writes. */
+/** The command the review tries in the container (ADR 0110), and what a person then sees. */
+export const TRY_COMMAND = `node ${TASK_FILE} Ada`;
+export const TRY_OUTPUT = "Hello, Ada!";
+
+/**
+ * The one task: a full review (risk tier 2), for the coder, naming the file it writes and the
+ * command a person runs (in backticks, so the review runs it exactly: ADR 0110).
+ */
 export const FULL_REVIEW_TASK = Object.freeze({
   title: `Write ${TASK_FILE}`,
-  outcome: `${TASK_FILE} exports greet(name), which returns a greeting for that name`,
-  acceptanceCriteria: [`${TASK_FILE} exists`, `node --check ${TASK_FILE} passes`],
+  outcome: `${TASK_FILE} exports greet(name), which returns a greeting for that name; run from the command line it prints the greeting`,
+  acceptanceCriteria: [
+    `${TASK_FILE} exists`,
+    `node --check ${TASK_FILE} passes`,
+    `\`${TRY_COMMAND}\` prints ${TRY_OUTPUT}`,
+  ],
   riskTier: 2,
   specialist: "coder",
 });
+
+/**
+ * The command try of the task's last review as the task drawer reads it (`GET /tasks/:id`:
+ * `review.evidence.tried`), and whether it is what a person should see: the command, run in the
+ * task's Docker container, that worked and printed the greeting. Null when no try is there.
+ * @param {any} detail
+ */
+export function commandTryOf(detail) {
+  const tried = detail?.review?.evidence?.tried ?? [];
+  const t = tried.find((x) => x?.kind === "command" && x?.target === TRY_COMMAND) ?? null;
+  if (!t) return null;
+  const output = String(t.output ?? "");
+  return {
+    target: t.target,
+    ok: t.ok === true,
+    inContainer: output.includes("in the task's Docker container"),
+    printed: output.includes(`\noutput:\n${TRY_OUTPUT}`),
+    exit0: /\bexit 0 in \d+ ms\b/.test(output),
+    output,
+  };
+}
+
+/**
+ * Whether the engine ran the review's try in the task's container: an `exec_start` of the
+ * command (inside the sandbox's `timeout -s KILL <s>` wrapper).
+ * @param {string[]} execs
+ */
+export function triedInContainer(execs) {
+  return execs.some((c) => c.trim().endsWith(TRY_COMMAND));
+}
 
 /**
  * `--out`, `--home`, `--image`, `--timeout-min`; unknown arguments are refused.
@@ -443,6 +487,27 @@ async function main() {
       tiers.length > 0 && tiers.every((t) => t >= 2),
       tiers.length ? `critic calls at tier ${tiers.join(", ")}` : "no critic call for the task",
     );
+    // ADR 0110: the review tried the tool as a person would, in the task's container, and the
+    // drawer shows it.
+    const tried = commandTryOf(detail);
+    result.tried = tried;
+    check(
+      `the review ran ${TRY_COMMAND} in the task's Docker container, and it worked`,
+      !!tried && tried.ok && tried.inContainer && tried.exit0,
+      tried
+        ? tried.output
+        : `no try of ${TRY_COMMAND}: ${JSON.stringify(detail.review?.evidence ?? null).slice(0, 400)}`,
+    );
+    check(
+      `"See what was checked" shows the output a person would see (${TRY_OUTPUT})`,
+      !!tried?.printed,
+      tried ? tried.output : "no try",
+    );
+    check(
+      'the task reads "Reviewed and tried"',
+      detail.review?.check?.label === "Reviewed and tried",
+      `${detail.review?.check?.label ?? "no check"}`,
+    );
 
     // The engine's side: give the event stream a moment to flush the teardown.
     await sleep(2_000);
@@ -465,6 +530,11 @@ async function main() {
     check(
       "the task's command ran inside the container (docker exec)",
       evidence.execs.some((c) => c.includes("node") && c.includes(TASK_FILE)),
+      evidence.execs.join(" | ") || "no exec",
+    );
+    check(
+      `the engine ran the review's ${TRY_COMMAND} in the task's container (docker exec)`,
+      triedInContainer(evidence.execs),
       evidence.execs.join(" | ") || "no exec",
     );
     check(

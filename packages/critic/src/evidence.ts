@@ -55,8 +55,11 @@ export const CHECKS_TRUST_LINE =
 /** The line above what the runtime tried (ADR 0104). */
 export const TRIED_TRUST_LINE =
   "The runtime started the work and used it as a person would (a page opened in a headless " +
-  "browser, network off); this is verified evidence, not a claim of the worker. A problem " +
-  "here (a file that did not load, an error on the page) means the work does not work yet.";
+  "browser, a command run with sample input, a server started and its routes called; in the " +
+  "task's sandbox, network off); this is verified evidence, not a claim of the worker. Judge " +
+  "the output against the acceptance criteria. A problem here (a file that did not load, an " +
+  "error on the page, a command that failed, a route that answered with an error) means the " +
+  "work does not work yet.";
 
 /** The line above the project's files the critic may read (ADR 0104). */
 export const PROJECT_FILES_LINE =

@@ -1,12 +1,15 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { CreateTaskBody } from "../packages/runtime/src/daemon/api-types.ts";
+import { planTries } from "../packages/runtime/src/loop/try-plan.ts";
 import {
   buildContainerRunArgv,
   DEFAULT_RUNNER_IMAGE,
 } from "../packages/runtime/src/sandbox/container.ts";
 import {
+  commandTryOf,
   criticTiers,
   DEFAULT_IMAGE,
   FULL_REVIEW_TASK,
@@ -17,7 +20,10 @@ import {
   summaryMarkdown,
   TASK_FILE,
   TASK_LABEL,
+  TRY_COMMAND,
+  TRY_OUTPUT,
   taskSandboxEvidence,
+  triedInContainer,
   // @ts-expect-error plain JS module
 } from "./sandbox-full-review.mjs";
 
@@ -87,6 +93,79 @@ describe("the Docker sandbox check's task and arguments", () => {
     expect(FULL_REVIEW_TASK.title).toContain(TASK_FILE);
     const parsed = CreateTaskBody.parse(FULL_REVIEW_TASK);
     expect(parsed).toMatchObject({ riskTier: 2, specialist: "coder", title: `Write ${TASK_FILE}` });
+  });
+
+  it("names the command a person runs exactly, so the review tries it in the container (ADR 0110)", () => {
+    expect(TRY_COMMAND).toBe(`node ${TASK_FILE} Ada`);
+    // The runtime's own reading of the task picks the command and its argument as written.
+    const root = mkdtempSync(join(tmpdir(), "fr sandbox check "));
+    try {
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(
+        join(root, ...TASK_FILE.split("/")),
+        "console.log('Hello, ' + process.argv[2] + '!');\n",
+      );
+      const plan = planTries({
+        changedFiles: [TASK_FILE],
+        root,
+        brief: {
+          title: FULL_REVIEW_TASK.title,
+          outcome: FULL_REVIEW_TASK.outcome,
+          criteria: FULL_REVIEW_TASK.acceptanceCriteria,
+        },
+      });
+      expect(plan.commands.map((c) => [c.target, c.argv])).toEqual([
+        [TRY_COMMAND, ["node", TASK_FILE, "Ada"]],
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the review's try as the drawer shows it, and the engine's exec of it", () => {
+    const output = `ran ${TRY_COMMAND} (from an acceptance criterion) in the task's Docker container, the network off\nexit 0 in 120 ms\noutput:\n${TRY_OUTPUT}`;
+    const detail = {
+      review: { evidence: { tried: [{ kind: "command", target: TRY_COMMAND, ok: true, output }] } },
+    };
+    expect(commandTryOf(detail)).toMatchObject({
+      ok: true,
+      inContainer: true,
+      exit0: true,
+      printed: true,
+    });
+    // In the process sandbox, or printing something else: not what the check asks for.
+    const elsewhere = output.replace(
+      "in the task's Docker container",
+      "in the process sandbox on this computer",
+    );
+    expect(
+      commandTryOf({
+        review: {
+          evidence: {
+            tried: [{ kind: "command", target: TRY_COMMAND, ok: true, output: elsewhere }],
+          },
+        },
+      })?.inContainer,
+    ).toBe(false);
+    expect(
+      commandTryOf({
+        review: {
+          evidence: {
+            tried: [
+              {
+                kind: "command",
+                target: TRY_COMMAND,
+                ok: true,
+                output: output.replace(TRY_OUTPUT, "Hi"),
+              },
+            ],
+          },
+        },
+      })?.printed,
+    ).toBe(false);
+    expect(commandTryOf({ review: { evidence: { tried: [] } } })).toBeNull();
+    expect(triedInContainer([`timeout -s KILL 30 ${TRY_COMMAND}`])).toBe(true);
+    expect(triedInContainer(["timeout -s KILL 60 node --check src/greet.js"])).toBe(false);
   });
 
   it("reads its options and refuses what it does not know", () => {

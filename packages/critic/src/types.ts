@@ -53,6 +53,11 @@ export interface UnavailableEvidence {
  * a check result; a try that did not work blocks accept.
  */
 export interface TriedEvidence {
+  /**
+   * What was tried (ADR 0110): a page opened in a browser, a command run with sample input, or
+   * a server started and called. Absent on a try recorded before ADR 0110: a page.
+   */
+  kind?: "page" | "command" | "server";
   /** What was tried, in words: "opened index.html in a browser, 1280 and 390 pixels wide". */
   what: string;
   /** The page or command tried (a path relative to the task's folder, or the command). */

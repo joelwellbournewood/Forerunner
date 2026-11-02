@@ -248,7 +248,7 @@ function DrawerBody({
             <p data-testid="drawer-check">
               <Badge tone="good">{detail.review.check.label}</Badge>{" "}
               {detail.review.check.tried
-                ? "The critic read the work and it was opened as you would open it."
+                ? triedLine(detail.review.evidence?.tried ?? [])
                 : "The critic read the work against each point above."}
             </p>
           ) : (
@@ -426,6 +426,20 @@ function LiveSteps({ sessionId, taskId }: { sessionId: string; taskId: string })
       ))}
     </ul>
   );
+}
+
+/**
+ * The line beside "Reviewed and tried" (ADR 0110): how the work was tried, in the words of what
+ * a person does with it (a page is opened, a command is run, a server is started and called).
+ */
+function triedLine(tried: readonly Pick<TaskReviewEvidence["tried"][number], "kind">[]) {
+  const kinds = new Set(tried.map((t) => t.kind));
+  if (kinds.size === 1 && kinds.has("command"))
+    return "The critic read the work and it was run as you would run it.";
+  if (kinds.size === 1 && kinds.has("server"))
+    return "The critic read the work and it was started and called as you would use it.";
+  if (kinds.size <= 1) return "The critic read the work and it was opened as you would open it.";
+  return "The critic read the work and it was tried as you would use it.";
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   normalize,
   safeSegment,
 } from "@forerunner/platform";
-import { type Browser, chromium } from "playwright";
+import { type Browser, chromium, type LaunchOptions } from "playwright";
 import { resolveChromiumExecutable } from "./profile.ts";
 
 /**
@@ -27,6 +27,8 @@ import { resolveChromiumExecutable } from "./profile.ts";
  * page did not open, or it threw an error that no blocked request explains).
  */
 export interface PageTry {
+  /** ADR 0110: a page (a command and a server are tried by the runtime in the task's sandbox). */
+  kind: "page";
   what: string;
   target: string;
   ok: boolean;
@@ -58,9 +60,30 @@ export interface TryPagesOptions {
   logger?: Logger;
   /** Tests hand in a launched browser; it is not closed. */
   browser?: Browser;
+  /**
+   * The page of a full-review task (ADR 0101, ADR 0110): opened only in a browser whose own
+   * sandbox runs. Where Chromium's sandbox cannot start, such a page is not tried (and the
+   * review says why) instead of being opened without it.
+   */
+  requireBrowserSandbox?: boolean;
+  /** How the browser is started; default Playwright's `chromium.launch`. Tests hand in one. */
+  launch?: (opts: LaunchOptions) => Promise<Browser>;
+  /** How the folder is served; default a loopback server on a random port. Tests hand in one. */
+  serve?: (root: string) => Promise<{ server: ServedFolder; origin: string }>;
 }
 
 export type TryPagesOutcome = { tried: PageTry[] } | { unavailable: string };
+
+/** The served folder as the try needs it: something it can close. */
+export interface ServedFolder {
+  close(done: () => void): unknown;
+}
+
+/**
+ * What the evidence says when the browser ran without its own sandbox (C-17): Chromium could not
+ * start with it here (Linux as root, no user namespaces), and the page was of a light review.
+ */
+export const NO_BROWSER_SANDBOX = "the browser ran without its own sandbox";
 
 export const TRY_WIDTHS: readonly number[] = [1280, 390];
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -127,32 +150,98 @@ export async function tryPages(opts: TryPagesOptions): Promise<TryPagesOutcome> 
   const widths = opts.widths?.length ? opts.widths : TRY_WIDTHS;
   let browser = opts.browser;
   const owned = !browser;
+  let unsandboxed: string | null = null;
   if (!browser) {
     const probe = resolveChromiumExecutable(opts.env ?? process.env);
     if (!probe.ok) return { unavailable: "no Chromium, Edge or Chrome was found on this computer" };
-    try {
-      browser = await chromium.launch({
-        headless: true,
-        timeout: 60_000,
-        ...(probe.executablePath ? { executablePath: probe.executablePath } : {}),
-      });
-    } catch (e) {
-      return { unavailable: `the browser did not start (${errorMessage(e).split("\n")[0]})` };
-    }
+    const started = await launchBrowser(opts, probe.executablePath);
+    if ("unavailable" in started) return started;
+    browser = started.browser;
+    unsandboxed = started.unsandboxed;
+    if (unsandboxed) logger.warn("page try without the browser's sandbox", { why: unsandboxed });
   }
-  const { server, origin } = await serveFolder(opts.root);
-  mkdirSync(opts.outDir, { recursive: true });
+  // R-1: everything after the launch is inside the try whose finally closes the browser, so a
+  // folder that cannot be served (or screenshots that cannot be stored) leaves nothing running.
+  let server: ServedFolder | null = null;
   const tried: PageTry[] = [];
   try {
+    let origin: string;
+    try {
+      ({ server, origin } = await (opts.serve ?? serveFolder)(opts.root));
+    } catch (e) {
+      return {
+        unavailable: `the task's folder could not be served to the browser (${firstLine(e)})`,
+      };
+    }
+    try {
+      mkdirSync(opts.outDir, { recursive: true });
+    } catch (e) {
+      return { unavailable: `the screenshots could not be stored (${firstLine(e)})` };
+    }
     for (const target of opts.pages) {
       if (opts.signal?.aborted) break;
-      tried.push(await tryOne(browser, origin, target, widths, opts, logger));
+      const t = await tryOne(browser, origin, target, widths, opts, logger);
+      tried.push(
+        unsandboxed
+          ? {
+              ...t,
+              output: `${t.output}\n${NO_BROWSER_SANDBOX}: it could not start with it on this computer (${unsandboxed})`,
+            }
+          : t,
+      );
     }
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const open = server;
+    if (open) await new Promise<void>((resolve) => open.close(() => resolve()));
     if (owned) await browser.close().catch(() => {});
   }
   return { tried };
+}
+
+/**
+ * Starts Chromium with its own sandbox on (C-17: Playwright's default turns it off). Where it
+ * cannot start with it (Linux as root, a kernel without user namespaces), a light review's page
+ * is opened without it and the evidence says so; a full review's page is not opened at all
+ * (`requireBrowserSandbox`, ADR 0110).
+ */
+async function launchBrowser(
+  opts: TryPagesOptions,
+  executablePath: string | undefined,
+): Promise<{ browser: Browser; unsandboxed: string | null } | { unavailable: string }> {
+  const launch = opts.launch ?? ((o: LaunchOptions) => chromium.launch(o));
+  const base: LaunchOptions = {
+    headless: true,
+    timeout: 60_000,
+    ...(executablePath ? { executablePath } : {}),
+  };
+  try {
+    return { browser: await launch({ ...base, chromiumSandbox: true }), unsandboxed: null };
+  } catch (e) {
+    const why = sandboxRefusal(e);
+    if (opts.requireBrowserSandbox)
+      return {
+        unavailable: `the browser could not start with its own sandbox on this computer (${why}), and a page of a full-review task is only opened with it`,
+      };
+    try {
+      return { browser: await launch({ ...base, chromiumSandbox: false }), unsandboxed: why };
+    } catch (e2) {
+      return { unavailable: `the browser did not start (${firstLine(e2)})` };
+    }
+  }
+}
+
+/** The line of a failed launch that says why (Playwright puts the browser's own words last). */
+function sandboxRefusal(e: unknown): string {
+  const lines = errorMessage(e)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const said = lines.find((l) => /sandbox/i.test(l) && !/^browserType\./.test(l));
+  return (said ?? lines[0] ?? "it did not start").slice(0, 200);
+}
+
+function firstLine(e: unknown): string {
+  return (errorMessage(e).split("\n")[0] ?? "").slice(0, 200);
 }
 
 async function tryOne(
@@ -271,6 +360,7 @@ async function tryOne(
       : []),
   ];
   return {
+    kind: "page",
     what: `opened ${target} in a browser, ${widths.join(" and ")} pixels wide`,
     target,
     ok: problems.length === 0,

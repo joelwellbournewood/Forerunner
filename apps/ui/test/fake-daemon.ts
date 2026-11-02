@@ -422,6 +422,9 @@ export interface FakeDaemonState {
   /**
    * What the critic's last review of a task ran and tried (ADR 0104), by task id; a done task
    * with an accepted review says "Reviewed and tried" when something was tried. A test seeds it.
+   * As the daemon (ADR 0110), each try says what kind it was: a page opened, a command run with
+   * sample input, or a server started and called (`kind`); a command or a server has no
+   * screenshot.
    */
   reviewEvidence: Map<string, TaskReviewEvidence>;
   /** Screenshots `GET /tasks/:id/evidence?file=` serves, by `<task id>/<file>`, base64. */

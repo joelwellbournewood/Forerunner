@@ -75,7 +75,7 @@ export function outcomeCriterion(outcome: string): string {
  * "the critic checks each" while tier 0 had no critic at all).
  */
 export const HOW_WORK_IS_CHECKED =
-  "How your work is checked: after your run Forerunner runs the project's own build, lint and tests (its package.json scripts), opens a page you made or changed in a browser, and the critic reads your work and the project's files against each acceptance criterion. Nothing is done on your word alone.";
+  "How your work is checked: after your run Forerunner runs the project's own build, lint and tests (its package.json scripts as they were before your task, or pytest, cargo test or go test), runs a command line tool you made with the sample input its brief or README names, starts a server you made and calls its routes, opens a page you made or changed in a browser, and the critic reads your work and the project's files against each acceptance criterion. Nothing is done on your word alone. Write the exact command a person runs in backticks in the README, so it can be tried.";
 
 /** What the brief asks of a code change that adds behaviour (the owner's decision 1). */
 export const TESTS_FOR_BEHAVIOUR =

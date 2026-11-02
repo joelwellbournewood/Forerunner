@@ -337,7 +337,8 @@ export type TaskDisplay = z.infer<typeof TaskDisplay>;
 
 /**
  * How a done task's work was checked (ADR 0104): "Reviewed and tried" when the critic reviewed
- * it and a page of it was opened in a browser, "Reviewed" when the critic reviewed it. Null for a
+ * it and it was tried as a person would use it (a page opened in a browser, a command run, a
+ * server started and called; ADR 0110), "Reviewed" when the critic reviewed it. Null for a
  * task that is not done, or was closed without a review ("Done: accepted without review").
  */
 export const TaskCheck = z.object({
@@ -355,6 +356,11 @@ export const TaskReviewEvidence = z.object({
   checks: z.array(z.object({ name: z.string(), passed: z.boolean(), output: z.string() })),
   tried: z.array(
     z.object({
+      /**
+       * What was tried (ADR 0110): a page opened in a browser, a command run with sample input,
+       * a server started and called. A try kept before ADR 0110 reads as a page.
+       */
+      kind: z.enum(["page", "command", "server"]),
       what: z.string(),
       target: z.string(),
       ok: z.boolean(),

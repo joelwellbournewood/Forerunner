@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { errorMessage, join } from "@forerunner/platform";
 import { chromium } from "playwright";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveChromiumExecutable, tryPages } from "../src/browser/index.ts";
+import { NO_BROWSER_SANDBOX, resolveChromiumExecutable, tryPages } from "../src/browser/index.ts";
 
 /**
  * "Try it" in a real headless Chromium (ADR 0104): a page is opened from its folder as a person
@@ -107,5 +107,31 @@ describe.skipIf(!ready.ok)(`tryPages in a real browser (${ready.reason})`, () =>
     expect(r.tried[0]).toMatchObject({ ok: false, blocking: true });
     expect(r.tried[0]?.output).toContain("index.html did not open (status 404)");
     expect(r.tried[0]?.screenshots).toEqual([]);
+  }, 60_000);
+
+  it("Chromium's own sandbox is asked for: where it starts nothing is said, where it cannot the light review's try says so and a full review's page is not opened (C-17, ADR 0110)", async () => {
+    const { root, out } = folder({ "index.html": "<title>Hi</title><p>Hi</p>" });
+    dirs.push(out);
+    const light = await tryPages({ root, pages: ["index.html"], outDir: out, widths: [1280] });
+    if (!("tried" in light)) throw new Error(light.unavailable);
+    const full = await tryPages({
+      root,
+      pages: ["index.html"],
+      outDir: out,
+      widths: [1280],
+      requireBrowserSandbox: true,
+    });
+    const said = light.tried[0]?.output.includes(NO_BROWSER_SANDBOX) ?? false;
+    if (said) {
+      // This computer cannot start Chromium's sandbox (Linux as root, no user namespaces).
+      expect(light.tried[0]?.output).toMatch(
+        /the browser ran without its own sandbox: it could not start with it on this computer \(.+\)$/,
+      );
+      expect("unavailable" in full && full.unavailable).toMatch(
+        /^the browser could not start with its own sandbox on this computer \(.+\), and a page of a full-review task is only opened with it$/,
+      );
+    } else {
+      expect("tried" in full && full.tried[0]?.ok).toBe(true);
+    }
   }, 60_000);
 });

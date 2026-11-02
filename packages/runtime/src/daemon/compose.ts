@@ -2036,6 +2036,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               outDir: join(evidenceRootOf(dirs), safeSegment(req.taskId), req.reviewKey),
               filePrefix: `${req.reviewKey}/`,
               env,
+              // ADR 0110: a full review's page only in a browser whose own sandbox runs.
+              ...(req.fullReview ? { requireBrowserSandbox: true } : {}),
               ...(req.signal ? { signal: req.signal } : {}),
             }),
         });
