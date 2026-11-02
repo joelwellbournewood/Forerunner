@@ -22,6 +22,7 @@ import {
   specialistOverride,
 } from "../models/run-settings.ts";
 import { DEFAULT_PROVIDER_CAPABILITIES, type ProviderCapabilities } from "../provider/types.ts";
+import { needsWeb } from "../registry/alternates.ts";
 import type { SpecialistDef } from "../registry/types.ts";
 import type { ModelSettingsView, ModelSettingValueView, RunSettingsView } from "./api-types.ts";
 
@@ -33,7 +34,7 @@ export interface ModelSettingsViewInput {
   principal: { id: string; name: string; kind: string; model_config: unknown };
   /** Further agents of the human (the critic), shown read-only. */
   others: { id: string; name: string; kind: string }[];
-  specialists: Pick<
+  specialists: (Pick<
     SpecialistDef,
     | "name"
     | "description"
@@ -43,8 +44,22 @@ export interface ModelSettingsViewInput {
     | "speed_mode"
     | "timeout_minutes"
     | "temperature"
-  >[];
+  > &
+    /** The registry's tool names: an entry naming a web tool may lack the web here (ADR 0107). */
+    Partial<Pick<SpecialistDef, "allowed_tools">>)[];
+  /**
+   * Whether a specialist can read the web on this install (`RuntimeApp.webAccess`, ADR 0107).
+   * False: an entry that works from the web carries `NO_WEB_LIMITATION`. Absent: no limitation.
+   */
+  webAccess?: boolean;
 }
+
+/**
+ * What a specialist that works from the web (its entry names `cc:WebFetch` or `cc:WebSearch`)
+ * cannot do on an install without web access (ADR 0107): the plan card shows it beside such a
+ * task, New task beside the choice. The task still runs, from the project's files.
+ */
+export const NO_WEB_LIMITATION = "Cannot read the web on this computer";
 
 const minutes = (ms: number) => Math.round((ms / 60_000) * 100) / 100;
 
@@ -158,6 +173,10 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
       description: d.description,
       maxEffort: d.max_effort,
       overridesAgentId: input.principal.id,
+      limitation:
+        input.webAccess === false && needsWeb({ registryTools: d.allowed_tools ?? [] })
+          ? NO_WEB_LIMITATION
+          : null,
       settings: settingsView(
         resolveRunSettings({
           mode: specialistMode(d.name),

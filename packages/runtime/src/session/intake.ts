@@ -391,10 +391,11 @@ export interface IntakeDeps {
    */
   docs?: Pick<ProjectDocsPort, "scaffoldProject">;
   /**
-   * Whether specialists reach the web on this install (U-044): true with a Claude subscription,
-   * whose runs go through the Agent SDK with `cc:WebFetch` and `cc:WebSearch`; false when every
-   * run is billed to an API key, where the loop driver has no web tool. False adds a planning
-   * rule: plan no task that needs the web. Absent: no rule (the executor still routes or asks).
+   * Whether specialists reach the web on this install (U-044, ADR 0107): true with a Claude
+   * subscription, whose runs go through the Agent SDK with `cc:WebFetch` and `cc:WebSearch`, and
+   * with the web page reader (`web_fetch`, the loop driver's `cc:WebFetch` on an API key); false
+   * only when there is neither (the reader turned off with `FORERUNNER_WEB_FETCH=off`). False
+   * adds a planning rule: plan no task that needs the web. Absent: no rule.
    */
   webSpecialists?: () => boolean;
   /**
@@ -410,9 +411,9 @@ export interface IntakeDeps {
   onDrafted?: (projectId: string) => void;
 }
 
-/** The planning rule when no specialist reaches the web on this install (U-044). */
+/** The planning rule when no specialist reaches the web on this install (U-044, ADR 0107). */
 export const NO_WEB_RULE =
-  "Web access: on this install every specialist run is billed to an API key, where no specialist has web tools (researcher and science-evaluator lose WebFetch and WebSearch). Plan no task that needs the web: research works only from the sources the project already holds, and the decision record says what had to be assumed.";
+  "Web access: no specialist on this install can read the web (no Claude subscription, and the web page reader is turned off). Plan no task that needs the web: research works only from the sources the project already holds, and the decision record says what had to be assumed.";
 
 /**
  * What a small plan is (design §3.3: a one-line brief gets one to three tasks and a README, the

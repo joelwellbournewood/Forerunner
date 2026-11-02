@@ -14,6 +14,7 @@ import {
   CLAUDE_CODE_TOOL_EQUIVALENTS,
   type DroppedTool,
   loopToolsFor,
+  WEB_FETCH_TOOL,
 } from "../src/registry/tools.ts";
 import { KNOWN_CLAUDE_CODE_TOOLS } from "../src/registry/types.ts";
 import { RUN_COMMAND_TOOL } from "../src/session/executor.ts";
@@ -67,21 +68,42 @@ function registryWith(tools: string[], requiresSandbox = true) {
   });
 }
 
+/** The loop driver's tools in the daemon: the file tools plus the web page reader (ADR 0107). */
+const LOOP_TOOLS = [...BUILT_INS, WEB_FETCH_TOOL];
+
 describe("loopToolsFor: the loop driver's equivalents of the registry's Claude Code tools", () => {
   it.each(Object.entries(CLAUDE_CODE_TOOL_EQUIVALENTS))(
     "cc:%s yields %s and nothing else",
     (cc, builtIn) => {
-      const m = loopToolsFor([`cc:${cc}`], { available: BUILT_INS });
+      const m = loopToolsFor([`cc:${cc}`], { available: LOOP_TOOLS });
       expect(m).toEqual({ tools: [builtIn], dropped: [] });
-      expect(BUILT_INS).toContain(builtIn);
+      expect(LOOP_TOOLS).toContain(builtIn);
     },
   );
+
+  it("cc:WebFetch yields the web page reader where the runtime registered it, else it is dropped as unavailable (ADR 0107)", () => {
+    expect(loopToolsFor(["cc:Read", "cc:WebFetch"], { available: LOOP_TOOLS })).toEqual({
+      tools: ["read_file", WEB_FETCH_TOOL],
+      dropped: [],
+    });
+    expect(loopToolsFor(["cc:WebFetch"], { available: BUILT_INS })).toEqual({
+      tools: [],
+      dropped: [
+        {
+          tool: "cc:WebFetch",
+          reason: "unavailable",
+          message: "cc:WebFetch maps to web_fetch, which is not registered in this runtime",
+        },
+      ],
+    });
+  });
 
   it("maps every known Claude Code tool or lists it as one with no loop equivalent", () => {
     const without = KNOWN_CLAUDE_CODE_TOOLS.filter(
       (t) => !Object.hasOwn(CLAUDE_CODE_TOOL_EQUIVALENTS, t),
     );
-    expect(without).toEqual(["WebFetch", "WebSearch", "Task", "TodoWrite"]);
+    // No web search on the loop driver: no search provider exists on an API key (ADR 0107).
+    expect(without).toEqual(["WebSearch", "Task", "TodoWrite"]);
     for (const t of without) {
       expect(loopToolsFor([`cc:${t}`], { available: BUILT_INS })).toEqual({
         tools: [],

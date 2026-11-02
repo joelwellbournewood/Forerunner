@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { appDirs, join, run, SimulatedClock, SystemClock } from "@forerunner/platform";
@@ -2645,6 +2647,8 @@ describe("the UI client against the real daemon: Settings → Sandbox (Docker) (
 async function composeWithRolePlayer(
   env: Record<string, string>,
   over: Partial<ComposeOptions> = {},
+  /** The daemon's own environment beside its home (`FORERUNNER_WEB_FETCH=off`, ...). */
+  daemonEnv: Record<string, string> = {},
 ): Promise<{
   rt: RuntimeApp;
   client: DaemonClient;
@@ -2676,7 +2680,7 @@ async function composeWithRolePlayer(
     return stream(req);
   };
   const rt = await composeRuntime({
-    env: { FORERUNNER_HOME: home },
+    env: { FORERUNNER_HOME: home, ...daemonEnv },
     dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
     config: null,
     clock: new ShiftedClock("2026-03-05T08:00:00Z"),
@@ -4780,4 +4784,144 @@ describe("the UI client against the real daemon: a project linked to a repositor
       "you",
     ]);
   }, 60_000);
+});
+
+describe("the UI client against the real daemon: research on an API key reads the web (ADR 0107)", () => {
+  // Live (2026-11-02, phase D): on an API key the researcher was refused at once ("Paused",
+  // "needs your decision" with no card in the Inbox) and nothing ran. The bench's stand-in runs
+  // on the loop driver as an API key does; its researcher reads the pages a brief names through
+  // `web_fetch` and writes from them.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let criticCalls: ModelRequest[];
+  let server: Server;
+  let pageUrl = "";
+  const hits: string[] = [];
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      hits.push(`${req.method} ${req.url}`);
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        "<!doctype html><html><head><title>Static site generators compared</title></head><body><main>" +
+          "<h1>Static site generators compared</h1>" +
+          "<p>Hugo builds a 10,000-page site in about 2 seconds.</p>" +
+          "<p>Eleventy needs Node.js 18 or newer.</p></main></body></html>",
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    pageUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/ssg.html`;
+    ({ rt, client, criticCalls } = await composeWithRolePlayer({}));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    server?.closeAllConnections();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+  });
+
+  it("a researcher task fetches the page, writes docs/research.md citing it, and the critic is shown the page", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Docs site", goal: "Pick a generator" });
+    // The fixture runs on this computer: the project names its host on its site list, as a
+    // person names an intranet page (a public site needs no entry).
+    const before = await rt.store.project.mustGet(project.id);
+    await client.updateProjectSettings(project.id, {
+      version: before.version,
+      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
+    });
+    const task = await client.createTask(project.id, {
+      title: "Compare two static site generators",
+      outcome: `docs/research.md says how fast Hugo builds and which Node.js Eleventy needs, citing ${pageUrl}`,
+      riskTier: 1,
+      specialist: "researcher",
+    });
+    // A page the network rules refuse: a private address the project does not name.
+    const refused = await client.createTask(project.id, {
+      title: "Read the router's admin page",
+      outcome: "docs/router.md says what http://10.0.0.7/admin shows",
+      riskTier: 1,
+      specialist: "researcher",
+    });
+    const states = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, await states()).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      states,
+      60_000,
+    );
+    // The researcher ran (no refusal, no hand-over to the person) and the critic reviewed it.
+    const done = await client.task(task.id);
+    expect(done.task.status, await states()).toBe("done");
+    expect(done.runs.map((r) => [r.kind, r.specialist])).toEqual([
+      ["review", "critic"],
+      ["work", "researcher"],
+    ]);
+    expect(hits).toContain("GET /ssg.html");
+    // The person opens the file on the Files tab: it cites the page and quotes it.
+    const file = await client.projectFile(project.id, "docs/research.md");
+    expect(file.content).toContain(pageUrl);
+    expect(file.content).toContain("Hugo builds a 10,000-page site in about 2 seconds.");
+    // The session's log names the page it read, in one short line.
+    const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
+    expect(lines).toContain(`read the web page ${new URL(pageUrl).host}/ssg.html`);
+    expect(lines).toContain("read the web page 10.0.0.7/admin (failed)");
+    // The critic was shown the page the researcher read, as data, beside the report.
+    const shown = criticCalls.map((c) => JSON.stringify(c.messages)).join("\n");
+    expect(shown).toContain(`### web page ${pageUrl}`);
+    expect(shown).toContain("Eleventy needs Node.js 18 or newer.");
+    // The refused page: the researcher was told why in words and wrote that it was not read.
+    const router = await client.projectFile(project.id, "docs/router.md");
+    expect(router.content).toContain(
+      "http://10.0.0.7/admin was not read: Refused: 10.0.0.7 is a private or local network address",
+    );
+    expect(shown).toContain("web page not read: http://10.0.0.7/admin (");
+    expect((await client.task(refused.id)).task.status, await states()).toBe("done");
+    expect(hits.every((h) => h === "GET /ssg.html")).toBe(true);
+    // This install reads the web: Settings' specialists list says nothing is missing.
+    const models = await client.modelSettings();
+    expect(models.specialists.find((x) => x.name === "researcher")?.limitation).toBeNull();
+  }, 120_000);
+
+  it("an install without web access says so for the researcher, and its task still runs from the project's files", async () => {
+    // The page reader turned off and no subscription: no specialist reads the web.
+    const off = await composeWithRolePlayer({}, {}, { FORERUNNER_WEB_FETCH: "off" });
+    try {
+      const models = await off.client.modelSettings();
+      const limits = Object.fromEntries(models.specialists.map((x) => [x.name, x.limitation]));
+      expect(limits.researcher).toBe("Cannot read the web on this computer");
+      expect(limits["science-evaluator"]).toBe("Cannot read the web on this computer");
+      expect(limits.coder).toBeNull();
+      const agentId = (await off.client.agents())[0]?.id ?? "";
+      const project = await off.client.createProject({ name: "Notes", goal: "Summaries" });
+      const task = await off.client.createTask(project.id, {
+        title: "Summarise the notes",
+        outcome: `docs/summary.md says what ${pageUrl} and the notes say`,
+        riskTier: 1,
+        specialist: "researcher",
+      });
+      const started = await off.client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => (await off.client.session(sessionId)).status !== "running",
+        "the session to end",
+        async () => (await off.client.tasks(project.id)).map((t) => t.status).join(", "),
+        60_000,
+      );
+      // Never handed to the person for a missing tool: the researcher ran and was reviewed.
+      const done = await off.client.task(task.id);
+      expect(done.task.status).toBe("done");
+      expect(done.runs.map((r) => [r.kind, r.specialist])).toEqual([
+        ["review", "critic"],
+        ["work", "researcher"],
+      ]);
+      expect((await off.client.projectFile(project.id, "docs/summary.md")).content).toBeTruthy();
+      expect(hits.filter((h) => h !== "GET /ssg.html")).toEqual([]);
+    } finally {
+      await off.rt.close();
+    }
+  }, 120_000);
 });

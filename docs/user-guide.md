@@ -387,7 +387,9 @@ The cards you meet most:
 
 - **The plan** from a new project's brief: the tasks in order, who does each, about what each
   costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a task that
-  needs a full review while Docker is not running, the total and what it covers ("About CHF 1.04
+  needs a full review while Docker is not running, "Cannot read the web on this computer"
+  beside a research task on an install that has turned page reading off (New task says the same
+  when you pick the researcher), the total and what it covers ("About CHF 1.04
   for 2 of the 3 tasks the agent does; the other one has no estimate yet."), and the decision it
   records in one or two sentences, with **The full decision record** one click away. **Approve and start** writes the tasks and starts working on
   them now. **Change the plan** opens a box: say what to change and the agent drafts a new plan
@@ -508,9 +510,18 @@ with why in one or two sentences and two buttons: **Try again** (a session tries
 what stopped it first, for example who does it with **Edit** on the Tasks tab) and **Cancel
 task**. Nothing waits silently with only a "Resume" that would run into the same stop.
 
-Research on the web needs a Claude subscription: runs billed to an API key have no web tools.
-On an install with an API key only, project setup plans no web research, and a task given to
-the researcher waits for you, saying so, instead of failing and being retried.
+Research works with an API key too. The researcher and the science evaluator read web pages
+by their address: public pages only (never this computer or your local network), with a GET
+and no passwords or cookies, at most 2 MB per page, and nothing on the project's block list.
+There is no web search on an API key, so a research task does best when it names the sources
+or sites to read (on a Claude subscription the researcher uses Claude Code's own web tools
+instead). The session log
+names each page read ("read the web page gohugo.io/about/"), the research file cites each page
+by its address, and the critic checks the claims against the pages the researcher actually
+got. A page that cannot be read (refused, missing, not a text page) is said in words to the
+researcher, who writes it down as not read. An install can turn page reading off
+(`FORERUNNER_WEB_FETCH=off`); then project setup plans no web research, and a researcher's task
+runs from the project's own files and says so when that is not enough.
 
 Every setting is in **Settings → All settings** with a plain name and its own control: your
 default autonomy for new projects, the monthly spending cap, quiet hours (a time range, or off),

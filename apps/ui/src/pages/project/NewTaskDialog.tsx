@@ -63,7 +63,9 @@ export function useDockerReady(open: boolean): boolean | null {
  * what it is for), or "Me: ask me in the Inbox" (`person`: the task's questions come to the
  * person's Inbox, no specialist runs).
  */
-export function useWhoChoices(open: boolean): { value: string; label: string }[] {
+export function useWhoChoices(
+  open: boolean,
+): { value: string; label: string; limitation?: string | null }[] {
   const client = useClient();
   const models = useAsync(
     (signal) => (open ? client.modelSettings(signal) : Promise.resolve(null)),
@@ -72,6 +74,8 @@ export function useWhoChoices(open: boolean): { value: string; label: string }[]
   const specialists = (models.data?.specialists ?? []).map((s) => ({
     value: s.name,
     label: s.description ? `${s.name}: ${firstSentence(s.description)}` : s.name,
+    // What it cannot do on this install, in the daemon's words (ADR 0107), said when chosen.
+    limitation: s.limitation ?? null,
   }));
   return [
     { value: WHO_AGENT, label: "Let the agent choose" },
@@ -119,6 +123,7 @@ export function NewTaskDialog({
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const docker = useDockerReady(open);
   const whoChoices = useWhoChoices(open);
+  const whoLimitation = whoChoices.find((w) => w.value === who)?.limitation ?? null;
   // The tasks it may wait on, by title (U-040): picked, never typed as ids.
   const projectTasks = useAsync(
     (signal) => (open ? client.tasks(projectId, { limit: 500 }, signal) : Promise.resolve(null)),
@@ -292,6 +297,11 @@ export function NewTaskDialog({
           <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="task-docker-note">
             Full review needs Docker, which is not running on this computer: the task waits until it
             runs. <Link to="/settings">Settings</Link> has the steps.
+          </p>
+        ) : null}
+        {whoLimitation ? (
+          <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="task-who-note">
+            {whoLimitation}: the {who} works only from the project's files.
           </p>
         ) : null}
         {who === WHO_PERSON ? (

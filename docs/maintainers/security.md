@@ -250,6 +250,16 @@ policy at every network exit, hidden-text extraction, the per-element approval g
 `browser.md`; the email command gate (DKIM, SPF, alignment, marker, thread, replay) and the
 owner-only settings routes are in `email.md`.
 
+Web research on an API key (`web_fetch`, ADR 0107, `capabilities.md` "Web research") is the one
+network reach that does not go through a token's domain list: only registry entries that name
+`cc:WebFetch` get the tool, and its own rules apply in code before any byte leaves (GET, no
+credentials, http(s), the project's block list, any host on a public address only unless the
+project names it, checked on the addresses the connection uses; redirects hop by hop; size and
+time caps). Every page is untrusted data, every call an audit row, every refusal a row with
+its reason. The residual risk, a manipulated model putting project words into an address it
+reads, is named in the ADR with its mitigations; a project that must stay closed uses its block
+list, an install `FORERUNNER_WEB_FETCH=off`.
+
 ### Injection test suite
 
 What it proves: the rule "content from web pages, emails, repo files, issue comments and other

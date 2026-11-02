@@ -267,15 +267,43 @@ export function markdownAsText(md: string): string[] {
 }
 
 /**
+ * What this install cannot do for a plan task, in a few words, or null (phase C, ADR 0107): the
+ * daemon's limitation of its specialist ("Cannot read the web on this computer"), read from the
+ * specialists list (`GET /settings/models`), so the words are the daemon's and true now. The
+ * plan names specialists as the registry does ("data analyst" reads as `data-analyst`); a name
+ * the list does not have says nothing here (the daemon maps aliases when it writes the plan).
+ */
+export function cannotRunHere(
+  specialist: string | null,
+  specialists: ReadonlyMap<string, string | null> | null,
+): string | null {
+  if (!specialists || !specialist) return null;
+  const name = specialist
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
+  return specialists.get(name) ?? null;
+}
+
+/**
  * The plan from the brief, shown once (design §3.3): the tasks in order with who does each and
  * what it costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a
- * full-review task while Docker is not ready, the total and what it covers, and the decision in
+ * full-review task while Docker is not ready, and beside a task this install cannot run what is
+ * missing (`cannotRunHere`), the total and what it covers, and the decision in
  * one or two sentences with the full record, as text, one click away. The other docs are
  * scaffolded without being listed. Live (2026-11-01) the card ran a title into "Needs Docker",
  * left a task without an estimate out of the total without saying so, and pasted the whole
  * decision record, status line and answer placeholder included.
  */
-function IntakeCard({ card, dockerReady }: { card: IntakeCardView; dockerReady: boolean | null }) {
+function IntakeCard({
+  card,
+  dockerReady,
+  specialists,
+}: {
+  card: IntakeCardView;
+  dockerReady: boolean | null;
+  specialists: ReadonlyMap<string, string | null> | null;
+}) {
   const tasks = [...card.milestones.flatMap((m) => m.tasks), ...card.looseTasks];
   const isPerson = (t: IntakeCardTask) => t.specialist === "person";
   const estimate = new Map(card.firstSession.items.map((i) => [i.key, i.estimateUsdMicro]));
@@ -302,6 +330,9 @@ function IntakeCard({ card, dockerReady }: { card: IntakeCardView; dockerReady: 
         {tasks.map((t) => {
           const cost = costOf(t);
           const after = t.dependsOn.map(titleOf).filter((x): x is string => x !== null);
+          const needsDocker = (t.riskTier ?? 0) >= 2 && dockerReady === false;
+          const missing = cannotRunHere(t.specialist, specialists);
+          const badges = [...(needsDocker ? ["Needs Docker"] : []), ...(missing ? [missing] : [])];
           return (
             <li key={t.key ?? t.title} data-testid="intake-task">
               {t.title}
@@ -317,13 +348,18 @@ function IntakeCard({ card, dockerReady }: { card: IntakeCardView; dockerReady: 
                     ? ` · about ${chf(cost)}`
                     : " · cost not known"}
                 {after.length ? ` · after ${after.map((a) => `"${a}"`).join(", ")}` : ""}
-                {(t.riskTier ?? 0) >= 2 && dockerReady === false ? " · " : ""}
               </span>
-              {(t.riskTier ?? 0) >= 2 && dockerReady === false ? (
-                <span className="rounded bg-amber-100 px-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                  Needs Docker
+              {badges.map((b) => (
+                <span key={b}>
+                  <span className="text-neutral-600 dark:text-neutral-400"> · </span>
+                  <span
+                    className="rounded bg-amber-100 px-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+                    data-testid="intake-task-cannot-run"
+                  >
+                    {b}
+                  </span>
                 </span>
-              ) : null}
+              ))}
             </li>
           );
         })}
@@ -387,6 +423,15 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
   // Home's and the Overview's "Answer" open `/inbox#card-<id>`: the page goes to that card.
   useScrollToHash(inbox.data !== null && inbox.data !== undefined);
   const dockerReady = sandbox.data ? sandbox.data.state === "ready" : null;
+  // What each specialist cannot do on this install (ADR 0107), beside a plan task that needs it.
+  const models = useAsync((signal) => client.modelSettings(signal), [client]);
+  const specialists = useMemo(
+    () =>
+      models.data
+        ? new Map(models.data.specialists.map((s) => [s.name, s.limitation ?? null] as const))
+        : null,
+    [models.data],
+  );
 
   // Cloud runner unlock (spec S.12, ADR 0068): the key bridge and this device's window record.
   // The auto-answer inside that window runs app-wide (`RunnerAutoUnlock` in the Shell), which
@@ -531,6 +576,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
             key={r.id}
             request={r}
             dockerReady={dockerReady}
+            specialists={specialists}
             onAnswer={(value) => answer(r, value)}
             unlock={{
               bridge,
@@ -730,11 +776,13 @@ function takesText(request: HumanRequestView): boolean {
 function RequestCard({
   request,
   dockerReady,
+  specialists,
   onAnswer,
   unlock,
 }: {
   request: HumanRequestView;
   dockerReady: boolean | null;
+  specialists: ReadonlyMap<string, string | null> | null;
   onAnswer: (value: unknown) => Promise<void>;
   unlock: {
     bridge: RunnerKeyBridge;
@@ -846,7 +894,9 @@ function RequestCard({
           showContext={!request.body}
         />
       ) : null}
-      {intake ? <IntakeCard card={intake} dockerReady={dockerReady} /> : null}
+      {intake ? (
+        <IntakeCard card={intake} dockerReady={dockerReady} specialists={specialists} />
+      ) : null}
       {challenge ? (
         <UnlockCard
           request={request}
