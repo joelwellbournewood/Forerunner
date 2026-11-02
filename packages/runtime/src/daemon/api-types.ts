@@ -900,6 +900,14 @@ export const ProjectPullRequestView = z.object({
   number: z.number().int(),
   url: z.string(),
   branch: z.string(),
+  /**
+   * Who checked a task's work (review, 2026-11-02: every PR was listed as "Reviewed by the
+   * critic", Forerunner's docs PRs too): `critic`, the critic's last review of it accepted it;
+   * `you`, the person accepted it at sign-off; `none`, it was marked done without the critic's
+   * review (the card's Mark done anyway) or closed on its checks alone. Null for Forerunner's
+   * docs PRs, which no critic reviews.
+   */
+  review: z.enum(["critic", "you", "none"]).nullable(),
 });
 export type ProjectPullRequestView = z.infer<typeof ProjectPullRequestView>;
 
@@ -2613,7 +2621,7 @@ export const DAEMON_ROUTES = {
   projectFiles:
     "GET /projects/:id/files (ProjectFilesView: the project's folder on this computer and its files and folders, read-only, without .git and node_modules; folder null before anything was written; design §3.10)",
   projectPullRequests:
-    "GET /projects/:id/pull-requests (ProjectPullRequestsView: the linked repository with its page and the open pull requests that wait for the person: each done task's and Forerunner's docs PRs, read from the git host when asked; error in words when the host does not answer; repository null without one; ADR 0104)",
+    "GET /projects/:id/pull-requests (ProjectPullRequestsView: the linked repository with its page and the open pull requests that wait for the person: each done task's, with who checked it (review: critic, you or none), and Forerunner's docs PRs (review null), read from the git host when asked; error in words when the host does not answer; repository null without one; ADR 0104)",
   projectFile:
     "GET /projects/:id/files/:path (ProjectFileContentView: one file's text under the folder, the path URL-encoded; content null for a file that is not text; 404 for a path that leaves the folder or does not exist)",
   milestones:

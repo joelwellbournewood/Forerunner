@@ -1,7 +1,9 @@
 import type { GitHost, PullRequestInfo, RepoRef } from "@forerunner/capabilities";
+import { ACCEPTED_WITHOUT_REVIEW } from "@forerunner/critic";
 import { errorMessage, isAbsolute, redact } from "@forerunner/platform";
-import type { ProjectRow, StateStore } from "@forerunner/state";
+import type { ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import { DOCS_SCAFFOLD_BRANCH, isDocsBranch, parseRepoRef, STATUS_BRANCH } from "../loop/docs.ts";
+import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
 import type {
   ProjectPullRequestsView,
   ProjectPullRequestView,
@@ -14,7 +16,9 @@ import type {
  * person to merge them. Before (GitHub walk, 2026-11-02) the session result said "5 reviewed
  * pull requests wait for you to merge" and nothing on the Overview, the session page or the
  * Inbox linked one; the repository was shown nowhere on the project page, and "Your files"
- * named this install's docs clone, which held none of the unmerged work.
+ * named this install's docs clone, which held none of the unmerged work. Each PR says who
+ * checked it (`review`): the review (2026-11-02) found Forerunner's own docs PRs listed under
+ * "Reviewed by the critic".
  */
 
 /**
@@ -52,9 +56,25 @@ function docsTitle(branch: string): string {
 }
 
 /**
- * The open pull requests that wait for the person: each done task's (the critic accepted it and
- * nothing merged it: below level 3 Trusted, merging is the person's) and Forerunner's docs PRs
- * (the scaffold, the intake's set, the status). A task still running or in review is not
+ * Who checked a done task's work, for the words its PR is listed under: the person's own
+ * acceptance at sign-off, a close without the critic's review (Mark done anyway, checks only),
+ * or the critic's accepting review. The critic's is read from its last review of the task, not
+ * the reason: at level 2 the merge writes "PR left open for you: ..." over the critic's words.
+ */
+async function reviewOf(
+  store: StateStore,
+  task: TaskRow,
+): Promise<NonNullable<ProjectPullRequestView["review"]>> {
+  if (task.reason.startsWith(ACCEPTED_WITHOUT_REVIEW)) return "none";
+  if (task.reason.startsWith(ACCEPTED_AT_SIGNOFF)) return "you";
+  const review = await store.review.latestForTask(task.id);
+  return review?.verdict === "accept" ? "critic" : "none";
+}
+
+/**
+ * The open pull requests that wait for the person: each done task's (nothing merged it: below
+ * level 3 Trusted, merging is the person's), with who checked it (`reviewOf`), and Forerunner's
+ * docs PRs (the scaffold, the intake's set, the status). A task still running or in review is not
  * waiting for a merge; a PR of someone else's is not listed. Read from the host when shown, so
  * a PR merged on GitHub is gone at once; a host that does not answer is said in words.
  */
@@ -88,6 +108,7 @@ export async function projectPullRequests(
         number: pr.number,
         url: pr.htmlUrl,
         branch: pr.head.ref,
+        review: await reviewOf(deps.store, task),
       });
     } else if (isDocsBranch(pr.head.ref)) {
       waiting.push({
@@ -97,6 +118,7 @@ export async function projectPullRequests(
         number: pr.number,
         url: pr.htmlUrl,
         branch: pr.head.ref,
+        review: null,
       });
     }
   }

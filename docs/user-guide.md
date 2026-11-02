@@ -108,8 +108,12 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   with its status, worked out when you look); **Your files** (the project's folder with **Open
   folder** in the desktop app and **Copy path**, and the files the last session changed; for a
   project linked to a GitHub repository instead: the repository with its link, and **Waiting for
-  you to merge**, each pull request the critic reviewed with **Open**, since merging on GitHub is
-  what puts the work into the repository's default branch);
+  you to merge**, each pull request with **Open**, since merging on GitHub is what puts the work
+  into the repository's default branch; they are grouped by who checked them: "Reviewed by the
+  critic", "Accepted by you at sign-off", "Marked done without the critic's review", and
+  Forerunner's own docs pull requests (the project's docs and its status), which you merge when
+  you like. The Last result says how many reviewed pull requests that session left for you;
+  this list is every one that waits now);
   **Decisions** (each question you answered with your answer, your name and the day: "Where
   should the page be published? Only as a local file for now. (Robin, 1 Nov)", the plan you
   approved, and the decision records in the project's folder, which open in Docs); and **Note

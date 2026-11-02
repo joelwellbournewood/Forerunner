@@ -845,8 +845,12 @@ lines, from the tasks as they stand at the end (`collectEndState`): what needs t
 needs your decision (Inbox); "X" failed: <reason>; Waiting for Docker: "X"), what happened (Did
 N tasks: names; "X" waits for review; Merged N pull requests; Nothing could run: "X" waits on
 "Y", which failed), then how it ended, what is next and the money (Stopped by you; Left for next
-time: "X" (about CHF 0.43); this session's CHF 0.90 was used; "X" is ready to continue; N tasks
-wait on it; Nothing left; CHF 0.80). Names in quotes, up to three then "and N more", CHF, no zero
+time: "X" (about CHF 0.43); this session's CHF 0.90 was used; "X" is ready to continue; Left N
+reviewed pull requests for you to merge; N tasks wait on it; Nothing left; CHF 0.80). The pull
+requests are the session's own, said as what it did ("Left N ... for you to merge"): before
+(review, 2026-11-02) "N reviewed pull requests wait for you to merge" stood next to the
+Overview's list of every PR that waits now, which has earlier sessions' and Forerunner's docs
+PRs too, and stayed after a merge on GitHub. Names in quotes, up to three then "and N more", CHF, no zero
 counts, no ids. `summary_cache.last_session.outcome` (`LastSessionOutcome`: done, failed with
 reason, needsYou, leftOver, waiting with what each waits on, waitingForDocker, stopReason,
 spentChfMicro) is what the Overview and Chat should read instead of parsing text;
@@ -2406,7 +2410,13 @@ person: each done task's (the critic accepted it and nothing merged it: below le
 the person's) and Forerunner's docs PRs ("Project status (docs/status.md)", "The project's
 standard docs", "The project's docs from the plan"), sorted by number; a PR of a task still
 running or in review, or of someone else's, is not listed; a host that does not answer is
-`error` in words. `GET /projects/:id/docs` reads `docsInPullRequests` and marks a doc missing on
+`error` in words. Each task PR says who checked it (`review`, `reviewOf`): `you` when the task's
+reason is the sign-off's `ACCEPTED_AT_SIGNOFF`, `none` when it is `ACCEPTED_WITHOUT_REVIEW` (Mark
+done anyway) or the critic's last review of the task did not accept it (a tier 0 close on checks
+alone), `critic` when that review accepted it (read from the review row, since at level 2 the
+merge step writes "PR left open for you: ..." over the reason); a docs PR's is null. Before
+(review, 2026-11-02) the Overview put every PR, the status and plan-docs PRs too, under
+"Reviewed by the critic." `GET /projects/:id/docs` reads `docsInPullRequests` and marks a doc missing on
 the default branch that waits in such a PR (`pullRequest` and the note "waiting in pull request
 #N: merge it to add it"). The runner's `task.files` event carries the task's `prUrl` and `branch`,
 and its line reads "Changed index.html, in pull request #2." (`prNumberWords`); `pr.left_open`

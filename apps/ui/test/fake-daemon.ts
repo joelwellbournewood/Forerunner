@@ -5892,7 +5892,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // its files with every folder on their path, and one file's text; a path that leaves the
   // folder is 404.
   // A repository project's pull requests that wait for the person (ADR 0104), as the daemon's
-  // docs-routes.ts answers them: the repository with its page and the waiting PRs, or the
+  // docs-routes.ts answers them: the repository with its page and the waiting PRs (each with
+  // who checked it, `review`: critic, you, none, or null for Forerunner's docs PRs), or the
   // host's error in words; no repository answers repository null.
   app.get("/projects/:id/pull-requests", (c) => {
     const id = c.req.param("id");

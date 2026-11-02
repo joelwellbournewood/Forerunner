@@ -86,10 +86,70 @@ describe("a project linked to a repository: its pull requests on the Overview (A
       "https://example.test/org/atlas/pull/11",
     );
     expect(within(files).getByTestId("prs-waiting")).toHaveTextContent(
-      "Reviewed by the critic. Merging on GitHub puts the work into the default branch.",
+      "Merging on GitHub puts the work into the default branch.",
     );
+    expect(within(files).getByTestId("prs-critic")).toHaveTextContent("Reviewed by the critic");
     // No folder of this computer is offered as the project's files.
     expect(within(files).queryByTestId("folder-path")).toBeNull();
+  });
+
+  it("says who checked each waiting PR: the critic's, yours, one done without a review, and Forerunner's docs on their own line without a review claim", async () => {
+    // Review (2026-11-02): every PR was listed under "Reviewed by the critic.", Forerunner's
+    // status PR and the plan's docs PR too, which no critic reviewed, and a task marked done
+    // without a review would have read the same.
+    const harness = createHarness();
+    const pr = (n: number, title: string, kind: "task" | "docs", review: string | null) => ({
+      kind,
+      taskId: kind === "task" ? `task_${n}` : null,
+      title,
+      number: n,
+      url: `https://example.test/org/atlas/pull/${n}`,
+      branch: `fr/${n}`,
+      review: review as "critic" | "you" | "none" | null,
+    });
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        pr(1, "The project's docs from the plan", "docs", null),
+        pr(2, "Create the page skeleton in index.html", "task", "critic"),
+        pr(3, "Style the page in styles.css", "task", "critic"),
+        pr(4, "Write the README", "task", "none"),
+        pr(5, "Add the deploy script", "task", "you"),
+        pr(6, "Project status (docs/status.md)", "docs", null),
+      ],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const group = async (id: string) =>
+      (await within(files).findByTestId(id)).querySelectorAll("[data-testid=pr-waiting]");
+    const titles = (rows: NodeListOf<Element>) => [...rows].map((r) => r.textContent);
+    expect(within(files).getByTestId("prs-critic")).toHaveTextContent("Reviewed by the critic");
+    expect(titles(await group("prs-critic"))).toEqual([
+      '"Create the page skeleton in index.html" · pull request #2Open',
+      '"Style the page in styles.css" · pull request #3Open',
+    ]);
+    expect(within(files).getByTestId("prs-you")).toHaveTextContent("Accepted by you at sign-off");
+    expect(titles(await group("prs-you"))).toEqual([
+      '"Add the deploy script" · pull request #5Open',
+    ]);
+    expect(within(files).getByTestId("prs-not-reviewed")).toHaveTextContent(
+      "Marked done without the critic's review",
+    );
+    expect(titles(await group("prs-not-reviewed"))).toEqual([
+      '"Write the README" · pull request #4Open',
+    ]);
+    const docs = within(files).getByTestId("prs-docs");
+    expect(docs).toHaveTextContent("Forerunner's docs, merge them when you like");
+    expect(docs).not.toHaveTextContent("Reviewed");
+    expect(titles(await group("prs-docs"))).toEqual([
+      `"The project's docs from the plan" · pull request #1Open`,
+      '"Project status (docs/status.md)" · pull request #6Open',
+    ]);
+    // Each one opens on GitHub.
+    expect(within(docs).getAllByTestId("pr-waiting-link")[1]).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/6",
+    );
   });
 
   it("no PR waiting says so; a git host that does not answer says that in words", async () => {

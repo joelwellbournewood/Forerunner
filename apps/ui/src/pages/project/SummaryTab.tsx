@@ -216,11 +216,32 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
 }
 
 /**
+ * Who checked a waiting pull request, in the order the groups are listed: a group says it once
+ * over its PRs, and no PR is listed under a check it did not get. Review (2026-11-02): every PR
+ * read "Reviewed by the critic.", Forerunner's status and plan-docs PRs too.
+ */
+type PrGroup = "critic" | "you" | "not-reviewed" | "docs";
+const PR_GROUPS: { key: PrGroup; label: string }[] = [
+  { key: "critic", label: "Reviewed by the critic" },
+  { key: "you", label: "Accepted by you at sign-off" },
+  { key: "not-reviewed", label: "Marked done without the critic's review" },
+  { key: "docs", label: "Forerunner's docs, merge them when you like" },
+];
+
+function groupOf(pr: ProjectPullRequestView): PrGroup {
+  if (pr.kind === "docs") return "docs";
+  if (pr.review === "critic") return "critic";
+  if (pr.review === "you") return "you";
+  return "not-reviewed";
+}
+
+/**
  * "Your files" of a project linked to a repository (design §3.4, §3.10; ADR 0104): the
  * repository with its page, and the pull requests that wait for the person to merge them, each
- * with its link, read from the git host when shown. Before (GitHub walk, 2026-11-02) the result
- * said "5 reviewed pull requests wait for you to merge" and no screen but the Tasks row's small
- * "PR" linked one; this page named a folder of this computer that held none of that work.
+ * with its link, read from the git host when shown, grouped by who checked them (`PR_GROUPS`).
+ * Before (GitHub walk, 2026-11-02) the result said "5 reviewed pull requests wait for you to
+ * merge" and no screen but the Tasks row's small "PR" linked one; this page named a folder of
+ * this computer that held none of that work.
  */
 function RepositoryFiles({
   projectId,
@@ -265,20 +286,29 @@ function RepositoryFiles({
           <div data-testid="prs-waiting">
             <h3 className="font-medium">Waiting for you to merge</h3>
             <p className="text-xs text-neutral-500">
-              Reviewed by the critic. Merging on GitHub puts the work into the default branch.
+              Merging on GitHub puts the work into the default branch.
             </p>
-            <ul className="mt-1 space-y-0.5">
-              {waiting.map((pr) => (
-                <li key={pr.number} data-testid="pr-waiting" className="flex flex-wrap gap-2">
-                  <span>
-                    "{pr.title}" · pull request #{pr.number}
-                  </span>
-                  <ExternalLink href={pr.url} variant="inline" testId="pr-waiting-link">
-                    Open
-                  </ExternalLink>
-                </li>
-              ))}
-            </ul>
+            {PR_GROUPS.map((group) => {
+              const prsOf = waiting.filter((pr) => groupOf(pr) === group.key);
+              if (!prsOf.length) return null;
+              return (
+                <div key={group.key} data-testid={`prs-${group.key}`} className="mt-1">
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400">{group.label}</p>
+                  <ul className="space-y-0.5">
+                    {prsOf.map((pr) => (
+                      <li key={pr.number} data-testid="pr-waiting" className="flex flex-wrap gap-2">
+                        <span>
+                          "{pr.title}" · pull request #{pr.number}
+                        </span>
+                        <ExternalLink href={pr.url} variant="inline" testId="pr-waiting-link">
+                          Open
+                        </ExternalLink>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
           </div>
         ) : prs.data && !prs.data.error ? (
           <p className="text-neutral-600 dark:text-neutral-400" data-testid="prs-none">

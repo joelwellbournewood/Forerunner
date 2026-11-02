@@ -159,9 +159,13 @@ export function sessionResultLines(f: ResultFacts): string[] {
       `${namesOf(titlesOf(o.leftOver))} ${plural(o.leftOver.length, "is", "are")} ready to continue.`,
     );
   }
+  // The session's own reviewed PRs left open, said as what this session did: the Overview's
+  // "Waiting for you to merge" lists every PR that waits now (earlier sessions', Forerunner's
+  // docs), and "1 reviewed pull request waits" stood next to a list of 3 there and stayed after
+  // a merge on GitHub (review, 2026-11-02).
   if (f.openPrs)
     next.push(
-      `${f.openPrs} reviewed ${plural(f.openPrs, "pull request waits", "pull requests wait")} for you to merge.`,
+      `Left ${f.openPrs} reviewed ${plural(f.openPrs, "pull request", "pull requests")} for you to merge.`,
     );
   const blocked = o.waiting.length;
   if (blocked && (o.failed.length || o.needsYou.length))

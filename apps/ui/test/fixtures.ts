@@ -153,6 +153,7 @@ export const PROJECT_PULL_REQUESTS: Record<
         number: 11,
         url: "https://example.test/org/atlas/pull/11",
         branch: "fr/task_1",
+        review: "critic",
       },
     ],
     error: null,

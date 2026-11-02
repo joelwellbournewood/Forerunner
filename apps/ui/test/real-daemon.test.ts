@@ -3912,6 +3912,52 @@ describe("the UI client against the real daemon: a project linked to a repositor
       reason: "seed",
       branch: "fr/bbbb-style-the-page",
     });
+    // The critic's accepting review of the done task (its reason is then the merge's "left
+    // open" words, so the review row, not the reason, says it was reviewed).
+    await rt.store.review.insert({
+      task_id: done.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 90,
+      confidence: 0.9,
+      verdict: "accept",
+      evidence: [],
+      summary: "Looks right.",
+      author_agent: rt.criticAgent.id,
+    });
+    await rt.store.task.patch(done.id, {
+      reason: "PR left open for you: autonomy level 2 does not merge (level 3 Trusted does)",
+    });
+    // A task the person marked done from its card after the critic asked for changes: its PR
+    // waits too, but no critic accepted it (review, 2026-11-02: it read "Reviewed by the
+    // critic").
+    const unreviewed = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write the README",
+      outcome: "README.md says how to open the page",
+      acceptance_criteria: ["it says how"],
+      risk_tier: 1,
+      status: "done",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "accepted without review: you marked it done in the Inbox",
+      branch: "fr/cccc-write-the-readme",
+    });
+    await rt.store.review.insert({
+      task_id: unreviewed.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 40,
+      confidence: 0.9,
+      verdict: "revise",
+      evidence: [],
+      summary: "The README does not say how to open the page.",
+      author_agent: rt.criticAgent.id,
+    });
     const repo = { owner: "o", name: "seeded" };
     const pr = await host.createPullRequest(repo, {
       title: done.title,
@@ -3926,6 +3972,35 @@ describe("the UI client against the real daemon: a project linked to a repositor
       head: "fr/bbbb-style-the-page",
       base: "main",
     });
+    const readmePr = await host.createPullRequest(repo, {
+      title: unreviewed.title,
+      body: "work",
+      head: "fr/cccc-write-the-readme",
+      base: "main",
+    });
+    // A task whose work the person accepted at sign-off: their own review.
+    const signedOff = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Add the deploy script",
+      outcome: "deploy.sh publishes the page",
+      acceptance_criteria: ["it publishes"],
+      risk_tier: 3,
+      status: "done",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "you accepted the work at sign-off",
+      branch: "fr/dddd-add-the-deploy-script",
+    });
+    const deployPr = await host.createPullRequest(repo, {
+      title: signedOff.title,
+      body: "work",
+      head: "fr/dddd-add-the-deploy-script",
+      base: "main",
+    });
     const view = await client.projectPullRequests(project.id);
     expect(view.error).toBeNull();
     expect(view.repository?.fullName).toBe("o/seeded");
@@ -3937,6 +4012,7 @@ describe("the UI client against the real daemon: a project linked to a repositor
         number: 1,
         url: "memory://o/seeded/pull/1",
         branch: "fr/docs-scaffold",
+        review: null,
       },
       {
         kind: "task",
@@ -3945,12 +4021,33 @@ describe("the UI client against the real daemon: a project linked to a repositor
         number: pr.number,
         url: pr.htmlUrl,
         branch: "fr/aaaa-create-the-page",
+        review: "critic",
+      },
+      {
+        kind: "task",
+        taskId: unreviewed.id,
+        title: "Write the README",
+        number: readmePr.number,
+        url: readmePr.htmlUrl,
+        branch: "fr/cccc-write-the-readme",
+        review: "none",
+      },
+      {
+        kind: "task",
+        taskId: signedOff.id,
+        title: "Add the deploy script",
+        number: deployPr.number,
+        url: deployPr.htmlUrl,
+        branch: "fr/dddd-add-the-deploy-script",
+        review: "you",
       },
     ]);
     // Merged on GitHub: gone at once, since the list is read from the host when asked.
     await host.mergePullRequest(repo, pr.number);
-    expect((await client.projectPullRequests(project.id)).waiting.map((w) => w.kind)).toEqual([
-      "docs",
+    expect((await client.projectPullRequests(project.id)).waiting.map((w) => w.review)).toEqual([
+      null,
+      "none",
+      "you",
     ]);
   }, 60_000);
 });
