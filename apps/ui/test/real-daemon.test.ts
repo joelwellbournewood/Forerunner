@@ -4110,15 +4110,16 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     const status = async () =>
       (await client.tasks(quote.id)).find((t) => t.id === faq.id)?.display?.label;
 
-    // No: the card's No, then "yes".
-    const first = await say("skip the FAQ task");
+    // No: the card's No, then "yes". ("Skip the FAQ task" cancels it since L-10; a pause is
+    // "pause" or "skip it for now".)
+    const first = await say("pause the FAQ task");
     expect(first.pendingConfirmation?.readback).toMatch(/^Pause "Write the FAQ"\?/);
     expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
     expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
     expect(await status()).toBe("Ready");
 
     // Yes: the card's Yes, then "yes".
-    await say("skip the FAQ task");
+    await say("skip the FAQ task for now");
     expect((await say("yes")).actions.map((a) => a.kind)).toEqual(["task.pause"]);
     expect(await status()).toBe("Paused by you");
     expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
@@ -4458,7 +4459,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
         action: "cancel",
       });
       expect(cancelled.change?.sentence).toBe(
-        'Cancelled "Write the About page in about.html": its run stopped and what it changed is removed; Undo brings it back.',
+        'Cancelled "Write the About page in about.html": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
       );
       await allEnded();
     } finally {
@@ -6468,4 +6469,386 @@ describe("the UI client against the real daemon: a session on a repository opens
       (await client.projectPullRequests(project.id)).waiting.filter((w) => w.kind === "task"),
     ).toEqual([]);
   }, 150_000);
+});
+
+describe("the UI client against the real daemon: Quit during 'Being reviewed', then the daemon starts again (stops, L-1)", () => {
+  it("the task reads Ready, the Update says it is ready again, and the next Start runs and reviews it", async () => {
+    // Live check of phase C (2026-11-02): Quit while the critic reviewed "Contact page", then
+    // reopen: the row and drawer read "Being reviewed · The critic is checking the work." for
+    // good, Start had nothing to run, and the Update said "Nothing was left half done." Quit's
+    // stop had released the task's claim, which leaves a task in review in review, and the
+    // next start freed only the tasks still claimed.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-quit-review-"));
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    // The review holds where the live one was: opening the page in a browser, a step that
+    // does not end when the process is asked to stop.
+    let trying = false;
+    const first = await composeWithRolePlayer(
+      {},
+      {
+        env,
+        dirs,
+        stateUrl,
+        tryIt: {
+          tryPages: () => {
+            trying = true;
+            return new Promise(() => undefined);
+          },
+        },
+      },
+    );
+    let projectId = "";
+    let taskId = "";
+    try {
+      const project = await first.client.createProject({ name: "Garden club", goal: "Pages" });
+      projectId = project.id;
+      const page = await first.client.createTask(project.id, {
+        title: "Contact page in contact.html",
+        outcome: "contact.html says how to reach the club",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      taskId = page.id;
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      await first.client.startSession({ agentId, projectId });
+      await eventually(
+        async () =>
+          trying &&
+          (await first.client.tasks(projectId)).find((t) => t.id === taskId)?.display?.label ===
+            "Being reviewed",
+        "the task to read Being reviewed",
+        async () => (await first.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      // Quit, as the desktop shell's Quit asks the daemon (`POST /shutdown`): every run stops
+      // and every claim is released; then the process ends.
+      const { app, token } = createDaemonApp(first.rt, { onShutdown: () => undefined });
+      const quit = await app.request("/shutdown", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(quit.status).toBe(202);
+    } finally {
+      await first.rt.close();
+    }
+
+    // Forerunner opens again on the same home.
+    const second = await composeWithRolePlayer({}, { env, dirs, stateUrl, tryIt: false });
+    try {
+      const row = (await second.client.tasks(projectId)).find((t) => t.id === taskId);
+      expect(row?.display?.label).toBe("Ready");
+      const me = await second.client.me();
+      const updates = (await second.client.inbox(me.id)).messages.map((m) => m.body);
+      expect(updates).toContain(
+        'Your last session was interrupted when Forerunner closed. "Contact page in contact.html" is ready again.',
+      );
+      expect(updates.join("\n")).not.toContain("Nothing was left half done.");
+      const check = await second.client.startCheck(projectId);
+      expect(check.runnable.map((t) => t.taskId)).toContain(taskId);
+      // The next Start runs it and the critic reviews it.
+      const agentId = (await second.client.agents())[0]?.id ?? "";
+      const started = await second.client.startSession({ agentId, projectId });
+      await eventually(
+        async () => (await second.client.session(started.session?.id ?? "")).status !== "running",
+        "the next session to end",
+        async () => (await second.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      const done = await second.client.task(taskId);
+      expect(done.task.status).toBe("done");
+      expect(done.runs.some((r) => r.kind === "review")).toBe(true);
+      expect(second.criticCalls.length).toBeGreaterThan(0);
+    } finally {
+      await second.rt.close();
+    }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: Cancel in the first moment of 'Being reviewed' (stops, L-8)", () => {
+  it("the review stops at once: no critic call after the Cancel, its files leave the folder, the line is true", async () => {
+    // Live check of phase C (2026-11-02), c9b: Cancel pressed about 0.1 s into "Being
+    // reviewed" (the page was being opened in a browser): the kill switch stopped the review,
+    // yet two critic calls ran after it to an accept (CHF 0.03), and credits.html stayed in
+    // Files about 6 s, until the review ended. 3 s in, it worked. The critic's own run never
+    // got the review's signal: only a run already going was stopped.
+    let release: () => void = () => undefined;
+    let trying = false;
+    const { rt, client, criticCalls } = await composeWithRolePlayer(
+      {},
+      {
+        tryIt: {
+          tryPages: (req) => {
+            trying = true;
+            // Opening the page takes a while; it ends when the test lets it.
+            return new Promise((resolve) => {
+              release = () =>
+                resolve({
+                  tried: req.pages.map((page) => ({
+                    what: `opened ${page} in a browser`,
+                    target: page,
+                    ok: true,
+                    blocking: false,
+                    output: `opened ${page}`,
+                    screenshots: [],
+                  })),
+                });
+            });
+          },
+        },
+      },
+    );
+    try {
+      const project = await client.createProject({ name: "Quote page", goal: "Credits" });
+      const page = await client.createTask(project.id, {
+        title: "Credits page in credits.html",
+        outcome: "credits.html names who made the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === page.id);
+      await eventually(
+        async () => trying && (await row())?.display?.label === "Being reviewed",
+        "the task to read Being reviewed",
+        async () => `${(await row())?.status}`,
+        30_000,
+      );
+      const files = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
+      expect(await files()).toContain("credits.html");
+      // The row's Cancel, as the Tasks tab sends it.
+      const shown = await row();
+      const cancelled = await client.taskAction(page.id, {
+        version: shown?.version ?? 0,
+        action: "cancel",
+      });
+      expect(cancelled.change?.sentence).toMatch(
+        /^Cancelled "Credits page in credits\.html": its review stopped and what it changed is removed/,
+      );
+      // The browser step ends; the review must not go on to the critic's model.
+      release();
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await row())?.status}, ${criticCalls.length} critic calls`,
+        30_000,
+      );
+      expect(criticCalls).toHaveLength(0);
+      expect((await row())?.display?.label).toBe("Cancelled");
+      expect(await files()).not.toContain("credits.html");
+      const detail = await client.task(page.id);
+      expect(detail.review).toBeNull();
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: 'Skip the … task' in Chat cancels it (stops, L-10)", () => {
+  it("read back as a cancel; Yes cancels it with the line the row's Cancel gives", async () => {
+    // Live check of phase C (2026-11-02): "Skip the Credits page task" while it ran was read
+    // back as 'Stop "Credits page in credits.html"? Its run stops now and it is paused', and
+    // Yes left it "Paused by you".
+    // Each specialist reply waits a minute, so the task stays Running while the chat is used.
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_DELAY_MS: "60000" });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Quote page", goal: "Credits" });
+      const page = await client.createTask(project.id, {
+        title: "Credits page in credits.html",
+        outcome: "credits.html names who made the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === page.id);
+      await eventually(
+        async () => (await row())?.display?.label === "Running",
+        "the task to run",
+        async () => `${(await row())?.status}`,
+        30_000,
+      );
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const asked = await say("Skip the Credits page task");
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Cancel "Credits page in credits.html"? It is dropped; its run stops now and what it changed is removed.',
+      );
+      const yes = await say("yes");
+      expect(yes.actions.map((a) => a.kind)).toEqual(["task.transition"]);
+      // The same line as the row's Cancel (`POST /tasks/:id/action` with "cancel").
+      expect(yes.reply).toBe(
+        'Cancelled "Credits page in credits.html": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+      );
+      expect((await row())?.display?.label).toBe("Cancelled");
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await row())?.status}`,
+        30_000,
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: Cancel promises a removal only while a review goes on (stops, L-7)", () => {
+  it("a task being reviewed says whether its review goes on here; the chat's read-back and the line follow it", async () => {
+    // Live check of phase C (2026-11-02): a task left "Being reviewed" with no review going
+    // on (Forerunner had closed during it) got the Cancel dialog "Drops it. Its review stops
+    // now and what it changed is removed; Undo brings it back." and nothing was removed. The
+    // dialog was worded from the status, while only a review going on is stopped.
+    // The critic's replies wait a minute: one task's review goes on while the test looks.
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_CRITIC_DELAY_MS: "60000",
+    });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Garden club", goal: "Pages" });
+      const running = await client.createTask(project.id, {
+        title: "About page in about.html",
+        outcome: "about.html tells the club's story",
+        riskTier: 1,
+        specialist: "coder",
+        priority: "high",
+      });
+      // Left in review with no review going on here (what a closed Forerunner left before
+      // L-1, or another computer's session).
+      const left = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Contact page in contact.html",
+        outcome: "contact.html says how to reach the club",
+        acceptance_criteria: ["contact.html exists"],
+        risk_tier: 1,
+        status: "in_review",
+        priority: 1,
+        specialist: "coder",
+        reason: "Wrote contact.html.",
+      } as never);
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const view = async (id: string) => (await client.tasks(project.id)).find((t) => t.id === id);
+      await eventually(
+        async () => (await view(running.id))?.display?.label === "Being reviewed",
+        "the About page's review to begin",
+        async () => `${(await view(running.id))?.status}`,
+        30_000,
+      );
+      // Its review goes on here; the other one's does not.
+      expect((await view(running.id))?.display?.live).toBe(true);
+      const idle = await view(left.id);
+      expect(idle?.display?.label).toBe("Being reviewed");
+      expect(idle?.display?.live).toBe(false);
+      // The drawer reads the same view.
+      expect((await client.task(left.id)).task.display?.live).toBe(false);
+      // Chat's read-back promises nothing about its files; the reviewed one says its review stops.
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      expect((await say("cancel the Contact page task")).pendingConfirmation?.readback).toBe(
+        'Cancel "Contact page in contact.html"? It is dropped.',
+      );
+      expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
+      expect((await say("cancel the About page task")).pendingConfirmation?.readback).toBe(
+        'Cancel "About page in about.html"? It is dropped; its review stops now and what it changed is removed.',
+      );
+      expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
+      // The row's Cancel on the one with nothing going on: the line says only that.
+      const cancelled = await client.taskAction(left.id, {
+        version: idle?.version ?? 0,
+        action: "cancel",
+      });
+      expect(cancelled.change?.sentence).toBe('Cancelled "Contact page in contact.html".');
+      // Stop now during the review: the task is Ready again, with nothing going on for it.
+      await client.stopSession(started.session?.id ?? "");
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await view(running.id))?.status}`,
+        30_000,
+      );
+      const after = await view(running.id);
+      expect(after?.display?.label).toBe("Ready");
+      expect(after?.display?.live).toBeUndefined();
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("a task with a pull request: the chat's read-back says its pull request stays open, as the Yes line and the row's Cancel do", async () => {
+    // Review of fix/stops: every task of a GitHub project carries its pull request from the
+    // end of its run, before its review. "skip the About page task" during the review read back
+    // 'It is dropped; its review stops now and what it changed is removed.', and Yes said
+    // 'its review stopped; its pull request stays open.' (nothing is removed).
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_CRITIC_DELAY_MS: "60000",
+    });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Garden club", goal: "Pages" });
+      const page = await client.createTask(project.id, {
+        title: "About page in about.html",
+        outcome: "about.html tells the club's story",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const view = async () => (await client.tasks(project.id)).find((t) => t.id === page.id);
+      await eventually(
+        async () => (await view())?.display?.label === "Being reviewed",
+        "the About page's review to begin",
+        async () => `${(await view())?.status}`,
+        30_000,
+      );
+      // Its pull request, as the runner records it for a repository project.
+      await rt.store.task.patch(page.id, { pr_url: "https://github.test/o/garden/pull/3" });
+      const shown = await view();
+      expect(shown?.prUrl).toBe("https://github.test/o/garden/pull/3");
+      expect(shown?.display?.live).toBe(true);
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      expect((await say("skip the About page task")).pendingConfirmation?.readback).toBe(
+        'Cancel "About page in about.html"? It is dropped; its review stops now; its pull request stays open.',
+      );
+      const yes = await say("yes");
+      expect(yes.actions.map((a) => a.kind)).toEqual(["task.transition"]);
+      expect(yes.reply).toBe(
+        'Cancelled "About page in about.html": its review stopped; its pull request stays open.',
+      );
+      expect((await view())?.display?.label).toBe("Cancelled");
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await view())?.status}`,
+        30_000,
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

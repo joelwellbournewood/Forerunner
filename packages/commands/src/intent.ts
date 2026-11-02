@@ -840,22 +840,29 @@ export class IntentParser {
   }
 
   /**
-   * One task moved by name (design §3.9): "skip the LICENSE task", "postpone X", "pause the
-   * CSS task", "stop the X task" (pause; a running one stops now), "cancel X", "resume X",
-   * "reopen X", "redo X", "try X again", "make X ready". Read back before it happens.
+   * One task moved by name (design §3.9): "skip the LICENSE task", "cancel X", "drop X"
+   * (cancel, as the row's Cancel: L-10), "skip X for now", "postpone X", "pause the CSS task",
+   * "stop the X task" (pause; a running one stops now), "resume X", "reopen X", "redo X", "try
+   * X again", "make X ready". Read back before it happens.
    */
   private matchTaskMove(c: string): Match | null {
     if (QUESTION_RE.test(c)) return null;
     const ref = (raw: string | undefined) => taskName(raw);
+    // "Skip X for now" puts it off: a pause, as "postpone X".
     const pause =
-      /^(?:skip|postpone|pause|defer|park|hold\s+off\s+on|put\s+off|stop|überspring(?:e)?|pausiere)\s+(.+?)(?:\s+(?:for\s+now|for\s+later|until\s+later|for\s+the\s+moment|vorerst|erst\s+mal))?$/i.exec(
+      /^(?:postpone|pause|defer|park|hold\s+off\s+on|put\s+off|stop|pausiere)\s+(.+?)(?:\s+(?:for\s+now|for\s+later|until\s+later|for\s+the\s+moment|vorerst|erst\s+mal))?$/i.exec(
+        c,
+      ) ??
+      /^(?:skip|überspring(?:e)?)\s+(.+?)\s+(?:for\s+now|for\s+later|until\s+later|for\s+the\s+moment|vorerst|erst\s+mal)$/i.exec(
         c,
       );
     if (pause) {
       const task = ref(pause[1]);
       return task ? { command: { name: "task.pause", params: { task } } } : null;
     }
-    const cancel = /^(?:cancel|drop|abbrechen)\s+(.+)$/i.exec(c);
+    // "Skip X" leaves it out: a cancel, as the row's Cancel (L-10, live check of phase C:
+    // "Skip the Credits page task" paused the task, "paused until you press Resume").
+    const cancel = /^(?:cancel|drop|skip|abbrechen|überspring(?:e)?)\s+(.+)$/i.exec(c);
     if (cancel) {
       const task = ref(cancel[1]);
       return task

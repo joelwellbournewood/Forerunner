@@ -114,7 +114,7 @@ describe("steering by chat (design §3.9)", () => {
     void style;
   });
 
-  it("'skip the LICENSE task' is read back as a pause; 'resume the LICENSE task' brings it back", async () => {
+  it("'skip the LICENSE task for now' is read back as a pause; 'resume the LICENSE task' brings it back", async () => {
     const license = await task("Add a LICENSE file");
     const asked = await say("skip the LICENSE task for now");
     expect(asked.pendingConfirmation?.readback).toBe(

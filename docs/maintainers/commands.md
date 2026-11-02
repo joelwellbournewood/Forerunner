@@ -68,7 +68,7 @@ agent's own tools are replaced by these in the daemon wiring step.
 | `project.switch` | global | low | yes | `human.notify_prefs.active_project`, `project_history` (last 10; "go back") |
 | `project.create` | global | low | yes (archive) | `project` row, active project; `ports.projectCreated` (the daemon's G.5 scaffold of the standard doc set, in the background; runtime.md "Project docs") |
 | `task.create` | project | low | yes (cancel) | `task` row, **ready** unless `status: draft` is asked for (design §3.9: a draft is planned by no session, so a task made by chat or the app waited silently); `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051), then `riskTierFor(specialist, tier)`: a deploy or a migration (`SIGNOFF_SPECIALISTS`, ADR 0104 decision 4) is stored at the full review at least, a light review asked for included (phase C leftover C-2: before, such a task was stored at the light review, its row read "Light review" and its run used the process sandbox); `priority` is `low`, `medium` (default) or `high` (`TaskPrioritySchema` from `@forerunner/runtime/priority`; an old number is read as its level), stored as the level's number; `depends_on` (ids or titles, checked by `TaskRepo.checkDependencies`), `budget_usd_micro`, `specialist` (a specialist, or `person` for a task only the person can answer) and `milestone_id`. The daemon's `POST /projects/:id/tasks` runs it, so New task is in Changes with its Undo. Sentence: "Added "X" to Atlas, high priority." (U-041) |
-| `task.transition` | project | low; `done`/`cancelled` medium | yes (the status before) | `task.status` through `TaskRepo.transition`; the API route and agents use it, the Tasks tab sends the actions below; a move the status no longer allows (the task finished between the read-back and the yes) is refused in words, `assertMove`: '"X" is already done; nothing changed.', never "task: illegal transition done -> cancelled"; the chat's read-back of a cancel says what Yes does to a task whose run is going: 'Cancel "X"? Its run stops now and what it changed is removed.' (a task left in review with no review running is only dropped; phase C leftover C-38) |
+| `task.transition` | project | low; `done`/`cancelled` medium | yes (the status before) | `task.status` through `TaskRepo.transition`; the API route and agents use it, the Tasks tab sends the actions below; a move the status no longer allows (the task finished between the read-back and the yes) is refused in words, `assertMove`: '"X" is already done; nothing changed.', never "task: illegal transition done -> cancelled"; the chat's read-back of a cancel says what Yes does to a task whose run is going: 'Cancel "X"? It is dropped; its run stops now and what it changed is removed.' (a task with a pull request: '; its run stops now; its pull request stays open'; a task left in review with no review running is only dropped; phase C leftover C-38, L-7, `moveAsk` below) |
 | `task.pause` | project | low | yes (ready again) | ready → `needs_human` recorded as the person's own (`author_human`), the reason "Paused by you"; on a running task it is Stop: the run is stopped (`ports.stopTask`, and the daemon's route) and the task paused, "Stopped by you". The project does not count it as "needs you" (design §2) |
 | `task.resume` | project | low | yes (paused again) | `needs_human` → ready, "Resumed by you"; `without_answers: true` is the Tasks tab's Go ahead without: the task's open Inbox cards are withdrawn and a note tells the specialist the person went ahead without answering; refused for a task only the person can do; its undo opens the cards again |
 | `task.reopen` | project | low | yes (cancelled or done again) | Reopen (cancelled → ready) and Redo (done → ready, the person's note says what to fix) through `TaskRepo.reopen`, which takes `cancelled` and `done` (U-080) |
@@ -321,14 +321,25 @@ reopened the task ..."). A command's `undo` may return a sentence that is added 
 own (the closure kept from the run returns those of its steps too): the undo of the cancel of a
 task that ran or was reviewed calls the `bringBackWork` port (the session took what the run
 changed out of the folder, ADR 0105) and adds "What it changed is back in the folder." or
-"What it changed could not be put back: the folder changed in the same places since." The
-cancel's own sentence says what happens to the work ('Cancelled "X": its run stopped and what
-it changed is removed; Undo brings it back.', or "its pull request stays open" for a task with
+(`UNDO_CONFLICT_WORDS`) "What it changed could not be put back: the same files changed since.
+Its next run does the work again." The cancel's own sentence says what happens to the work
+('Cancelled "X": its run stopped and what it changed is removed. Undo reopens it, and its
+changes come back unless the same files changed since.', `CANCEL_UNDO_WORDS`; L-6, live check
+of phase C: the line promised "Undo brings it back", the session's next task rewrote the same
+file six seconds later and the Undo could not; or "its pull request stays open" for a task with
 a pull request), and a person's move out of `in_review` stops the review through `stopTask` as
 a move out of `claimed` or `in_progress` stops the run. The sentence says so only when
 `stopTask` answers `true` (a live run or review was stopped; the session sets aside exactly
 those): a task in review that no session reviews (its card waits, or Forerunner closed during
-its review) reads 'Cancelled "X".', and its files stay (phase C review). Every person's move of a task can be undone (design §3.5: "every
+its review) reads 'Cancelled "X".', and its files stay (phase C review). The chat's read-back
+of a cancel (`moveAsk`) says "its run stops now and what it changed is removed" for a running
+task, and "its review stops now ..." for a task in review only when the `liveWork` port answers
+that its review goes on here (the daemon: `KillSwitch.hasTask`; without the port a task in
+review is taken to have no review going on; a running task's read-back always says its run stops;
+L-7). A task with a pull request (`pr_url`: a GitHub project's task carries one from the end
+of its run, before its review) reads "its run (or review) stops now; its pull request stays
+open" instead, as the line after Yes and the Tasks tab's Cancel dialog (`cancelWorkLine`) say:
+the cancel keeps its pull request and takes nothing out of the folder. Every person's move of a task can be undone (design §3.5: "every
 action has one Undo right after it"): the undo puts the task back as it was. The move's
 `before` records the row's `status`, `reason`, `author_human`, `author_agent` and `attempt`;
 the undo restores them through `TaskRepo.restoreStatus` (a status only an agent sets comes
@@ -441,7 +452,7 @@ and each clause goes through the patterns, in English and German:
 | stop after this task, stop when the current task is done, finish this task and then stop | `session.pause` (matched on the whole line, before "and" splits it) |
 | resume, continue, allow sessions again, resume work | `session.resume` |
 | make the FAQ task depend on the README task, make X wait for Y, X should wait for Y, run X after Y | `task.dependencies {task: X, add: [Y]}` (whole line; never a question) |
-| skip X [for now], postpone X, pause the X task, stop the X task; cancel X, drop X; resume X; reopen X, redo X; try X again, retry X; make X ready | `task.pause`; `task.transition {cancelled}`; `task.resume`; `task.reopen`; `task.transition {ready}` (X by title within the project; "the" and "task" dropped, before or after the name: 'skip the task "Write the FAQ"' finds "Write the FAQ", phase C leftover C-38; "skip" is a pause, which can be undone; the session or work itself is never a task's name) |
+| skip X for now, postpone X, pause the X task, stop the X task; skip X, cancel X, drop X (L-10: "skip X" is the row's Cancel, its read-back says a run or review going on stops and its changes are removed); resume X; reopen X, redo X; try X again, retry X; make X ready | `task.pause`; `task.transition {cancelled}`; `task.resume`; `task.reopen`; `task.transition {ready}` (X by title within the project; "the" and "task" dropped, before or after the name: 'skip the task "Write the FAQ"' finds "Write the FAQ", phase C leftover C-38; the session or work itself is never a task's name) |
 | summarise the last session, summarize it, recap | `summary.speak` |
 | remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
 | note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |

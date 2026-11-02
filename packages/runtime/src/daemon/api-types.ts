@@ -319,6 +319,13 @@ export const TaskDisplay = z.object({
       cardKind: z.enum(["retry", "questions", "budget", "cannot_run"]).optional(),
     })
     .nullable(),
+  /**
+   * Being reviewed: whether its review goes on in this app now, which Cancel stops at once
+   * (and then takes its work out of the folder). False for a task left in review with no review
+   * going on (L-7: the Cancel dialog promised a removal that never came). Absent for the other
+   * statuses (a running task's run stops wherever it runs) and from an older service.
+   */
+  live: z.boolean().optional(),
 });
 export type TaskDisplay = z.infer<typeof TaskDisplay>;
 

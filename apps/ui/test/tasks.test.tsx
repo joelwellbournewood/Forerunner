@@ -98,6 +98,7 @@ describe("Tasks tab (design §3.5)", () => {
     const views = projectTaskViews(TASKS, "proj_atlas", [], true, {
       pausedByPerson: new Set(),
       added: new Map(TASKS.map((t, i) => [t.id, i])),
+      notLive: new Set(),
     });
     expect(
       filterTasks(views, { status: "done", specialist: "", text: "" }).map((t) => t.id),
@@ -308,11 +309,11 @@ describe("Tasks tab (design §3.5)", () => {
     await user.click(within(await rowOf("t_run")).getByTestId("action-cancel"));
     const dialog = await screen.findByTestId("action-dialog");
     expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(
-      "Drops it. Its run stops now and what it changed is removed; Undo brings it back.",
+      "Drops it. Its run stops now and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.",
     );
     await user.click(within(dialog).getByTestId("confirm-action"));
     expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
-      'Cancelled "Write the About page": its run stopped and what it changed is removed; Undo brings it back.',
+      'Cancelled "Write the About page": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
     );
     expect(screen.getByTestId("task-moved-undo")).toBeInTheDocument();
     expect(postedCalls(harness, "/tasks/t_run/action").map((c) => c.body)).toEqual([
@@ -324,6 +325,29 @@ describe("Tasks tab (design §3.5)", () => {
     expect(within(review).getByTestId("action-explain")).toHaveTextContent(
       "Drops it. Its review stops now; its pull request stays open.",
     );
+  });
+
+  it("a task left Being reviewed with no review going on: Cancel says only Drops it, and the line only that it is cancelled (stops, L-7)", async () => {
+    // Live check of phase C: after a quit during its review the row read "Being reviewed" and
+    // Cancel's dialog said "Drops it. Its review stops now and what it changed is removed;
+    // Undo brings it back."; nothing was removed. The daemon says whether a review goes on.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_left", "Contact page in contact.html", { status: "in_review" });
+    harness.daemon.state.taskMeta.notLive.add("t_left");
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("t_left");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent("Being reviewed");
+    await user.click(within(row).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(/^Drops it\.$/);
+    await user.click(within(dialog).getByTestId("confirm-action"));
+    expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+      /^Cancelled "Contact page in contact\.html"\.$/,
+    );
+    expect(postedCalls(harness, "/tasks/t_left/action").map((c) => c.body)).toEqual([
+      { version: 1, action: "cancel" },
+    ]);
   });
 
   it("a task in review whose card waits reads Needs your decision; Cancel promises nothing about its files (phase C review)", async () => {

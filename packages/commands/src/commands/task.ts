@@ -268,20 +268,32 @@ function namesList(titles: readonly string[]): string {
  * one-line consequence (design §3.5).
  */
 export function moveAsk(
-  task: Pick<TaskRow, "title">,
+  task: Pick<TaskRow, "title"> & Partial<Pick<TaskRow, "pr_url">>,
   from: TaskStatus,
   to: TaskStatus,
   stuck = 0,
+  /** Whether a run or review of the task goes on now (`CommandPorts.liveWork`); see there. */
+  live?: boolean,
 ): string {
   const t = quote(task.title);
   if (to === "cancelled") {
-    // C-38: what Yes does to a task whose run is going (ADR 0105, the Tasks tab's
-    // `cancelWorkLine`): its run stops and what it changed is taken out of the folder. A task
-    // left in review with no review running (phase C review) is only dropped.
+    // As the row's Cancel dialog (L-10, the UI's `cancelWorkLine`) and the line after Yes
+    // (`personMove`): what Yes does to a task whose run is going (C-38) or whose review goes on
+    // here (L-7: a task left "Being reviewed" by a quit was promised a removal that never
+    // came); a task left in review with no review running is only dropped. A task with a pull
+    // request keeps it and nothing is taken out of the folder (review of fix/stops: a GitHub
+    // project's task carries one from the end of its run).
     const what = RUNNING.includes(from)
-      ? "Its run stops now and what it changed is removed"
-      : "It is dropped";
-    return `Cancel ${t}? ${what}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+      ? "its run"
+      : from === "in_review" && live === true
+        ? "its review"
+        : null;
+    const work = !what
+      ? ""
+      : task.pr_url
+        ? `; ${what} stops now; its pull request stays open`
+        : `; ${what} stops now and what it changed is removed`;
+    return `Cancel ${t}? It is dropped${work}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
   }
   if (to === "needs_human")
     return RUNNING.includes(from)
@@ -294,6 +306,19 @@ export function moveAsk(
   if (to === "ready") return `Resume ${t}? It is ready again; the next session can run it.`;
   return `Mark ${t} ${statusWords(to)}?`;
 }
+
+/**
+ * What Undo of a cancel does with the work it took out of the folder (L-6, live check of phase
+ * C): the task comes back, and its changes with it unless the same files changed since, which
+ * a session that goes on after the cancel often does within seconds. Before, the line and the
+ * dialog said "Undo brings it back", and the Undo then said it could not.
+ */
+export const CANCEL_UNDO_WORDS =
+  "Undo reopens it, and its changes come back unless the same files changed since.";
+
+/** What Undo of such a cancel says when the same files changed since (L-6). */
+export const UNDO_CONFLICT_WORDS =
+  "What it changed could not be put back: the same files changed since. Its next run does the work again.";
 
 /** What a person's move did, in one line (design §5): the task by name, no raw state. */
 export function moveSentence(
@@ -319,7 +344,7 @@ export function moveSentence(
     const what = from === "in_review" ? "its review" : "its run";
     s =
       extra.work === "removed"
-        ? `Cancelled ${t}: ${what} stopped and what it changed is removed; Undo brings it back.`
+        ? `Cancelled ${t}: ${what} stopped and what it changed is removed. ${CANCEL_UNDO_WORDS}`
         : `Cancelled ${t}: ${what} stopped; its pull request stays open.`;
   } else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
@@ -504,8 +529,7 @@ async function undoMove(before: JsonValue, after: JsonValue, ctx: CommandContext
   ) {
     const back = await ctx.ports.bringBackWork(task.id);
     if (back === "restored") return "What it changed is back in the folder.";
-    if (back === "conflict")
-      return "What it changed could not be put back: the folder changed in the same places since.";
+    if (back === "conflict") return UNDO_CONFLICT_WORDS;
   }
   return undefined;
 }
@@ -758,6 +782,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
         task.status,
         params.to,
         params.to === "cancelled" ? (await waitingOn(ctx, task)).length : 0,
+        ctx.ports.liveWork?.(task.id),
       ),
     });
   },

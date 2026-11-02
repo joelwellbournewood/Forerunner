@@ -960,7 +960,13 @@ intake session, not a cloud runner's, not another device's) with no live kill-sw
 registration is ended `stopped` with the stop reason `interrupted` and the summary
 "Interrupted: Forerunner closed while this session ran. "X" is ready again.", its running runs
 are closed (`killed`), the tasks its agent holds go back to ready with the reason "Forerunner
-closed while it ran", and the person gets one Update about their own work (rows on a project);
+closed while it ran", and so do the tasks its runs left in review, claimed or not (L-1, live
+check of phase C: Quit during "Being reviewed" released the task's claim through the kill
+switch, `releaseClaim` keeps a task in review in review, and the process ended before the
+runner put it back; the next start freed only the claimed tasks, so the task read "Being
+reviewed" for good and the Update said "Nothing was left half done"; tested across a restart
+in `session-recovery.test.ts` and `real-daemon.test.ts`), unless a card waits on the person
+for it, and the person gets one Update about their own work (rows on a project);
 a background job's row on no project (the critic's monthly calibration) is ended without one,
 so a crash during it never reads "Your last session was interrupted". `POST /sessions/:id/stop`
 on a row nothing in this process runs ends it the same way (`endDeadSession`, stop reason
@@ -1726,7 +1732,8 @@ never reviewed. `recordMove` of a task the person cancelled calls the executor's
 `setAside(task)` (`PrTaskExecutor.setAside`, `@forerunner/capabilities`) before the next task
 starts, so what the run changed is out of the folder, kept for Undo; the run's changed files
 are not listed in the result; the log line reads 'You cancelled it while "X" ran; what it
-changed is removed (Undo brings it back) and the session goes on.' (`setAside` count on
+changed is removed and the session goes on.' (it promised "Undo brings it back" before L-6,
+which the session's next task, changing the same files, often made untrue; `setAside` count on
 `task.moved_while_running`). The commands' `bringBackWork` port (`PrTaskExecutor.bringBack`)
 puts it back on Undo of the cancel, also after a restart (the ref is in the folder's own git).
 Tests: `continuity-cancel.test.ts` (Cancel on the Tasks tab while it runs: the files out, the
@@ -1747,6 +1754,27 @@ the first two describes, and their `real-daemon.test.ts` and `tasks.test.tsx` si
   (`taskDisplay`, `actionsFor`), not "Being reviewed". A move recorded after the run is
   recorded before a Stop now that came with it ends the session, so a cancel's files go as its
   line said.
+- **Whether a review goes on is on the task's view (L-7).** `KillSwitch.hasTask(id)` says
+  whether a registration of the task that is not stopped exists (what `stopTask` would stop);
+  `projectTaskViews` (server.ts) gives `taskDisplay` a `live` predicate from it, and a task
+  being reviewed carries `display.live`, so the Tasks tab's Cancel dialog promises its work is
+  removed only while its review goes on here, and the commands' `liveWork` port words the
+  chat's read-back the same way. Before, a task left "Being reviewed" with no review going on
+  got "Its review stops now and what it changed is removed; Undo brings it back." and nothing
+  was removed. A running task is not asked: its run stops wherever it runs (a run on another
+  computer stops once its runner's watch of the task sees the move, and that runner sets its
+  work aside).
+- **A Cancel at any moment of "Being reviewed" stops the review at once (L-8).** The review's
+  controller is registered under the task before the task moves to `in_review`, so a Cancel
+  from the first moment the row reads "Being reviewed" finds it (a move between the run's end
+  and that transition is recorded as a move during the run; a refused transition is no
+  longer a session error). The critic port (`loop/critic.ts`) goes no further once its signal
+  is aborted (after the page was opened: no lease, no checks, no critic run), and the critic's
+  own run gets the review's signal (`CriticService`, `critic.md`). Before, a Cancel about
+  0.1 s into the review (while the page was opened) stopped the review's controller, but the
+  critic's run started afterwards on no signal and ran on to an accept, spending CHF 0.03,
+  and the files left the folder only once that review ended (`real-daemon.test.ts`, "Cancel
+  in the first moment of 'Being reviewed'").
 - **Stop now, Stop all or Quit during the review put the task back to Ready.** The critic's
   stopped review throws `killed` (no Review row); with the session's own controller aborted
   and the task still `in_review`, the runner puts it back with `restoreStatus(…, "in_review",

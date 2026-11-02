@@ -196,6 +196,45 @@ describe("CriticService: checks run before the model reads (H.2, ADR 0104)", () 
     }
   });
 
+  it("a review stopped while its checks run makes no model call, and one stopped before it begins runs nothing (L-8)", async () => {
+    // Live check of phase C: a Cancel in the first moment of "Being reviewed" stopped the
+    // review, but the critic's run started after the stop without the review's signal, so its
+    // calls ran on to an accept (CHF 0.03) before the review was thrown away.
+    const stop = new AbortController();
+    const seen: string[] = [];
+    const checkRunner: CheckRunner = {
+      async run(cmd) {
+        seen.push(cmd.name);
+        // The person cancels the task while the project's tests run.
+        stop.abort(new Error("Cancel by you"));
+        return { name: cmd.name, passed: true, output: "4 passing" };
+      },
+    };
+    const w = await world({ replies: [submitReply(), closingReply()], deps: { checkRunner } });
+    try {
+      await expect(
+        w.critic.review(
+          taskInput(w.ids.task, 1),
+          w.ctx({ checks: [unit], cwd: "/work/tree", signal: stop.signal }),
+        ),
+      ).rejects.toMatchObject({ code: "killed" });
+      expect(seen).toEqual(["unit"]);
+      expect(w.provider.calls).toHaveLength(0);
+      expect(await w.store.review.forTask(w.ids.task)).toEqual([]);
+      // Stopped before it began: not even the checks run.
+      await expect(
+        w.critic.review(
+          taskInput(w.ids.task, 1),
+          w.ctx({ checks: [unit], cwd: "/work/tree", signal: stop.signal }),
+        ),
+      ).rejects.toMatchObject({ code: "killed" });
+      expect(seen).toEqual(["unit"]);
+      expect(w.provider.calls).toHaveLength(0);
+    } finally {
+      await w.close();
+    }
+  });
+
   it("tier 1 runs the task's checks too (ADR 0104: the project's build, lint and tests always run for code, never a level)", async () => {
     const seen: string[] = [];
     const checkRunner: CheckRunner = {

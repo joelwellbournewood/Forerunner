@@ -601,7 +601,27 @@ describe("IntentParser: steering phrases (design §3.9)", () => {
     expect((await parser.parse("what does the FAQ depend on?", ctx())).commands).toEqual([]);
   });
 
-  it("one task by name: skip / postpone / pause / stop -> pause; cancel; resume; reopen; try again", async () => {
+  it("'skip the X task' cancels it, as the row's Cancel; 'skip X for now' pauses it (L-10)", async () => {
+    // Live check of phase C: "Skip the Credits page task" was read back as 'Stop "Credits
+    // page in credits.html"? Its run stops now and it is paused', and Yes paused it.
+    for (const text of ["Skip the Credits page task", "skip the LICENSE task", "drop the FAQ"])
+      expect(await one(text), text).toMatchObject({
+        name: "task.transition",
+        params: { to: "cancelled" },
+      });
+    expect(await one("Skip the Credits page task")).toEqual({
+      name: "task.transition",
+      params: { task: "Credits page", to: "cancelled" },
+    });
+    expect(await one("überspringe die README Aufgabe")).toMatchObject({
+      name: "task.transition",
+      params: { to: "cancelled" },
+    });
+    for (const text of ["skip the LICENSE task for now", "skip the LICENSE task until later"])
+      expect(await one(text), text).toEqual({ name: "task.pause", params: { task: "LICENSE" } });
+  });
+
+  it("one task by name: postpone / pause / stop / skip for now -> pause; cancel; resume; reopen; try again", async () => {
     expect(await one("skip the LICENSE task for now")).toEqual({
       name: "task.pause",
       params: { task: "LICENSE" },
@@ -625,10 +645,14 @@ describe("IntentParser: steering phrases (design §3.9)", () => {
       params: { task: "style", to: "ready" },
     });
     // Phase C leftover C-38: the task named after the word "task", quoted or not, is found
-    // (before: 'no task matches "task "Write the FAQ""'); "skip" stays a pause (design §3.9: an
-    // instruction becomes a change with a read-back; the pause can be undone, a skip that
-    // cancelled would drop the task).
+    // (before: 'no task matches "task "Write the FAQ""'). Since L-10 (wave 6, stops) "skip" is
+    // the row's Cancel and "skip … for now" the pause; either way the change is read back once
+    // (design §3.9) and can be undone.
     expect(await one('Skip the task "Write the FAQ"')).toEqual({
+      name: "task.transition",
+      params: { task: "Write the FAQ", to: "cancelled" },
+    });
+    expect(await one('Skip the task "Write the FAQ" for now')).toEqual({
       name: "task.pause",
       params: { task: "Write the FAQ" },
     });

@@ -81,6 +81,13 @@ export interface TaskDisplayContext {
    * tried"); absent where the caller does not need it.
    */
   reviews?: ReadonlyMap<string, Pick<ReviewRow, "verdict" | "evidence">>;
+  /**
+   * Whether a review of the task goes on in this app now (the kill switch holds it): a task
+   * being reviewed's `live` (L-7). Absent: not said. A running task is not asked: its run goes
+   * on wherever it was claimed, and a run on another computer stops on its own once it sees the
+   * move (the runner's watch of the task), so a Cancel takes its work out there too.
+   */
+  live?: (taskId: string) => boolean;
 }
 
 /** A title as a status names it: whole when short, else cut at a word. */
@@ -197,6 +204,7 @@ function display(
     agentName: extra.agentName ?? null,
     since: extra.since ?? null,
     blocker: extra.blocker ?? null,
+    ...(extra.live !== undefined ? { live: extra.live } : {}),
   };
 }
 
@@ -248,6 +256,7 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         });
       return display("review", "Being reviewed", "info", {
         detail: "The critic is checking the work.",
+        ...(ctx.live ? { live: ctx.live(task.id) } : {}),
       });
     case "claimed":
     case "in_progress": {

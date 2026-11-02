@@ -186,8 +186,15 @@ describe("kill switch", () => {
       label: "run",
     });
 
+    // What a Cancel would stop is known before it is pressed (L-7: the dialog's words).
+    expect([ks.hasTask("t-moved"), ks.hasTask("t-other"), ks.hasTask("t-none")]).toEqual([
+      true,
+      true,
+      false,
+    ]);
     const report = ks.stopTask("t-moved", "cancelled by you");
     expect(report).toEqual({ stoppedRuns: 2, killedProcesses: 0, revokedTokens: 1 });
+    expect(ks.hasTask("t-moved")).toBe(false);
     expect(movedRun.signal.aborted && movedHold.signal.aborted).toBe(true);
     expect(movedRun.signal.reason).toMatchObject({ code: "killed", message: "cancelled by you" });
     expect(session.signal.aborted || otherRun.signal.aborted).toBe(false);

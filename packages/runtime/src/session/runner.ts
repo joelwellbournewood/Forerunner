@@ -1700,25 +1700,11 @@ export class SessionRunner {
               });
             }
           } else if (result.outcome === "done" || result.outcome === "in_review") {
-            await store.task.transition(
-              task.id,
-              task.version,
-              "in_review",
-              result.summary.slice(0, 200),
-              { agentId: agent.id },
-            );
-            // A task cancelled between its run and its review is never reviewed (phase C, live
-            // walk 2 C1: the critic "accepted" a cancelled task).
-            // Nothing live was stopped then (its run had ended, its review had not begun), so
-            // its files stay, as the cancel's line said.
-            const toReview = await store.task.mustGet(task.id);
-            if (toReview.status !== "in_review") {
-              await recordMove(toReview, result.outcome, "review", false);
-              continue;
-            }
             // The review is stopped with the task's run when the person cancels it meanwhile
             // (`KillSwitch.stopTask`, as for the run, U-039): its own controller, registered
-            // under the task, which a stop of the session aborts too.
+            // under the task, which a stop of the session aborts too. Registered before the
+            // task reads "Being reviewed" (L-8, live check of phase C): a Cancel from the first
+            // moment it reads so finds the review to stop, and its line says so truly.
             const reviewController = new AbortController();
             const onReviewAbort = () => reviewController.abort(controller.signal.reason);
             if (controller.signal.aborted) onReviewAbort();
@@ -1730,6 +1716,39 @@ export class SessionRunner {
               controller: reviewController,
               label: `review of task ${task.id} in session ${session.id}`,
             });
+            const endReviewHold = () => {
+              unregisterReview();
+              controller.signal.removeEventListener("abort", onReviewAbort);
+            };
+            try {
+              await store.task.transition(
+                task.id,
+                task.version,
+                "in_review",
+                result.summary.slice(0, 200),
+                { agentId: agent.id },
+              );
+            } catch (e) {
+              // Moved by a person after its run returned and before it went to review (a
+              // cancel in that moment): their state stands, as for a move during the run.
+              const now = await store.task.mustGet(task.id);
+              if (now.status === "in_progress") {
+                endReviewHold();
+                throw e;
+              }
+              endReviewHold();
+              await recordMove(now, result.outcome, "run", stoppedByMove(reviewController));
+              continue;
+            }
+            // A task cancelled between its run and its review is never reviewed (phase C, live
+            // walk 2 C1: the critic "accepted" a cancelled task). Its files go only when the
+            // cancel stopped the review's hold (then its line said so).
+            const toReview = await store.task.mustGet(task.id);
+            if (toReview.status !== "in_review") {
+              endReviewHold();
+              await recordMove(toReview, result.outcome, "review", stoppedByMove(reviewController));
+              continue;
+            }
             // The critic (spec H, ADR 0104): every task is reviewed before it can count as
             // done (tier 0 as the light review); the verdict is applied through the state
             // workflow.
@@ -1753,8 +1772,7 @@ export class SessionRunner {
                   })
                 : null;
             } finally {
-              unregisterReview();
-              controller.signal.removeEventListener("abort", onReviewAbort);
+              endReviewHold();
             }
             if (!reviewed) {
               inReview.push(task.id);

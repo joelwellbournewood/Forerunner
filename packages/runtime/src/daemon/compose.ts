@@ -3030,6 +3030,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // the Tasks tab's route does (U-039); the session goes on with the rest. Whether a live
       // run or review was stopped is what a cancel's sentence says of its work (phase C).
       stopTask: (taskId, reason) => kill.stopTask(taskId, reason).stoppedRuns > 0,
+      // What `stopTask` would stop: a cancel's read-back promises its work is removed only
+      // when a run or review of it goes on here (L-7).
+      liveWork: (taskId) => kill.hasTask(taskId),
       // Undo of the cancel of a task that ran (phase C): what the session took out of the
       // folder when the person cancelled it goes back in (`PrTaskExecutor.bringBack`).
       bringBackWork: async (taskId) => {
