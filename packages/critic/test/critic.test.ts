@@ -160,7 +160,7 @@ describe("CriticService: independence (H.1)", () => {
   });
 });
 
-describe("CriticService: checks run at tier 2+ (H.2)", () => {
+describe("CriticService: checks run before the model reads (H.2, ADR 0104)", () => {
   const unit: CheckCommand = { name: "unit", argv: ["pnpm", "test"] };
 
   it("tier 2 runs the task's check commands in the worktree before the model reads; a failed check is a finding", async () => {
@@ -196,10 +196,12 @@ describe("CriticService: checks run at tier 2+ (H.2)", () => {
     }
   });
 
-  it("tier 1 is a light read: commands are not run and the evidence says so", async () => {
+  it("tier 1 runs the task's checks too (ADR 0104: the project's build, lint and tests always run for code, never a level)", async () => {
+    const seen: string[] = [];
     const checkRunner: CheckRunner = {
-      async run() {
-        throw new Error("tier 1 must not run commands");
+      async run(cmd) {
+        seen.push(cmd.name);
+        return { name: cmd.name, passed: true, output: "pnpm test -> exit 0 in 12 ms\n4 passing" };
       },
     };
     const w = await world({
@@ -211,10 +213,19 @@ describe("CriticService: checks run at tier 2+ (H.2)", () => {
         taskInput(w.ids.task, 1),
         w.ctx({ checks: [unit], cwd: "/work/tree" }),
       );
+      expect(seen).toEqual(["unit"]);
       expect(out.verdict).toBe("accept");
-      expect(out.evidence).toContain(
-        "checks: 1 command was not run (a light review reads the work; a full review runs them)",
-      );
+      expect(out.evidence).toContain("ran: unit -> pass (pnpm test -> exit 0 in 12 ms)");
+      // What the person can open: the check and its output, kept on the review.
+      expect(out.verification?.checks).toContainEqual({
+        name: "unit",
+        passed: true,
+        required: true,
+        output: "pnpm test -> exit 0 in 12 ms\n4 passing",
+      });
+      const user = w.provider.calls[0]?.request.messages[0]?.content as string;
+      expect(user).toContain("4 passing");
+      expect(user).not.toContain("Checks not run at this tier");
     } finally {
       await w.close();
     }

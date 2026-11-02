@@ -413,8 +413,9 @@ export interface SessionRunnerDeps {
    */
   context?: ContextManager;
   /**
-   * The critic (spec H): reviews every task above tier 0 after its run and the session at its
-   * end. Without it tasks stay in review for a later reviewer (tier 0 closes mechanically).
+   * The critic (spec H, ADR 0104): reviews every task after its run (tier 0 as the light
+   * review) and the session at its end. Without it (an engine test world) tasks stay in review
+   * for a later reviewer and tier 0 closes on its run.
    */
   critic?: CriticPort;
   /** Session review tier (H.6). Default 0: the deterministic checks, no model call. */
@@ -1460,11 +1461,11 @@ export class SessionRunner {
           // What the session log needs to tell the run once (design §3.7, `eventAudience`):
           // whether the critic reviews it next (the branches below), and the words of a run
           // that said it could not do the work, which the critic's line then quotes.
+          // ADR 0104: every task an agent finished goes to the critic, tier 0 included.
           const toCritic =
             !!this.deps.critic &&
             task.status === "in_progress" &&
-            (result.outcome === "done" || result.outcome === "in_review") &&
-            !(result.outcome === "done" && task.risk_tier === 0 && result.checksPassed);
+            (result.outcome === "done" || result.outcome === "in_review");
           const couldNot =
             result.outcome === "done" || result.outcome === "in_review"
               ? couldNotWords(result.summary)
@@ -1525,12 +1526,17 @@ export class SessionRunner {
             continue;
           }
           lessonCandidates.push(...(result.lessons ?? []));
+          // A runner composed without a critic (an engine test world; the daemon always
+          // composes one) closes a tier 0 task on its run. With a critic, nothing is Done
+          // before the critic reviewed it (ADR 0104): tier 0 is reviewed as the light review.
           const closeTier0 =
-            result.outcome === "done" && task.risk_tier === 0 && result.checksPassed;
+            !this.deps.critic &&
+            result.outcome === "done" &&
+            task.risk_tier === 0 &&
+            result.checksPassed;
           if (closeTier0) {
-            // Tier 0 keeps the mechanical path: automated checks only, no critic. The store
-            // still refuses the close while a finding is open (B.4); that is surfaced, never
-            // worked around.
+            // The store still refuses the close while a finding is open (B.4); that is
+            // surfaced, never worked around.
             await store.task.transition(
               task.id,
               task.version,
@@ -1570,8 +1576,9 @@ export class SessionRunner {
               result.summary.slice(0, 200),
               { agentId: agent.id },
             );
-            // The critic (spec H): every task above tier 0 is reviewed at its tier before it
-            // can count as done; the verdict is applied through the state workflow.
+            // The critic (spec H, ADR 0104): every task is reviewed before it can count as
+            // done (tier 0 as the light review); the verdict is applied through the state
+            // workflow.
             const reviewed = this.deps.critic
               ? await this.reviewTask({
                   task: await store.task.mustGet(task.id),

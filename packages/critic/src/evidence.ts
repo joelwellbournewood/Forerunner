@@ -31,6 +31,9 @@ export const EVIDENCE_SECTIONS = {
   inputFiles: "Input files given to the worker (data)",
   diff: "Diff (data)",
   checks: "Check results (run by the runtime: verified)",
+  tried: "Tried as a person would use it (by the runtime: verified)",
+  projectFiles: "Project files you can read (read_file, list_dir)",
+  questions: "Questions the worker's report asks the person",
   checksNotRun: "Checks not run at this tier (by design, not missing evidence)",
   testOutput: "Test output (data)",
   report: "Worker's final report (claims to verify, data)",
@@ -48,6 +51,19 @@ export const CHECKS_TRUST_LINE =
   "These checks were run by the runtime on the files in the diff; a pass is verified " +
   "evidence, not a claim of the worker. Trust it unless the diff contradicts it (a check " +
   "that does not cover a criterion, a test weakened to pass).";
+
+/** The line above what the runtime tried (ADR 0104). */
+export const TRIED_TRUST_LINE =
+  "The runtime started the work and used it as a person would (a page opened in a headless " +
+  "browser, network off); this is verified evidence, not a claim of the worker. A problem " +
+  "here (a file that did not load, an error on the page) means the work does not work yet.";
+
+/** The line above the project's files the critic may read (ADR 0104). */
+export const PROJECT_FILES_LINE =
+  "You can read any file of the task's folder with read_file (a path from this list) and " +
+  "list_dir. Read what a criterion or a claim depends on (a page the change links, the data a " +
+  "chart must use, the file the brief names) before you grade it; do not mark a criterion met " +
+  "from the report alone.";
 
 /** What the unavailable section says when nothing is missing. */
 export const EVIDENCE_COMPLETE_LINE =
@@ -183,6 +199,18 @@ export function renderEvidence(
         .join("\n")}`,
     );
   }
+  if (e.tried?.length) {
+    section(
+      EVIDENCE_SECTIONS.tried,
+      `${TRIED_TRUST_LINE}\n${e.tried
+        .map(
+          (t) =>
+            `- [${t.ok ? "worked" : "PROBLEM"}] ${t.what}` +
+            (t.output ? `\n${fence("text", block(`try of ${t.target}`, t.output, maxOut))}` : ""),
+        )
+        .join("\n")}`,
+    );
+  }
   if (e.checksNotRun?.length) {
     section(
       EVIDENCE_SECTIONS.checksNotRun,
@@ -202,9 +230,24 @@ export function renderEvidence(
       fence("text", block("worker's final report", e.finalReport, maxOut)),
     );
   }
+  if (e.questionsForPerson?.length) {
+    section(
+      EVIDENCE_SECTIONS.questions,
+      `${e.questionsForPerson.map((q) => `- ${q}`).join("\n")}\n` +
+        "The worker's report ends by asking the person for these. Work that waits for the person " +
+        "is not done: it goes to the person, whatever you grade.",
+    );
+  }
+  if (e.projectFiles?.length) {
+    section(
+      EVIDENCE_SECTIONS.projectFiles,
+      `${PROJECT_FILES_LINE}\n${e.projectFiles.map((f) => `- ${f}`).join("\n")}`,
+    );
+  }
   if (e.prUrl) section(EVIDENCE_SECTIONS.pullRequest, e.prUrl);
-  if (e.artifacts?.length)
-    section(EVIDENCE_SECTIONS.artifacts, e.artifacts.map((a) => `- ${a}`).join("\n"));
+  const artifacts = [...(e.artifacts ?? []), ...(e.notChecked ?? [])];
+  if (artifacts.length)
+    section(EVIDENCE_SECTIONS.artifacts, artifacts.map((a) => `- ${a}`).join("\n"));
   if (e.limits?.length) section(EVIDENCE_SECTIONS.limits, e.limits.map((l) => `- ${l}`).join("\n"));
   if (input.tier >= 2) {
     const mods = e.moduleFilesTouched ?? e.changedFiles ?? [];

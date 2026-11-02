@@ -36,6 +36,11 @@ import {
   tierForAttempt,
 } from "../loop/ports.ts";
 import {
+  HOW_WORK_IS_CHECKED,
+  outcomeCriterion,
+  TESTS_FOR_BEHAVIOUR,
+} from "../loop/verification.ts";
+import {
   decideFastMode,
   FAST_MODE_AUDIT_TOOL,
   type FastModeDecision,
@@ -569,14 +574,18 @@ export class LoopTaskExecutor implements TaskExecutor {
         // executor records each run's changes itself (the workspace's history, or the PR).
         "Do not commit, push or open a pull request: Forerunner records your changes after the run (it commits them in the project's folder, or opens the pull request).",
         "Report evidence (commands and output), not claims.",
+        // ADR 0104: the brief says how the work is checked, and it is true for every task.
+        HOW_WORK_IS_CHECKED,
+        TESTS_FOR_BEHAVIOUR,
         "End the report with one line per lesson worth keeping, as 'Lesson: ...'.",
         // U-022: the person is the one who can answer; a specialist never guesses for them.
         `If the acceptance criteria need answers only the person can give (a choice of stack, hosting, repository, domain, an account), do not guess: call ${ASK_PERSON_TOOL} with the questions when it is offered, else end the report with "Questions for the person:" and one question per line.`,
         ...retryConstraints(task.attempt, openFindings),
       ],
+      // The critic reviews against the same criterion (live2 #8: a generic one was "met").
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
-        : ["The outcome described in the goal is achieved and verified."],
+        : [outcomeCriterion(task.outcome)],
       budgetUsdMicro: Math.max(1, Math.min(cap.usdMicro, sessionLeftUsdMicro)),
       riskTier: task.risk_tier as 0 | 1 | 2 | 3,
       specialist: defaultSpec.name,
@@ -1074,7 +1083,8 @@ export class LoopTaskExecutor implements TaskExecutor {
           (result.error ? redact(result.error.message) : "") ||
           result.outcome,
       costUsdMicro: result.costUsdMicro,
-      // Checks are the critic's job from tier 1 up; tier 0 closes when the specialist finished cleanly.
+      // A clean finish; the critic reviews every task (ADR 0104), so this alone closes nothing
+      // in the daemon (only a runner composed without a critic closes tier 0 on it).
       checksPassed: result.outcome === "completed",
       runId: run.id,
       ...(worktree ? { worktree } : {}),

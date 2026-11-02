@@ -24,7 +24,10 @@ const MAX_AUDIT_SUMMARY_CHARS = 500;
 
 /** Tier of a new task that names none, outside small-project mode. */
 export const DEFAULT_RISK_TIER = 1;
-/** Tier of a new task that names none in small-project mode: checks only, no critic model. */
+/**
+ * Tier of a new task that names none in small-project mode (spec B.6). Since ADR 0104 the
+ * critic reviews it as the light review: no task closes on automatic checks alone.
+ */
 export const SMALL_PROJECT_RISK_TIER = 0;
 
 /** A brief shorter than this, on at most two lines and with no list, asks for a small plan. */

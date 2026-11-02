@@ -233,6 +233,33 @@ describe("what a specialist is told (design §4.6)", () => {
     );
   });
 
+  it("the brief tells the truth about how the work is checked, and a task without criteria is held to its outcome (ADR 0104)", async () => {
+    // Live (2026-11-01): the brief said "Acceptance criteria (the critic checks each)" while a
+    // tier 0 task had no critic, and a task added in chat carried "The outcome described in the
+    // goal is achieved and verified.", which the critic marked met though nothing was verified.
+    w = await world();
+    const task = await add(w, "Write the FAQ", {
+      outcome: "docs/faq.md answers the five questions members ask most",
+      acceptance_criteria: [],
+      risk_tier: 0,
+    });
+    const provider = new ScriptedProvider([{ text: "Done." }], w.h.clock);
+    await run(w, task, provider);
+    const brief = provider.calls[0]?.messages[0]?.content as string;
+    const constraints = brief.slice(
+      brief.indexOf("## Constraints"),
+      brief.indexOf("## Acceptance"),
+    );
+    expect(constraints).toContain(
+      "- How your work is checked: after your run Forerunner runs the project's own build, lint and tests (its package.json scripts), opens a page you made or changed in a browser, and the critic reads your work and the project's files against each acceptance criterion. Nothing is done on your word alone.",
+    );
+    expect(constraints).toContain("add a test that runs it");
+    expect(brief).toContain(
+      "1. The work itself shows this outcome (a file, a page or an output, not only the report): docs/faq.md answers the five questions members ask most",
+    );
+    expect(brief).not.toContain("The outcome described in the goal is achieved and verified.");
+  });
+
   it("a retry carries the previous attempt's error, and no 'findings below' line when none follow", async () => {
     w = await world();
     const task = await add(w, "Style the page in styles.css", { attempt: 1 });

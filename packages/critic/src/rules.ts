@@ -14,7 +14,9 @@ import type { ReviewFinding, ReviewTier, RuleAdjustment, Severity, Verdict } fro
  *      becomes revise;
  *   2. accept needs a grade of at least ACCEPT_MIN_GRADE (grade and verdict agree);
  *   3. confidence below LOW_CONFIDENCE never accepts: it escalates (H.4);
- *   4. tier 3 always ends with a human sign-off (H.2).
+ *   4. work whose own report asks the person for something (a "Questions for the person:"
+ *      list) never accepts: it goes to the person (ADR 0104);
+ *   5. tier 3 always ends with a human sign-off (H.2).
  *
  * Every change is recorded as an adjustment so the review shows what the model said and what
  * the code made of it.
@@ -22,6 +24,8 @@ import type { ReviewFinding, ReviewTier, RuleAdjustment, Severity, Verdict } fro
 export const LOW_CONFIDENCE = 0.6;
 export const ACCEPT_MIN_GRADE = 70;
 export const ESCALATE_RULE = "escalate_needs_reason";
+/** Work whose report asks the person for something is not accepted (ADR 0104). */
+export const ASKS_PERSON_RULE = "asks_person";
 export const SEVERITY_ORDER: readonly Severity[] = ["info", "low", "medium", "high", "critical"];
 /** Severities that block accept and keep a task from closing. */
 export const BLOCKING_SEVERITIES: ReadonlySet<Severity> = new Set<Severity>([
@@ -68,6 +72,11 @@ export interface RawVerdict {
   /** The model's stated reason for an escalate, when it gave one. */
   escalation?: SubmitEscalation | null;
   grounds?: EscalationGrounds;
+  /**
+   * Questions the work's own report asks the person (a "Questions for the person:" list, ADR
+   * 0104): work that waits for the person is not done, so it never accepts.
+   */
+  asksPerson?: number;
 }
 
 export type EscalationCheck =
@@ -204,6 +213,15 @@ export function applyVerdictRules(raw: RawVerdict, tier: ReviewTier): RuledVerdi
       "low_confidence",
       "escalate",
       `confidence ${confidence.toFixed(2)} is below ${LOW_CONFIDENCE}; low confidence never accepts (H.4)`,
+    );
+  }
+  if (verdict === "accept" && (raw.asksPerson ?? 0) > 0) {
+    // Live (2026-11-01, "Members chart"): a report that made no chart and asked for the data
+    // file was accepted ("a blocked report is the right outcome") and the task was Done.
+    change(
+      ASKS_PERSON_RULE,
+      "human",
+      `the work's report asks the person ${raw.asksPerson === 1 ? "a question" : `${raw.asksPerson} questions`}; work that waits for the person is not done (ADR 0104)`,
     );
   }
   if (tier === 3) {

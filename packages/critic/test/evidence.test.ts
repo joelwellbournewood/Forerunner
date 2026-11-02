@@ -117,6 +117,13 @@ describe("renderEvidence: what the critic is given (ADR 0042)", () => {
     for (const reason of ESCALATION_REASONS) expect(prompt).toContain(reason);
     expect(prompt).toMatch(/pass .* is verified evidence/);
     expect(prompt).toContain("Low confidence is never accept");
-    expect(CRITIC_PROMPT.promptVersion).toMatch(/^critic@1\.1\.0\+[0-9a-f]{8}$/);
+    // ADR 0104: the prompt names what was tried, the files it may read and the questions rule.
+    expect(prompt).toContain(EVIDENCE_SECTIONS.tried);
+    expect(prompt).toContain(EVIDENCE_SECTIONS.projectFiles);
+    expect(prompt).toContain(EVIDENCE_SECTIONS.questions.split(" (")[0] ?? "");
+    expect(prompt).toContain(
+      "A deliverable the brief or a criterion asks for that is not there is never met",
+    );
+    expect(CRITIC_PROMPT.promptVersion).toMatch(/^critic@1\.2\.0\+[0-9a-f]{8}$/);
   });
 });

@@ -21,8 +21,8 @@ eval set so grade drift is visible.
 
 | Tier | Depth | Model (spec D table) | Effort | Time | Ends with |
 | --- | --- | --- | --- | --- | --- |
-| 0 | automated checks only, no model (`tier0.ts`) | none | - | check timeouts | accept only if every required check passes and criteria exist |
-| 1 | light read | Sonnet (`critic_t1`) | medium | 30 s target, also the run timeout | model verdict, bounded by the rules |
+| 0 | automated checks only, no model (`tier0.ts`); since ADR 0104 the runtime never reviews a task at 0 (it reviews it at 1), so this is for callers outside the session loop | none | - | check timeouts | accept only if every required check passes and criteria exist |
+| 1 | light review: the task's checks are run, the critic may read the task's folder, what was tried is evidence | Sonnet (`critic_t1`) | medium | 30 s target; up to 180 s when it reads files (`READING_REVIEW_TIMEOUT_MS`) | model verdict, bounded by the rules |
 | 2 | full review: the task's check commands are run, doc drift checked | Opus (`critic_t23`) | high | task budget, 10 min default timeout | model verdict, bounded by the rules |
 | 3 | deep review (checks run) plus human sign-off | Opus | max | task budget | always `human`, with a blocking `HumanRequest` carrying the summary and findings |
 
@@ -67,16 +67,46 @@ off, is unchanged and writes nothing.
 
 Checks: `ctx.checks` (argv commands, `ctx.cwd` the worktree) are run through the `CheckRunner`
 (`tier0.ts#runChecks`; the default `ProcessCheckRunner` uses `platform.run` with a timeout per
-command and resolves a relative command `cwd` under the worktree) at tiers 0, 2 and 3, before
-the evidence is rendered. The results join `evidence.checkResults`, so the model reads the
-output and a failed required check is a high finding; the evidence list records each as
-`ran: <name> -> pass|fail (<first line>)`. Tier 1 is a light read under its 30 s target: it
-does not run commands and records `checks: N command(s) not run at tier 1 ...` instead, so the
-omission is never silent.
+command and resolves a relative command `cwd` under the worktree) at every tier, before the
+evidence is rendered (ADR 0104: the project's build, lint and tests always run for code and are
+never a level; before, tier 1 only listed them as not run). The runtime's critic loop hands a
+`CheckRunner` over a lease of the task's sandbox (`sandboxCheckRunner`), so nothing runs on the
+host. The results join `evidence.checkResults`, so the model reads the output and a failed
+required check is a high finding; the evidence list records each as
+`ran: <name> -> pass|fail (<first line>)`.
+
+Verification (ADR 0104, `types.ts`):
+- **Read access.** `ctx.project = { root, tools }` gives a task review read-only tools (the
+  runtime's `read_file` and `list_dir`) besides `submit_review`. The critic's token allows those
+  tools and `allowedPaths: [root]` only, so the hooks refuse a path outside the folder; the run
+  gets `cwd: root`, up to `READING_REVIEW_TURNS` (12) calls and, without an explicit timeout,
+  `READING_REVIEW_TIMEOUT_MS`. `evidence.projectFiles` (the folder's files) is rendered under
+  "Project files you can read (read_file, list_dir)".
+- **Tried.** `evidence.tried` (`TriedEvidence[]`: what, target, ok, blocking, output,
+  screenshots) is rendered under "Tried as a person would use it (by the runtime: verified)". A
+  try that is not ok is a finding: high when `blocking` (the page did not open or threw an
+  error), low otherwise (a linked file that did not load: the critic weighs it against the
+  brief).
+- **Questions for the person.** `evidence.questionsForPerson` (the report's "Questions for the
+  person:" list) is rendered as such, and `rules.ts` turns an accept into `human`
+  (`ASKS_PERSON_RULE`): work that waits for the person is never accepted.
+- **Not checked.** `evidence.notChecked` (what could not be run or tried, and why) is rendered
+  with the artifacts.
+- **For the person.** A task review's output carries `verification` (`VerificationRecord`:
+  checks with their output cut to 2000 characters, the tries, what was not checked), persisted
+  as one `{ verification }` entry of the review row's `evidence`; the daemon reads it for
+  "Reviewed" / "Reviewed and tried" and the task drawer.
+- A `doc_drift` that starts with "none" (or "no drift", "n/a") is no drift (`noDocDrift`; live,
+  "none (docs/testing.md still says …)" turned an accept into a revise), and a finding the model
+  gave no action for asks to "Resolve it and show the evidence" (`NO_ACTION_GIVEN`), never
+  "Fix: <the finding>".
 
 Mandatory tiers (open decision in the spec): anything touching main, security, data, money or
-science claims is reviewed at tier 2 or higher. Small-project mode (spec B.6, ADR 0051)
-defaults a new task that names no tier to tier 0: that default is chosen in one place, the
+science claims is reviewed at tier 2 or higher. The runtime reviews every task an agent finished
+at its tier, never below 1 and never below its specialist's registry `risk_tier_floor`, and a
+deploy or a migration at 3 (ADR 0104, `packages/runtime/src/loop/verification.ts`).
+Small-project mode (spec B.6, ADR 0051)
+defaults a new task that names no tier to tier 0 (reviewed as tier 1): that default is chosen in one place, the
 runtime's `defaultRiskTier(project)` (`packages/runtime/src/session/project-plan.ts`), by every
 task creation path, and stored on the task (`risk_tier`). The critic reviews at the tier it is
 given and never reads the flag, so a tier named on a task stands whatever the mode and flipping

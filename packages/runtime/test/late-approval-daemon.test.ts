@@ -9,6 +9,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { approvalKeyFor } from "../src/enforcement/hooks.ts";
 import { LATE_APPROVAL_AUDIT_TOOL } from "../src/session/late-approval.ts";
+import { AcceptingCriticProvider } from "./helpers.ts";
 
 /**
  * ADR 0088 on the desktop daemon: a hooks approval a session filed for its task, answered
@@ -33,7 +34,10 @@ async function compose(clock: SimulatedClock): Promise<RuntimeApp> {
     clock,
     stateUrl: "sqlite::memory:",
     vault: new MemoryVault(),
-    provider: new FakeProvider({ replies: [], onNoMatch: "echo", clock, latency: "none" }),
+    // The critic reviews every task (ADR 0104), tier 0 too: it accepts here; the subject is elsewhere.
+    provider: new AcceptingCriticProvider(
+      new FakeProvider({ replies: [], onNoMatch: "echo", clock, latency: "none" }),
+    ),
     registryDir: REGISTRY,
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.1.0-test",

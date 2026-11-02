@@ -290,12 +290,29 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   const plannedSentBack = sentBackOf(session.handoff).filter(
     (id) => planned.has(id) && data.tasks.get(id)?.status !== "done" && !plannedFailed.includes(id),
   );
-  if (plannedDoneTasks === 0 && plannedFailed.length + plannedSentBack.length > 0) {
+  // Live (2026-11-02, D): a session whose only task was refused at once and waits for the
+  // person read "Session review: accepted (grade 100, 0 finding(s))". Work that waits for the
+  // person is not done either.
+  const plannedWaiting = [...planned].filter(
+    (id) =>
+      data.tasks.get(id)?.status === "needs_human" &&
+      !plannedFailed.includes(id) &&
+      !plannedSentBack.includes(id),
+  );
+  if (
+    plannedDoneTasks === 0 &&
+    plannedFailed.length + plannedSentBack.length + plannedWaiting.length > 0
+  ) {
     const parts = [
       ...(plannedFailed.length ? [`${plannedFailed.length} of ${planned.size} failed`] : []),
       ...(plannedSentBack.length
         ? [
             `${plannedSentBack.length}${plannedFailed.length ? "" : ` of ${planned.size}`} sent back by the critic`,
+          ]
+        : []),
+      ...(plannedWaiting.length
+        ? [
+            `${plannedWaiting.length}${plannedFailed.length + plannedSentBack.length ? "" : ` of ${planned.size}`} ${plannedWaiting.length === 1 ? "waits" : "wait"} for the person`,
           ]
         : []),
     ];
@@ -304,8 +321,10 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       `No planned task was done: ${parts.join(", ")}`,
       plannedSentBack.length && !plannedFailed.length
         ? "Address the critic's findings on each task sent back before planning it again"
-        : "Read each failed task's reason and fix what stopped it before planning it again",
-      [...plannedFailed, ...plannedSentBack].join(", "),
+        : plannedFailed.length
+          ? "Read each failed task's reason and fix what stopped it before planning it again"
+          : "Say in the summary what the person must answer before the work can go on",
+      [...plannedFailed, ...plannedSentBack, ...plannedWaiting].join(", "),
     );
   }
   const costPerDone = doneTasks > 0 ? Math.round(actual / doneTasks) : null;

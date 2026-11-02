@@ -7,7 +7,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { SANDBOX_NOTICE_AUTHOR } from "../src/daemon/sandbox-wiring.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { FakeContainerEngine } from "../src/sandbox/fake-engine.ts";
-import { ScriptedProvider } from "./helpers.ts";
+import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
 
 /**
  * U-079: while the Docker sandbox is not ready, a full-review task (tier 2+) waits: the session
@@ -39,7 +39,10 @@ describe("full-review tasks wait for the Docker sandbox (U-079)", () => {
       clock,
       stateUrl: "sqlite::memory:",
       vault: new MemoryVault(),
-      provider: new ScriptedProvider([{ text: "Done. Nothing to report." }], clock),
+      // The critic reviews every task (ADR 0104), tier 0 too: it accepts here; the subject is elsewhere.
+      provider: new AcceptingCriticProvider(
+        new ScriptedProvider([{ text: "Done. Nothing to report." }], clock),
+      ),
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",

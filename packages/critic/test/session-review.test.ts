@@ -444,6 +444,43 @@ describe("session review (H.6)", () => {
     }
   });
 
+  it("a session whose only planned task waits for the person is not graded 100 (live 2026-11-02, D)", async () => {
+    const w = await world();
+    try {
+      // Live: the researcher was refused at once on an API key; the task waits for the person
+      // and the session review read "accepted (grade 100, 0 finding(s))".
+      const a = await w.newTask({ status: "needs_human", title: "Research the clubs" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [{ taskId: a.id, title: a.title, estimateUsdMicro: 200_000 }],
+          estimateUsdMicro: 200_000,
+          summary: "",
+        },
+        summary: '"Research the clubs" needs your decision (Inbox).',
+        handoff: { done: [], sent_back: [], blocked: [a.id] },
+        status: "completed",
+        spent_usd_micro: 0,
+      });
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.grade).toBeLessThan(100);
+      expect(out.verdict).not.toBe("accept");
+      expect(out.findings.map((f) => f.description)).toEqual([
+        "No planned task was done: 1 of 1 waits for the person",
+      ]);
+      expect(out.findings[0]?.requiredAction).toBe(
+        "Say in the summary what the person must answer before the work can go on",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
   it("a session with one task failed and one sent back names both in one finding (U-072)", async () => {
     const w = await world();
     try {

@@ -79,6 +79,7 @@ import {
   runChecks,
 } from "./tier0.ts";
 import type {
+  ReviewEvidence,
   ReviewFinding,
   ReviewInput,
   ReviewOutcome,
@@ -86,6 +87,7 @@ import type {
   ReviewTier,
   RuleAdjustment,
   Verdict,
+  VerificationRecord,
 } from "./types.ts";
 
 /**
@@ -206,10 +208,25 @@ export interface ReviewContext {
    */
   checks?: CheckCommand[];
   cwd?: string;
+  /**
+   * Read access to the task's folder (ADR 0104): read-only tools (the runtime's `read_file` and
+   * `list_dir`) the critic may call besides `submit_review`, confined to `root` by its token's
+   * paths and the hooks. Without it the critic reads only the rendered evidence.
+   */
+  project?: { root: string; tools: readonly ToolSpec[] };
   /** Human to address a sign-off request to. Default: the session token's owner. */
   humanId?: string | null;
   onEvent?: (ev: RunEvent) => void;
 }
+
+/** Model calls a review that may read the project's files gets (it reads, then submits). */
+export const READING_REVIEW_TURNS = 12;
+/**
+ * Wall clock for a light review that reads files (ADR 0104): the 30 s target stays the target
+ * (the review's evidence says when it was missed), but a run that reads a few files is not cut
+ * at it. Tiers 2 and 3 keep their own timeout.
+ */
+export const READING_REVIEW_TIMEOUT_MS = 180_000;
 
 const SYSTEM_SUFFIX =
   "\n\n## Returning the review\n\nCall the `submit_review` tool exactly once with the complete " +
@@ -368,12 +385,12 @@ export class CriticService {
     const sessionCode: SessionChecks | null = sessionData ? sessionChecks(sessionData) : null;
     let effective = sessionData ? withSessionEvidence(input, sessionData) : input;
 
-    // Tiers 2 and 3 run the task's checks (H.2 "full review with tests run") before the model
-    // reads: the results join the evidence, so a failed check is a finding and the model sees
-    // the output. Tier 1 is a light read under its 30 s target and only notes the commands.
+    // The task's checks run before the model reads, at every tier (ADR 0104: the project's
+    // build, lint and tests always run for a code task and are never a level): the results
+    // join the evidence, so a failed check is a finding and the model sees the output.
     const preEvidence: string[] = [];
     const checks = ctx.checks ?? [];
-    if (checks.length > 0 && tier >= 2) {
+    if (checks.length > 0) {
       const ran = await runChecks(checks, {
         cwd: ctx.cwd,
         runner: this.deps.checkRunner,
@@ -387,23 +404,6 @@ export class CriticService {
         },
       };
       preEvidence.push(...ran.map(ranCheckLine));
-    } else if (checks.length > 0) {
-      preEvidence.push(
-        // Shown under the review's Details (design §5 rule 6): words, no "tier" or "(s)".
-        `checks: ${checks.length === 1 ? "1 command was" : `${checks.length} commands were`} not run (a light review reads the work; a full review runs them)`,
-      );
-      // The critic is told which commands were not run and that this is the tier's design,
-      // so it grades the diff by reading instead of escalating for "missing" check results.
-      effective = {
-        ...effective,
-        evidence: {
-          ...effective.evidence,
-          checksNotRun: [
-            ...(effective.evidence.checksNotRun ?? []),
-            ...checks.map((c) => `${c.name}: ${c.argv.join(" ")}`),
-          ],
-        },
-      };
     }
 
     const rendered = renderEvidence(
@@ -411,7 +411,13 @@ export class CriticService {
       { openFindings },
       { ...this.deps.render, pipeline: this.deps.render?.pipeline ?? this.deps.context },
     );
-    // The critic's own token: the session's ids and budget, one tool, nothing else (H.1).
+    // Read access to the task's folder (ADR 0104): read-only tools besides submit_review.
+    const readTools = input.subject.kind === "task" && ctx.project ? [...ctx.project.tools] : [];
+    const readRoot = readTools.length ? ctx.project?.root : undefined;
+    if (readTools.length && ctx.timeoutMs === undefined)
+      pick.timeoutMs = Math.max(pick.timeoutMs, READING_REVIEW_TIMEOUT_MS);
+    // The critic's own token: the session's ids and budget, the submit tool and the read tools
+    // when it may read the task's folder (only that folder), nothing else (H.1).
     const token = this.deps.tokens.issue({
       runId,
       sessionId: parent.sessionId,
@@ -419,8 +425,8 @@ export class CriticService {
       ownerHumanId: parent.ownerHumanId,
       projectId: parent.projectId,
       taskId: taskId ?? parent.taskId,
-      allowedTools: [SUBMIT_REVIEW_TOOL],
-      allowedPaths: [],
+      allowedTools: [SUBMIT_REVIEW_TOOL, ...readTools.map((t) => t.name)],
+      allowedPaths: readRoot ? [readRoot] : [],
       allowedDomains: [],
       grantedSecrets: [],
       budgetUsdMicro: Math.min(ctx.budgetUsdMicro ?? parent.budgetUsdMicro, parent.budgetUsdMicro),
@@ -445,6 +451,7 @@ export class CriticService {
         { endRun: maxEffort },
       ),
     );
+    for (const t of readTools) tools.register(t);
     const label = subjectLabel(input.subject);
     if (fast.kind !== "off") {
       if (persist)
@@ -470,7 +477,8 @@ export class CriticService {
         pricing: this.deps.pricing(runModel),
         ...(fast.kind === "applied" ? { speed: "fast" as const } : {}),
         timeoutMs: pick.timeoutMs,
-        maxTurns: this.deps.maxTurns ?? 3,
+        maxTurns: this.deps.maxTurns ?? (readTools.length ? READING_REVIEW_TURNS : 3),
+        ...(readRoot ? { cwd: readRoot } : {}),
         maxTokensPerCall: this.deps.maxTokensPerCall ?? REVIEW_TOKENS_PER_CALL,
         ...(maxEffort ? { maxTokensCeiling: MAX_EFFORT_TOKENS_CEILING } : {}),
         effort: pick.effort,
@@ -516,6 +524,9 @@ export class CriticService {
       lessonProposals: [],
       promptVersion: this.deps.prompt.promptVersion,
       runId,
+      ...(input.subject.kind === "task"
+        ? { verification: verificationOf(effective.evidence) }
+        : {}),
     };
     output.evidence.push(
       ...preEvidence,
@@ -696,7 +707,8 @@ export class CriticService {
         add({
           severity: severityOf(f.severity),
           description: f.what,
-          requiredAction: f.required_action ?? `Fix: ${f.what}`,
+          // Live (2026-11-02, B3): "Fix: <the finding>" made the retry brief read "X -> Fix: X".
+          requiredAction: f.required_action?.trim() || NO_ACTION_GIVEN,
           where: f.where ?? f.how_to_see,
         });
       }
@@ -714,7 +726,7 @@ export class CriticService {
         }
       }
       evidence.push(...submitted.evidence, ...submitted.checks_run.map((c) => `ran: ${c}`));
-      if (submitted.doc_drift && !/^\s*none\s*\.?\s*$/i.test(submitted.doc_drift)) {
+      if (submitted.doc_drift && !noDocDrift(submitted.doc_drift)) {
         add({
           severity: "medium",
           description: `Doc drift: ${submitted.doc_drift}`,
@@ -726,6 +738,19 @@ export class CriticService {
     // A failed required check blocks accept at every tier (B.4), whatever the model said.
     for (const r of e.checkResults ?? []) {
       if (!r.passed) add(findingForFailedCheck(r));
+    }
+    // So does a try that a person would be stopped by at once (ADR 0104): the page did not open
+    // or threw an error. A smaller problem (a linked file that did not load) is a low finding
+    // the critic weighs against the brief.
+    for (const t of e.tried ?? []) {
+      if (t.ok) continue;
+      const first = triedProblem(t.output);
+      add({
+        severity: t.blocking ? "high" : "low",
+        description: `Tried ${t.target}: ${first}`,
+        requiredAction: `Make ${t.target} work when it is opened as a person would use it`,
+        where: t.target,
+      });
     }
 
     if (input.tier >= 2) {
@@ -756,7 +781,15 @@ export class CriticService {
     }
 
     const ruled = applyVerdictRules(
-      { grade, confidence, verdict, findings, escalation: submitted?.escalation ?? null, grounds },
+      {
+        grade,
+        confidence,
+        verdict,
+        findings,
+        escalation: submitted?.escalation ?? null,
+        grounds,
+        asksPerson: e.questionsForPerson?.length ?? 0,
+      },
       input.tier,
     );
     if (ruled.escalation) {
@@ -808,7 +841,12 @@ export class CriticService {
       grade: out.grade,
       confidence: out.confidence,
       verdict: out.verdict,
-      evidence: out.evidence as JsonValue[],
+      evidence: [
+        ...(out.evidence as JsonValue[]),
+        ...(out.verification
+          ? [{ verification: out.verification as unknown as JsonValue } as JsonValue]
+          : []),
+      ],
       summary: out.summary,
       author_agent: this.deps.criticAgentId,
     });
@@ -1102,4 +1140,43 @@ function failedRun(runId: string, message: string): RunResult {
   };
 }
 
+/** The first problem line of a try's output (its "problem:" lines first), at most 300 characters. */
+function triedProblem(output: string): string {
+  const lines = output.split(/\r?\n/).map((l) => l.trim());
+  const problem = lines.find((l) => /^problem:/i.test(l))?.replace(/^problem:\s*/i, "");
+  return (problem ?? lines.find((l) => l) ?? "it did not work").slice(0, 300);
+}
+
+/**
+ * What a finding asks for when the model named no action: words that do not repeat the
+ * finding (the retry brief reads "<finding> -> <action>").
+ */
+export const NO_ACTION_GIVEN = "Resolve it and show the evidence";
+
+/**
+ * Whether the model's `doc_drift` says there is none. Live (2026-11-02, B3), "none
+ * (docs/testing.md still says ...)" was read as drift and turned an accept into a revise: a
+ * text that starts with "none" (or "no drift", "n/a") is no drift, whatever explanation follows.
+ */
+export function noDocDrift(text: string): boolean {
+  return /^\s*(?:none|no(?:\s+doc(?:s|umentation)?)?\s+drift|n\/a|not applicable)\b/i.test(text);
+}
+
 export type { RuleAdjustment };
+
+/**
+ * What the person sees of the check (ADR 0104): the checks the runtime ran (their output cut
+ * short) and what it tried, with the screenshots it stored.
+ */
+export function verificationOf(e: ReviewEvidence): VerificationRecord {
+  return {
+    checks: (e.checkResults ?? []).map((c) => ({
+      name: c.name,
+      passed: c.passed,
+      required: c.required !== false,
+      output: c.output.slice(0, 2000),
+    })),
+    tried: (e.tried ?? []).map((t) => ({ ...t, output: t.output.slice(0, 2000) })),
+    notChecked: [...(e.notChecked ?? [])],
+  };
+}

@@ -16,7 +16,7 @@ import {
   type TaskExecutor,
 } from "../src/session/runner.ts";
 import { seedWorld } from "./context-helpers.ts";
-import { ScriptedProvider } from "./helpers.ts";
+import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
 
 /**
  * U-039: Cancel, Mark failed or Needs me on a task that is running ended the whole session as
@@ -77,7 +77,8 @@ describe("a person's move on a running task stops that task's run; the session g
       clock,
       stateUrl: "sqlite::memory:",
       vault: new MemoryVault(),
-      provider,
+      // The critic reviews every task (ADR 0104): it accepts here; `provider` sees the rest.
+      provider: new AcceptingCriticProvider(provider),
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",

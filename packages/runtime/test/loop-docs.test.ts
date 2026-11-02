@@ -203,7 +203,8 @@ describe("project docs at session end (spec G.5)", () => {
   });
 
   it("a session that touched no task writes nothing, and a failing write never fails the session", async () => {
-    const w = await loopWorld();
+    // The task is reviewed before it is done (ADR 0104: tier 0 is the light review).
+    const w = await loopWorld({ replies: [submitReply(), closingReply()] });
     const { root } = await bareRepo();
     const { docs } = await docsFor(w, root, null);
     const idle = await w.start(w.runner(doneExecutor(w), { docs }));
