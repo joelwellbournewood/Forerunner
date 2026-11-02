@@ -838,7 +838,7 @@ describe("verification: a command line tool, an API and a Python project are tri
     const t = v?.tried[0];
     expect(t).toMatchObject({ kind: "command", target: "node wc.js <file>", ok: true });
     expect(t?.output).toContain(
-      "ran node wc.js <file> (from an acceptance criterion) in the process sandbox on this computer, the network off",
+      "ran node wc.js <file> (from an acceptance criterion) on this computer, not in a container (a program that ignores proxy settings can still reach the network)",
     );
     expect(t?.output).toContain(
       "<file>: a sample text file written for the try (2 lines, 9 words):\n  the quick brown fox\n  jumps over the lazy dog",
@@ -874,12 +874,51 @@ describe("verification: a command line tool, an API and a Python project are tri
     const found = (await w.store.finding.list({ task_id: task.id } as never)).map((f) => [
       f.severity,
       f.description,
+      f.required_action,
     ]);
+    // The retry brief and the drawer ask for what a command needs, in a command's words.
     expect(found).toContainEqual([
       "high",
       "Tried node wc.js <file>: it exited with code 1: TypeError: Cannot read properties of undefined (reading 'toFixed')",
+      "Make node wc.js <file> work when it is run as a person would run it",
     ]);
     expect((await w.store.task.mustGet(task.id)).status).not.toBe("done");
+    await w.close();
+  });
+
+  it("C-1: a usage line at the end of a sentence ('node wc.js <file>.') runs the tool with a sample file, and correct work is Done", async () => {
+    // The review's walk (h): a usual tool that reads only its command line and says how to use
+    // it without one. The try read "<file>." as a redirect, ran `node wc.js` with the sample on
+    // its standard input, saw exit 1 and sent correct work back until the person had to decide.
+    const root = taskFolder({
+      "wc.js": [
+        "const file = process.argv[2];",
+        'if (!file) { console.error("Usage: node wc.js <file>"); process.exit(1); }',
+        'console.log(require("fs").readFileSync(file, "utf8").split(/\\s+/).filter(Boolean).length);',
+        "",
+      ].join("\n"),
+    });
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }), closingReply()],
+      critic: { sandbox: processSandbox([]), hasCommand: async () => true },
+    });
+    const task = await w.addTask("Keep wc.js working", {
+      outcome: "The word counter still works. Usage: node wc.js <file>.",
+      acceptance_criteria: ["wc.js keeps working as before: node wc.js <file>."],
+    });
+    await w.start(w.runner(doneExecutor(w, { worktree: root, changedFiles: ["wc.js"] })));
+    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    const v = await verificationOfTask(w, task.id);
+    expect(v?.tried).toHaveLength(1);
+    const t = v?.tried[0];
+    expect(t).toMatchObject({ kind: "command", target: "node wc.js <file>", ok: true });
+    expect(t?.output).toContain("ran node wc.js <file> (from an acceptance criterion)");
+    expect(t?.output).toContain(
+      "<file>: a sample text file written for the try (2 lines, 9 words)",
+    );
+    expect(t?.output).toMatch(/exit 0 in \d+ ms\noutput:\n9/);
+    expect(t?.output).not.toContain("standard input");
     await w.close();
   });
 
@@ -901,7 +940,7 @@ describe("verification: a command line tool, an API and a Python project are tri
     const t = (await verificationOfTask(w, task.id))?.tried[0];
     expect(t).toMatchObject({ kind: "server", target: "node server.js", ok: true });
     expect(t?.output).toContain(
-      "started node server.js (from the brief) in the process sandbox on this computer, the network off; it listened",
+      "started node server.js (from the brief) on this computer, not in a container (a program that ignores proxy settings can still reach the network); it listened",
     );
     expect(t?.output).toContain(
       'GET /health (named in the brief) -> 200 application/json: {"ok":true}',
@@ -910,6 +949,101 @@ describe("verification: a command line tool, an API and a Python project are tri
     expect(existsSync(join(root, ".forerunner-try"))).toBe(false);
     await w.close();
   }, 30_000);
+
+  const MEMBERS = [
+    'const http = require("http");',
+    "http.createServer((req, res) => {",
+    '  const json = (code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };',
+    '  if (req.url === "/health") return json(200, { ok: true });',
+    '  if (req.url === "/admin") return req.headers.authorization ? json(200, { admin: true }) : json(OPEN_ADMIN ? 200 : 401, { error: "token required" });',
+    '  json(404, { error: "not found" });',
+    "}).listen(process.env.PORT || 3000);",
+    "",
+  ].join("\n");
+
+  it("C-1: an API whose routes answer the 401 and 404 its criteria expect is Done · Reviewed and tried", async () => {
+    // The review's walk (i): the server answered exactly what its criteria say, and the try
+    // sent it back four times for "GET /admin answered 401".
+    const root = taskFolder({ "server.js": `const OPEN_ADMIN = false;\n${MEMBERS}` });
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }), closingReply()],
+      critic: { sandbox: processSandbox([]), hasCommand: async () => true },
+    });
+    const task = await w.addTask("Write the members API", {
+      outcome: "A members API in server.js",
+      acceptance_criteria: [
+        "`node server.js` still answers GET /health with 200",
+        "GET /admin answers 401 without a token",
+        "GET /nope answers 404",
+      ],
+    });
+    await w.start(w.runner(doneExecutor(w, { worktree: root, changedFiles: ["server.js"] })));
+    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    const t = (await verificationOfTask(w, task.id))?.tried[0];
+    expect(t).toMatchObject({ kind: "server", target: "node server.js", ok: true });
+    expect(t?.output).toContain(
+      'GET /admin (named in the brief) -> 401 application/json: {"error":"token required"} (the brief expects 401)',
+    );
+    expect(t?.output).toContain(
+      'GET /nope (named in the brief) -> 404 application/json: {"error":"not found"} (the brief expects 404)',
+    );
+    expect(t?.output).not.toContain("problem:");
+    expect(
+      (await w.store.finding.list({ task_id: task.id } as never)).map((f) => f.description),
+    ).toEqual([]);
+    await w.close();
+  }, 30_000);
+
+  it("C-1: an API that answers 200 where its criterion expects 401 is sent back; a named route that answers 404 with no answer named is weighed, not blocking", async () => {
+    const root = taskFolder({ "server.js": `const OPEN_ADMIN = true;\n${MEMBERS}` });
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 92 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: { sandbox: processSandbox([]), hasCommand: async () => true },
+    });
+    const open = await w.addTask("Write the members API", {
+      acceptance_criteria: ["GET /admin answers 401 without a token"],
+    });
+    const r = await w.start(
+      w.runner(doneExecutor(w, { worktree: root, changedFiles: ["server.js"] })),
+      { budgetCapUsdMicro: 1_000_000 },
+    );
+    expect(r.reviews[0]).toMatchObject({ taskId: open.id, verdict: "revise" });
+    expect(
+      (await w.store.finding.list({ task_id: open.id } as never)).map((f) => [
+        f.severity,
+        f.description,
+        f.required_action,
+      ]),
+    ).toContainEqual([
+      "high",
+      "Tried node server.js: GET /admin answered 200, and the brief says it answers 401",
+      "Make node server.js start and answer as a person would use it",
+    ]);
+    await w.close();
+
+    // A route the brief names without saying what it answers, answering 404: a low finding the
+    // critic weighs against the brief (the route may be a later task's), not a send-back.
+    const root2 = taskFolder({ "server.js": `const OPEN_ADMIN = false;\n${MEMBERS}` });
+    const w2 = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }), closingReply()],
+      critic: { sandbox: processSandbox([]), hasCommand: async () => true },
+    });
+    const items = await w2.addTask("Write the members API", {
+      acceptance_criteria: ["GET /health answers 200", "GET /items lists the members"],
+    });
+    await w2.start(w2.runner(doneExecutor(w2, { worktree: root2, changedFiles: ["server.js"] })));
+    expect((await w2.store.task.mustGet(items.id)).status).toBe("done");
+    expect(
+      (await w2.store.finding.list({ task_id: items.id } as never)).map((f) => [
+        f.severity,
+        f.description,
+      ]),
+    ).toEqual([["low", "Tried node server.js: GET /items answered 404"]]);
+    await w2.close();
+  }, 60_000);
 
   it("C-1: an API that crashes when it starts is sent back with the error it printed", async () => {
     const root = taskFolder({

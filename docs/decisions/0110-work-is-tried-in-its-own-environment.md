@@ -37,31 +37,48 @@ C-17, L-4, L-5, R-1; `/tmp/frbench/handoffs.json` "verification"):
      guess ("node greet.js Ada prints …") is not run; a tool that reads its command line but whose
      usage nobody wrote down is not guessed at: the review says it was not tried and why. A text
      around the command that expects an error ("exits with code 1") makes a failing exit no
-     problem;
+     problem, and one that says it keeps running ("watches the folder", "until you stop it")
+     makes a tool still running after 5 s no problem. A full stop or comma after a placeholder is
+     the sentence's ("Usage: node wc.js <file>." runs `node wc.js <sample>`, never a redirect
+     from a file named "file>."), and `./wc.js` is `wc.js`;
    - an **API or a server**: a file the task wrote that listens (`.listen(`, `serve_forever`,
      `app.run(`, …) is started (the command the brief names, else `node <file>` / `python3
      <file>`), with `PORT` set to a free port; the ports its code or the brief names are watched
      too. Its GET routes are called: the ones the brief, a criterion or the README names first
      (`GET /health`, `` `/items` ``), then the ones its code handles, else `/`; routes with
-     parameters and other methods are listed as not called;
+     parameters and other methods are listed as not called. A named route carries what its
+     sentence says it answers: a status ("GET /admin answers 401 without a token"), an error
+     ("refuses", "not found"), or a call with a token or a login the try's plain GET does not
+     make;
    - a **page**: as ADR 0104 (`pagesToTry`);
    - a **library**: nothing is started; its tests check it.
 2. **Commands and servers run in the task's sandbox lease** (`try-run.ts`, `runTries`): the same
    lease the project's checks use, the container when Docker is ready (always for a full review,
-   ADR 0101), the process sandbox otherwise; the network off; 30 s per command, 15 s for a server
-   to listen and 5 s per call. A server is driven by a small Node script written into the
+   ADR 0101), with the network off (`--network none`); the process sandbox otherwise, which only
+   points the proxy settings at a proxy that refuses every connection (ADR 0007), so its evidence
+   says "on this computer, not in a container (a program that ignores proxy settings can still
+   reach the network)" and never "the network off"; 30 s per command, 15 s for a server to listen
+   and 5 s per call. A server is driven by a small Node script written into the
    folder's `.forerunner-try/` and run inside the same sandbox (`SERVER_DRIVER`): it starts the
    server, waits until it accepts a connection (ports in use before it started do not count),
    calls each route over the sandbox's own loopback, stops the server and its children, and
-   prints the result. `node` is the runner image's in the container and the daemon's own Node in
+   prints the result. The server never outlives the driver: a guard (the same script) starts
+   it in a process group of its own and kills that group when the driver's pipe to it closes,
+   however the driver ended (Stop, a session's end, Quit, the lease's time limit, all of which
+   kill only the driver in the process sandbox). A stopped review stops its try; the stop is
+   not reported as a problem of the work. `node` is the runner image's in the container and the daemon's own Node in
    the process sandbox. Without a sandbox (a test world) nothing the work made is started on the
    host. Afterwards `.forerunner-try/` is removed, and so are files the tried work wrote; a file
    it changed is named in the try's output.
-3. **What a try finds.** A command that exits with an error (unless expected) or does not finish,
-   a server that stops before it listens, a route the brief names that answers 4xx, any route
-   that answers 5xx or does not answer, and a server that stops while it is called are problems:
-   `blocking`, so a high finding "Tried <target>: <problem>" that only a new try without it
-   resolves (ADR 0104 point 9). A server the brief neither says how to start nor names a route
+3. **What a try finds.** A command that exits with an error (unless expected) or does not finish
+   (unless it keeps running by design), a server that stops before it listens, a named route
+   whose answer is not the status or error its sentence names ("answered 200, and the brief says
+   it answers 401"), any route that answers 5xx or does not answer, and a server that stops while
+   it is called are problems: `blocking`, so a high finding "Tried <target>: <problem>" that only
+   a new try without it resolves (ADR 0104 point 9). A named route that answers 4xx where nothing
+   says what it answers is a problem that does not block, a low finding the critic weighs (the
+   route may be a later task's); a 401 or 403 on a route the brief calls with a token is no
+   problem. A server the brief neither says how to start nor names a route
    of (the task only edited a big app's server file, which needs its database or a key) is still
    tried, but what goes wrong is a line "… was started, but …; the brief says nothing about
    running it, so this is not held against the task", never a finding. A program that is not

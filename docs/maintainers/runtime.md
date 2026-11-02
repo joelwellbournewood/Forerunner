@@ -2078,24 +2078,48 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   `planTries` reads the brief, the criteria, the README the task wrote and its files: a command
   written exactly (backticks, a code block, a sentence that goes on after it) whose program is
   `node`, `python3` or `python` and whose script is in the folder is a `CommandTry` (placeholders
-  become samples under `TRY_FOLDER`, `.forerunner-try/`; `expectsError` when its sentence expects
-  an error); a script that listens, or a file the task wrote that listens, is a `ServerTry` (the
-  ports its code or the brief names, the GET routes the brief names then the ones its code
-  handles, else `/`); a tool that reads its command line but whose usage nobody wrote down, a
+  become samples under `TRY_FOLDER`, `.forerunner-try/`; a full stop or comma after a
+  placeholder is the sentence's, so "Usage: node wc.js <file>." runs `node wc.js <sample>`, and
+  `./wc.js` is `wc.js`; `expectsError` when its sentence expects an error; `keepsRunning` when
+  it says the tool keeps running, "watches" or runs "until you stop it": it is stopped after
+  `COMMAND_KEEPS_RUNNING_MS`, 5 s, and that is no problem); a script that listens, or a file the
+  task wrote that listens, is a `ServerTry` (the ports its code or the brief names, the GET
+  routes the brief names then the ones its code handles, else `/`; a named route carries what
+  its sentence says it answers, `ServerRoute.expect`: a status, "GET /admin answers 401
+  without a token", or an error, "refuses", "not found"; `withCredentials` when the
+  sentence calls it with a token, a key or a login, which the try's plain GET does not send);
+  a tool that reads its command line but whose usage nobody wrote down, a
   missing script and a `<url>` are `notTried` lines. At most 3 commands and 1 server. `runTries`
   runs them in the review's lease (opened for checks or tries; refused: each target "was not
   tried: the sandbox could not be opened (…)"; no sandbox port: "there is no sandbox to run it
   in"): a command with its samples written and `PYTHONDONTWRITEBYTECODE=1`, 30 s; a server
   through `SERVER_DRIVER` (`.forerunner-try/serve.cjs`, input on stdin: argv with `$NODE`, ports,
-  routes, 15 s to listen, 5 s a call), which prints its result after `@@FR-TRY@@`. `node` is the
-  daemon's `process.execPath` in the process sandbox and `node` in the container. The result is
-  `TriedEvidence` with `kind` "command" or "server", `blocking` on a problem (a failing exit, a
-  timeout, a server that stopped before or while it was called, a named route that answered 4xx,
-  any 5xx or no answer); a program or package that is not installed and a server that never
+  routes, 15 s to listen, 5 s a call), which prints its result after `@@FR-TRY@@`. The driver
+  starts the server through a guard (the same file with `--guard`), which leads a process group
+  of its own and reads a pipe from the driver that is never written: however the driver ends
+  (Stop, a session's end, Quit, the lease's time limit; the process sandbox kills only the
+  driver), the pipe closes and the guard kills its group, the server and what it started; when
+  the server ends by itself the guard reports how after `@@FR-GUARD@@` and takes the server's
+  children with it (`try-run.test.ts`). A stopped review stops its try: `runTries` throws the
+  signal's reason instead of reporting "it exited with code null". `node` is the daemon's
+  `process.execPath` in the process sandbox and `node` in the container. The evidence says where
+  it ran: "in the task's Docker container, the network off", or for the process sandbox "on this
+  computer, not in a container (a program that ignores proxy settings can still reach the
+  network)", since that sandbox only points the proxy settings at a refusing proxy (ADR 0007).
+  The result is `TriedEvidence` with `kind` "command" or "server", `blocking` on a problem that
+  stops a person (a failing exit, a timeout, a server that stopped before or while it was called,
+  a named route whose answer is not the status or error its sentence names, any 5xx or no
+  answer); a named route that answers 4xx where nothing says what it answers is a problem that
+  does not block (a low finding the critic weighs), and a 401 or 403 on a route the brief calls
+  with a token is no problem; a program or package that is not installed (exit 126 or 127, or
+  Windows' 9009 "was not found") and a server that never
   listened are `notTried` lines, and so is what goes wrong with a server nobody asked to run
   (`ServerTry.expected` false: no start command and no route of it in the brief, criteria or
   README; "… the brief says nothing about running it, so this is not held against the task"). `.forerunner-try/` is removed after the tries and again after the
   review (a cargo build folder); files the tried work wrote are removed and named in the output.
+  A marker check runs inside `holdFolder` (`try-run.ts`): what the test run wrote is removed,
+  go.mod, go.sum, Cargo.toml and Cargo.lock are put back as they were, and the check's output
+  says so ("the test run wrote Cargo.lock; removed again").
 - **Questions for the person.** A report with a "Questions for the person:" list is never
   accepted (the critic package's `ASKS_PERSON_RULE`); the loop files the report's questions as
   one card (`askPersonInstead`), quoting the specialist's own words (`quotedWords`), and the

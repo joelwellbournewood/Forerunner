@@ -84,7 +84,7 @@ import {
 } from "./project-checks.ts";
 import { MAX_PAGES_TRIED, pagesToTry, type TryItPort } from "./try-it.ts";
 import { planTries, TRY_FOLDER, type TryPlan } from "./try-plan.ts";
-import { runTries } from "./try-run.ts";
+import { holdFolder, runTries } from "./try-run.ts";
 import { outcomeCriterion, reviewFloorOf, reviewTierOf, signoffReasonOf } from "./verification.ts";
 
 /**
@@ -1065,19 +1065,37 @@ type ExecFn = (
   opts: { env?: Record<string, string>; timeoutMs: number },
 ) => Promise<RunResult>;
 
+type MarkerOutcome =
+  | { result: { name: string; passed: boolean; output: string; required: boolean } }
+  | { notRun: string };
+
 /**
  * One marker check (C-3): the first candidate whose probe starts runs (pytest, else unittest);
  * none starting is "not run, because <tool> is not installed where the checks run"; a run that
  * could not get its dependencies, or found no tests, is not run either. Never a failed review.
+ * The folder stays as the work left it (`holdFolder`): what the run wrote is removed again, a
+ * go.mod or Cargo.lock it rewrote is put back, and the check's output says so.
  */
 export async function runMarkerCheck(
   m: MarkerCheck,
   exec: ExecFn,
   root: string,
-): Promise<
-  | { result: { name: string; passed: boolean; output: string; required: boolean } }
-  | { notRun: string }
-> {
+): Promise<MarkerOutcome> {
+  const restore = holdFolder(root);
+  let out: MarkerOutcome;
+  let note: string | null = null;
+  try {
+    out = await markerCheckIn(m, exec, root);
+  } finally {
+    note = restore();
+  }
+  if (note && "result" in out)
+    out.result.output = `${out.result.output}
+${note}`;
+  return out;
+}
+
+async function markerCheckIn(m: MarkerCheck, exec: ExecFn, root: string): Promise<MarkerOutcome> {
   const notRun = (why: string) => ({
     notRun: `the project's ${m.language} tests were not run: ${why}`,
   });

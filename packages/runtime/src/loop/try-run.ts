@@ -1,6 +1,6 @@
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { TriedEvidence } from "@forerunner/critic";
-import { errorMessage, join } from "@forerunner/platform";
+import { errorMessage, ForerunnerError, join } from "@forerunner/platform";
 import type { Sandbox } from "../sandbox/types.ts";
 import { type CommandTry, type ServerTry, TRY_FOLDER, type TryPlan } from "./try-plan.ts";
 
@@ -31,6 +31,8 @@ export interface TryRunOutcome {
 
 /** A command gets this long. */
 export const COMMAND_TRY_TIMEOUT_MS = 30_000;
+/** A command the brief says keeps running (a watcher) is stopped after this long. */
+export const COMMAND_KEEPS_RUNNING_MS = 5_000;
 /** A server gets this long to listen, and each call this long to be answered. */
 export const SERVER_START_MS = 15_000;
 export const SERVER_CALL_MS = 5_000;
@@ -41,13 +43,18 @@ const RESULT_MARK = "@@FR-TRY@@";
 /** A try leaves no Python bytecode caches in the task's folder. */
 const TRY_ENV: Record<string, string> = { PYTHONDONTWRITEBYTECODE: "1" };
 
-/** Where the try ran, in words for the evidence. */
+/**
+ * Where the try ran and how far it was kept off the network, in words for the evidence. The
+ * container has no network (`--network none`). The process sandbox only points the proxy
+ * settings at a proxy that refuses every connection (ADR 0007): a program that ignores them,
+ * as Node's own `http` and `fetch` do, still reaches the network, so it does not say "off".
+ */
 export function whereWords(sandbox: Sandbox): string {
   return sandbox.kind === "container"
-    ? "in the task's Docker container"
+    ? "in the task's Docker container, the network off"
     : sandbox.kind === "process"
-      ? "in the process sandbox on this computer"
-      : "in the task's sandbox";
+      ? "on this computer, not in a container (a program that ignores proxy settings can still reach the network)"
+      : "in the task's sandbox, the network off";
 }
 
 export async function runTries(plan: TryPlan, ctx: TryRunContext): Promise<TryRunOutcome> {
@@ -56,14 +63,16 @@ export async function runTries(plan: TryPlan, ctx: TryRunContext): Promise<TryRu
   const before = snapshot(ctx.root);
   try {
     for (const c of plan.commands) {
-      if (ctx.signal?.aborted) break;
+      stopIfAborted(ctx.signal);
       const r = await tryCommand(c, ctx);
+      stopIfAborted(ctx.signal);
       if ("tried" in r) out.tried.push(r.tried);
       else out.notTried.push(r.notTried);
     }
     for (const s of plan.servers) {
-      if (ctx.signal?.aborted) break;
+      stopIfAborted(ctx.signal);
       const r = await tryServer(s, ctx);
+      stopIfAborted(ctx.signal);
       if ("tried" in r) out.tried.push(r.tried);
       else out.notTried.push(r.notTried);
     }
@@ -86,6 +95,17 @@ export async function runTries(plan: TryPlan, ctx: TryRunContext): Promise<TryRu
     }
   }
   return out;
+}
+
+/**
+ * A stopped review (Stop, a session's end, Quit) stops its try: what the stop cut short is not
+ * a problem of the work ("it exited with code null"), and the runner handles the stop.
+ */
+function stopIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new ForerunnerError("killed", "the review was stopped while the work was tried");
 }
 
 async function writeSamples(c: CommandTry, sandbox: Sandbox): Promise<void> {
@@ -117,7 +137,7 @@ async function tryCommand(
   try {
     r = await ctx.sandbox.run(programArgv(c.argv, ctx.node), {
       env: TRY_ENV,
-      timeoutMs: COMMAND_TRY_TIMEOUT_MS,
+      timeoutMs: c.keepsRunning ? COMMAND_KEEPS_RUNNING_MS : COMMAND_TRY_TIMEOUT_MS,
       maxOutputBytes: 64 * 1024,
       ...(c.input !== undefined ? { input: c.input } : {}),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -133,13 +153,16 @@ async function tryCommand(
   const dep = missingDependency(`${r.stderr}\n${r.stdout}`, ctx.root);
   if (dep) return { notTried: `${c.target} was not tried: ${dep}` };
   const problems: string[] = [];
-  if (r.timedOut) problems.push(`it did not finish within ${COMMAND_TRY_TIMEOUT_MS / 1000} s`);
-  else if (r.code !== 0 && !c.expectsError) {
+  // A watcher still running when it was stopped did what the brief says it does.
+  const keptRunning = r.timedOut && c.keepsRunning;
+  if (r.timedOut && !keptRunning)
+    problems.push(`it did not finish within ${COMMAND_TRY_TIMEOUT_MS / 1000} s`);
+  else if (!r.timedOut && r.code !== 0 && !c.expectsError) {
     const err = errorLine(r.stderr) ?? errorLine(r.stdout);
     problems.push(`it exited with code ${r.code}${err ? `: ${err}` : ""}`);
   }
   const lines = [
-    `ran ${c.target} (from ${c.source}) ${whereWords(ctx.sandbox)}, the network off`,
+    `ran ${c.target} (from ${c.source}) ${whereWords(ctx.sandbox)}`,
     ...c.samples.flatMap((s) => [
       `${s.stands}${typeof s.content === "string" ? ":" : ""}`,
       ...(typeof s.content === "string"
@@ -150,10 +173,14 @@ async function tryCommand(
             .map((l) => `  ${l}`)
         : []),
     ]),
-    r.timedOut ? "stopped: it ran out of time" : `exit ${r.code} in ${r.durationMs} ms`,
+    keptRunning
+      ? `it kept running, as the brief says; it was stopped after ${COMMAND_KEEPS_RUNNING_MS / 1000} s`
+      : r.timedOut
+        ? "stopped: it ran out of time"
+        : `exit ${r.code} in ${r.durationMs} ms`,
     ...(r.stdout.trim() ? ["output:", clip(r.stdout.trimEnd())] : ["output: (nothing)"]),
     ...(r.stderr.trim() ? ["[stderr]", clip(r.stderr.trimEnd())] : []),
-    ...(c.expectsError && r.code !== 0 ? ["(the brief expects an error here)"] : []),
+    ...(c.expectsError && !r.timedOut && r.code !== 0 ? ["(the brief expects an error here)"] : []),
     ...problems.map((p) => `problem: ${p}`),
   ];
   return {
@@ -246,7 +273,7 @@ async function tryServer(
           ok: false,
           blocking: true,
           output: [
-            `started ${s.target} (from ${s.source}) ${whereWords(ctx.sandbox)}, the network off`,
+            `started ${s.target} (from ${s.source}) ${whereWords(ctx.sandbox)}`,
             ...(log ? ["its output:", clip(log)] : []),
             `problem: ${problem}`,
           ].join("\n"),
@@ -258,48 +285,94 @@ async function tryServer(
       notTried: `${s.target} was not tried: it was started but did not listen on a port within ${SERVER_START_MS / 1000} s, so its routes were not called`,
     };
   }
-  const problems: string[] = [];
-  const lines = [
-    `started ${s.target} (from ${s.source}) ${whereWords(ctx.sandbox)}, the network off; it listened`,
-  ];
+  // A problem that stops a person (a crash, a 5xx, an answer the brief says is wrong) blocks;
+  // a named route that answers 4xx where the brief says nothing of its answer is weighed.
+  const problems: { text: string; blocking: boolean }[] = [];
+  const lines = [`started ${s.target} (from ${s.source}) ${whereWords(ctx.sandbox)}; it listened`];
   for (const call of d.calls ?? []) {
     const route = s.routes.find((x) => x.path === call.path);
     const named = route?.documented ? " (named in the brief)" : "";
     if (call.error) {
       lines.push(`GET ${call.path}${named} -> no answer (${firstLine(call.error)})`);
-      problems.push(`GET ${call.path} did not answer`);
+      problems.push({ text: `GET ${call.path} did not answer`, blocking: true });
       continue;
     }
     const body = (call.body ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-    lines.push(
-      `GET ${call.path}${named} -> ${call.status} ${(call.type ?? "").split(";")[0]}${body ? `: ${body}` : ""}`,
-    );
     const status = call.status ?? 0;
-    if (status >= 500 || (route?.documented && status >= 400))
-      problems.push(`GET ${call.path} answered ${status}`);
+    const judged = route ? judgeAnswer(route, status) : { note: "" };
+    lines.push(
+      `GET ${call.path}${named} -> ${call.status} ${(call.type ?? "").split(";")[0]}${body ? `: ${body}` : ""}${judged.note}`,
+    );
+    if (judged.problem)
+      problems.push({
+        text: `GET ${call.path} ${judged.problem.text}`,
+        blocking: judged.problem.blocking,
+      });
+    else if (status >= 500 && !judged.note)
+      problems.push({ text: `GET ${call.path} answered ${status}`, blocking: true });
   }
   if (s.skippedRoutes.length)
     lines.push(`not called: ${s.skippedRoutes.join(", ")} (the try calls GET routes only)`);
   if (d.exitedDuring) {
     const err = errorLine(log);
-    problems.push(
-      `it stopped while it was being called (exit ${d.exitedDuring.code ?? d.exitedDuring.signal})${err ? `: ${err}` : ""}`,
-    );
+    problems.push({
+      text: `it stopped while it was being called (exit ${d.exitedDuring.code ?? d.exitedDuring.signal})${err ? `: ${err}` : ""}`,
+      blocking: true,
+    });
   }
   if (log) lines.push("its output:", clip(log));
-  if (problems.length && !s.expected) return { notTried: notHeld(s, problems[0] ?? "") };
-  lines.push(...problems.map((p) => `problem: ${p}`));
+  if (problems.length && !s.expected) return { notTried: notHeld(s, problems[0]?.text ?? "") };
+  // The blocking problem first: it is the one the critic's finding names.
+  problems.sort((a, b) => Number(b.blocking) - Number(a.blocking));
+  lines.push(...problems.map((p) => `problem: ${p.text}`));
   return {
     tried: {
       kind: "server",
       what: `started ${s.target} and called it as a person would`,
       target: s.target,
       ok: problems.length === 0,
-      blocking: problems.length > 0,
+      blocking: problems.some((p) => p.blocking),
       output: lines.join("\n"),
       screenshots: [],
     },
   };
+}
+
+/**
+ * A route's answer against what the brief says of it (`ServerRoute.expect`): the status it
+ * names, or an error. A 401 or 403 is the try's own call when the brief calls the route with a
+ * token. A named route that answers 4xx with nothing said is a smaller problem, weighed by the
+ * critic (it may be a later task's); 5xx is judged by the caller.
+ */
+function judgeAnswer(
+  route: ServerTry["routes"][number],
+  status: number,
+): { note: string; problem?: { text: string; blocking: boolean } } {
+  const expect = route.expect;
+  if (expect && "status" in expect) {
+    if (status === expect.status) return { note: ` (the brief expects ${expect.status})` };
+    return {
+      note: "",
+      problem: {
+        text: `answered ${status}, and the brief says it answers ${expect.status}`,
+        blocking: true,
+      },
+    };
+  }
+  if (expect && "error" in expect) {
+    if (status >= 400 && status < 500) return { note: " (the brief expects it to refuse)" };
+    if (status < 400)
+      return {
+        note: "",
+        problem: { text: `answered ${status}, and the brief says it refuses`, blocking: true },
+      };
+    return { note: "" };
+  }
+  if (route.withCredentials && (status === 401 || status === 403))
+    return { note: " (the brief calls it with a token or a login; the try sends none)" };
+  if (route.documented && status >= 400 && status < 500)
+    return { note: "", problem: { text: `answered ${status}`, blocking: false } };
+  return { note: "" };
 }
 
 /**
@@ -317,11 +390,14 @@ function cannotStart(program: string, message: string): string {
   return `it could not start (${firstLine(message)})`;
 }
 
-/** A program the container does not have: `docker exec` answers 126 or 127 with these words. */
+/** A program the sandbox does not have: `docker exec` answers 126 or 127, Windows 9009, with these words. */
 function notInstalled(program: string, code: number | null, stderr: string): string | null {
   if (
-    (code === 126 || code === 127) &&
-    /executable file not found|not found|no such file/i.test(stderr)
+    ((code === 126 || code === 127) &&
+      /executable file not found|not found|no such file/i.test(stderr)) ||
+    // Windows: `python3` that is only the Microsoft Store's alias ("Python was not found; run
+    // without arguments to install from the Microsoft Store"), or a name cmd does not know.
+    (code === 9009 && /was not found|is not recognized/i.test(stderr))
   )
     return `${program === "node" ? "Node.js" : program} is not installed where the work is tried`;
   return null;
@@ -418,11 +494,66 @@ function leftBehind(
     const was = before.get(f);
     if (was === undefined) {
       created.push(f);
-      rmSync(join(root, ...f.split("/")), { force: true });
+      try {
+        rmSync(join(root, ...f.split("/")), { force: true });
+      } catch {
+        // a file the sandbox's user owns: named, not removed
+      }
     } else if (was !== sig) changed.push(f);
   }
   return { created, changed };
 }
+
+/** What a test run may rewrite in the person's folder and is put back as it was. */
+const KEPT_AS_IT_WAS = ["go.mod", "go.sum", "Cargo.lock", "Cargo.toml"];
+
+/**
+ * Keeps the task's folder as the work left it while the review runs the project's tests in it
+ * (C-3): `cargo test` writes Cargo.lock, `go test` can rewrite go.mod and go.sum, a test can
+ * write its output next to it. The returned function removes what was created meanwhile, puts
+ * back the files above as they were, and says in a line what it did, for the check's output.
+ */
+export function holdFolder(root: string): () => string | null {
+  const before = snapshot(root);
+  const kept = new Map<string, string | null>();
+  for (const f of KEPT_AS_IT_WAS) {
+    try {
+      kept.set(f, readFileSync(join(root, f), "utf8"));
+    } catch {
+      kept.set(f, null);
+    }
+  }
+  return () => {
+    const left = leftBehind(root, before);
+    const putBack: string[] = [];
+    for (const [f, text] of kept) {
+      if (text === null || !left.changed.includes(f)) continue;
+      try {
+        if (readFileSync(join(root, f), "utf8") !== text) {
+          writeFileSync(join(root, f), text);
+          putBack.push(f);
+        }
+      } catch {
+        // unreadable now: named as changed below
+      }
+    }
+    // A kept file that was there is put back or has its content still (only its time moved).
+    const changed = left.changed.filter((f) => typeof kept.get(f) !== "string");
+    const lines = [
+      ...(left.created.length
+        ? [`the test run wrote ${left.created.slice(0, 5).join(", ")}; removed again`]
+        : []),
+      ...(putBack.length ? [`the test run changed ${putBack.join(", ")}; put back as it was`] : []),
+      ...(changed.length
+        ? [`the test run changed ${changed.slice(0, 5).join(", ")} in the task's folder`]
+        : []),
+    ];
+    return lines.length ? lines.join("\n") : null;
+  };
+}
+
+/** The line the guard reports the server's end on, in its standard error. */
+const GUARD_MARK = "@@FR-GUARD@@";
 
 /**
  * The server driver (CommonJS, so it runs whatever the folder's package type is): it reads its
@@ -431,20 +562,62 @@ function leftBehind(
  * started are not counted), calls each route with GET over loopback, stops the server and its
  * children, and prints the result after the marker. It runs inside the task's sandbox, so the
  * server and the calls share the sandbox's network: the loopback only.
+ *
+ * The server never outlives the driver, however the driver ends (rule 4). It is started by a
+ * guard (this file with `--guard`), which leads a process group of its own and whose standard
+ * input is a pipe from the driver that is never written. When the driver is killed (Stop, the
+ * session's end, the sandbox's time limit: the sandbox kills only the driver), that pipe closes
+ * and the guard kills its group: the server and whatever it started. When the server ends by
+ * itself, the guard says how on its standard error and takes the server's children with it.
+ * On Windows the sandbox's kill takes the driver's whole tree, guard and server included.
  */
 export const SERVER_DRIVER = String.raw`"use strict";
 const { spawn, spawnSync } = require("child_process");
 const net = require("net");
 const http = require("http");
 const MARK = "${RESULT_MARK}";
-let raw = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (d) => { raw += d; });
-process.stdin.on("end", () => {
-  let cfg;
-  try { cfg = JSON.parse(raw); } catch (e) { return done({ error: "bad job: " + e.message }); }
-  main(cfg).catch((e) => done({ error: String((e && e.message) || e) }));
-});
+const GUARD = "${GUARD_MARK}";
+if (process.argv[2] === "--guard") guard();
+else {
+  let raw = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (d) => { raw += d; });
+  process.stdin.on("end", () => {
+    let cfg;
+    try { cfg = JSON.parse(raw); } catch (e) { return done({ error: "bad job: " + e.message }); }
+    main(cfg).catch((e) => done({ error: String((e && e.message) || e) }));
+  });
+}
+function guard() {
+  const win = process.platform === "win32";
+  const argv = JSON.parse(process.env.FR_TRY_ARGV || "[]");
+  delete process.env.FR_TRY_ARGV;
+  let child = null;
+  let ending = false;
+  const end = () => {
+    if (ending) return;
+    ending = true;
+    if (win) {
+      if (child && child.pid) spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+      return process.exit(0);
+    }
+    try { process.kill(-process.pid, "SIGKILL"); } catch (e) {
+      try { if (child) child.kill("SIGKILL"); } catch (e2) {}
+      process.exit(0);
+    }
+  };
+  const report = (r) => {
+    if (ending) return;
+    process.stderr.write("\n" + GUARD + JSON.stringify(r) + "\n", end);
+  };
+  // The driver ended: nothing may stay of what it started.
+  process.stdin.on("end", end);
+  process.stdin.on("error", end);
+  process.stdin.resume();
+  child = spawn(argv[0], argv.slice(1), { stdio: ["ignore", "inherit", "inherit"], windowsHide: true });
+  child.on("error", (e) => report({ spawnError: e.message }));
+  child.on("exit", (code, signal) => report({ exit: { code, signal } }));
+}
 function done(r) { process.stdout.write("\n" + MARK + JSON.stringify(r) + "\n", () => process.exit(0)); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function freePort() {
@@ -486,16 +659,28 @@ async function main(cfg) {
   const keep = (d) => { log = (log + d).slice(-4000); };
   let exited = null;
   let spawnError = null;
-  const child = spawn(argv[0], argv.slice(1), {
-    env: Object.assign({}, process.env, { PORT: String(port) }),
-    stdio: ["ignore", "pipe", "pipe"],
+  // The guard starts the server; its standard input stays open as long as this driver lives.
+  const child = spawn(process.execPath, [__filename, "--guard"], {
+    env: Object.assign({}, process.env, { PORT: String(port), FR_TRY_ARGV: JSON.stringify(argv) }),
+    stdio: ["pipe", "pipe", "pipe"],
     detached: !win,
     windowsHide: true,
   });
+  child.stdin.on("error", () => {});
   child.stdout.on("data", keep);
   child.stderr.on("data", keep);
   child.on("error", (e) => { spawnError = e.message; });
-  child.on("exit", (code, signal) => { exited = { code, signal }; });
+  // "close": the guard has ended and everything it said has been read, its report included.
+  child.on("close", (code, signal) => {
+    let said = {};
+    log = log.split("\n").filter((line) => {
+      if (line.indexOf(GUARD) !== 0) return true;
+      try { said = Object.assign(said, JSON.parse(line.slice(GUARD.length))); } catch (e) {}
+      return false;
+    }).join("\n");
+    if (said.spawnError) spawnError = said.spawnError;
+    exited = said.exit || { code, signal };
+  });
   const kill = () => {
     if (exited || !child.pid) return;
     try {

@@ -38,7 +38,7 @@ import { docDriftFor } from "./docs-drift.ts";
 import { type RenderOptions, renderEvidence, subjectLabel } from "./evidence.ts";
 import { fingerprintOf } from "./fingerprint.ts";
 import { quotedWords, SIGNOFF_OPTIONS, signoffCard, signoffCardWords } from "./followup.ts";
-import { NOT_CAUSED_BY_TASK, resolvedByRerun, triedProblems } from "./measured.ts";
+import { NOT_CAUSED_BY_TASK, resolvedByRerun, triedAction, triedProblems } from "./measured.ts";
 import {
   type CriticModelPick,
   type CriticSettings,
@@ -757,7 +757,7 @@ export class CriticService {
       add({
         severity: t.blocking && t.causedByTask !== false ? "high" : "low",
         description: `Tried ${t.target}: ${first}${t.causedByTask === false ? NOT_CAUSED_BY_TASK : ""}`,
-        requiredAction: `Make ${t.target} work when it is opened as a person would use it`,
+        requiredAction: triedAction(t),
         where: t.target,
       });
     }

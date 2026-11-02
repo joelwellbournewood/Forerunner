@@ -93,7 +93,11 @@ Verification (ADR 0104, `types.ts`):
   high when `blocking` (the page did not open or threw an error), low otherwise (a linked file
   that did not load: the critic weighs it against the brief). `causedByTask: false` (the runtime
   found that the task changed none of the files that run on the page) makes it low with the
-  suffix " (not caused by this task)" (`NOT_CAUSED_BY_TASK`).
+  suffix " (not caused by this task)" (`NOT_CAUSED_BY_TASK`). Its required action names what
+  was tried in its own words (`triedAction` in `measured.ts`): "Make <page> work when it is
+  opened as a person would use it", "Make <command> work when it is run as a person would run
+  it", "Make <server> start and answer as a person would use it"; the drawer and the retry brief
+  show it.
 - **Measured findings** (`measured.ts`, ADR 0104 point 9). "Check failed: <name>" and "Tried
   <page>: <problem>" state what the runtime measured. In `persist`, an earlier open finding of
   that kind is resolved when this review's `verification` shows the check ran and passed, or the

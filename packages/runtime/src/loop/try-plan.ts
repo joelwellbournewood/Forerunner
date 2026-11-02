@@ -51,6 +51,11 @@ export interface CommandTry {
   samples: TrySample[];
   /** The text around it expects an error or a non-zero exit: a failing exit is then no problem. */
   expectsError: boolean;
+  /**
+   * The text around it says it keeps running ("watches the folder", "until you stop it"): the
+   * try stops it after a few seconds, and that it was still running then is no problem.
+   */
+  keepsRunning: boolean;
   /** Where it was written: "the brief", "an acceptance criterion" or "README.md". */
   source: string;
 }
@@ -65,7 +70,7 @@ export interface ServerTry {
   /** Ports its code or the brief names; the try also sets PORT to a free one. */
   ports: number[];
   /** GET routes to call; `documented` when the brief, a criterion or the README names it. */
-  routes: { path: string; documented: boolean }[];
+  routes: ServerRoute[];
   /** Routes it names that a try cannot call ("POST /items": only GET routes are called). */
   skippedRoutes: string[];
   source: string;
@@ -76,6 +81,23 @@ export interface ServerTry {
    * held against the task.
    */
   expected: boolean;
+}
+
+export interface ServerRoute {
+  path: string;
+  /** The brief, a criterion or the README names it. */
+  documented: boolean;
+  /**
+   * What the sentence that names it says it answers: a status ("GET /admin answers 401 without
+   * a token") or an error ("refuses a request without a key"). A plain GET is judged against
+   * it, as a command's `expectsError` is: an API that answers what its criteria say is no problem.
+   */
+  expect?: { status: number } | { error: true };
+  /**
+   * A sentence names it with what a plain GET does not send ("answers 200 with a valid
+   * token"): a 401 or 403 is then what the try's own call gets, not the work's problem.
+   */
+  withCredentials?: true;
 }
 
 export interface TryPlan {
@@ -91,7 +113,8 @@ export interface TryBrief {
   criteria: readonly string[];
 }
 
-const SCRIPT = /^[\w@][\w@./-]*\.(?:m?js|cjs|py)$/i;
+/** A script of the task's folder, as written: `wc.js`, `src/cli.py`, `./wc.js`. */
+const SCRIPT = /^(?:\.\/)?[\w@][\w@./-]*\.(?:m?js|cjs|py)$/i;
 const PROGRAMS = new Set(["node", "python3", "python"]);
 /** Code that listens on a port: an API or a server. */
 const LISTENS =
@@ -268,6 +291,10 @@ function parseCommand(raw: string, sentence: string, exact: boolean): FoundComma
       : { text: `${arg.replace(/\\n/g, "\n")}\n` };
     line = line.slice(pipe[0].length);
   }
+  // Sentence punctuation is the sentence's, never part of the command: "node wc.js <file>."
+  // runs `node wc.js <file>` (it was read as a redirect from a file named "file>.").
+  line = line.replace(/(<[^>\s]+>|\[[^\]\s]+\])[.,;:!?]+$/, "$1");
+  if (!exact) line = line.replace(/(\S)[.,;:!?]+$/, "$1");
   const redirect = /\s<\s*(\S+)\s*$/.exec(line);
   if (redirect && !isPlaceholder(line.slice(redirect.index + 1).trim())) {
     stdin = { file: redirect[1] ?? "" };
@@ -280,7 +307,8 @@ function parseCommand(raw: string, sentence: string, exact: boolean): FoundComma
   const all = words(line);
   const program = all[0]?.toLowerCase() ?? "";
   if (!PROGRAMS.has(program) || !SCRIPT.test(all[1] ?? "")) return null;
-  if ((all[1] ?? "").split("/").includes("..")) return null;
+  const script = (all[1] ?? "").replace(/^\.\//, "");
+  if (script.split("/").includes("..")) return null;
   let args = all.slice(2);
   if (args.some((a) => /^[|;&>]/.test(a))) {
     const cut = args.findIndex((a) => /^[|;&>]/.test(a));
@@ -292,6 +320,8 @@ function parseCommand(raw: string, sentence: string, exact: boolean): FoundComma
     // be one that goes on the sentence ("prints", "and"), else where it ends is a guess.
     const kept: string[] = [];
     for (const a of args) {
+      // "<file>, then ...": the command ended at its placeholder, where the sentence goes on.
+      if (/^[.,;:!?)]+$/.test(a)) break;
       const bare = a.replace(/[.,;:)]+$/, "");
       if (isArgWord(bare) && !/^[.,;:]+$/.test(bare)) {
         kept.push(bare);
@@ -303,7 +333,7 @@ function parseCommand(raw: string, sentence: string, exact: boolean): FoundComma
     }
     args = kept;
   }
-  const command = [program, all[1] ?? "", ...args];
+  const command = [program, script, ...args];
   const shown =
     stdin && "text" in stdin
       ? `echo ${JSON.stringify(stdin.text.trimEnd())} | ${command.join(" ")}`
@@ -420,6 +450,10 @@ function commandTry(
     /\bexit(?:s|ing)?\s+(?:with\s+)?(?:code\s+|status\s+)?[1-9]|\bnon-?zero\b|\b(?:an?|the)\s+(?:error|usage)\b|\bfails?\b|\berrors?\s+(?:out|message)\b/i.test(
       found.sentence,
     );
+  const keepsRunning =
+    /\bwatch(?:es|ing)?\b|\bkeeps?\s+running\b|\buntil\s+(?:you\s+|the\s+person\s+)?(?:stop|press|quit|interrupt|close)|\bctrl[- +]?c\b|\bruns?\s+forever\b|\bin\s+the\s+background\b/i.test(
+      found.sentence,
+    );
   return {
     kind: "command",
     target: found.target,
@@ -427,6 +461,7 @@ function commandTry(
     ...(input !== undefined ? { input } : {}),
     samples,
     expectsError,
+    keepsRunning,
     source,
   };
 }
@@ -455,10 +490,18 @@ function serverTry(
     portIn(/(?:localhost|127\.0\.0\.1):(\d{2,5})/g, t.text);
     portIn(/\bport\s+(\d{2,5})\b/gi, t.text);
   }
-  const documented: { method: string; path: string }[] = [];
-  for (const t of texts)
-    for (const m of t.text.matchAll(/\b(GET|POST|PUT|PATCH|DELETE|HEAD)\s+(\/[^\s`'",;)]*)/g))
-      documented.push({ method: m[1] ?? "GET", path: trimPath(m[2] ?? "/") });
+  const documented: (Omit<ServerRoute, "documented"> & { method: string })[] = [];
+  for (const t of texts) {
+    const mentions = [...t.text.matchAll(ROUTE_MENTION)];
+    mentions.forEach((m, i) => {
+      const from = (m.index ?? 0) + m[0].length;
+      documented.push({
+        method: m[1] ?? "GET",
+        path: trimPath(m[2] ?? "/"),
+        ...answerIn(clauseAfter(t.text, from, mentions[i + 1]?.index)),
+      });
+    });
+  }
   for (const t of texts)
     for (const m of t.text.matchAll(/`(\/[\w\-./]*)`/g))
       if (!documented.some((d) => d.path === trimPath(m[1] ?? "")))
@@ -481,7 +524,12 @@ function serverTry(
       if (!skippedRoutes.includes(w)) skippedRoutes.push(w);
       continue;
     }
-    if (!routes.some((r) => r.path === d.path)) routes.push({ path: d.path, documented: true });
+    const known = routes.find((r) => r.path === d.path);
+    const route: ServerRoute = known ?? { path: d.path, documented: true };
+    // The first sentence that says what a plain GET gets is the one it is judged by.
+    if (!route.expect && d.expect) route.expect = d.expect;
+    if (d.withCredentials) route.withCredentials = true;
+    if (!known) routes.push(route);
   }
   for (const p of fromCode)
     if (callable(p) && !routes.some((r) => r.path === p))
@@ -498,6 +546,34 @@ function serverTry(
     source,
     expected: source !== "its code" || documented.length > 0,
   };
+}
+
+/** A route a text names: "GET /health", "DELETE /items/1". */
+const ROUTE_MENTION = /\b(GET|POST|PUT|PATCH|DELETE|HEAD)\s+(\/[^\s`'",;)]*)/g;
+/** A status a sentence says a route answers ("answers 401", "with 200", "a 404"): not a port or a time. */
+const STATUS_SAID =
+  /(?<!\bport\s{0,3})\b([1-5]\d\d)\b(?!\s*(?:ms\b|milliseconds|s\b|seconds|bytes|kb\b|mb\b|items|words|lines|members|%|px\b))/i;
+/** A sentence that says a route refuses: "answers an error", "refuses a request without a key". */
+const ERROR_SAID =
+  /\b(?:errors?|refuses?|rejects?|denies|denied|unauthori[sz]ed|forbidden|not\s+found|fails?)\b/i;
+/** A call a plain GET does not make: with a token, a key, a header, a login. */
+const CREDENTIALS_SAID =
+  /\bwith\s+(?:an?\s+|the\s+|its\s+|your\s+)?(?:valid\s+|correct\s+|right\s+)?(?:token|key|api[- ]?key|header|cookie|password|credentials?|session|login|bearer|auth\w*)\b|\b(?:when|once|if)\s+(?:logged|signed)\s+in\b|\bauthenticated\b/i;
+
+/** What follows a route's mention, up to the next route or the end of its sentence. */
+function clauseAfter(text: string, from: number, nextRoute: number | undefined): string {
+  const ends = ["\n", ". ", "; "].map((e) => text.indexOf(e, from)).filter((i) => i >= 0);
+  if (nextRoute !== undefined) ends.push(nextRoute);
+  return text.slice(from, ends.length ? Math.min(...ends) : text.length);
+}
+
+/** What a clause says a plain GET of the route gets: a status, an error, or nothing said. */
+function answerIn(said: string): Pick<ServerRoute, "expect" | "withCredentials"> {
+  if (CREDENTIALS_SAID.test(said)) return { withCredentials: true };
+  const status = STATUS_SAID.exec(said);
+  if (status?.[1]) return { expect: { status: Number(status[1]) } };
+  if (ERROR_SAID.test(said)) return { expect: { error: true } };
+  return {};
 }
 
 function trimPath(p: string): string {

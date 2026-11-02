@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, run } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
+import { runMarkerCheck } from "../src/loop/critic.ts";
 import {
   CHANGED_SCRIPT_SUFFIX,
   markerChecks,
@@ -97,6 +98,57 @@ describe("what is tried (C-1)", () => {
     expect(commandsIn("`node wc.js a.txt > out.txt`")).toEqual([]);
   });
 
+  it("a command at the end of a sentence keeps its placeholder: the full stop is the sentence's, never a file to read from", () => {
+    // Before: "<file>." was read as a redirect from a file named "file>.", so the try ran
+    // `node wc.js` with a sample on its standard input and showed "node wc.js < file>.".
+    const shape = (text: string) =>
+      commandsIn(text).map((c) => ({ target: c.target, words: c.words, stdin: c.stdin }));
+    for (const text of ["Usage: node wc.js <file>.", "Run it with node wc.js <file>."])
+      expect(shape(text)).toEqual([
+        { target: "node wc.js <file>", words: ["node", "wc.js", "<file>"], stdin: undefined },
+      ]);
+    expect(shape("Use python3 cli.py <name>.")).toEqual([
+      { target: "python3 cli.py <name>", words: ["python3", "cli.py", "<name>"], stdin: undefined },
+    ]);
+    // The sentence goes on after a comma: the command ended at its placeholder.
+    expect(shape("Count the words with node wc.js <file>, then compare.")).toEqual([
+      { target: "node wc.js <file>", words: ["node", "wc.js", "<file>"], stdin: undefined },
+    ]);
+    // A real redirect at the end of a sentence reads the file the sentence names.
+    expect(shape("Run it as node wc.js < notes.txt.")).toEqual([
+      {
+        target: "node wc.js < notes.txt",
+        words: ["node", "wc.js"],
+        stdin: { file: "notes.txt" },
+      },
+    ]);
+    // A script written from the folder ("./wc.js") is the same script.
+    expect(shape("`node ./wc.js <file>` prints the count")).toEqual([
+      { target: "node wc.js <file>", words: ["node", "wc.js", "<file>"], stdin: undefined },
+    ]);
+  });
+
+  it("a usage line at the end of a sentence runs the tool with a sample for its <file>, as a person would", () => {
+    const root = folder({ "wc.js": WC });
+    const plan = planTries({
+      changedFiles: ["wc.js"],
+      root,
+      brief: {
+        title: "Keep wc.js working",
+        outcome: "Usage: node ./wc.js <file>.",
+        criteria: ["wc.js keeps working as before: node wc.js <file>."],
+      },
+    });
+    expect(plan.notTried).toEqual([]);
+    expect(plan.commands).toHaveLength(1);
+    expect(plan.commands[0]).toMatchObject({
+      target: "node wc.js <file>",
+      argv: ["node", "wc.js", `${TRY_FOLDER}/sample-1.txt`],
+      source: "an acceptance criterion",
+    });
+    expect(plan.commands[0]?.input).toBeUndefined();
+  });
+
   it("a file the folder does not have becomes a sample of that name; an error the brief expects is no problem", () => {
     const root = folder({ "wc.js": WC });
     const plan = planTries({
@@ -137,13 +189,39 @@ describe("what is tried (C-1)", () => {
         file: "server.js",
         ports: [3000],
         routes: [
-          { path: "/health", documented: true },
+          // The criterion says what it answers: the try's GET is judged against that.
+          { path: "/health", documented: true, expect: { status: 200 } },
           { path: "/items", documented: false },
         ],
         skippedRoutes: ["POST /items"],
         source: "the brief",
         expected: true,
       },
+    ]);
+  });
+
+  it("a route the brief names carries the answer its sentence names: a status, an error, or a call the try cannot make without a token", () => {
+    const root = folder({ "server.js": SERVER });
+    const plan = planTries({
+      changedFiles: ["server.js"],
+      root,
+      brief: {
+        title: "Write server.js",
+        outcome: "A members API in server.js",
+        criteria: [
+          "`node server.js` still answers GET /health with 200",
+          "GET /admin answers 401 without a token",
+          "GET /nope answers 404; GET /me answers 200 with a valid token",
+          "GET /items refuses a request without a key, and GET /list returns the items",
+        ],
+      },
+    });
+    expect(plan.servers[0]?.routes).toEqual([
+      { path: "/health", documented: true, expect: { status: 200 } },
+      { path: "/admin", documented: true, expect: { status: 401 } },
+      { path: "/nope", documented: true, expect: { status: 404 } },
+      { path: "/me", documented: true, withCredentials: true },
+      { path: "/items", documented: true, expect: { error: true } },
     ]);
   });
 
@@ -254,6 +332,47 @@ describe("the project's tests whatever the language (C-3)", () => {
       ["go test", "go test ./...", "off"],
     ]);
     expect(markerChecks(folder({ "index.html": "<p>hi</p>" }))).toEqual([]);
+  });
+
+  it("a test run leaves the folder as the work left it: a lock file it wrote goes, a go.mod it rewrote is put back", async () => {
+    // The reviewer's note: `cargo test` writes Cargo.lock, `go test` can rewrite go.mod and
+    // go.sum, and the next 'Workspace before' commit or a retry's PR would carry them as the
+    // task's work.
+    const root = folder({
+      "Cargo.toml": '[package]\nname = "calc"\nversion = "0.1.0"\n',
+      "src/lib.rs": "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+      "go.mod": "module calc\n\ngo 1.22\n",
+    });
+    const cargo = markerChecks(root).find((m) => m.name === "cargo test");
+    expect(cargo).toBeDefined();
+    const ran = await runMarkerCheck(
+      cargo as NonNullable<typeof cargo>,
+      async (argv) => {
+        if (argv[1] === "test") {
+          writeFileSync(join(root, "Cargo.lock"), "version = 3\n");
+          writeFileSync(
+            join(root, "go.mod"),
+            "module calc\n\ngo 1.22\n\nrequire example.com/x v1.0.0\n",
+          );
+        }
+        return {
+          code: 0,
+          signal: null,
+          stdout: "test result: ok. 1 passed",
+          stderr: "",
+          truncated: false,
+          timedOut: false,
+          durationMs: 5,
+        };
+      },
+      root,
+    );
+    expect(existsSync(join(root, "Cargo.lock"))).toBe(false);
+    expect(readFileSync(join(root, "go.mod"), "utf8")).toBe("module calc\n\ngo 1.22\n");
+    expect(ran).toMatchObject({ result: { name: "cargo test", passed: true } });
+    const output = "result" in ran ? ran.result.output : "";
+    expect(output).toContain("the test run wrote Cargo.lock; removed again");
+    expect(output).toContain("the test run changed go.mod; put back as it was");
   });
 
   it("test files no check runs are told", () => {

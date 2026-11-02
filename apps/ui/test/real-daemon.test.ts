@@ -3075,7 +3075,7 @@ describe("the UI client against the real daemon: a command line tool and an API 
       expect(tried[0]?.screenshots).toEqual([]);
       const out = tried[0]?.output ?? "";
       expect(out).toContain(
-        "ran node wc.js <file> (from an acceptance criterion) in the process sandbox on this computer, the network off",
+        "ran node wc.js <file> (from an acceptance criterion) on this computer, not in a container (a program that ignores proxy settings can still reach the network)",
       );
       expect(out).toContain("<file>: a sample text file written for the try (2 lines, 9 words):");
       // The stand-in's tool counted the sample's words, in the sandbox, as a person would.
@@ -3119,7 +3119,7 @@ describe("the UI client against the real daemon: a command line tool and an API 
         ["server", "node server.js", true],
       ]);
       expect(tried[0]?.output).toContain(
-        "started node server.js (from the brief) in the process sandbox on this computer, the network off; it listened",
+        "started node server.js (from the brief) on this computer, not in a container (a program that ignores proxy settings can still reach the network); it listened",
       );
       expect(tried[0]?.output).toContain(
         'GET /health (named in the brief) -> 200 application/json: {"ok":true}',

@@ -1,4 +1,4 @@
-import type { VerificationRecord } from "./types.ts";
+import type { TriedEvidence, VerificationRecord } from "./types.ts";
 
 /**
  * Findings the runtime measured (ADR 0104, the review of 2026-11-02): a project check that failed
@@ -15,6 +15,16 @@ export type MeasuredFinding =
 
 /** The words a try's finding ends with when the task's files do not run on the page (ADR 0104). */
 export const NOT_CAUSED_BY_TASK = " (not caused by this task)";
+
+/**
+ * What a try's finding asks for, in the words of what was tried (ADR 0110): a page is opened, a
+ * command is run, a server is started and called. It is shown in the drawer and the retry brief.
+ */
+export function triedAction(t: Pick<TriedEvidence, "kind" | "target">): string {
+  if (t.kind === "command") return `Make ${t.target} work when it is run as a person would run it`;
+  if (t.kind === "server") return `Make ${t.target} start and answer as a person would use it`;
+  return `Make ${t.target} work when it is opened as a person would use it`;
+}
 
 /** The problems of a try as its finding names them: its "problem:" lines, else its first line. */
 export function triedProblems(output: string): string[] {

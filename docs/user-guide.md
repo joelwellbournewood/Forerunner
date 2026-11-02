@@ -145,11 +145,17 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   test or go test) or **Reviewed and tried** (the work was also used as you would use it: a page
   it made was opened in a browser, a command line tool it made was run with sample input, for
   example `node wc.js <file>` with a small text file, or a server it made was started and the
-  routes its brief names were called). Tools and servers are tried where the task's commands
-  run: in the Docker container when Docker is ready (always for a full review), otherwise in the
-  process sandbox, with the network off. A tool is tried only when its brief, a criterion or
-  its README says exactly how to run it (in backticks); otherwise **See what was checked** says
-  it was not tried and why. If a task changed the project's test, build or lint script, the
+  routes its brief names were called; a route the brief says answers 401 or 404, or refuses,
+  is expected to). Tools and servers are tried where the task's commands run: in the Docker
+  container when Docker is ready (always for a full review), with the network off; otherwise
+  on this computer outside a container, where only programs that follow the proxy settings are
+  kept off the network, and **See what was checked** says so. A tool is tried only when its
+  brief, a criterion or its README says exactly how to run it (in backticks, or in a sentence
+  such as "Usage: node wc.js <file>."); otherwise **See what was checked** says it was not
+  tried and why. A tool the brief says keeps running (it watches a folder) is stopped after a
+  few seconds, and that is no problem. Nothing a try started keeps running after it, also when
+  you stop the session while a server is being tried, and the project's tests leave your
+  folder as the work left it. If a task changed the project's test, build or lint script, the
   check runs the script as it was before the task, and the changed one beside it. Work whose report still asks you something (for example a
   chart whose data file is missing) is never Done: it waits for your answer with a card in the
   Inbox. A project test that failed or a page that threw an error keeps the task from Done until
