@@ -164,7 +164,11 @@ export const NEVER_PASSED = [
   "ANTHROPIC_BASE_URL",
   "FORERUNNER_GITHUB_TOKEN",
 ];
-/** Model credentials, passed only to `--provider bench-live`. */
+/**
+ * Model credentials: never passed from this machine's environment. `--provider bench-live`
+ * gets its key back as ANTHROPIC_API_KEY (`daemonEnv`), and `fr setup` as
+ * FORERUNNER_ANTHROPIC_KEY (`setupEnv`).
+ */
 export const MODEL_CREDENTIALS = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
@@ -204,11 +208,10 @@ export function daemonEnv({ home, provider, extra }) {
  * model from the environment). Ends the start with setup's own reason when the key is refused;
  * the key itself is never printed.
  */
-export function storeLiveKey({ dir, home }) {
+export function storeLiveKey({ dir, home, extra = {} }) {
   const key = liveKey();
   if (!key) fail(LIVE_KEY_MISSING);
-  const env = daemonEnv({ home, provider: "none", extra: {} });
-  env.FORERUNNER_ANTHROPIC_KEY = key;
+  const env = setupEnv({ home, extra });
   const r = spawnSync(
     process.execPath,
     [
@@ -226,6 +229,21 @@ export function storeLiveKey({ dir, home }) {
     fail(
       `fr setup refused the key for --provider bench-live (exit ${r.status ?? r.signal}); nothing was started. Last lines:\n${said.trim().split("\n").slice(-5).join("\n")}`,
     );
+}
+
+/**
+ * `fr setup`'s environment for `storeLiveKey`: the daemon's without a provider, the key as
+ * FORERUNNER_ANTHROPIC_KEY, and the API base the start's `--env` names
+ * (FORERUNNER_ANTHROPIC_API, else FORERUNNER_BENCH_LIVE_API, the daemon's), so a live start can
+ * be dry-run against a local stand-in of the API without spending: setup checks the key where
+ * the daemon will call. Without either, setup checks it with Anthropic.
+ */
+export function setupEnv({ home, extra = {} }) {
+  const env = daemonEnv({ home, provider: "none", extra: {} });
+  env.FORERUNNER_ANTHROPIC_KEY = liveKey();
+  const base = extra.FORERUNNER_ANTHROPIC_API?.trim() || extra.FORERUNNER_BENCH_LIVE_API?.trim();
+  if (base) env.FORERUNNER_ANTHROPIC_API = base;
+  return env;
 }
 
 export const LIVE_KEY_MISSING =

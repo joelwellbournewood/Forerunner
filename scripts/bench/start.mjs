@@ -66,7 +66,7 @@ for (const [label, port] of [
 const extra = envPairs(args.env);
 if (provider === "bench-live") {
   console.log(`bench ${name}: storing the key in the home's vault (fr setup checks it first) ...`);
-  storeLiveKey({ dir, home });
+  storeLiveKey({ dir, home, extra });
 }
 console.log(`bench ${name}: starting the daemon (provider ${provider}) on port ${daemonPort} ...`);
 const daemon = await startDaemon({ dir, home, provider, port: daemonPort, extra });

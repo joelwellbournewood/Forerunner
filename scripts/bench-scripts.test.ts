@@ -17,7 +17,7 @@ import {
   // @ts-expect-error plain JS module
 } from "./bench/journeys/smoke-checks.cjs";
 // @ts-expect-error plain JS module
-import { daemonEnv, liveKey } from "./bench/lib.mjs";
+import { daemonEnv, liveKey, setupEnv } from "./bench/lib.mjs";
 
 /**
  * The bench scripts with a real model (scripts/bench/README.md; the live run of 2026-11-01): what
@@ -97,6 +97,36 @@ describe("bench: the daemon's environment and a live start", () => {
       expect(stand.ANTHROPIC_API_KEY).toBeUndefined();
       expect(stand.FORERUNNER_HOME).toBe("/h");
       expect(stand.FORERUNNER_VAULT_BACKEND).toBe("file");
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
+  });
+
+  it("fr setup gets the key and the --env API base, so a live start can be dry-run against a local stand-in of the API", () => {
+    const saved = { ...process.env };
+    try {
+      process.env.ANTHROPIC_API_KEY = KEY;
+      process.env.ANTHROPIC_BASE_URL = "https://proxy.example.test";
+      process.env.FORERUNNER_ANTHROPIC_API = "https://from-the-shell.example.test";
+      // The live helper's dry run: the daemon's provider and setup's key check both go to the stub.
+      const stub = setupEnv({
+        home: "/h",
+        extra: { FORERUNNER_BENCH_LIVE_API: "http://127.0.0.1:9" },
+      });
+      expect(stub.FORERUNNER_ANTHROPIC_KEY).toBe(KEY);
+      expect(stub.FORERUNNER_ANTHROPIC_API).toBe("http://127.0.0.1:9");
+      expect(stub.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(stub.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(stub.FORERUNNER_HOME).toBe("/h");
+      expect(stub.FORERUNNER_VAULT_BACKEND).toBe("file");
+      // Named on its own, setup's base wins; with neither, setup checks the key with Anthropic
+      // (the shell's own FORERUNNER_* never reach it).
+      expect(
+        setupEnv({ home: "/h", extra: { FORERUNNER_ANTHROPIC_API: "http://127.0.0.1:8" } })
+          .FORERUNNER_ANTHROPIC_API,
+      ).toBe("http://127.0.0.1:8");
+      expect(setupEnv({ home: "/h", extra: {} }).FORERUNNER_ANTHROPIC_API).toBeUndefined();
     } finally {
       for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
       Object.assign(process.env, saved);

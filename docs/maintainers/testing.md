@@ -2478,11 +2478,15 @@ carries `usd` and the `price` row from the app's own table (`benchPriceOf` in
 with `--cap` for a live run's spend cap. A live start stores the key in the bench home's vault
 with `fr setup --non-interactive` (the setup assistant then shows Claude connected, as on an
 install with a key), refuses at once without a key, and a daemon that exits during its start
-ends the start at once. Tests: `testenv/test/bench-role-player.test.ts` (the stand-in against
+ends the start at once. Setup checks the key where the daemon will call (`setupEnv`: the
+start's `--env FORERUNNER_BENCH_LIVE_API`, or `FORERUNNER_ANTHROPIC_API` on its own), so a live
+start can be dry-run against a local stand-in of the API without spending (the review of
+2026-11-02 had to edit `lib.mjs` to do it). Tests: `testenv/test/bench-role-player.test.ts` (the stand-in against
 the runtime's own intake parser, plan writer and critic schema; the live wrapper over a stubbed
 provider), `packages/runtime/test/cli-daemon-provider.test.ts` (the live path end to end
 against a stub of the Messages API: prices, no part of the key), `scripts/bench-scripts.test.ts`
-(calls.mjs, the daemon's environment, a live start without a key, a daemon that exits).
+(calls.mjs, the daemon's and setup's environment, a live start without a key, a daemon that exits,
+the smoke journey's checks).
 
 Known limits: the stand-in proves mechanics, never model quality; on the stand-in the setup
 assistant and Settings still say no Claude key is connected; the daemon gets a new token on
