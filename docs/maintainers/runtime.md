@@ -2055,6 +2055,13 @@ Proportional verification (ADR 0104, `src/loop/verification.ts`, `project-checks
   `@forerunner/capabilities` `browser.tryPages` with screenshots under
   `<data>/evidence/<task>/<review key>/` (`evidenceRootOf`), served back by
   `GET /tasks/:id/evidence?file=` (`evidenceFileOf` refuses anything outside the task's folder).
+  A task keeps only its latest review's screenshots, which the drawer shows: compose wraps
+  whichever try port it has so `keepOnlyThisTry` removes the task's other review folders
+  before each try (a retry, Try again and Redo replace them; before, phase E C-20, every
+  review's 30-60 KB per screenshot stayed for good). A project cannot be deleted, so its
+  evidence lives as long as its tasks; uninstall treats `<data>` as the person's data. Test:
+  `apps/ui/test/real-daemon.test.ts` (a review sent back and tried again leaves one folder;
+  the drawer's screenshot is served and the first try's is 404).
 - **Questions for the person.** A report with a "Questions for the person:" list is never
   accepted (the critic package's `ASKS_PERSON_RULE`); the loop files the report's questions as
   one card (`askPersonInstead`), quoting the specialist's own words (`quotedWords`), and the

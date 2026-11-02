@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import type { TriedEvidence } from "@forerunner/critic";
 import { type AppDirs, isInside, join, normalize, safeSegment } from "@forerunner/platform";
 
@@ -76,4 +76,35 @@ export function evidenceFileOf(
   const base = join(evidenceRootOf(dirs), safeSegment(taskId));
   const abs = normalize(join(base, ...file.split("/")));
   return isInside(base, abs) ? abs : null;
+}
+
+/**
+ * Before a task's page is tried again, the screenshots of its earlier reviews go (phase E,
+ * C-20): a task keeps only its latest review's, which the drawer shows (`GET /tasks/:id/evidence`
+ * serves them); a retry, Try again and Redo replace them instead of adding a folder each time.
+ * Only folders under the task's own evidence folder are removed; a failure to remove one is
+ * left for the next try and never stops this one.
+ */
+export function keepOnlyThisTry(
+  dirs: Pick<AppDirs, "data">,
+  taskId: string,
+  reviewKey: string,
+): void {
+  const base = join(evidenceRootOf(dirs), safeSegment(taskId));
+  let names: string[];
+  try {
+    names = readdirSync(base);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name === reviewKey) continue;
+    const dir = normalize(join(base, name));
+    if (!isInside(base, dir) || dir === normalize(base)) continue;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // held open (Windows) or already gone: the next try removes it
+    }
+  }
 }

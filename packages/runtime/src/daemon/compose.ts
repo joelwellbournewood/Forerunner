@@ -126,7 +126,7 @@ import {
 } from "../loop/memory.ts";
 import { MERGE_PR_TOOL, ReviewedPrMerge } from "../loop/merge.ts";
 import { RepoCreator, RepoProposals } from "../loop/repo-create.ts";
-import { evidenceRootOf, type TryItPort } from "../loop/try-it.ts";
+import { evidenceRootOf, keepOnlyThisTry, type TryItPort } from "../loop/try-it.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
 import { modelIdFor } from "../models/ladder.ts";
 import {
@@ -2016,8 +2016,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // the diff from the task's worktree, the project's check commands, the session pipeline for
   // the compression bypass, critic memory for repeat findings.
   // "Try it" (ADR 0104): screenshots under `<data>/evidence/<task>/<review>/`, read back by
-  // `GET /tasks/:id/evidence` for the task drawer.
-  const tryIt: TryItPort | undefined =
+  // `GET /tasks/:id/evidence` for the task drawer; a task keeps only its latest review's
+  // (`keepOnlyThisTry` before each try, phase E C-20), whichever port tries the page.
+  const tryPort: TryItPort | undefined =
     opts.tryIt === false
       ? undefined
       : (opts.tryIt ?? {
@@ -2031,6 +2032,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               ...(req.signal ? { signal: req.signal } : {}),
             }),
         });
+  const tryIt: TryItPort | undefined = tryPort && {
+    tryPages: (req) => {
+      keepOnlyThisTry(dirs, req.taskId, req.reviewKey);
+      return tryPort.tryPages(req);
+    },
+  };
   const critic = new CriticLoop({
     store,
     clock,

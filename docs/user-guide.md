@@ -168,7 +168,9 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   waits for and what waits on it, its runs (who ran each one, with that run's report and the
   files it changed; the critic's run is marked as the review), the critic's review in words
   with **See what was checked** (the project's checks with their output, each page tried with
-  what it showed and its screenshots, and anything that could not be run or tried, and why),
+  what it showed and its screenshots, and anything that could not be run or tried, and why;
+  the screenshots are kept in Forerunner's data folder under `evidence`, only those of the
+  task's latest review: a new review replaces them),
   its pull request, and **Edit**
   (the wording, priority, budget, review level and who does it; for example a full-review task
   waiting for Docker can go to a light review, except a deploy or a data migration, which keeps
