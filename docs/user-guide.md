@@ -274,7 +274,8 @@ looks again and takes the tasks that just became ready (what they waited for is 
 the critic sent back (the next attempt runs in the same session, up to the retry limit; after
 the last one you get one card), and tasks you made ready meanwhile. So a chain of seven tasks
 is one Start. It stops when nothing more can run, the session's budget is used (a fifth is kept
-for reviews), you stop it, or its time runs out. A run that fails because Claude did not answer
+for reviews; a task whose run the session's budget stopped is ready again and the next session
+continues it), you stop it, or its time runs out. A run that fails because Claude did not answer
 (the network, a rate limit) is tried again once at once; if it fails again the task reads
 "Failed:" with what went wrong, never the model's first sentence.
 

@@ -1875,16 +1875,17 @@ export class SessionRunner {
               });
             }
           } else if (result.outcome === "budget_exceeded") {
-            await store.task.transition(
-              task.id,
-              task.version,
-              "needs_human",
-              "budget exhausted mid-task",
-              { agentId: agent.id },
-            );
-            needsHuman.push(task.id);
+            // The session's own budget is used (design §4.2: the session stops there). The task
+            // is no matter for the person: it goes back to ready by its claim's release, its
+            // attempt count unchanged, and the next session continues it. Before, it waited
+            // in needs_human with no card while the result said '"X" needs your decision
+            // (Inbox).' over an empty Inbox (phase C, the sibling of live walk 2 B2).
             stopReason = "budget_exceeded";
-            await releaseIfHeld(task.id, "budget exhausted");
+            await releaseIfHeld(
+              task.id,
+              "the session's budget was used during its run; the next session continues it",
+            );
+            skipped.push(task.id);
             skipped.push(...queue.map((i) => i.taskId));
             queue.length = 0;
             break;

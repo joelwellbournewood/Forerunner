@@ -808,7 +808,12 @@ names and nothing run, validated brief, the billing source picked for the task a
 that follows it, derived narrower token, specialist prompt and model from the registry, Run
 row recorded; ADR 0044), then moves it to done (tier 0 with checks passed), in review,
 needs human or failed; the inbox is re-checked between tasks and a human "stop" ends the
-session; at 80% of the budget or a mid-task cap no new task starts. Session end writes the
+session; at 80% of the budget or a mid-task cap no new task starts. A run the session's own
+budget stops (`budget_exceeded` with the session's remaining budget as the cap) ends the
+session, and its task goes back to ready by its claim's release, its attempt count unchanged,
+listed with the tasks left for next time ('The session's budget is used. "X" and "Y" are ready
+to continue.'); before (phase C), it waited in `needs_human` with no card while the result said
+it needed the person's decision in the Inbox. Session end writes the
 project summary cache, sends a handoff (requires ack) to the project's peers
 (`settings.members` or agents that touched the project), notifies the human and records the
 session summary, handoff and spend; with a docs port it also writes the session's status

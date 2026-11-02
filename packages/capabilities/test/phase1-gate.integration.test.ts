@@ -354,7 +354,14 @@ describe("phase 1 gate", () => {
     expect(
       (await w.store.costLedger.sum({ sessionId: res.sessionId })).usd_micro,
     ).toBeLessThanOrEqual(w.sessionCap);
-    expect(res.needsHuman).toHaveLength(1);
+    // The session's budget, not the task, stopped the run: nothing waits for the person, and
+    // the task is ready for the next session, its attempt count unchanged (design §4.2; before,
+    // it waited in needs_human with no card while the result pointed at the Inbox).
+    expect(res.needsHuman).toEqual([]);
+    expect(res.skipped).toHaveLength(2);
+    const stopped = (await w.store.task.forProject(w.project)).find((t) => t.title === "Runaway");
+    expect(stopped?.status).toBe("ready");
+    expect(stopped?.attempt).toBe(0);
     expect(res.stopReason).toBe("budget_exceeded");
     expect(res.handoff).toMatchObject({ stop_reason: "budget_exceeded" });
     expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(0);

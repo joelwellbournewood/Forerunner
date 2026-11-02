@@ -7,16 +7,16 @@
  * has no estimate, so its allowance is the session's remaining budget (the executor caps every
  * run at the session's remaining budget); its specialist keeps calling a tool with long replies
  * until the enforcement hooks refuse the next model call (`SessionBudget.precheck` through
- * `EnforcementHooks.beforeModelCall`). The runner then stops the session: the task is handed to
- * the human in a resumable state, the third task is never started, the handoff goes to Bob, the
- * summary to J. Asserted on the ledger, the run and session rows, the run events, the audit
- * rows, the messages and the git host; then J resumes the task with more budget and a second
- * session completes it.
+ * `EnforcementHooks.beforeModelCall`). The runner then stops the session: the task goes back to
+ * ready for the next session (design §4.2, phase C: before, it waited in needs_human with no card
+ * while the summary said it needed J's decision in an empty Inbox), the third task is never
+ * started, the handoff goes to Bob, the summary to J. Asserted on the ledger, the run and session
+ * rows, the run events, the audit rows, the messages and the git host; then a second session
+ * with more budget completes both.
  *
  * Windows and Android: the same code runs on both (paths and processes through
  * @forerunner/platform); the final-build runs are recorded in gates.md.
  */
-import { canTransition, TASK_TRANSITIONS } from "@forerunner/state";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { coderRunaway, coderWrites, criticAccepts } from "../src/scenario-scripts.ts";
 import { type ScenarioWorld, scenarioWorld } from "../src/scenario-world.ts";
@@ -72,8 +72,9 @@ describe("scenario 5: budget", () => {
     // --- Clause: the session hit its cap mid-task ----------------------------------------------
     expect(first.plan?.items.map((i) => i.taskId)).toEqual([t1.id, t2.id, t3.id]);
     expect(first.completed).toEqual([t1.id]);
-    expect(first.needsHuman).toEqual([t2.id]);
-    expect(first.skipped).toEqual([t3.id]);
+    // Nothing waits for J: the exporter is left for the next session with the docs page.
+    expect(first.needsHuman).toEqual([]);
+    expect(first.skipped).toEqual([t2.id, t3.id]);
     expect(first.stopReason).toBe("budget_exceeded");
     expect(first.status).toBe("stopped");
     const session = await w.store.session.mustGet(first.sessionId);
@@ -131,7 +132,7 @@ describe("scenario 5: budget", () => {
       status: "stopped",
       stopReason: "budget_exceeded",
       completed: 1,
-      skipped: 1,
+      skipped: 2,
       spentUsdMicro: ledger,
     });
     expect(
@@ -144,8 +145,8 @@ describe("scenario 5: budget", () => {
     expect(session.handoff).toMatchObject({
       stop_reason: "budget_exceeded",
       done: [t1.id],
-      blocked: [t2.id],
-      next: [t3.id],
+      blocked: [],
+      next: [t2.id, t3.id],
       spent_usd_micro: ledger,
     });
     const handoff = (await w.inbox(w.bob)).find((m) => m.type === "handoff");
@@ -156,14 +157,18 @@ describe("scenario 5: budget", () => {
       requires_ack: true,
     });
     expect(handoff?.body).toBe(session.summary);
-    // The result (design §5): what needs J, what was done, how it ended and what is left.
+    // The result (design §5): what was done, how it ended and what is left; nothing points at
+    // the Inbox, where nothing waits.
     expect(session.summary.split("\n")).toEqual([
-      '"Metrics exporter" needs your decision (Inbox).',
       'Did 1 task: "Config loader".',
       expect.stringMatching(
-        /^The session's budget is used\. "Docs page" is ready to continue\. CHF \d+\.\d{2}\.$/,
+        /^The session's budget is used\. "Metrics exporter" and "Docs page" are ready to continue\. CHF \d+\.\d{2}\.$/,
       ),
     ]);
+    expect(
+      (await w.store.humanRequest.list({ task_id: t2.id, status: "open" } as never, { limit: 5 }))
+        .length,
+    ).toBe(0);
     // J's Inbox gets one line for the session, naming the project (design §3.8); the decision
     // that waits is its card's to say (§5.10).
     const summary = (await w.inbox(w.j)).find((m) => m.type === "info");
@@ -176,20 +181,20 @@ describe("scenario 5: budget", () => {
     expect((await w.store.task.mustGet(t1.id)).status).toBe("done");
 
     // --- Clause: the task is back in a resumable state ---------------------------------------
+    // Ready for the next session, its attempt count unchanged (the session's budget, not the
+    // work, stopped it).
     const stopped = await w.store.task.mustGet(t2.id);
-    expect(stopped.status).toBe("needs_human");
-    expect(stopped.reason).toBe("budget exhausted mid-task");
+    expect(stopped.status).toBe("ready");
+    expect(stopped.reason).toBe(
+      "the session's budget was used during its run; the next session continues it",
+    );
     expect(stopped.claimed_by).toBeNull();
     expect(stopped.claim_expires).toBeNull();
     expect(stopped.attempt).toBe(0);
     expect(stopped.actual_cost_usd_micro).toBe(run.cost_usd_micro);
-    expect(canTransition(TASK_TRANSITIONS, stopped.status, "ready")).toBe(true);
     expect((await w.store.task.mustGet(t3.id)).status).toBe("ready");
 
-    // J puts it back and gives the next session more budget; the same task completes.
-    await w.store.task.transition(t2.id, stopped.version, "ready", "J: resume with more budget", {
-      humanId: w.j.id,
-    });
+    // The next session, with more budget, continues it; the same task completes.
     runaway = false;
     await w.clock.advance(60 * 60_000);
     const second = await w.runSession(w.alice, { budgetCapUsdMicro: 2_000_000 });

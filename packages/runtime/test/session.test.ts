@@ -528,11 +528,14 @@ describe("session runner", () => {
     expect(res.stopReason).toBe("budget_exceeded");
     expect(res.status).toBe("stopped");
     expect(res.completed).toHaveLength(1);
-    expect(res.needsHuman).toHaveLength(1);
-    expect(res.skipped).toHaveLength(3);
+    // The session's budget, not the task, stopped the second run: nothing waits for the
+    // person, and that task is left for the next session with the three not started (phase C).
+    expect(res.needsHuman).toHaveLength(0);
+    expect(res.skipped).toHaveLength(4);
     expect(res.handoff).toMatchObject({ stop_reason: "budget_exceeded" });
     const tasks = await w.store.task.list({ project_id: w.project } as never);
     expect(tasks.every((t) => t.claimed_by === null)).toBe(true);
+    expect(tasks.filter((t) => t.status === "ready")).toHaveLength(4);
     expect((await w.store.session.mustGet(res.sessionId)).status).toBe("stopped");
   });
 
