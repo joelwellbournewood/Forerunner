@@ -603,7 +603,7 @@ Tests use nodemailer's SMTP transport as a second, independent client against bo
 
 ### Fake git host
 
-`pnpm vitest run --project unit testenv/test/githost.test.ts` (30 tests, about 6 s; needs
+`pnpm vitest run --project unit testenv/test/githost.test.ts` (32 tests, about 6 s; needs
 `git` on PATH, and the three git-over-HTTP tests skip with a visible reason when
 `git http-backend` is not found next to `git --exec-path`). The suite uses a `SimulatedClock`
 and a temp `rootDir`, and covers: `GET /user` with `X-OAuth-Scopes`, bad and missing
@@ -635,7 +635,56 @@ event with `created`, `pusher`, `commits[].added`, request log entry), push to a
 `bearer` / `token` on `/info/refs` rejected with 401 "invalid credentials" while Basic and the
 REST API accept the same fine-grained token.
 
+The pull request cases run one merge method each (squash and rebase were one case until the
+Windows runner, at 6 to 7 s per merge case, ran it past the 20 s default under load on
+c8c16fb), with a 60 s limit for that much git, and none reads what another left: the listing
+case checks its own pull request under `state=open` and `state=closed` (it counted "at least 3
+closed", which the timed-out case's unfinished rebase merge made 2), and the squash case its
+merged one.
+
 Other stand-ins: to be filled by the testenv items that build them.
+
+### Tests run as CI runs them (`testenv/src/ci-env.ts`)
+
+CI's runners differ from a developer's machine in two ways that let a test pass locally and
+fail on CI, which is what happened on c8c16fb (CI run 41533695121, Desktop app run
+41533695023):
+
+- **No git identity.** The runners have no `user.name` or `user.email` in any config (Linux:
+  "empty ident name not allowed"; Windows: "unable to auto-detect email address"), and
+  `actions/checkout` writes its settings to a temporary HOME. A test that ran a plain
+  `git merge` (`apps/ui/test/real-daemon.test.ts`, C-57) passed wherever the person had set up
+  git. A machine set up for development often signs commits too.
+- **`FORCE_COLOR=1`.** `ci.yml` sets it for every step, so every program a test starts colours
+  its output into a pipe: a tried `node wc.js` printed `\x1b[33m9\x1b[39m` and the C-1 cases in
+  `packages/runtime/test/verification.test.ts` failed (a product bug as well: a person whose
+  environment forces colour read the escapes in "See what was checked"; sandbox.md).
+
+`testenv/src/ci-env.ts` is a vitest setup file of the root projects (unit, integration, e2e)
+and of `apps/ui`, so every test worker, on any machine, CI included, runs that way: git's global
+config is an empty file of the worker's (`GIT_CONFIG_GLOBAL`; the system config stays, as on
+CI), `GIT_AUTHOR_*`, `GIT_COMMITTER_*` and `EMAIL` are removed, `FORCE_COLOR=1` is set and
+`NO_COLOR` removed. The processes a test starts inherit it. So:
+
+- a test that makes a commit gives it an identity: a `GitOps` with `identity`, `-c user.name=…
+  -c user.email=…` on a plain `git`, or `GIT_AUTHOR_*`/`GIT_COMMITTER_*` in the run's `env`; the
+  product's own commits work without one (`GitOps` falls back to `Forerunner` and `EMAIL`),
+  which is what a person's PC that never set up git needs;
+- a test that reads a program's output reads it as CI does, coloured unless the product asks for
+  plain output (`withoutForcedColour`, `stripAnsi`, platform-notes.md);
+- a test that needs another git config or colour setting passes its own `env` to the process it
+  starts (`packages/capabilities/test/git-auth.integration.test.ts` sets `GIT_CONFIG_GLOBAL`).
+
+The suite run like CI, locally, is then the usual commands (`pnpm check`,
+`pnpm test:integration`, `pnpm test:e2e`, `cd apps/ui && pnpm vitest run --config
+vitest.config.ts`); to also give vitest's own process CI's colour, prefix them with
+`FORCE_COLOR=1`, as ci.yml does. What the setup file cannot make local is the Windows runner's
+speed: a case that waits on a session or does dozens of git commands is several times slower
+there and slower again under load. Such a case waits on the state it needs, as long as that
+state still moves, with a message that says what it saw, and leaves nothing running when it
+gives up (`sessionOver` and `settle` in `packages/runtime/test/notifications-hear-once.test.ts`:
+on c8c16fb a session still taking steps every 2 to 4 s outlived a fixed 30 s wait, and the
+runtime was closed under it, "sqlite database is closed").
 
 ## Known issues
 
