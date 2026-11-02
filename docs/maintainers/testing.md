@@ -2582,8 +2582,10 @@ Tests: `scripts/desktop-window-check.test.ts` (the options; the app's environmen
 variable and provider name are the ones `supervisor.rs` forwards; the stand-in lands where
 `BENCH_ENTRY` resolves from an installed CLI; the shell's log lines as tauri-plugin-log writes
 them, with the words read from `windows.rs` and `folder.rs`; folders compared as Windows does;
-`seedPrUrl` on a real SQLite file and the column the Tasks tab reads; the page server; the step
-summary; the job's shape in `desktop.yml`). Not covered: notifications (a toast is not in the
+`seedPrUrl` on a real SQLite file and the column the Tasks tab reads; the page server; the whole
+screen at a stop (`desktopScreenshot`: Windows PowerShell with the file's path only in `FR_SHOT`,
+nothing off Windows, a failure in PowerShell's words); the step summary; the job's shape in
+`desktop.yml`). Not covered: notifications (a toast is not in the
 page), the tray and Quit from it, a second window, a deep link; a standard (non-administrator)
 user (U-012).
 
