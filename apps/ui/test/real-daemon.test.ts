@@ -5111,4 +5111,52 @@ describe("the UI client against the real daemon: answers do what the person said
       (await rt.store.task.mustGet(task.id)).status,
     );
   }, 60_000);
+
+  it("a deploy or a migration is stored at the full review however it is made: New task, chat, an edit (phase C leftover C-2)", async () => {
+    const project = await client.createProject({ name: "Shop deploy", goal: "The shop online" });
+    // New task as the dialog sends it: no level picked, so the daemon applies the project's.
+    const deploy = await client.createTask(project.id, {
+      title: "Deploy the shop to the host",
+      outcome: "The shop answers on its domain",
+      specialist: "ops-deploy",
+    });
+    expect(deploy.riskTier).toBe(2);
+    // A light review asked for explicitly is raised too: the owner's decision 4.
+    const migrate = await client.createTask(project.id, {
+      title: "Move the orders to the new schema",
+      outcome: "Every order is in the new table",
+      specialist: "migration-specialist",
+      riskTier: 1,
+    });
+    expect(migrate.riskTier).toBe(2);
+    // An edit that hands a light task to the deploy specialist raises it.
+    const plain = await client.createTask(project.id, {
+      title: "Write the deploy notes",
+      outcome: "docs/deploy.md",
+      specialist: "writer-marketing",
+    });
+    expect(plain.riskTier).toBe(1);
+    const edited = await client.updateTask(plain.id, {
+      version: plain.version,
+      specialist: "ops-deploy",
+    });
+    expect((await rt.store.task.mustGet(plain.id)).risk_tier).toBe(2);
+    expect(edited.riskTier).toBe(2);
+    // The chat's task.create: the same floor.
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    await client.chat({
+      humanId: me.id,
+      agentId,
+      projectId: project.id,
+      projectTab: true,
+      text: 'tool: task_create {"title": "Deploy the docs site", "outcome": "docs online", "specialist": "ops-deploy"}',
+      source: "text",
+    });
+    const rows = await client.tasks(project.id);
+    const viaChat = rows.find((t) => t.title === "Deploy the docs site");
+    expect(viaChat?.riskTier).toBe(2);
+    for (const t of rows.filter((r) => r.specialist === "ops-deploy"))
+      expect(t.riskTier, t.title).toBe(2);
+  }, 60_000);
 });

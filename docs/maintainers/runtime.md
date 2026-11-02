@@ -1280,7 +1280,12 @@ is where `project.small_project_mode` is read. `defaultRiskTier(project)` (0 wit
 else 1) is the one place a new task's tier is chosen when the task names none: the daemon's
 `POST /projects/:id/tasks` (`riskTier` optional), the `task.create` command (`risk_tier`
 optional) and the plan writer call it; the critic reviews at `task.risk_tier` and never reads
-the flag, so a named tier stands and flipping the flag leaves existing tasks alone.
+the flag, so a named tier stands and flipping the flag leaves existing tasks alone. Every one of
+them, and `task.update`, then stores `riskTierFor(specialist, tier)`: a deploy or a migration
+(`SIGNOFF_SPECIALISTS`, ADR 0104 decision 4) at the full review at least, whatever tier was
+named (phase C leftover C-2: before, only the critic applied the registry's floor, so the row
+read "Light review" and the run used the process sandbox on the host; the science evaluator's
+registry floor of 2 is still applied by the critic only).
 `applyProjectPlan(store, project, plan, author)`, served as `POST /projects/:id/plan`
 (`ProjectPlanBody` to `PlanProjectView`), writes a plan (phases with their tasks, loose tasks,
 one reason for every row) as milestone and task rows in one transaction: outside the mode a

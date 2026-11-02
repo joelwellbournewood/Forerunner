@@ -128,6 +128,7 @@ import type {
   ModelWatchReportSummary,
   QueueItemView,
 } from "../src/api/contracts.ts";
+import { FULL_REVIEW_SPECIALISTS, FULL_REVIEW_TIER } from "../src/lib/task-actions.ts";
 import { TASK_TRANSITIONS } from "../src/lib/task-transitions.ts";
 import {
   actionSentence,
@@ -1612,7 +1613,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       outcome: parsed.data.outcome,
       acceptanceCriteria: parsed.data.acceptanceCriteria,
       // Like the daemon: a task that names no tier gets the project's default (B.6).
-      riskTier: parsed.data.riskTier ?? project.defaultRiskTier ?? 1,
+      // A deploy or a migration is stored at the full review at least (`riskTierFor`, C-2).
+      riskTier: Math.max(
+        parsed.data.riskTier ?? project.defaultRiskTier ?? 1,
+        FULL_REVIEW_SPECIALISTS.has(parsed.data.specialist ?? "") ? FULL_REVIEW_TIER : 0,
+      ),
       status: parsed.data.status,
       priority: parsed.data.priority,
       claimedBy: null,
@@ -1782,6 +1787,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       words.push(
         `who does it to ${b.specialist === "person" ? "you" : (b.specialist ?? "the agent's choice")}`,
       );
+    }
+    // As the daemon's `riskTierFor` (C-2): a deploy or a migration stays at the full review.
+    if (FULL_REVIEW_SPECIALISTS.has(task.specialist ?? "") && task.riskTier < FULL_REVIEW_TIER) {
+      if (before.riskTier === undefined) before.riskTier = task.riskTier;
+      task.riskTier = FULL_REVIEW_TIER;
+      words.push("review level to Full review");
     }
     if (!words.length && !b.note?.trim())
       return errorBody(c, 409, "conflict", `Nothing to change on "${task.title}".`);

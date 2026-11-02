@@ -31,6 +31,7 @@ import {
   elapsed,
   isFinished,
   reviewLevelName,
+  reviewLevelValue,
   STATUS_FILTERS,
   stuckLine,
   type TaskActionKey,
@@ -431,7 +432,8 @@ export function TasksTab({
                         {t.title}
                       </button>
                       <div className="text-xs text-neutral-500">
-                        {reviewLevelName(t.riskTier)} · {PRIORITY_LABELS[t.priority]} priority
+                        {reviewLevelName(reviewLevelValue(t.riskTier, t.specialist))} ·{" "}
+                        {PRIORITY_LABELS[t.priority]} priority
                         {t.attempt > 1 ? ` · attempt ${t.attempt}` : ""}
                         {prUrl ? (
                           <>

@@ -1,5 +1,5 @@
 import { ForerunnerError } from "@forerunner/platform";
-import { defaultRiskTier } from "@forerunner/runtime";
+import { defaultRiskTier, riskTierFor } from "@forerunner/runtime";
 // The module itself, not the package index: the index loads this package (a cycle), and the
 // schema is needed when this module is evaluated.
 import {
@@ -582,7 +582,8 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       title: params.title,
       outcome: params.outcome,
       acceptance_criteria: params.acceptance_criteria,
-      risk_tier: params.risk_tier ?? defaultRiskTier(project),
+      // C-2: a deploy or a migration is stored at the full review at least (`riskTierFor`).
+      risk_tier: riskTierFor(params.specialist, params.risk_tier ?? defaultRiskTier(project)),
       status: params.status,
       priority: PRIORITY_VALUES[params.priority],
       depends_on: dependsOn,
@@ -948,6 +949,15 @@ function editPatch(params: TaskUpdateParams, task: TaskRow): EditPatch {
     patch.budget_usd_micro = params.budget_usd_micro;
   if (params.specialist !== undefined && (params.specialist ?? null) !== task.specialist)
     patch.specialist = params.specialist ?? null;
+  // C-2: a task handed to a deploy or a migration, or one lowered below the full review while it
+  // stays theirs, is stored at the full review at least (`riskTierFor`).
+  const specialist = patch.specialist !== undefined ? patch.specialist : task.specialist;
+  const tier = patch.risk_tier ?? task.risk_tier;
+  const floored = riskTierFor(specialist, tier);
+  if (floored !== tier) {
+    if (floored === task.risk_tier) delete patch.risk_tier;
+    else patch.risk_tier = floored;
+  }
   return patch;
 }
 

@@ -163,6 +163,44 @@ describe("small-project mode: shaping a plan (B.6)", () => {
     expect(shaped.milestones.flatMap((m) => m.tasks.map((t) => t.riskTier))).toEqual([1, 2, 1]);
     await store.close();
   });
+
+  it("a deploy or a migration in a plan is stored at the full review whatever tier the planner named (phase C leftover C-2)", async () => {
+    for (const small of [true, false]) {
+      const { store, project } = await worldWith(small);
+      const shaped = shapeProjectPlan(
+        {
+          tasks: [
+            { title: "Deploy the site", outcome: "live", specialist: "ops" },
+            {
+              title: "Move the data",
+              outcome: "moved",
+              specialist: "migration-specialist",
+              riskTier: 1,
+            },
+            { title: "Write the page", outcome: "index.html", specialist: "coder" },
+            {
+              title: "Sign off the launch",
+              outcome: "signed",
+              specialist: "ops-deploy",
+              riskTier: 3,
+            },
+          ],
+        },
+        project,
+      );
+      const tasks = [...shaped.milestones.flatMap((m) => m.tasks), ...shaped.unassigned];
+      expect(
+        tasks.map((t) => [t.specialist, t.riskTier]),
+        `small project: ${small}`,
+      ).toEqual([
+        ["ops-deploy", 2],
+        ["migration-specialist", 2],
+        ["coder", small ? 0 : 1],
+        ["ops-deploy", 3],
+      ]);
+      await store.close();
+    }
+  });
 });
 
 describe("small-project mode: writing a plan (B.6)", () => {

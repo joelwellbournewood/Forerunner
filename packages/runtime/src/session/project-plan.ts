@@ -1,8 +1,10 @@
 import { ForerunnerError, redact } from "@forerunner/platform";
 import type { MilestoneRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
+import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { DEFAULT_TASK_PRIORITY, PRIORITY_VALUES, TaskPrioritySchema } from "../priority.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
+import { FULL_REVIEW_TIER } from "./sandbox-gate.ts";
 
 /**
  * Small-project mode (spec B.6) and the plan writer.
@@ -53,6 +55,20 @@ export function isShortBrief(brief: string | null | undefined): boolean {
 /** The one place a new task's tier is chosen when the task names none. */
 export function defaultRiskTier(project: Pick<ProjectRow, "small_project_mode">): 0 | 1 {
   return project.small_project_mode ? SMALL_PROJECT_RISK_TIER : DEFAULT_RISK_TIER;
+}
+
+/**
+ * The tier a task is stored at for the specialist that does it (phase C leftover C-2, ADR 0104
+ * decision 4): a deploy or a data migration (`SIGNOFF_SPECIALISTS`) is stored at least at the
+ * full review, whatever the plan, New task, the chat or an edit asked for. Before, such a task
+ * was stored at the light review: its row read "Light review", and its run used the process
+ * sandbox on the host while only the critic applied the registry's floor. Every path that
+ * writes a task's tier or its specialist calls this (`task.create`, `task.update`, the plan's
+ * tasks).
+ */
+export function riskTierFor(specialist: string | null | undefined, tier: number): number {
+  const name = specialist ? canonicalSpecialistName(specialist) : null;
+  return name && SIGNOFF_SPECIALISTS.has(name) ? Math.max(tier, FULL_REVIEW_TIER) : tier;
 }
 
 /** Caps on one plan, enforced before anything is written. */
@@ -259,7 +275,7 @@ function shapeRows(
     title: t.title,
     outcome: t.outcome,
     acceptanceCriteria: t.acceptanceCriteria,
-    riskTier: t.riskTier ?? tier,
+    riskTier: riskTierFor(t.specialist, t.riskTier ?? tier),
     priority: PRIORITY_VALUES[t.priority],
     dependsOn: t.dependsOn,
     budgetUsdMicro: t.budgetUsdMicro,
