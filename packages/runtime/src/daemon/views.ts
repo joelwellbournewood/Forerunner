@@ -134,6 +134,8 @@ export interface ProjectCardFacts {
   repository?: (project: ProjectRow) => { fullName: string; url: string } | null;
   /** Whether a Claude credential is in force (a failed plan's button: Try again or Connect). */
   hasModel?: boolean | null;
+  /** Stop all is on: a ready project offers no Continue the Start dialog would refuse. */
+  stopped?: boolean | null;
 }
 
 export async function projectCard(
@@ -183,6 +185,7 @@ export async function projectCard(
     plan: plan.state,
     planError: plan.error,
     hasModel: facts?.hasModel ?? null,
+    stopped: facts?.stopped ?? null,
     working,
     folder,
   });

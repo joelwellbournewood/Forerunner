@@ -66,8 +66,10 @@ Home shows, top to bottom:
 
 The sentence says, first match first: "Waiting for you: approve the plan" or "Waiting for you:
 2 questions"; 'Working on "Style the page" (3 of 7 done)'; 'Stuck: "Style the page" failed; 2
-tasks wait on it' or "Waiting for Docker: 1 task"; "Ready to continue: 3 tasks ready";
-"Drafting the plan…" or "Planning failed: Claude did not answer" with **Try again** (without a
+tasks wait on it' or "Waiting for Docker: 1 task"; "Ready to continue: 3 tasks ready" (without
+a Claude key "Ready: 3 tasks. Claude is not connected." with **Connect Claude**, and while
+sessions are stopped "Ready: 3 tasks. Sessions are stopped.", the bar at the top having
+**Allow sessions again**); "Drafting the plan…" or "Planning failed: Claude did not answer" with **Try again** (without a
 Claude key: "Planning failed: Claude is not connected" with **Connect Claude**), or "You
 rejected the plan. Nothing was written." with **Draft a new plan**; "Done: all 7 tasks. Your
 files: <folder>". The project's page has the reason in full. Home and the project pages follow
@@ -563,7 +565,8 @@ session of your agents on this computer, revokes the run tokens and freezes clai
 seconds; the tray does the same. On a shared project the other people's sessions keep running,
 and the tasks they hold stay theirs. A bar then says **Sessions are stopped** until you press
 **Allow sessions again** (lets sessions start again) or **Continue where it stopped** (allows
-them and starts a session on every project that has work that can run); the tray, "resume" in
+them and starts a session again on the projects Stop all stopped, if they still have work that
+can run; other projects are left alone); the tray, "resume" in
 Chat or a start from the phone allow them too. The stop lasts across restarts until then. A
 session's own page has **Stop after this task** and **Stop now** (see "Sessions"); they end that
 session only and leave the rest running. Starting a session while sessions are stopped says

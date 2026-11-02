@@ -49,6 +49,8 @@ export interface ProjectStatusInput {
    * known. Without one, Try again cannot work, so the button is Connect Claude.
    */
   hasModel?: boolean | null;
+  /** Stop all is on (the kill switch is frozen): no session starts until it is lifted. */
+  stopped?: boolean | null;
   /** The session working on the project now, if one runs. */
   working: ProjectWorking | null;
   /** The project's folder (its workspace, or the linked folder or repository checkout). */
@@ -204,14 +206,27 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
       action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
     };
 
-  // 4. Work that can run now.
+  // 4. Work that can run now. Continue opens the Start dialog, so the line offers it only when
+  // the dialog would start (`start-blocked.ts`): without Claude it is Connect Claude, and with
+  // Stop all on the header's stopped bar has Allow sessions again (design §5 rule 4: true now;
+  // later #62, #49: before, "Ready to continue [Continue]" led to a disabled Start).
   const ready = input.tasks.filter((t) => keyOf(t) === "ready");
-  if (ready.length > 0)
+  if (ready.length > 0) {
+    const n = plural(ready.length, "task");
+    if (input.hasModel === false)
+      return {
+        kind: "ready",
+        text: `Ready: ${n}. Claude is not connected.`,
+        action: { ...CONNECT_CLAUDE },
+      };
+    if (input.stopped === true)
+      return { kind: "ready", text: `Ready: ${n}. Sessions are stopped.`, action: null };
     return {
       kind: "ready",
-      text: `Ready to continue: ${plural(ready.length, "task")} ready`,
+      text: `Ready to continue: ${n} ready`,
       action: { kind: "start", label: "Continue", to: null },
     };
+  }
 
   // 5. The plan from the brief.
   if (input.plan === "drafting" && total === 0)

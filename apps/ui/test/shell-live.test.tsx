@@ -60,25 +60,54 @@ describe("the header while a session runs (design §3.1)", () => {
     await waitFor(() => expect(screen.queryByTestId("running-chip")).toBeNull());
   });
 
-  it("Continue where it stopped allows sessions and starts the projects with work that can run", async () => {
+  it("Continue where it stopped allows sessions and starts again only the projects Stop all stopped (later #60)", async () => {
+    // Before: it started a session on every project with work that could run, so stopping one
+    // project and pressing it started (and spent on) the others too.
     const user = userEvent.setup();
     const harness = createHarness();
-    harness.daemon.state.killActive = true;
-    renderApp("/", harness);
+    // Atlas runs a session; Beacon has a ready task too, and no session.
+    running(harness);
+    const beaconTask = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!beaconTask) throw new Error("fixture changed");
+    beaconTask.status = "ready";
+    renderApp("/", harness, { pollIntervalMs: 40 });
+    await user.click(await screen.findByTestId("kill-switch"));
+    await user.click(await screen.findByTestId("kill-confirm-stop"));
     const bar = await screen.findByTestId("kill-banner");
     expect(bar).toHaveTextContent(
       "Sessions are stopped. No session starts until you allow it again.",
     );
     expect(within(bar).getByTestId("kill-resume")).toHaveTextContent("Allow sessions again");
+    expect(within(bar).getByTestId("kill-continue")).toHaveAttribute(
+      "title",
+      "Lets sessions start again and starts again the work Stop all stopped",
+    );
     await user.click(within(bar).getByTestId("kill-continue"));
     await waitFor(() => expect(postedCalls(harness, "/kill/resume")).toHaveLength(1));
-    // Atlas has a ready task its start check would run; Beacon has none.
     await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
     expect(postedCalls(harness, "/sessions")[0]?.body).toMatchObject({
       projectId: "proj_atlas",
       trigger: "manual",
     });
     await waitFor(() => expect(screen.queryByTestId("kill-banner")).toBeNull());
+    // Beacon, which nothing stopped, got no session.
+    expect(
+      postedCalls(harness, "/sessions").filter(
+        (c) => (c.body as { projectId?: string }).projectId === "proj_beacon",
+      ),
+    ).toEqual([]);
+  });
+
+  it("Continue where it stopped after a Stop all that stopped nothing starts nothing", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.killActive = true;
+    renderApp("/", harness);
+    const bar = await screen.findByTestId("kill-banner");
+    await user.click(within(bar).getByTestId("kill-continue"));
+    await waitFor(() => expect(postedCalls(harness, "/kill/resume")).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByTestId("kill-banner")).toBeNull());
+    expect(postedCalls(harness, "/sessions")).toEqual([]);
   });
 
   it("without a Claude key one bar says so, with Connect; with one there is no bar", async () => {

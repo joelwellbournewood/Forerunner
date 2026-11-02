@@ -995,6 +995,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const updatesChecked = { value: false };
   /** Starts answered queued or deferred so far: none of them ever begins in the fake. */
   const waitingStarts = { count: 0 };
+  /** The projects whose sessions the last Stop all ended (POST /kill/resume names them). */
+  const stoppedByKill: string[] = [];
   app.get("/__test/calls", (c) => c.json(state.calls));
   app.post("/__test/reset", (c) => {
     updatesChecked.value = false;
@@ -1329,6 +1331,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       planError: state.intake[p.id]?.error ?? null,
       // As the daemon (`!!rt.provider`): `/me`'s provider, unknown when the fixture names none.
       hasModel: me.provider === undefined ? null : me.provider !== null,
+      stopped: state.killActive,
       working,
       folder,
     });
@@ -2075,6 +2078,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // As the daemon (later #38): nothing a session could run is refused with the start check's
+    // sentence, whoever asks (the Start dialog, Continue where it stopped, the phone).
+    if (parsed.data.projectId) {
+      const check = fakeStartCheck(
+        state.tasks,
+        parsed.data.projectId,
+        parsed.data.budgetUsdMicro ?? null,
+        state.sandbox,
+        { killActive: false, busy: (options.startOutcome ?? "started") === "queued" },
+      );
+      if (check.blocked?.kind === "nothing_runnable")
+        return errorBody(c, 409, "conflict", check.blocked.sentence);
+    }
     const startId = nextId("start");
     const outcome = options.startOutcome ?? "started";
     if (outcome !== "started") {
@@ -2201,6 +2217,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         s.currentTask = null;
         pushEvent(s, "session.stopped", "Stopped: Stop all.", "info");
         stopped += 1;
+        // As the daemon's kill switch (later #60): what Continue where it stopped starts again.
+        if (s.projectId && !stoppedByKill.includes(s.projectId)) stoppedByKill.push(s.projectId);
         emit("session.changed", clone(s));
       }
     }
@@ -2208,7 +2226,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   });
   app.post("/kill/resume", (c) => {
     state.killActive = false;
-    return c.json({ killActive: false, stoppedSessions: 0 });
+    const stoppedProjects = stoppedByKill.splice(0);
+    return c.json({ killActive: false, stoppedSessions: 0, ok: true, stoppedProjects });
   });
 
   // Desktop control (spec S.32; ADR 0067): the status with what the indicator shows, revoke

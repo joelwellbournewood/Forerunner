@@ -5107,4 +5107,208 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
       (await client.changes({ projectId: project.id, undoable: true })).map((c) => c.id),
     ).not.toContain(started.changeLogId);
   }, 120_000);
+
+  it("POST /sessions on a project with nothing to run answers the start check's sentence and starts nothing (later #38)", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Nothing to run", goal: "Say so" });
+    const before = (await client.sessions()).length;
+    const refused = await client
+      .startSession({ agentId, projectId: project.id, reason: "continue where it stopped" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    const check = await client.startCheck(project.id);
+    expect(check.blocked?.kind).toBe("nothing_runnable");
+    expect(refused).toBeInstanceOf(ApiError);
+    expect(refused, JSON.stringify(refused)).toMatchObject({
+      code: "conflict",
+      status: 409,
+      message: check.blocked?.sentence,
+    });
+    expect((await client.sessions()).length).toBe(before);
+  });
+
+  it("GET /projects: under Stop all a project with ready work offers no Continue the Start dialog would refuse (later #62, #49)", async () => {
+    const project = await client.createProject({ name: "Ready under Stop all", goal: "Wait" });
+    await client.createTask(project.id, {
+      title: "Write notes/later.md",
+      outcome: "notes/later.md exists",
+      riskTier: 1,
+    });
+    await client.kill({ scope: "all", reason: "stop all from the UI" });
+    try {
+      const card = (await client.projects()).find((p) => p.id === project.id);
+      expect(card?.statusLine).toEqual({
+        kind: "ready",
+        text: "Ready: 1 task. Sessions are stopped.",
+        action: null,
+      });
+      expect((await client.startCheck(project.id)).blocked?.kind).toBe("stopped");
+    } finally {
+      await client.resume();
+    }
+    expect((await client.projects()).find((p) => p.id === project.id)?.statusLine).toMatchObject({
+      text: "Ready to continue: 1 task ready",
+      action: { kind: "start", label: "Continue" },
+    });
+    // Nothing is left ready for the next case's session.
+    const [task] = await client.tasks(project.id);
+    if (task) await client.taskAction(task.id, { version: task.version, action: "cancel" });
+  });
+});
+
+describe("the UI client against the real daemon without a Claude key: the ready line (phase E, screens)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-nokey-ready-"));
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock: new SimulatedClock("2026-03-05T08:00:00Z"),
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("GET /projects: a project with a ready task reads 'Claude is not connected' with Connect Claude, the Start dialog's blocker (later #62)", async () => {
+    // Before: "Ready to continue: 1 task ready [Continue]", and Continue led to a disabled Start.
+    const project = await client.createProject({ name: "No key, ready", goal: "Say so" });
+    await client.createTask(project.id, { title: "Write the README", outcome: "README.md exists" });
+    const card = (await client.projects()).find((p) => p.id === project.id);
+    expect(card?.statusLine).toEqual({
+      kind: "ready",
+      text: "Ready: 1 task. Claude is not connected.",
+      action: { kind: "link", label: "Connect Claude", to: "/setup" },
+    });
+    expect((await client.startCheck(project.id)).blocked?.kind).toBe("no_model");
+  });
+});
+
+describe("the UI client against the real daemon: Continue where it stopped starts only what Stop all stopped (phase E, screens, later #60)", () => {
+  /** The daemon on `home`, its specialist runs waiting until they are stopped. */
+  async function compose(home: string) {
+    const env = { FORERUNNER_HOME: home };
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const provider = new ScriptedProvider([WAITING_CALL, WAITING_CALL, WAITING_CALL], clock);
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: new AcceptingCriticProvider(provider),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client, provider };
+  }
+
+  /** Two projects with a ready task each; a session runs the first's task. */
+  async function twoProjectsOneRunning(
+    client: DaemonClient,
+    provider: ScriptedProvider,
+    name: string,
+  ) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = (n: string) =>
+      client.createProject({ name: n, goal: "Two pages", autonomyLevel: 2 });
+    const a = await project(`${name} A`);
+    const b = await project(`${name} B`);
+    for (const p of [a, b])
+      await client.createTask(p.id, {
+        title: `Write ${p.name}.html`,
+        outcome: "the page exists",
+        riskTier: 0,
+      });
+    const calls = provider.calls.length;
+    const started = await client.startSession({ agentId, projectId: a.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    await eventually(
+      async () => provider.calls.length > calls,
+      "the first project's run",
+      async () => `session ${(await client.session(sessionId)).status}`,
+      10_000,
+    );
+    return { a, b, sessionId };
+  }
+
+  it("POST /kill/resume names the projects whose sessions Stop all ended, in this process and after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-continue-"));
+    const first = await compose(home);
+    let a = "";
+    try {
+      const one = await twoProjectsOneRunning(first.client, first.provider, "Now");
+      await first.client.kill({ scope: "all", reason: "stop all from the UI" });
+      await eventually(
+        async () => (await first.client.session(one.sessionId)).stopReason === "stop_all",
+        "the session to end by Stop all",
+        async () => `session ${(await first.client.session(one.sessionId)).status}`,
+        10_000,
+      );
+      // Only the project that ran: the other one has ready work too, and nothing stopped it.
+      expect((await first.client.resume()).stoppedProjects).toEqual([one.a.id]);
+      // Allowed again: a second resume names nothing.
+      expect((await first.client.resume()).stoppedProjects).toEqual([]);
+
+      // Stop all again, then the daemon stops and starts on the same home before Continue.
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const calls = first.provider.calls.length;
+      const again = await first.client.startSession({ agentId, projectId: one.a.id });
+      await eventually(
+        async () => first.provider.calls.length > calls,
+        "the run again",
+        async () => `session ${(await first.client.session(again.session?.id ?? "")).status}`,
+        10_000,
+      );
+      await first.client.kill({ scope: "all", reason: "stop all from the UI" });
+      a = one.a.id;
+    } finally {
+      await first.rt.close();
+    }
+    const second = await compose(home);
+    try {
+      expect((await second.client.resume()).stoppedProjects).toEqual([a]);
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
 });

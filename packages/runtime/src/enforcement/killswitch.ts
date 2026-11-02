@@ -89,6 +89,11 @@ export class KillSwitch {
    * a session stopped during Stop all leaves everything stopped (U-032).
    */
   private frozen: (KillScope | "all")[] = [];
+  /**
+   * The sessions whose runs a freezing stop (Stop all) ended since the last `resume()`: what
+   * "Continue where it stopped" starts again (later #60), and nothing else.
+   */
+  private stoppedByFreeze = new Set<string>();
   private listeners = new Set<(report: KillReport, reason: string, by: StopBy | null) => void>();
   private readonly protectedSessions = new Set<string>();
 
@@ -146,6 +151,15 @@ export class KillSwitch {
   resume(): void {
     this.onResume?.();
     this.frozen = [];
+    this.stoppedByFreeze.clear();
+  }
+
+  /**
+   * The sessions a freezing stop (Stop all) ended since the last `resume()`, in the order they
+   * were stopped. Read before `resume()`, which forgets them.
+   */
+  stoppedSessions(): string[] {
+    return [...this.stoppedByFreeze];
   }
 
   async stop(
@@ -166,6 +180,7 @@ export class KillSwitch {
       if (r.controller && !r.controller.signal.aborted) {
         r.controller.abort(new KillSwitchStop(reason, by));
         stoppedRuns++;
+        if (opts.freeze !== false) this.stoppedByFreeze.add(r.sessionId);
       }
       if (r.child && r.child.exitCode === null && !r.child.killed) {
         killTree(r.child);

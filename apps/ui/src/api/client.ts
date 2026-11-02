@@ -375,7 +375,14 @@ export type ChangeMilestoneInput = z.input<typeof ChangeMilestoneBodySchema>;
 export type KillBody = z.infer<typeof KillBodySchema>;
 
 /** Shapes the contract leaves open (ADR 0025): lists are bare arrays, kill reports its state. */
-export const KillResult = z.looseObject({ killActive: z.boolean() });
+export const KillResult = z.looseObject({
+  killActive: z.boolean(),
+  /**
+   * `POST /kill/resume`: the projects whose sessions Stop all ended, which Continue where it
+   * stopped starts again (later #60). Absent from an older service.
+   */
+  stoppedProjects: z.array(z.string()).optional(),
+});
 export type KillResult = z.infer<typeof KillResult>;
 
 export const ProjectList = z.array(ProjectCardSchema);

@@ -4712,7 +4712,10 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
   waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready", action `start`:
-  the Start dialog); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
+  the Start dialog; only when that dialog would start: without Claude "Ready: 3 tasks. Claude is
+  not connected." with Connect Claude, and under Stop all "Ready: 3 tasks. Sessions are
+  stopped." with no button, the header's stopped bar having Allow sessions again; the card's
+  facts `hasModel` and `stopped`, later #62, #49); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
   files: <folder>"; then paused or draft work. The task words are `taskDisplay`'s, so the
   sentence and the Tasks tab never disagree.
 - A failed plan reads "Planning failed: <a few words>" within 80 characters (design §2 item 5,
@@ -5235,6 +5238,19 @@ yes, in the row `GET /extensions` and `GET /extensions/:id` serve to the panel, 
 run tokens, releases its task claims back to `ready`, freezes new registrations in its scope
 and leaves the other agent's run, token and claim untouched; `scope: "all"` releases every
 agent's claims; `/kill/resume` lifts the freeze and a revoked token stays revoked (S.8).
+
+What Stop all stopped (phase E, later #60): the kill switch keeps the sessions a freezing stop
+ended since the last `resume()` (`KillSwitch.stoppedSessions()`), `POST /kill` writes them into
+`kill.json` (`KillRequest.sessions`), and `POST /kill/resume` answers `stoppedProjects`: the
+projects of those sessions (in this process, or from `kill.json` after a restart; the
+conversation and the plan's intake session left out), read before the resume forgets them. The
+stopped bar's Continue where it stopped starts those, and no other project.
+
+`POST /sessions` refuses a start the start check says would do nothing (`startBlocked` kind
+`nothing_runnable`: 409 `conflict` with the Start dialog's sentence, "Nothing can run: no task is
+ready.", `details.blocked`), as the chat's `session.start` does; Stop all and a missing Claude key
+keep their own answers (U-077, U-047). Before (later #38), only the month's money was checked,
+so Continue where it stopped, the phone and the API started sessions that ran nothing.
 
 `kill-resume-restart.test.ts` (U-019): `POST /kill` writes `<runtime>/kill.json`, which every
 runtime's `KillFileWatcher` applies when it starts, so a kill survives a crash or a restart until

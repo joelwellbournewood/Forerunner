@@ -187,9 +187,25 @@ describe("local daemon", () => {
   });
 
   it("starts a session through the scheduler and exposes it with its events; kill works", async () => {
-    const started = await req("/sessions", {
+    // Nothing to run (the project's only task was cancelled above): no session, the start
+    // check's sentence (design §4.8; later #38).
+    const nothing = await req("/sessions", {
       method: "POST",
       body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: 1_000_000 }),
+    });
+    expect(nothing.status).toBe(409);
+    expect(await json(nothing)).toMatchObject({
+      code: "conflict",
+      message: "Nothing can run: no task is ready.",
+    });
+    const added = await req(`/projects/${projectId}/tasks`, {
+      method: "POST",
+      body: JSON.stringify({ title: "Write the README", outcome: "README.md exists" }),
+    });
+    expect(added.status).toBe(201);
+    const started = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: 3_000_000 }),
     });
     expect(started.status).toBe(202);
     // The answer carries the session the start began, which the start dialog opens (U-003).

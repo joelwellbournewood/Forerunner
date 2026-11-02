@@ -428,7 +428,11 @@ running chip ('Alice is working on "Style the page" · 2 min ›', `RunningChip`
 runs and asks once ("Stops every running session now. No session starts until you allow it
 again.") before `POST /kill {scope:"all"}`. While stopped, the bar "Sessions are stopped" offers
 **Allow sessions again** (`POST /kill/resume`) and **Continue where it stopped** (resume, then a
-session for every project whose start check would run something). `/me.provider` null shows
+session on each project the answer's `stoppedProjects` names, the projects whose sessions Stop
+all ended, while its start check would run something; an older service without the field: every
+project with work, as before; later #60: it started every project with work, so stopping one and
+pressing it started the others too; test `test/shell-live.test.tsx`, real-daemon "Continue where
+it stopped starts only what Stop all stopped"). `/me.provider` null shows
 "Claude is not connected: planning and tasks need it. You can still add tasks. [Connect]"
 (`/setup`). The project cards stay live: `project.changed` upserts one, `inbox.changed` (in SSE
 mode, or when the count moved) and a session's start or end re-read the list

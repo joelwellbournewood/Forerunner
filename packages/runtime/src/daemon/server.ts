@@ -22,7 +22,7 @@ import { cardFate } from "../conversation/card-fate.ts";
 import { readTranscript, TRANSCRIPT_SHOW_LIMIT } from "../conversation/transcript.ts";
 import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
-import { writeKillRequest } from "../enforcement/killfile.ts";
+import { readKillRequest, writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes, type DeviceConfirmation } from "../extensions/routes.ts";
 import type { ExtensionView } from "../extensions/types.ts";
@@ -855,6 +855,8 @@ export function createDaemonApp(
       repository: (project) => projectRepository(project, rt.config?.githubApiBase),
       // A failed plan's button: Try again while Claude is connected, else Connect Claude.
       hasModel: !!rt.provider,
+      // A ready project offers Continue only when the Start dialog would start (later #62).
+      stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });
@@ -1392,6 +1394,22 @@ export function createDaemonApp(
           { details: { cause: "budget_over_month", leftUsdMicro: left } },
         );
     }
+    // Nothing a session could run (design §3.6, §4.8: nothing runnable means no session):
+    // refused with the Start dialog's sentence, as the chat's session.start is. The dialog
+    // disables Start then, but Continue where it stopped, the phone and the API did not ask
+    // (later #38). Stop all and a missing Claude key keep their own answers below.
+    if (body.projectId) {
+      const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
+      const blocked = await startBlocked(
+        check,
+        body.projectId,
+        rt.scheduler.isActive(body.agentId),
+      );
+      if (blocked?.kind === "nothing_runnable")
+        throw new ForerunnerError("validation", blocked.sentence, {
+          details: { blocked },
+        });
+    }
     let begun: () => void = () => undefined;
     const sessionBegun = new Promise<"begun">((resolve) => {
       begun = () => resolve("begun");
@@ -1613,12 +1631,16 @@ export function createDaemonApp(
       by: "stop_all",
     });
     const killActive = rt.kill.isFrozen({ agentId: rt.agent.id });
+    // The sessions it ended go with the request, so Continue where it stopped starts those
+    // again after a restart too (later #60).
+    const sessions = rt.kill.stoppedSessions();
     writeKillRequest(
       {
         scope: body.scope,
         reason: body.reason ?? STOP_ALL_REASON,
         requestedAt: rt.clock.nowIso(),
         requestedBy: "daemon",
+        ...(sessions.length ? { sessions } : {}),
       },
       rt.dirs.runtime,
     );
@@ -1638,12 +1660,29 @@ export function createDaemonApp(
     return c.json({ stopping: true, ...report }, 202);
   });
   app.post("/kill/resume", async (c) => {
+    // What the stop ended, read before the resume forgets it: the projects whose sessions Stop
+    // all stopped, in this process or (from kill.json) before a restart. The stopped bar's
+    // Continue where it stopped starts those again, and no other (later #60).
+    const sessionIds = new Set([
+      ...rt.kill.stoppedSessions(),
+      ...(readKillRequest(rt.dirs.runtime)?.sessions ?? []),
+    ]);
+    const stoppedProjects: string[] = [];
+    for (const id of sessionIds) {
+      const s = await rt.store.session.get(id);
+      if (!s?.project_id || s.summary === "conversation" || isIntakeSession(s)) continue;
+      if (!stoppedProjects.includes(s.project_id)) stoppedProjects.push(s.project_id);
+    }
     // The request file makes a kill survive a crash; once resumed it must not come back on the
     // next start (U-019). The daemon's kill switch removes it on every resume (`onResume` in
     // compose.ts), so the phone's start lifts it the same way (U-032).
     rt.kill.resume();
     rt.events.emit("session", { type: "kill.resumed", payload: {} });
-    return c.json({ killActive: rt.kill.isFrozen({ agentId: rt.agent.id }), ok: true });
+    return c.json({
+      killActive: rt.kill.isFrozen({ agentId: rt.agent.id }),
+      ok: true,
+      stoppedProjects,
+    });
   });
 
   app.get("/inbox", async (c) => {

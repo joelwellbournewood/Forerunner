@@ -227,6 +227,30 @@ describe("project status sentence (design §2)", () => {
     });
   });
 
+  it("4. ready work offers Continue only when a Start would start: Connect Claude without a key, nothing under Stop all (later #62, #49)", async () => {
+    // Before: "Ready to continue: 1 task ready [Continue]" without a key, and Continue led to a
+    // Start dialog whose Start was disabled.
+    await task("Create index.html", "ready");
+    expect((await card({ sandboxReady: null, hasModel: false })).statusLine).toEqual({
+      kind: "ready",
+      text: "Ready: 1 task. Claude is not connected.",
+      action: { kind: "link", label: "Connect Claude", to: "/setup" },
+    });
+    // Stop all on: the header's stopped bar has Allow sessions again; the line offers nothing.
+    expect((await card({ sandboxReady: null, hasModel: true, stopped: true })).statusLine).toEqual({
+      kind: "ready",
+      text: "Ready: 1 task. Sessions are stopped.",
+      action: null,
+    });
+    expect((await card({ sandboxReady: null, hasModel: true, stopped: false })).statusLine).toEqual(
+      {
+        kind: "ready",
+        text: "Ready to continue: 1 task ready",
+        action: { kind: "start", label: "Continue", to: null },
+      },
+    );
+  });
+
   it("5. the plan being drafted, or failed in words", async () => {
     expect(
       (
