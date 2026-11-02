@@ -51,7 +51,11 @@ the cloud runner are built and pass their tests, but you are the first to run th
 Every project is a card: stage, next milestone, health, spend against budget, how many things
 wait on you, and the latest critic grade. "New project" asks for a name, a goal, a short brief
 and a repository link; the project starts at your default autonomy (Settings) and becomes the
-active project.
+active project. The goal is optional when you write a brief: left empty, the brief's first
+sentence is the goal. A brief of a sentence or two (under 200 characters, no list, no
+repository link) gets a small plan: one milestone of one to three tasks, without a separate
+critic review (small-project mode, which you can turn off in Settings); a longer brief or a list
+of features gets a full plan.
 
 The active project is always shown in the header. It is one project for every channel: what
 you pick in the header (or the palette's "Switch project", or Make active on Home) is the

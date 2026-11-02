@@ -21,6 +21,7 @@ import {
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
+import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
 /**
  * The UI's own client against the real daemon (U-008 in docs/status/UPDATE-LOG.md). The screen
@@ -2644,14 +2645,15 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(await client.sessions({ projectId: project.id })).toHaveLength(before);
   }, 60_000);
 
-  it("a one-line brief: a small project, a first reply without tasks asked for once more, one card (live check of 2026-11-01)", async () => {
+  it("a one-line brief without a Goal: the dialog's goal, a small project, a first reply without tasks asked for once more, one card (live check of 2026-11-01)", async () => {
     bench.intakeBad = "missing-tasks";
     try {
       const before = intakeCalls.length;
       const brief = "A page that shows a random quote";
+      // What New project sends when the Goal is left empty (NewProjectDialog).
       const project = await client.createProject({
         name: "One line",
-        goal: brief,
+        goal: goalFromBrief(brief),
         brief,
         intake: true,
       });
