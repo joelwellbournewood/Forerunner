@@ -8,10 +8,13 @@ export const INLINE_LINK_CLASS = "text-blue-700 hover:underline dark:text-blue-3
 /**
  * A link that leaves the app, the one way the desktop UI opens one (a test forbids
  * `target="_blank"` anywhere else). In the desktop shell the link has no target: the webview
- * navigates, and `windows.rs` (`on_navigation`) opens it in the system browser instead. A
- * `target="_blank"` there is a new-window request, which the webview dropped before the shell
- * handled `on_new_window` (the Tasks tab's PR link did nothing). In a browser tab it opens a
- * new tab. `variant="inline"` is a text link; the default is a secondary button.
+ * navigates, and `windows.rs` (`on_navigation`) opens it in the system browser instead. The
+ * Tasks tab's PR link, a `target="_blank"` link then, did nothing in the shell:
+ * tauri-plugin-opener's page script cancelled the click and called `plugin:opener|open_url`,
+ * which the ACL refuses. The shell now builds that plugin without its script (`lib.rs`,
+ * `opener_plugin`), and a new-window request (in WebView2, a Ctrl- or Shift-click here) goes to
+ * `on_new_window`, which hands a web page to the system browser the same way. In a browser tab
+ * it opens a new tab. `variant="inline"` is a text link; the default is a secondary button.
  */
 export function ExternalLink({
   href,

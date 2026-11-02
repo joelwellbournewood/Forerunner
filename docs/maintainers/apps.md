@@ -1295,8 +1295,10 @@ server. The window's navigation policy (`deeplink::navigation_allowed`) refuses 
 origin and opens `http(s)` targets in the OS browser (opener plugin; `windows::leave_action`).
 A new-window request (`target="_blank"`, `window.open`) goes through `on_new_window`
 (`windows::new_window_action`): an `http(s)` page opens in the OS browser, the app's own pages
-and other schemes are refused, and no second window is ever created. Before, nothing handled
-it and the webview dropped the click (the Tasks tab's PR link did nothing).
+and other schemes are refused, and no second window is ever created. The Tasks tab's PR link
+(`target="_blank"` then) did nothing because the opener plugin's page script cancelled the
+click before the webview asked for a window, and the ACL refused the script's own call
+(below).
 
 **How a link leaves the app: one way.** `on_navigation` and `on_new_window` on the main window
 are the only path out, behind the app-origin allowlist, and they log every hand-off (below).

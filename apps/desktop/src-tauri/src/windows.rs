@@ -129,9 +129,13 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
             leave(&nav_app, url, leave_action(url), Via::Link);
             false
         })
-        // A `target="_blank"` link or `window.open` (the Tasks tab's PR link was one): without
-        // this handler the webview dropped the request and the click did nothing. A web page
-        // opens in the system browser; the app's own pages stay in this one window.
+        // A new-window request: a `target="_blank"` link or `window.open`, and in WebView2 a
+        // link clicked with Ctrl or Shift. A web page opens in the system browser; the app's own
+        // pages stay in this one window. Those clicks used to do nothing (the Tasks tab's PR
+        // link, `target="_blank"` then, was one) because tauri-plugin-opener's page script
+        // cancelled them before the webview asked for a window and called
+        // `plugin:opener|open_url`, which the ACL refuses (Desktop app run 41442343517). The
+        // shell builds that plugin without its script (`lib.rs`, `opener_plugin`).
         .on_new_window(move |url, _features| {
             leave(
                 &new_window_app,
@@ -499,9 +503,10 @@ mod tests {
         assert!(FIRST_CLOSE_TITLE.contains("still running"));
     }
 
-    /// The Tasks tab's PR link (`target="_blank"` before) did nothing in the window: a
-    /// new-window request had no handler. A web page now opens in the system browser, from a
-    /// navigation and from a new-window request alike; nothing else leaves the app.
+    /// The Tasks tab's PR link (`target="_blank"` before) did nothing in the window: the opener
+    /// plugin's page script cancelled the click and the ACL refused its `open_url` (`lib.rs`,
+    /// `opener_plugin`). A web page opens in the system browser, from a navigation and from a
+    /// new-window request alike; nothing else leaves the app.
     #[test]
     fn links_that_leave_the_app_open_web_pages_in_the_browser_only() {
         let origins = vec![

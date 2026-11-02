@@ -2529,7 +2529,8 @@ dependency outside Node and the repository; their pure parts have unit tests.
 `scripts/desktop-window-check.mjs`, job `window` of `.github/workflows/desktop.yml` (after
 `build`, on `windows-latest`, every run of that workflow; about 6 to 10 minutes). The desktop
 shell opens links, files and windows its own way, and the owner's "Clicking PR does nothing"
-was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no handler). The job:
+was a bug only the shell had (tauri-plugin-opener's page script cancelled the `target="_blank"`
+click and the ACL refused its `open_url`; `apps.md`, "How a link leaves the app"). The job:
 
 1. downloads the MSI the build job uploaded (`desktop-windows-latest`) and installs it into
    Program Files;
