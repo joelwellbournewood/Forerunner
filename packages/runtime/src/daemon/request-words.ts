@@ -170,6 +170,29 @@ function closedLine(r: Pick<HumanRequestRow, "status">, ctx: RequestWordsContext
   return null;
 }
 
+/**
+ * What became of a change waiting for its yes (the commands executor's card: a Settings
+ * confirmation, a chat read-back), once answered (phase C leftover C-29: every one read
+ * "Answered.", whether the change was made or the preview was closed with No). A yes says the
+ * change in its own done sentence ("Raised the monthly cap from CHF 100 to CHF 200."); a no
+ * says nothing changed; a yes the registry refused says why.
+ */
+function changeCardOutcome(card: JsonObject, answer: unknown): string | null {
+  if (typeof card.command !== "string") return null;
+  if (card.decision !== "needs_yes" && card.decision !== "needs_device") return null;
+  const verdict = isRecord(answer) ? str(answer.verdict) : null;
+  if (verdict === "declined") return "You said no; nothing changed.";
+  if (verdict === "refused") {
+    const reason = isRecord(answer) ? str(answer.reason) : null;
+    return `Not changed: ${reason ? cutWords(reason.replace(/[.\s]+$/, ""), 100) : "it could not be made"}.`;
+  }
+  if (verdict === "confirmed") {
+    const sentence = str(card.sentence);
+    return sentence ? cutWords(sentence, 160) : "Changed as you confirmed.";
+  }
+  return null;
+}
+
 /** The answer as the person gave it: the option's words, never JSON. */
 export function answerWords(answer: unknown): string | null {
   if (typeof answer === "string") return answer.trim() || null;
@@ -758,6 +781,7 @@ export function requestWords(
       outcome = `${ctx.taskTitle ? q(ctx.taskTitle) : "The task"} was cancelled.`;
   } else {
     words = genericCard(r);
+    outcome = changeCardOutcome(card, r.answer);
   }
   if (r.status !== "open") {
     const given = answerWords(r.answer);

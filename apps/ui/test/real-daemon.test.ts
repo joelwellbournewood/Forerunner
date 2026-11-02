@@ -5203,4 +5203,29 @@ describe("the UI client against the real daemon: answers do what the person said
       30_000,
     );
   }, 90_000);
+
+  it("a Settings confirmation says in the Answered list what came of it: the change made, or nothing changed (phase C leftover C-29)", async () => {
+    const me = await client.me();
+    // As Settings sends a raise of the monthly cap: it waits for this computer's OK.
+    const raise = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 900 } }],
+      source: "ui",
+    });
+    expect(raise.status).toBe("pending");
+    const lower = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 950 } }],
+      source: "ui",
+    });
+    expect(lower.status).toBe("pending");
+    const confirmed = await client.confirmCommand(raise.pendingId ?? "", { answer: "device" });
+    expect(confirmed.status).toBe("done");
+    await client.cancelCommand(lower.pendingId ?? "");
+    const answered = (await client.inbox(me.id)).requests.filter(
+      (r) => r.id === raise.pendingId || r.id === lower.pendingId,
+    );
+    const byId = new Map(answered.map((r) => [r.id, r.outcome]));
+    expect(byId.get(raise.pendingId ?? "")).toBe(confirmed.sentence);
+    expect(byId.get(raise.pendingId ?? "")).toMatch(/monthly cap .*CHF 900/);
+    expect(byId.get(lower.pendingId ?? "")).toBe("You said no; nothing changed.");
+  }, 60_000);
 });

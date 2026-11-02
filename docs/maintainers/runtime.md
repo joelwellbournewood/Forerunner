@@ -2232,7 +2232,11 @@ waits on you" while 4 tasks waited on it).
   back (`change_card.ask`: 'Pause "X"?', the rest as its body), not by the change card's object.
   Its buttons read **Yes** (with the question's consequence as its line) and **No** ("Nothing
   changes."); a click sends "Yes" or "No", which `isYes` and `acceptsAnswer` read in either
-  case (before: the stored "yes" and "no" with no line).
+  case (before: the stored "yes" and "no" with no line). Once answered, such a card (a Settings
+  confirmation too) says what came of it (`changeCardOutcome`, from the stored `verdict`; phase
+  C leftover C-29, before every one read "Answered."): a yes its done sentence ("Raised the
+  monthly cap from CHF 100 to CHF 900."), a no "You said no; nothing changed.", a yes the
+  registry refused "Not changed: <why>.".
 - **GET /inbox** returns the open cards, then the last `INBOX_ANSWERED_KEPT` (20) answered or
   withdrawn ones for the Inbox's Answered list, and `needsYouCount` (every open card: the
   Inbox's heading, the header badge, and the sum of the projects' `waitingOnYou` plus the cards of
