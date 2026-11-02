@@ -4926,3 +4926,98 @@ describe("the UI client against the real daemon: research on an API key reads th
     }
   }, 120_000);
 });
+
+describe("the UI client against the real daemon: Quit during 'Being reviewed', then the daemon starts again (stops, L-1)", () => {
+  it("the task reads Ready, the Update says it is ready again, and the next Start runs and reviews it", async () => {
+    // Live check of phase C (2026-11-02): Quit while the critic reviewed "Contact page", then
+    // reopen: the row and drawer read "Being reviewed · The critic is checking the work." for
+    // good, Start had nothing to run, and the Update said "Nothing was left half done." Quit's
+    // stop had released the task's claim, which leaves a task in review in review, and the
+    // next start freed only the tasks still claimed.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-quit-review-"));
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    // The review holds where the live one was: opening the page in a browser, a step that
+    // does not end when the process is asked to stop.
+    let trying = false;
+    const first = await composeWithRolePlayer(
+      {},
+      {
+        env,
+        dirs,
+        stateUrl,
+        tryIt: {
+          tryPages: () => {
+            trying = true;
+            return new Promise(() => undefined);
+          },
+        },
+      },
+    );
+    let projectId = "";
+    let taskId = "";
+    try {
+      const project = await first.client.createProject({ name: "Garden club", goal: "Pages" });
+      projectId = project.id;
+      const page = await first.client.createTask(project.id, {
+        title: "Contact page in contact.html",
+        outcome: "contact.html says how to reach the club",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      taskId = page.id;
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      await first.client.startSession({ agentId, projectId });
+      await eventually(
+        async () =>
+          trying &&
+          (await first.client.tasks(projectId)).find((t) => t.id === taskId)?.display?.label ===
+            "Being reviewed",
+        "the task to read Being reviewed",
+        async () => (await first.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      // Quit, as the desktop shell's Quit asks the daemon (`POST /shutdown`): every run stops
+      // and every claim is released; then the process ends.
+      const { app, token } = createDaemonApp(first.rt, { onShutdown: () => undefined });
+      const quit = await app.request("/shutdown", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(quit.status).toBe(202);
+    } finally {
+      await first.rt.close();
+    }
+
+    // Forerunner opens again on the same home.
+    const second = await composeWithRolePlayer({}, { env, dirs, stateUrl, tryIt: false });
+    try {
+      const row = (await second.client.tasks(projectId)).find((t) => t.id === taskId);
+      expect(row?.display?.label).toBe("Ready");
+      const me = await second.client.me();
+      const updates = (await second.client.inbox(me.id)).messages.map((m) => m.body);
+      expect(updates).toContain(
+        'Your last session was interrupted when Forerunner closed. "Contact page in contact.html" is ready again.',
+      );
+      expect(updates.join("\n")).not.toContain("Nothing was left half done.");
+      const check = await second.client.startCheck(projectId);
+      expect(check.runnable.map((t) => t.taskId)).toContain(taskId);
+      // The next Start runs it and the critic reviews it.
+      const agentId = (await second.client.agents())[0]?.id ?? "";
+      const started = await second.client.startSession({ agentId, projectId });
+      await eventually(
+        async () => (await second.client.session(started.session?.id ?? "")).status !== "running",
+        "the next session to end",
+        async () => (await second.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      const done = await second.client.task(taskId);
+      expect(done.task.status).toBe("done");
+      expect(done.runs.some((r) => r.kind === "review")).toBe(true);
+      expect(second.criticCalls.length).toBeGreaterThan(0);
+    } finally {
+      await second.rt.close();
+    }
+  }, 120_000);
+});

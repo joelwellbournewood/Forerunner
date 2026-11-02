@@ -262,6 +262,62 @@ describe("a session a dead daemon left running is ended at the next start (desig
     expect((await rt.store.task.mustGet(waiting.id)).status).toBe("in_review");
   }, 120_000);
 
+  it("a task being reviewed when the person quit Forerunner is ready again at the next start (L-1)", async () => {
+    // Live check of phase C (2026-11-02): Quit during "Being reviewed", then reopen. Quit's
+    // stop released every claim (`POST /shutdown` -> the kill switch), and a released task in
+    // review keeps its status; the process ended before the runner put the task back. The next
+    // start ended the session but freed only the tasks still claimed ('{"tasks":[]}'), so the
+    // task read "Being reviewed · The critic is checking the work." for good, Start had nothing
+    // to run, and the Update said "Nothing was left half done."
+    const home = mkdtempSync(join(tmpdir(), "fr-recovery-quit-review-"));
+    const clock = new SimulatedClock("2026-11-01T12:00:00Z");
+    const first = await compose(home, clock, false);
+    const ghost = await leaveAGhost(first);
+    const reviewing = await first.store.task.mustGet(ghost.task.id);
+    await first.store.task.transition(reviewing.id, reviewing.version, "in_review", "Wrote it.", {
+      agentId: first.agent.id,
+    });
+    // Quit: what the desktop shell's Quit asks of the daemon (POST /shutdown), then the
+    // process ends before the session's own end is written.
+    const quit = createDaemonApp(first, { onShutdown: () => undefined });
+    const shutdown = await quit.app.request("/shutdown", {
+      method: "POST",
+      headers: { authorization: `Bearer ${quit.token}` },
+    });
+    expect(shutdown.status).toBe(202);
+    const left = await first.store.task.mustGet(ghost.task.id);
+    expect([left.status, left.claimed_by]).toEqual(["in_review", null]);
+    opened.splice(0);
+
+    const rt = await compose(home, clock, true);
+    const task = await rt.store.task.mustGet(ghost.task.id);
+    expect(task.status).toBe("ready");
+    expect(task.reason).toBe("Forerunner closed while it ran");
+    expect((await rt.store.session.mustGet(ghost.session.id)).summary).toBe(
+      'Interrupted: Forerunner closed while this session ran. "Create the page skeleton" is ready again.',
+    );
+    const human = (await rt.store.human.list({}, { limit: 1 }))[0];
+    const updates = (await rt.store.message.inbox({ humanId: human?.id ?? "" })).filter((m) =>
+      /interrupted/.test(m.body),
+    );
+    expect(updates.map((m) => m.body)).toEqual([
+      'Your last session was interrupted when Forerunner closed. "Create the page skeleton" is ready again.',
+    ]);
+    // What the Tasks tab and the Start dialog read: Ready, and Start runs it.
+    const { app, token } = createDaemonApp(rt);
+    const get = async (path: string) =>
+      (await (
+        await app.request(path, { headers: { authorization: `Bearer ${token}` } })
+      ).json()) as Record<string, unknown>;
+    const views = (await get(`/projects/${ghost.project.id}/tasks`)) as unknown as {
+      id: string;
+      display?: { label: string };
+    }[];
+    expect(views.find((v) => v.id === ghost.task.id)?.display?.label).toBe("Ready");
+    const check = await get(`/projects/${ghost.project.id}/start-check`);
+    expect((check.runnable as { taskId: string }[]).map((t) => t.taskId)).toContain(ghost.task.id);
+  }, 120_000);
+
   it("a background job's row (the critic's calibration) is ended without telling the person", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-recovery-critic-"));
     const clock = new SimulatedClock("2026-11-01T12:00:00Z");

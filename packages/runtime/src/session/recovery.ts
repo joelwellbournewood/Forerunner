@@ -12,7 +12,8 @@ import { holdsTask } from "../daemon/task-words.ts";
  *
  * At daemon start nothing of this install runs yet, so every such row is a ghost: it is ended
  * `stopped` with the stop reason `interrupted` and a one-line result, its running run rows are
- * closed, the tasks its agent still holds go back to ready with the reason
+ * closed, the tasks its agent still holds and the tasks its runs left in review (claimed or
+ * not: Quit releases every claim, L-1) go back to ready with the reason
  * `INTERRUPTED_TASK_REASON`, and the person gets one Update naming what is ready again. An
  * intake session (the plan's `intake`) is the intake's own (`IntakeService.closeExpired`), a
  * cloud runner's session runs elsewhere, and a row another device ran is that device's.
@@ -98,10 +99,24 @@ export async function endDeadSession(
   const held = (await store.task.claimedBy(row.agent_id)).filter(
     (t) => runTaskIds.has(t.id) || !row.project_id || t.project_id === row.project_id,
   );
+  // And a task its runs worked on that was being reviewed, claimed or not (L-1, live check of
+  // phase C): Quit stops every run and releases every claim (`POST /shutdown`), and releasing
+  // the claim of a task in review leaves it in review. When the process ended before the
+  // session put it back, the claim alone missed it, and it read "Being reviewed" for good: no
+  // review runs once the session that ran it is gone, and no session plans a task in review.
+  const reviewing: TaskRow[] = [];
+  for (const id of runTaskIds) {
+    if (held.some((t) => t.id === id)) continue;
+    const t = await store.task.get(id);
+    if (t?.status === "in_review" && (t.claimed_by ?? row.agent_id) === row.agent_id)
+      reviewing.push(t);
+  }
   const tasks: TaskRow[] = [];
-  for (const t of held) {
+  for (const t of [...held, ...reviewing]) {
     try {
-      const released = await store.task.releaseClaim(t.id, row.agent_id, opts.taskReason);
+      const released = t.claimed_by
+        ? await store.task.releaseClaim(t.id, row.agent_id, opts.taskReason)
+        : t;
       const back = await reviewBackToReady(store, released, row.agent_id, opts.taskReason);
       if (back) tasks.push(back);
     } catch (e) {

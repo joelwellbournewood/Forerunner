@@ -949,7 +949,13 @@ intake session, not a cloud runner's, not another device's) with no live kill-sw
 registration is ended `stopped` with the stop reason `interrupted` and the summary
 "Interrupted: Forerunner closed while this session ran. "X" is ready again.", its running runs
 are closed (`killed`), the tasks its agent holds go back to ready with the reason "Forerunner
-closed while it ran", and the person gets one Update about their own work (rows on a project);
+closed while it ran", and so do the tasks its runs left in review, claimed or not (L-1, live
+check of phase C: Quit during "Being reviewed" released the task's claim through the kill
+switch, `releaseClaim` keeps a task in review in review, and the process ended before the
+runner put it back; the next start freed only the claimed tasks, so the task read "Being
+reviewed" for good and the Update said "Nothing was left half done"; tested across a restart
+in `session-recovery.test.ts` and `real-daemon.test.ts`), unless a card waits on the person
+for it, and the person gets one Update about their own work (rows on a project);
 a background job's row on no project (the critic's monthly calibration) is ended without one,
 so a crash during it never reads "Your last session was interrupted". `POST /sessions/:id/stop`
 on a row nothing in this process runs ends it the same way (`endDeadSession`, stop reason
