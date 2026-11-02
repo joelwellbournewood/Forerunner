@@ -1429,10 +1429,26 @@ facts are placeholders") and a tester, the page was accepted full of PLACEHOLDER
 person was never asked. `withOwnersContent` (`src/session/intake-content.ts`) holds the rule in
 code on every drafted proposal before its card is filed: `promisedContent` reads the promise
 ("I will give you", "I'll send", "we will provide you with", "the owner will supply", in the
-brief, the person's changes or the goal) and keeps its items that are content (`CONTENT_WORD`),
-never a secret (a key, a password: secrets go by name) and not feedback or an approval; a
-promise "for later" or a brief that asks for placeholders adds nothing (the person chose to start
-without it). A plan with no person task naming those items gets one, "Give <the items as the
+brief, the person's changes or the goal) and keeps its items whose head (the words before a
+preposition: "photos" of "photos of the garden") is content (`CONTENT_WORD`), never a secret (a
+key, a password: secrets go by name) and not feedback or an approval; a promise "for later" or a
+brief that asks for placeholders adds nothing (the person chose to start without it). Only a
+promise to Forerunner counts (`handedToForerunner`; review of 2026-11-02: "we will send
+subscribers a weekly email" got a person task "Give subscribers a weekly email" asking "What is
+the subscribers a weekly email?", and the build waited on it): one that names Forerunner ("give
+you", "send … to you", "share … with you"), or one that names no one else, made by the person
+("I", "we", the owner, the client), not with "can", "share" or ongoing work ("weekly", "every
+day"). A promise to someone else ("send subscribers …", "give them …", "… to members", "provide
+members with …") or by a customer is the project's own work. The person's change wins: once one
+of their "Change the plan" words drops the step or refuses to give
+(`dropsOwnersContent`: "drop", "leave … out", "nothing", "no", "not" with "content", "the first
+task", "asks me", "questions", "give" or an item), the redraft is the model's, as it is; any
+other change ("Make the headings blue") keeps the step, added again when the redraft has none.
+The redraft is told the plan the person read, a line per task with who does it and, for the
+person, the questions (`planRead`, from the answered card, so Try again after a restart has it
+too: `IntakeDraftOptions.read`), so "drop the first task" names a task the model knows, even one
+the code added; the prompt says the person's change wins and what the project sends its own
+people is not such content. A plan with no person task naming those items gets one, "Give <the items as the
 brief wrote them>", for the person, high priority, first in the milestone of the work that uses
 it, one question per item ("What is the menu?", "What are the hours?", "Where are the photos (a
 path in the project's folder, or a link)?"); the tasks that start the work and name an item
@@ -1441,12 +1457,20 @@ included. On approval the questions are filed at once (`syncPersonQuestions`), a
 person task is no work for a session, `resumeWork` does not count it as runnable: no empty
 session starts, and the plan card's Done line reads "Plan approved: 3 tasks written; the work
 starts once you answer its questions in the Inbox." (`intakeOutcome`; before, a session started
-only to file the questions). The answers reach the build's brief as "Answers from the person to
-…" (`taskContextBlock`). Tests: `intake-owner-content.test.ts` (the live reply,
-`fixtures/intake-live-bakery.json`: the items, the questions, the person task and the build's
-dependency, a plan that asks already, a brief that promises nothing; through the daemon: the
-plan card's three tasks, Approve and start, the questions card, the build waiting, no session,
-the Done line). (6) **Plan
+only to file the questions); its Approve and start says so before the press too, "Writes these 3
+tasks; the work starts once you answer its questions in the Inbox." (`workWaitsOnPerson`: every
+task but the person's waits on another), where it said "starts working on them now". The answers
+reach the build's brief as "Answers from the person to …" (`taskContextBlock`). Tests:
+`intake-owner-content.test.ts` (the live reply, `fixtures/intake-live-bakery.json`: the items,
+the questions, the person task and the build's dependency, a plan that asks already, a brief that
+promises nothing, the review's promises to someone else ("we will send subscribers a weekly
+email", "give clients …", "share recipes with members", "provide a REST API with JSON data"),
+the changes that drop the step and those that keep it; through the daemon: the plan card's three
+tasks and its Approve and start words, Approve and start, the questions card, the build waiting,
+no session, the Done line, and Change the plan twice: "Make the headings blue." keeps the step,
+the review's "There is nothing for me to give: drop the task that asks me for content" is a
+two-task plan, each redraft told the plan the person read); `intake.test.ts` (Try again after a
+restart tells the plan read from the answered card). (6) **Plan
 size (ADR 0103).** `intakePlanSize` asks for "Plan size: small (a short brief: see Size in your
 instructions)" when the project has no repository and the brief it is drafted from is short
 (`isShortBrief`: under `SHORT_BRIEF_CHARS`, 200, at most two lines, no list), or the project is in

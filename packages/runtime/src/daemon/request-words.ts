@@ -379,7 +379,9 @@ function intakeCard(
     if (/^(approve and start|approve|approved|yes)$/.test(w))
       choices.push({
         label: option === "approve" ? "Approve and start" : option,
-        explain: `Writes ${n} and starts working on them now.`,
+        explain: workWaitsOnPerson(card)
+          ? `Writes ${n}; the work starts once you answer its questions in the Inbox.`
+          : `Writes ${n} and starts working on them now.`,
         tone: "primary",
         confirm: null,
         input: null,
@@ -423,21 +425,40 @@ function intakeCard(
   };
 }
 
-/** Whether an approved plan holds a task for the person ("specialist": "person"). */
-function plansPersonTask(card: JsonObject): boolean {
+/** The tasks of an intake card's plan, milestones first. */
+function planTasks(card: JsonObject): Record<string, unknown>[] {
   const proposal = isRecord(card.proposal) ? card.proposal : {};
   const plan = isRecord(proposal.plan) ? proposal.plan : {};
-  const tasks = [
-    ...(Array.isArray(plan.tasks) ? plan.tasks : []),
+  return [
     ...(Array.isArray(plan.milestones)
       ? plan.milestones.flatMap((m: unknown) =>
           isRecord(m) && Array.isArray(m.tasks) ? m.tasks : [],
         )
       : []),
-  ];
-  return tasks.some(
-    (t: unknown) =>
-      isRecord(t) && typeof t.specialist === "string" && /^person$/i.test(t.specialist),
+    ...(Array.isArray(plan.tasks) ? plan.tasks : []),
+  ].filter(isRecord);
+}
+
+const isPersonTask = (t: Record<string, unknown>) =>
+  typeof t.specialist === "string" && /^person$/i.test(t.specialist);
+
+/** Whether an approved plan holds a task for the person ("specialist": "person"). */
+function plansPersonTask(card: JsonObject): boolean {
+  return planTasks(card).some(isPersonTask);
+}
+
+/**
+ * Whether all of a plan's work waits on the person's answers: it has a task for the person and
+ * every other task waits on another one (the plan has no cycle, so each chain ends at the
+ * person's). Approve and start then starts nothing (live L-11, the bakery's content step).
+ */
+function workWaitsOnPerson(card: JsonObject): boolean {
+  const tasks = planTasks(card);
+  const work = tasks.filter((t) => !isPersonTask(t));
+  return (
+    tasks.some(isPersonTask) &&
+    work.length > 0 &&
+    work.every((t) => Array.isArray(t.dependsOn) && t.dependsOn.length > 0)
   );
 }
 

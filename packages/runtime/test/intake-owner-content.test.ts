@@ -62,6 +62,43 @@ describe("content the brief says the person will give (live L-11)", () => {
       expect(promisedContent(none), none).toBeNull();
   });
 
+  it("only content given to Forerunner counts: what the project sends or gives its own people is the work (review of 2026-11-02)", () => {
+    // The review's bench: "we will send subscribers a weekly email" got a person task "Give
+    // subscribers a weekly email" asking "What is the subscribers a weekly email?", and the
+    // build waited on it.
+    for (const none of [
+      "A newsletter signup page; we will send subscribers a weekly email",
+      "A booking page; we will give clients a list of free times",
+      "A recipe club site; we will share recipes with members",
+      "An app; we will provide a REST API with JSON data",
+      "A shop; we will send emails to subscribers",
+      "A newsletter page; I will send a weekly email",
+      "A shop page; the customer will provide their address at checkout",
+      "A catering site; we can provide menus for weddings",
+      "I'll give them the menu at the door",
+      "We will supply members with a monthly newsletter",
+    ])
+      expect(promisedContent(none), none).toBeNull();
+    // A promise to Forerunner: "you", or no one else named.
+    expect(promisedContent("A cafe page. I'll send you the opening hours and the photos")).toEqual({
+      phrase: "the opening hours and the photos",
+      items: ["opening hours", "photos"],
+    });
+    expect(
+      promisedContent("A site for our bakery; we will provide the menu and the photos"),
+    ).toEqual({ phrase: "the menu and the photos", items: ["menu", "photos"] });
+    expect(promisedContent("A shop page; the owner will supply the logo")?.items).toEqual(["logo"]);
+    expect(promisedContent("A club page; I'll send the photos of the garden")?.items).toEqual([
+      "photos of the garden",
+    ]);
+    expect(promisedContent("A club page; I will share the member list with you")?.items).toEqual([
+      "member list",
+    ]);
+    expect(promisedContent("A page; I will send the texts to you tomorrow")?.items).toEqual([
+      "texts",
+    ]);
+  });
+
   it("asks one question per item, in the person's words", () => {
     expect(["menu", "hours", "address", "photos", "logo"].map(contentQuestion)).toEqual([
       "What is the menu?",
@@ -70,6 +107,10 @@ describe("content the brief says the person will give (live L-11)", () => {
       "Where are the photos (a path in the project's folder, or a link)?",
       "Where is the logo (a path in the project's folder, or a link)?",
     ]);
+    // The item's head noun says "is" or "are", not its last word.
+    expect(contentQuestion("photos of the garden")).toBe(
+      "Where are the photos of the garden (a path in the project's folder, or a link)?",
+    );
   });
 
   it("the live bakery plan gets a person task for the menu, hours and address, and the build waits on it", () => {
@@ -121,6 +162,43 @@ describe("content the brief says the person will give (live L-11)", () => {
   it("a brief that promises nothing leaves the plan as it is", () => {
     const live = readIntakeReply(BAKERY.reply_text).proposal;
     expect(withOwnersContent(live, "A one-page website for a small bakery in Bern")).toBe(live);
+  });
+
+  it("Change the plan: a change that drops the step, or says there is nothing to give, wins; another change keeps the step (review of 2026-11-02)", () => {
+    // The redraft the model writes with the person's change: the live plan, no person task.
+    const live = readIntakeReply(BAKERY.reply_text).proposal;
+    for (const dropped of [
+      // The review's two changes, word for word: before, the step came back on every redraft.
+      "There is nothing for me to give: drop the task that asks me for content and start building.",
+      "Drop the first task. Nothing in it is for me to give; build the page now.",
+      "I have no menu yet, leave that step out.",
+      "Remove the questions, I will not give you anything.",
+    ])
+      expect(withOwnersContent(live, BAKERY.brief, [dropped]), dropped).toBe(live);
+    // A later change does not bring it back once the person dropped it.
+    expect(
+      withOwnersContent(live, BAKERY.brief, [
+        "Drop the task that asks me for content.",
+        "Make the headings blue.",
+      ]),
+    ).toBe(live);
+    // A change about something else: the step the brief asks for stays, and the build waits.
+    for (const other of [
+      "Make the headings blue.",
+      "Keep the menu step and add a photo gallery.",
+    ]) {
+      const tasks = tasksOf(withOwnersContent(live, BAKERY.brief, [other]));
+      expect(
+        tasks.map((t) => t.key),
+        other,
+      ).toEqual(["your-content", "build-site", "check-site"]);
+      expect(tasks.find((t) => t.key === "build-site")?.dependsOn).toEqual(["your-content"]);
+    }
+    // Content a change promises is asked for too.
+    const logo = tasksOf(
+      withOwnersContent(live, "A one-page website for a bakery", ["I'll send you the logo too."]),
+    );
+    expect(logo[0]).toMatchObject({ title: "Give the logo", specialist: "person" });
   });
 });
 
@@ -224,6 +302,15 @@ describe("the bakery brief through the daemon: the plan card asks for the conten
     const inbox = (await json(await req("/inbox"))) as { requests: Record<string, unknown>[] };
     const card = inbox.requests.find((r) => r.projectId === project.id && r.status === "open");
     expect(card?.title).toBe('Plan for "Bakery Bern": 3 tasks');
+    // Approve and start says what it does here: nothing starts before the answers (review of
+    // 2026-11-02: it said "starts working on them now", and nothing started).
+    const explain = (c: Record<string, unknown> | undefined) =>
+      (c?.choices as { label: string; explain: string }[] | undefined)?.find(
+        (x) => x.label === "Approve and start",
+      )?.explain;
+    expect(explain(card)).toBe(
+      "Writes these 3 tasks; the work starts once you answer its questions in the Inbox.",
+    );
     const proposal = (card?.changeCard as JsonObject | undefined)?.proposal as {
       plan: { milestones: { tasks: { title: string; specialist?: string }[] }[] };
     };
@@ -268,5 +355,84 @@ describe("the bakery brief through the daemon: the plan card asks for the conten
     expect(plan?.outcome).toBe(
       "Plan approved: 3 tasks written; the work starts once you answer its questions in the Inbox.",
     );
+  });
+
+  it("Change the plan: another change keeps the step; a change that drops it is the new plan, and the model is told the plan the person read (review of 2026-11-02)", async () => {
+    const created = await req("/projects", {
+      method: "POST",
+      body: JSON.stringify({ name: "Bakery Thun", goal: BAKERY.goal, brief: BAKERY.brief }),
+    });
+    const project = (await json(created)) as { id: string };
+    const openCard = async () => {
+      const inbox = (await json(await req("/inbox"))) as { requests: Record<string, unknown>[] };
+      const card = inbox.requests.find((r) => r.projectId === project.id && r.status === "open");
+      const proposal = (card?.changeCard as JsonObject | undefined)?.proposal as {
+        plan: { milestones: { tasks: { title: string; specialist?: string }[] }[] };
+      };
+      return {
+        card,
+        tasks: proposal.plan.milestones.flatMap((m) => m.tasks.map((t) => t.title)),
+      };
+    };
+    const change = async (card: Record<string, unknown> | undefined, text: string) => {
+      // Every draft of the model is the live one: two tasks, no step for the person.
+      provider.queue.push(BAKERY.reply_text);
+      const answered = await req(`/requests/${card?.id}/answer`, {
+        method: "POST",
+        body: JSON.stringify({
+          version: card?.version,
+          answer: { choice: "Change the plan", text },
+        }),
+      });
+      expect(answered.status).toBe(200);
+      await rt.intake.inFlight(project.id);
+    };
+    const told = (i: number) =>
+      JSON.stringify(provider.calls[i]?.messages.find((m) => m.role === "user")?.content ?? "");
+    const from = provider.calls.length;
+    provider.queue.push(BAKERY.reply_text);
+    expect(
+      (await req(`/projects/${project.id}/intake`, { method: "POST", body: "{}" })).status,
+    ).toBe(202);
+    const first = await openCard();
+    expect(first.tasks).toEqual([
+      "Give the real menu, hours and address",
+      "Build the one-page bakery site",
+      "Check the site: validity, responsiveness, placeholders",
+    ]);
+    // A change about something else: the step stays, though the model's redraft has none.
+    await change(first.card, "Make the headings blue.");
+    const second = await openCard();
+    expect(second.card?.id).not.toBe(first.card?.id);
+    expect(second.tasks).toEqual(first.tasks);
+    // The redraft is told the plan the person read, its step for the person first.
+    expect(told(from + 1)).toContain(
+      "The plan the person read, in order:\\n1. Give the real menu, hours and address (the person answers: What is the menu? What are the hours? What is the address?)\\n2. Build the one-page bakery site (coder)",
+    );
+    expect(told(from + 1)).toContain(
+      "The person read the first plan and asked for this change: Make the headings blue.",
+    );
+    // The review's change: before, the step came back on every redraft and the build waited.
+    await change(
+      second.card,
+      "There is nothing for me to give: drop the task that asks me for content and start building.",
+    );
+    const third = await openCard();
+    expect(third.card?.title).toBe('Plan for "Bakery Thun": 2 tasks');
+    expect(
+      (third.card?.choices as { label: string; explain: string }[] | undefined)?.[0]?.explain,
+    ).toBe("Writes these 2 tasks and starts working on them now.");
+    expect(third.tasks).toEqual([
+      "Build the one-page bakery site",
+      "Check the site: validity, responsiveness, placeholders",
+    ]);
+    expect(provider.calls).toHaveLength(from + 3);
+    // Nothing of the earlier plans was written; the open card is answered as the person wants.
+    expect(await rt.store.task.list({ project_id: project.id } as never)).toEqual([]);
+    const rejected = await req(`/requests/${third.card?.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ version: third.card?.version, answer: "Reject" }),
+    });
+    expect(rejected.status).toBe(200);
   });
 });

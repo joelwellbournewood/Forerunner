@@ -1413,6 +1413,11 @@ describe("PM intake: Change the plan keeps the person's words until the new plan
       await after.intake.inFlight(projectId);
       expect(second.calls).toHaveLength(1);
       expect(told(second.calls[0])).toContain(asked);
+      // The plan the person read before the change is told again, from the answered card.
+      expect(told(second.calls[0])).toContain(
+        "The plan the person read, in order:\\n1. Scaffold the repository (coder)\\n2. Set up continuous integration (coder)\\n3. Sign-in flow (coder)",
+      );
+      expect(told(first.calls[1])).toContain("The plan the person read, in order:");
       // The plan size comes from the brief the project keeps, so it holds across the restart.
       expect(told(second.calls[0])).toContain("Plan size: small");
       const pending = await req2(`/projects/${projectId}/intake`);

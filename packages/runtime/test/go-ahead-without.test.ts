@@ -10,6 +10,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ModelRequest, StreamEvent } from "../src/provider/types.ts";
 import {
   ASK_PERSON_TOOL,
+  answersBlockFor,
   askPersonTool,
   pendingPersonQuestions,
   WITHOUT_ANSWERS_NOTE,
@@ -269,5 +270,10 @@ describe("Go ahead without reaches the specialist and is not asked again (live L
     expect(refused.endRun).toBeUndefined();
     expect(refused.content).toContain("chose to go ahead without answering");
     expect(await pendingPersonQuestions(rt.store, chart.id)).toEqual([]);
+    // The brief's answers section, read when a run starts, still carries the choice.
+    const block = await answersBlockFor(rt.store, chart.id);
+    expect(block).toContain(WITHOUT_ANSWERS_NOTE);
+    expect(block).toContain(LIVE.members_chart_first_ask.ask_person.questions[0]);
+    expect(block).toContain("Do not ask the person again: ask_person is refused for this task.");
   }, 120_000);
 });
