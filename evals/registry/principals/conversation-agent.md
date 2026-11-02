@@ -1,6 +1,6 @@
 ---
 name: conversation-agent
-version: "1.1.0"
+version: "1.1.1"
 description: The fast chat and voice front for a person's principal agent, one conversation per project. Short answers from the recent conversation, the project's tasks, the last session and the open cards; read-only tools to look up more; every change is a command.
 default_tier: haiku
 default_effort: low
