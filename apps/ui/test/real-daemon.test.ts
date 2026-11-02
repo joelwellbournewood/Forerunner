@@ -5063,4 +5063,48 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
       report: "The review stopped before a verdict: you stopped the session.",
     });
   }, 120_000);
+
+  it("GET /changes: a session start whose session ended is not undoable and says why, before anyone tries (later #36)", async () => {
+    const project = await client.createProject({ name: "Start undo", goal: "Say why" });
+    await client.createTask(project.id, {
+      title: "Write notes/plan.md",
+      outcome: "notes/plan.md exists",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    // The chat's start (the change log's session.start), with the words a person typed.
+    const asked = await client.executeCommands({
+      commands: [{ name: "session.start", params: { project: project.id, budgetChf: 5 } }],
+      wordsUsed: "start a session on Start undo",
+      source: "text",
+      projectId: project.id,
+    });
+    // A start above CHF 1.60 asks for a yes first, as the chat's read-back does.
+    const started =
+      asked.status === "pending" && asked.pendingId
+        ? await client.confirmCommand(asked.pendingId, { answer: "tap" })
+        : asked;
+    expect(started.status, JSON.stringify(started)).toBe("done");
+    const row = async () =>
+      (await client.changes({ projectId: project.id })).find((c) => c.id === started.changeLogId);
+    expect((await row())?.wordsUsed).toBe("start a session on Start undo");
+    await eventually(
+      async () =>
+        (await client.tasks(project.id)).every((t) => t.status === "done") &&
+        !(await client.sessions()).some(
+          (s) => s.projectId === project.id && ["running", "paused", "planned"].includes(s.status),
+        ),
+      "the started session to end",
+      async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+      60_000,
+    );
+    expect(await row()).toMatchObject({
+      undoState: "undoable",
+      undoable: false,
+      undoBlockedReason: "the session this start began has already ended; there is nothing to undo",
+    });
+    expect(
+      (await client.changes({ projectId: project.id, undoable: true })).map((c) => c.id),
+    ).not.toContain(started.changeLogId);
+  }, 120_000);
 });

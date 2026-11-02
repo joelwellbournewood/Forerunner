@@ -1,30 +1,44 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { commandNames, undoTone } from "../src/pages/ChangesPage.tsx";
+import { commandNames, undoBadge } from "../src/pages/ChangesPage.tsx";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Change log", () => {
-  it("reads command names and undo tones", () => {
+  it("reads command names and says what Undo can do, from the view", () => {
     expect(commandNames([{ name: "budget.set", params: {} }, "undo", 3])).toEqual([
       "budget.set",
       "undo",
       "?",
     ]);
-    expect(undoTone("undoable")).toBe("good");
-    expect(undoTone("undone")).toBe("info");
-    expect(undoTone("irreversible")).toBe("warn");
+    const row = { undoable: false, undoState: "undoable" as const };
+    expect(undoBadge({ ...row, undoable: true })).toEqual({ label: "Can be undone", tone: "good" });
+    // Stored as undoable, but the view says it would not work now (later #36).
+    expect(undoBadge(row)).toEqual({ label: "Cannot be undone", tone: "warn" });
+    expect(undoBadge({ undoable: false, undoState: "undone" })).toEqual({
+      label: "Undone",
+      tone: "info",
+    });
+    expect(undoBadge({ undoable: false, undoState: "expired" })).toEqual({
+      label: "Reverted",
+      tone: "neutral",
+    });
+    expect(undoBadge({ undoable: false, undoState: "irreversible" })).toEqual({
+      label: "Cannot be undone",
+      tone: "warn",
+    });
   });
 
-  it("lists every change with who asked, the words, the commands, before/after and the source", async () => {
+  it("lists every change with who asked, the words said, the commands, before/after and the source", async () => {
     renderApp("/changes");
     const rows = await screen.findAllByTestId("change");
     expect(rows).toHaveLength(2);
     const first = rows[0];
     if (!first) throw new Error("no change");
     expect(first).toHaveAttribute("data-source", "voice");
+    // Design §5 rule 6: never "Undo." as text next to the Undo button.
     expect(within(first).getByTestId("change-sentence")).toHaveTextContent(
-      "Raised tonight's session budget for Atlas from CHF 5 to CHF 20, until 06:00. Undo.",
+      /^Raised tonight's session budget for Atlas from CHF 5 to CHF 20, until 06:00\.$/,
     );
     expect(within(first).getByTestId("change-words")).toHaveTextContent(
       "give Atlas 20 francs tonight",
@@ -32,12 +46,45 @@ describe("Change log", () => {
     expect(first).toHaveTextContent("Alice");
     expect(first).toHaveTextContent("budget.set");
     expect(first).toHaveTextContent('"sessionBudgetChf": 5');
-    expect(within(first).getByTestId("change-undo-state")).toHaveTextContent("undoable");
+    expect(within(first).getByTestId("change-undo-state")).toHaveTextContent("Can be undone");
     expect(within(first).getByTestId("change-undo")).toBeInTheDocument();
     const second = rows[1];
     if (!second) throw new Error("no change");
-    expect(within(second).getByTestId("change-undo-state")).toHaveTextContent("undone");
+    expect(within(second).getByTestId("change-undo-state")).toHaveTextContent("Undone");
     expect(within(second).queryByTestId("change-undo")).not.toBeInTheDocument();
+  });
+
+  it("a row whose Undo would not work is never badged as undoable; a click in the app is no 'Said:' (later #36, #90)", async () => {
+    // Before: every row read "undoable" (the stored state), "Cannot be undone now: …" ones too;
+    // a Settings click read 'Said: "Settings: Quiet hours to from 12:00 to 18:00"'.
+    const harness = createHarness();
+    harness.daemon.state.changes.unshift({
+      ...(harness.daemon.state.changes[0] as (typeof harness.daemon.state.changes)[number]),
+      id: "chg_start",
+      source: "ui",
+      wordsUsed: "Start session",
+      commands: [{ name: "session.start", params: { project: "proj_atlas" } }],
+      sentence: "Started a session on Atlas with a budget of CHF 5.00. Undo.",
+      undoState: "undoable",
+      expiresAt: null,
+      before: { session_id: null },
+      after: { session_id: "sess_1", start_id: "start_1" },
+    });
+    renderApp("/changes", harness);
+    const row = (await screen.findAllByTestId("change")).find(
+      (r) => r.getAttribute("data-change-id") === "chg_start",
+    ) as HTMLElement;
+    expect(within(row).getByTestId("change-undo-state")).toHaveTextContent("Cannot be undone");
+    expect(within(row).queryByTestId("change-undo")).toBeNull();
+    expect(within(row).getByTestId("change-undo-blocked")).toHaveTextContent(
+      "Cannot be undone now: the session this start began has already ended; there is nothing to undo.",
+    );
+    expect(within(row).getByTestId("change-sentence")).toHaveTextContent(
+      /^Started a session on Atlas with a budget of CHF 5\.00\.$/,
+    );
+    expect(within(row).queryByTestId("change-words")).toBeNull();
+    expect(row).not.toHaveTextContent("Said:");
+    expect(row).not.toHaveTextContent(/\bundoable\b/);
   });
 
   it("undoes a change with one click and shows the undo row", async () => {

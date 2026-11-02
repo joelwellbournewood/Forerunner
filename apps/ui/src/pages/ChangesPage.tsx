@@ -4,22 +4,34 @@ import { type ChangeLogView, type CommandResultJson, describeError } from "../ap
 import { CommandResult } from "../components/ChangeCardDialog.tsx";
 import { RouteMissing } from "../components/RouteMissing.tsx";
 import { Badge, Button, ErrorBanner, INPUT_CLASS, Loading, type Tone } from "../components/ui.tsx";
+import { withoutUndoWord } from "../lib/plain-words.ts";
 import { formatDateTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState } from "../store/context.tsx";
 
-export function undoTone(state: ChangeLogView["undoState"]): Tone {
-  switch (state) {
-    case "undoable":
-      return "good";
-    case "undone":
-      return "info";
-    case "expired":
-      return "neutral";
-    default:
-      return "warn";
-  }
+/**
+ * What Undo can do for a row, from the view (later #36, U-061): "Can be undone" only when the
+ * daemon says the Undo would work now (`undoable`, which already weighs the window and each
+ * command's own check), "Undone", "Reverted" (a timed change that went back by itself), else
+ * "Cannot be undone". Before, the badge showed the stored `undo_state`, so a row whose Undo the
+ * daemon refused ("Cannot be undone now: …") still read "undoable".
+ */
+export function undoBadge(c: Pick<ChangeLogView, "undoable" | "undoState">): {
+  label: string;
+  tone: Tone;
+} {
+  if (c.undoable) return { label: "Can be undone", tone: "good" };
+  if (c.undoState === "undone") return { label: "Undone", tone: "info" };
+  if (c.undoState === "expired") return { label: "Reverted", tone: "neutral" };
+  return { label: "Cannot be undone", tone: "warn" };
 }
+
+/**
+ * The channels in which a person says words (design §5 rule 11): "Said:" shows what they said
+ * there. A click in the app (`ui`, the palette) carries the button's words, which nobody said
+ * (later #90: 'Said: "Settings: Quiet hours to from 12:00 to 18:00"').
+ */
+const SAID_SOURCES = new Set<ChangeLogView["source"]>(["chat", "voice", "email"]);
 
 /** The command names of a change log row (the daemon stores `{ name, params }` objects). */
 export function commandNames(commands: unknown[]): string[] {
@@ -128,7 +140,7 @@ export function ChangesPage() {
             onChange={(e) => setOnlyUndoable(e.target.checked)}
             data-testid="changes-undoable"
           />
-          undoable only
+          Only what can be undone
         </label>
         <select
           className={`${INPUT_CLASS} w-auto`}
@@ -207,17 +219,18 @@ export function ChangesPage() {
                   {projectName(c.projectId)}
                 </Link>
               ) : null}
-              <Badge tone={undoTone(c.undoState)} testId="change-undo-state">
-                {c.undoState}
+              <Badge tone={undoBadge(c).tone} testId="change-undo-state">
+                {undoBadge(c).label}
               </Badge>
               <span className="ml-auto text-xs text-neutral-500">
                 {humanName(c.humanId) ?? c.agentId ?? "agent"} · {formatDateTime(c.createdAt)}
               </span>
             </div>
             <p className="mt-2 font-medium" data-testid="change-sentence">
-              {c.sentence}
+              {/* Design §5 rule 6: the Undo is the button below, never "Undo." as text. */}
+              {withoutUndoWord(c.sentence).text}
             </p>
-            {c.wordsUsed ? (
+            {c.wordsUsed && SAID_SOURCES.has(c.source) ? (
               <p
                 className="text-xs text-neutral-600 dark:text-neutral-400"
                 data-testid="change-words"

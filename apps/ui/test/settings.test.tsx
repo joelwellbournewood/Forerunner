@@ -336,7 +336,7 @@ describe("Settings", () => {
       deviceId: "device_from_another_install",
     });
     expect(await within(dialog).findByTestId("command-refused")).toHaveTextContent(
-      "Refused (approval_required): unknown device; pair it first",
+      "Not done: unknown device; pair it first.",
     );
     expect(harness.daemon.state.pendingCommands.has(pendingId)).toBe(true);
     expect(harness.daemon.state.changes).toHaveLength(2);

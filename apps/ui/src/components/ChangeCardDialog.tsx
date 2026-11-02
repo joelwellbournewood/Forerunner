@@ -4,6 +4,15 @@ import { type ChangeCardView, parseChangeCard } from "../api/contracts.ts";
 import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
 import { Badge, Button, ErrorBanner } from "./ui.tsx";
 
+/**
+ * A refused command in words (later #90): "Not done: unknown device; pair it first." Before,
+ * "Refused (approval_required): …" put the error code in front of the reason.
+ */
+export function refusedWords(reason: string | null | undefined): string {
+  const said = (reason ?? "").trim().replace(/[.\s]+$/, "");
+  return said ? `Not done: ${said}.` : "Not done.";
+}
+
 /** The change card of spec Q.4, as a block: what, old → new, scope, duration, impact, undo. */
 export function ChangeCard({
   card,
@@ -159,7 +168,8 @@ export function CommandResult({
   return (
     <div className="space-y-2" data-testid="command-refused">
       {card ? <ChangeCard card={card} /> : null}
-      <ErrorBanner message={`Refused (${result.code ?? "refused"}): ${result.reason ?? ""}`} />
+      {/* Design §5 rules 6 and 8: what went wrong in words, never the error code. */}
+      <ErrorBanner message={refusedWords(result.reason)} />
       <Button variant="ghost" onClick={onDismiss} data-testid="command-close">
         Close
       </Button>

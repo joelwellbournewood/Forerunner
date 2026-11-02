@@ -5025,7 +5025,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       title?: string;
       version?: number;
       depends_on?: string[];
+      session_id?: string | null;
     };
+    // As the daemon's `startUndoRefusal` (later #36): a start whose session ended has nothing
+    // left to undo, and the row says so instead of offering Undo.
+    if (name === "session.start") {
+      const s = after.session_id
+        ? state.sessions.find((x) => x.id === after.session_id)
+        : undefined;
+      return s && !["running", "paused", "planned"].includes(s.status)
+        ? "the session this start began has already ended; there is nothing to undo"
+        : null;
+    }
     if (!name?.startsWith("task.")) return null;
     const task = state.tasks.find((t) => t.id === after.task_id);
     if (!task) return "the task no longer exists";

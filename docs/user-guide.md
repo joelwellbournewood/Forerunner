@@ -549,8 +549,11 @@ words used, what changed, and **Undo** while it can still be taken back. An undo
 confirmation as the change it makes: undoing a lowered monthly cap raises it, so it waits for
 your confirmation on this PC (or the phone with biometric), and so does putting back a wider
 email mode; undoing a raise acts at once. When an undo cannot work any more (the task was
-finished since, a session already read the note), the change says why instead of offering
-Undo, and nothing ever says "Undone" when nothing changed.
+finished since, a session already read the note, the session a start began has ended), the
+change reads **Cannot be undone** and says why instead of offering Undo, and nothing ever says
+"Undone" when nothing changed. Each change says **Can be undone**, **Undone**, **Reverted** (a
+change for tonight that went back by itself) or **Cannot be undone**. "Said:" shows the words you
+typed in chat, said aloud or wrote in an email; a click in the app has none.
 
 ## Kill switch
 

@@ -37,11 +37,14 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   // Changes is behind More (design §6).
   await page.getByTestId("main-nav").getByTestId("more-nav").click();
   await page.getByRole("menuitem", { name: "Changes" }).click();
+  // Never "Undo." as text beside the Undo button, and a click in Settings is nothing anyone said
+  // (design §5 rule 6, later #90): no "Said:" line.
   await expect(page.getByTestId("change").first().getByTestId("change-sentence")).toHaveText(
-    "Set autonomy for Atlas from 2 to 3. Undo.",
+    "Set autonomy for Atlas from 2 to 3.",
   );
-  await expect(page.getByTestId("change").first().getByTestId("change-words")).toContainText(
-    "Settings: Autonomy to 3",
+  await expect(page.getByTestId("change").first().getByTestId("change-words")).toHaveCount(0);
+  await expect(page.getByTestId("change").first().getByTestId("change-undo-state")).toHaveText(
+    "Can be undone",
   );
   await page.getByTestId("change").first().getByTestId("change-undo").click();
   await expect(page.getByTestId("changes-note")).toContainText(
