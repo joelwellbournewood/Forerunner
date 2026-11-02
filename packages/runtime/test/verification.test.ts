@@ -922,6 +922,97 @@ describe("verification: a command line tool, an API and a Python project are tri
     await w.close();
   });
 
+  it("C-1: where the daemon's environment forces colour (FORCE_COLOR=1, as some people and CI set it), the tried command runs without it, and what it printed reaches the drawer and the critic as plain text", async () => {
+    // CI on c8c16fb: `console.log(9)` reached the try's evidence as "\x1b[33m9\x1b[39m"; the
+    // process sandbox handed the daemon's FORCE_COLOR to the tried command. A person whose
+    // environment forces colour read the escapes in "See what was checked", and so did the critic.
+    const root = taskFolder({
+      "wc.js": [
+        'const fs = require("fs");',
+        'const n = fs.readFileSync(process.argv[2], "utf8").split(/\\s+/).filter(Boolean).length;',
+        "console.log(n);",
+        'console.log("colour forced: " + (process.env.FORCE_COLOR ?? "no") + ", NO_COLOR=" + (process.env.NO_COLOR ?? "unset"));',
+        // A program that colours whatever the environment says.
+        'console.error("\\u001b[2mcounted \\u001b[1m" + n + "\\u001b[22m words\\u001b[0m");',
+        "",
+      ].join("\n"),
+    });
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }), closingReply()],
+      critic: {
+        sandbox: {
+          open: async (req: { worktree: string }) => ({
+            sandbox: await ProcessSandbox.create({
+              worktree: req.worktree,
+              limits: { timeoutMs: 120_000 },
+              network: { mode: "none" },
+              // The daemon's own environment, whatever the machine running this test has.
+              baseEnv: { ...process.env, FORCE_COLOR: "1", CLICOLOR_FORCE: "1" },
+            }),
+            engine: "process",
+            warnings: [],
+          }),
+        },
+        hasCommand: async () => true,
+      },
+    });
+    const task = await w.addTask("Write wc.js", {
+      acceptance_criteria: ["`node wc.js <file>` prints the number of words in the file"],
+    });
+    await w.start(w.runner(doneExecutor(w, { worktree: root, changedFiles: ["wc.js"] })));
+    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    const t = (await verificationOfTask(w, task.id))?.tried[0];
+    expect(t).toMatchObject({ kind: "command", target: "node wc.js <file>", ok: true });
+    expect(t?.output).toMatch(
+      /exit 0 in \d+ ms\noutput:\n9\ncolour forced: no, NO_COLOR=1\n\[stderr\]\ncounted 9 words$/,
+    );
+    const sent = JSON.stringify(reviewCalls(w)[0]?.request.messages);
+    expect(sent).toContain("counted 9 words");
+    expect(sent).not.toContain("\\u001b");
+    await w.close();
+  });
+
+  it("C-3: the project's checks print colour (a test runner forced into it, or one that always colours); the drawer and the critic read plain text, and the checks ran with NO_COLOR=1", async () => {
+    const root = taskFolder({
+      "package.json": JSON.stringify({ name: "clamp", scripts: { test: "node --test" } }),
+      "src/clamp.js": "export const clamp = (x) => x;\n",
+    });
+    const leases: FakeSandbox[] = [];
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }), closingReply()],
+      critic: {
+        sandbox: {
+          open: async () => {
+            const sandbox = new FakeSandbox({ worktree: root }).script(/npm run --silent test/, {
+              code: 0,
+              stdout:
+                "\u001b[32m✔ clamp keeps 2 inside 0..3\u001b[39m\n\u001b[34mℹ pass 1\u001b[39m",
+              stderr: "\u001b[33m(node:1) ExperimentalWarning\u001b[39m",
+            });
+            leases.push(sandbox);
+            return { sandbox, engine: "fake", warnings: [] };
+          },
+        },
+        hasCommand: async () => true,
+      },
+    });
+    const task = await w.addTask("Add clamp");
+    await w.start(w.runner(doneExecutor(w, { worktree: root, changedFiles: ["src/clamp.js"] })));
+    const test = leases[0]?.calls.find((c) => c.argv.join(" ") === "npm run --silent test");
+    expect(test?.opts.env).toMatchObject({ NO_COLOR: "1" });
+    const v = await verificationOfTask(w, task.id);
+    expect(v?.checks.map((c) => [c.name, c.passed])).toEqual([["test", true]]);
+    expect(v?.checks[0]?.output).toMatch(
+      /^npm run --silent test -> exit 0 in \d+ ms\n✔ clamp keeps 2 inside 0\.\.3\nℹ pass 1\n\[stderr\]\n\(node:1\) ExperimentalWarning$/,
+    );
+    const sent = JSON.stringify(reviewCalls(w)[0]?.request.messages);
+    expect(sent).toContain("✔ clamp keeps 2 inside 0..3");
+    expect(sent).not.toContain("\\u001b");
+    await w.close();
+  });
+
   it("C-1: a tiny HTTP API is started in the task's sandbox and the route the brief names is called; the reply is the evidence", async () => {
     const root = taskFolder({ "server.js": SERVER });
     const leases: { kind: string; destroyed: () => boolean }[] = [];

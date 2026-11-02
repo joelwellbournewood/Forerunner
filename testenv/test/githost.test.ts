@@ -378,7 +378,24 @@ describe("FakeGitHost", () => {
     });
   });
 
-  describe("pull requests", () => {
+  // Each case is a few dozen git subprocesses (a seeded commit, a merge, a mergeability check):
+  // about 1 s here and 6 to 7 s on the Windows runner, which ran a squash and a rebase in one
+  // case past the 20 s default under load (CI on c8c16fb). One merge method per case, and a
+  // limit for that much git on a loaded Windows runner; no case reads what another left.
+  describe("pull requests", { timeout: 60_000 }, () => {
+    /** The PRs `GET /pulls?state=` lists, each checked to be in that state; `seen` for messages. */
+    const byState = async (state: "open" | "closed") => {
+      const r = await api(base, "GET", `/repos/alice/${repoName}/pulls?state=${state}`, {
+        token: alice.token,
+      });
+      const seen = r.list.map((p) => `#${p.number} ${p.state}`).join(", ");
+      expect(
+        r.list.every((p) => p.state === state),
+        `state=${state} listed ${seen}`,
+      ).toBe(true);
+      return { numbers: r.list.map((p) => Number(p.number)), seen };
+    };
+
     it("opens a PR, reports mergeability and files, and merges with a merge commit", async () => {
       await host.seedCommit(
         `alice/${repoName}`,
@@ -501,7 +518,7 @@ describe("FakeGitHost", () => {
       expect((fixed.json.head as Json).sha).toBe(synced[0]?.payload.after);
     });
 
-    it("supports squash and rebase merges", async () => {
+    it("supports squash merges", async () => {
       await host.seedCommit(`alice/${repoName}`, { "sq/1.txt": "1\n" }, "sq one", "feature/squash");
       await host.seedCommit(`alice/${repoName}`, { "sq/2.txt": "2\n" }, "sq two", "feature/squash");
       const sq = await api(base, "POST", `/repos/alice/${repoName}/pulls`, {
@@ -533,7 +550,14 @@ describe("FakeGitHost", () => {
         "sq/1.txt",
         "sq/2.txt",
       ]);
+      // A merged PR is listed as closed, no longer as open.
+      const closed = await byState("closed");
+      expect(closed.numbers, `closed: ${closed.seen}`).toContain(Number(sq.json.number));
+      const open = await byState("open");
+      expect(open.numbers, `open: ${open.seen}`).not.toContain(Number(sq.json.number));
+    });
 
+    it("supports rebase merges", async () => {
       await host.seedCommit(`alice/${repoName}`, { "rb/1.txt": "1\n" }, "rb one", "feature/rebase");
       await host.seedCommit(`alice/${repoName}`, { "rb/2.txt": "2\n" }, "rb two", "feature/rebase");
       await host.seedCommit(
@@ -591,10 +615,12 @@ describe("FakeGitHost", () => {
         { token: alice.token },
       );
       expect(byHead.list.map((p) => p.number)).toEqual([n]);
-      const closedList = await api(base, "GET", `/repos/alice/${repoName}/pulls?state=closed`, {
-        token: alice.token,
-      });
-      expect(closedList.list.length).toBeGreaterThanOrEqual(3);
+      // By state, on this case's own pull request (the others' PRs are theirs: a case that ran
+      // late or timed out must not change what this one counts).
+      const openNow = await byState("open");
+      expect(openNow.numbers, `open: ${openNow.seen}`).toContain(n);
+      const closedNow = await byState("closed");
+      expect(closedNow.numbers, `closed: ${closedNow.seen}`).not.toContain(n);
       const review = await api(base, "POST", `/repos/alice/${repoName}/pulls/${n}/reviews`, {
         token: alice.token,
         body: { event: "APPROVE", body: "LGTM" },
@@ -613,6 +639,10 @@ describe("FakeGitHost", () => {
       expect(edited.json.title).toBe("Review (renamed)");
       expect(edited.json.state).toBe("closed");
       expect(edited.json.merged).toBe(false);
+      const closedAfter = await byState("closed");
+      expect(closedAfter.numbers, `closed: ${closedAfter.seen}`).toContain(n);
+      const openAfter = await byState("open");
+      expect(openAfter.numbers, `open: ${openAfter.seen}`).not.toContain(n);
     });
 
     it("updates a PR branch with the base branch", async () => {

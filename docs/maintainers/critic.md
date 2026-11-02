@@ -83,6 +83,15 @@ host. The results join `evidence.checkResults`, so the model reads the output an
 required check is a high finding; the evidence list records each as
 `ran: <name> -> pass|fail (<first line>)`.
 
+Command output is plain text wherever the critic or the person reads it: `ProcessCheckRunner`
+runs a check without the daemon's forced colour (`withoutForcedColour(process.env)`: no
+`FORCE_COLOR`, `CLICOLOR_FORCE` or `PY_COLORS`, `NO_COLOR=1`) and strips the escape sequences
+it printed anyway (`stripAnsi`, `@forerunner/platform`), and so do `renderEvidence` (the
+check, try and test output blocks) and `verificationOf` (what "See what was checked" shows),
+whoever produced the output. Before (CI on c8c16fb, where ci.yml sets `FORCE_COLOR=1`; a
+person can have it set) a tried command's `9` reached both as `\x1b[33m9\x1b[39m`
+(`tier0.test.ts`).
+
 Verification (ADR 0104, `types.ts`):
 - **Read access.** `ctx.project = { root, tools }` gives a task review read-only tools (the
   runtime's `read_file` and `list_dir`) besides `submit_review`. The critic's token allows those

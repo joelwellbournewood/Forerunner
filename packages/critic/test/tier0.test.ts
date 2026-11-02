@@ -170,4 +170,29 @@ describe("tier 0: automated checks only", () => {
     expect(slow.passed).toBe(false);
     expect(slow.output).toContain("timeout");
   });
+
+  it("ProcessCheckRunner runs a check without the daemon's forced colour, and its output is plain text even when the check colours anyway", async () => {
+    // CI sets FORCE_COLOR=1 (so do some people): Node then colours `console.log(7)` into the
+    // pipe, and the critic and "See what was checked" read the escape sequences.
+    const was = { FORCE_COLOR: process.env.FORCE_COLOR, NO_COLOR: process.env.NO_COLOR };
+    process.env.FORCE_COLOR = "1";
+    delete process.env.NO_COLOR;
+    try {
+      const r = await new ProcessCheckRunner().run({
+        name: "colour",
+        argv: [
+          "node",
+          "-e",
+          'console.log(7); console.log("NO_COLOR=" + process.env.NO_COLOR); console.error("\\u001b[31mred anyway\\u001b[39m")',
+        ],
+      });
+      expect(r.output).toMatch(
+        /^node -e .+ -> exit 0 in \d+ ms\n7\nNO_COLOR=1\n\n\[stderr\]\nred anyway$/,
+      );
+    } finally {
+      for (const [k, v] of Object.entries(was))
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+    }
+  });
 });

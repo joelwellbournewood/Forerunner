@@ -219,7 +219,9 @@ with their milestone.
   (`refs/forerunner/set-aside/<task>`, HEAD does not move) and the folder goes back to HEAD;
   with nothing to set aside an older commit under the ref is dropped. `bringBack(task)` (Undo
   of the cancel) applies that commit's diff on top of the folder as it is now
-  (`GitOps.bringBack`: `git apply`, all or nothing): `restored` with the files, `conflict` when
+  (`GitOps.bringBack`: `git diff --binary --no-color --no-ext-diff`, so a person's
+  `color.ui=always` or external diff tool cannot spoil the patch, then `git apply`, all or
+  nothing; before, such a config made every bring-back a `conflict`): `restored` with the files, `conflict` when
   the folder changed in the same places since (the ref stays), `missing` when nothing is set
   aside. Ignored files stay where they are. `GitOps.commitFile(path, content, message)` commits
   one file's content on top of HEAD through a temporary index (`GIT_INDEX_FILE`), the files in

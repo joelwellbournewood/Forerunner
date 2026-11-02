@@ -814,6 +814,12 @@ cd apps/ui && pnpm test           # Vitest + Testing Library, jsdom, fake daemon
 cd apps/ui && pnpm test:ui        # Playwright, headless Chromium, fake daemon + Vite on free ports
 ```
 
+The Vitest suite runs with CI's environment on every machine (`setupFiles` starts with
+`testenv/src/ci-env.ts`: no git identity, `FORCE_COLOR=1`; testing.md, "Tests run as CI runs
+them"): `real-daemon.test.ts`'s C-57 case merged on the seed repository with a plain
+`git merge` and passed only where the person had a git identity (CI on c8c16fb, both runners);
+its merge now names the seed's identity.
+
 `setup-assistant` covers the setup assistant (ADR 0092): a fresh install opens it instead of
 Home, a set-up install and a daemon without `/setup` stay where the app opened, Settings links
 to it; the walk through name and time zone, a rejected and an accepted API key checked on paste

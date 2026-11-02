@@ -7207,10 +7207,8 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
     const briefBare = join(bare, "..", "brief.git");
     await run(["git", "init", "--bare", "-b", "main", briefBare]);
     const seedDir = join(bare, "..", "brief-seed");
-    const seed = new GitOps({
-      cwd: seedDir,
-      identity: { name: "Seed", email: "seed@example.test" },
-    });
+    const seedIdentity = { name: "Seed", email: "seed@example.test" };
+    const seed = new GitOps({ cwd: seedDir, identity: seedIdentity });
     await seed.clone(briefBare);
     writeFileSync(join(seedDir, "README.md"), "# brief\n");
     await seed.commitAll("seed");
@@ -7271,12 +7269,17 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
     expect(files.entries.map((e) => e.path)).not.toContain("docs/overview.md");
 
     // The person merges the intake's pull request on the host; the next session's end brings
-    // this computer's copy up to date, so the tabs read the merged docs.
+    // this computer's copy up to date, so the tabs read the merged docs. The merge commit is the
+    // seed's, under its identity: CI's runners have none of their own (testenv/src/ci-env.ts).
     await seed.fetch();
     await run([
       "git",
       "-C",
       seedDir,
+      "-c",
+      `user.name=${seedIdentity.name}`,
+      "-c",
+      `user.email=${seedIdentity.email}`,
       "merge",
       "--no-ff",
       "-m",

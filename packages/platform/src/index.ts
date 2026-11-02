@@ -6,4 +6,5 @@ export * from "./log.ts";
 export * from "./net-errors.ts";
 export * from "./os.ts";
 export * from "./paths.ts";
+export * from "./plain-output.ts";
 export * from "./shell.ts";

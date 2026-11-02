@@ -75,7 +75,9 @@ async function compose(env: Record<string, string>, benchClock?: SimulatedClock)
     expect(res.status, `${init.method ?? "GET"} ${path}`).toBeLessThan(300);
     return (await res.json()) as Json;
   };
-  return { rt, req, json, bench };
+  /** The sessions the cases started, for `settle`. */
+  const sessions: string[] = [];
+  return { rt, req, json, bench, sessions };
 }
 
 type World = Awaited<ReturnType<typeof compose>>;
@@ -122,29 +124,92 @@ async function startSession(w: World, projectId: string): Promise<string> {
     post({ agentId: w.rt.agent.id, projectId, trigger: "manual" }),
   );
   expect(started.status).toBe(202);
-  return String((((await started.json()) as Json).session as Json).id);
+  const id = String((((await started.json()) as Json).session as Json).id);
+  w.sessions.push(id);
+  return id;
 }
+
+const ENDED = ["completed", "stopped", "failed", "killed"];
+/**
+ * A session whose row and log did not change for this long is stuck, however loaded the
+ * machine is (the Windows runner's longest quiet spell seen was a 16 s start).
+ */
+const NO_PROGRESS_MS = 45_000;
+/** Below the cases' own 120 s, so a session that never ends is stopped here, not left running. */
+const SESSION_LIMIT_MS = 100_000;
 
 /**
  * Wait until the session has ended and its start is over in the scheduler (the session-end
  * notification is decided there, after the run returns), then until the notifier has recorded
  * what that start sent: a session-end notification when there is one, else the next tick.
+ *
+ * A session that is still working is waited for: on the Windows runner under load one with a
+ * task that fails after its retries took more than 30 s (CI on c8c16fb) while it kept taking
+ * steps. It fails when the session took no step for `NO_PROGRESS_MS`, or ran past
+ * `SESSION_LIMIT_MS`; then it is stopped and waited for first, so nothing of it runs into the
+ * next case or into the runtime's close, and the error says what was seen.
  */
 async function sessionOver(w: World, sessionId: string): Promise<Json> {
-  const row = await waitFor(
-    async () => {
-      const s = await w.json(`/sessions/${sessionId}`);
-      return ["completed", "stopped", "failed", "killed"].includes(String(s.status)) &&
-        !w.rt.scheduler.isActive(w.rt.agent.id)
-        ? s
-        : undefined;
-    },
+  const view = () => w.json(`/sessions/${sessionId}`);
+  const events = async () =>
+    ((await w.json(`/sessions/${sessionId}/events`)) as unknown as Json[]).length;
+  const progress = async (s: Json) =>
+    JSON.stringify([s.status, s.steps, s.spent, s.currentTask, s.statusText, await events()]);
+  const started = Date.now();
+  let last = "";
+  let movedAt = started;
+  for (;;) {
+    const s = await view();
+    if (ENDED.includes(String(s.status)) && !w.rt.scheduler.isActive(w.rt.agent.id)) {
+      // The notifier records asynchronously: a turn of the event loop lets a pending one land.
+      await new Promise((r) => setTimeout(r, 200));
+      return s;
+    }
+    const now = Date.now();
+    const at = await progress(s);
+    if (at !== last) {
+      last = at;
+      movedAt = now;
+    }
+    const why =
+      now - movedAt > NO_PROGRESS_MS
+        ? `it took no step for ${Math.round((now - movedAt) / 1000)} s`
+        : now - started > SESSION_LIMIT_MS
+          ? `it was still working after ${Math.round((now - started) / 1000)} s`
+          : null;
+    if (why) {
+      const seen = JSON.stringify(s);
+      await stopAndWait(w, sessionId, why);
+      throw new Error(`session ${sessionId} did not end (${why}; stopped it): ${seen}`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/** Stop a session as the session page's Stop now does and wait until nothing of it runs. */
+async function stopAndWait(w: World, sessionId: string, why: string): Promise<void> {
+  const view = () => w.json(`/sessions/${sessionId}`);
+  await w.req(`/sessions/${sessionId}/stop`, post({}));
+  await waitFor(
     async () =>
-      `session ${sessionId} to end: ${JSON.stringify(await w.json(`/sessions/${sessionId}`))}`,
+      ENDED.includes(String((await view()).status)) && !w.rt.scheduler.isActive(w.rt.agent.id)
+        ? true
+        : undefined,
+    async () => `session ${sessionId} to stop (${why}): ${JSON.stringify(await view())}`,
   );
-  // The notifier records asynchronously: a turn of the event loop lets a pending one land.
-  await new Promise((r) => setTimeout(r, 200));
-  return row;
+}
+
+/**
+ * Before the runtime closes: a session a failed case left running is stopped and waited for,
+ * so it never meets a closed database ("sqlite database is closed" on the Windows runner) or
+ * the next case.
+ */
+async function settle(w: World | undefined): Promise<void> {
+  if (!w) return;
+  for (const id of w.sessions) {
+    const s = await w.json(`/sessions/${id}`);
+    if (!ENDED.includes(String(s.status))) await stopAndWait(w, id, "the cases are over");
+  }
 }
 
 async function recent(w: World): Promise<Json[]> {
@@ -159,6 +224,7 @@ describe("one notification per outcome: a task that fails after its retries (des
     w = await compose({ FORERUNNER_BENCH_FAIL: "Write the scope" });
   }, 120_000);
   afterAll(async () => {
+    await settle(w);
     await w?.rt.close();
   });
 
@@ -321,6 +387,7 @@ describe("the person's own Stop now is not echoed back (design §5.11)", () => {
     w = await compose({ FORERUNNER_BENCH_DELAY_MS: "60000" }, still);
   }, 120_000);
   afterAll(async () => {
+    await settle(w);
     await w?.rt.close();
   });
 
@@ -341,9 +408,12 @@ describe("the person's own Stop now is not echoed back (design §5.11)", () => {
           (t) => t.id === taskId,
         )?.status,
       );
+    // A session's start on the loaded Windows runner took 16 s before its first task (CI on
+    // c8c16fb): the wait is the case's own limit less the stop's; `settle` stops what is left.
     await waitFor(
       async () => ((await status()) === "in_progress" ? true : undefined),
       async () => `the task to run (it is ${await status()})`,
+      SESSION_LIMIT_MS,
     );
     const stopped = await w.req(`/sessions/${sessionId}/stop`, post({}));
     expect(stopped.status).toBe(200);
