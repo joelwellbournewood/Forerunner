@@ -81,7 +81,12 @@ import {
   type SpecialistProfile,
 } from "../registry/alternates.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
-import { RUN_COMMAND_TOOL, type SpecialistDriver, TOOL_UNMAPPED_AUDIT } from "../registry/tools.ts";
+import {
+  RUN_COMMAND_TOOL,
+  type SpecialistDriver,
+  TOOL_UNMAPPED_AUDIT,
+  WEB_FETCH_TOOL,
+} from "../registry/tools.ts";
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
 import { pricingFor as tablePricingFor } from "../wiring/billing-ports.ts";
@@ -649,7 +654,11 @@ export class LoopTaskExecutor implements TaskExecutor {
         message: `the ${spec.name} has no web access on this run (${lost.join(", ")} not offered here); it works from what the project holds`,
       });
       webLines.push(NO_WEB_ACCESS_LINE);
-    } else if (choice.driver !== "sdk" && profile.registryTools.includes(WEB_SEARCH_CC)) {
+    } else if (
+      choice.driver !== "sdk" &&
+      profile.registryTools.includes(WEB_SEARCH_CC) &&
+      spec.allowedTools.includes(WEB_FETCH_TOOL)
+    ) {
       // `cc:WebSearch` has no equivalent on an API key (ADR 0107): the page reader only.
       webLines.push(NO_WEB_SEARCH_LINE);
     }

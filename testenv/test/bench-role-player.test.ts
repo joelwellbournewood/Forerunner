@@ -354,6 +354,53 @@ describe("bench role-player: specialists", () => {
     expect(String(write?.input.content)).toMatch(/random quote/);
   });
 
+  it("a researcher offered web_fetch reads the pages its brief names and writes from them, citing each (ADR 0107)", async () => {
+    const { p } = player();
+    const url = "https://gohugo.io/about/";
+    const refused = "http://10.0.0.7/admin";
+    const run = await runSpecialist(p, {
+      specialist: "researcher",
+      title: "Compare two static site generators",
+      outcome: `docs/research.md says how fast Hugo builds, citing ${url} and ${refused}.`,
+      criteria: ["Every claim cites its page"],
+      tools: ["read_file", "write_file", "list_dir", "web_fetch"],
+      results: (name, input) =>
+        name === "web_fetch"
+          ? input.url === url
+            ? {
+                content: `${url} (HTTP 200, "About Hugo")\n\nHugo builds a 10,000-page site in about 2 seconds.\nLinks (1):`,
+              }
+            : {
+                content:
+                  "ERROR: Refused: 10.0.0.7 is a private or local network address; research reads public web pages only.",
+                isError: true,
+              }
+          : { content: name === "list_dir" ? "(empty)" : "ok" },
+    });
+    const names = run.steps.flatMap((s) => s.calls.map((c) => c.name));
+    expect(names).toEqual(["list_dir", "web_fetch", "web_fetch", "write_file"]);
+    const write = run.steps.flatMap((s) => s.calls).find((c) => c.name === "write_file");
+    expect(write?.input.path).toBe("docs/research.md");
+    const text = String(write?.input.content);
+    expect(text).toContain(`- "Hugo builds a 10,000-page site in about 2 seconds." (${url})`);
+    expect(text).toContain(`- ${refused} was not read: Refused: 10.0.0.7 is a private`);
+    expect(text).toContain(`## Sources read\n\n- ${url}\n- ${refused} (not read)`);
+    expect(run.last.text).toContain(`**Sources read**\n- ${url}\n- ${refused}: not read (Refused:`);
+    // Without the page reader it reads nothing and writes as before.
+    const plain = await runSpecialist(player().p, {
+      specialist: "researcher",
+      title: "Compare two static site generators",
+      outcome: `docs/research.md says how fast Hugo builds, citing ${url}.`,
+      criteria: ["Every claim cites its page"],
+      tools: ["read_file", "write_file", "list_dir"],
+      results: (name) => ({ content: name === "list_dir" ? "(empty)" : "ok" }),
+    });
+    expect(plain.steps.flatMap((s) => s.calls.map((c) => c.name))).toEqual([
+      "list_dir",
+      "write_file",
+    ]);
+  });
+
   it("FORERUNNER_BENCH_FAIL makes the run report it could not do the work, or fail the call", async () => {
     const report = player({ FORERUNNER_BENCH_FAIL: "script.js" });
     const r = await runSpecialist(report.p, {

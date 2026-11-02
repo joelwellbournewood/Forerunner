@@ -259,6 +259,8 @@ describe("the researcher runs on an API key and reads the web (ADR 0107)", () =>
     expect(w.runs.map((r) => r.specialist)).toEqual(["researcher"]);
     expect(w.provider.calls).toHaveLength(1);
     expect(w.provider.calls[0]?.messages[0]?.content as string).toContain(NO_WEB_ACCESS_LINE);
+    // No word about web_fetch on a run that has no page reader.
+    expect(w.provider.calls[0]?.messages[0]?.content as string).not.toContain(NO_WEB_SEARCH_LINE);
     expect(w.events).toContain(
       "the researcher has no web access on this run (cc:WebFetch, cc:WebSearch not offered here); it works from what the project holds",
     );
