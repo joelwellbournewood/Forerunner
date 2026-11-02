@@ -1,6 +1,7 @@
 import { mkdirSync, rmSync } from "node:fs";
-import { dirname, errorMessage, ForerunnerError, log } from "@forerunner/platform";
+import { dirname, ForerunnerError, log } from "@forerunner/platform";
 import { type GitAuth, type GitIdentity, GitOps } from "./git.ts";
+import { firstPushFailedWords, pushFailure } from "./push-words.ts";
 
 /**
  * The branch every task branch, docs branch and status branch starts from (`origin/<base>`),
@@ -16,7 +17,7 @@ import { type GitAuth, type GitIdentity, GitOps } from "./git.ts";
  * repository that has branches but not `base` is not empty: that is a configuration Forerunner
  * does not guess at, and the error says what to check. Pushing the first commit can fail (a
  * token without write access, a rule on the host): the error says the repository is empty and
- * what the person can do.
+ * what the person can do, in words (`firstPushFailedWords`), never git's output.
  */
 export interface EnsureBaseInput {
   /** The clone of the repository, fetched (or just cloned). */
@@ -66,10 +67,13 @@ export async function ensureBaseBranch(input: EnsureBaseInput): Promise<EnsureBa
       // Someone (another install, the person) made the first commit meanwhile: use theirs.
       await git.fetch();
       if (await git.hasRef(`origin/${base}`)) return "existing";
+      // In words, never git's output (review, 2026-11-02). A refusal is not tried again at
+      // once (`provider_auth` is not a transient code for the runner); no network is.
+      const failure = pushFailure(e);
       throw new ForerunnerError(
-        "provider_error",
-        `${repoName} is empty and Forerunner could not make its first commit: ${errorMessage(e).slice(0, 300)}. Add a first commit (a README) to it on GitHub, then press Try again.`,
-        { cause: e, details: { repo: repoName, base } },
+        failure.kind === "refused" ? "provider_auth" : "provider_error",
+        firstPushFailedWords(repoName, e),
+        { cause: e, details: { repo: repoName, base, failure: failure.kind } },
       );
     }
     await git.fetch();

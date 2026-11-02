@@ -4799,7 +4799,10 @@ started through the composed `rt.runner` (the PR executor and loop executor on t
 provider, whose text-only reply leaves no change and so no task PR) writing its status
 update on `fr/status` with a PR of its own, the entry naming the session and
 the task, `main` untouched, `handoff.docs` on the session row; a repository the host cannot
-serve answering 201 with the error recorded. The other creation paths and the marker's
+serve answering 201 with the error recorded; an empty repository whose host refuses the first
+commit (a pre-receive hook) answering 201, then a session whose task fails with one sentence
+and what to do as its reason, its failed-task card and its result line (no "git push",
+"fatal:", "remote:" or line break) and no at-once retry. The other creation paths and the marker's
 reader: `sources-routes.test.ts` (an accepted repository candidate scaffolded through the
 composed daemon, the PR and the marker), `intake.test.ts` (a rejected intake asked for at
 creation scaffolding the templates and the marker into the workspace),

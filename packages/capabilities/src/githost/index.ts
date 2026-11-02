@@ -5,4 +5,5 @@ export * from "./github-graphql.ts";
 export * from "./memory.ts";
 export * from "./pr-executor.ts";
 export * from "./projects-mirror.ts";
+export * from "./push-words.ts";
 export * from "./types.ts";

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
@@ -396,5 +396,74 @@ describe("standard doc set at project creation (G.5)", () => {
     const row = await rt.store.project.mustGet(String((await json(res)).id));
     expect(row.summary_cache.docs).toMatchObject({ error: expect.stringContaining("o/missing") });
     expect(row.repos).toEqual(["o/missing"]);
+  });
+
+  it("an empty repository whose host refuses the first commit: the creation goes on, and the task fails with one sentence and what to do (review, 2026-11-02)", async () => {
+    // Before: the task's reason and its failed-task card carried git's multi-line output
+    // ("git push main failed: fatal: ... remote: Permission ... ! [remote rejected] ...").
+    const bare = join(root, "locked.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    writeFileSync(
+      join(bare, "hooks", "pre-receive"),
+      "#!/bin/sh\necho 'Permission to o/locked denied to the token.' >&2\nexit 1\n",
+    );
+    chmodSync(join(bare, "hooks", "pre-receive"), 0o755);
+    await host.createRepo({ owner: "o", name: "locked", private: true, cloneUrl: bare });
+    const res = await req("/projects", {
+      method: "POST",
+      body: JSON.stringify({ name: "Locked", goal: "A page", repos: ["o/locked"] }),
+    });
+    expect(res.status).toBe(201);
+    const projectId = String((await json(res)).id);
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Create index.html",
+      outcome: "index.html exists",
+      acceptance_criteria: ["it opens"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 500_000,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const events: { type: string; payload: Record<string, unknown> }[] = [];
+    const result = await rt.runner.start({
+      agentId: rt.agent.id,
+      projectId,
+      trigger: "manual",
+      budgetCapUsdMicro: 2_000_000,
+      grant: {
+        allowedTools: rt.toolsForRun().names(),
+        allowedPaths: [],
+        allowedDomains: [],
+        grantedSecrets: [],
+      },
+      onEvent: (type, payload) => events.push({ type, payload }),
+    });
+    const words =
+      "o/locked is empty and GitHub refused Forerunner's first commit (the token may not write to it). Add a README on GitHub or check the token in Settings, then press Try again.";
+    expect(result.failed).toEqual([task.id]);
+    const failed = await rt.store.task.mustGet(task.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.reason).toBe(words);
+    // A refusal is not tried again at once: it would be refused again.
+    expect(events.filter((e) => e.type === "task.retrying")).toEqual([]);
+    const card = (
+      await rt.store.humanRequest.list({ task_id: task.id, status: "open" } as never, {
+        limit: 10,
+      })
+    )[0];
+    expect(card?.why).toBe(`"Create index.html" failed: ${words}`);
+    const session = await rt.store.session.mustGet(result.sessionId);
+    expect(session.summary).toContain(`"Create index.html" failed: o/locked is empty`);
+    // The session result has its lines; the reason and the card are one paragraph.
+    for (const text of [failed.reason, card?.why ?? "", session.summary])
+      for (const raw of ["git push", "fatal:", "remote:", "[remote rejected]"])
+        expect(text, raw).not.toContain(raw);
+    expect(`${failed.reason}${card?.why}`).not.toContain("\n");
   });
 });

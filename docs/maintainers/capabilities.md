@@ -132,9 +132,20 @@ with their milestone.
   intake, a README with the project's name and goal from `PrTaskExecutor`), then the clone is
   fetched. A remote with branches but not `base` is `not_found` in words ("<repo> has no branch
   "<base>" to start from (it has main). Set its default branch on GitHub, then press Try
-  again."); a first push that fails is `provider_error` saying the repository is empty and to add
-  a first commit on GitHub (when someone else's first commit arrived meanwhile, theirs is used).
-  Before, every task on an empty repository failed with git's "'origin/main' is not a commit".
+  again."); a first push that fails says, in words from `firstPushFailedWords` (`push-words.ts`)
+  and never git's output, that the repository is empty and what to do: refused, `provider_auth`
+  (not a transient code, so the runner does not try again at once): "<repo> is empty and GitHub
+  refused Forerunner's first commit (the token may not write to it). Add a README on GitHub or
+  check the token in Settings, then press Try again."; not reached, `provider_error`; anything
+  else, `provider_error` with the host's one line ('git said "..."'). When someone else's first
+  commit arrived meanwhile, theirs is used. Before, every task on an empty repository failed with
+  git's "'origin/main' is not a commit", and then (review, 2026-11-02) a refused first push put
+  git's multi-line output into the task's reason and its card.
+- `push-words.ts`: `pushFailure(e)` sorts a failed push into unreachable, refused or other (with
+  the one line that says why: the host's `remote:` line, else the reason after "[remote
+  rejected]", else git's first line that is not its framing, redacted); `pushFailedWords` (a
+  task's branch) and `firstPushFailedWords` (an empty repository's first commit) word them. The
+  runner cuts a task's reason at 200 characters, so these stay under it for a usual name.
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
   head)` takes a head other than HEAD.
 - `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone
@@ -430,7 +441,9 @@ the task with `pushFailedWords` ("Forerunner could not push the branch <branch> 
 refused it (...). Check the GitHub token in Settings, then press Try again."; the network and
 other refusals have their own words; before, the reason was git's output), an empty repository getting its README commit on
 `main` before the task's branch and PR (the branch holding only the task's change), a base
-branch the remote lacks failing in words, a rebase conflict as a blocking human request with no
+branch the remote lacks failing in words, an empty repository whose host refuses the first
+commit (a pre-receive hook) failing with `firstPushFailedWords`' exact sentence and the inner
+executor never run, a first commit refused for another reason naming the host's one line, a rebase conflict as a blocking human request with no
 PR, and no changes as a failure. What each of the conflict request's options does, answered
 through the daemon's route with the strings the Inbox shows and followed by the task's next
 run, is `packages/runtime/test/pr-answers.test.ts` (U-028). Like `git.test.ts` it spawns dozens of git processes, so both
