@@ -156,6 +156,66 @@ function genericTasks(goal: string): PlanTaskOut[] {
   ];
 }
 
+/**
+ * Small-project mode (a short brief, design §3.3): one to three tasks, no reviewer, deploy or
+ * marketing task; the README is a drafted doc, not a task.
+ */
+function smallTasks(web: boolean, quotes: boolean, goal: string): PlanTaskOut[] {
+  if (web)
+    return [
+      {
+        key: "build",
+        title: quotes
+          ? "Build the random quote page in index.html, styles.css and script.js"
+          : "Build the page in index.html, styles.css and script.js",
+        outcome: quotes
+          ? "index.html loads styles.css and script.js; script.js holds at least ten quotes and shows a random one with its author each time the page is opened."
+          : "index.html loads styles.css and script.js and shows the page's content.",
+        acceptanceCriteria: [
+          "index.html is valid HTML5 and links styles.css and script.js",
+          quotes
+            ? "Opening index.html shows one of at least ten quotes, picked at random"
+            : "Opening index.html shows the content",
+        ],
+        priority: "high",
+        dependsOn: [],
+        specialist: "coder",
+      },
+      {
+        key: "check",
+        title: "Check that index.html, styles.css and script.js work together",
+        outcome: "A short check confirms the three files load together without errors.",
+        acceptanceCriteria: [
+          "node --check passes on script.js",
+          "Every file index.html references exists",
+        ],
+        priority: "medium",
+        dependsOn: ["build"],
+        specialist: "tester",
+      },
+    ];
+  return [
+    {
+      key: "build",
+      title: "Build the first working version in src/main.js",
+      outcome: `src/main.js runs with node and does the smallest useful thing for: ${goal.slice(0, 120)}`,
+      acceptanceCriteria: ["node src/main.js exits 0"],
+      priority: "high",
+      dependsOn: [],
+      specialist: "coder",
+    },
+    {
+      key: "test",
+      title: "Add a check for src/main.js in test/main.test.js",
+      outcome: "test/main.test.js checks the main behaviour of src/main.js.",
+      acceptanceCriteria: ["node --check passes on test/main.test.js"],
+      priority: "medium",
+      dependsOn: ["build"],
+      specialist: "tester",
+    },
+  ];
+}
+
 function chainTasks(web: boolean): PlanTaskOut[] {
   const steps = web
     ? [
@@ -205,7 +265,13 @@ export function planFor(input: IntakeInput, opts: PlanOptions): PlanShape {
   const web = isWebBrief(text);
   const quotes = /\bquotes?\b/i.test(text);
   let tasks =
-    opts.kind === "chain" ? chainTasks(web) : web ? webTasks(quotes) : genericTasks(input.goal);
+    opts.kind === "chain"
+      ? chainTasks(web)
+      : input.smallProject
+        ? smallTasks(web, quotes, input.goal || input.brief)
+        : web
+          ? webTasks(quotes)
+          : genericTasks(input.goal);
   if (opts.personTask) {
     const decide = personTask(web);
     const last = tasks.at(-1);
@@ -226,6 +292,8 @@ export function planFor(input: IntakeInput, opts: PlanOptions): PlanShape {
         slug: "plain-static-page",
         title: "A plain static page, no build step",
         body: [
+          "Decision: a plain page in three files (index.html, styles.css, script.js), opened straight from the folder; no framework, no build step.",
+          "",
           "## Decision",
           "",
           "The page is plain HTML, CSS and JavaScript in three files (index.html, styles.css,",
@@ -247,6 +315,8 @@ export function planFor(input: IntakeInput, opts: PlanOptions): PlanShape {
         slug: "start-small",
         title: "Start with the smallest working version",
         body: [
+          "Decision: the smallest version that does what the brief asks, in plain JavaScript run with Node.js.",
+          "",
           "## Decision",
           "",
           "Build the smallest version that does what the brief asks, in plain JavaScript run with",
@@ -272,17 +342,28 @@ export function intakeProposal(input: IntakeInput, opts: PlanOptions): Record<st
   const plan = planFor(input, opts);
   const name = input.project || "the project";
   const goal = input.goal || input.brief.split("\n")[0] || name;
-  const ready = plan.tasks;
-  const docs: Record<string, string> = {
-    "README.md": `# ${name}\n\n${goal}\n\nPlanned by Forerunner (stand-in model). See docs/overview.md.\n`,
-    "docs/overview.md": `# Overview\n\n${goal}\n\n## Brief\n\n${input.brief.slice(0, 1500) || "(no brief)"}\n`,
-    "docs/architecture.md": `# Architecture\n\n${
-      isWebBrief(`${input.goal}\n${input.brief}`)
-        ? "Three static files: index.html (structure), styles.css (look), script.js (behaviour)."
-        : "One Node.js entry point, src/main.js, with a check in test/."
-    }\n`,
+  // Every task a specialist does has an estimate, in run order; a person task needs none.
+  const estimated = plan.tasks.filter((t) => t.specialist !== "person");
+  const decisionDoc = {
     [`docs/decisions/0001-${plan.decision.slug}.md`]: `# 0001: ${plan.decision.title}\n\n${plan.decision.body}\n`,
   };
+  // Small-project mode: only the README and the decision; Forerunner writes the rest from
+  // its templates (the intake's Size rules).
+  const docs: Record<string, string> = input.smallProject
+    ? {
+        "README.md": `# ${name}\n\n${goal}\n\nPlanned by Forerunner (stand-in model).\n`,
+        ...decisionDoc,
+      }
+    : {
+        "README.md": `# ${name}\n\n${goal}\n\nPlanned by Forerunner (stand-in model). See docs/overview.md.\n`,
+        "docs/overview.md": `# Overview\n\n${goal}\n\n## Brief\n\n${input.brief.slice(0, 1500) || "(no brief)"}\n`,
+        "docs/architecture.md": `# Architecture\n\n${
+          isWebBrief(`${input.goal}\n${input.brief}`)
+            ? "Three static files: index.html (structure), styles.css (look), script.js (behaviour)."
+            : "One Node.js entry point, src/main.js, with a check in test/."
+        }\n`,
+        ...decisionDoc,
+      };
   return {
     plan: {
       reason: `planned from the brief for ${name}`,
@@ -307,8 +388,8 @@ export function intakeProposal(input: IntakeInput, opts: PlanOptions): Record<st
     },
     docs,
     firstSession: {
-      summary: `Start with ${ready[0]?.title ?? "the first task"} and the tasks that follow from it.`,
-      items: ready.map((t, i) => ({
+      summary: `Start with ${estimated[0]?.title ?? "the first task"} and the tasks that follow from it.`,
+      items: estimated.map((t, i) => ({
         key: t.key,
         estimateUsdMicro: 150_000 + i * 25_000,
         rationale:

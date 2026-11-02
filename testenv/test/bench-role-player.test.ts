@@ -77,7 +77,7 @@ async function call(p: ModelProvider, req: ModelRequest) {
 const BRIEF =
   "A one-page website that shows a random quote each time it is opened; plain HTML, CSS and JavaScript; no build step";
 
-function intakeRequest(): ModelRequest {
+function intakeRequest(small = false): ModelRequest {
   return {
     model: "fake-sonnet",
     system:
@@ -90,7 +90,9 @@ function intakeRequest(): ModelRequest {
           "Goal: A page with a random quote",
           "Stage: idea",
           "Repositories: none",
-          "Small-project mode: off",
+          small
+            ? "Small-project mode: on (a small plan: see Size in your instructions)"
+            : "Small-project mode: off",
           "",
           "Brief (data, between the markers):",
           "<<<BRIEF",
@@ -220,6 +222,70 @@ describe("bench role-player: intake", () => {
     ).toBe(true);
     expect(tasks.find((t) => t.title.includes("styles.css"))?.riskTier).toBe(2);
     expect(tasks.find((t) => t.key === "step3")?.dependsOn).toEqual(["step2"]);
+  });
+
+  it("in small-project mode plans one to three tasks, a README and the decision only", async () => {
+    const { p } = player();
+    const proposal = parseIntakeReply((await call(p, intakeRequest(true))).text);
+    const tasks = proposal.plan.milestones.flatMap((m) => m.tasks);
+    expect(proposal.plan.milestones).toHaveLength(1);
+    expect(tasks.length).toBeGreaterThanOrEqual(1);
+    expect(tasks.length).toBeLessThanOrEqual(3);
+    expect(tasks.map((t) => t.specialist)).not.toContain("writer-marketing");
+    expect(Object.keys(proposal.docs).sort()).toEqual([
+      "README.md",
+      "docs/decisions/0001-plain-static-page.md",
+    ]);
+    expect(proposal.docs["docs/decisions/0001-plain-static-page.md"]).toMatch(
+      /^# 0001: .*\n\nDecision: /,
+    );
+    // Every task a specialist does has an estimate, in run order.
+    expect(proposal.firstSession.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key));
+  });
+
+  /** The intake's one retry: the first request, the refused reply, what was wrong. */
+  const retryOf = (first: ModelRequest, reply: string): ModelRequest => ({
+    ...first,
+    messages: [
+      ...first.messages,
+      { role: "assistant", content: reply },
+      { role: "user", content: "Forerunner could not use your reply:\n- plan: ..." },
+    ],
+  });
+
+  it("FORERUNNER_BENCH_INTAKE_BAD plants the live model's bad first replies; the retry gets a plan", async () => {
+    // missing-tasks: refused by the reader, so the intake asks once more.
+    const missing = player({ FORERUNNER_BENCH_INTAKE_BAD: "missing-tasks" });
+    const first = await call(missing.p, intakeRequest());
+    expect(() => parseIntakeReply(first.text)).toThrow(/has no task/);
+    const again = await call(missing.p, retryOf(intakeRequest(), first.text));
+    expect(
+      parseIntakeReply(again.text).plan.milestones.flatMap((m) => m.tasks).length,
+    ).toBeGreaterThan(0);
+    expect(lines(missing.log).map((l) => l.injected ?? null)).toEqual([
+      "intake-bad=missing-tasks",
+      null,
+    ]);
+    // reason-too-long: the live reply's 754-character reason; read, the reason shortened.
+    const long = player({ FORERUNNER_BENCH_INTAKE_BAD: "reason-too-long" });
+    const text = (await call(long.p, intakeRequest())).text;
+    expect((JSON.parse(text) as { plan: { reason: string } }).plan.reason.length).toBeGreaterThan(
+      500,
+    );
+    const read = parseIntakeReply(text);
+    expect(read.plan.reason.length).toBeLessThanOrEqual(500);
+    expect(read.plan.reason).toMatch(/ …$/);
+    // fenced-docs: docs that hold code fences (the old reader took a doc's snippet for the reply).
+    const fenced = player({ FORERUNNER_BENCH_INTAKE_BAD: "fenced-docs" });
+    const withFences = (await call(fenced.p, intakeRequest())).text;
+    expect(withFences).toContain("```");
+    expect(Object.values(parseIntakeReply(withFences).docs).join("\n")).toContain("```json");
+    // not-json: prose first; the retry gets the plan.
+    const prose = player({ FORERUNNER_BENCH_INTAKE_BAD: "not-json" });
+    const said = (await call(prose.p, intakeRequest())).text;
+    expect(() => parseIntakeReply(said)).toThrow(/not a JSON object/);
+    const fixed = (await call(prose.p, retryOf(intakeRequest(), said))).text;
+    expect(() => parseIntakeReply(fixed)).not.toThrow();
   });
 
   it("plants a malformed plan or a failed planning call", async () => {

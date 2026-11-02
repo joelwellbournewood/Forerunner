@@ -2,6 +2,7 @@ import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import type { z } from "zod";
 import type { ProjectDocsPort } from "../loop/ports.ts";
+import { isShortBrief } from "../session/project-plan.ts";
 import type { CreateProjectBody } from "./api-types.ts";
 
 const logger = log("create-project");
@@ -62,7 +63,10 @@ export async function createProjectRecord(
     summary_cache: body.brief ? { brief: body.brief } : {},
     data_assets: [],
     settings: { members: [deps.agent.id] },
-    small_project_mode: false,
+    // A new project with a short brief asks for a small plan (design §3.3, ADR 0103): one
+    // milestone, a flat task list. A longer brief, or a repository brought in (whose size the
+    // brief does not tell), leaves the mode off; the person can change it in Settings.
+    small_project_mode: (body.repos ?? []).length === 0 && isShortBrief(body.brief),
     active: true,
     author_human: deps.human.id,
   });

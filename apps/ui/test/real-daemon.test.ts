@@ -2644,6 +2644,59 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(await client.sessions({ projectId: project.id })).toHaveLength(before);
   }, 60_000);
 
+  it("a one-line brief: a small project, a first reply without tasks asked for once more, one card (live check of 2026-11-01)", async () => {
+    bench.intakeBad = "missing-tasks";
+    try {
+      const before = intakeCalls.length;
+      const brief = "A page that shows a random quote";
+      const project = await client.createProject({
+        name: "One line",
+        goal: brief,
+        brief,
+        intake: true,
+      });
+      expect(project.goal).toBe("A page that shows a random quote");
+      // A short brief, no repository: small-project mode (ADR 0103).
+      expect(project.smallProjectMode).toBe(true);
+      await rt.intake.inFlight(project.id);
+      // The first reply had no tasks; the intake asked once more, with the problem in words.
+      const calls = intakeCalls.slice(before);
+      expect(calls).toHaveLength(2);
+      expect(String(calls[0]?.messages[0]?.content)).toContain(
+        "Small-project mode: on (a small plan: see Size in your instructions)",
+      );
+      expect(String(calls[1]?.messages[2]?.content)).toContain("- plan: the plan has no task");
+      expect(await client.intakeStatus(project.id)).toMatchObject({ state: "pending" });
+      const me = await client.me();
+      const cards = (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      expect(cards).toHaveLength(1);
+      expect(cards[0]?.title).toBe('Plan for "One line": 2 tasks');
+    } finally {
+      bench.intakeBad = "none";
+    }
+  }, 60_000);
+
+  it("a reply that cannot be read, twice: the project page says so in words", async () => {
+    bench.intake = "malformed";
+    try {
+      const project = await client.createProject({
+        name: "Unreadable",
+        goal: "A quote page",
+        brief: BRIEF,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id)?.catch(() => undefined);
+      expect(await client.intakeStatus(project.id)).toMatchObject({
+        state: "failed",
+        error: "Claude's plan could not be read. Forerunner asked Claude twice.",
+      });
+    } finally {
+      bench.intake = "ok";
+    }
+  }, 60_000);
+
   it("Approve and start writes the plan and starts working on it; the card says so", async () => {
     const { project, card } = await planned("Quote page");
     // Before the approval the Start dialog's button is the plan card, not the Tasks tab.

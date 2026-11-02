@@ -67,7 +67,7 @@ export const DECISION_DOC_DIR = "docs/decisions";
 /** The decision doc written when the workspace has no `0001-*.md` yet. */
 export const DEFAULT_DECISION_DOC = "0001-project-decisions.md";
 export const MAX_PERSON_QUESTIONS = 10;
-const MAX_QUESTION_CHARS = 500;
+export const MAX_QUESTION_CHARS = 500;
 
 export { CANCEL_TASK_OPTION };
 
