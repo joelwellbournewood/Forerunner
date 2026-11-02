@@ -331,7 +331,15 @@ command as a child process with:
 
 - environment = `scrubEnv(process.env)` (every credential-looking variable removed, `PATH`,
   `HOME`, locale kept) + the sandbox `env` + the per-run `env`, then the proxy variables and
-  `FORERUNNER_SANDBOX=process` on top (a run cannot override the proxy);
+  `FORERUNNER_SANDBOX=process` on top (a run cannot override the proxy). Git's own config from
+  the environment (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`) is taken as
+  a set by `scrubGitConfigEnv`: an entry goes when its key names a way to carry or fetch a
+  credential (an `extraheader`, a `credential.helper`) or when its key or its value holds one (a
+  URL with a user part such as `url.https://<token>@github.com/.insteadOf`, whatever the user
+  part is; an `Authorization:` header; a token the platform's shapes find), and the rest are
+  numbered again so the count matches the keys. Before (live, 2026-11-02) the name rule dropped
+  every `_KEY_n` and kept the count, and every git command a specialist ran exited 128 "missing
+  config key"; the first fix looked at the values only, and a token in a key reached the model;
 - `cwd` pinned inside the worktree through `containPathReal` (a link leaving the worktree is
   `path_not_allowed`, a missing directory `not_found`);
 - wall-clock and output caps from the platform runner (`killTree` on timeout);
@@ -436,7 +444,10 @@ beyond loopback):
   cleanup of network/sidecar/proxy when the task `run` exits non-zero or rejects, refusal when
   no gateway can be parsed, per-run proxy variables stripped, wrapper kill → `timedOut`,
   host-side file access with containment and the symlink fixture.
-- `sandbox-process.test.ts`: env scrubbed (credential-shaped fixtures built by concatenation),
+- `sandbox-process.test.ts`: git status / branch work with `GIT_CONFIG_*` in the environment
+  and no credential entry reaches the command, neither one held in a key
+  (`url.<https://TOKEN@host/>.insteadOf`) nor in a value, not even through `git config -l`;
+  env scrubbed (credential-shaped fixtures built by concatenation),
   PATH kept, proxy variables set and not overridable, cwd pinned and escapes refused, timeout,
   output cap, exit codes as results, deny-all proxy for `none`, LF writes, warning logged, file
   access and cwd through an escaping symlink refused while an inside link is followed.

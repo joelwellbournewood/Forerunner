@@ -118,6 +118,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
   let token: string;
   let home = "";
   let bare = "";
+  let emptyBare = "";
   const clock = new SimulatedClock("2026-03-05T08:00:00Z");
   /** One reply per model call, pushed right before the call that consumes it. */
   const replies: ScriptReply[] = [];
@@ -171,6 +172,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     await seed.commitAll("seed");
     await seed.push("main");
     await host.createRepo({ owner: "o", name: "sample", private: true, cloneUrl: bare });
+    // "o/empty": a repository just created on GitHub, with no commit at all.
+    emptyBare = join(home, "empty.git");
+    await run(["git", "init", "--bare", "-b", "main", emptyBare]);
+    await host.createRepo({ owner: "o", name: "empty", private: true, cloneUrl: emptyBare });
     rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs,
@@ -642,6 +647,39 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(readme.stdout).toContain("# sample (kept)");
     expect(existsSync(rt.intake.workspaceDir(projectId))).toBe(false);
     expect(await rt.store.task.list({ project_id: projectId } as never)).toHaveLength(3);
+  });
+
+  it("with an empty repository the approved doc set is its first commit on main, with no pull request (GitHub walk, 2026-11-02)", async () => {
+    // Before: the docs branch failed ("'origin/main' is not a commit"), the docs went to a
+    // folder nobody read, and every task then failed the same way.
+    // Created with the intake (as New project does): the scaffold waits for the approval, so
+    // the approved set is the first thing to reach the repository.
+    replies.push({ text: JSON.stringify(proposal()) });
+    const projectId = await createProject({
+      name: "Fresh",
+      goal: "A page in a new repository",
+      brief: "A repository just created on GitHub, nothing in it yet.",
+      repos: ["o/empty"],
+      intake: true,
+    });
+    const drafted = (await rt.intake.inFlight(projectId)) as { requestId: string } | null;
+    const requestId = String(drafted?.requestId);
+    await answer(requestId, "approve");
+    const c = await card(requestId);
+    expect(c.docs).toMatchObject({ target: "repository", branch: "main", prUrl: null });
+    expect((c.docs as JsonObject).repo_error).toBeUndefined();
+    const tree = await run(["git", "ls-tree", "-r", "--name-only", "main"], { cwd: emptyBare });
+    expect(tree.stdout).toContain("docs/overview.md");
+    expect(tree.stdout).toContain("README.md");
+    const log = await run(["git", "log", "--format=%s", "main"], { cwd: emptyBare });
+    expect(log.stdout.trim()).toBe("docs: start the repository with the project's doc set");
+    // No pull request for the first commit; nothing went to the workspace instead.
+    expect(
+      (await host.listPullRequests({ owner: "o", name: "empty" })).filter((p) =>
+        p.head.ref.startsWith("fr/intake-"),
+      ),
+    ).toEqual([]);
+    expect(existsSync(rt.intake.workspaceDir(projectId))).toBe(false);
   });
 
   it("POST /projects with intake: true runs the intake in the background; without it nothing runs", async () => {

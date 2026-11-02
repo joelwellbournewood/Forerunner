@@ -259,6 +259,35 @@ describe("Docs tab", () => {
     await waitFor(() => expect(content).toHaveTextContent("search index built at deploy time"));
   });
 
+  it("a doc waiting in a docs pull request says so, with the pull request's link (ADR 0106)", async () => {
+    // GitHub walk (2026-11-02): the docs read "missing · not written yet" while they waited in
+    // the scaffold's pull request #1, which no screen showed.
+    const harness = createHarness();
+    harness.daemon.state.docs.proj_atlas = (harness.daemon.state.docs.proj_atlas ?? []).map((d) =>
+      d.path === "docs/runbook.md"
+        ? {
+            ...d,
+            note: "waiting in pull request #1: merge it to add it",
+            pullRequest: { number: 1, url: "https://example.test/org/atlas/pull/1" },
+          }
+        : d,
+    );
+    renderApp("/projects/proj_atlas/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    const runbook = within(docs)
+      .getAllByTestId("doc-row")
+      .find((r) => r.dataset.path === "docs/runbook.md");
+    if (!runbook) throw new Error("no runbook row");
+    expect(runbook).toHaveTextContent("in a pull request");
+    expect(runbook).not.toHaveTextContent("missing");
+    expect(runbook).toHaveTextContent("waiting in pull request #1: merge it to add it");
+    expect(within(runbook).getByTestId("doc-pr-link")).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/1",
+    );
+    expect(within(runbook).getByTestId("doc-pr-link")).toHaveTextContent("Open pull request #1");
+  });
+
   it("degrades when the docs route is missing", async () => {
     renderApp(
       "/projects/proj_atlas/docs",

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
+  ensureBaseBranch,
   type GitHost,
   GitOps,
   type GitTokenSource,
@@ -1674,6 +1675,12 @@ export class IntakeService {
       "task's changes itself (and opens the pull request when the project has a repository). An",
       "outcome or a criterion never asks a specialist to commit, push or open a pull request:",
       "say what the files must contain and which check must pass.",
+      // Live (2026-11-01, live2 #14) the plan asked the person "Where should the site files
+      // live on your computer, and do you want them under version control (git)?": the app
+      // decides both.
+      "Forerunner decides where the files live (the project's folder on this computer, or the",
+      "linked repository) and keeps their history in git: never ask the person where files go or",
+      "whether to use version control, and plan no task for it.",
       ...(this.deps.webSpecialists?.() === false ? [NO_WEB_RULE] : []),
       "",
       ...SMALL_PLAN_RULES,
@@ -2047,6 +2054,33 @@ export class IntakeService {
     });
     if (existsSync(join(dir, ".git"))) await git.fetch();
     else await git.clone(info.cloneUrl);
+    const fullName = `${repo.owner}/${repo.name}`;
+    // An empty repository (just created on GitHub): the approved doc set is its first commit
+    // on the default branch, with nothing to review it against (ADR 0106). Before, the branch
+    // below failed ("'origin/main' is not a commit") and the docs went to a folder nobody read.
+    let first: Awaited<ReturnType<typeof writeDocSet>> | null = null;
+    await ensureBaseBranch({
+      git,
+      cloneUrl: info.cloneUrl,
+      base: info.defaultBranch,
+      repoName: fullName,
+      scratchDir: join(this.deps.worktreeRoot, "intake", "first-commit", safeSegment(project.id)),
+      ...(auth ? { auth } : {}),
+      ...(this.deps.identity ? { identity: this.deps.identity } : {}),
+      first: async (scratch) => {
+        first = await writeDocSet(scratch, docs, project);
+        return `docs: start the repository with the project's doc set\n\nThe repository was empty; Forerunner made this first commit from the approved plan (intake request ${requestId}) so the project's work has a branch to start from.`;
+      },
+    });
+    const firstSet = first as Awaited<ReturnType<typeof writeDocSet>> | null;
+    if (firstSet)
+      return {
+        target: "repository",
+        repo: fullName,
+        branch: info.defaultBranch,
+        prUrl: null,
+        ...firstSet,
+      };
     const branch = intakeDocsBranch(project.id);
     const existingPr = (await host.listPullRequests(repo, { state: "open", head: branch }))[0];
     await git.createBranch(
@@ -2057,7 +2091,6 @@ export class IntakeService {
     const commit = await git.commitAll(
       `docs: project doc set from the brief\n\nDrafted by Forerunner intake (request ${requestId}): ${r.written.length} doc(s) drafted, ${r.scaffolded.length} from the templates, ${r.kept.length} kept as they were.`,
     );
-    const fullName = `${repo.owner}/${repo.name}`;
     if (!commit.committed && !existingPr)
       return { target: "repository", repo: fullName, branch, prUrl: null, ...r };
     await git.push(branch, { force: !!existingPr, defaultBranch: info.defaultBranch });

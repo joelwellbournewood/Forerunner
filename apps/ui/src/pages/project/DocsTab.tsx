@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { RouteMissing } from "../../components/RouteMissing.tsx";
 import { Badge, Button, ErrorBanner, Loading } from "../../components/ui.tsx";
 import { formatBytes } from "../../lib/format.ts";
@@ -80,7 +81,8 @@ export function DocsTab({ projectId }: { projectId: string }) {
                 </td>
                 <td className="py-1 pr-2 font-mono text-xs">{d.path}</td>
                 <td className="py-1 pr-2">
-                  {!d.exists ? <Badge tone="bad">missing</Badge> : null}
+                  {!d.exists && d.pullRequest ? <Badge tone="warn">in a pull request</Badge> : null}
+                  {!d.exists && !d.pullRequest ? <Badge tone="bad">missing</Badge> : null}
                   {d.exists && d.drift ? (
                     <Badge tone="warn" title={d.note}>
                       drift
@@ -88,6 +90,16 @@ export function DocsTab({ projectId }: { projectId: string }) {
                   ) : null}
                   {d.exists && !d.drift ? <Badge tone="good">current</Badge> : null}
                   {d.note ? <span className="ml-1 text-xs text-neutral-500">{d.note}</span> : null}
+                  {!d.exists && d.pullRequest ? (
+                    <ExternalLink
+                      href={d.pullRequest.url}
+                      variant="inline"
+                      className="ml-1 text-xs"
+                      testId="doc-pr-link"
+                    >
+                      Open pull request #{d.pullRequest.number}
+                    </ExternalLink>
+                  ) : null}
                 </td>
                 <td className="py-1 pr-2">{d.exists ? formatBytes(d.sizeBytes) : "—"}</td>
                 <td className="py-1 text-neutral-600 dark:text-neutral-400">

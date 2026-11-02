@@ -15,8 +15,12 @@ describe("Project page", () => {
       '"Add the search box to the header": Being reviewed',
     );
     expect(summary).not.toHaveTextContent("Review PR #12");
-    expect(within(summary).getByTestId("your-files")).toHaveTextContent(
-      "/home/alice/.local/share/forerunner/worktrees/proj_atlas",
+    // Atlas is linked to org/atlas: its files are the repository and the PRs that wait for
+    // the person (ADR 0106), not this computer's copy of the default branch.
+    const files = within(summary).getByTestId("your-files");
+    expect(files).toHaveTextContent("On GitHub: org/atlas");
+    expect(await within(files).findByTestId("pr-waiting")).toHaveTextContent(
+      '"Index the documentation pages" · pull request #11',
     );
     const tabs = screen.getByTestId("project-tabs");
     const primary = within(tabs)

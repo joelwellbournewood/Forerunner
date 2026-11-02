@@ -315,6 +315,12 @@ export async function fileReviewFailedRequest(
   return { request, reused: false };
 }
 
+/**
+ * A task's reason after the person accepted its work at sign-off ("Accept the work"): the
+ * person's own review. The Overview's waiting pull requests read it (`daemon/pull-requests.ts`).
+ */
+export const ACCEPTED_AT_SIGNOFF = "you accepted the work at sign-off";
+
 /** Apply the answered review-failed cards (U-045); run from `RuntimeApp.syncApprovals`. */
 export async function syncReviewFailedAnswers(deps: InReviewSyncDeps): Promise<BlockedSyncResult> {
   return syncInReviewCards(deps, REVIEW_FAILED_KEY, "review-failed", {
@@ -607,9 +613,7 @@ export async function syncSignoffAnswers(deps: {
           final = await closeFromNeedsHuman(
             tx,
             task,
-            card.reason === "verdict"
-              ? "you accepted the work at sign-off"
-              : ACCEPTED_WITHOUT_REVIEW,
+            card.reason === "verdict" ? ACCEPTED_AT_SIGNOFF : ACCEPTED_WITHOUT_REVIEW,
             actor,
           );
         } else if (answer === "revise") {

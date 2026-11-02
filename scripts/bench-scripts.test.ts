@@ -175,6 +175,38 @@ describe("bench: the daemon's environment and a live start", () => {
     expect(r.stderr).toContain("the daemon exited during its start");
     expect(r.stderr).toContain("needs ANTHROPIC_API_KEY");
   }, 120_000);
+
+  it("--githost: the stand-in for GitHub serves an empty and a seeded repository with its token", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-bench-githost-"));
+    // startGithost waits for the JSON; the server stays up until it is ended.
+    const script = `import(${JSON.stringify(pathToFileURL(join(BENCH, "lib.mjs")).href)}).then(async (m) => { const g = await m.startGithost({ dir: ${JSON.stringify(dir)}, port: 0 }); console.log(JSON.stringify(g)); })`;
+    const r = node(["--input-type=module", "-e", script]);
+    expect(r.status, r.stderr).toBe(0);
+    const g = JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "{}") as {
+      pid: number;
+      url: string;
+      token: string;
+      repos: string[];
+    };
+    try {
+      expect(g.repos).toEqual(["bench/empty", "bench/seeded"]);
+      const get = (path: string) =>
+        fetch(`${g.url}${path}`, { headers: { authorization: `Bearer ${g.token}` } });
+      const empty = await get("/repos/bench/empty/branches");
+      expect(empty.status).toBe(200);
+      expect(await empty.json()).toEqual([]);
+      const seeded = (await (await get("/repos/bench/seeded/branches")).json()) as {
+        name: string;
+      }[];
+      expect(seeded.map((b) => b.name)).toEqual(["main"]);
+    } finally {
+      try {
+        process.kill(-g.pid, "SIGTERM");
+      } catch {
+        process.kill(g.pid, "SIGTERM");
+      }
+    }
+  }, 120_000);
 });
 
 /**

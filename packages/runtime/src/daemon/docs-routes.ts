@@ -1,15 +1,24 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { docFile, STANDARD_DOCS } from "@forerunner/memory";
-import { basename, ForerunnerError, fromPosix, isInside, join } from "@forerunner/platform";
+import {
+  basename,
+  errorMessage,
+  ForerunnerError,
+  fromPosix,
+  isInside,
+  join,
+  log,
+} from "@forerunner/platform";
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import { Hono } from "hono";
-import { WORKSPACE_DIR } from "../loop/docs.ts";
+import { type DocInPullRequest, WORKSPACE_DIR } from "../loop/docs.ts";
 import type {
   DocContentView,
   DocView,
   ProjectFileContentView,
   ProjectFileEntryView,
   ProjectFilesView,
+  ProjectPullRequestsView,
 } from "./api-types.ts";
 import { ownsProject, type Who } from "./ownership.ts";
 import { reviewsView } from "./views.ts";
@@ -18,16 +27,24 @@ import { reviewsView } from "./views.ts";
  * The Docs tab (spec G.5, K.2; U-005 in docs/status/UPDATE-LOG.md): the standard doc set of a
  * project as this install has it, and one doc's text. The roots are `ProjectDocs.docsDirsFor`
  * in its order (a linked local folder, this install's docs clone of the repository, the
- * project's workspace), the same the chat's docs search reads; nothing is cloned or fetched, so
- * a repository's docs show as this install last wrote or pulled them. A doc's drift is an open
- * critic finding that names it.
+ * project's workspace), the same the chat's docs search reads; nothing is cloned for it, so
+ * a repository's docs show as this install last wrote or pulled them (its default branch, ADR
+ * 0106), and a doc missing there that waits in one of Forerunner's docs pull requests says so
+ * with the PR (`docsInPullRequests`, which fetches). A doc's drift is an open critic finding
+ * that names it.
  */
 export interface DocsRoutesDeps {
   store: StateStore;
   /** The roots a project's docs are read from (`ProjectDocs.docsDirsFor`). */
   docsDirsFor: (project: ProjectRow) => string[];
+  /** The docs that wait in a docs pull request (`ProjectDocs.docsInPullRequests`). */
+  docsInPullRequests?: (project: ProjectRow) => Promise<DocInPullRequest[]>;
+  /** A repository project's pull requests that wait for the person (`projectPullRequests`). */
+  pullRequests?: (project: ProjectRow) => Promise<ProjectPullRequestsView>;
   who: () => Who;
 }
+
+const logger = log("docs-routes");
 
 /** The largest doc `GET /projects/:id/docs/:path` returns in full; longer ones are cut. */
 export const DOC_CONTENT_MAX_BYTES = 512 * 1024;
@@ -170,6 +187,17 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
     const roots = deps.docsDirsFor(project);
     const reviews = await reviewsView(deps.store, { projectId: project.id, limit: 50 });
+    // Before (GitHub walk, 2026-11-02) the docs read "missing · not written yet" while they
+    // waited in the scaffold's pull request #1, which nothing showed.
+    let waiting: DocInPullRequest[] = [];
+    try {
+      waiting = (await deps.docsInPullRequests?.(project)) ?? [];
+    } catch (e) {
+      logger.warn("docs pull requests not read", {
+        projectId: project.id,
+        error: errorMessage(e),
+      });
+    }
     const drift = reviews.reviews
       .flatMap((r) => r.findings)
       .filter((f) => f.status === "open" && /^doc drift/i.test(f.description));
@@ -177,6 +205,20 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
       const rel = docFile(doc);
       const found = locate(roots, rel);
       const finding = drift.find((f) => f.description.includes(doc) || f.description.includes(rel));
+      const pr = found
+        ? undefined
+        : waiting.find((w) => w.path === rel || (rel.endsWith("/") && w.path.startsWith(rel)));
+      if (pr && !finding)
+        return {
+          path: rel,
+          title: TITLES[doc],
+          exists: false,
+          sizeBytes: 0,
+          updatedAt: null,
+          drift: false,
+          note: `waiting in pull request #${pr.number}: merge it to add it`,
+          pullRequest: { number: pr.number, url: pr.url },
+        };
       return {
         path: rel,
         title: TITLES[doc],
@@ -218,6 +260,17 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
         content += `\n\nDecisions in this folder:\n${adrs.map((n) => `- ${n}`).join("\n")}\n`;
     }
     const view: DocContentView = { path: rel, content, updatedAt: found.updatedAt };
+    return c.json(view);
+  });
+
+  // A repository project's pull requests that wait for the person (design §3.4 "Your files",
+  // ADR 0106): each done task's and Forerunner's docs PRs, read from the host when asked.
+  app.get("/projects/:id/pull-requests", async (c) => {
+    const project = await owned(c.req.param("id"));
+    if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
+    const view: ProjectPullRequestsView = deps.pullRequests
+      ? await deps.pullRequests(project)
+      : { repository: null, waiting: [], error: null };
     return c.json(view);
   });
 

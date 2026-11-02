@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import {
   type Clock,
   errorMessage,
@@ -15,7 +15,9 @@ import type {
   StateStore,
   TaskRow,
 } from "@forerunner/state";
+import { ensureBaseBranch } from "./base-branch.ts";
 import { GitOps, type GitTokenSource, gitAuthFor, resolveGitToken } from "./git.ts";
+import { pushFailedWords } from "./push-words.ts";
 import type { GitHost, RepoRef } from "./types.ts";
 
 /**
@@ -125,6 +127,30 @@ export function setAsideRef(taskId: string): string {
   return `refs/forerunner/set-aside/${safeSegment(taskId)}`;
 }
 
+/**
+ * What a project's folder never takes into its history: caches and installs a specialist's
+ * command leaves behind (live, 2026-11-02: `__pycache__/*.pyc` was staged into the project).
+ */
+export const WORKSPACE_GITIGNORE = [
+  "# Written by Forerunner: files a command leaves behind, kept out of the folder's history.",
+  "__pycache__/",
+  "*.pyc",
+  "node_modules/",
+  ".venv/",
+  ".pytest_cache/",
+  ".DS_Store",
+  "Thumbs.db",
+  "",
+].join("\n");
+
+/** A `.gitignore` in a project's folder when it has none; one it has is never changed. */
+export function ensureWorkspaceGitignore(dir: string): boolean {
+  const file = join(dir, ".gitignore");
+  if (existsSync(file)) return false;
+  writeFileSync(file, WORKSPACE_GITIGNORE, "utf8");
+  return true;
+}
+
 export class PrTaskExecutor implements TaskExecutor {
   private readonly logger = log("pr-executor");
 
@@ -145,14 +171,35 @@ export class PrTaskExecutor implements TaskExecutor {
       `fr/${task.id.slice(0, 8)}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
     const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
+    const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
     const git = new GitOps({
       cwd: dir,
       // Scoped to the clone URL's origin; a local path or SSH remote gets no header.
-      auth: gitAuthFor(await resolveGitToken(this.deps.token), target.clone),
+      auth,
       identity: this.deps.identity,
     });
     if (existsSync(join(dir, ".git"))) await git.fetch();
     else await git.clone(target.clone);
+    // An empty repository (just created on GitHub) gets its first commit, a README with the
+    // project's name and goal, so the task has a branch to start from (ADR 0106).
+    await ensureBaseBranch({
+      git,
+      cloneUrl: target.clone,
+      base: target.base,
+      repoName: `${target.repo.owner}/${target.repo.name}`,
+      scratchDir: join(this.deps.worktreeRoot, "first-commit", safeSegment(task.id)),
+      ...(auth ? { auth } : {}),
+      ...(this.deps.identity ? { identity: this.deps.identity } : {}),
+      first: async (scratch) => {
+        const project = await this.deps.store.project.get(task.project_id);
+        writeFileSync(
+          join(scratch, "README.md"),
+          `# ${project?.name ?? target.repo.name}\n\n${project?.goal ?? ""}\n`,
+          "utf8",
+        );
+        return "Start the repository with a README\n\nThe repository was empty; Forerunner made this first commit so its tasks have a branch to start from.";
+      },
+    });
     if (!task.branch) await this.deps.store.task.patch(task.id, { branch });
     const answered = await this.conflictAnswer(task);
     if (answered?.outcome === "resolved")
@@ -212,7 +259,7 @@ export class PrTaskExecutor implements TaskExecutor {
     } catch (e) {
       return {
         outcome: "failed",
-        summary: `push failed: ${errorMessage(e)}`,
+        summary: pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
         costUsdMicro: result.costUsdMicro,
         branch,
       };
@@ -278,6 +325,7 @@ export class PrTaskExecutor implements TaskExecutor {
     // them (found by Windows CI).
     const git = new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
     if (!existsSync(join(dir, ".git"))) await git.init("main");
+    ensureWorkspaceGitignore(dir);
     const before = `Workspace before "${task.title}" (task ${task.id})`;
     await git.commitAll(before, { allowEmpty: !(await git.hasCommits()) });
     const inner = this.deps.inner.withWorktree
@@ -351,7 +399,7 @@ export class PrTaskExecutor implements TaskExecutor {
       } catch (e) {
         return {
           outcome: "failed",
-          summary: `push failed: ${errorMessage(e)}`,
+          summary: pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
           costUsdMicro: 0,
           branch,
         };

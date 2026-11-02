@@ -2423,7 +2423,10 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 
 `scripts/bench/` starts the real daemon (`fr daemon` on an isolated `FORERUNNER_HOME`) and the
 real UI dev server, and gives Playwright scripts a recorder (`recorder.cjs`: `openApp`, `step`
-screenshots and visible text, `api`, problems from the console and the network). Usage, the
+screenshots and visible text, `api`, problems from the console and the network). `--githost
+<port>` adds the fake git host as the bench's GitHub (`githost-server.ts`: `bench/empty` with no
+commit and `bench/seeded`, its token stored with `fr setup`; tested in `bench-scripts.test.ts`).
+Usage, the
 failure-injection variables and where everything lands are in `scripts/bench/README.md`; the
 smoke journey is `scripts/bench/journeys/smoke.cjs` (after Start it clicks the dialog's "Open the
 session", since the Start dialog keeps the person on the project page; one Start runs the whole

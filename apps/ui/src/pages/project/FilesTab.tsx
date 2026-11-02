@@ -21,7 +21,14 @@ export function sizeWords(bytes: number): string {
  * browser. Before, no screen showed the folder: Docs listed only the template docs and refused
  * index.html.
  */
-export function FilesTab({ projectId }: { projectId: string }) {
+export function FilesTab({
+  projectId,
+  repository = null,
+}: {
+  projectId: string;
+  /** A project linked to a repository: the folder is this computer's copy of its default branch. */
+  repository?: { fullName: string; url: string } | null;
+}) {
   const client = useClient();
   const [params, setParams] = useSearchParams();
   const open = params.get("path");
@@ -41,6 +48,17 @@ export function FilesTab({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-3" data-testid="files-tab">
+      {repository ? (
+        // ADR 0106: the work of a repository project waits in pull requests until merged; this
+        // folder is the default branch, so the page says so instead of looking incomplete.
+        <p
+          className="text-sm text-neutral-600 dark:text-neutral-400"
+          data-testid="files-repository"
+        >
+          This computer's copy of {repository.fullName} as merged. Work waiting in a pull request is
+          on the Overview.
+        </p>
+      ) : null}
       {data.folder ? <FolderPath path={data.folder} /> : null}
       {data.entries.length === 0 ? (
         <EmptyState testId="files-empty">Nothing written yet.</EmptyState>

@@ -330,7 +330,11 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     expect(rows[0]?.deniedReason).toMatch(/^autonomy_insufficient: autonomy level 2/);
     expect(m.approvals.requests).toEqual([]);
     expect(result.merges[0]).toMatchObject({ taskId, status: "not_allowed" });
-    expect(result.summary).toContain("1 reviewed pull request waits for you to merge.");
+    // The session's own PRs, said as the session's (review, 2026-11-02): the Overview lists
+    // every PR that waits now, from earlier sessions and Forerunner's docs PRs too, and
+    // "1 reviewed pull request waits" stood next to a list of 3, and stayed after a merge.
+    expect(result.summary).toContain("Left 1 reviewed pull request for you to merge.");
+    expect(result.summary).not.toContain("waits for you to merge");
     expect((await m.w.store.task.mustGet(taskId)).reason).toContain("left open");
     expect(await requestsFor(m.w, taskId)).toEqual([]);
   });

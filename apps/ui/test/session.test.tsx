@@ -74,6 +74,49 @@ describe("Live session view", () => {
     await waitFor(() => expect(screen.getAllByTestId("event-row")).toHaveLength(rows.length));
   });
 
+  it("names each pull request the session's tasks went to, with its branch and link (GitHub walk, 2026-11-02)", async () => {
+    // Before: the session page said "Changed 1 file: index.html" and named neither the PR nor
+    // the branch.
+    const harness = createHarness();
+    const base = harness.daemon.state.events[0];
+    if (!base) throw new Error("no event fixture");
+    harness.daemon.state.events.push(
+      {
+        ...base,
+        id: "ev_pr_1",
+        seq: 101,
+        type: "task.started",
+        text: 'The coder started "Create the page skeleton in index.html".',
+        payload: { taskId: "task_9", title: "Create the page skeleton in index.html" },
+      },
+      {
+        ...base,
+        id: "ev_pr_2",
+        seq: 102,
+        type: "task.files",
+        text: "Changed index.html, in pull request #2.",
+        payload: {
+          taskId: "task_9",
+          files: ["index.html"],
+          prUrl: "https://github.com/org/atlas/pull/2",
+          branch: "fr/task_9-create-the-page",
+        },
+      },
+    );
+    renderApp("/sessions/sess_1", harness);
+    const prs = await screen.findByTestId("session-prs");
+    const row = within(prs).getByTestId("session-pr");
+    expect(row).toHaveTextContent(
+      '"Create the page skeleton in index.html" · pull request #2 · branch fr/task_9-create-the-page',
+    );
+    expect(within(row).getByTestId("session-pr-link")).toHaveAttribute(
+      "href",
+      "https://github.com/org/atlas/pull/2",
+    );
+    // The log line names the PR too.
+    expect(await screen.findByText("Changed index.html, in pull request #2.")).toBeInTheDocument();
+  });
+
   it("reads the session summary aloud through the daemon", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

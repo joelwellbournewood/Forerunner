@@ -14,6 +14,7 @@ import type {
   DaemonDeviceView,
   DesktopAllowEntryView,
   DesktopControlView,
+  DocView,
   EmailCommandRowView,
   EmailSentRowView,
   EmailSettingsPatchBody,
@@ -31,6 +32,7 @@ import type {
   PairingStartView,
   PendingChangeView,
   ProjectCard,
+  ProjectPullRequestView,
   ReviewsView,
   ReviewView,
   SessionView,
@@ -168,6 +170,7 @@ import {
   PERFORMANCE,
   PROJECT_FILES,
   PROJECT_FOLDERS,
+  PROJECT_PULL_REQUESTS,
   PROJECTS,
   PROMOTIONS,
   QUEUE,
@@ -402,6 +405,13 @@ export interface FakeDaemonState {
    */
   folders: Record<string, string>;
   files: Record<string, { path: string; content: string | null; updatedAt: string }[]>;
+  /**
+   * `GET /projects/:id/pull-requests` by project (ADR 0106): the PRs that wait for the person,
+   * or the host's error in words; a project without an entry has none waiting.
+   */
+  pullRequests: Record<string, { waiting: ProjectPullRequestView[]; error: string | null }>;
+  /** `GET /projects/:id/docs` by project: Atlas has the fixture set, the others none. */
+  docs: Record<string, DocView[]>;
   messages: MessageView[];
   killActive: boolean;
   calls: RecordedCall[];
@@ -520,6 +530,18 @@ interface PendingCommand {
 }
 
 const clone = <T>(value: T): T => structuredClone(value);
+
+/**
+ * The repository a project is linked to, as the daemon's `projectRepository` reads `repos[0]`:
+ * `owner/name` on GitHub; none for no link or a local folder.
+ */
+function repositoryOf(
+  repos: readonly string[] | undefined,
+): { fullName: string; url: string } | null {
+  const first = repos?.[0]?.trim() ?? "";
+  if (!/^[\w.-]+\/[\w.-]+$/.test(first)) return null;
+  return { fullName: first, url: `https://github.com/${first}` };
+}
 
 /** The stand-in's scripted session lines that stand for what a person follows (design §3.7). */
 const SCRIPTED_PERSON_TYPES = new Set([
@@ -784,6 +806,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     intake: {},
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
+    pullRequests: clone(PROJECT_PULL_REQUESTS),
+    docs: { proj_atlas: clone(DOCS) },
     messages: clone(MESSAGES),
     killActive: false,
     calls: [],
@@ -1253,7 +1277,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           since: session.startedAt,
         }
       : null;
-    const folder = state.folders[p.id] ?? null;
+    // As the daemon's `projectCard`: a repository project's work is on the repository and in its
+    // pull requests (ADR 0106), so its card names the repository and no folder.
+    const repository = repositoryOf(p.repos);
+    const folder = repository ? null : (state.folders[p.id] ?? null);
     const statusLine = projectStatusLine({
       projectId: p.id,
       tasks: tasks.map((t) => ({
@@ -1283,6 +1310,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       progress: progressOf(tasks.map((t) => ({ status: t.status as never }))),
       working,
       folder,
+      repository,
     };
   };
   app.get("/projects", (c) => c.json(state.projects.map(projectCardOf)));
@@ -5975,7 +6003,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
-    return c.json(id === "proj_atlas" ? DOCS : []);
+    return c.json(state.docs[id] ?? []);
   });
   app.get("/projects/:id/docs/:path", (c) => {
     const doc = DOC_CONTENTS[c.req.param("path")];
@@ -5984,6 +6012,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // The Files tab (design §3.10), as the daemon's docs-routes.ts answers it: the folder and
   // its files with every folder on their path, and one file's text; a path that leaves the
   // folder is 404.
+  // A repository project's pull requests that wait for the person (ADR 0106), as the daemon's
+  // docs-routes.ts answers them: the repository with its page and the waiting PRs (each with
+  // who checked it, `review`: critic, you, none, or null for Forerunner's docs PRs), or the
+  // host's error in words; no repository answers repository null.
+  app.get("/projects/:id/pull-requests", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 404, "not_found", "no such project");
+    const repository = repositoryOf(project.repos);
+    const prs = state.pullRequests[id];
+    return c.json({
+      repository,
+      waiting: repository ? (prs?.waiting ?? []) : [],
+      error: repository ? (prs?.error ?? null) : null,
+    });
+  });
   app.get("/projects/:id/files", (c) => {
     const id = c.req.param("id");
     if (!state.projects.some((p) => p.id === id))

@@ -175,7 +175,10 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       }.`;
     case "task.files": {
       const files = list(p, "files").map(String);
-      return files.length ? `Changed ${namedList(files)}.` : "Changed no file.";
+      const pr = prNumberWords(s("prUrl"));
+      return files.length
+        ? `Changed ${namedList(files)}${pr ? `, in ${pr}` : ""}.`
+        : "Changed no file.";
     }
     case "task.finished": {
       const outcome = s("outcome");
@@ -382,6 +385,25 @@ function typeWords(type: string): string {
 }
 
 /**
+ * Why a reviewed pull request was left open, after "waits for you to merge it": the level's
+ * refusal as the setting's name ("Forerunner merges only at Trusted"), another reason as it
+ * is with the merge step's prefix and any URL taken out.
+ */
+export function leftOpenWords(reason: string): string {
+  const r = reason.replace(/^PR left open for you:\s*/i, "").trim();
+  if (!r) return "";
+  if (/^autonomy (level )?\d+ does not merge/i.test(r))
+    return ": Forerunner merges only at Trusted";
+  return `: ${r.replace(/https?:\/\/\S+/g, "it").replace(/[.\s]+$/, "")}`;
+}
+
+/** "pull request #2" for a pull request's URL (`…/pull/2`), "" for none. */
+export function prNumberWords(url: string): string {
+  const n = /\/pulls?\/(\d+)\/?(?:[?#].*)?$/.exec(url.trim())?.[1];
+  return n ? `pull request #${n}` : url ? "a pull request" : "";
+}
+
+/**
  * The sentence for the event types `describeEvent` leaves to this file; null for a type it
  * does not know, which `fallbackLine` words.
  */
@@ -454,12 +476,18 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
       return `Gave this task ${plural(list(p, "ids").length, "line")} you said.`;
     case "task.files": {
       const files = list(p, "files").map(String);
-      return `Changed ${plural(files.length, "file")}${files.length ? `: ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", …" : ""}` : ""}.`;
+      const pr = prNumberWords(s("prUrl"));
+      const branch = s("branch");
+      return `Changed ${plural(files.length, "file")}${files.length ? `: ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", …" : ""}` : ""}${pr ? `; ${pr}${branch ? ` on the branch ${branch}` : ""}` : ""}.`;
     }
+    // The PR by its number, never its URL; the level's refusal in the setting's name (design
+    // §5: no raw autonomy levels). Before (bench, 2026-11-02): "Left the pull request
+    // http://…/pull/3 open for you: PR left open for you: autonomy level 2 does not merge
+    // (level 3 Trusted does)."
     case "pr.merged":
-      return `Merged the reviewed pull request ${s("prUrl")}.`;
+      return `Merged ${prNumberWords(s("prUrl")) || "the reviewed pull request"}.`;
     case "pr.left_open":
-      return `Left the pull request ${s("prUrl")} open for you: ${s("reason") || "it was not merged"}.`;
+      return `${capital(prNumberWords(s("prUrl")) || "the pull request")} waits for you to merge it${leftOpenWords(s("reason"))}.`;
     case "pr.merge_failed":
       return `${s("warning") || "The merge step failed; the pull request stays open."}`;
     case "context.headroom_unavailable":

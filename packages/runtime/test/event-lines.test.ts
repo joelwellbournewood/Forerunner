@@ -4,6 +4,46 @@ import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpe
 
 /** Session log lines for the events added with U-013 and U-017. */
 describe("session log lines", () => {
+  it("a task's changed files name the pull request they went to (GitHub walk, 2026-11-02)", () => {
+    // Before: "Changed 1 file: index.html." with no word of the PR or its branch.
+    expect(
+      describeEvent("task.files", {
+        taskId: "t1",
+        files: ["index.html"],
+        prUrl: "https://github.com/o/sample/pull/2",
+        branch: "fr/01a1-create-index",
+      }),
+    ).toBe("Changed index.html, in pull request #2.");
+    expect(describeEvent("task.files", { taskId: "t1", files: ["index.html"] })).toBe(
+      "Changed index.html.",
+    );
+  });
+
+  it("a reviewed pull request left open is named by its number and says why in the setting's name", () => {
+    // Bench, 2026-11-02: "Left the pull request http://127.0.0.1:48063/bench/seeded/pull/3 open
+    // for you: PR left open for you: autonomy level 2 does not merge (level 3 Trusted does)."
+    expect(
+      describeEvent("pr.left_open", {
+        taskId: "t1",
+        prUrl: "https://github.com/o/sample/pull/3",
+        reason: "PR left open for you: autonomy level 2 does not merge (level 3 Trusted does)",
+      }),
+    ).toBe("Pull request #3 waits for you to merge it: Forerunner merges only at Trusted.");
+    expect(
+      describeEvent("pr.left_open", {
+        taskId: "t1",
+        prUrl: "https://github.com/o/sample/pull/4",
+        reason:
+          "PR left open for you: the reviewed commit is not known (no task worktree), so https://github.com/o/sample/pull/4 is not merged automatically",
+      }),
+    ).toBe(
+      "Pull request #4 waits for you to merge it: the reviewed commit is not known (no task worktree), so it is not merged automatically.",
+    );
+    expect(
+      describeEvent("pr.merged", { taskId: "t1", prUrl: "https://github.com/o/sample/pull/5" }),
+    ).toBe("Merged pull request #5.");
+  });
+
   it("says when a session put claimed tasks back to ready (U-013)", () => {
     expect(describeEvent("task.claims_released", { count: 2 })).toBe(
       "Put 2 tasks back to ready: their claim had lapsed or no agent held it.",

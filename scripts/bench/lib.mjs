@@ -246,6 +246,68 @@ export function setupEnv({ home, extra = {} }) {
   return env;
 }
 
+/**
+ * `--githost <port>`: the fake git host of testenv (`githost-server.ts`) as the bench's GitHub,
+ * with the repositories `bench/empty` (no commit, as one just created on GitHub) and
+ * `bench/seeded` (a README on main). Returns `{ pid, url, token, repos }` once it serves.
+ */
+export async function startGithost({ dir, port }) {
+  const out = path.join(dir, "githost.json");
+  const logFile = path.join(dir, "githost.log");
+  const pid = spawnLogged(
+    [
+      process.execPath,
+      "--import",
+      "tsx",
+      path.join("scripts", "bench", "githost-server.ts"),
+      "--root",
+      path.join(dir, "githost"),
+      "--port",
+      String(port),
+      "--out",
+      out,
+    ],
+    { cwd: REPO, env: { ...process.env }, logFile },
+  );
+  const info = await waitFor(() => {
+    if (!isAlive(pid)) return { exited: true };
+    return existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : null;
+  }, 60_000);
+  if (!info || info.exited) {
+    await killTree(pid);
+    fail(`the stand-in for GitHub did not start; see ${logFile}`);
+  }
+  return { pid, url: info.url, token: info.token, repos: info.repos };
+}
+
+/**
+ * The stand-in's token in the home's vault and its URL as the config's GitHub API base, with the
+ * app's own `fr setup --non-interactive` (it checks the token against the API first), so
+ * Settings shows GitHub connected and the daemon reaches the stand-in, as on an install.
+ */
+export function storeGithubToken({ dir, home, githost }) {
+  const env = daemonEnv({ home, provider: "none", extra: {} });
+  env.FORERUNNER_GITHUB_API = githost.url;
+  env.FORERUNNER_GITHUB_TOKEN = githost.token;
+  const r = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      path.join("packages", "runtime", "src", "cli", "main.ts"),
+      "setup",
+      "--non-interactive",
+    ],
+    { cwd: REPO, env, encoding: "utf8", timeout: 120_000, windowsHide: true },
+  );
+  const said = `${r.stdout ?? ""}${r.stderr ?? ""}`.split(githost.token).join("[the token]");
+  writeFileSync(path.join(dir, "setup-githost.log"), said);
+  if (r.status !== 0)
+    fail(
+      `fr setup refused the stand-in's GitHub token (exit ${r.status ?? r.signal}). Last lines:\n${said.trim().split("\n").slice(-5).join("\n")}`,
+    );
+}
+
 export const LIVE_KEY_MISSING =
   "--provider bench-live needs ANTHROPIC_API_KEY (or FORERUNNER_ANTHROPIC_KEY) in the environment: it calls the real Messages API. Nothing was started.";
 

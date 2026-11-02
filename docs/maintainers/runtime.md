@@ -850,8 +850,12 @@ lines, from the tasks as they stand at the end (`collectEndState`): what needs t
 needs your decision (Inbox); "X" failed: <reason>; Waiting for Docker: "X"), what happened (Did
 N tasks: names; "X" waits for review; Merged N pull requests; Nothing could run: "X" waits on
 "Y", which failed), then how it ended, what is next and the money (Stopped by you; Left for next
-time: "X" (about CHF 0.43); this session's CHF 0.90 was used; "X" is ready to continue; N tasks
-wait on it; Nothing left; CHF 0.80). Names in quotes, up to three then "and N more", CHF, no zero
+time: "X" (about CHF 0.43); this session's CHF 0.90 was used; "X" is ready to continue; Left N
+reviewed pull requests for you to merge; N tasks wait on it; Nothing left; CHF 0.80). The pull
+requests are the session's own, said as what it did ("Left N ... for you to merge"): before
+(review, 2026-11-02) "N reviewed pull requests wait for you to merge" stood next to the
+Overview's list of every PR that waits now, which has earlier sessions' and Forerunner's docs
+PRs too, and stayed after a merge on GitHub. Names in quotes, up to three then "and N more", CHF, no zero
 counts, no ids. `summary_cache.last_session.outcome` (`LastSessionOutcome`: done, failed with
 reason, needsYou, leftOver, waiting with what each waits on, waitingForDocker, stopReason,
 spentChfMicro) is what the Overview and Chat should read instead of parsing text;
@@ -1410,7 +1414,8 @@ for a duplicate key), an empty text "left … empty", a number "out of range", a
 record to open with a "Decision: " line in one or two sentences (the plan card shows it), asks for
 an estimate for every task a specialist does (`firstSession.items`, in run order: the card has a
 cost per task), never asks a specialist to commit, push or open a pull request (the executor
-records the changes), and says what a small plan is (`SMALL_PLAN_RULES`: one milestone of one to
+records the changes), says Forerunner decides where the files live and keeps them in git so
+the person is never asked either (live2 #14), and says what a small plan is (`SMALL_PLAN_RULES`: one milestone of one to
 three tasks, no reviewer, deploy, marketing or research task unless asked, no person task unless
 the work cannot start, riskTier left out, only README.md and the decision record). (6) **Plan
 size (ADR 0103).** `intakePlanSize` asks for "Plan size: small (a short brief: see Size in your
@@ -2293,9 +2298,8 @@ files one non-blocking `decision` request for the human (`fileLeftOpenRequest`: 
 the status; `syncPrAnswers` applies the answer, below); every outcome is written on the task row (`reason`, versioned with the agent), comes
 back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or `pr.left_open` event
 (`pr.merge_failed` when the port threw; never fatal) and is counted in the summary ("Merged 1
-reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). A merged
-branch is taken out of the session's PR branches, so the status update of `ProjectDocs` opens
-its own PR instead of committing to a merged branch. Tier 0 tasks close without a review and
+reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). The status
+update of `ProjectDocs` never goes on a task's branch (ADR 0106), merged or not. Tier 0 tasks close without a review and
 are never merged; a tier 3 task's accepting verdict becomes the human sign-off (`needs_human`,
 spec H), so it never reaches the merge either and the human who signs off merges. The kill
 switch ends the step as it ends the session: a `killed` refusal of the hooks (the revoked
@@ -2522,7 +2526,7 @@ project's `data/`). The outcome is recorded on the row as `summary_cache.docs` (
 `error` and `failed_at`); a git host that cannot serve the repository is a warning in the
 daemon log and the creation still answers 201, the critic's drift check reporting the
 missing docs at the first review.
-`writeSessionStatus({ project, session, update, prBranch })` runs in the runner's step 4
+`writeSessionStatus({ project, session, update })` runs in the runner's step 4
 once the task states are final, for a session that executed a plan and changed at least one
 task (`docs.status_skipped` otherwise; a paused session writes nothing): the update is the
 session's completed, in-review plus sent-back, blocked (needs human, failed, blocked by
@@ -2530,21 +2534,60 @@ findings) and skipped task titles with the session id, the end instant from the 
 a note (`stop reason <x>; spent $<n>`), and the four top sections come from the project's
 state in the store (the latest 15 done tasks, every task claimed, in progress or in review,
 every needs-human or failed one, the ready and draft ones highest priority first). With a
-repository it is committed as `docs: status after session <id>` on the branch of the last
-pull request the session opened or updated (`prBranch`, from the executor's `branch` and
-`prUrl`), so the session's PR carries it, or on `fr/status-<session id>`
-(`statusBranchFor`) with a small PR of its own ("docs: status after session <id8>") when the
-session opened none; a repository without `docs/status.md` gets it scaffolded in the same
-commit. Without a repository the file under the workspace is updated. The result is the
-`docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`) and
+repository it is committed as `docs: status after session <id>` on Forerunner's own status
+branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status"):
+a later session adds its commit to the open PR and comments the entry on it; once the PR is
+merged or closed the branch starts again from the default branch (pushed with a lease) and a
+new PR opens. It never goes on a task's branch (ADR 0106): the critic had accepted that branch,
+and the status commit pushed onto it after the review put a file the critic never saw into the
+reviewed PR (GitHub walk, 2026-11-02). A repository without `docs/status.md` gets it scaffolded
+in the same commit. Without a repository the file in the project's folder is updated and the
+session's work is committed with it (`statusInFolder`: "Did "<task>", …", after a `.gitignore`
+for caches when the folder has none; `commit` on the outcome), since the executor commits only a
+baseline before each run and the last task's files stayed uncommitted (live, 2026-11-02). Every
+docs write on a repository first makes sure the default branch exists (`ensureBaseBranch`, ADR
+0106): an empty repository gets the doc set as its first commit there (`scaffoldProject`
+answers `firstCommit: true`, `branch` the default branch, no PR; `summary_cache.docs.first_commit`).
+After each write the docs clone is back on the default branch (`backToBase`), so what reads it
+sees what is merged; `docsInPullRequests(project)` fetches the clone and lists the docs that wait
+in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, the intake's
+`fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab. The result is the
+`docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`, `commit`) and
 `handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
 the session ends as it would have. The critic's tier 2+ drift check runs before this write
 and is told so (`CriticLoopDeps.statusDocManaged`, set by the daemon): it neither expects
 the specialist's change to touch `docs/status.md` nor reports it missing.
+**Where a repository project's work is** (`daemon/pull-requests.ts`, ADR 0106): the project card
+carries `repository` (`projectRepository`: `repos[0]` as `owner/name`, not a local folder, with
+its page from the GitHub API base: `api.github.com` is github.com, GitHub Enterprise and the fake
+git host serve pages at the API's origin) and then no `folder`, since this install's docs clone
+holds only the default branch. `GET /projects/:id/pull-requests` (`projectPullRequests`, served
+by `docs-routes.ts`) reads the host's open PRs when asked and lists those that wait for the
+person: each done task's (the critic accepted it and nothing merged it: below level 3 the merge is
+the person's) and Forerunner's docs PRs ("Project status (docs/status.md)", "The project's
+standard docs", "The project's docs from the plan"), sorted by number; a PR of a task still
+running or in review, or of someone else's, is not listed; a host that does not answer is
+`error` in words. Each task PR says who checked it (`review`, `reviewOf`): `you` when the task's
+reason is the sign-off's `ACCEPTED_AT_SIGNOFF`, `none` when it is `ACCEPTED_WITHOUT_REVIEW` (Mark
+done anyway) or the critic's last review of the task did not accept it (a tier 0 close on checks
+alone), `critic` when that review accepted it (read from the review row, since at level 2 the
+merge step writes "PR left open for you: ..." over the reason); a docs PR's is null. Before
+(review, 2026-11-02) the Overview put every PR, the status and plan-docs PRs too, under
+"Reviewed by the critic." `GET /projects/:id/docs` reads `docsInPullRequests` and marks a doc missing on
+the default branch that waits in such a PR (`pullRequest` and the note "waiting in pull request
+#N: merge it to add it"). The runner's `task.files` event carries the task's `prUrl` and `branch`,
+and its line reads "Changed index.html, in pull request #2." (`prNumberWords`); `pr.left_open`
+reads "Pull request #3 waits for you to merge it: Forerunner merges only at Trusted."
+(`leftOpenWords`: the merge step's "PR left open for you:" prefix and URLs taken out, the level's
+refusal in the setting's name) and `pr.merged` "Merged pull request #5."; before, both carried the
+URL and "autonomy level 2 does not merge (level 3 Trusted does)". The chat's
+`# Your files` for a repository project (`repositoryFacts`, `filesBlock`) names the repository,
+says the work waits in pull requests until the person merges it, lists the done tasks' PR links
+and this computer's copy of the default branch; a folder project's names the folder.
 `docsDirsFor(project)` lists where the chat's docs search reads the set (spec J.1, ADR 0061),
 in order and without cloning or fetching: a local folder the project is linked to (an absolute
 `repos[0]`, spec A.4), this install's docs clone `<worktreeRoot>/<project id>` (made by the
-scaffold and the status updates), and the workspace, each only when it exists (empty when none
+scaffold and the status updates, on the default branch), and the workspace, each only when it exists (empty when none
 does). A linked folder is not a host repository (`parseRepoRef` is null for a path), so G.5
 writes such a project's set to the workspace and the list carries both; the search lets the
 first root win on the same repo-relative path.
@@ -4441,9 +4484,15 @@ without findings points to the previous attempt instead. A run that ended on an 
 named by `failureWords` ("Claude did not answer (model call failed).", the redacted message
 otherwise), never by the text the model wrote before the error, and carries
 `TaskExecutionResult.errorCode`; a timeout keeps its partial output (D.17). The constraints say
-"Do not commit, push or open a pull request: Forerunner records your changes after the run":
-the executor commits a workspace's changes (the next run's baseline) or opens the pull request
-itself; live (2026-11-01) a planned outcome asked the coder for a commit it never makes
+who does each git step (`gitConstraints`): on a repository's branch "Forerunner commits your
+changes on the branch <branch>, pushes it and opens the pull request after the run", in a
+project's folder "Forerunner commits your changes in the project's folder after the run", each
+with "a criterion that asks for a commit ... is Forerunner's step: do not report it as not met",
+and "Git's read commands (git status, git diff, git log) work in the folder"; a project linked
+to a local folder of the person's gets only "do not commit, push or open a pull request". Live
+(2026-11-01) a planned outcome asked the coder for a commit it never makes; on GitHub
+(2026-11-02) the coder found git broken (`scrubGitConfigEnv`, sandbox.md), wrote "I can't
+commit, push or open a PR" into its report, and that text became the PR body
 (`executor-brief.test.ts`).
 
 ### Injection (`src/injection/scan.ts`)
@@ -4894,14 +4943,19 @@ search a project's workspace docs and record a stated lesson into `rt.memory`.
 
 `loop-docs.test.ts` (spec G.5, ADR 0058; the runner with `ProjectDocs` on a `MemoryGitHost`
 whose repository clones from a local bare repo): a session whose executor pushed a branch and
-opened its PR gets `docs/status.md` scaffolded and committed on that branch (the session id,
-the date, the task under Done and in the entry, the note, `src/x.ts` still there), the only
-open PR is the task's, `main` has no status doc and its README is unchanged, the event and
-`handoff.docs` name the branch and PR; a session that opened no PR (a task that needs the
-human) files `fr/status-<session id>` with its own PR, the entry listing the blocked task and
-the top sections the project's state (a draft task under Next), a second session adding its
-own branch and PR; a project without a repository writes under
-`<projectsRoot>/<id>/workspace`; a session that touched no task writes nothing
+opened its PR gets `docs/status.md` scaffolded and committed on `fr/status` with its own PR (the
+session id, the date, the task under Done and in the entry, the note), the task's branch holds
+no status doc and the status branch none of the task's files, `main` has no status doc and its
+README is unchanged, the event and `handoff.docs` name the status branch and PR; a session that
+opened no PR (a task that needs the human) files the status PR, the entry listing the blocked
+task and the top sections the project's state (a draft task under Next), a second session
+adding its entry to the same branch and PR (a comment names it); an empty repository gets the
+doc set as its first commit on `main` with no PR, the marker included, the clone on `main`, and
+the status PR then starts from it; `docsInPullRequests` names the scaffold PR's docs with its
+number and link once the clone exists (nothing before), while the clone stays on `main`; a
+project's folder ends the session with `git status` clean, the last commit "Did "<task>"" holding
+the task's file and `docs/status.md`, `__pycache__` ignored by the written `.gitignore`; a
+project without a repository writes under `<projectsRoot>/<id>/workspace`; a session that touched no task writes nothing
 (`docs.status_skipped`), a session that only filed its plan (assisted mode) emits no `docs.*`
 event and writes nothing, and a port that throws ends the session `completed` with
 `docs.status_failed`. `docs-scaffold.test.ts` (through `composeRuntime` and `POST /projects`
@@ -4918,9 +4972,12 @@ the marker; a project created by `project.create` through `POST /commands/execut
 scaffolded in the background (the row's `summary_cache.docs`, the workspace); a session
 started through the composed `rt.runner` (the PR executor and loop executor on the scripted
 provider, whose text-only reply leaves no change and so no task PR) writing its status
-update on `fr/status-<session id>` with a PR of its own, the entry naming the session and
+update on `fr/status` with a PR of its own, the entry naming the session and
 the task, `main` untouched, `handoff.docs` on the session row; a repository the host cannot
-serve answering 201 with the error recorded. The other creation paths and the marker's
+serve answering 201 with the error recorded; an empty repository whose host refuses the first
+commit (a pre-receive hook) answering 201, then a session whose task fails with one sentence
+and what to do as its reason, its failed-task card and its result line (no "git push",
+"fatal:", "remote:" or line break) and no at-once retry. The other creation paths and the marker's
 reader: `sources-routes.test.ts` (an accepted repository candidate scaffolded through the
 composed daemon, the PR and the marker), `intake.test.ts` (a rejected intake asked for at
 creation scaffolding the templates and the marker into the workspace),
@@ -5524,8 +5581,9 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   2026-10-25 showed 5.5 accepts it and still runs fast (`usage.speed: "fast"`).
 - Chat retrieval (ADR 0061): the docs search reads and ranks the doc set on every model turn
   (no index or cache; bounded by the memory package's file caps) and ranks lexically, so a
-  question worded unlike the doc finds nothing. The docs clone `docsDirsFor` lists is whatever
-  branch the last scaffold or status update checked out; it is not fetched for the chat. A
+  question worded unlike the doc finds nothing. The docs clone `docsDirsFor` lists is on the
+  default branch as the last scaffold or status update fetched it; it is not fetched for the
+  chat. A
   project linked to a host repository that was never scaffolded on this install has no docs
   dir until the first scaffold or status update. The registry's `conversation-agent` prompt
   (`evals/registry`, synced from the registry repository) still says "If the context does not

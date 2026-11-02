@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Link } from "react-router";
-import type { HumanRequestView, ProjectCard } from "../../api/client.ts";
+import type { HumanRequestView, ProjectCard, ProjectPullRequestView } from "../../api/client.ts";
+import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { FolderPath } from "../../components/FolderPath.tsx";
 import { ReadAloud } from "../../components/ReadAloud.tsx";
 import { buttonClassName, ErrorBanner, Loading } from "../../components/ui.tsx";
@@ -170,7 +171,14 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
           </ul>
         </section>
       ) : null}
-      {project?.folder ? (
+      {project?.repository ? (
+        <RepositoryFiles
+          projectId={projectId}
+          repository={project.repository}
+          version={version}
+          changed={changed}
+        />
+      ) : project?.folder ? (
         <section aria-labelledby="files-title" data-testid="your-files">
           <h2 id="files-title" className="font-semibold">
             Your files
@@ -204,5 +212,116 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
         </section>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Who checked a waiting pull request, in the order the groups are listed: a group says it once
+ * over its PRs, and no PR is listed under a check it did not get. Review (2026-11-02): every PR
+ * read "Reviewed by the critic.", Forerunner's status and plan-docs PRs too.
+ */
+type PrGroup = "critic" | "you" | "not-reviewed" | "docs";
+const PR_GROUPS: { key: PrGroup; label: string }[] = [
+  { key: "critic", label: "Reviewed by the critic" },
+  { key: "you", label: "Accepted by you at sign-off" },
+  { key: "not-reviewed", label: "Marked done without the critic's review" },
+  { key: "docs", label: "Forerunner's docs, merge them when you like" },
+];
+
+function groupOf(pr: ProjectPullRequestView): PrGroup {
+  if (pr.kind === "docs") return "docs";
+  if (pr.review === "critic") return "critic";
+  if (pr.review === "you") return "you";
+  return "not-reviewed";
+}
+
+/**
+ * "Your files" of a project linked to a repository (design §3.4, §3.10; ADR 0106): the
+ * repository with its page, and the pull requests that wait for the person to merge them, each
+ * with its link, read from the git host when shown, grouped by who checked them (`PR_GROUPS`).
+ * Before (GitHub walk, 2026-11-02) the result said "5 reviewed pull requests wait for you to
+ * merge" and no screen but the Tasks row's small "PR" linked one; this page named a folder of
+ * this computer that held none of that work.
+ */
+function RepositoryFiles({
+  projectId,
+  repository,
+  version,
+  changed,
+}: {
+  projectId: string;
+  repository: { fullName: string; url: string };
+  version: string;
+  changed: string[];
+}) {
+  const client = useClient();
+  const prs = useAsync(
+    (signal) => client.projectPullRequests(projectId, signal),
+    [client, projectId],
+  );
+  const { reload } = prs;
+  useEffect(() => {
+    if (version) reload();
+  }, [version, reload]);
+  const waiting: ProjectPullRequestView[] = prs.data?.waiting ?? [];
+  return (
+    <section aria-labelledby="files-title" data-testid="your-files">
+      <h2 id="files-title" className="font-semibold">
+        Your files
+      </h2>
+      <div className="mt-1 space-y-2 text-sm">
+        <p data-testid="repository">
+          On GitHub:{" "}
+          <ExternalLink href={repository.url} variant="inline" testId="repository-link">
+            {repository.fullName}
+          </ExternalLink>
+        </p>
+        {prs.error && !prs.data ? <ErrorBanner message={prs.error} onRetry={prs.reload} /> : null}
+        {prs.data?.error ? (
+          <p className="text-neutral-600 dark:text-neutral-400" data-testid="prs-error">
+            {prs.data.error}
+          </p>
+        ) : null}
+        {waiting.length > 0 ? (
+          <div data-testid="prs-waiting">
+            <h3 className="font-medium">Waiting for you to merge</h3>
+            <p className="text-xs text-neutral-500">
+              Merging on GitHub puts the work into the default branch.
+            </p>
+            {PR_GROUPS.map((group) => {
+              const prsOf = waiting.filter((pr) => groupOf(pr) === group.key);
+              if (!prsOf.length) return null;
+              return (
+                <div key={group.key} data-testid={`prs-${group.key}`} className="mt-1">
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400">{group.label}</p>
+                  <ul className="space-y-0.5">
+                    {prsOf.map((pr) => (
+                      <li key={pr.number} data-testid="pr-waiting" className="flex flex-wrap gap-2">
+                        <span>
+                          "{pr.title}" · pull request #{pr.number}
+                        </span>
+                        <ExternalLink href={pr.url} variant="inline" testId="pr-waiting-link">
+                          Open
+                        </ExternalLink>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        ) : prs.data && !prs.data.error ? (
+          <p className="text-neutral-600 dark:text-neutral-400" data-testid="prs-none">
+            No pull request waits for you.
+          </p>
+        ) : null}
+        {changed.length > 0 ? (
+          <p data-testid="changed-files">
+            Changed by the last session: {changed.slice(0, 8).join(", ")}
+            {changed.length > 8 ? ` and ${changed.length - 8} more` : ""}
+          </p>
+        ) : null}
+      </div>
+    </section>
   );
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, run, SimulatedClock } from "@forerunner/platform";
 import { KillSwitch, SessionBudget, type TaskExecutor, TokenIssuer } from "@forerunner/runtime";
@@ -207,6 +207,282 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
     expect(
       (await w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1))[0]?.body,
     ).toContain("Updated by session");
+    await w.store.close();
+  });
+
+  it("an empty repository gets a first commit (a README) on its default branch, then the task's branch and pull request (GitHub walk, 2026-11-02)", async () => {
+    // Before: every task of a project linked to a repository just created on GitHub failed with
+    // "git checkout -B fr/... failed: fatal: 'origin/main' is not a commit and a branch ...
+    // cannot be created from it".
+    const w = await world();
+    const empty = join(w.root, "empty.git");
+    await run(["git", "init", "--bare", "-b", "main", empty]);
+    await w.host.createRepo({ owner: "o", name: "empty", private: true, cloneUrl: empty });
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Create index.html",
+      outcome: "index.html exists",
+      acceptance_criteria: ["index.html shows a quote"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: innerWriting({ "index.html": "<h1>quote</h1>\n" }),
+      repoFor: async () => ({ clone: empty, repo: { owner: "o", name: "empty" }, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    const res = await exec.execute({
+      task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    expect(res.summary).not.toContain("is not a commit");
+    expect(res.outcome).toBe("in_review");
+    expect(res.prUrl).toContain("/pull/1");
+    // main holds the first commit: the README with the project's name and goal.
+    const main = new GitOps({ cwd: join(w.root, "main-check"), identity });
+    await main.clone(empty, { branch: "main" });
+    expect((await main.log(5)).map((c) => c.subject)).toEqual([
+      "Start the repository with a README",
+    ]);
+    expect(readFileSync(join(w.root, "main-check", "README.md"), "utf8")).toBe("# Sample\n\ng\n");
+    // The task's branch starts from it and carries only the task's change.
+    const check = new GitOps({ cwd: join(w.root, "branch-check"), identity });
+    await check.clone(empty, { branch: res.branch });
+    expect((await check.log(5)).map((c) => c.subject)).toEqual([
+      "Create index.html",
+      "Start the repository with a README",
+    ]);
+    expect(res.changedFiles).toEqual(["index.html"]);
+    await w.store.close();
+  });
+
+  it("a push the host refuses fails the task in words with what to do, not git's output", async () => {
+    // Before: "push failed: git push fr/... failed: remote: ... error: failed to push some refs".
+    const w = await world();
+    // The host refuses every push to the repository, as GitHub does for a read-only token.
+    const hook = join(w.bare, "hooks", "pre-receive");
+    writeFileSync(
+      hook,
+      "#!/bin/sh\necho 'Permission to o/sample denied to the token.' >&2\nexit 1\n",
+    );
+    chmodSync(hook, 0o755);
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Add health endpoint",
+      outcome: "GET /health works",
+      acceptance_criteria: ["returns 200"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: innerWriting({ "health.ts": "export const ok = true;\n" }),
+      repoFor: async () => ({ clone: w.bare, repo: { owner: "o", name: "sample" }, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    const res = await exec.execute({
+      task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.summary).toBe(
+      `Forerunner could not push the branch ${res.branch} to o/sample: GitHub refused it (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`,
+    );
+    expect(res.summary).not.toContain("git push");
+    await w.store.close();
+  });
+
+  it("an empty repository whose host refuses the first commit fails the task in words with what to do, not git's output (review, 2026-11-02)", async () => {
+    // Before: 'o/empty is empty and Forerunner could not make its first commit: git push main
+    // failed: fatal: expected ...\nwarning: push negotiation failed ...\nremote: Permission to
+    // o/empty denied to the token.\nTo /tmp/.../empty.git\n ! [remote rejected] main -> main
+    // (pre-receive hook declined). Add a first commit ...', which the runner made the task's
+    // reason and the failed-task card's text.
+    const w = await world();
+    const empty = join(w.root, "empty.git");
+    await run(["git", "init", "--bare", "-b", "main", empty]);
+    const hook = join(empty, "hooks", "pre-receive");
+    writeFileSync(
+      hook,
+      "#!/bin/sh\necho 'Permission to o/empty denied to the token.' >&2\nexit 1\n",
+    );
+    chmodSync(hook, 0o755);
+    await w.host.createRepo({ owner: "o", name: "empty", private: true, cloneUrl: empty });
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Create index.html",
+      outcome: "index.html exists",
+      acceptance_criteria: ["index.html shows a quote"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    let ran = false;
+    const inner = innerWriting({ "index.html": "<h1>quote</h1>\n" });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: {
+        execute: (ctx) => {
+          ran = true;
+          return inner.execute(ctx);
+        },
+      },
+      repoFor: async () => ({ clone: empty, repo: { owner: "o", name: "empty" }, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    const ctx = {
+      task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    };
+    const words =
+      "o/empty is empty and GitHub refused Forerunner's first commit (the token may not write to it). Add a README on GitHub or check the token in Settings, then press Try again.";
+    // The runner makes the message the task's reason (cut at 200) and the failed-task card's
+    // text; the code is not a transient one, so the runner does not try again at once.
+    await expect(exec.execute(ctx)).rejects.toMatchObject({
+      message: words,
+      code: "provider_auth",
+    });
+    expect(words.length).toBeLessThanOrEqual(200);
+    expect(ran).toBe(false);
+    expect((await run(["git", "--git-dir", empty, "branch", "-a"])).stdout.trim()).toBe("");
+    await w.store.close();
+  });
+
+  it("a first commit refused for another reason names the host's one line, not git's output", async () => {
+    const w = await world();
+    const empty = join(w.root, "archived.git");
+    await run(["git", "init", "--bare", "-b", "main", empty]);
+    const hook = join(empty, "hooks", "pre-receive");
+    writeFileSync(
+      hook,
+      "#!/bin/sh\necho 'This repository is archived and read-only.' >&2\nexit 1\n",
+    );
+    chmodSync(hook, 0o755);
+    await w.host.createRepo({ owner: "o", name: "archived", private: true, cloneUrl: empty });
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Create index.html",
+      outcome: "index.html exists",
+      acceptance_criteria: [],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: innerWriting({ "index.html": "<h1>quote</h1>\n" }),
+      repoFor: async () => ({
+        clone: empty,
+        repo: { owner: "o", name: "archived" },
+        base: "main",
+      }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    await expect(
+      exec.execute({
+        task,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      /^o\/archived is empty and Forerunner could not make its first commit: git said "This repository is archived and read-only"\. Add a README on GitHub, then press Try again\.$/,
+    );
+    await w.store.close();
+  });
+
+  it("a repository with branches but not the default one fails in words, with what to check", async () => {
+    const w = await world();
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Edit readme",
+      outcome: "o",
+      acceptance_criteria: [],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: innerWriting({ "README.md": "# x\n" }),
+      // The seeded repository has main; the host says its default branch is "trunk".
+      repoFor: async () => ({ clone: w.bare, repo: { owner: "o", name: "sample" }, base: "trunk" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    await expect(
+      exec.execute({
+        task,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      'o/sample has no branch "trunk" to start from (it has main). Set its default branch on GitHub, then press Try again.',
+    );
     await w.store.close();
   });
 
