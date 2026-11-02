@@ -8,7 +8,12 @@ export interface StartBlockedFacts {
   stopped: boolean;
   /** A model (a Claude key or subscription) is configured. */
   hasModel: boolean;
-  /** A session of the agent runs now: a start waits for it, and its work makes tasks ready. */
+  /**
+   * A session of the agent runs now whose work can make this project's tasks ready: one on this
+   * project, or one tied to no project (`busyHere`). A start then waits for it rather than being
+   * refused. Another project's session does not count: a task waits only on tasks of its own
+   * project, so that work makes nothing here ready (later #38).
+   */
   busy: boolean;
   projectId: string;
   chfPerUsd: number;
@@ -18,6 +23,21 @@ export interface StartBlockedFacts {
    * (`IntakeService.status`).
    */
   plan?: "pending" | "drafting" | null;
+}
+
+/**
+ * Whether the session the agent runs now (`active`, the scheduler's `activeStart`) can make
+ * `projectId`'s tasks ready: it works on that project, or on no project in particular. The
+ * `busy` fact of `startBlocked`. Before, any running session counted, so a start on a project
+ * with nothing to run was queued behind another project's session and became a session that
+ * ran nothing (design §4.8: nothing runnable means no session; later #38).
+ */
+export function busyHere(
+  active: { req: { projectId?: string | undefined } } | undefined,
+  projectId: string,
+): boolean {
+  if (!active) return false;
+  return active.req.projectId === undefined || active.req.projectId === projectId;
 }
 
 /**
@@ -60,7 +80,8 @@ function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["bloc
       sentence: "Claude is not connected: planning and tasks need it.",
       action: { kind: "link", label: "Connect Claude", to: "/settings" },
     };
-  // A session runs now: the start waits for it, and its work makes more tasks ready.
+  // A session runs now on this project: the start waits for it, and its work makes more tasks
+  // ready. One on another project makes none of these ready (`busyHere`).
   if (r.runnable.length > 0 || f.busy) return null;
   const tasksTab = `/projects/${encodeURIComponent(f.projectId)}/tasks`;
   const stuck = r.waiting.find((w) =>

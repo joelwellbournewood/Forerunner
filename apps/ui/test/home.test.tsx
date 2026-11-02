@@ -236,6 +236,25 @@ describe("Home", () => {
     expect(connect).toHaveAttribute("href", "/setup");
   });
 
+  it("a project with ready work offers no Continue that the Start dialog would refuse: Connect Claude without a key (later #62)", async () => {
+    // Before: "Ready to continue: 1 task ready [Continue]", and Continue opened a Start dialog
+    // whose Start was disabled because Claude was not connected.
+    const harness = createHarness({ me: { provider: null } });
+    const draft = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!draft) throw new Error("fixture changed");
+    draft.status = "ready";
+    renderApp("/", harness);
+    const cards = await screen.findAllByTestId("project-card");
+    const beacon = within(cards[1] as HTMLElement);
+    expect(beacon.getByTestId("project-status")).toHaveTextContent(
+      /^Ready: 1 task\. Claude is not connected\.$/,
+    );
+    const connect = beacon.getByTestId("project-status-action");
+    expect(connect).toHaveTextContent("Connect Claude");
+    expect(connect).toHaveAttribute("href", "/setup");
+    expect(beacon.queryByText("Continue")).toBeNull();
+  });
+
   it("a one-line brief without a Goal creates the project: the brief's first sentence is the goal, and the dialog says so (live check of 2026-11-01)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

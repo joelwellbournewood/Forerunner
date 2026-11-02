@@ -66,8 +66,10 @@ Home shows, top to bottom:
 
 The sentence says, first match first: "Waiting for you: approve the plan" or "Waiting for you:
 2 questions"; 'Working on "Style the page" (3 of 7 done)'; 'Stuck: "Style the page" failed; 2
-tasks wait on it' or "Waiting for Docker: 1 task"; "Ready to continue: 3 tasks ready";
-"Drafting the plan…" or "Planning failed: Claude did not answer" with **Try again** (without a
+tasks wait on it' or "Waiting for Docker: 1 task"; "Ready to continue: 3 tasks ready" (without
+a Claude key "Ready: 3 tasks. Claude is not connected." with **Connect Claude**, and while
+sessions are stopped "Ready: 3 tasks. Sessions are stopped.", the bar at the top having
+**Allow sessions again**); "Drafting the plan…" or "Planning failed: Claude did not answer" with **Try again** (without a
 Claude key: "Planning failed: Claude is not connected" with **Connect Claude**), or "You
 rejected the plan. Nothing was written." with **Draft a new plan**; "Done: all 7 tasks. Your
 files: <folder>". The project's page has the reason in full. Home and the project pages follow
@@ -104,7 +106,8 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
 - **Overview**: where the project stands and what happens next. The cards of this project that
   wait for you, each with **Answer**; **Working now** (the task in flight, for how long, with
   **Open**); **Last result** (the last session's result in at most three lines, with **Open the
-  session** and "Read aloud"); **Next** (the open tasks in the order a session runs them, each
+  session** and "Read aloud"; when something it left for you has moved on since, a line says what
+  it is now, such as 'Since then: "Write the README" is done.'); **Next** (the open tasks in the order a session runs them, each
   with its status, worked out when you look); **Your files** (the project's folder with **Open
   folder** in the desktop app and **Copy path**, and the files the last session changed; for a
   project linked to a GitHub repository instead: the repository with its link, and **Waiting for
@@ -165,8 +168,13 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it
-  waits for and what waits on it, its runs (who ran each one, with that run's report and the
-  files it changed; the critic's run is marked as the review), the critic's review in words
+  waits for and what waits on it, its runs (who ran each one, with **Open the session**, that
+  run's report with **The whole report** when it is long, and the files it changed: click one to
+  open it on the Files tab; in a project linked to a repository the files are in the task's pull
+  request. A research run lists the web pages it read and those it could not read, and why.
+  While the task runs, its last steps show there as they happen ("read index.html", "wrote
+  styles.css"). The critic's run is marked as the review; a review that was stopped says so and
+  who stopped it), the critic's review in words
   with **See what was checked** (the project's checks with their output, each page tried with
   what it showed and its screenshots, and anything that could not be run or tried, and why),
   its pull request, and **Edit**
@@ -293,7 +301,8 @@ started "Create the page skeleton" (about CHF 0.14).", "Changed index.html.", "T
 accepted "Create the page skeleton".", "The designer could not do "Style the page": "The work
 needs something I do not have here". Trying again." and how it ended ("Session over: 2 done, 1
 needs you. CHF 0.06."). A task the critic sends back is tried again in the same session; each
-try is one line, and "The writer takes over …" says when another specialist tries it. **Details**
+try is one line, and "The writer takes over …" says when another specialist tries it; the lines
+after it name that specialist, including "The writer could not do …" when its own try fails too. **Details**
 adds the internal steps (the brief, memory, each tool call, each start and finish of a retry, the
 notifications sent), each line's event type, the level filters and the raw output; escalations
 are highlighted. A session
@@ -304,7 +313,9 @@ current task and starts nothing new), when its wall clock runs out, or when you 
 
 A start while your agent is in another session waits its turn: waiting starts (yours, an
 approved plan's, a CI or pull request trigger) run one after the other in the order they came,
-and none replaces another. **Start session** says how many wait before yours.
+and none replaces another. **Start session** says how many wait before yours. A project with
+nothing to run is refused even then: another project's session makes none of its tasks ready,
+so its start would only end at once.
 
 **Start** opens a dialog that says what the session will do: "This session runs "Create
 index.html" (about CHF 0.12) and continues with up to 6 more as they become ready". The budget
@@ -557,8 +568,12 @@ words used, what changed, and **Undo** while it can still be taken back. An undo
 confirmation as the change it makes: undoing a lowered monthly cap raises it, so it waits for
 your confirmation on this PC (or the phone with biometric), and so does putting back a wider
 email mode; undoing a raise acts at once. When an undo cannot work any more (the task was
-finished since, a session already read the note), the change says why instead of offering
-Undo, and nothing ever says "Undone" when nothing changed.
+finished since, a session already read the note, the session a start began has ended), the
+change reads **Cannot be undone** and says why instead of offering Undo, and nothing ever says
+"Undone" when nothing changed. Each change says **Can be undone**, **Undone**, **Reverted** (a
+change for tonight that went back by itself) or **Cannot be undone**; the line an Undo itself
+leaves ("Undone: …") has no such badge. "Said:" shows the words you
+typed in chat, said aloud or wrote in an email; a click in the app has none.
 
 ## Kill switch
 
@@ -568,7 +583,8 @@ session of your agents on this computer, revokes the run tokens and freezes clai
 seconds; the tray does the same. On a shared project the other people's sessions keep running,
 and the tasks they hold stay theirs. A bar then says **Sessions are stopped** until you press
 **Allow sessions again** (lets sessions start again) or **Continue where it stopped** (allows
-them and starts a session on every project that has work that can run); the tray, "resume" in
+them and starts a session again on the projects Stop all stopped, if they still have work that
+can run; other projects are left alone, and so is a session you stopped or undid yourself); the tray, "resume" in
 Chat or a start from the phone allow them too. The stop lasts across restarts until then. A
 session's own page has **Stop after this task** and **Stop now** (see "Sessions"); they end that
 session only and leave the rest running. Starting a session while sessions are stopped says

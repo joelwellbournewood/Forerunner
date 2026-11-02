@@ -1059,3 +1059,190 @@ describe("Tasks tab (design §3.5)", () => {
     expect(fakeSandboxView("not_running").ready).toBe(false);
   });
 });
+
+describe("the task drawer's runs lead somewhere (phase E screens, later #46, C-41, C-72)", () => {
+  /** proj_atlas as a project with a folder (no repository), with a file whose name has a space. */
+  function folderProject(): Harness {
+    const harness = createHarness();
+    const atlas = harness.daemon.state.projects.find((p) => p.id === "proj_atlas");
+    if (atlas) atlas.repos = [];
+    harness.daemon.state.files.proj_atlas?.push({
+      path: "notes/Über uns.md",
+      content: "# Über uns\n",
+      updatedAt: "2026-10-19T21:09:00.000Z",
+    });
+    const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
+    if (work) work.files = ["site/index.html", "notes/Über uns.md"];
+    return harness;
+  }
+  const workRun = async (drawer: HTMLElement) =>
+    (await within(drawer).findAllByTestId("drawer-run")).find(
+      (r) => r.getAttribute("data-kind") === "work",
+    ) as HTMLElement;
+
+  it("each changed file of a run is a link that opens the Files tab on that file", async () => {
+    // Before: "Changed: index.html, script.js" as plain text; a person who opened a task could
+    // not open what it wrote (the owner's complaint 4).
+    const user = userEvent.setup();
+    const harness = folderProject();
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const files = within(await workRun(drawer)).getByTestId("drawer-files");
+    const links = within(files).getAllByRole("link");
+    expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["site/index.html", "/projects/proj_atlas/files?path=site%2Findex.html"],
+      [
+        "notes/Über uns.md",
+        `/projects/proj_atlas/files?path=${encodeURIComponent("notes/Über uns.md")}`,
+      ],
+    ]);
+    await user.click(within(files).getByRole("link", { name: "notes/Über uns.md" }));
+    expect(await screen.findByTestId("file-view-path")).toHaveTextContent("notes/Über uns.md");
+    expect(await screen.findByTestId("file-content")).toHaveTextContent("# Über uns");
+  });
+
+  it("a repository project's changed files are named with its pull request, where they are", async () => {
+    // A repository project's work is on its branch and pull request (ADR 0106), not in this
+    // install's folder: a link to the Files tab would open the default branch.
+    const harness = createHarness();
+    const task = harness.daemon.state.tasks.find((t) => t.id === "task_2");
+    if (task) task.prUrl = "https://example.test/org/atlas/pull/12";
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const files = within(await workRun(drawer)).getByTestId("drawer-files");
+    expect(files).toHaveTextContent("Changed: index.html, in its pull request");
+    expect(within(files).queryByRole("link", { name: "index.html" })).toBeNull();
+    expect(within(files).getByRole("link", { name: "in its pull request" })).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/12",
+    );
+  });
+
+  it("while a task runs its drawer shows the run's live step lines and opens the session", async () => {
+    const harness = createHarness();
+    addTask(harness, "task_live", "Style the page in styles.css", { status: "in_progress" });
+    const session = harness.daemon.state
+      .sessions[0] as (typeof harness.daemon.state.sessions)[number];
+    harness.daemon.state.sessions.push({
+      ...session,
+      id: "sess_live",
+      status: "running",
+      endedAt: null,
+      summary: "",
+    });
+    const run = harness.daemon.state.runs[0] as (typeof harness.daemon.state.runs)[number];
+    harness.daemon.state.runs.unshift({
+      ...run,
+      id: "run_live",
+      taskId: "task_live",
+      sessionId: "sess_live",
+      specialist: "designer",
+      outcome: "Running",
+      verdict: null,
+      reviewId: null,
+      createdAt: new Date().toISOString(),
+    });
+    const base = harness.daemon.state.events[0] as (typeof harness.daemon.state.events)[number];
+    const line = (seq: number, type: string, text: string, payload: Record<string, unknown>) => ({
+      ...base,
+      id: `ev_live_${seq}`,
+      sessionId: "sess_live",
+      seq,
+      type,
+      text,
+      payload,
+      level: "info" as const,
+      audience: "person" as const,
+    });
+    harness.daemon.state.events.push(
+      line(1, "task.started", 'The designer started "Style the page".', {
+        taskId: "task_live",
+        title: "Style the page in styles.css",
+        specialist: "designer",
+      }),
+      line(2, "task.step", "read index.html", { taskId: "task_live", text: "read index.html" }),
+    );
+    renderApp("/projects/proj_atlas/tasks?task=task_live", harness, liveEvents(harness));
+    const drawer = await screen.findByTestId("task-drawer");
+    const steps = await within(drawer).findByTestId("drawer-steps");
+    expect(steps).toHaveTextContent("read index.html");
+    expect(within(drawer).getByRole("link", { name: "Open the session" })).toHaveAttribute(
+      "href",
+      "/sessions/sess_live",
+    );
+    // The next step line arrives on the session's stream: the drawer follows it.
+    const next = line(3, "task.step", "wrote styles.css", {
+      taskId: "task_live",
+      text: "wrote styles.css",
+    });
+    harness.daemon.state.events.push(next);
+    for (const l of harness.daemon.state.listeners) l("session.event", next);
+    await waitFor(() =>
+      expect(within(drawer).getByTestId("drawer-steps")).toHaveTextContent("wrote styles.css"),
+    );
+    expect(within(drawer).getByTestId("drawer-steps")).toHaveTextContent("read index.html");
+  });
+
+  it("a review stopped before the critic decided says so and who stopped it, never a bare 'Stopped' (C-41)", async () => {
+    const harness = createHarness();
+    const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
+    harness.daemon.state.runs.unshift({
+      ...(work as (typeof harness.daemon.state.runs)[number]),
+      id: "run_review_stopped",
+      specialist: "critic",
+      outcome: "killed",
+      verdict: null,
+      reviewId: null,
+      stoppedBecause: "you stopped the session",
+      createdAt: "2026-04-01T12:00:00.000Z",
+    });
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const review = (await within(drawer).findAllByTestId("drawer-run")).find(
+      (r) => r.getAttribute("data-kind") === "review",
+    ) as HTMLElement;
+    expect(review).toHaveTextContent(/^Review by the critic · .* · Review stopped/);
+    // Plain words (design §2, §5 rule 6): never "verdict".
+    expect(review).not.toHaveTextContent(/verdict/i);
+    expect(review).toHaveTextContent(
+      "The review stopped before the critic decided: you stopped the session.",
+    );
+  });
+
+  it("a report cut to a few lines keeps the whole of it one click away (C-72)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
+    if (work) {
+      work.report = "Summary\nWrote the page.\n…";
+      work.fullReport = "Summary\nWrote the page.\nSources read\n- https://example.org/a";
+    }
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const whole = within(await workRun(drawer)).getByTestId("drawer-full-report");
+    await user.click(within(whole).getByText("The whole report"));
+    expect(whole).toHaveTextContent("Sources read");
+    expect(whole).toHaveTextContent("https://example.org/a");
+  });
+
+  it("a research run lists the pages it read and those it could not read, in words (C-72)", async () => {
+    const harness = createHarness();
+    const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
+    if (work)
+      work.webSources = [
+        { url: "https://example.org/a", title: "Page A", refused: null },
+        {
+          url: "https://blocked.example/b",
+          title: null,
+          refused: "the network rules do not allow it",
+        },
+      ];
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const web = await within(await workRun(drawer)).findByTestId("drawer-web");
+    expect(web).toHaveTextContent("Read: Page A (https://example.org/a)");
+    expect(web).toHaveTextContent(
+      "Not read: https://blocked.example/b (the network rules do not allow it)",
+    );
+  });
+});

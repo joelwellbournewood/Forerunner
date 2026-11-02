@@ -34,6 +34,7 @@ import {
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
+import { taskStepsFromLog } from "../src/lib/session-steps.ts";
 import { reviewLevelName, reviewLevelValue } from "../src/lib/task-actions.ts";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
@@ -185,7 +186,19 @@ describe("the UI client against the real daemon", () => {
     expect(failures).toEqual([]);
   });
 
+  /**
+   * A ready task for the next start: a session runs only when there is something to run
+   * (design §4.8; POST /sessions refuses with the start check's sentence otherwise, later #38).
+   */
+  const someWork = (title: string) =>
+    client.createTask(projectId, { title, outcome: `${title} exists`, riskTier: 0 });
+
   it("start session: answers with the session it started, which the dialog opens (U-003)", async () => {
+    // Nothing to run yet: refused in the Start dialog's words, no session.
+    await expect(
+      client.startSession({ agentId, projectId, trigger: "manual" }),
+    ).rejects.toMatchObject({ code: "conflict", message: "Nothing can run: no task is ready." });
+    await someWork("Write contract.md");
     const started = await client.startSession({ agentId, projectId, trigger: "manual" });
     expect(started.result).toBe("started");
     expect(started.startId).toEqual(expect.any(String));
@@ -204,6 +217,7 @@ describe("the UI client against the real daemon", () => {
       if (running.length === 0) break;
       await new Promise((r) => setTimeout(r, 25));
     }
+    await someWork("Write note.md");
     const started = await client.startSession({
       agentId,
       projectId,
@@ -317,7 +331,17 @@ describe("the UI client against the real daemon", () => {
     const paths = after.entries.map((e) => e.path);
     expect(paths).toEqual(expect.arrayContaining(["README.md", "site", "site/index.html"]));
     expect(after.entries.find((e) => e.path === "site")?.kind).toBe("dir");
-    expect(paths.some((p) => p.startsWith("node_modules") || p.startsWith(".git"))).toBe(false);
+    // The git folder and node_modules are left out; a session's .gitignore is a file like any
+    // other (ADR 0106), listed now that the cases above ran sessions in this project.
+    expect(
+      paths.some(
+        (p) =>
+          p === "node_modules" ||
+          p.startsWith("node_modules/") ||
+          p === ".git" ||
+          p.startsWith(".git/"),
+      ),
+    ).toBe(false);
     const page = await client.projectFile(projectId, "site/index.html");
     expect(page).toMatchObject({ path: "site/index.html", binary: false });
     expect(page.content).toContain("<h1>Quotes</h1>");
@@ -367,6 +391,7 @@ describe("the UI client against the real daemon", () => {
   });
 
   it("stop session: answers with the session, and Stop all set before stays in force (U-032)", async () => {
+    await someWork("Write stop.md");
     const started = await client.startSession({ agentId, projectId, trigger: "manual" });
     const id = started.session?.id ?? (await client.sessions({ projectId }))[0]?.id ?? "";
     expect(id).not.toBe("");
@@ -5438,5 +5463,699 @@ describe("the UI client against the real daemon: answers do what the person said
     expect(byId.get(raise.pendingId ?? "")).toBe(confirmed.sentence);
     expect(byId.get(raise.pendingId ?? "")).toMatch(/monthly cap .*CHF 900/);
     expect(byId.get(lower.pendingId ?? "")).toBe("You said no; nothing changed.");
+  }, 60_000);
+});
+
+describe("the UI client against the real daemon: screens that lead somewhere (phase E, screens)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let bench: BenchOptions;
+  let criticCalls: ModelRequest[];
+  let server: Server;
+  let pageUrl = "";
+
+  beforeAll(async () => {
+    server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        "<!doctype html><html><head><title>Quotes people like</title></head><body><main>" +
+          "<p>Most people keep a favourite quote.</p></main></body></html>",
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    pageUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/quotes.html`;
+    ({ rt, client, bench, criticCalls } = await composeWithRolePlayer({}));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    server?.closeAllConnections();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+  });
+
+  /** A session on the project, waited for until it ends (60 s: Windows CI is slow). */
+  async function runSession(projectId: string): Promise<string> {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const states = async () =>
+      (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, await states()).not.toBe("");
+    await eventually(
+      async () =>
+        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+      "the session to end",
+      states,
+      60_000,
+    );
+    return sessionId;
+  }
+
+  it("GET /tasks/:id: each run names its session, its files open on the Files tab, its step lines are in that session's log, a research run names the pages it read (later #46, C-72)", async () => {
+    const project = await client.createProject({ name: "Drawer links", goal: "Open what ran" });
+    const before = await rt.store.project.mustGet(project.id);
+    await client.updateProjectSettings(project.id, {
+      version: before.version,
+      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
+    });
+    const page = await client.createTask(project.id, {
+      title: "Build the quote page in index.html",
+      outcome: "index.html shows a quote",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const research = await client.createTask(project.id, {
+      title: "Find what quotes people like",
+      outcome: `docs/research.md says what ${pageUrl} and http://10.0.0.7/admin say`,
+      riskTier: 1,
+      specialist: "researcher",
+    });
+    const sessionId = await runSession(project.id);
+
+    const done = await client.task(page.id);
+    const work = done.runs.find((r) => r.kind === "work");
+    expect(work?.sessionId).toBe(sessionId);
+    expect(work?.files.length).toBeGreaterThan(0);
+    // Each file the drawer links opens through the Files tab's route, as the link sends it.
+    for (const f of work?.files ?? []) {
+      expect((await client.projectFile(project.id, f)).path).toBe(f);
+    }
+    // While it ran, the drawer showed the run's step lines from that session's log: the log up
+    // to the task's end has them for this task.
+    const log = await client.sessionEvents(sessionId);
+    const end = log.findIndex(
+      (e) => e.type === "task.finished" && (e.payload as { taskId?: string }).taskId === page.id,
+    );
+    expect(end).toBeGreaterThan(0);
+    const live = taskStepsFromLog(log.slice(0, end), page.id);
+    expect(live?.length, JSON.stringify(log.map((e) => e.type))).toBeGreaterThan(0);
+    expect(taskStepsFromLog(log, page.id)).toBeNull();
+
+    // The research run lists the page it read and the one the network rules refused.
+    const read = (await client.task(research.id)).runs.find((r) => r.kind === "work");
+    expect(read?.webSources).toEqual([
+      expect.objectContaining({ url: pageUrl, title: "Quotes people like", refused: null }),
+      expect.objectContaining({
+        url: "http://10.0.0.7/admin",
+        refused: expect.stringMatching(/private or local network address/),
+      }),
+    ]);
+  }, 120_000);
+
+  it("GET /tasks/:id: a review stopped by Stop now says so and who stopped it (C-41)", async () => {
+    const project = await client.createProject({ name: "Review stopped", goal: "Say why" });
+    const task = await client.createTask(project.id, {
+      title: "Write notes/todo.md",
+      outcome: "notes/todo.md lists three things",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const agentId = (await client.agents())[0]?.id ?? "";
+    // The critic takes a minute to answer: the review is in flight when the person stops.
+    bench.criticDelayMs = 60_000;
+    try {
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      const status = async () =>
+        (await client.tasks(project.id)).find((t) => t.id === task.id)?.status;
+      const asked = criticCalls.length;
+      await eventually(
+        async () => (await status()) === "in_review" && criticCalls.length > asked,
+        "the critic's call to begin",
+        async () => `task ${await status()}, ${criticCalls.length - asked} critic call(s)`,
+        30_000,
+      );
+      await client.stopSession(sessionId, "stopped from the live view");
+      await eventually(
+        async () => !["running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () => `session ${(await client.session(sessionId)).status}`,
+        30_000,
+      );
+    } finally {
+      bench.criticDelayMs = 0;
+    }
+    const runs = (await client.task(task.id)).runs;
+    const review = runs.find((r) => r.kind === "review");
+    expect(review, JSON.stringify(runs)).toMatchObject({
+      outcome: "Review stopped",
+      report: "The review stopped before the critic decided: you stopped the session.",
+    });
+  }, 120_000);
+
+  it("GET /changes: a session start whose session ended is not undoable and says why, before anyone tries (later #36)", async () => {
+    const project = await client.createProject({ name: "Start undo", goal: "Say why" });
+    await client.createTask(project.id, {
+      title: "Write notes/plan.md",
+      outcome: "notes/plan.md exists",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    // The chat's start (the change log's session.start), with the words a person typed.
+    const asked = await client.executeCommands({
+      commands: [{ name: "session.start", params: { project: project.id, budgetChf: 5 } }],
+      wordsUsed: "start a session on Start undo",
+      source: "text",
+      projectId: project.id,
+    });
+    // A start above CHF 1.60 asks for a yes first, as the chat's read-back does.
+    const started =
+      asked.status === "pending" && asked.pendingId
+        ? await client.confirmCommand(asked.pendingId, { answer: "tap" })
+        : asked;
+    expect(started.status, JSON.stringify(started)).toBe("done");
+    const row = async () =>
+      (await client.changes({ projectId: project.id })).find((c) => c.id === started.changeLogId);
+    expect((await row())?.wordsUsed).toBe("start a session on Start undo");
+    await eventually(
+      async () =>
+        (await client.tasks(project.id)).every((t) => t.status === "done") &&
+        !(await client.sessions()).some(
+          (s) => s.projectId === project.id && ["running", "paused", "planned"].includes(s.status),
+        ),
+      "the started session to end",
+      async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+      60_000,
+    );
+    expect(await row()).toMatchObject({
+      undoState: "undoable",
+      undoable: false,
+      undoBlockedReason: "the session this start began has already ended; there is nothing to undo",
+    });
+    expect(
+      (await client.changes({ projectId: project.id, undoable: true })).map((c) => c.id),
+    ).not.toContain(started.changeLogId);
+  }, 120_000);
+
+  it("POST /sessions on a project with nothing to run answers the start check's sentence and starts nothing (later #38)", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Nothing to run", goal: "Say so" });
+    const before = (await client.sessions()).length;
+    const refused = await client
+      .startSession({ agentId, projectId: project.id, reason: "continue where it stopped" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    const check = await client.startCheck(project.id);
+    expect(check.blocked?.kind).toBe("nothing_runnable");
+    expect(refused).toBeInstanceOf(ApiError);
+    expect(refused, JSON.stringify(refused)).toMatchObject({
+      code: "conflict",
+      status: 409,
+      message: check.blocked?.sentence,
+    });
+    expect((await client.sessions()).length).toBe(before);
+  });
+
+  it("the session log names the specialist that runs: after two failed attempts '… takes over … from the coder', and the finished line and the drawer name the same one (later #75, U-044)", async () => {
+    // Before: the runner wrote task.started and task.finished with the plan's specialist, while
+    // the executor handed the third attempt to another one inside its run ("The coder started …"
+    // and "The coder finished …" for the migration specialist's work), with no "takes over".
+    const project = await client.createProject({ name: "Ladder", goal: "Name who runs" });
+    const task = await client.createTask(project.id, {
+      title: "Ladder notes: write notes/ladder.md",
+      outcome: "notes/ladder.md lists the steps",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    bench.fail = ["Ladder notes"];
+    bench.failTimes = 2;
+    try {
+      for (let i = 0; i < 4; i++) {
+        const now = (await client.tasks(project.id)).find((t) => t.id === task.id);
+        if (now?.status === "done") break;
+        if (now?.status !== "ready" && now?.status !== "failed") break;
+        if (now.status === "failed")
+          await client.taskAction(task.id, { version: now.version, action: "try_again" });
+        await runSession(project.id);
+      }
+    } finally {
+      bench.fail = [];
+      bench.failTimes = Number.POSITIVE_INFINITY;
+    }
+    const detail = await client.task(task.id);
+    const work = detail.runs.filter((r) => r.kind === "work");
+    const states = JSON.stringify(work.map((r) => [r.specialist, r.outcome]));
+    expect(work.length, states).toBeGreaterThanOrEqual(3);
+    const third = work[0];
+    expect(third?.specialist, states).not.toBe("coder");
+    const events = (
+      await Promise.all(
+        [...new Set(work.map((r) => r.sessionId ?? ""))].map((id) => client.sessionEvents(id)),
+      )
+    ).flat();
+    const mine = (type: string) =>
+      events.filter(
+        (e) => e.type === type && (e.payload as { taskId?: string }).taskId === task.id,
+      );
+    const lastStart = mine("task.started").at(-1);
+    expect(
+      lastStart?.payload,
+      JSON.stringify(mine("task.started").map((e) => e.payload)),
+    ).toMatchObject({
+      specialist: third?.specialist,
+      handedFrom: "coder",
+    });
+    expect(lastStart?.audience).toBe("person");
+    expect(lastStart?.text).toMatch(
+      / takes over "Ladder notes: write notes\/ladder\.md" from the coder\.$/,
+    );
+    expect(mine("task.finished").at(-1)?.payload).toMatchObject({ specialist: third?.specialist });
+  }, 120_000);
+
+  it("after a hand-over, the stand-in's own failed attempt is told as the stand-in's: its 'could not do' line names who ran it (U-044, review of later #75)", async () => {
+    // Before: the critic's line about the stand-in's run named the plan's specialist, right
+    // under "The migration specialist takes over …": "The coder could not do …. Trying again."
+    const project = await client.createProject({ name: "Third ladder", goal: "Name who ran" });
+    const task = await client.createTask(project.id, {
+      title: "Third ladder: write notes/third.md",
+      outcome: "notes/third.md lists the steps",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    bench.fail = ["Third ladder"];
+    bench.failTimes = 3;
+    try {
+      for (let i = 0; i < 4; i++) {
+        const now = (await client.tasks(project.id)).find((t) => t.id === task.id);
+        if (now?.status !== "ready" && now?.status !== "failed") break;
+        if (now.status === "failed")
+          await client.taskAction(task.id, { version: now.version, action: "try_again" });
+        await runSession(project.id);
+      }
+    } finally {
+      bench.fail = [];
+      bench.failTimes = Number.POSITIVE_INFINITY;
+    }
+    const work = (await client.task(task.id)).runs.filter((r) => r.kind === "work");
+    const said: string[] = [];
+    let handOver: {
+      who: string;
+      specialist: string;
+      verdict?: Awaited<ReturnType<DaemonClient["sessionEvents"]>>[number];
+    } | null = null;
+    for (const sessionId of [...new Set(work.map((r) => r.sessionId ?? ""))]) {
+      const log = (await client.sessionEvents(sessionId)).filter(
+        (e) => (e.payload as { taskId?: string }).taskId === task.id,
+      );
+      said.push(...log.filter((e) => e.audience === "person").map((e) => e.text));
+      const at = log.findIndex(
+        (e) => e.type === "task.started" && !!(e.payload as { handedFrom?: string }).handedFrom,
+      );
+      const started = log[at];
+      if (!started) continue;
+      handOver = {
+        who: started.text.split(" takes over ")[0] ?? "",
+        specialist: String((started.payload as { specialist?: string }).specialist),
+        verdict: log.slice(at + 1).find((e) => e.type === "critic.verdict"),
+      };
+    }
+    expect(handOver, JSON.stringify(said)).not.toBeNull();
+    expect(handOver?.specialist).not.toBe("coder");
+    // The stand-in's own attempt failed too (the third planted failure): the critic's line
+    // about it names the stand-in, as the line above it did.
+    expect(handOver?.verdict?.payload, JSON.stringify(said)).toMatchObject({
+      specialist: handOver?.specialist,
+      couldNot: expect.any(String),
+    });
+    expect(handOver?.verdict?.text, JSON.stringify(said)).toMatch(
+      new RegExp(`^${handOver?.who} could not do "Third ladder: write notes/third\\.md"`),
+    );
+  }, 180_000);
+
+  it("GET /projects/:id/summary: a task the session left for the person reads what it is now once it moved on (C-54)", async () => {
+    // Before: after Mark done anyway the Overview kept the session's '"X" needs your decision
+    // (Inbox).' while the header said done and the Inbox had no such card.
+    const me = await client.me();
+    const project = await client.createProject({ name: "Since then", goal: "True now" });
+    const task = await client.createTask(project.id, {
+      title: "Write docs/plan.md",
+      outcome: "docs/plan.md lists the steps",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    bench.fail = ["Write docs/plan.md"];
+    try {
+      await runSession(project.id);
+    } finally {
+      bench.fail = [];
+    }
+    const before = await client.projectSummary(project.id);
+    expect(before.lastSession?.summary, JSON.stringify(before.lastSession)).toMatch(
+      /needs your decision/,
+    );
+    expect(before.lastSession?.since).toBeUndefined();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.taskId === task.id && r.status === "open",
+    );
+    expect(card, "the failed task's card").toBeDefined();
+    await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Mark done anyway",
+    });
+    const after = await client.projectSummary(project.id);
+    expect(after.lastSession?.summary).toBe(before.lastSession?.summary);
+    expect(after.lastSession?.since).toEqual([
+      'Since then: "Write docs/plan.md" is done: accepted without review.',
+    ]);
+  }, 120_000);
+
+  it("GET /projects: under Stop all a project with ready work offers no Continue the Start dialog would refuse (later #62, #49)", async () => {
+    const project = await client.createProject({ name: "Ready under Stop all", goal: "Wait" });
+    await client.createTask(project.id, {
+      title: "Write notes/later.md",
+      outcome: "notes/later.md exists",
+      riskTier: 1,
+    });
+    await client.kill({ scope: "all", reason: "stop all from the UI" });
+    try {
+      const card = (await client.projects()).find((p) => p.id === project.id);
+      expect(card?.statusLine).toEqual({
+        kind: "ready",
+        text: "Ready: 1 task. Sessions are stopped.",
+        action: null,
+      });
+      expect((await client.startCheck(project.id)).blocked?.kind).toBe("stopped");
+    } finally {
+      await client.resume();
+    }
+    expect((await client.projects()).find((p) => p.id === project.id)?.statusLine).toMatchObject({
+      text: "Ready to continue: 1 task ready",
+      action: { kind: "start", label: "Continue" },
+    });
+    // Nothing is left ready for the next case's session.
+    const [task] = await client.tasks(project.id);
+    if (task) await client.taskAction(task.id, { version: task.version, action: "cancel" });
+  });
+});
+
+describe("the UI client against the real daemon without a Claude key: the ready line (phase E, screens)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-nokey-ready-"));
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock: new SimulatedClock("2026-03-05T08:00:00Z"),
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("GET /projects: a project with a ready task reads 'Claude is not connected' with Connect Claude, the Start dialog's blocker (later #62)", async () => {
+    // Before: "Ready to continue: 1 task ready [Continue]", and Continue led to a disabled Start.
+    const project = await client.createProject({ name: "No key, ready", goal: "Say so" });
+    await client.createTask(project.id, { title: "Write the README", outcome: "README.md exists" });
+    const card = (await client.projects()).find((p) => p.id === project.id);
+    expect(card?.statusLine).toEqual({
+      kind: "ready",
+      text: "Ready: 1 task. Claude is not connected.",
+      action: { kind: "link", label: "Connect Claude", to: "/setup" },
+    });
+    expect((await client.startCheck(project.id)).blocked?.kind).toBe("no_model");
+  });
+});
+
+describe("the UI client against the real daemon: Continue where it stopped starts only what Stop all stopped (phase E, screens, later #60)", () => {
+  /** The daemon on `home`, its specialist runs waiting until they are stopped. */
+  async function compose(home: string) {
+    const env = { FORERUNNER_HOME: home };
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const provider = new ScriptedProvider([WAITING_CALL, WAITING_CALL, WAITING_CALL], clock);
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: new AcceptingCriticProvider(provider),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client, provider };
+  }
+
+  /** Two projects with a ready task each; a session runs the first's task. */
+  async function twoProjectsOneRunning(
+    client: DaemonClient,
+    provider: ScriptedProvider,
+    name: string,
+  ) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = (n: string) =>
+      client.createProject({ name: n, goal: "Two pages", autonomyLevel: 2 });
+    const a = await project(`${name} A`);
+    const b = await project(`${name} B`);
+    for (const p of [a, b])
+      await client.createTask(p.id, {
+        title: `Write ${p.name}.html`,
+        outcome: "the page exists",
+        riskTier: 0,
+      });
+    const calls = provider.calls.length;
+    const started = await client.startSession({ agentId, projectId: a.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    await eventually(
+      async () => provider.calls.length > calls,
+      "the first project's run",
+      async () => `session ${(await client.session(sessionId)).status}`,
+      10_000,
+    );
+    return { a, b, sessionId };
+  }
+
+  it("POST /kill/resume names the projects whose sessions Stop all ended, in this process and after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-continue-"));
+    const first = await compose(home);
+    let a = "";
+    try {
+      const one = await twoProjectsOneRunning(first.client, first.provider, "Now");
+      await first.client.kill({ scope: "all", reason: "stop all from the UI" });
+      await eventually(
+        async () => (await first.client.session(one.sessionId)).stopReason === "stop_all",
+        "the session to end by Stop all",
+        async () => `session ${(await first.client.session(one.sessionId)).status}`,
+        10_000,
+      );
+      // Only the project that ran: the other one has ready work too, and nothing stopped it.
+      expect((await first.client.resume()).stoppedProjects).toEqual([one.a.id]);
+      // Allowed again: a second resume names nothing.
+      expect((await first.client.resume()).stoppedProjects).toEqual([]);
+
+      // Stop all again, then the daemon stops and starts on the same home before Continue.
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const calls = first.provider.calls.length;
+      const again = await first.client.startSession({ agentId, projectId: one.a.id });
+      await eventually(
+        async () => first.provider.calls.length > calls,
+        "the run again",
+        async () => `session ${(await first.client.session(again.session?.id ?? "")).status}`,
+        10_000,
+      );
+      await first.client.kill({ scope: "all", reason: "stop all from the UI" });
+      a = one.a.id;
+    } finally {
+      await first.rt.close();
+    }
+    const second = await compose(home);
+    try {
+      expect((await second.client.resume()).stoppedProjects).toEqual([a]);
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
+
+  it("a session the person undid is not started again: POST /kill/resume names only what Stop all stopped (review of later #60)", async () => {
+    // Before: the undo of the chat's start stops its session with the freeze on, so the kill
+    // switch counted it as stopped by Stop all; the next Stop all and Continue where it stopped
+    // started the undone project again, and it spent.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-continue-undo-"));
+    const { rt, client, provider } = await compose(home);
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = (n: string) =>
+        client.createProject({ name: n, goal: "One page", autonomyLevel: 2 });
+      const undone = await project("Undone start");
+      const other = await project("Victor notes");
+      for (const p of [undone, other])
+        await client.createTask(p.id, {
+          title: `Write ${p.name}.html`,
+          outcome: "the page exists",
+          riskTier: 0,
+        });
+      const sessionOf = async (projectId: string) =>
+        (await client.sessions()).find(
+          (s) => s.projectId === projectId && ["running", "paused", "planned"].includes(s.status),
+        );
+
+      // The chat starts a session on the first project, and its run begins.
+      let calls = provider.calls.length;
+      const asked = await client.executeCommands({
+        commands: [{ name: "session.start", params: { project: undone.id, budgetChf: 5 } }],
+        wordsUsed: "start a session on Undone start",
+        source: "text",
+        projectId: undone.id,
+      });
+      const started =
+        asked.status === "pending" && asked.pendingId
+          ? await client.confirmCommand(asked.pendingId, { answer: "tap" })
+          : asked;
+      expect(started.status, JSON.stringify(started)).toBe("done");
+      await eventually(
+        async () => provider.calls.length > calls,
+        "the chat's session to run its task",
+        async () => `session ${(await sessionOf(undone.id))?.status ?? "none"}`,
+        15_000,
+      );
+      const undoneSession = (await sessionOf(undone.id))?.id ?? "";
+      expect(undoneSession).not.toBe("");
+
+      // Changes → Undo stops it.
+      await client.undoChange(started.changeLogId ?? "");
+      await eventually(
+        async () => (await client.session(undoneSession)).stopReason === "you",
+        "the undone session to end, stopped by you",
+        async () => JSON.stringify(await client.session(undoneSession)),
+        15_000,
+      );
+
+      // A session on the other project, then Stop all.
+      calls = provider.calls.length;
+      const second = await client.startSession({ agentId, projectId: other.id });
+      const otherSession = second.session?.id ?? "";
+      await eventually(
+        async () => provider.calls.length > calls,
+        "the other project's run",
+        async () => `session ${(await client.session(otherSession)).status}`,
+        15_000,
+      );
+      await client.kill({ scope: "all", reason: "stop all from the UI" });
+      await eventually(
+        async () => (await client.session(otherSession)).stopReason === "stop_all",
+        "the other session to end by Stop all",
+        async () => `session ${(await client.session(otherSession)).status}`,
+        15_000,
+      );
+      expect((await client.resume()).stoppedProjects).toEqual([other.id]);
+    } finally {
+      await rt.close();
+    }
+  }, 90_000);
+});
+
+describe("the UI client against the real daemon: a start on a project with nothing to run while another project's session runs (phase E, screens, later #38)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let provider: ScriptedProvider;
+
+  beforeAll(async () => {
+    ({ rt, client, provider } = await composeWithWaitingRun([WAITING_CALL]));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("POST /sessions, the Start dialog and the chat refuse it in the start check's words; no session is queued for it", async () => {
+    // Before: a running session of the agent made every start wait for it (`busy`), so the
+    // start on the empty project was queued and became a session that ended with "Nothing
+    // could run: no task is ready."; its Start dialog offered an enabled Start, "Starts after
+    // the current session". Another project's work makes none of this project's tasks ready.
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const me = await client.me();
+    const busy = await client.createProject({ name: "Busy one", goal: "Keeps the agent busy" });
+    await client.createTask(busy.id, {
+      title: "Write the busy page",
+      outcome: "it is done",
+      riskTier: 0,
+    });
+    const empty = await client.createProject({ name: "Empty one", goal: "Nothing to do yet" });
+    const running = await client.startSession({ agentId, projectId: busy.id });
+    const runningId = running.session?.id ?? "";
+    expect(runningId).not.toBe("");
+    try {
+      await eventually(
+        async () => provider.calls.length >= 1,
+        "the busy project's model call",
+        async () => `${provider.calls.length} model call(s)`,
+        10_000,
+      );
+      const check = await client.startCheck(empty.id);
+      expect(check.busy).toBe(true);
+      expect(check.blocked).toMatchObject({
+        kind: "nothing_runnable",
+        sentence: "Nothing can run: no task is ready.",
+      });
+      const refused = await client.startSession({ agentId, projectId: empty.id }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      expect(refused, JSON.stringify(refused)).toMatchObject({
+        code: "conflict",
+        status: 409,
+        message: "Nothing can run: no task is ready.",
+      });
+      const reply = await client.chat({
+        humanId: me.id,
+        agentId: rt.agent.id,
+        projectId: empty.id,
+        projectTab: true,
+        text: "start a session",
+        source: "text",
+      });
+      expect(reply.reply).toMatch(/^Nothing can run: no task is ready\./);
+      expect(reply.pendingConfirmation).toBeNull();
+      expect(rt.scheduler.pendingStarts(agentId)).toEqual([]);
+      // The busy project's own Start still waits its turn: that session's work is its own.
+      expect((await client.startCheck(busy.id)).blocked).toBeNull();
+    } finally {
+      await client.stopSession(runningId, "stopped from the live view");
+      await eventually(
+        async () =>
+          !rt.scheduler.isActive(agentId) && rt.scheduler.pendingStarts(agentId).length === 0,
+        "the agent to be free, with nothing waiting",
+        async () =>
+          `active ${rt.scheduler.isActive(agentId)}, ${rt.scheduler.pendingStarts(agentId).length} waiting`,
+        10_000,
+      );
+    }
+    expect(await client.sessions({ projectId: empty.id })).toEqual([]);
   }, 60_000);
 });

@@ -17,7 +17,7 @@ import {
   inMemoryConnectorFactory,
   testCatalog,
 } from "./extensions-helpers.ts";
-import { ScriptedProvider } from "./helpers.ts";
+import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
 
 /**
  * The notification module inside the running system (ADR 0038): `composeRuntime` builds the
@@ -99,7 +99,14 @@ describe("notifications wired into the daemon", () => {
       clock,
       stateUrl: "sqlite::memory:",
       vault,
-      provider: new ScriptedProvider([{ text: "Hello from the fake agent." }], clock),
+      // The critic accepts: the session test runs a task to its end (a session runs only with
+      // something to run, later #38).
+      provider: new AcceptingCriticProvider(
+        new ScriptedProvider(
+          [{ text: "Hello from the fake agent." }, { text: "Wrote README.md." }],
+          clock,
+        ),
+      ),
       registryDir: REGISTRY,
       identity: {
         humanName: "J",
@@ -410,10 +417,16 @@ describe("notifications wired into the daemon", () => {
 
   it("a finished session notifies the human with the outcome, links to the session and logs the delivery on the session", async () => {
     const pending = nextRecord("session_ended");
+    // A session runs only when there is something to run (design §4.8; later #38).
+    const added = await post(`/projects/${projectId}/tasks`, {
+      title: "Write the README",
+      outcome: "README.md exists",
+    });
+    expect(added.status).toBe(201);
     const started = await post("/sessions", {
       agentId: rt.agent.id,
       projectId,
-      budgetUsdMicro: 1_000_000,
+      budgetUsdMicro: 3_000_000,
     });
     expect(started.status).toBe(202);
     const record = await pending;

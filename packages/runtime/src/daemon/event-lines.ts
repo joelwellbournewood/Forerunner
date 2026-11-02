@@ -165,8 +165,9 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
         ? `You started the session with a budget of ${chf("budgetCapUsdMicro")}.`
         : `The session started with a budget of ${chf("budgetCapUsdMicro")}.`;
     case "task.started":
-      // A retry by another specialist (the ladder's "split, or with another specialist").
-      if (p.again === true && s("handedFrom"))
+      // Another specialist takes over (the ladder's "split, or with another specialist"), in
+      // this session or a later one (U-044: the runner names the specialist that runs).
+      if (s("handedFrom") && s("handedFrom") !== s("specialist"))
         return `${capital(specialistWho(p))} takes over ${taskName(p)} from ${specialistWho({
           specialist: s("handedFrom"),
         })}.`;

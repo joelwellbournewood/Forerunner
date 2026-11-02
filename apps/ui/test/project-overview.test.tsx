@@ -232,3 +232,23 @@ describe("the project header (design §2, §3.4)", () => {
     );
   });
 });
+
+describe("the Overview's Last result is true now (C-54, design §5 rule 4)", () => {
+  it("a task the session left for the person that moved on since gets a 'Since then' line", async () => {
+    // Before: after Mark done anyway the Overview still read the session's '"Write the README
+    // ..." needs your decision (Inbox).' with no such card in the Inbox.
+    const harness = createHarness();
+    const session = harness.daemon.state.sessions.find((s) => s.id === "sess_1");
+    if (session) session.handoff = { blocked: ["task_1", "task_3"] };
+    renderApp("/projects/proj_atlas", harness);
+    const since = await screen.findByTestId("last-result-since");
+    expect(
+      within(since)
+        .getAllByRole("listitem")
+        .map((l) => l.textContent),
+    ).toContain('Since then: "Index the documentation pages" is done.');
+    expect(screen.getByTestId("last-result")).toHaveTextContent(
+      "Indexed the docs and opened a PR for the search box.",
+    );
+  });
+});

@@ -231,6 +231,13 @@ export const ProjectSummary = z.object({
       stopReason: z.string(),
       /** The files the session's tasks changed (design §3.4 "Your files"). */
       changedFiles: z.array(z.string()).optional(),
+      /**
+       * What became of the tasks the session left waiting for the person, computed when read
+       * (design §5 rule 4; C-54): 'Since then: "Write the README" is Done.' for each that moved
+       * on, at most three, then "and N more". The summary stays the record of the session's
+       * end. Absent when none moved on, and from an older service.
+       */
+      since: z.array(z.string()).optional(),
     })
     .nullable(),
   /** The task titles the last session left for later, as it ended (kept for the chat). */
@@ -451,8 +458,32 @@ export const TaskDetailView = z.object({
       outcome: z.string(),
       /** The specialist's report, or what went wrong, cut to a few lines; null when none. */
       report: z.string().nullable(),
+      /**
+       * The whole report when `report` had to be cut (the drawer's "The whole report"); absent
+       * when `report` is all of it, and from an older service.
+       */
+      fullReport: z.string().optional(),
       /** Files the run changed, relative to the project's folder. */
       files: z.array(z.string()),
+      /**
+       * The session the run belongs to: the drawer opens it, and follows its step lines while
+       * the task runs (design §3.5). Absent from an older service.
+       */
+      sessionId: z.string().optional(),
+      /**
+       * The web pages the run read (ADR 0107), by address with their title, and those it could
+       * not read with why in words (`refused`). Absent when it read none, and from an older
+       * service.
+       */
+      webSources: z
+        .array(
+          z.object({
+            url: z.string(),
+            title: z.string().nullable(),
+            refused: z.string().nullable(),
+          }),
+        )
+        .optional(),
     }),
   ),
   /** The critic's last review in words, null when none. */

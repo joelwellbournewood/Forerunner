@@ -8,6 +8,7 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
+import { stopReasonOfHandoff } from "../session/stop-words.ts";
 import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
 import { holdsTask, plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
@@ -188,6 +189,8 @@ function isWorkRun(r: Pick<RunRow, "specialist" | "parent_run_id">): boolean {
 
 interface RunReport {
   report: string | null;
+  /** The whole report when `report` was cut. */
+  fullReport?: string;
   files: string[];
 }
 
@@ -213,7 +216,11 @@ export function pairReports(
       files = p.files.filter((x): x is string => typeof x === "string");
     } else if (e.type === "task.finished") {
       const report = typeof p.summary === "string" ? reportText(p.summary) : null;
-      finished.push({ at: e.created_at, report: { report, files } });
+      const whole = typeof p.summary === "string" ? reportText(p.summary, FULL_REPORT_LINES) : null;
+      finished.push({
+        at: e.created_at,
+        report: { report, ...(whole && whole !== report ? { fullReport: whole } : {}), files },
+      });
       files = [];
     }
   }
@@ -230,6 +237,9 @@ export function pairReports(
   return out;
 }
 
+/** The lines of a run's whole report the drawer keeps behind "The whole report". */
+const FULL_REPORT_LINES = 80;
+
 /** A report as the drawer shows it: plain text, at most `lines` lines. */
 function reportText(text: string, lines = 6): string | null {
   // A run stopped from outside (Stop, Cancel, Stop all) reports only the driver's words.
@@ -242,6 +252,72 @@ function reportText(text: string, lines = 6): string | null {
     .filter((l) => l.trim().length > 0);
   if (!t.length) return null;
   return t.length > lines ? `${t.slice(0, lines).join("\n")}\n…` : t.join("\n");
+}
+
+/** Run outcomes of a run stopped from outside (Stop now, Stop all, Quit, a cancel). */
+const STOPPED_OUTCOMES = new Set(["killed", "stopped"]);
+/**
+ * A critic's run stopped before the critic decided (C-41), in plain words: never "verdict"
+ * (design §2, §5 rule 6).
+ */
+const REVIEW_STOPPED = "Review stopped";
+const REVIEW_STOPPED_SENTENCE = "The review stopped before the critic decided";
+
+/**
+ * Who or what stopped a review before its verdict, in words (C-41): the cancel of the task, or
+ * how its session ended (`handoff.stop_reason`). Before, the drawer said "Review by the critic ·
+ * Stopped" and nothing else.
+ */
+export function reviewStopWords(task: Pick<TaskRow, "status">, sessionStop: string | null): string {
+  if (task.status === "cancelled") return "you cancelled the task";
+  switch (sessionStop) {
+    case "you":
+      return "you stopped the session";
+    case "stop_all":
+      return "Stop all stopped the session";
+    case "quit":
+      return "Forerunner was closed";
+    case "interrupted":
+      return "Forerunner closed while it ran";
+    case "budget_exceeded":
+    case "budget_finish_current":
+      return "the session's budget was used";
+    case "timeout":
+      return "the session ran out of time";
+    default:
+      return "it was stopped";
+  }
+}
+
+/**
+ * The web pages a run read and those it could not read (ADR 0107, C-72), from its Run row's
+ * `webSources` artifact (`webSourceArtifact`): the address it asked for, the page's title, and
+ * why one was not read, in words. Nothing of the page's text.
+ */
+export function runWebSources(
+  artifacts: readonly JsonValue[] | null | undefined,
+): { url: string; title: string | null; refused: string | null }[] {
+  const out: { url: string; title: string | null; refused: string | null }[] = [];
+  for (const a of artifacts ?? []) {
+    if (!a || typeof a !== "object" || Array.isArray(a)) continue;
+    const list = (a as { webSources?: unknown }).webSources;
+    if (!Array.isArray(list)) continue;
+    for (const s of list) {
+      if (!s || typeof s !== "object" || Array.isArray(s)) continue;
+      const o = s as Record<string, unknown>;
+      if (typeof o.url !== "string" || !o.url) continue;
+      out.push({
+        url: o.url,
+        title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : null,
+        // Shown in brackets after the address: without its closing full stop.
+        refused:
+          typeof o.error === "string" && o.error
+            ? plainReason(o.error, 160).replace(/[.\s]+$/, "")
+            : null,
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -286,18 +362,34 @@ export async function taskDetail(
     const events = await store.event.list(sessionId, 0, 5000);
     for (const [runId, report] of pairReports(work, events, task.id)) reports.set(runId, report);
   }
+  // Why a review stopped before its verdict (C-41): who stopped its session, or the cancel.
+  const stopReasons = new Map<string, string | null>();
+  for (const r of runRows)
+    if (!isWorkRun(r) && STOPPED_OUTCOMES.has(r.outcome) && !stopReasons.has(r.session_id))
+      stopReasons.set(
+        r.session_id,
+        stopReasonOfHandoff((await store.session.get(r.session_id))?.handoff),
+      );
   const runs = runRows.map((r) => {
     const got = reports.get(r.id);
+    const work = isWorkRun(r);
+    const stoppedReview = !work && STOPPED_OUTCOMES.has(r.outcome);
+    const web = runWebSources(r.artifacts);
     return {
       id: r.id,
-      kind: isWorkRun(r) ? ("work" as const) : ("review" as const),
+      kind: work ? ("work" as const) : ("review" as const),
       specialist: r.specialist,
       startedAt: r.created_at,
       durationMs: r.duration_ms,
       cost: money(r.cost_usd_micro, chfPerUsd),
-      outcome: runOutcomeWords(r.outcome),
-      report: got?.report ?? null,
+      outcome: stoppedReview ? REVIEW_STOPPED : runOutcomeWords(r.outcome),
+      report: stoppedReview
+        ? `${REVIEW_STOPPED_SENTENCE}: ${reviewStopWords(task, stopReasons.get(r.session_id) ?? null)}.`
+        : (got?.report ?? null),
+      ...(got?.fullReport ? { fullReport: got.fullReport } : {}),
       files: got?.files ?? [],
+      sessionId: r.session_id,
+      ...(web.length ? { webSources: web } : {}),
     };
   });
   const latest = await store.review.latestForTask(task.id);

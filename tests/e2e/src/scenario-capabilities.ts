@@ -308,6 +308,8 @@ export async function researchInstall(
     host: install.github,
     inner: {
       execute: (ctx) => new LoopTaskExecutor(loopDeps).execute(ctx),
+      // As compose wires it (U-044): who runs is known before the log says who started.
+      chooseSpecialist: (ctx) => new LoopTaskExecutor(loopDeps).chooseSpecialist(ctx),
       withWorktree: (dir) => new LoopTaskExecutor({ ...loopDeps, worktreeFor: async () => dir }),
     },
     repoFor: async (task: TaskRow) => {

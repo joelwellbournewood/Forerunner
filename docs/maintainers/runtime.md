@@ -937,8 +937,13 @@ whose every unfinished dependency runs now, is running, or itself follows; never
 failed, cancelled, missing or person-held task, nor a full-review task while Docker is not
 ready), why a Start would do nothing (`blocked`: `stopped` while Stop all is on, `no_model`
 without a provider, `nothing_runnable` with the first blocker in one sentence and the button
-that unblocks it; none while the agent is in a session, `busy`, since that session makes more
-tasks ready), and what is left of the monthly cap this month (`monthLeft`, the ledger's UTC
+that unblocks it; none while the agent is in a session on this project, or one tied to no
+project, since that session makes more tasks ready: `busyHere`, the scheduler's `activeStart`;
+another project's session makes none of these ready, a task waits only on tasks of its own
+project, so the blocker stands and `POST /sessions` and the chat refuse too, later #38; before,
+such a start was queued and became a session that ran nothing), whether the agent is in any
+session (`busy`: the dialog's "Starts after the current session", never shown with a blocker),
+and what is left of the monthly cap this month (`monthLeft`, the ledger's UTC
 month as the caps count it). `POST /sessions` refuses a budget above `monthLeft` with that
 sentence (`validation`); 0 and negative budgets never pass its schema.
 
@@ -2100,6 +2105,20 @@ only stand-in is across the sign-off line (below) the specialist keeps the task 
 goes on; with no stand-in at all the task returns `needs_human` ("none can do what the tester
 does ... split the task or cancel it") and nothing runs. A specialist the person gave the task to after the failures
 (no run of it yet) keeps it. Before U-044 the same specialist ran the same brief again.
+The choice is made before the run is announced (ADR 0108, phase E later #75):
+`LoopTaskExecutor.chooseSpecialist` (the registry's name for the plan's, then the ladder's
+stand-in, `ladderStandIn`) is what the runner asks before it writes `task.started`, which names
+that specialist with `handedFrom` the one that ran the task last (`lastWorkSpecialist`, in this
+session or an earlier one; the person line "The migration specialist takes over "X" from the
+coder."), and `execute` passes it on; `task.finished`, `critic.review_failed` and
+`critic.verdict` (its "The migration specialist could not do … Trying again." line, the
+`ranBy` of `reviewTask`) name `TaskExecutionResult.specialist` (set by `execute`, and by the web
+routing), as does the lesson of a resolved finding. Before, these lines named the plan item's
+specialist for the stand-in's work; the verdict's line still did after `task.started` was fixed
+(review of later #75: "takes over … from the coder." then "The coder could not do …" for the
+stand-in's own failed attempt). The review itself keeps the plan item (its level and sign-off,
+ADR 0108). Wrappers forward it
+(`PrTaskExecutor.chooseSpecialist`; compose's and the e2e worlds' `inner`).
 Only a runner composed without a critic (an engine test world) closes a tier 0 task on its
 run ("tier 0: automated checks only"); the daemon always composes one, so every task is
 reviewed (ADR 0104). The store still refuses to close a task with an open finding and the
@@ -2529,7 +2548,10 @@ afternoon's session only. `CommandLoop.undo` asks the same `startUndoState` befo
 executor: the undo of a change that is one `session.start` whose session ended is refused
 with `SESSION_START_ENDED_REASON` ("the session this start began has already ended; there
 is nothing to undo") and the row is marked `irreversible` (the Changes screen stops
-offering it; no undo row is written); inside a composed change (the phone's "switch,
+offering it; no undo row is written). `CommandLoop.undoBlocked` asks the same check
+(`startUndoRefusal`, which only reads) for `GET /changes`, so a start whose session ended is
+`undoable: false` with that reason before anyone presses Undo (phase E, later #36: the row
+offered Undo and the click then said it could not); inside a composed change (the phone's "switch,
 budget, start") the start part is the no-op and the rest is undone. A start made with a
 phone's or web client's device id (the daemon's `POST /commands/execute` with `deviceId`)
 is a remote row the PC's `RemoteCommandWatcher` runs, so its change log row has
@@ -4046,7 +4068,16 @@ run began before the report; a report from before any run began has no run). Bef
 were paired with every run row by position, the critic's included, so the coder's report and
 files showed under the critic's run and the coder's own run was empty. A run stopped from
 outside reads "The run was stopped." instead of the driver's words, and reports and the
-review's summary read "(s)" plurals as their number says (`plainPlurals`). Results are
+review's summary read "(s)" plurals as their number says (`plainPlurals`). Phase E (screens):
+each run names its `sessionId` (the drawer's Open the session, and the log whose `task.step`
+lines it follows while the task runs); a report cut to six lines carries the whole of it (at
+most 80 lines) as `fullReport`; a run that read web pages lists them from its Run row's
+`webSources` artifact (`runWebSources`: address, title, and why one was not read; never the
+page text, ADR 0107, C-72); and a critic's run stopped from outside (`killed`, `stopped`) reads
+"Review stopped" with "The review stopped before the critic decided: <who>." as its report
+(plain words: never "verdict", design §2, §5 rule 6)
+(`reviewStopWords`: the cancel of the task, else the session's `handoff.stop_reason`, C-41).
+Results are
 `CommandResultViewSchema`; `/me.activeProjectId` is the registry's record, the one active
 project of every channel (U-056): the header's switcher, the palette and Home's Make active run
 `project.switch` (source `ui`) and the app shows `/me`'s project at start. `POST /chat` and
@@ -4312,22 +4343,25 @@ every new specialist goes through review. The composition root turns registry en
 `adding-a-specialist.md` for the file format and the golden eval sets under `evals/registry/`.
 
 **Stand-ins and web work (`alternates.ts`, U-044).** `alternateSpecialist(from, candidates,
-{ exclude, requireWeb })` names the specialist that takes a task over: one whose registry tools
-cover `from`'s and whose tools on the run's driver cover `from`'s there, ranked by the words its
-description shares with `from`'s less the tools it has on top, then fewer extra tools, then the
-name; null when none fits. A stand-in never crosses the sign-off line (`keepsSignoff`, the
-owner's decision 4, ADR 0104): an ordinary task never goes to `ops-deploy` or the
-`migration-specialist`, and a deploy or a migration never goes to an ordinary specialist,
-because the critic's floor, the sign-off and the stored level (`riskTierFor`) all follow who
-does the work (phase E review: a coder's task handed to the migration-specialist got a
-migration's full review and sign-off while it ran on the host at the light review, and a
-migration handed to the coder lost its sign-off). As shipped: tester goes to coder, designer
-and writer-marketing to each other, data-analyst to science-evaluator; coder, ops-deploy,
-migration-specialist, researcher and science-evaluator have none. Where only a specialist of
-the other kind fits (`acrossSignoff: true` finds one: the coder and the migration-specialist),
-the executor keeps the specialist at the second rung, logs why ("the coder tries again: the
-only specialist that could take it over, the migration-specialist, is for a data migration,
-which keeps the full review and your sign-off") and the brief says "your two previous attempts
+{ exclude, requireWeb, task })` names the specialist that takes a task over: one whose registry
+tools cover `from`'s and whose tools on the run's driver cover `from`'s there, ranked by the words
+its description shares with the task's title and outcome (twice, matched without a plural "s";
+ADR 0108) and with `from`'s, less the tools it has on top, then fewer extra tools, then the
+name; null when none fits. Only the ranking reads the task: which specialists fit is the tools.
+A stand-in never crosses the sign-off line (`keepsSignoff`, the owner's decision 4, ADR 0104):
+an ordinary task never goes to `ops-deploy` or the `migration-specialist`, and a deploy or a
+migration never goes to an ordinary specialist, because the critic's floor, the sign-off and
+the stored level (`riskTierFor`) all follow who does the work (phase E review: a coder's task
+handed to the migration-specialist got a migration's full review and sign-off while it ran on
+the host at the light review, and a migration handed to the coder lost its sign-off). As
+shipped: tester goes to coder, designer and writer-marketing to each other, data-analyst to
+science-evaluator; coder, ops-deploy, migration-specialist, researcher and science-evaluator
+have none. Where only a specialist of the other kind fits (`acrossSignoff: true` finds one:
+the coder and the migration-specialist), the executor's `ladderStandIn` answers `keptAcross`:
+the specialist keeps the task at the second rung (the runner's `chooseSpecialist` names it on
+`task.started`, no "takes over" line), the run logs why ("the coder tries again: the only
+specialist that could take it over, the migration-specialist, is for a data migration, which
+keeps the full review and your sign-off") and the brief says "your two previous attempts
 failed" (`retryConstraints(..., { kept })`); the ladder goes on to its next rung. With no fit
 of either kind the task waits for the person as before. `SpecialistSpec` carries the
 entry's `description` and `registryTools` (`allowed_tools` as written) for it. The executor
@@ -4765,7 +4799,10 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
   waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready", action `start`:
-  the Start dialog); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
+  the Start dialog; only when that dialog would start: without Claude "Ready: 3 tasks. Claude is
+  not connected." with Connect Claude, and under Stop all "Ready: 3 tasks. Sessions are
+  stopped." with no button, the header's stopped bar having Allow sessions again; the card's
+  facts `hasModel` and `stopped`, later #62, #49); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
   files: <folder>"; then paused or draft work. The task words are `taskDisplay`'s, so the
   sentence and the Tasks tab never disagree.
 - A failed plan reads "Planning failed: <a few words>" within 80 characters (design §2 item 5,
@@ -4793,8 +4830,11 @@ card for the phone and the state service). `projectCard` adds, computed when rea
 - The server passes `ProjectCardFacts` (`sandboxReady`, the intake's state and error, the
   folder, `hasModel`); `projectSummary` adds `next` (`overviewNext`: open tasks in run order with their
   status words, running and ready first, at most three lines then "and N more") and
-  `lastSession.changedFiles` (the last session's `task.files` events). The UI fake computes
-  both with the same functions. Tests: `test/project-status.test.ts`, and the real-daemon case
+  `lastSession.changedFiles` (the last session's `task.files` events), and `lastSession.since`
+  (C-54, design §5 rule 4: for each task the session's `handoff.blocked` left for the person
+  that has moved on since, 'Since then: "X" is done: accepted without review.', at most three
+  then "and N more"; `blockedTaskIds` and `sinceLines` in `project-status.ts`; the summary stays
+  the record of the session's end). The UI fake computes them with the same functions. Tests: `test/project-status.test.ts`, and the real-daemon case
   "project status sentence" in `apps/ui/test/real-daemon.test.ts`.
 - `/me` names the provider in force (`provider`, null without a model): the shell's "Claude is
   not connected" bar reads it.
@@ -4811,7 +4851,11 @@ null when none exists yet) depth first in name order with sizes and change dates
 (`truncated`). `GET /projects/:id/files/:path` (the path URL-encoded) answers one file's text
 (cut at 256 KiB; `binary` with `content: null` when its first 8 KiB hold a NUL byte);
 `fileUnder` refuses an absolute path, a drive, an empty, `.` or `..` segment, a skipped folder
-and anything whose real path leaves the folder's real path, as 404. `GET
+and anything whose real path leaves the folder's real path, as 404; on Windows also a segment
+with a colon (an alternate data stream, "a.txt:hidden") or a device name ("CON", "nul.txt",
+`notAWindowsFileName`). `test/docs-routes-files.test.ts` (phase E, later #65) covers spaces,
+non-ASCII names, links in and out of the folder and those Windows forms; the task drawer's file
+links go through it. `GET
 /projects/:id/docs/:path` also opens a decision record (`DECISION_RECORD`,
 `docs/decisions/<name>.md`), which the Overview's Decisions link to. Both are read-only; the
 real-daemon case "files: the project's folder" covers them.
@@ -5288,6 +5332,24 @@ yes, in the row `GET /extensions` and `GET /extensions/:id` serve to the panel, 
 run tokens, releases its task claims back to `ready`, freezes new registrations in its scope
 and leaves the other agent's run, token and claim untouched; `scope: "all"` releases every
 agent's claims; `/kill/resume` lifts the freeze and a revoked token stays revoked (S.8).
+
+What Stop all stopped (phase E, later #60): the kill switch keeps the sessions Stop all (a stop
+`by: "stop_all"`: the header, the tray, `fr kill`, the phone's kill, the chat's stop of the
+agent) ended since the last `resume()` (`KillSwitch.stoppedSessions()`); another stop that
+freezes, such as the undo of a chat's start (by you), Quit or one that names no one, is never
+counted, so an undone session is not started again (review of later #60). `POST /kill` writes them into
+`kill.json` (`KillRequest.sessions`), and `POST /kill/resume` answers `stoppedProjects`: the
+projects of those sessions (in this process, or from `kill.json` after a restart; the
+conversation and the plan's intake session left out), read before the resume forgets them. The
+stopped bar's Continue where it stopped starts those, and no other project.
+
+`POST /sessions` refuses a start the start check says would do nothing (`startBlocked` kind
+`nothing_runnable`: 409 `conflict` with the Start dialog's sentence, "Nothing can run: no task is
+ready.", `details.blocked`), as the chat's `session.start` does, also while another project's
+session runs (`busyHere`: only a session on this project, or on none, makes a start wait); Stop
+all and a missing Claude key
+keep their own answers (U-077, U-047). Before (later #38), only the month's money was checked,
+so Continue where it stopped, the phone and the API started sessions that ran nothing.
 
 `kill-resume-restart.test.ts` (U-019): `POST /kill` writes `<runtime>/kill.json`, which every
 runtime's `KillFileWatcher` applies when it starts, so a kill survives a crash or a restart until

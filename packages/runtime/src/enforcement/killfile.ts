@@ -12,6 +12,11 @@ export interface KillRequest {
   reason: string;
   requestedAt: string;
   requestedBy: string;
+  /**
+   * The sessions this Stop all ended (the daemon's `POST /kill` writes them): what "Continue
+   * where it stopped" starts again after a restart too (later #60). Absent from `fr kill`.
+   */
+  sessions?: string[];
 }
 
 export function killFilePath(runtimeDir: string = appDirs().runtime): string {
@@ -56,11 +61,15 @@ export function parseKillRequest(raw: unknown): KillRequest | null {
       scope = { ...(agentId ? { agentId } : {}), ...(sessionId ? { sessionId } : {}) };
     }
   }
+  const sessions = Array.isArray(r.sessions)
+    ? r.sessions.filter((s): s is string => typeof s === "string" && s.length > 0)
+    : [];
   return {
     scope,
     reason: str(r.reason) ?? "",
     requestedAt: r.requestedAt,
     requestedBy: str(r.requestedBy) ?? "unknown",
+    ...(sessions.length ? { sessions } : {}),
   };
 }
 

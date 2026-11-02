@@ -85,9 +85,11 @@ import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-proj
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
+  blockedTaskIds,
   overviewNext,
   progressOf,
   projectStatusLine,
+  sinceLines,
 } from "@forerunner/runtime/daemon/project-status";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
@@ -220,6 +222,12 @@ export interface FakeDaemonOptions {
    * default) carries the new session; `queued` and `deferred` carry none.
    */
   startOutcome?: "started" | "queued" | "deferred";
+  /**
+   * With `startOutcome: "queued"`: the project the agent's other session works on. A start on
+   * it with nothing ready waits for that session; on any other project it is refused, as the
+   * daemon's `busyHere` decides (later #38). Unset: a project none of the tests start.
+   */
+  busyProjectId?: string;
   /** Heartbeat cadence on /events; 1 s by default. */
   heartbeatMs?: number;
   /** Delay between streamed chat tokens; 5 ms by default. */
@@ -390,8 +398,18 @@ export interface FakeDaemonState {
   tasks: TaskView[];
   /** Who paused which task, and the order tasks were added (the daemon's row authors and ages). */
   taskMeta: FakeTaskMeta;
-  /** The tasks' runs (`/projects/:id/runs`, the drawer's runs); the critic's are its reviews. */
-  runs: (typeof RUNS)[number][];
+  /**
+   * The tasks' runs (`/projects/:id/runs`, the drawer's runs); the critic's are its reviews. A
+   * test may give a run the files it changed, the web pages it read, and why a review stopped
+   * (`GET /tasks/:id` serves them as the daemon reads them from the log and the Run row).
+   */
+  runs: ((typeof RUNS)[number] & {
+    report?: string;
+    fullReport?: string;
+    files?: string[];
+    webSources?: { url: string; title: string | null; refused: string | null }[];
+    stoppedBecause?: string;
+  })[];
   /**
    * What the critic's last review of a task ran and tried (ADR 0104), by task id; a done task
    * with an accepted review says "Reviewed and tried" when something was tried. A test seeds it.
@@ -646,7 +664,17 @@ function fakeStartCheck(
   projectId: string,
   budgetUsdMicro: number | null,
   sandbox: SandboxStatusView | null = null,
-  opts: { killActive?: boolean; busy?: boolean } = {},
+  opts: {
+    killActive?: boolean;
+    /** The agent is in another session: a start is queued ("Starts after the current session"). */
+    busy?: boolean;
+    /**
+     * That session works on this project, so its work can make tasks ready here and a start
+     * waits for it rather than being refused. As the daemon's `busyHere` (later #38): another
+     * project's session makes none of this project's tasks ready.
+     */
+    busyHere?: boolean;
+  } = {},
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   // High first, as the daemon's stored numbers order them (U-041).
@@ -709,7 +737,7 @@ function fakeStartCheck(
         sentence: "Sessions are stopped (Stop all), so nothing can start.",
         action: { kind: "resume", label: "Allow sessions again", to: null },
       }
-    : runnable.length > 0 || opts.busy
+    : runnable.length > 0 || (opts.busy && opts.busyHere)
       ? null
       : stuckOn
         ? stuckOn.d.status === "needs_human"
@@ -986,6 +1014,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const updatesChecked = { value: false };
   /** Starts answered queued or deferred so far: none of them ever begins in the fake. */
   const waitingStarts = { count: 0 };
+  /** The projects whose sessions the last Stop all ended (POST /kill/resume names them). */
+  const stoppedByKill: string[] = [];
   app.get("/__test/calls", (c) => c.json(state.calls));
   app.post("/__test/reset", (c) => {
     updatesChecked.value = false;
@@ -1320,6 +1350,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       planError: state.intake[p.id]?.error ?? null,
       // As the daemon (`!!rt.provider`): `/me`'s provider, unknown when the fixture names none.
       hasModel: me.provider === undefined ? null : me.provider !== null,
+      stopped: state.killActive,
       working,
       folder,
     });
@@ -1433,16 +1464,34 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         }),
       ),
     );
+    const base = SUMMARIES[id] ?? {
+      goal: p.goal,
+      stage: p.stage,
+      lastSession: null,
+      nextSteps: [],
+      openQuestions: 0,
+      spend: p.spend,
+      spoken: `${p.name} has not run yet.`,
+    };
+    // As the daemon (C-54): what became of the tasks the last session left for the person.
+    const last = base.lastSession;
+    const views = projectTaskViews(
+      state.tasks,
+      id,
+      state.requests,
+      state.sandbox.ready,
+      state.taskMeta,
+    );
+    const since = last
+      ? sinceLines(
+          blockedTaskIds(state.sessions.find((s) => s.id === last.id)?.handoff),
+          new Map(views.map((t) => [t.id, t])),
+          (t) => t.display as NonNullable<TaskView["display"]>,
+        )
+      : [];
     return c.json({
-      ...(SUMMARIES[id] ?? {
-        goal: p.goal,
-        stage: p.stage,
-        lastSession: null,
-        nextSteps: [],
-        openQuestions: 0,
-        spend: p.spend,
-        spoken: `${p.name} has not run yet.`,
-      }),
+      ...base,
+      ...(last ? { lastSession: { ...last, ...(since.length ? { since } : {}) } } : {}),
       next,
     });
   });
@@ -2014,6 +2063,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       {
         killActive: state.killActive,
         busy: (options.startOutcome ?? "started") === "queued",
+        busyHere: options.busyProjectId === id,
       },
     );
     // As the daemon: with no task yet because the plan waits (or is drafted), the button is
@@ -2076,6 +2126,23 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // As the daemon (later #38): nothing a session could run is refused with the start check's
+    // sentence, whoever asks (the Start dialog, Continue where it stopped, the phone).
+    if (parsed.data.projectId) {
+      const check = fakeStartCheck(
+        state.tasks,
+        parsed.data.projectId,
+        parsed.data.budgetUsdMicro ?? null,
+        state.sandbox,
+        {
+          killActive: false,
+          busy: (options.startOutcome ?? "started") === "queued",
+          busyHere: options.busyProjectId === parsed.data.projectId,
+        },
+      );
+      if (check.blocked?.kind === "nothing_runnable")
+        return errorBody(c, 409, "conflict", check.blocked.sentence);
+    }
     const startId = nextId("start");
     const outcome = options.startOutcome ?? "started";
     if (outcome !== "started") {
@@ -2185,6 +2252,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         s.currentTask = null;
         pushEvent(s, "session.stopped", "Stopped: Stop all.", "info");
         stopped += 1;
+        // As the daemon's kill switch (later #60): what Continue where it stopped starts again.
+        if (s.projectId && !stoppedByKill.includes(s.projectId)) stoppedByKill.push(s.projectId);
         emit("session.changed", clone(s));
       }
     }
@@ -2192,7 +2261,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   });
   app.post("/kill/resume", (c) => {
     state.killActive = false;
-    return c.json({ killActive: false, stoppedSessions: 0 });
+    const stoppedProjects = stoppedByKill.splice(0);
+    return c.json({ killActive: false, stoppedSessions: 0, ok: true, stoppedProjects });
   });
 
   // Desktop control (spec S.32; ADR 0067): the status with what the indicator shows, revoke
@@ -5029,7 +5099,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       title?: string;
       version?: number;
       depends_on?: string[];
+      session_id?: string | null;
     };
+    // As the daemon's `startUndoRefusal` (later #36): a start whose session ended has nothing
+    // left to undo, and the row says so instead of offering Undo.
+    if (name === "session.start") {
+      const s = after.session_id
+        ? state.sessions.find((x) => x.id === after.session_id)
+        : undefined;
+      return s && !["running", "paused", "planned"].includes(s.status)
+        ? "the session this start began has already ended; there is nothing to undo"
+        : null;
+    }
     if (!name?.startsWith("task.")) return null;
     const task = state.tasks.find((t) => t.id === after.task_id);
     if (!task) return "the task no longer exists";

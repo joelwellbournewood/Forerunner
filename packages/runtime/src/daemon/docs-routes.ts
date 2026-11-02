@@ -6,6 +6,7 @@ import {
   ForerunnerError,
   fromPosix,
   isInside,
+  isWindows,
   join,
   log,
 } from "@forerunner/platform";
@@ -148,6 +149,17 @@ export function listProjectFiles(root: string): {
   return { entries, truncated };
 }
 
+/** Windows' device names, which name no file in any folder ("CON", "nul.txt", "COM1.md"). */
+const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i;
+
+/**
+ * A segment Windows reads as something else than a file of the folder: an alternate data
+ * stream ("a.txt:hidden", a colon is no letter of a Windows file name) or a device name.
+ */
+function notAWindowsFileName(segment: string): boolean {
+  return segment.includes(":") || WINDOWS_DEVICE.test(segment);
+}
+
 /**
  * The file a relative path names under the root, or null when the path leaves it: an absolute
  * path, a drive, a `..` segment, a skipped folder, or a link that resolves outside the root.
@@ -158,7 +170,8 @@ export function fileUnder(root: string, rel: string): string | null {
     rel.length === 0 ||
     rel.startsWith("/") ||
     /^[A-Za-z]:/.test(rel) ||
-    parts.some((p) => p === "" || p === "." || p === ".." || FILES_SKIPPED.has(p))
+    parts.some((p) => p === "" || p === "." || p === ".." || FILES_SKIPPED.has(p)) ||
+    (isWindows() && parts.some(notAWindowsFileName))
   )
     return null;
   const file = join(root, ...parts);

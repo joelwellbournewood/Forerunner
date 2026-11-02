@@ -284,6 +284,16 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
+   * The specialist the next attempt runs with (U-044): the inner executor decides it (the
+   * retry ladder's stand-in), so the runner's log names who runs before the run begins.
+   */
+  async chooseSpecialist(
+    ctx: Parameters<NonNullable<TaskExecutor["chooseSpecialist"]>>[0],
+  ): Promise<string | null> {
+    return (await this.deps.inner.chooseSpecialist?.(ctx)) ?? null;
+  }
+
+  /**
    * A task cancelled while it ran or was reviewed (phase C, live walk 2 C1): what its run
    * changed since its baseline ("Workspace before …", or the branch's last commit) is taken out
    * of the folder and kept under `setAsideRef(task)`, so the next task never builds on it and

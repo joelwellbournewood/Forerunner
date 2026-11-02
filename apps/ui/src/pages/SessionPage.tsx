@@ -14,6 +14,7 @@ import {
   SpendBar,
   statusTone,
 } from "../components/ui.tsx";
+import { currentFromLog, ENDED_SESSION } from "../lib/session-steps.ts";
 import { formatTime } from "../lib/time.ts";
 import { useClient, useStreamOptions, useUiState } from "../store/context.tsx";
 
@@ -29,7 +30,7 @@ const LEVEL_STYLES: Record<Level, string> = {
 
 const ACTIVE = new Set(["planned", "running", "paused"]);
 /** A session in one of these has ended: its log is complete and nothing more streams (U-071). */
-export const ENDED = new Set(["completed", "stopped", "failed", "killed"]);
+export const ENDED = ENDED_SESSION;
 
 /** "14:05": when a session began, for its title (design §3.7). */
 export function startedAtWords(iso: string | null | undefined): string | null {
@@ -70,39 +71,6 @@ export function pullRequestsFromLog(events: readonly EventView[]): SessionPullRe
     });
   }
   return [...byUrl.values()];
-}
-
-/** A task step line of the log (`task.step`: "read index.html", "ran node --check: ok"). */
-interface StepLine {
-  seq: number;
-  text: string;
-}
-
-/**
- * The task in flight and its step lines, from the log as it streams (design §3.7): a
- * `task.started` begins one, its `task.step` lines follow (at most the last eight), and its
- * `task.finished` ends it. The session row only says it at the end, so the page reads the log.
- */
-export function currentFromLog(
-  events: readonly EventView[],
-): { title: string; specialist: string | null; steps: StepLine[] } | null {
-  let current: { title: string; specialist: string | null; steps: StepLine[] } | null = null;
-  for (const e of events) {
-    const p = (e.payload ?? {}) as Record<string, unknown>;
-    if (e.type === "task.started") {
-      current = {
-        title: typeof p.title === "string" ? p.title : "a task",
-        specialist: typeof p.specialist === "string" ? p.specialist : null,
-        steps: [],
-      };
-    } else if (e.type === "task.step" && current) {
-      const text = typeof p.text === "string" && p.text ? p.text : e.text;
-      current.steps = [...current.steps, { seq: e.seq, text }].slice(-8);
-    } else if (e.type === "task.finished" || e.type === "session.ended") {
-      current = null;
-    }
-  }
-  return current;
 }
 
 /** Live session view (design §3.7, spec K.3). */
@@ -496,8 +464,16 @@ export function SessionPage() {
         aria-live="polite"
       >
         {visible.length === 0 ? (
-          <p className="p-3 text-neutral-500">
-            {shown.length === 0 ? "Waiting for the first event…" : "Nothing matches the filters."}
+          <p className="p-3 text-neutral-500" data-testid="event-log-empty">
+            {shown.length > 0
+              ? "Nothing matches the filters."
+              : !ended
+                ? "Waiting for the first event…"
+                : // An ended session never waits (later #86: the planning session's only lines
+                  // are internal ones); Details has them when there are any.
+                  events.length > 0 && !details
+                  ? "Nothing to show here. Details has the internal steps."
+                  : "Nothing to show here."}
           </p>
         ) : null}
         <ol>

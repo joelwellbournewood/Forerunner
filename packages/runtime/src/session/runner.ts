@@ -183,6 +183,11 @@ export interface Planner {
 }
 
 export interface TaskExecutionResult {
+  /**
+   * The specialist that ran (U-044): the one the executor handed the task to when it differs
+   * from the plan item's (a web routing). `task.finished` names it. Absent: the item's.
+   */
+  specialist?: string;
   outcome:
     | "done"
     | "in_review"
@@ -272,6 +277,25 @@ export interface TaskExecutor {
    * the next task never builds on it. Returns the files taken out. Absent: the files stay.
    */
   setAside?(task: TaskRow): Promise<string[]>;
+  /**
+   * The specialist the next attempt of the task runs with, when it is not the plan item's
+   * (U-044): the retry ladder's stand-in after two failed attempts by it, or the registry's name
+   * for the plan's. Asked before `task.started` is written, so the log names who runs; `execute`
+   * then gets the item with that specialist. Null or absent: the item's.
+   */
+  chooseSpecialist?(ctx: { task: TaskRow; item: PlanItem }): Promise<string | null>;
+}
+
+/**
+ * The specialist of the task's latest work run (not the critic's review), from any session:
+ * who ran it last, so a hand-over in a later session still says from whom.
+ */
+async function lastWorkSpecialist(store: StateStore, taskId: string): Promise<string | null> {
+  const runs = (await store.run.forTask(taskId)).filter(
+    (r) => r.specialist !== "critic" && !r.parent_run_id,
+  );
+  runs.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  return runs.at(-1)?.specialist ?? null;
 }
 
 /** One step of a task's run, as the executor reports it to the runner (`onStep`). */
@@ -1374,16 +1398,33 @@ export class SessionRunner {
               `session ${session.id} started work`,
               { agentId: agent.id },
             );
+          // The specialist that runs this attempt, known before the log says who started it
+          // (U-044): the retry ladder's stand-in after two failed attempts, the plan's name read
+          // as the registry's. Before, the log named the plan's specialist for work another one
+          // did ("The coder started …" for the migration specialist's run).
+          const chosen = await this.deps.executor
+            .chooseSpecialist?.({ task, item })
+            .catch((e: unknown) => {
+              this.logger.warn("the specialist for the task was not chosen ahead", {
+                taskId: task.id,
+                error: errorMessage(e),
+              });
+              return null;
+            });
+          const runItem: PlanItem = chosen ? { ...item, specialist: chosen } : item;
           const before = startedWith.get(task.id);
           const again = before !== undefined;
-          startedWith.set(task.id, item.specialist);
+          // Who ran it last, in this session or an earlier one: another specialist taking over
+          // says so ("The migration specialist takes over … from the coder").
+          const previous = before ?? (chosen ? await lastWorkSpecialist(store, task.id) : null);
+          startedWith.set(task.id, runItem.specialist);
           await emit("task.started", {
             taskId: task.id,
             title: task.title,
-            specialist: item.specialist,
+            specialist: runItem.specialist,
             estimateUsdMicro: item.estimateUsdMicro,
             ...(again ? { again: true } : {}),
-            ...(again && before !== item.specialist ? { handedFrom: before } : {}),
+            ...(previous && previous !== runItem.specialist ? { handedFrom: previous } : {}),
           });
           runningTask = { id: task.id, title: task.title };
           // The claim is renewed every sixth of its TTL for as long as the task runs: a
@@ -1458,7 +1499,7 @@ export class SessionRunner {
               session,
               token,
               budget,
-              item,
+              item: runItem,
               signal: taskController.signal,
               heard: said.map(({ deliveredTo: _to, ...line }) => line),
               ...(notes.length ? { notes } : {}),
@@ -1555,7 +1596,7 @@ export class SessionRunner {
               taskId: task.id,
               // The log's line names the task and who did it (design §3.7, §5 rule 3).
               title: task.title,
-              specialist: item.specialist,
+              specialist: result.specialist ?? runItem.specialist,
               outcome: result.outcome,
               costUsdMicro: result.costUsdMicro,
               summary: result.summary,
@@ -1694,7 +1735,11 @@ export class SessionRunner {
                     session,
                     token,
                     budget,
+                    // The plan item: the review level and sign-off stay the planned specialist's (ADR 0108).
                     item,
+                    // Who ran the attempt, for the critic's line about it (U-044): the stand-in
+                    // after a hand-over, never the plan's name for the stand-in's work.
+                    ranBy: result.specialist ?? runItem.specialist,
                     result,
                     agentId: agent.id,
                     signal: reviewController.signal,
@@ -1764,7 +1809,7 @@ export class SessionRunner {
               await emit("critic.review_failed", {
                 taskId: task.id,
                 title: task.title,
-                specialist: item.specialist,
+                specialist: result.specialist ?? runItem.specialist,
                 ...(couldNot !== null ? { couldNot } : {}),
                 warning: `critic review failed: ${reviewed.error}${
                   humanRequestId ? "; asked you to rework, accept or cancel" : ""
@@ -1788,7 +1833,7 @@ export class SessionRunner {
               for (const id of reviewed.resolvedFindingIds) {
                 const finding = await store.finding.get(id);
                 lessonCandidates.push({
-                  text: `Critic finding resolved on "${task.title}" (${item.specialist}): ${
+                  text: `Critic finding resolved on "${task.title}" (${result.specialist ?? runItem.specialist}): ${
                     finding
                       ? `[${finding.severity}] ${finding.description} -> ${finding.required_action}`
                       : `finding ${id} was resolved by the rework`
@@ -2662,9 +2707,15 @@ export class SessionRunner {
   private async reviewTask(
     req: Parameters<CriticPort["reviewTask"]>[0] & {
       emit: (t: string, p: Record<string, unknown>, cost?: number) => Promise<void>;
+      /**
+       * The specialist that ran the reviewed attempt: the retry ladder's stand-in after a
+       * hand-over (U-044), while `item` stays the plan's (its review level and sign-off, ADR
+       * 0108). The verdict's line names it ("The migration specialist could not do …").
+       */
+      ranBy: string;
     },
   ): Promise<TaskReviewOutcome | ReviewFailure | null> {
-    const { emit, ...request } = req;
+    const { emit, ranBy, ...request } = req;
     const critic = this.deps.critic;
     if (!critic) return null;
     await emit("critic.review_started", {
@@ -2690,7 +2741,7 @@ export class SessionRunner {
       {
         taskId: request.task.id,
         title: request.task.title,
-        specialist: request.item.specialist,
+        specialist: ranBy,
         ...(couldNot !== null ? { couldNot } : {}),
         reviewId: outcome.reviewId,
         tier: outcome.tier,

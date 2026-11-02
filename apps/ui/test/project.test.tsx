@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { milestonesFromTasks } from "../src/pages/project/PlanTab.tsx";
@@ -138,6 +138,32 @@ describe("Project page", () => {
     // U-046: no plan from a brief was asked for, so the dialog does not send the person to
     // the Inbox for one (it did, for every project).
     expect(warning).not.toHaveTextContent(/Inbox/);
+  });
+
+  it("while the agent is in another project's session, Start stays refused on a project with nothing to run; on the busy project it waits its turn (later #38)", async () => {
+    // Before: any running session enabled Start ("Starts after the current session…") on a
+    // project with nothing ready, and the queued start became a session that ran nothing.
+    const user = userEvent.setup();
+    const elsewhere = createHarness({ startOutcome: "queued", busyProjectId: "proj_atlas" });
+    renderApp("/projects/proj_beacon", elsewhere);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    let dialog = await screen.findByTestId("start-session-dialog");
+    expect(await within(dialog).findByTestId("start-session-no-work")).toHaveTextContent(
+      "Nothing can run: no task is ready.",
+    );
+    expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
+    expect(dialog).not.toHaveTextContent("Starts after the current session");
+    cleanup();
+
+    const here = createHarness({ startOutcome: "queued", busyProjectId: "proj_beacon" });
+    renderApp("/projects/proj_beacon", here);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    dialog = await screen.findByTestId("start-session-dialog");
+    await waitFor(() => expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled());
+    expect(dialog).toHaveTextContent("Starts after the current session");
+    expect(within(dialog).queryByTestId("start-session-no-work")).not.toBeInTheDocument();
   });
 
   describe("the plan from the brief (U-046)", () => {

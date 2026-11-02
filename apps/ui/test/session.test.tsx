@@ -315,3 +315,35 @@ describe("a finished session's page (U-071)", () => {
     expect(h.gets.filter((p) => p === `/sessions/${session.id}/events`)).toHaveLength(polled);
   });
 });
+
+describe("an ended session with nothing a person follows (later #86)", () => {
+  it("never says it waits for the first event; it says Details has the internal steps", async () => {
+    // Before: the planning session's page, ended, read "Waiting for the first event…" because its
+    // only lines are internal ones (the plan's notification).
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.events = harness.daemon.state.events
+      .filter((e) => e.sessionId === "sess_1")
+      .map((e) => ({ ...e, audience: "detail" as const }));
+    renderApp("/sessions/sess_1", harness);
+    const log = await screen.findByTestId("event-log");
+    await waitFor(() =>
+      expect(log).toHaveTextContent("Nothing to show here. Details has the internal steps."),
+    );
+    expect(log).not.toHaveTextContent("Waiting for the first event");
+    await user.click(screen.getByTestId("details-toggle"));
+    expect((await screen.findAllByTestId("event-row")).length).toBeGreaterThan(0);
+  });
+
+  it("an ended session with no line at all says there is nothing to show", async () => {
+    const harness = createHarness();
+    harness.daemon.state.events = harness.daemon.state.events.filter(
+      (e) => e.sessionId !== "sess_1",
+    );
+    renderApp("/sessions/sess_1", harness);
+    const log = await screen.findByTestId("event-log");
+    await waitFor(() => expect(log).toHaveTextContent("Nothing to show here."));
+    expect(log).not.toHaveTextContent("Waiting for the first event");
+    expect(log).not.toHaveTextContent("Details has");
+  });
+});

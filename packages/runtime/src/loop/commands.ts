@@ -295,6 +295,10 @@ export class CommandLoop implements ConversationCommands {
    */
   async undoBlocked(row: ChangeLogRow): Promise<string | null> {
     try {
+      // A start whose session ended (later #36): the row says so instead of offering an Undo
+      // whose click could only say it cannot. The row is marked only when an undo is tried.
+      const start = await this.startUndoRefusal(row);
+      if (start) return start.reason;
       return await this.executor.undoBlockedReason(row, await this.contextForRow(row));
     } catch (e) {
       this.logger.warn("could not check whether a change can be undone", {
@@ -355,11 +359,47 @@ export class CommandLoop implements ConversationCommands {
     changeLogId: string,
     humanId: string,
   ): Promise<CommandResultView | null> {
+    const { store } = this.deps;
+    const row = await store.changeLog.get(changeLogId);
+    if (!row || row.human_id !== humanId) return null;
+    const refusal = await this.startUndoRefusal(row);
+    if (!refusal) return null;
+    const refused: CommandResultView = {
+      status: "refused",
+      reason: refusal.reason,
+      code: refusal.code,
+      card: null,
+      commands: ["undo"],
+    };
+    if (!refusal.ended) {
+      this.logger.info("undo of a session.start deferred: the PC is picking the start up", {
+        changeLogId,
+      });
+      return refused;
+    }
+    await store.changeLog.update(row.id, row.version, { undo_state: "irreversible" });
+    this.logger.info("undo of a session.start refused: nothing left to undo", {
+      changeLogId,
+      reason: refusal.reason,
+    });
+    return refused;
+  }
+
+  /**
+   * Why the undo of a change that is one `session.start` cannot work now (`endedStart`), with
+   * the code the refusal carries, and whether nothing is left to undo (`ended`: the start's
+   * session ended, it never ran, or it cannot be tied to a session) rather than in flight. Null
+   * when it can, or when the executor decides (a port that named the session, a composed
+   * change, a row that is not undoable). Reads only: `endedStart` marks the row, and the change
+   * log shows the reason in place of Undo (`undoBlocked`, later #36).
+   */
+  private async startUndoRefusal(
+    row: ChangeLogRow,
+  ): Promise<{ reason: string; code: string; ended: boolean } | null> {
     const check = this.deps.startUndoState;
     if (!check) return null;
     const { store } = this.deps;
-    const row = await store.changeLog.get(changeLogId);
-    if (row?.undo_state !== "undoable" || row.human_id !== humanId) return null;
+    if (row.undo_state !== "undoable") return null;
     const commands = row.commands as { name?: unknown }[];
     if (commands.length !== 1 || commands[0]?.name !== "session.start") return null;
     const after =
@@ -367,25 +407,13 @@ export class CommandLoop implements ConversationCommands {
         ? (row.after as JsonObject)
         : {};
     if (typeof after.session_id === "string") return null;
-    const refused = (reason: string, code: string): CommandResultView => ({
-      status: "refused",
-      reason,
-      code,
-      card: null,
-      commands: ["undo"],
-    });
     let startId = typeof after.start_id === "string" ? after.start_id : undefined;
     let reason = SESSION_START_ENDED_REASON;
     if (typeof after.remote_command_id === "string") {
       const remote = await store.remoteCommand.get(after.remote_command_id);
       if (remote?.status === "pending") return null;
-      if (remote?.status === "picked_up") {
-        this.logger.info("undo of a session.start deferred: the PC is picking the start up", {
-          changeLogId,
-          remoteCommandId: remote.id,
-        });
-        return refused(SESSION_START_IN_FLIGHT_REASON, "unavailable");
-      }
+      if (remote?.status === "picked_up")
+        return { reason: SESSION_START_IN_FLIGHT_REASON, code: "unavailable", ended: false };
       if (remote?.status === "failed") {
         startId = undefined;
         reason = SESSION_START_NOT_RUN_REASON;
@@ -396,12 +424,7 @@ export class CommandLoop implements ConversationCommands {
     }
     const agentId = typeof after.agent_id === "string" ? after.agent_id : row.agent_id;
     if (!agentId || (await check(agentId, startId)) !== "ended") return null;
-    await store.changeLog.update(row.id, row.version, { undo_state: "irreversible" });
-    this.logger.info("undo of a session.start refused: nothing left to undo", {
-      changeLogId,
-      reason,
-    });
-    return refused(reason, "validation");
+    return { reason, code: "validation", ended: true };
   }
 
   activeProject(humanId: string): Promise<string | null> {

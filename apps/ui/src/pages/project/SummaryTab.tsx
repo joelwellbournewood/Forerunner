@@ -145,6 +145,15 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
             <p className="whitespace-pre-line" data-testid="last-result">
               {data.lastSession.summary}
             </p>
+            {data.lastSession.since?.length ? (
+              // What became of what the session left for you (C-54): the summary is the record
+              // of its end, these lines are true now.
+              <ul className="mt-1" data-testid="last-result-since">
+                {data.lastSession.since.map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+              </ul>
+            ) : null}
             <p className="mt-1 text-xs text-neutral-500">
               {data.lastSession.endedAt ? `${relativeTime(data.lastSession.endedAt)} · ` : ""}
               <Link

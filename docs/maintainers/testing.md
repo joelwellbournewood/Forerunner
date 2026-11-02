@@ -57,6 +57,8 @@ says. Everything is exported from `@forerunner/testenv` (`testenv/src/githost/in
 two humans with one principal agent each on two installs that share one state store, a sample
 project in the fake git host with a plan, the real session runner, PR executor, critic loop and
 memory loop per install, a scheduler per install, the fake mail server and a simulated clock.
+Its PR executor's inner executor (and `scenario-capabilities.ts`'s) forwards `chooseSpecialist`
+as compose's does (ADR 0108), so the log names the specialist that runs as in the app.
 See "Scenarios" below. Other stand-ins (fake Cloudflare, simulated users beyond the two humans):
 to be filled by the testenv items that build them.
 

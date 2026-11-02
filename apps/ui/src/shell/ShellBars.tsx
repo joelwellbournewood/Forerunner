@@ -142,8 +142,10 @@ export function StopAll() {
 
 /**
  * The stopped bar (design §3.1): "Sessions are stopped" with Allow sessions again (lets
- * sessions start again) and Continue where it stopped (allows them and starts a session on
- * every project with work that can run).
+ * sessions start again) and Continue where it stopped (allows them and starts a session again
+ * on the projects whose sessions Stop all ended, as `POST /kill/resume` names them, each only
+ * while its start check has work to run). Before (later #60), it started a session on every
+ * project with work that could run, so stopping one project and pressing it started others.
  */
 export function StoppedBar() {
   const client = useClient();
@@ -161,15 +163,17 @@ export function StoppedBar() {
       const r = await client.resume();
       store.dispatch({ type: "killActive", active: r.killActive });
       if (continueWork && identity) {
-        // Every project with work a session would run gets one (its start check says so);
-        // the agent's starts run one after another, in order.
-        const fresh = await client.projects().catch(() => projects);
-        for (const p of fresh) {
-          const check = await client.startCheck(p.id).catch(() => null);
+        // The projects Stop all stopped get a session again while there is work to run there
+        // (their start check says so); the agent's starts run one after another, in order. An
+        // older service names none: every project with work that can run, as before.
+        const ids =
+          r.stoppedProjects ?? (await client.projects().catch(() => projects)).map((p) => p.id);
+        for (const id of ids) {
+          const check = await client.startCheck(id).catch(() => null);
           if (!check || check.blocked || check.runnable.length === 0) continue;
           await client.startSession({
             agentId: identity.agentId,
-            projectId: p.id,
+            projectId: id,
             trigger: "manual",
             reason: "continue where it stopped",
           });
@@ -202,7 +206,7 @@ export function StoppedBar() {
         onClick={() => void allow(true)}
         disabled={busy}
         data-testid="kill-continue"
-        title="Lets sessions start again and starts the work that was stopped"
+        title="Lets sessions start again and starts again the work Stop all stopped"
       >
         Continue where it stopped
       </Button>

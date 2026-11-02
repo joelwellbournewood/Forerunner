@@ -306,6 +306,38 @@ describe("session commands over the scheduler", () => {
     await store.close();
   });
 
+  it("Changes offers no Undo for a session.start whose session ended, and says why, before anyone tries it (later #36, U-061)", async () => {
+    // Before: the row offered Undo after its session ended, and the click then said it could not.
+    const w = await storeWorld();
+    const { store, clock } = w;
+    const kill = new KillSwitch(new TokenIssuer({ now: () => clock.now() }));
+    const sched = sessionScheduler(w);
+    const { startUndoState, ...ports } = sessionCommandPorts({
+      scheduler: sched.scheduler,
+      kill,
+      store,
+    });
+    const commands = new CommandLoop({
+      store,
+      clock,
+      ports: { chfPerUsd: async () => 0.8, ...ports },
+      startUndoState,
+    });
+    await commands.start();
+    const started = await commands.execute(
+      { name: "session.start", params: { project: "Sample", budgetChf: 1 } },
+      w.turn,
+    );
+    expect(started.status).toBe("done");
+    await settle();
+    expect(sched.scheduler.isActive(w.agentId)).toBe(false);
+    const row = await store.changeLog.mustGet(started.changeLogId ?? "");
+    expect(await commands.undoBlocked(row)).toBe(SESSION_START_ENDED_REASON);
+    // Reading it changes nothing: the row is marked only when an undo is tried.
+    expect((await store.changeLog.mustGet(row.id)).undo_state).toBe("undoable");
+    await store.close();
+  });
+
   it("the undo of a session.start whose session ended is a no-op with a clear message: nothing stopped, the kill switch open, the change row irreversible; a running start is stopped as that session only", async () => {
     const w = await storeWorld();
     const { store, clock } = w;
