@@ -143,9 +143,18 @@ with their milestone.
   git's multi-line output into the task's reason and its card.
 - `push-words.ts`: `pushFailure(e)` sorts a failed push into unreachable, refused or other (with
   the one line that says why: the host's `remote:` line, else the reason after "[remote
-  rejected]", else git's first line that is not its framing, redacted); `pushFailedWords` (a
-  task's branch) and `firstPushFailedWords` (an empty repository's first commit) word them. The
-  runner cuts a task's reason at 200 characters, so these stay under it for a usual name.
+  rejected]", else git's first line that is not its framing, redacted; the host's progress lines,
+  "remote: Resolving deltas ...", are never the reason); `pushFailedWords` (a task's branch) and
+  `firstPushFailedWords` (an empty repository's first commit) word them. The runner cuts a
+  task's reason at 200 characters, so these stay under it for a usual name. `GitOps` reports a
+  failed command as `git push <branch> failed: <git's stderr>`, so git's first line shares a line
+  with that header: `pushFailure` takes the header off before reading the lines. With git's
+  default configuration the host's `remote:` line is git's first line; before (CI on 193e579), it
+  was missed there and the person read git's generic "pre-receive hook declined" instead of the
+  host's sentence. It was found only where `push.negotiate=true` makes git print two lines first
+  ("fatal: expected 'acknowledgments'...", "warning: push negotiation failed..."), as in the
+  development container's global config; `push-words.test.ts` feeds both shapes, and Windows'
+  CRLF, through `GitOps.push` with a stub runner, so it does not depend on the machine's git.
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
   head)` takes a head other than HEAD.
 - `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone

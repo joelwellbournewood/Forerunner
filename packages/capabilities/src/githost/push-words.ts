@@ -23,6 +23,14 @@ const REFUSED =
 /** git's framing around the reason: never the reason itself. */
 const BOILERPLATE =
   /^(to |error: failed to push|hint:|warning:|fatal: expected 'acknowledgments'|everything up-to-date)/i;
+/** The host's progress lines (`remote: Resolving deltas: 100% ...`): never the reason. */
+const REMOTE_PROGRESS =
+  /^(enumerating|counting|compressing|writing|receiving|resolving|processing|total \d)/i;
+/**
+ * The header `GitOps` puts before git's output (`git push main failed: `). It shares a line with
+ * git's first line, which with git's default configuration is the host's own `remote:` line.
+ */
+const GITOPS_HEADER = /^git [^:\r\n]*? failed:\s*/i;
 
 export function pushFailure(e: unknown): PushFailure {
   const raw = errorMessage(e);
@@ -35,11 +43,16 @@ export function pushFailure(e: unknown): PushFailure {
  * The one line that says why: the host's own message ("remote: ..."), else the reason git puts
  * in brackets after "[remote rejected]", else git's first line that is not its framing. Without
  * a final dot, so it can be quoted inside a sentence.
+ *
+ * `GitOps`'s header is taken off the first line before anything is read: with git's default
+ * configuration the host's line is git's first, so it shared the header's line and was missed
+ * (CI on 193e579, git 2.56); it was found only where `push.negotiate` made git print two lines
+ * before it, as on the development container.
  */
 function pushSaid(raw: string): string {
   const lines = raw
     .split(/\r?\n/)
-    .map((l) => l.trim())
+    .map((l, i) => (i === 0 ? l.replace(GITOPS_HEADER, "") : l).trim())
     .filter(Boolean);
   const remote = lines
     .filter((l) => /^remote:/i.test(l))
@@ -49,13 +62,11 @@ function pushSaid(raw: string): string {
         .replace(/^error:\s*/i, "")
         .trim(),
     )
-    .find(Boolean);
+    .find((l) => l && !REMOTE_PROGRESS.test(l));
   const rejected = lines
     .map((l) => /\[(?:remote )?rejected\][^(]*\(([^)]+)\)/i.exec(l)?.[1]?.trim())
     .find(Boolean);
-  const other = lines
-    .map((l) => l.replace(/^git push .*? failed:?\s*/i, "").trim())
-    .find((l) => l && !BOILERPLATE.test(l));
+  const other = lines.find((l) => !BOILERPLATE.test(l));
   return redact(remote || rejected || other || "")
     .slice(0, 160)
     .replace(/[.\s]+$/, "");
