@@ -4395,7 +4395,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
         action: "cancel",
       });
       expect(cancelled.change?.sentence).toBe(
-        'Cancelled "Write the About page in about.html": its run stopped and what it changed is removed; Undo brings it back.',
+        'Cancelled "Write the About page in about.html": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
       );
       await allEnded();
     } finally {
@@ -5145,7 +5145,7 @@ describe("the UI client against the real daemon: 'Skip the … task' in Chat can
       expect(yes.actions.map((a) => a.kind)).toEqual(["task.transition"]);
       // The same line as the row's Cancel (`POST /tasks/:id/action` with "cancel").
       expect(yes.reply).toBe(
-        'Cancelled "Credits page in credits.html": its run stopped and what it changed is removed; Undo brings it back.',
+        'Cancelled "Credits page in credits.html": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
       );
       expect((await row())?.display?.label).toBe("Cancelled");
       await eventually(
@@ -5154,6 +5154,90 @@ describe("the UI client against the real daemon: 'Skip the … task' in Chat can
         async () => `${(await row())?.status}`,
         30_000,
       );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: Cancel promises a removal only while a run or review goes on (stops, L-7)", () => {
+  it("the task views say whether its run or review goes on here; the chat's read-back and the line follow it", async () => {
+    // Live check of phase C (2026-11-02): a task left "Being reviewed" with no review going
+    // on (Forerunner had closed during it) got the Cancel dialog "Drops it. Its review stops
+    // now and what it changed is removed; Undo brings it back." and nothing was removed. The
+    // dialog was worded from the status, while only a run or review going on is stopped.
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_DELAY_MS: "60000" });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Garden club", goal: "Pages" });
+      const running = await client.createTask(project.id, {
+        title: "About page in about.html",
+        outcome: "about.html tells the club's story",
+        riskTier: 1,
+        specialist: "coder",
+        priority: "high",
+      });
+      // Left in review with no review going on here (what a closed Forerunner left before
+      // L-1, or another computer's session).
+      const left = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Contact page in contact.html",
+        outcome: "contact.html says how to reach the club",
+        acceptance_criteria: ["contact.html exists"],
+        risk_tier: 1,
+        status: "in_review",
+        priority: 1,
+        specialist: "coder",
+        reason: "Wrote contact.html.",
+      } as never);
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const view = async (id: string) => (await client.tasks(project.id)).find((t) => t.id === id);
+      await eventually(
+        async () => (await view(running.id))?.display?.label === "Running",
+        "the About page to run",
+        async () => `${(await view(running.id))?.status}`,
+        30_000,
+      );
+      expect((await view(running.id))?.display?.live).toBe(true);
+      const idle = await view(left.id);
+      expect(idle?.display?.label).toBe("Being reviewed");
+      expect(idle?.display?.live).toBe(false);
+      // The drawer reads the same view.
+      expect((await client.task(left.id)).task.display?.live).toBe(false);
+      // Chat's read-back promises nothing about its files; the running one says its run stops.
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      expect((await say("cancel the Contact page task")).pendingConfirmation?.readback).toBe(
+        'Cancel "Contact page in contact.html"? It is dropped.',
+      );
+      expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
+      expect((await say("cancel the About page task")).pendingConfirmation?.readback).toBe(
+        'Cancel "About page in about.html"? It is dropped; its run stops now and what it changed is removed.',
+      );
+      expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
+      // The row's Cancel on the one with nothing going on: the line says only that.
+      const cancelled = await client.taskAction(left.id, {
+        version: idle?.version ?? 0,
+        action: "cancel",
+      });
+      expect(cancelled.change?.sentence).toBe('Cancelled "Contact page in contact.html".');
+      await client.stopSession(started.session?.id ?? "");
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await view(running.id))?.status}`,
+        30_000,
+      );
+      // Its run ended: nothing goes on for it any more.
+      expect((await view(running.id))?.display?.live ?? false).toBe(false);
     } finally {
       await rt.close();
     }

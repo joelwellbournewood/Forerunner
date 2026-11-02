@@ -167,7 +167,7 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
     const change = ((await res.json()) as { change: Json }).change;
     // The line after the action says what happens to the work.
     expect(change.sentence).toBe(
-      'Cancelled "About page": its run stopped and what it changed is removed; Undo brings it back.',
+      'Cancelled "About page": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
     );
     cancelChangeId = String(change.changeLogId);
     const ended = await waitFor(
@@ -198,7 +198,7 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
       .filter((e) => e.audience === "person")
       .map((e) => String(e.text));
     expect(lines).toContain(
-      'You cancelled it while "About page" ran; what it changed is removed (Undo brings it back) and the session goes on.',
+      'You cancelled it while "About page" ran; what it changed is removed and the session goes on.',
     );
   }, 60_000);
 
@@ -287,7 +287,7 @@ describe("cancelling a task while the critic reviews it (live walk 2, C1)", () =
     });
     expect(res.status).toBe(200);
     expect(JSON.stringify(await res.json())).toContain(
-      'Cancelled \\"Contact page\\": its review stopped and what it changed is removed; Undo brings it back.',
+      'Cancelled \\"Contact page\\": its review stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
     );
     const ended = await waitFor(
       async () => {
@@ -639,7 +639,7 @@ describe("cancelling a run keeps the person's answers in the decision record (ph
     });
     const change = ((await res.json()) as { change: Json }).change;
     expect(change.sentence).toBe(
-      'Cancelled "Build the page": its run stopped and what it changed is removed; Undo brings it back.',
+      'Cancelled "Build the page": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
     );
     await waitFor(
       async () => {
@@ -661,5 +661,120 @@ describe("cancelling a run keeps the person's answers in the decision record (ph
     expect(JSON.stringify(await undone.json())).toContain("What it changed is back in the folder.");
     expect(readFileSync(join(workspace, "index.html"), "utf8")).toBe("<h1>Bakery</h1>\n");
     expect(record().split(A).length - 1).toBe(1);
+  }, 60_000);
+});
+
+describe("Undo of a cancel after the session's next task changed the same file (stops, L-6)", () => {
+  // Live check of phase C (2026-11-02), Bakery: the print task was cancelled while it ran, the
+  // session's next task wrote index.html six seconds later, and Undo said "What it changed
+  // could not be put back: the folder changed in the same places since." while the dialog and
+  // the line had promised "Undo brings it back". The words now say what Undo does: it reopens
+  // the task, and its changes come back unless the same files changed since; when they did,
+  // the task's next run does the work again.
+  const clock = new SimulatedClock("2026-11-02T14:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-continuity-undo-conflict-"));
+  // "Print stylesheet" writes print.css and links it from index.html, then waits until it is
+  // stopped; "Menu" rewrites index.html; the critic accepts it.
+  const provider = new ScriptedProvider(
+    [
+      write("print.css", "@media print { nav { display: none; } }\n"),
+      write(
+        "index.html",
+        '<link rel="stylesheet" media="print" href="print.css">\n<h1>Bakery</h1>\n',
+      ),
+      { ttftMs: HOUR, text: "never sent" },
+      write("index.html", "<h1>Bakery Bern</h1>\n<p>Menu: Nussgipfel, Zopf.</p>\n"),
+      { text: "Wrote the menu into index.html." },
+      accept,
+      { text: "Accepted." },
+    ],
+    clock,
+  );
+  let rt: RuntimeApp;
+  let req: Awaited<ReturnType<typeof compose>>["req"];
+
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, provider));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("the cancel's line promises what Undo does, and Undo says the work could not come back and that the next run redoes it", async () => {
+    const project = await rt.store.project.insert({
+      name: "Bakery Bern",
+      goal: "A page for the bakery",
+      autonomy_level: 2,
+    });
+    const workspace = projectWorkspaceDir(join(rt.dirs.data, "projects"), project.id);
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, "index.html"), "<h1>Bakery</h1>\n", "utf8");
+    const add = (title: string, priority: number) =>
+      rt.store.task.insert({
+        project_id: project.id,
+        title,
+        outcome: `${title} is done`,
+        acceptance_criteria: ["index.html exists"],
+        risk_tier: 1,
+        status: "ready",
+        priority,
+        specialist: "coder",
+        est_cost_usd_micro: 100_000,
+        reason: "seed",
+      });
+    const print = await add("Print stylesheet", 9);
+    const menu = await add("Menu", 1);
+    const started = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" }),
+    });
+    expect(started.status).toBe(202);
+    const sessionId = (((await started.json()) as Json).session as Json).id as string;
+    await waitFor(
+      async () =>
+        provider.calls.length === 3 && existsSync(join(workspace, "print.css")) ? true : undefined,
+      async () => `print.css to be written (${provider.calls.length} model calls)`,
+    );
+    // The row's Cancel while it runs.
+    const loaded = await rt.store.task.mustGet(print.id);
+    const res = await req(`/tasks/${print.id}/action`, {
+      method: "POST",
+      body: JSON.stringify({ version: loaded.version, action: "cancel" }),
+    });
+    expect(res.status).toBe(200);
+    const change = ((await res.json()) as { change: Json }).change;
+    expect(change.sentence).toBe(
+      'Cancelled "Print stylesheet": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+    );
+    // The session goes on: the next task rewrites index.html.
+    const ended = await waitFor(
+      async () => {
+        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
+        return isEnded(s) ? s : undefined;
+      },
+      async () => `the session to end (task ${(await rt.store.task.mustGet(menu.id)).status})`,
+    );
+    expect(ended.status).toBe("completed");
+    expect(readFileSync(join(workspace, "index.html"), "utf8")).toContain("Nussgipfel");
+    expect(existsSync(join(workspace, "print.css"))).toBe(false);
+    // The session log does not promise that Undo brings the files back.
+    const lines = ((await (await req(`/sessions/${sessionId}/events`)).json()) as Json[])
+      .filter((e) => e.audience === "person")
+      .map((e) => String(e.text));
+    expect(lines).toContain(
+      'You cancelled it while "Print stylesheet" ran; what it changed is removed and the session goes on.',
+    );
+    // Undo in Changes: the task is ready again; its work could not come back, and it says so.
+    const undone = await req(`/changes/${String(change.changeLogId)}/undo`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(undone.status).toBe(200);
+    expect(JSON.stringify(await undone.json())).toContain(
+      "What it changed could not be put back: the same files changed since. Its next run does the work again.",
+    );
+    expect((await rt.store.task.mustGet(print.id)).status).toBe("ready");
+    expect(existsSync(join(workspace, "print.css"))).toBe(false);
+    expect(readFileSync(join(workspace, "index.html"), "utf8")).toContain("Nussgipfel");
   }, 60_000);
 });

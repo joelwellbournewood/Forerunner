@@ -246,7 +246,7 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
         ? `Another agent moved ${taskName(p)} while it ran; the session goes on.`
         : n("setAside") > 0
           ? // Phase C: a cancelled run's changes are taken out of the folder, kept for Undo.
-            `You ${movedWords(s("status"))} while ${taskName(p)} ran; what it changed is removed (Undo brings it back) and the session goes on.`
+            `You ${movedWords(s("status"))} while ${taskName(p)} ran; what it changed is removed and the session goes on.`
           : `You ${movedWords(s("status"))} while ${taskName(p)} ran; the session goes on.`;
     case "task.blocked_by_findings":
       return `${capital(taskName(p))} stays in review: an earlier finding is still open.`;

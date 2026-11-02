@@ -236,6 +236,18 @@ export class KillSwitch {
     return { stoppedRuns, killedProcesses, revokedTokens };
   }
 
+  /**
+   * Whether a run or review of the task goes on in this process now (a registration naming
+   * the task that is not stopped): what `stopTask` would stop. A Cancel's dialog, read-back and
+   * line say its work is removed only then (L-7: a task left "Being reviewed" with no review
+   * going on was promised a removal that never came).
+   */
+  hasTask(taskId: string): boolean {
+    for (const r of this.regs.values())
+      if (!r.protected && r.taskId === taskId && !r.controller?.signal.aborted) return true;
+    return false;
+  }
+
   /** Add `scope` to the stopped scopes; "all" covers every other, so it replaces them. */
   private freeze(scope: KillScope | "all"): void {
     if (scope === "all") {

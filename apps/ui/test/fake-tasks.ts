@@ -28,10 +28,20 @@ export interface FakeTaskMeta {
   pausedByPerson: Set<string>;
   /** The order tasks were added, for the run order's "older first". */
   added: Map<string, number>;
+  /**
+   * Running or reviewed tasks whose run or review does not go on in the app (the daemon asks
+   * its kill switch, `display.live`; L-7): a task left in review by a quit, another computer's
+   * run. A test adds them; every other running or reviewed task has its run or review going.
+   */
+  notLive: Set<string>;
 }
 
 export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
-  return { pausedByPerson: new Set(), added: new Map(tasks.map((t, i) => [t.id, i])) };
+  return {
+    pausedByPerson: new Set(),
+    added: new Map(tasks.map((t, i) => [t.id, i])),
+    notLive: new Set(),
+  };
 }
 
 /** A view as the row `task-words` reads. */
@@ -89,6 +99,7 @@ export function projectTaskViews(
     sandboxReady,
     runs: new Map(),
     agentNames: new Map([["agent_alice", "Alice"]]),
+    live: (taskId: string) => !meta.notLive.has(taskId),
   };
   const byId = new Map(mine.map((t) => [t.id, t]));
   return runOrder(rows).map((row, i) => ({
@@ -128,6 +139,7 @@ export function actionTarget(
  */
 export function liveWork(view: TaskView): boolean {
   const key = view.display?.key;
+  if (view.display?.live === false) return false;
   return key === "running" || (view.status === "in_review" && key === "review");
 }
 
@@ -147,7 +159,7 @@ export function actionSentence(
   if (to === "cancelled" && ran)
     s = task.prUrl
       ? `Cancelled ${t}: ${what} stopped; its pull request stays open.`
-      : `Cancelled ${t}: ${what} stopped and what it changed is removed; Undo brings it back.`;
+      : `Cancelled ${t}: ${what} stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.`;
   else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
     s = ["claimed", "in_progress"].includes(from)

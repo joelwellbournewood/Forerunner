@@ -100,18 +100,22 @@ export function actionsFor(
 /**
  * What Cancel does to the work of a task that runs or is being reviewed (phase C, live walk 2
  * C1: the cancelled page's files stayed and the next task described it): its run stops, and
- * what it changed is taken out of the folder, which Undo puts back; a pull request already
- * opened stays open. Null for a task that is not running.
+ * what it changed is taken out of the folder; Undo reopens it and puts the changes back unless
+ * the same files changed since (L-6: a session that goes on often changes them within
+ * seconds); a pull request already opened stays open. Null for a task that is not running, and
+ * for one whose run or review does not go on in the app (the daemon's `display.live`, L-7: a
+ * task left "Being reviewed" by a quit was promised a removal that never came).
  */
 export function cancelWorkLine(
   task: Pick<TaskView, "status" | "prUrl" | "display" | "reason">,
 ): string | null {
   const key = displayOf(task).key;
   if (key !== "running" && key !== "review") return null;
+  if (task.display?.live === false) return null;
   const what = key === "review" ? "Its review" : "Its run";
   return task.prUrl
     ? `${what} stops now; its pull request stays open.`
-    : `${what} stops now and what it changed is removed; Undo brings it back.`;
+    : `${what} stops now and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.`;
 }
 
 /** The actions that open a form or a page instead of the confirm dialog. */

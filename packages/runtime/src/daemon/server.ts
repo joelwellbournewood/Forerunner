@@ -954,7 +954,11 @@ export function createDaemonApp(
   };
   const projectTaskViews = async (projectId: string): Promise<TaskView[]> => {
     const rows = await rt.store.task.forProject(projectId, {}, { limit: 10_000 });
-    const ctx = await loadTaskDisplayContext(rt.store, rows, sandboxReady());
+    // Whether a run or review of each goes on here (L-7): what Stop and Cancel stop at once.
+    const ctx = {
+      ...(await loadTaskDisplayContext(rt.store, rows, sandboxReady())),
+      live: (taskId: string) => rt.kill.hasTask(taskId),
+    };
     return runOrder(rows).map((t, i) =>
       taskView(t, chf(), specialistLimit, {
         display: taskDisplay(t, ctx),

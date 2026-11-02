@@ -80,3 +80,29 @@ review of the fix such a task stayed "Being reviewed" for good.
   for every other move.
 - `git stash`: a stash is shared by every checkout of the repository and its entries move when
   others are added; a named ref is the task's own.
+
+## Amendment (2026-11-02, phase E, area "stops": L-6, L-7, L-8)
+
+The live check of phase C with the real model found three places where the words of point 5
+promised more than the code kept:
+
+- **Undo's promise (L-6).** A session goes on after a cancel, and its next task often changes
+  the same files within seconds (Bakery: index.html six seconds later), so Undo could not put
+  the work back while the dialog and the line had said "Undo brings it back". Points 3 and 5 now
+  read: the line 'Cancelled "X": its run stopped and what it changed is removed. Undo reopens
+  it, and its changes come back unless the same files changed since.', the same in the Cancel
+  dialog, and an Undo that could not put the changes back says "What it changed could not be put
+  back: the same files changed since. Its next run does the work again." (the task is ready
+  again, so the next session redoes it). The session log line no longer mentions Undo. A
+  three-way merge of the set-aside changes was not chosen: a rewritten file conflicts anyway,
+  and conflict markers in the person's files are worse than a redo.
+- **A promise with nothing to stop (L-7).** Point 6 made the line true; the dialog and the
+  chat's read-back were still worded from the stored status. The task's view now says whether
+  a run or review of it goes on in the app (`display.live`, from the kill switch), and the
+  dialog and the read-back say the work is removed only then.
+- **A cancel in the first moment of a review (L-8).** The critic's own run now gets the
+  review's signal, and the review's controller is registered before the task reads "Being
+  reviewed", so a cancel at any moment of the review stops it at once; the consequence above
+  ("a cancel between a run's end and its review's start stops nothing") now holds only for the
+  moment before that registration, which a person cannot see: the task still reads "Running"
+  then.

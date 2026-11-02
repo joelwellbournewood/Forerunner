@@ -158,10 +158,17 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   **Reopen** (a cancelled task) and **Cancel** (it names the tasks that wait on it and will be
   stuck; on a task that is running or being reviewed its run or review stops at once, and what
   it changed is taken out of the project's folder before the next task starts, so nothing builds
-  on work you dropped; **Undo** puts the files back, and the answers you gave in the Inbox
+  on work you dropped; **Undo** reopens the task and puts its changes back unless the same
+  files changed since (a session that goes on often changes them within seconds: then Undo says
+  so and the task's next run does the work again), and the answers you gave in the Inbox
   meanwhile stay in the decision record; a task that already has a pull request keeps it open.
-  The line after Cancel says what happened: a task whose review is not running, because its
-  card waits for you, keeps its files and reads only "Cancelled"). Every action asks for an optional **note for the agent**, which goes into the task's
+  The dialog and the line after Cancel say what happens: a task with no run or review going on
+  in the app, because its card waits for you or another computer reviews it, keeps its files,
+  its dialog says only "Drops it." and the line only "Cancelled". A Cancel from the first moment
+  a task reads **Being reviewed** stops the review at once: the critic makes no further call).
+  If you quit Forerunner while a task is **Being reviewed**, it reads **Ready** when you open it
+  again, the Inbox's Update names it ("… is ready again"), and the next **Start** runs and
+  reviews it. Every action asks for an optional **note for the agent**, which goes into the task's
   next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it

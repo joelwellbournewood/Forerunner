@@ -319,14 +319,21 @@ reopened the task ..."). A command's `undo` may return a sentence that is added 
 own (the closure kept from the run returns those of its steps too): the undo of the cancel of a
 task that ran or was reviewed calls the `bringBackWork` port (the session took what the run
 changed out of the folder, ADR 0105) and adds "What it changed is back in the folder." or
-"What it changed could not be put back: the folder changed in the same places since." The
-cancel's own sentence says what happens to the work ('Cancelled "X": its run stopped and what
-it changed is removed; Undo brings it back.', or "its pull request stays open" for a task with
+(`UNDO_CONFLICT_WORDS`) "What it changed could not be put back: the same files changed since.
+Its next run does the work again." The cancel's own sentence says what happens to the work
+('Cancelled "X": its run stopped and what it changed is removed. Undo reopens it, and its
+changes come back unless the same files changed since.', `CANCEL_UNDO_WORDS`; L-6, live check
+of phase C: the line promised "Undo brings it back", the session's next task rewrote the same
+file six seconds later and the Undo could not; or "its pull request stays open" for a task with
 a pull request), and a person's move out of `in_review` stops the review through `stopTask` as
 a move out of `claimed` or `in_progress` stops the run. The sentence says so only when
 `stopTask` answers `true` (a live run or review was stopped; the session sets aside exactly
 those): a task in review that no session reviews (its card waits, or Forerunner closed during
-its review) reads 'Cancelled "X".', and its files stay (phase C review). Every person's move of a task can be undone (design §3.5: "every
+its review) reads 'Cancelled "X".', and its files stay (phase C review). The chat's read-back
+of a cancel (`moveAsk`) says "its run stops now and what it changed is removed" (or "its
+review") only when the `liveWork` port answers that a run or review of the task goes on here
+(the daemon: `KillSwitch.hasTask`; without the port a running task is taken to run, a task in
+review to have no review going on; L-7). Every person's move of a task can be undone (design §3.5: "every
 action has one Undo right after it"): the undo puts the task back as it was. The move's
 `before` records the row's `status`, `reason`, `author_human`, `author_agent` and `attempt`;
 the undo restores them through `TaskRepo.restoreStatus` (a status only an agent sets comes

@@ -234,6 +234,12 @@ export interface CommandPorts {
    */
   stopTask?(taskId: string, reason: string): Promise<boolean | undefined> | boolean | undefined;
   /**
+   * Whether a run or review of the task goes on in this app now (what `stopTask` would stop):
+   * a cancel's read-back says its run or review stops and its work is removed only then (L-7).
+   * Absent: a running task is taken to have its run going, a task in review no review.
+   */
+  liveWork?(taskId: string): boolean;
+  /**
    * Undo of the cancel of a task that ran (phase C, live walk 2 C1): what its run changed,
    * which the session took out of the folder, goes back in. `missing` when nothing was taken
    * out; `conflict` when the folder changed since in the same places (nothing is put back).

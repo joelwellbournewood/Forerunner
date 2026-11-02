@@ -1716,7 +1716,8 @@ never reviewed. `recordMove` of a task the person cancelled calls the executor's
 `setAside(task)` (`PrTaskExecutor.setAside`, `@forerunner/capabilities`) before the next task
 starts, so what the run changed is out of the folder, kept for Undo; the run's changed files
 are not listed in the result; the log line reads 'You cancelled it while "X" ran; what it
-changed is removed (Undo brings it back) and the session goes on.' (`setAside` count on
+changed is removed and the session goes on.' (it promised "Undo brings it back" before L-6,
+which the session's next task, changing the same files, often made untrue; `setAside` count on
 `task.moved_while_running`). The commands' `bringBackWork` port (`PrTaskExecutor.bringBack`)
 puts it back on Undo of the cancel, also after a restart (the ref is in the folder's own git).
 Tests: `continuity-cancel.test.ts` (Cancel on the Tasks tab while it runs: the files out, the
@@ -1737,6 +1738,13 @@ the first two describes, and their `real-daemon.test.ts` and `tasks.test.tsx` si
   (`taskDisplay`, `actionsFor`), not "Being reviewed". A move recorded after the run is
   recorded before a Stop now that came with it ends the session, so a cancel's files go as its
   line said.
+- **What Stop and Cancel would stop is on the task's view (L-7).** `KillSwitch.hasTask(id)`
+  says whether a registration of the task that is not stopped exists (what `stopTask` would
+  stop); `projectTaskViews` (server.ts) gives `taskDisplay` a `live` predicate from it, and a
+  running or reviewed task's `display.live` says it, so the Tasks tab's Cancel dialog promises
+  its work is removed only then, and the commands' `liveWork` port words the chat's read-back
+  the same way. Before, a task left "Being reviewed" with no review going on got "Its review
+  stops now and what it changed is removed; Undo brings it back." and nothing was removed.
 - **A Cancel at any moment of "Being reviewed" stops the review at once (L-8).** The review's
   controller is registered under the task before the task moves to `in_review`, so a Cancel
   from the first moment the row reads "Being reviewed" finds it (a move between the run's end

@@ -81,6 +81,11 @@ export interface TaskDisplayContext {
    * tried"); absent where the caller does not need it.
    */
   reviews?: ReadonlyMap<string, Pick<ReviewRow, "verdict" | "evidence">>;
+  /**
+   * Whether a run or review of the task goes on in this app now (the kill switch holds it):
+   * a running or reviewed task's `live` (L-7). Absent: not said.
+   */
+  live?: (taskId: string) => boolean;
 }
 
 /** A title as a status names it: whole when short, else cut at a word. */
@@ -197,6 +202,7 @@ function display(
     agentName: extra.agentName ?? null,
     since: extra.since ?? null,
     blocker: extra.blocker ?? null,
+    ...(extra.live !== undefined ? { live: extra.live } : {}),
   };
 }
 
@@ -248,6 +254,7 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         });
       return display("review", "Being reviewed", "info", {
         detail: "The critic is checking the work.",
+        ...(ctx.live ? { live: ctx.live(task.id) } : {}),
       });
     case "claimed":
     case "in_progress": {
@@ -256,6 +263,7 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       return display("running", "Running", "info", {
         agentName,
         since: run?.created_at ?? task.updated_at,
+        ...(ctx.live ? { live: ctx.live(task.id) } : {}),
         ...(run?.specialist ? { detail: `The ${run.specialist} is working on it.` } : {}),
       });
     }
