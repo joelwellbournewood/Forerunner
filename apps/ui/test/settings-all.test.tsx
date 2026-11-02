@@ -27,7 +27,6 @@ describe("every setting is visible in Settings (U-060)", () => {
         "Quiet hours",
         "Where notifications go",
         "Read urgent notifications aloud",
-        "Language",
         "Model watch evaluations",
         "Monthly critic calibration",
         "Budget per session",
@@ -48,10 +47,13 @@ describe("every setting is visible in Settings (U-060)", () => {
     expect(within(watch).getByTestId("setting-value-cell")).toHaveTextContent(
       "asks before any paid evaluation; evaluations need a container",
     );
-    // Stored but read by nothing yet: information, without a control (validation rule 7).
-    const language = await rowFor("human.language");
-    expect(within(language).queryByTestId("setting-change")).toBeNull();
-    expect(language).toHaveTextContent("changes nothing yet");
+    // Stored but read by nothing yet: a row that changes nothing is not listed (validation rule
+    // 7, design §6: "Rows that do nothing are hidden"); before, it sat beside the monthly cap as
+    // "Language … the stored choice changes nothing yet" with "read-only".
+    expect(rows.map((r) => r.dataset.key)).not.toContain("human.language");
+    expect(screen.queryByText(/changes nothing yet/)).toBeNull();
+    // Every row listed has its Change.
+    for (const row of rows) expect(within(row).getByTestId("setting-change")).toBeInTheDocument();
   });
 
   it("quiet hours: a check box and two times send settings.set with the times", async () => {

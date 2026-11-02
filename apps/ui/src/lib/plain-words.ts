@@ -75,6 +75,14 @@ const AUTONOMY: Record<number, { name: string; means: string }> = {
   4: { name: "Autopilot", means: "everything except destructive, money and credential actions" },
 };
 
+/**
+ * The five autonomy levels by name with what each lets the agent do (design §2: "Autonomy lives
+ * in Settings with its name"): the one list every autonomy control in Settings offers.
+ */
+export const AUTONOMY_LEVELS: readonly { level: number; name: string; means: string }[] = [
+  0, 1, 2, 3, 4,
+].map((level) => ({ level, ...(AUTONOMY[level] as { name: string; means: string }) }));
+
 /** "Standard (level 2)" and what the level lets the agent do. */
 export function autonomyLabel(level: number): { label: string; means: string } {
   const a = AUTONOMY[level];

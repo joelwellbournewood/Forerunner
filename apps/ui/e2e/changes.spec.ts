@@ -8,6 +8,8 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   request,
 }) => {
   await page.goto("/settings");
+  // Each project's autonomy is under Advanced (design §6: Settings opens on Basics).
+  await page.getByTestId("settings-advanced-summary").click();
   // The row shows its plain label (U-060); the key stays on the row for tests.
   // Atlas's row: the daemon lists every project's autonomy (settings-view.ts).
   const row = page
@@ -16,7 +18,8 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   await expect(row.getByTestId("setting-label")).toHaveText("Autonomy");
   await row.getByTestId("setting-change").click();
   const dialog = page.getByTestId("setting-dialog");
-  await dialog.getByTestId("setting-value").fill("3");
+  // By name (design §2, §6: one named autonomy control); the level is the command's value.
+  await dialog.getByTestId("setting-value").selectOption("3");
   await dialog.getByTestId("setting-apply").click();
   await expect(dialog.getByTestId("command-pending")).toHaveAttribute("data-decision", "needs_yes");
   await expect(dialog.getByTestId("card-new")).toHaveText("3");
@@ -28,7 +31,7 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   await expect(dialog.getByTestId("command-undo")).toBeVisible();
   await dialog.getByTestId("command-close").click();
   await expect(row.getByTestId("setting-value-cell")).toHaveText(
-    "3 Trusted: asks only for risky actions",
+    "Trusted: also merges reviewed pull requests",
   );
 
   // Changes is behind More (design §6).

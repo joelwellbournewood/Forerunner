@@ -156,14 +156,19 @@ describe("Settings", () => {
   it("shows the scope on every row, the daemon status and the same-command hint", async () => {
     renderApp("/settings");
     const rows = await screen.findAllByTestId("setting-row");
-    expect(rows).toHaveLength(17); // the fixture's 16, and Beacon's autonomy: the daemon lists every project's
+    // The fixture's 16 and Beacon's autonomy (the daemon lists every project's), less the three
+    // that change nothing (language, the model provider, chat.model): design §6 hides them.
+    expect(rows).toHaveLength(14);
+    const advanced = screen.getByTestId("settings-advanced");
     for (const row of rows) {
-      const scope = within(row).getByTestId("setting-scope");
+      // Every row under Advanced names its scope; in Basics a project's row names the project
+      // (the person's own rows need no "you").
+      const scope = within(row).queryByTestId("setting-scope");
+      if (!advanced.contains(row) && row.dataset.scope !== "project") continue;
       // Names, never ids (U-074).
-      expect(scope.textContent).toMatch(/^(everyone|you|Alice's agent|Atlas|Beacon)$/);
-      expect(scope.textContent).not.toMatch(/human_|agent_|proj_/);
+      expect(scope?.textContent).toMatch(/^(everyone|you|Alice's agent|Atlas|Beacon)$/);
+      expect(scope?.textContent).not.toMatch(/human_|agent_|proj_/);
     }
-    expect(screen.getByTestId("scope-group-global")).toBeInTheDocument();
     expect(screen.getByTestId("scope-group-project")).toBeInTheDocument();
     expect(screen.getByTestId("edit-hint")).toHaveTextContent(/asking in chat or voice/);
     const cap = rows.find((r) => r.dataset.key === "human.monthly_cap");
@@ -171,8 +176,10 @@ describe("Settings", () => {
       "CHF 150.00",
     );
     expect(within(cap as HTMLElement).getByTestId("setting-change")).toBeInTheDocument();
-    const provider = rows.find((r) => r.dataset.key === "runtime.provider");
-    expect(provider).toHaveTextContent("read-only");
+    // A row no command changes is not listed (validation rule 7): before, "Model provider" sat
+    // there with "read-only".
+    expect(rows.find((r) => r.dataset.key === "runtime.provider")).toBeUndefined();
+    expect(screen.queryByText("read-only")).toBeNull();
     const status = screen.getByTestId("daemon-status");
     expect(status).toHaveTextContent("http://127.0.0.1:9");
     expect(status).toHaveTextContent("from env");
@@ -198,9 +205,8 @@ describe("Settings", () => {
     const autonomy = rows.find((r) => r.dataset.key === "project.autonomy");
     await user.click(within(autonomy as HTMLElement).getByTestId("setting-change"));
     const dialog = await screen.findByTestId("setting-dialog");
-    const input = within(dialog).getByTestId("setting-value");
-    await user.clear(input);
-    await user.type(input, "3");
+    // Autonomy is chosen by name (design §2, §6), the level's value stays the command's.
+    await user.selectOptions(within(dialog).getByTestId("setting-value"), "3");
     await user.click(within(dialog).getByTestId("setting-apply"));
     await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
     // The settings screen names its channel (RT-P5-4): the row is logged as `ui`, not `chat`.
@@ -385,9 +391,7 @@ describe("Settings", () => {
     const autonomy = rows.find((r) => r.dataset.key === "project.autonomy");
     await user.click(within(autonomy as HTMLElement).getByTestId("setting-change"));
     const dialog = await screen.findByTestId("setting-dialog");
-    const input = within(dialog).getByTestId("setting-value");
-    await user.clear(input);
-    await user.type(input, "1");
+    await user.selectOptions(within(dialog).getByTestId("setting-value"), "1");
     await user.click(within(dialog).getByTestId("setting-apply"));
     const pending = await within(dialog).findByTestId("command-pending");
     await user.click(within(pending).getByTestId("command-no"));

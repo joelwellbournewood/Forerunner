@@ -74,8 +74,8 @@ files: <folder>". The project's page has the reason in full. Home and the projec
 the work as it happens: no reload needed.
 
 **New project** asks for a name, a goal, a short brief and a repository link; the agent drafts a
-plan for you to approve. The project starts at your default autonomy (Settings, where every
-project's autonomy is named) and becomes the active project.
+plan for you to approve. The project starts at your default autonomy (Settings → Basics; each
+project's own autonomy is under Settings → Advanced, by name) and becomes the active project.
 
 The header names the project you are looking at. The active project (the one chat, voice and
 the phone talk about outside a project page) is what you pick in the header's list, the
@@ -503,11 +503,17 @@ out your words, each finished sentence of the reply and the end of the reply.
 Each thing has one place. **Settings** is how Forerunner itself works; **Extensions** is what
 your agents may reach beyond their built-in tools.
 
-- **Settings**: your agent's name, the model and its key or subscription (set in the setup)
-  and which is used first, budgets and autonomy, **Voice** (installing local voice, CPU or GPU, and which voice providers
-  the sandbox download), **Email** (your agent's mailbox and mode, on the Email page) and your
-  paired devices.
-  are in force), **Sandbox (Docker)** (whether full-review tasks can run, the step to take,
+- **Settings** opens on **Basics**: your name and your agent's name, whether Claude and GitHub
+  are connected (with **Connect Claude** when Claude is not, and the setup assistant), the
+  budget per session of each project, the monthly cap, the default autonomy by name ("Standard:
+  routine, reversible actions run; the rest asks you"), quiet hours, and **Sandbox (Docker)**
+  (whether full-review tasks can run, the step to take, the sandbox download). Everything else is
+  under **Advanced** (collapsed; click it to open): the subscription allowance, which Claude
+  credential is used first, appearance and shortcuts, the connection to the background service,
+  your paired devices, sources, Opus fast mode, models, **Voice** (installing local voice, CPU or
+  GPU, and which voice providers are in force), the desktop allowlist, **Email** (your agent's
+  mailbox and mode, on the Email page) and the other settings, each project's autonomy among
+  them. Only settings you can change are listed; autonomy is always chosen by its name.
 - **Extensions**: each extra capability with what it is granted (tools, domains, secrets,
   scopes), what it has cost, and an On/Off switch that takes effect at once, also for a session
   that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice
@@ -527,6 +533,8 @@ your agents may reach beyond their built-in tools.
   longer there; the first start of this version removes such a row an earlier version added.
 
 ## Your agent's name
+
+Settings → Basics → **Your name** changes how the app and your agent address you.
 
 Settings → **Your agent**: type a new name (one line, up to 60 characters) and click **Save**. The
 app, notifications, the agent's commits and its email signature use it at once, the phone within

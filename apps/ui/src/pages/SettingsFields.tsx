@@ -1,5 +1,7 @@
 import type { SettingView } from "../api/client.ts";
 import { Field, INPUT_CLASS } from "../components/ui.tsx";
+import { chfToMicro } from "../lib/money.ts";
+import { AUTONOMY_LEVELS } from "../lib/plain-words.ts";
 
 /**
  * Settings as a person reads and changes them (U-060): a plain label for every key, a value in
@@ -66,13 +68,15 @@ export function settingLabel(s: Pick<SettingView, "key" | "label">): string {
   return s.label ?? SETTING_LABELS[leafOf(s.key)] ?? s.key;
 }
 
-export const AUTONOMY_OPTIONS = [
-  { value: "0", label: "0 Advisor: suggests, you do" },
-  { value: "1", label: "1 Assisted: asks before most actions" },
-  { value: "2", label: "2 Standard" },
-  { value: "3", label: "3 Trusted: asks only for risky actions" },
-  { value: "4", label: "4 Autopilot" },
-] as const;
+/**
+ * Autonomy by name (design §2, §6: "default autonomy (by name)"; one named control): the same
+ * five names and meanings for the default and for each project's level. Before, the default's
+ * list read "2 Standard" and "3 Trusted: asks only for risky actions" while each project's
+ * level was a number from 0 to 4.
+ */
+export const AUTONOMY_OPTIONS: readonly { value: string; label: string }[] = AUTONOMY_LEVELS.map(
+  (a) => ({ value: String(a.level), label: `${a.name}: ${a.means}` }),
+);
 
 export const ON_OFF = [
   { value: "true", label: "On" },
@@ -171,7 +175,7 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
 /** The command and control behind a structured or listed setting; null for the rest. */
 export interface StructuredCommand {
   name: "settings.set" | "budget.set" | "autonomy.set";
-  inputType: "number" | "text" | "fields";
+  inputType: "number" | "text" | "fields" | "money";
   options?: readonly { value: string; label: string }[];
   fields?: readonly FieldSpec[];
   min?: number;
@@ -281,20 +285,20 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
     case "default_autonomy":
       return select(leaf, AUTONOMY_OPTIONS, Number, (c) => str(c, "2"), {});
     case "session_cap":
+      // Any amount in CHF with a point or a comma (design §6): "12.30" was refused by the
+      // number input's step of 0.50, as the monthly cap was before (walk lifecycle).
       return {
         name: "budget.set",
-        inputType: "number",
-        min: 0,
-        step: 0.5,
+        inputType: "money",
         unit: "CHF",
         initial: (c) => {
           const m = obj(c);
-          return typeof m.chfMicro === "number" ? String(m.chfMicro / 1_000_000) : "";
+          return typeof m.chfMicro === "number" ? (m.chfMicro / 1_000_000).toFixed(2) : "";
         },
         params: (v) => {
-          const amountChf = Number(v);
-          return Number.isFinite(amountChf) && amountChf > 0
-            ? { scope: "session", amountChf, ...projectParam }
+          const micro = chfToMicro(v);
+          return micro !== null && micro > 0
+            ? { scope: "session", amountChf: micro / 1_000_000, ...projectParam }
             : null;
         },
       };

@@ -1353,6 +1353,19 @@ describe("the UI client against the real daemon", () => {
     expect((await client.setupStatus()).name).toBe(before.name);
   });
 
+  it("Settings → Basics → Your name: the setup assistant's profile route renames you, and /me says so (design §6)", async () => {
+    const before = (await client.me()).name;
+    try {
+      // The body the Basics form sends.
+      const status = await client.setupProfile({ name: "Robin" });
+      expect(status.name).toBe("Robin");
+      expect((await client.me()).name).toBe("Robin");
+    } finally {
+      await client.setupProfile({ name: before });
+    }
+    expect((await client.me()).name).toBe(before);
+  });
+
   it("start session under Stop all: 409 with what to do, not a server error (U-077)", async () => {
     expect((await client.kill({ scope: "all", reason: "stop all from the UI" })).killActive).toBe(
       true,

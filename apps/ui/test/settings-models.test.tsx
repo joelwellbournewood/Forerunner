@@ -7,6 +7,7 @@ import {
   optionsFor,
   rowsOf,
 } from "../src/pages/ModelSettingsSection.tsx";
+import { commandForSetting } from "../src/pages/SettingsPage.tsx";
 import { MODEL_SETTINGS, SETTINGS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
@@ -221,9 +222,12 @@ describe("Settings: models per agent and specialist", () => {
     renderApp("/settings", createHarness({ missingRoutes: ["/settings/models"] }));
     const section = await screen.findByTestId("model-settings");
     await waitFor(() => expect(section).toHaveTextContent("/settings/models"));
-    // Every row of "All settings" is still there (the fixture's, the D.16 slider row included).
-    // Beacon's autonomy too: the daemon lists every project's rows (settings-view.ts).
-    expect(await screen.findAllByTestId("setting-row")).toHaveLength(SETTINGS.length + 1);
+    // Every row of the settings is still there (the fixture's, the D.16 slider row included).
+    // Beacon's autonomy too: the daemon lists every project's rows (settings-view.ts). Rows
+    // that change nothing are not listed (design §6, validation rule 7).
+    expect(await screen.findAllByTestId("setting-row")).toHaveLength(
+      SETTINGS.filter((s) => commandForSetting(s) !== null).length + 1,
+    );
   });
 });
 

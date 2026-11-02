@@ -1,5 +1,6 @@
-import { type FormEvent, useState } from "react";
-import { Link } from "react-router";
+import { shownHumanName } from "@forerunner/runtime/daemon/human-name";
+import { type FormEvent, useLayoutEffect, useRef, useState } from "react";
+import { Link, useLocation } from "react-router";
 import { type CommandResultJson, describeError, type SettingView } from "../api/client.ts";
 import { CommandResult } from "../components/ChangeCardDialog.tsx";
 import { Dialog } from "../components/Dialog.tsx";
@@ -19,7 +20,7 @@ import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useScrollToHash } from "../lib/use-hash-scroll.ts";
 import { HotkeySettings } from "../shell/HotkeySettings.tsx";
-import { useClient, useUiState, useUiStore } from "../store/context.tsx";
+import { refreshIdentity, useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference, UiState } from "../store/store.ts";
 import { AgentNameSection } from "./AgentNameSection.tsx";
 import { BillingOrderSection } from "./BillingOrderSection.tsx";
@@ -29,6 +30,7 @@ import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
 import { PlanAllowanceSection } from "./PlanAllowanceSection.tsx";
 import { SandboxSettingsCard } from "./SandboxSettingsCard.tsx";
 import {
+  AUTONOMY_OPTIONS,
   describeSetting,
   type FieldSpec,
   FieldsInput,
@@ -226,13 +228,12 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
   if (INFORMATION_ONLY.includes(leaf)) return null;
   const projectParam = s.scope === "project" && s.scopeId ? { project: s.scopeId } : {};
   if (key === "project.autonomy" || key === "autonomy.level") {
+    // By name, as the default autonomy (design §2, §6: one named autonomy control).
     return {
       name: "autonomy.set",
-      inputType: "number",
-      min: 0,
-      max: 4,
-      step: 1,
-      initial: initialPlain,
+      inputType: "text",
+      options: AUTONOMY_OPTIONS,
+      initial: (current) => (typeof current === "number" ? String(current) : "2"),
       params: (v) => {
         const level = asInt(v);
         return level === null || level < 0 || level > 4 ? null : { level, ...projectParam };
@@ -652,20 +653,274 @@ function FastModeCard({
 }
 
 /**
- * Settings (spec K.7, Q.1, R.2): your agent's name (U-025), every setting with its scope (changes
- * run through the command registry), the paired devices, the sources and the capabilities.
+ * What Settings opens on (design §6, Basics), in this order after the names and the accounts:
+ * budget per session (one row per project), the monthly cap, the default autonomy by name and
+ * quiet hours; Docker's card closes Basics. Every other row is under Advanced.
+ */
+export const BASIC_SETTING_KEYS = [
+  "project.session_cap",
+  "human.monthly_cap",
+  "human.default_autonomy",
+  "human.quiet_hours",
+] as const;
+
+export function isBasicSetting(s: Pick<SettingView, "key">): boolean {
+  return (BASIC_SETTING_KEYS as readonly string[]).includes(s.key);
+}
+
+/** The Basics rows in the design's order (each project's budget per session first). */
+export function basicSettings(settings: SettingView[]): SettingView[] {
+  return BASIC_SETTING_KEYS.flatMap((key) => settings.filter((s) => s.key === key));
+}
+
+/**
+ * The rows Settings lists: the ones a command changes (validation rule 7: a row that changes
+ * nothing is removed). "Language … the stored choice changes nothing yet", "Review reserve …
+ * sessions keep 20% whatever is stored here", the model provider and the registry directory
+ * were read-only rows beside the monthly cap.
+ */
+export function changeableSettings(settings: SettingView[]): SettingView[] {
+  return settings.filter((s) => commandForSetting(s) !== null);
+}
+
+/** One line under a Basics row: what the setting does (design §3: an explanation per action). */
+const BASIC_EXPLAIN: Partial<Record<string, string>> = {
+  "human.monthly_cap":
+    "The most all your projects together may spend in a month; no model call goes past it.",
+  "human.default_autonomy":
+    "New projects start at this level; each project's own level is under Advanced.",
+};
+
+/** A setting's value as a row shows it: money in CHF, the slider's stop, else in words. */
+function SettingValue({ setting }: { setting: SettingView }) {
+  if (isMoney(setting.value)) return <Money value={setting.value} />;
+  if (isSlider(setting.key)) return <>{speedQualityLabel(setting.value)}</>;
+  return <>{describeSetting(setting) ?? renderValue(setting.value)}</>;
+}
+
+/**
+ * One Basics row: its name (and the project's, for a project's row), the value in words, Change
+ * (the same command and change card as every other route) and one line saying what it does.
+ */
+function BasicSettingRow({
+  setting,
+  names,
+  onChange,
+}: {
+  setting: SettingView;
+  names: Pick<UiState, "me" | "agents" | "projects">;
+  onChange: (setting: SettingView, command: SettingCommand) => void;
+}) {
+  const command = commandForSetting(setting);
+  const explain = BASIC_EXPLAIN[setting.key] ?? setting.description;
+  return (
+    <li
+      className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2"
+      data-testid="setting-row"
+      data-scope={setting.scope}
+      data-key={setting.key}
+    >
+      <span className="font-medium" data-testid="setting-label">
+        {settingLabel(setting)}
+      </span>
+      {setting.scope === "project" ? (
+        <Badge testId="setting-scope">{scopeName(setting, names)}</Badge>
+      ) : null}
+      <span className="text-sm" data-testid="setting-value-cell">
+        <SettingValue setting={setting} />
+      </span>
+      {command ? (
+        <Button
+          variant="ghost"
+          onClick={() => onChange(setting, command)}
+          data-testid="setting-change"
+        >
+          Change
+        </Button>
+      ) : null}
+      <p
+        className="w-full text-xs text-neutral-600 dark:text-neutral-400"
+        data-testid="setting-explain"
+      >
+        {explain}
+      </p>
+    </li>
+  );
+}
+
+/**
+ * Settings → Basics → Your name: the name Forerunner calls you, saved through the setup
+ * assistant's own route (`POST /setup/profile`, which writes the human row), then `/me` read
+ * again so every place that names you follows.
+ */
+function YourNameSection() {
+  const client = useClient();
+  const store = useUiStore();
+  // The placeholder the daemon gives a person it knows no name for is not a name (U-077).
+  const current = useUiState((s) => shownHumanName(s.me?.name));
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const value = draft ?? current;
+  const unchanged = value.trim() === "" || value.trim() === current;
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || unchanged) return;
+    const name = value.trim();
+    setBusy(true);
+    setError(null);
+    setSaved(null);
+    try {
+      await client.setupProfile({ name });
+      setSaved(`Saved. Forerunner calls you ${name}.`);
+      await refreshIdentity(client, store).catch(() => {});
+      setDraft(null);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+      data-testid="your-name-section"
+    >
+      <h3 className="font-semibold">Your name</h3>
+      <form onSubmit={(e) => void save(e)} className="mt-2 space-y-2">
+        <Field label="Name" hint="How your agent and the app address you.">
+          <input
+            className={INPUT_CLASS}
+            value={value}
+            maxLength={80}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setSaved(null);
+            }}
+            data-testid="your-name-input"
+          />
+        </Field>
+        {error ? <ErrorBanner message={error} testId="your-name-error" /> : null}
+        {saved ? (
+          <output className="block text-sm" data-testid="your-name-saved">
+            {saved}
+          </output>
+        ) : null}
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={busy || unchanged}
+          data-testid="your-name-save"
+        >
+          {busy ? "Saving…" : "Save"}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+/** "API key", "subscription" or both: the Claude credentials the setup assistant stored. */
+function claudeHow(c: { anthropicApiKey: boolean; subscription: boolean } | undefined): string {
+  if (!c) return "";
+  if (c.anthropicApiKey && c.subscription) return " (API key and subscription)";
+  if (c.anthropicApiKey) return " (API key)";
+  if (c.subscription) return " (subscription)";
+  return "";
+}
+
+/**
+ * Settings → Basics → Accounts and keys (design §6: Claude, GitHub): whether Claude is connected
+ * now (`/me.provider`, which the header's no-key bar reads) and with which credential, whether a
+ * GitHub token is stored (`GET /setup`), and the setup assistant that adds or replaces them.
+ */
+function AccountsSection() {
+  const client = useClient();
+  const provider = useUiState((s) => s.me?.provider);
+  const setup = useAsync((signal) => client.setupStatus(signal), [client]);
+  const creds = setup.data?.credentials;
+  // A daemon that does not name its provider (an older one): the stored credentials say it.
+  const claude =
+    provider === undefined
+      ? creds
+        ? creds.anthropicApiKey || creds.subscription
+        : null
+      : provider !== null;
+  return (
+    <div
+      className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+      data-testid="settings-accounts"
+    >
+      <h3 className="font-semibold">Accounts and keys</h3>
+      <ul className="mt-1 space-y-1 text-sm">
+        {claude === null ? null : (
+          <li data-testid="account-claude" className="flex flex-wrap items-center gap-2">
+            <span>Claude: {claude ? `connected${claudeHow(creds)}` : "not connected"}</span>
+            {claude ? null : (
+              <Link to="/setup" className={buttonClassName("primary")}>
+                Connect Claude
+              </Link>
+            )}
+          </li>
+        )}
+        {creds ? (
+          <li data-testid="account-github">
+            GitHub: {creds.github ? "connected" : "not connected"}
+          </li>
+        ) : null}
+      </ul>
+      <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+        The setup assistant checks a pasted key at once and keeps it in this computer's credential
+        store.
+      </p>
+      <Link to="/setup" className={`${buttonClassName("secondary")} mt-2`}>
+        Open the setup assistant
+      </Link>
+    </div>
+  );
+}
+
+/** What Advanced holds, named on its summary so a pointer like "Settings → Voice" is found. */
+const ADVANCED_CONTENTS =
+  "models, which Claude credential is used first, the subscription allowance, voice, devices, sources, email, desktop control, fast mode, appearance, shortcuts, the background service and every other setting";
+
+/**
+ * Settings (design §6; spec K.7, Q.1, R.2). It opens on **Basics**: your name and your agent's,
+ * Claude and GitHub, budget per session, the monthly cap, the default autonomy by name, quiet
+ * hours and Docker. Everything else (models, credential order, voice, devices, sources, the
+ * background service, the desktop allowlist, fast mode, the other settings) is under
+ * **Advanced**, collapsed. Every row runs the command chat and voice use, with the same change
+ * card and Changes entry; rows that change nothing are not listed.
  */
 export function SettingsPage() {
   const client = useClient();
   const store = useUiStore();
   const { theme, connection, config, me, agents, projects } = useUiState((s) => s);
   const settings = useAsync((signal) => client.settings(undefined, signal), [client]);
-  const groups = groupByScope(settings.data ?? []);
+  const shown = changeableSettings(settings.data ?? []);
+  const basics = basicSettings(shown);
+  const groups = groupByScope(shown.filter((s) => !isBasicSetting(s)));
+  const names = { me, agents, projects };
+  const advancedRef = useRef<HTMLDetailsElement>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const { hash } = useLocation();
+  // A link to a section under Advanced opens it before the page scrolls there.
+  useLayoutEffect(() => {
+    if (!hash || hash.length < 2) return;
+    const el = document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (el && advancedRef.current?.contains(el)) {
+      advancedRef.current.open = true;
+      setAdvancedOpen(true);
+    }
+  }, [hash]);
   // "Set up Docker" (`/settings#sandbox`) and other in-app links land on their section.
   useScrollToHash(true);
   const [editing, setEditing] = useState<{ setting: SettingView; command: SettingCommand } | null>(
     null,
   );
+  const edit = (setting: SettingView, command: SettingCommand) => setEditing({ setting, command });
 
   return (
     <section aria-labelledby="settings-title" className="space-y-5">
@@ -673,296 +928,305 @@ export function SettingsPage() {
         Settings
       </h1>
 
-      <AgentNameSection />
-
-      <div
-        className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
-        data-testid="settings-accounts"
+      <section
+        aria-labelledby="settings-basics-title"
+        className="space-y-4"
+        data-testid="settings-basics"
       >
-        <h2 className="font-semibold">Accounts and keys</h2>
-        <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-          Your Claude key or subscription and your GitHub token. The setup assistant checks a pasted
-          key at once and keeps it in this computer's credential store.
-        </p>
-        <Link to="/setup" className={`${buttonClassName("secondary")} mt-2`}>
-          Open the setup assistant
-        </Link>
-      </div>
-
-      <PlanAllowanceSection />
-
-      <BillingOrderSection />
-
-      <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
-        <h2 className="font-semibold">Appearance</h2>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-          <span>Dark mode</span>
-          <select
-            aria-label="Theme"
-            data-testid="theme-select"
-            value={theme}
-            onChange={(e) =>
-              store.dispatch({ type: "theme", theme: e.target.value as ThemePreference })
-            }
-            className="rounded border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900"
-          >
-            <option value="system">Follow the system</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-          <Badge>scope: this device</Badge>
+        <h2 id="settings-basics-title" className="text-lg font-semibold">
+          Basics
+        </h2>
+        <YourNameSection />
+        <AgentNameSection />
+        <AccountsSection />
+        <div
+          className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+          data-testid="basic-settings"
+        >
+          <h3 className="font-semibold">Money, autonomy and quiet hours</h3>
+          {settings.loading && !settings.data ? <Loading what="settings" /> : null}
+          {settings.error ? (
+            <ErrorBanner message={settings.error} onRetry={settings.reload} />
+          ) : null}
+          <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+            {basics.map((s) => (
+              <BasicSettingRow
+                key={`${s.scope}:${s.scopeId ?? ""}:${s.key}`}
+                setting={s}
+                names={names}
+                onChange={edit}
+              />
+            ))}
+          </ul>
         </div>
-      </div>
+        <SandboxSettingsCard />
+      </section>
 
-      <HotkeySettings />
-
-      <div
-        className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
-        data-testid="daemon-status"
+      <details
+        ref={advancedRef}
+        open={advancedOpen}
+        onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+        className="rounded border border-neutral-200 dark:border-neutral-800"
+        data-testid="settings-advanced"
       >
-        <h2 className="font-semibold">Daemon connection</h2>
-        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-          <dt className="text-neutral-500">Status</dt>
-          <dd>
-            <Badge
-              tone={
-                connection.status === "connected"
-                  ? "good"
-                  : connection.status === "connecting"
-                    ? "warn"
-                    : "bad"
-              }
-            >
-              {connection.status}
-            </Badge>{" "}
-            {connection.error ? (
-              <span className="text-red-700 dark:text-red-300">{connection.error}</span>
-            ) : null}
-          </dd>
-          <dt className="text-neutral-500">URL</dt>
-          <dd>
-            <code>{config.baseUrl}</code> <Badge>from {config.source}</Badge>
-          </dd>
-          <dt className="text-neutral-500">Token</dt>
-          <dd>{config.token ? "present (never shown)" : "none"}</dd>
-          <dt className="text-neutral-500">Realtime</dt>
-          <dd>{connection.streamMode}</dd>
-          {connection.health ? (
-            <>
-              <dt className="text-neutral-500">Daemon</dt>
-              <dd>
-                v{connection.health.version} · {connection.health.profile} ·{" "}
-                {connection.health.platform} · up {formatDuration(connection.health.uptimeMs)} ·{" "}
-                <Link to="/updates" className="text-blue-700 hover:underline dark:text-blue-300">
-                  updates
-                </Link>
-              </dd>
-              <dt className="text-neutral-500">State</dt>
-              <dd>
-                <code>{connection.health.stateUrl}</code>
-              </dd>
-              <dt className="text-neutral-500">Vault</dt>
-              <dd>{connection.health.vaultBackend}</dd>
-              <dt className="text-neutral-500">Sessions</dt>
-              <dd>
-                {connection.health.activeSessions} active
-                {connection.health.killActive ? " · kill switch active" : ""}
-              </dd>
-              <dt className="text-neutral-500">Sandbox</dt>
-              <dd data-testid="sandbox-health">
-                <Badge tone={connection.health.sandbox.available ? "good" : "warn"}>
-                  {connection.health.sandbox.kind}
-                  {connection.health.sandbox.available
-                    ? ` via ${connection.health.sandbox.engine}`
-                    : " stand-in"}
-                </Badge>{" "}
-                {connection.health.sandbox.reason}
-              </dd>
-              <dt className="text-neutral-500">Extensions</dt>
-              <dd data-testid="extensions-health">
-                {connection.health.extensions.enabled} enabled
-                {connection.health.extensions.pending > 0
-                  ? ` · ${connection.health.extensions.pending} waiting for your approval`
-                  : ""}{" "}
-                <Link to="/extensions" className="text-blue-700 hover:underline dark:text-blue-300">
-                  open
-                </Link>
-              </dd>
-            </>
-          ) : null}
-          {config.platform ? (
-            <>
-              <dt className="text-neutral-500">Shell</dt>
-              <dd>
-                {config.platform}
-                {config.shellVersion ? ` · ${config.shellVersion}` : ""}
-              </dd>
-            </>
-          ) : null}
-          {me ? (
-            <>
-              <dt className="text-neutral-500">This PC</dt>
-              <dd data-testid="desktop-device">
-                {me.desktopDeviceId ? (
-                  <>
-                    paired device <code>{me.desktopDeviceId}</code>: confirms high-risk changes here
-                  </>
-                ) : (
-                  "no device row registered by the daemon: high-risk changes cannot be confirmed on this PC (confirm on the phone with biometric)"
-                )}
-              </dd>
-            </>
-          ) : null}
-        </dl>
-      </div>
-
-      <DevicesSection />
-
-      <SourcesSection />
-
-      <FastModeCard
-        rows={fastModeRows(settings.data ?? [])}
-        onToggle={(setting, command) => setEditing({ setting, command })}
-      />
-      <ModelSettingsSection />
-
-      <VoiceSettingsCard />
-
-      <SandboxSettingsCard />
-
-      <DesktopAllowlistSection />
-
-      <div
-        className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
-        data-testid="capabilities-section"
-      >
-        <h2 className="font-semibold">Capabilities</h2>
-        <ul className="mt-2 space-y-1 text-sm">
-          <li>
-            <Link
-              to="/settings/capabilities/email"
-              className="font-medium text-blue-700 hover:underline dark:text-blue-300"
-              data-testid="capability-email"
-            >
-              Email
-            </Link>
-            <span className="text-neutral-600 dark:text-neutral-400">
-              {" "}
-              — a mailbox and a sending mode per agent, the limits that stay on, pause, the command
-              audit.
-            </span>
-          </li>
-          <li className="text-neutral-600 dark:text-neutral-400">
-            The browser and desktop control are switched on in{" "}
-            <Link to="/extensions" className="text-blue-700 hover:underline dark:text-blue-300">
-              Extensions
-            </Link>
-            .
-          </li>
-        </ul>
-      </div>
-
-      <div>
-        <div className="flex flex-wrap items-baseline gap-3">
-          <h2 className="font-semibold">All settings</h2>
-          <span className="text-xs text-neutral-500" data-testid="edit-hint">
-            Change a value here or by asking in chat or voice: every route runs the same command,
-            shows the same change card and writes the same entry in{" "}
-            <Link to="/changes" className="text-blue-700 hover:underline dark:text-blue-300">
-              Changes
-            </Link>
-            .
+        <summary className="cursor-pointer select-none p-3" data-testid="settings-advanced-summary">
+          <span className="text-lg font-semibold">Advanced</span>
+          <span className="ml-2 text-sm text-neutral-600 dark:text-neutral-400">
+            {ADVANCED_CONTENTS}
           </span>
-        </div>
-        {settings.loading && !settings.data ? <Loading what="settings" /> : null}
-        {settings.error ? <ErrorBanner message={settings.error} onRetry={settings.reload} /> : null}
-        {settings.data && settings.data.length === 0 ? (
-          <EmptyState>The daemon reports no settings.</EmptyState>
-        ) : null}
-        {SCOPES.map((scope) =>
-          groups[scope].length === 0 ? null : (
-            <div key={scope} className="mt-3" data-testid={`scope-group-${scope}`}>
-              <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-                {SCOPE_LABELS[scope]}
-              </h3>
-              <table className="mt-1 w-full text-sm">
-                <thead className="text-left text-xs text-neutral-500">
-                  <tr>
-                    <th className="py-1 pr-2">Scope</th>
-                    <th className="py-1 pr-2">Setting</th>
-                    <th className="py-1 pr-2">Value</th>
-                    <th className="py-1 pr-2">Risk</th>
-                    <th className="py-1 pr-2">Description</th>
-                    <th className="py-1" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {groups[scope].map((s) => {
-                    const command = commandForSetting(s);
-                    return (
-                      <tr
-                        key={`${s.scope}:${s.scopeId ?? ""}:${s.key}`}
-                        className="border-t border-neutral-100 dark:border-neutral-800"
-                        data-testid="setting-row"
-                        data-scope={s.scope}
-                        data-key={s.key}
-                      >
-                        <td className="py-1 pr-2">
-                          <Badge testId="setting-scope">
-                            {scopeName(s, { me, agents, projects })}
-                          </Badge>
-                        </td>
-                        <td className="py-1 pr-2 font-medium" data-testid="setting-label">
-                          {settingLabel(s)}
-                        </td>
-                        <td className="py-1 pr-2 text-xs" data-testid="setting-value-cell">
-                          {isMoney(s.value) ? (
-                            <Money value={s.value} />
-                          ) : isSlider(s.key) ? (
-                            speedQualityLabel(s.value)
-                          ) : (
-                            (describeSetting(s) ?? renderValue(s.value))
-                          )}
-                        </td>
-                        <td className="py-1 pr-2">
-                          <Badge
-                            tone={
-                              s.risk === "high" ? "bad" : s.risk === "medium" ? "warn" : "neutral"
-                            }
-                          >
-                            {s.risk}
-                          </Badge>
-                        </td>
-                        <td className="py-1 pr-2 text-neutral-600 dark:text-neutral-400">
-                          {s.description}
-                        </td>
-                        <td className="py-1 text-right">
-                          {command ? (
-                            <Button
-                              variant="ghost"
-                              onClick={() => setEditing({ setting: s, command })}
-                              data-testid="setting-change"
-                            >
-                              Change
-                            </Button>
-                          ) : (
-                            <span
-                              className="text-xs text-neutral-400"
-                              title="Shown for information: no command changes this value here"
-                            >
-                              read-only
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+        </summary>
+        <div className="space-y-5 p-3 pt-0">
+          <PlanAllowanceSection />
+
+          <BillingOrderSection />
+
+          <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
+            <h2 className="font-semibold">Appearance</h2>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <span>Dark mode</span>
+              <select
+                aria-label="Theme"
+                data-testid="theme-select"
+                value={theme}
+                onChange={(e) =>
+                  store.dispatch({ type: "theme", theme: e.target.value as ThemePreference })
+                }
+                className="rounded border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900"
+              >
+                <option value="system">Follow the system</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+              <Badge>scope: this device</Badge>
             </div>
-          ),
-        )}
-      </div>
+          </div>
+
+          <HotkeySettings />
+
+          <div
+            className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+            data-testid="daemon-status"
+          >
+            <h2 className="font-semibold">Daemon connection</h2>
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+              <dt className="text-neutral-500">Status</dt>
+              <dd>
+                <Badge
+                  tone={
+                    connection.status === "connected"
+                      ? "good"
+                      : connection.status === "connecting"
+                        ? "warn"
+                        : "bad"
+                  }
+                >
+                  {connection.status}
+                </Badge>{" "}
+                {connection.error ? (
+                  <span className="text-red-700 dark:text-red-300">{connection.error}</span>
+                ) : null}
+              </dd>
+              <dt className="text-neutral-500">URL</dt>
+              <dd>
+                <code>{config.baseUrl}</code> <Badge>from {config.source}</Badge>
+              </dd>
+              <dt className="text-neutral-500">Token</dt>
+              <dd>{config.token ? "present (never shown)" : "none"}</dd>
+              <dt className="text-neutral-500">Realtime</dt>
+              <dd>{connection.streamMode}</dd>
+              {connection.health ? (
+                <>
+                  <dt className="text-neutral-500">Daemon</dt>
+                  <dd>
+                    v{connection.health.version} · {connection.health.profile} ·{" "}
+                    {connection.health.platform} · up {formatDuration(connection.health.uptimeMs)} ·{" "}
+                    <Link
+                      to="/updates"
+                      className="text-blue-700 hover:underline dark:text-blue-300"
+                    >
+                      updates
+                    </Link>
+                  </dd>
+                  <dt className="text-neutral-500">State</dt>
+                  <dd>
+                    <code>{connection.health.stateUrl}</code>
+                  </dd>
+                  <dt className="text-neutral-500">Vault</dt>
+                  <dd>{connection.health.vaultBackend}</dd>
+                  <dt className="text-neutral-500">Sessions</dt>
+                  <dd>
+                    {connection.health.activeSessions} active
+                    {connection.health.killActive ? " · kill switch active" : ""}
+                  </dd>
+                  <dt className="text-neutral-500">Sandbox</dt>
+                  <dd data-testid="sandbox-health">
+                    <Badge tone={connection.health.sandbox.available ? "good" : "warn"}>
+                      {connection.health.sandbox.kind}
+                      {connection.health.sandbox.available
+                        ? ` via ${connection.health.sandbox.engine}`
+                        : " stand-in"}
+                    </Badge>{" "}
+                    {connection.health.sandbox.reason}
+                  </dd>
+                  <dt className="text-neutral-500">Extensions</dt>
+                  <dd data-testid="extensions-health">
+                    {connection.health.extensions.enabled} enabled
+                    {connection.health.extensions.pending > 0
+                      ? ` · ${connection.health.extensions.pending} waiting for your approval`
+                      : ""}{" "}
+                    <Link
+                      to="/extensions"
+                      className="text-blue-700 hover:underline dark:text-blue-300"
+                    >
+                      open
+                    </Link>
+                  </dd>
+                </>
+              ) : null}
+              {config.platform ? (
+                <>
+                  <dt className="text-neutral-500">Shell</dt>
+                  <dd>
+                    {config.platform}
+                    {config.shellVersion ? ` · ${config.shellVersion}` : ""}
+                  </dd>
+                </>
+              ) : null}
+              {me ? (
+                <>
+                  <dt className="text-neutral-500">This PC</dt>
+                  <dd data-testid="desktop-device">
+                    {me.desktopDeviceId ? (
+                      <>
+                        paired device <code>{me.desktopDeviceId}</code>: confirms high-risk changes
+                        here
+                      </>
+                    ) : (
+                      "no device row registered by the daemon: high-risk changes cannot be confirmed on this PC (confirm on the phone with biometric)"
+                    )}
+                  </dd>
+                </>
+              ) : null}
+            </dl>
+          </div>
+
+          <DevicesSection />
+
+          <SourcesSection />
+
+          <FastModeCard rows={fastModeRows(settings.data ?? [])} onToggle={edit} />
+          <ModelSettingsSection />
+
+          <VoiceSettingsCard />
+
+          <DesktopAllowlistSection />
+
+          <div
+            className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+            data-testid="capabilities-section"
+          >
+            <h2 className="font-semibold">Capabilities</h2>
+            <ul className="mt-2 space-y-1 text-sm">
+              <li>
+                <Link
+                  to="/settings/capabilities/email"
+                  className="font-medium text-blue-700 hover:underline dark:text-blue-300"
+                  data-testid="capability-email"
+                >
+                  Email
+                </Link>
+                <span className="text-neutral-600 dark:text-neutral-400">
+                  {" "}
+                  — a mailbox and a sending mode per agent, the limits that stay on, pause, the
+                  command audit.
+                </span>
+              </li>
+              <li className="text-neutral-600 dark:text-neutral-400">
+                The browser and desktop control are switched on in{" "}
+                <Link to="/extensions" className="text-blue-700 hover:underline dark:text-blue-300">
+                  Extensions
+                </Link>
+                .
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <div className="flex flex-wrap items-baseline gap-3">
+              <h2 className="font-semibold">Other settings</h2>
+              <span className="text-xs text-neutral-500" data-testid="edit-hint">
+                Change a value here or by asking in chat or voice: every route runs the same
+                command, shows the same change card and writes the same entry in{" "}
+                <Link to="/changes" className="text-blue-700 hover:underline dark:text-blue-300">
+                  Changes
+                </Link>
+                .
+              </span>
+            </div>
+            {settings.data && settings.data.length === 0 ? (
+              <EmptyState>The daemon reports no settings.</EmptyState>
+            ) : null}
+            {SCOPES.map((scope) =>
+              groups[scope].length === 0 ? null : (
+                <div key={scope} className="mt-3" data-testid={`scope-group-${scope}`}>
+                  <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+                    {SCOPE_LABELS[scope]}
+                  </h3>
+                  <table className="mt-1 w-full text-sm">
+                    <thead className="text-left text-xs text-neutral-500">
+                      <tr>
+                        <th className="py-1 pr-2">Scope</th>
+                        <th className="py-1 pr-2">Setting</th>
+                        <th className="py-1 pr-2">Value</th>
+                        <th className="py-1 pr-2">Description</th>
+                        <th className="py-1" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groups[scope].map((s) => {
+                        const command = commandForSetting(s);
+                        return (
+                          <tr
+                            key={`${s.scope}:${s.scopeId ?? ""}:${s.key}`}
+                            className="border-t border-neutral-100 dark:border-neutral-800"
+                            data-testid="setting-row"
+                            data-scope={s.scope}
+                            data-key={s.key}
+                          >
+                            <td className="py-1 pr-2">
+                              <Badge testId="setting-scope">{scopeName(s, names)}</Badge>
+                            </td>
+                            <td className="py-1 pr-2 font-medium" data-testid="setting-label">
+                              {settingLabel(s)}
+                            </td>
+                            <td className="py-1 pr-2 text-xs" data-testid="setting-value-cell">
+                              <SettingValue setting={s} />
+                            </td>
+                            <td className="py-1 pr-2 text-neutral-600 dark:text-neutral-400">
+                              {s.description}
+                            </td>
+                            <td className="py-1 text-right">
+                              {command ? (
+                                <Button
+                                  variant="ghost"
+                                  onClick={() => edit(s, command)}
+                                  data-testid="setting-change"
+                                >
+                                  Change
+                                </Button>
+                              ) : null}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ),
+            )}
+          </div>
+        </div>
+      </details>
       {editing ? (
         <SettingChangeDialog
           setting={editing.setting}

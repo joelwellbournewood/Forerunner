@@ -5229,6 +5229,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     if (body.name) setup.name = body.name;
     if (body.timezone) setup.timezone = body.timezone;
+    // As the daemon: the human row too, so `/me` names the person so (Settings → Your name).
+    if (body.name) me.name = body.name;
+    if (body.timezone) me.timezone = body.timezone;
     return c.json(setup);
   });
   app.post("/setup/anthropic", async (c) => {
