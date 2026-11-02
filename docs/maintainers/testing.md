@@ -2458,7 +2458,8 @@ failing (`FORERUNNER_BENCH_FAIL`, its retries in one session, one card, the step
 attempted) and a failed model call (`FORERUNNER_BENCH_FAIL_MODE=error`, the task reads "Claude
 did not answer (model call failed)."). The injections match task titles, so they name the chain
 plan's titles ("quote list", "random quote"), not "Step 3". `scripts/bench/journeys/intake.cjs
-<bench> [--brief ...]` walks New project with a one-line brief and no Goal, the plan card and
+<bench> [--brief ...]` walks New project with a one-line brief and no Goal (the project named after
+the brief, `names.cjs`, unless `--project`; before, every one was "Quote page HH:MM:SS"), the plan card and
 Approve and start through the UI, pressing Try again at most twice, and records the checks, the
 plan card's lines and every intake call (the Plan size line sent, what the second call was told,
 output tokens) in `steps/intake-result.json`; with `--watch` it waits for the session Approve and

@@ -22,7 +22,15 @@ test("reviews tab lists the critic's verdicts with findings and draws the grade 
   await revise.getByTestId("review-details-toggle").click();
   await expect(revise.getByTestId("review-details")).toContainText("confidence 80%");
   await page.getByTestId("filter-verdict").selectOption("accept");
+  // Accepted only: the sent-back review is gone, the accepted one is shown, and the session's
+  // own check stays under Session checks (wave 3 kept only the first of these; leftover 92).
   await expect(page.getByTestId("review").filter({ hasText: "Add the search box" })).toHaveCount(0);
+  const accepted = page.getByTestId("review").filter({ hasText: "Index the documentation pages" });
+  await expect(accepted).toHaveCount(1);
+  await expect(accepted.getByTestId("review-verdict")).toHaveText("accepted");
+  await expect(page.getByTestId("reviews-empty")).toHaveCount(0);
+  await expect(page.getByTestId("review")).toHaveCount(2);
+  await expect(page.getByTestId("session-checks").getByTestId("review")).toHaveCount(1);
 });
 
 test("a review link (?review=) opens the review highlighted", async ({ page }) => {

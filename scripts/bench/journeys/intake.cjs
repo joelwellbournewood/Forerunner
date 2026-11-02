@@ -26,6 +26,7 @@ const {
   until,
   waitForSession,
 } = require("../recorder.cjs");
+const { projectNameFor } = require("./names.cjs");
 
 const args = process.argv.slice(2);
 const NAME = args[0] && !args[0].startsWith("--") ? args[0] : "intake";
@@ -35,7 +36,8 @@ const opt = (flag, fallback) => {
 };
 const BRIEF = opt("--brief", "A page that shows a random quote");
 const GOAL = opt("--goal", "");
-const PROJECT = opt("--project", `Quote page ${new Date().toISOString().slice(11, 19)}`);
+// Without --project the project is named after the brief (names.cjs), as a person would.
+const PROJECT = opt("--project", projectNameFor(BRIEF));
 const WATCH = args.includes("--watch");
 
 const b = bench(NAME);

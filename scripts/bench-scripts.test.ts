@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
+// @ts-expect-error plain JS module
+import { projectNameFor } from "./bench/journeys/names.cjs";
 import {
   agentsDone,
   allDone,
@@ -215,6 +217,29 @@ describe("bench: the daemon's environment and a live start", () => {
  * names and "[stand-in model]" in the chat reply, and passed "every planned task is done" on 0
  * of 0 tasks). These are what the live plan, files and reply looked like.
  */
+describe("bench: the intake journey names the project after the brief (live B, 2026-11-02)", () => {
+  const at = new Date("2026-11-02T16:45:30.000Z");
+
+  it("without --project the name is the brief's first words and the time, not 'Quote page'", () => {
+    expect(projectNameFor("A todo list", at)).toBe("A todo list 16:45:30");
+    expect(projectNameFor("  A todo list.\nWith due dates", at)).toBe("A todo list 16:45:30");
+    // A long brief is cut at a word, at most 40 characters before the time.
+    const long = projectNameFor(
+      "A small web app that tracks the books I read and lends to friends",
+      at,
+    );
+    expect(long).toBe("A small web app that tracks the books I 16:45:30");
+    expect(long.length).toBeLessThanOrEqual(49);
+    expect(projectNameFor("", at)).toBe("Project 16:45:30");
+  });
+
+  it("intake.cjs uses it when --project is not given", () => {
+    const script = readFileSync(join(BENCH, "journeys", "intake.cjs"), "utf8");
+    expect(script).toContain('const PROJECT = opt("--project", projectNameFor(BRIEF));');
+    expect(script).not.toMatch(/`Quote page \$\{/);
+  });
+});
+
 describe("bench: the smoke journey's checks on structure and states", () => {
   type T = {
     id: string;
