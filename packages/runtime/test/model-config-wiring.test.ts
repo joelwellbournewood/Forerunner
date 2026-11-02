@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, Logger, type LogRecord, SimulatedClock } from "@forerunner/platform";
+import type { RunRow } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
@@ -112,6 +113,21 @@ describe("model settings wired into the daemon", () => {
    * for it (the critic may send the task back within the session, which is a second run):
    * the specialist's runs and the critic's review runs, which sit on the task too.
    */
+  /**
+   * The coder's runs of a task on the rung under test, and the one the retry ladder escalated
+   * (its fourth attempt runs one model rung up). Since the second rung keeps the coder (no
+   * stand-in of its kind: the migration-specialist keeps a migration's sign-off, phase E
+   * review), every attempt of a task the critic keeps sending back is the coder's: three on the
+   * rung, then at most one escalated, and only after those three.
+   */
+  const byRung = (coder: RunRow[], upModel: string) => {
+    const onRung = coder.filter((r) => r.model !== upModel);
+    const escalated = coder.filter((r) => r.model === upModel);
+    expect(onRung.length).toBeGreaterThanOrEqual(1);
+    expect(escalated.length).toBeLessThanOrEqual(1);
+    if (escalated.length) expect(onRung).toHaveLength(3);
+    return { onRung, escalated };
+  };
   const runTask = async (title: string) => {
     // A project of its own, so a task the critic sent back earlier never shares the plan.
     const card = await json(await post("/projects", { name: title, goal: `${title} is done` }));
@@ -222,8 +238,11 @@ describe("model settings wired into the daemon", () => {
 
   it("a session before the adopt runs the coder and the tier-1 critic on the built-in sonnet rung", async () => {
     const { coder, critic } = await runTask("Write a note");
-    for (const run of coder)
+    const { onRung, escalated } = byRung(coder, "fake-opus");
+    for (const run of onRung)
       expect(run).toMatchObject({ specialist: "coder", model: "fake-sonnet", effort: "medium" });
+    for (const run of escalated)
+      expect(run).toMatchObject({ specialist: "coder", model: "fake-opus", effort: "medium" });
     // The critic reviews the task at tier 1: the sonnet rung at medium effort (spec D).
     for (const run of critic)
       expect(run).toMatchObject({ specialist: "critic", model: "fake-sonnet", effort: "medium" });
@@ -287,8 +306,11 @@ describe("model settings wired into the daemon", () => {
 
     // ... so the next session picks the adopted rung and effort, with no restart ...
     const { coder, critic } = await runTask("Write another note");
-    for (const run of coder)
+    const { onRung, escalated } = byRung(coder, "fake-opus");
+    for (const run of onRung)
       expect(run).toMatchObject({ specialist: "coder", model: "fake-sonnet-6", effort: "low" });
+    for (const run of escalated)
+      expect(run).toMatchObject({ specialist: "coder", model: "fake-opus", effort: "low" });
     expect(provider.calls.some((c) => c.model === "fake-sonnet-6" && c.effort === "low")).toBe(
       true,
     );
