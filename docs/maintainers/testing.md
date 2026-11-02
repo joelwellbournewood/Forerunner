@@ -2487,7 +2487,19 @@ of them first and writes its markdown file from them: each fact quoted with its 
 the pages not read under "Uncertainty" with the refusal's words, every page under "Sources
 read", ADR 0107; `urlsNamed`, `factsOf`, `researchContent` in `plans.ts`), a `submit_review` verdict, a chat reply that says what context it got
 and quotes back the plan's state (`# Plan from the brief`) and the first task line it was told
-(`chatFacts`), so a journey can check that a reply names a task as a real model's would.
+(`chatFacts`), so a journey can check that a reply names a task as a real model's would. The
+intake stand-in reads the person's words after "Change the plan" (`splitChanges` reads them
+from the brief as `briefWithChanges` in `session/intake.ts` writes them; `applyChanges` in
+`plans.ts`): "drop|remove|... <name>" removes the tasks it names, "add|include|insert <name>"
+adds one, words it cannot place are named in the plan's reason, so the Change the plan journey
+can be walked on the bench (phase E; before, every new draft was the first plan again).
+`FORERUNNER_BENCH_PLAN=research` adds a researcher task whose brief names a web address. The
+stand-in's own sentences follow the writing rules (no "(s)": "Accepted: the changed file
+matches the brief", "1 earlier turn", "no command tool"). The real-daemon file's "what the bench
+walks" block runs Change the plan through the stand-in and checks the fields only the fake
+covered before (rule 3): a project's `working` while a session runs (the stand-in's first
+specialist call held), `lastSession.changedFiles`, the session's `statusText` "Ended: 1 task
+needs you", and the decisions' `plan` and `record` entries.
 `FORERUNNER_BENCH_DELAY_MS` waits before each reply but the critic's; `criticDelayMs`
 (`FORERUNNER_BENCH_CRITIC_DELAY_MS`, default 0) waits before each of the critic's, abortable
 like the other, so Stop now or Cancel during "Being reviewed" can be walked and tested

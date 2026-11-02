@@ -25,6 +25,7 @@ import {
   type PageRead,
   type PlanOptions,
   researchContent,
+  splitChanges,
   urlsNamed,
 } from "./plans.ts";
 import {
@@ -129,11 +130,13 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
   const rawDelay = (env.FORERUNNER_BENCH_DELAY_MS ?? "").trim();
   const delay = rawDelay ? Number(rawDelay) : 250;
   const criticDelay = Number((env.FORERUNNER_BENCH_CRITIC_DELAY_MS ?? "").trim() || 0);
+  // FORERUNNER_BENCH_PLAN: `chain`, `research`, or both (`chain,research`).
+  const plans = list(env.FORERUNNER_BENCH_PLAN).map((v) => v.toLowerCase());
   return {
     log,
     plan: {
-      kind:
-        (env.FORERUNNER_BENCH_PLAN ?? "").trim().toLowerCase() === "chain" ? "chain" : "default",
+      kind: plans.includes("chain") ? "chain" : "default",
+      research: plans.includes("research"),
       personTask: ["1", "true", "yes", "on"].includes(
         (env.FORERUNNER_BENCH_PERSON ?? "").trim().toLowerCase(),
       ),
@@ -310,13 +313,17 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
 export function parseIntakeRequest(req: ModelRequest): IntakeInput {
   const user = firstUserText(req.messages);
   const field = (name: string) => new RegExp(`^${name}: (.*)$`, "m").exec(user)?.[1]?.trim() ?? "";
-  const brief = /<<<BRIEF\n([\s\S]*?)\nBRIEF>>>/.exec(user)?.[1]?.trim() ?? "";
+  // After "Change the plan" the person's words follow the brief inside the markers (design §3.3).
+  const { brief, changes } = splitChanges(
+    /<<<BRIEF\n([\s\S]*?)\nBRIEF>>>/.exec(user)?.[1]?.trim() ?? "",
+  );
   return {
     project: field("Project"),
     goal: field("Goal"),
     brief,
     // "Plan size: small (a short brief: …)" asks for one to three tasks (the intake's Size rules).
     smallProject: field("Plan size").startsWith("small"),
+    changes,
   };
 }
 
@@ -824,7 +831,14 @@ function criticAnswer(
         grade: 86,
         confidence: "high",
         verdict: "accept",
-        summary: `${STAND_IN} Accepted: ${changed.length ? `${changed.length} changed file(s) match the brief` : "the report and the evidence match the brief"}.`,
+        // Design §5 rule 6: no "(s)"; the verb agrees ("Accepted: 1 changed file match").
+        summary: `${STAND_IN} Accepted: ${
+          changed.length === 1
+            ? "the changed file matches the brief"
+            : changed.length
+              ? `the ${changed.length} changed files match the brief`
+              : "the report and the evidence match the brief"
+        }.`,
         findings: [],
         criteria: criteria.map((c) => ({
           text: c,
@@ -881,7 +895,13 @@ export function describeChatContext(req: ModelRequest): string {
     .map((l) => /^- ([a-z_]+):/.exec(l)?.[1])
     .filter(Boolean);
   const tools = (req.tools ?? []).length;
-  return `I was given ${earlier} earlier turn(s) of this conversation, ${projects.length} project(s) in the system prompt${active ? " with one marked active" : ""}, ${hasTasks ? "a task list" : "no task list"}, ${hasDocs ? "project doc excerpts" : "no project doc excerpts"}, ${hasLessons ? "lessons" : "no lessons"}, the facts ${factNames.length ? factNames.join(", ") : "(none)"}, and ${tools} command tool(s).`;
+  // The reply is shown in the chat: plural words as the number says (design §5 rule 6).
+  return `I was given ${counted(earlier, "earlier turn")} of this conversation, ${counted(projects.length, "project")} in the system prompt${active ? " with one marked active" : ""}, ${hasTasks ? "a task list" : "no task list"}, ${hasDocs ? "project doc excerpts" : "no project doc excerpts"}, ${hasLessons ? "lessons" : "no lessons"}, the facts ${factNames.length ? factNames.join(", ") : "(none)"}, and ${counted(tools, "command tool")}.`;
+}
+
+/** "no project", "1 project", "2 projects". */
+function counted(n: number, what: string): string {
+  return n === 0 ? `no ${what}` : n === 1 ? `1 ${what}` : `${n} ${what}s`;
 }
 
 function chatAnswer(req: ModelRequest): Answer {

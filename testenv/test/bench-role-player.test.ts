@@ -302,6 +302,103 @@ describe("bench role-player: intake", () => {
     expect(lines(big.log).map((l) => l.injected ?? null)).toEqual(["intake-bad=too-big", null]);
   });
 
+  /**
+   * An intake request after "Change the plan" (design §3.3): the brief, then the person's
+   * words, as the intake writes them (`briefWithChanges` in packages/runtime/src/session/intake.ts).
+   */
+  const changedRequest = (brief: string, changes: string[]): ModelRequest => {
+    const asked =
+      changes.length === 1
+        ? `${brief}\n\nThe person read the first plan and asked for this change: ${changes[0]}`
+        : `${brief}\n\nThe person read the earlier plans and asked for these changes, in order; the later one wins where they differ:\n${changes.map((c, i) => `${i + 1}. ${c}`).join("\n")}`;
+    const first = intakeRequest(true);
+    return {
+      ...first,
+      messages: [
+        {
+          role: "user",
+          content: String(first.messages[0]?.content).replace(BRIEF, asked),
+        },
+      ],
+    };
+  };
+  const titlesOf = (text: string) =>
+    parseIntakeReply(text).plan.milestones.flatMap((m) => m.tasks.map((t) => t.title));
+
+  it("Change the plan: the stand-in reads the person's words, drops and adds the tasks they name and says what it did (bench, phase E)", async () => {
+    const { p } = player();
+    const before = titlesOf((await call(p, intakeRequest(true))).text);
+    expect(before.some((t) => /^Check /.test(t))).toBe(true);
+    expect(before.some((t) => /README/.test(t))).toBe(false);
+    const r = await call(p, changedRequest(BRIEF, ["drop the check and add a README task"]));
+    const proposal = parseIntakeReply(r.text);
+    const tasks = proposal.plan.milestones.flatMap((m) => m.tasks);
+    const after = tasks.map((t) => t.title);
+    // The check is gone; a README task is there; the rest of the plan is as before.
+    expect(after.some((t) => /check/i.test(t))).toBe(false);
+    expect(after.filter((t) => /README/.test(t))).toHaveLength(1);
+    expect(after).toContain(before[0]);
+    expect(tasks.find((t) => /README/.test(t.title))?.dependsOn).toEqual([tasks[0]?.key]);
+    // The plan writer takes it, and every task an agent does has its estimate.
+    expect(
+      shapeProjectPlan(proposal.plan, { name: "Quote page", small_project_mode: false }).milestones,
+    ).toHaveLength(1);
+    expect(proposal.firstSession.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key));
+    // What it did is in the plan's reason, in words.
+    expect(proposal.plan.reason).toMatch(/removed "Check that index\.html/);
+    expect(proposal.plan.reason).toMatch(/added "Write the README/);
+  });
+
+  it("Change the plan: later changes win, words it cannot place leave the plan as it was and are named, the last task is never dropped", async () => {
+    const { p } = player();
+    const plain = titlesOf((await call(p, intakeRequest(true))).text);
+    // In order: the README is added, then dropped again.
+    const both = parseIntakeReply(
+      (await call(p, changedRequest(BRIEF, ["add a README task", "remove the README"]))).text,
+    );
+    expect(both.plan.milestones.flatMap((m) => m.tasks.map((t) => t.title))).toEqual(plain);
+    // Words that name no task and no verb it knows: the same plan, and the reason says so.
+    const vague = parseIntakeReply(
+      (await call(p, changedRequest(BRIEF, ["A single index.html only."]))).text,
+    );
+    expect(vague.plan.milestones.flatMap((m) => m.tasks.map((t) => t.title))).toEqual(plain);
+    expect(vague.plan.reason).toContain('could not place "A single index.html only."');
+    // Anything else it is asked to add becomes a task with the person's words as its title.
+    const dark = parseIntakeReply(
+      (await call(p, changedRequest(BRIEF, ["Add a dark mode."]))).text,
+    );
+    expect(dark.plan.milestones.flatMap((m) => m.tasks.map((t) => t.title))).toEqual([
+      ...plain,
+      "Add a dark mode",
+    ]);
+    // A change that would leave no task keeps the last one and says why.
+    const all = parseIntakeReply(
+      (await call(p, changedRequest(BRIEF, ["drop the check, remove the page"]))).text,
+    );
+    const left = all.plan.milestones.flatMap((m) => m.tasks);
+    expect(left).toHaveLength(1);
+    expect(left[0]?.dependsOn).toEqual([]);
+    expect(all.plan.reason).toMatch(/kept .* so the plan has a task/);
+  });
+
+  it("FORERUNNER_BENCH_PLAN=research adds a researcher task whose brief names a web address (bench, phase E, C-73)", async () => {
+    const { p } = player({ FORERUNNER_BENCH_PLAN: "research" });
+    const tasks = parseIntakeReply(
+      (await call(p, intakeRequest(true))).text,
+    ).plan.milestones.flatMap((m) => m.tasks);
+    const research = tasks.find((t) => t.specialist === "researcher");
+    expect(research?.title).toMatch(/research\/notes\.md/);
+    expect(`${research?.outcome}`).toMatch(/https:\/\//);
+    expect(tasks.length).toBeLessThanOrEqual(3);
+    // With chain: the seven steps and the research task.
+    const chained = player({ FORERUNNER_BENCH_PLAN: "chain,research" });
+    const seven = parseIntakeReply(
+      (await call(chained.p, intakeRequest())).text,
+    ).plan.milestones.flatMap((m) => m.tasks);
+    expect(seven.map((t) => t.specialist)).toContain("researcher");
+    expect(seven.filter((t) => t.key?.startsWith("step"))).toHaveLength(7);
+  });
+
   it("plants a malformed plan or a failed planning call", async () => {
     const bad = player({ FORERUNNER_BENCH_INTAKE: "malformed" });
     expect(() => parseIntakeReply("")).toThrow();
@@ -520,6 +617,33 @@ describe("bench role-player: critic and chat", () => {
     ).toBe("Write the README: what it does");
   });
 
+  it("its summary follows the writing rules: no '(s)', and the verb agrees with the count (bench, phase E)", async () => {
+    // The Reviews tab read "Accepted: 1 changed file match the brief." (design §5 rule 6).
+    const { p } = player();
+    const one = SubmitReviewSchema.parse(
+      (await call(p, review("Create index.html", "c1"))).calls[0]?.input,
+    );
+    expect(one.summary).toBe(`${STAND_IN} Accepted: the changed file matches the brief.`);
+    const two = SubmitReviewSchema.parse(
+      (
+        await call(p, {
+          ...review("Create index.html", "c2"),
+          messages: [
+            {
+              role: "user",
+              content: evidence("Create index.html").replace(
+                "- index.html",
+                "- index.html\n- styles.css",
+              ),
+            },
+          ],
+        })
+      ).calls[0]?.input,
+    );
+    expect(two.summary).toBe(`${STAND_IN} Accepted: the 2 changed files match the brief.`);
+    for (const s of [one.summary, two.summary]) expect(s).not.toContain("(s)");
+  });
+
   it("sends a worker that did nothing back", async () => {
     const { p } = player();
     const r = await call(p, review("Create index.html", "c1", "I could not complete this task."));
@@ -542,9 +666,26 @@ describe("bench role-player: critic and chat", () => {
     const { p } = player();
     const r = await call(p, chat("what is going on?"));
     expect(r.text.startsWith(STAND_IN)).toBe(true);
-    expect(r.text).toMatch(/0 earlier turn\(s\)/);
-    expect(r.text).toMatch(/1 project\(s\).*marked active/);
+    // Plural words as the number says (design §5 rule 6): the reply is shown in the chat.
+    expect(r.text).toMatch(/no earlier turn of this conversation/);
+    expect(r.text).toMatch(/1 project in the system prompt.*marked active/);
     expect(r.text).toMatch(/no task list/);
+    expect(r.text).toMatch(/and no command tool\.$/);
+    expect(r.text).not.toContain("(s)");
+    const later = await call(
+      p,
+      chat(
+        "and now?",
+        ["task_list", "task_add"],
+        [
+          { role: "user", content: "hello" },
+          { role: "assistant", content: "hi" },
+        ],
+      ),
+    );
+    expect(later.text).toMatch(/1 earlier turn of this conversation/);
+    expect(later.text).toMatch(/and 2 command tools\.$/);
+    expect(later.text).not.toContain("(s)");
     expect(detectRole(chat("x")).role).toBe("chat");
   });
 

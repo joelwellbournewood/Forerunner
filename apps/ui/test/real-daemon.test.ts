@@ -34,6 +34,7 @@ import {
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
+import { intakeCardOf } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
 /**
@@ -4924,5 +4925,150 @@ describe("the UI client against the real daemon: research on an API key reads th
     } finally {
       await off.rt.close();
     }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: what the bench walks (phase E, bench)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  /** Holds the next specialist call until `release()`: a session is seen while it runs. */
+  let hold: { armed: boolean; held: boolean; release: () => void; gate: Promise<void> } = {
+    armed: false,
+    held: false,
+    release: () => undefined,
+    gate: Promise.resolve(),
+  };
+  const arm = () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    hold = { armed: true, held: false, release, gate };
+  };
+
+  beforeAll(async () => {
+    // The bench's stand-in as `fr daemon --provider bench` runs it: the check task asks the
+    // person first (FORERUNNER_BENCH_ASK), so a session ends with a task that needs them.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-bench-"));
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0", FORERUNNER_BENCH_ASK: "Check that" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = async function* (req) {
+      if (hold.armed && !hold.held && detectRole(req).role === "specialist") {
+        hold.held = true;
+        await hold.gate;
+      }
+      yield* stream(req);
+    };
+    ({ rt, client } = await composeWithRolePlayer({}, { provider: player }));
+  }, 120_000);
+  afterAll(async () => {
+    hold.release();
+    await rt?.close();
+  });
+
+  const BRIEF = "A page that shows a random quote";
+  const planCard = async (name: string) => {
+    const project = await client.createProject({
+      name,
+      goal: goalFromBrief(BRIEF),
+      brief: BRIEF,
+      intake: true,
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.projectId === project.id && r.status === "open",
+    );
+    if (!card) throw new Error("no plan card");
+    return { project, card, me };
+  };
+  /** The task titles the plan card shows (the Inbox's own reading of the card). */
+  const shownTasks = (card: { changeCard?: unknown } | undefined) =>
+    (intakeCardOf(card?.changeCard)?.milestones ?? []).flatMap((m) => m.tasks.map((t) => t.title));
+
+  it("Change the plan with the stand-in: the new plan card shows the change the person typed", async () => {
+    const { project, card, me } = await planCard("Changed by words");
+    const before = shownTasks(card);
+    expect(before.some((t) => /^Check /.test(t))).toBe(true);
+    // What the Inbox sends for Change the plan with the words in its text box.
+    await client.answerRequest(card.id, {
+      version: card.version,
+      answer: { choice: "Change the plan", text: "drop the check and add a README task" },
+    });
+    await rt.intake.inFlight(project.id);
+    const status = await client.intakeStatus(project.id);
+    expect(status.state).toBe("pending");
+    const next = (await client.inbox(me.id)).requests.find((r) => r.id === status.requestId);
+    const after = shownTasks(next);
+    expect(after).toContain(before[0]);
+    expect(after.some((t) => /check/i.test(t))).toBe(false);
+    expect(after.filter((t) => /README/.test(t))).toHaveLength(1);
+    expect(next?.title).toBe(`Plan for "Changed by words": ${after.length} tasks`);
+    // Nothing is left open for the next case: Reject writes nothing.
+    await client.answerRequest(next?.id ?? "", { version: next?.version ?? 0, answer: "Reject" });
+    expect(await client.tasks(project.id)).toEqual([]);
+  }, 60_000);
+
+  it("a session Approve and start began: Working now while it runs, then 'Ended: 1 task needs you', the files it changed, and the plan and its record among the decisions (rule 3)", async () => {
+    const { project, card } = await planCard("Seen working");
+    arm();
+    await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+    const tasks = await client.tasks(project.id);
+    const build = tasks.find((t) => t.specialist === "coder");
+    if (!build) throw new Error(`no coder task in ${tasks.map((t) => t.title).join(", ")}`);
+    const states = async () =>
+      `${(await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ")}; held=${hold.held}`;
+    // The specialist's first call is held: the session runs the build task now.
+    await eventually(async () => hold.held, "the build task's first model call", states, 30_000);
+    const session = (await client.sessions({ projectId: project.id })).find(
+      (s) => s.status === "running",
+    );
+    if (!session) throw new Error("no running session");
+    const running = (await client.projects()).find((p) => p.id === project.id);
+    expect(running?.working).toMatchObject({
+      sessionId: session.id,
+      agentName: "Alice",
+      taskId: build.id,
+      taskTitle: build.title,
+    });
+    expect(running?.working?.since).toBeTruthy();
+    expect((await client.project(project.id)).working?.sessionId).toBe(session.id);
+    hold.release();
+    await eventually(
+      async () => (await client.session(session.id)).status !== "running",
+      "the session to end",
+      states,
+      60_000,
+    );
+    // The check task asked the person; the session finished with it waiting for them.
+    const ended = await client.session(session.id);
+    expect(ended.status).toBe("completed");
+    expect(ended.statusText).toBe("Ended: 1 task needs you");
+    expect((await client.project(project.id)).working).toBeNull();
+    const summary = await client.projectSummary(project.id);
+    expect(summary.lastSession?.id).toBe(session.id);
+    expect(summary.lastSession?.changedFiles).toEqual(
+      expect.arrayContaining(["index.html", "script.js", "styles.css"]),
+    );
+    // The plan the person approved and the decision record it wrote are decisions too.
+    const decisions = await client.decisions(project.id);
+    expect(decisions.find((d) => d.kind === "plan")).toMatchObject({
+      id: card.id,
+      question: "The plan for Seen working",
+      chosen: "Approved.",
+      decidedByName: "J",
+      path: null,
+    });
+    expect(decisions.find((d) => d.kind === "record")).toMatchObject({
+      question: "A plain static page, no build step",
+      chosen: "docs/decisions/0001-plain-static-page.md",
+      path: "docs/decisions/0001-plain-static-page.md",
+      decidedByName: null,
+    });
   }, 120_000);
 });
