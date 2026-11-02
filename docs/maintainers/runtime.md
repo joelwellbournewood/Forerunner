@@ -1924,7 +1924,14 @@ card left. The rules:
   intake (`intakeAnswer`), specialist proposal (`specialistAnswer`), model watch
   (`modelWatchAnswerOf`) and a person's questions (`personQuestionsAnswer`, U-022: the Inbox
   form's `{ answers: [{ question, answer }] }` with at least one non-blank answer, one text from
-  anywhere else, or the option "Cancel the task"; a blank answer is refused), found by
+  anywhere else, or the option "Cancel the task"; a blank answer is refused; "go ahead" is Go
+  ahead without only where the card offers it, phase E: `personQuestionsAnswerFor(card,
+  answer)` reads it against `offersGoAheadWithout(card)`, true for a specialist's or the
+  critic's questions, false for a task planned for the person, whose card offers the form and
+  Cancel task only; there the route, the chat's `request.answer` and the sync refuse it with
+  `NEEDS_YOUR_ANSWERS`, "This card needs your answers: type them, or Cancel task.", and the
+  card stays open; before, a typed "go ahead" from the phone, the web approvals or the chat
+  closed the person's task with no answers and the task after it started on nothing), found by
   `change_card.key` (`ANSWER_CARD_KEYS`; a test asserts each
   equals its producer's constant). These readers live in this module (it imports only types
   beyond `@forerunner/platform`, so the UI's stand-in daemon loads it in a browser
@@ -2185,7 +2192,9 @@ waits on you" while 4 tasks waited on it).
   nothing. The same for the blocked-findings and failed-review cards, the person's answers (the
   existing start, now through `resumeWork`) and the questions card's new **Go ahead without**
   (`personQuestionsAnswer` reads it as `without`: the task goes back to ready with
-  `WITHOUT_ANSWERS_NOTE` queued for its brief). A planned person task (`on_answer: "done"`,
+  `WITHOUT_ANSWERS_NOTE` queued for its brief; only a specialist's card offers it, phase E: a
+  `without` stored on the person's own card, by a daemon from before, is recorded
+  `unrecognized_answer` and the questions are filed again, never a close on no answers). A planned person task (`on_answer: "done"`,
   New task's "Me") that the answers close calls `resumeWork` too, so the task that waited on it
   runs without a Start click (the review of fix/needs-me found it closed the task and started
   nothing; the Done line reads 'Answers saved in the decision record; "X" is done; a session

@@ -5,6 +5,7 @@ import {
   budgetStopAnswer,
   cannotRunAnswer,
   normalAnswer,
+  offersGoAheadWithout,
   optionLabel,
   signoffAnswer,
 } from "../wiring/request-answers.ts";
@@ -290,7 +291,8 @@ function retryOutcome(card: JsonObject, ctx: RequestWordsContext, verdict: boole
 function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords {
   const task = ctx.taskTitle ?? str(card.task_title) ?? "the task";
   const waiting = ctx.waiting ?? [];
-  const planned = card.source !== "specialist" && card.source !== "critic";
+  // The person's own task: no specialist decides in their place, so no Go ahead without.
+  const planned = !offersGoAheadWithout(card);
   const context = str(card.context);
   const body =
     [

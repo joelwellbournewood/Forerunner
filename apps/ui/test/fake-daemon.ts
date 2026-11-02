@@ -106,7 +106,7 @@ import {
   acceptsAnswer,
   budgetStopAnswer,
   cannotRunAnswer,
-  personQuestionsAnswer,
+  personQuestionsAnswerFor,
   signoffAnswer,
 } from "@forerunner/runtime/wiring/request-answers";
 import {
@@ -2332,15 +2332,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (p.id === r.projectId && p.waitingOnYou > 0) p.waitingOnYou -= 1;
     }
     // U-022, as the daemon's `syncPersonQuestions`: answers close a planned person task (done)
-    // or send a paused one back to ready; "Cancel task" cancels it; "Go ahead without" sends it
-    // back to ready without the answers (design §3.8). The card records the outcome.
+    // or send a paused one back to ready; "Cancel task" cancels it; "Go ahead without", which
+    // only a specialist's card offers (the route above refuses it on the person's own card,
+    // phase E), sends it back to ready without the answers (design §3.8). The card records the
+    // outcome.
     const personCard = r.changeCard as { key?: unknown; on_answer?: unknown } | null;
     if (typeof personCard?.key === "string" && personCard.key.startsWith("person_questions:")) {
       const task = state.tasks.find((t) => t.id === r.taskId);
-      const read = personQuestionsAnswer(parsed.data.answer as never);
+      const read = personQuestionsAnswerFor(personCard, parsed.data.answer as never);
       if (task && read?.kind === "cancel") task.status = "cancelled";
-      else if (task && read?.kind === "without")
-        task.status = personCard.on_answer === "done" ? "done" : "ready";
+      else if (task && read?.kind === "without") task.status = "ready";
       else if (task && read?.kind === "answers")
         task.status = personCard.on_answer === "ready" ? "ready" : "done";
       // As the daemon's resumeWork: an answer that leaves a task of the project runnable (the

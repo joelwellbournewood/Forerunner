@@ -432,9 +432,13 @@ project's workspace folder) and the decision log. A task planned for you is then
 done, and if a task was waiting on it, a session starts and works on that task (the card's Done
 line says so); a task a specialist was working on goes back to ready, a session starts, and its
 next run gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
-and say in its report what it assumed; the task goes on in a session. **Cancel task** cancels it
-instead (asked once, naming the tasks that wait on it). You can also answer in your own words
-from the phone; one text then answers all the questions.
+and say in its report what it assumed; the task goes on in a session. A task planned for you has
+no specialist to decide in your place, so its card has no Go ahead without: "go ahead" typed on
+the phone or said in Chat is refused with "This card needs your answers: type them, or Cancel
+task.", and the card and the task wait (if you have no answer, type what the next task should do
+instead, for example "use placeholder text"). **Cancel task** cancels it instead (asked once,
+naming the tasks that wait on it). You can also answer in your own words from the phone; one
+text then answers all the questions.
 
 ## Autonomy and budgets
 

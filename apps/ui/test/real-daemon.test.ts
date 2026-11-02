@@ -4926,3 +4926,85 @@ describe("the UI client against the real daemon: research on an API key reads th
     }
   }, 120_000);
 });
+
+describe("the UI client against the real daemon: answers do what the person said (phase E, answers)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    ({ rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_PERSON: "1" }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  /** A project planned from a brief, its plan card open in the Inbox. */
+  const planned = async (name: string) => {
+    const project = await client.createProject({
+      name,
+      goal: "A page for the bakery",
+      brief: "A one-page website for a small bakery with its opening hours.",
+      intake: true,
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const open = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    const [card] = await open();
+    if (!card) throw new Error("no plan card");
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    return { project, card, me, open, say };
+  };
+
+  it('"go ahead" on the person\'s own card is refused in words, typed or from the chat; the card and the task wait', async () => {
+    const { project, card, open, say } = await planned("Bakery hours");
+    await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+    let asked: Awaited<ReturnType<typeof open>>[number] | undefined;
+    await eventually(
+      async () => {
+        asked = (await open()).find((r) => r.reply === "form" && !!r.taskId);
+        return !!asked;
+      },
+      "the person task's card",
+      async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
+      30_000,
+    );
+    if (!asked) throw new Error("no person card");
+    // What the Inbox offers on it: the form and Cancel task.
+    expect(asked.choices?.map((c) => c.label)).toEqual(["Cancel task"]);
+    // The phone and the web approvals send the person's typed words as the answer.
+    const refused = await client
+      .answerRequest(asked.id, { version: asked.version, answer: "go ahead" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(400);
+    expect((refused as ApiError).message).toBe(
+      "This card needs your answers: type them, or Cancel task.",
+    );
+    // The chat's request_answer gets the same refusal, and says it.
+    const reply = await say(
+      `tool: request_answer {"request": "${asked.id}", "answer": "go ahead"}`,
+    );
+    expect(reply.reply).toContain("This card needs your answers: type them, or Cancel task.");
+    expect(reply.pendingConfirmation ?? null).toBeNull();
+    const still = (await open()).find((r) => r.id === asked?.id);
+    expect(still?.status).toBe("open");
+    const task = (await client.tasks(project.id)).find((t) => t.id === asked?.taskId);
+    expect(task?.status).toBe("needs_human");
+    expect(task?.display?.label).toMatch(/^Needs your answer/);
+  }, 60_000);
+});

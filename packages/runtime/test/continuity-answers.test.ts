@@ -197,7 +197,10 @@ describe("the person's answers reach the task that waited on them (phase C, live
     expect(after.requests.filter((r) => r.taskId === fill.id && r.status === "open")).toEqual([]);
   }, 60_000);
 
-  it("Go ahead without on the person's card tells the next task to decide itself, not the plan's promise", async () => {
+  it("Go ahead without is no answer to the person's own card: refused in words, the task and the one after it wait (phase E)", async () => {
+    // Before phase E this closed the person's task with no answers although its card offers
+    // only the form and Cancel task (design §3.8: Go ahead without is the specialist's card's,
+    // "the specialist decides"); the task after it then started on nothing.
     const asked = await rt.store.task.insert({
       project_id: projectId,
       title: "Owner picks the colours",
@@ -225,17 +228,23 @@ describe("the person's answers reach the task that waited on them (phase C, live
     await rt.syncApprovals();
     const inbox = (await (await req("/inbox")).json()) as { requests: Json[] };
     const card = inbox.requests.find((r) => r.taskId === asked.id && r.status === "open");
-    // The option the Inbox shows for it (design §3.8), as a click sends it.
-    const answered = await req(`/requests/${String(card?.id)}/answer`, {
+    // The options the Inbox shows on it: the form and Cancel task.
+    expect(((card?.choices ?? []) as { label: string }[]).map((c) => c.label)).toEqual([
+      "Cancel task",
+    ]);
+    const refused = await req(`/requests/${String(card?.id)}/answer`, {
       method: "POST",
       body: JSON.stringify({ version: card?.version, answer: "Go ahead without" }),
     });
-    expect(answered.status).toBe(200);
-    expect((await rt.store.task.mustGet(asked.id)).status).toBe("done");
-    const brief = await taskContextBlock(rt.store, await rt.store.task.mustGet(style.id));
-    expect(brief).toContain(
-      '- "Owner picks the colours": the person chose to go ahead without answering its questions',
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as Json).message).toBe(
+      "This card needs your answers: type them, or Cancel task.",
     );
-    expect(brief).not.toContain("recorded in docs/style.md");
+    await rt.syncApprovals();
+    expect((await rt.store.task.mustGet(asked.id)).status).toBe("needs_human");
+    expect((await rt.store.humanRequest.mustGet(String(card?.id))).status).toBe("open");
+    expect((await rt.store.task.mustGet(style.id)).status).toBe("draft");
+    const brief = await taskContextBlock(rt.store, await rt.store.task.mustGet(style.id));
+    expect(brief).not.toContain("go ahead without answering");
   });
 });
