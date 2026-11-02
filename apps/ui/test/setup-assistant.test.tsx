@@ -299,9 +299,18 @@ describe("setup assistant", () => {
     );
   });
 
-  it("without a Claude key the Done step says work cannot start; with both it says neither", async () => {
+  it("without a Claude key the Done step says work cannot start", async () => {
     const none = await toDone({ anthropicApiKey: false, github: true });
     expect(none).toHaveTextContent("Until Claude is connected your agent cannot start work.");
     expect(none).not.toHaveTextContent("Without GitHub");
+  });
+
+  it("with a Claude key and a GitHub token the Done step says neither sentence", async () => {
+    const both = await toDone({ anthropicApiKey: true, github: true });
+    expect(both).toHaveTextContent("✓ Claude is connected.");
+    expect(both).toHaveTextContent("✓ GitHub is connected.");
+    expect(both).not.toHaveTextContent("Until Claude is connected");
+    expect(both).not.toHaveTextContent("Without GitHub");
+    expect(screen.queryByTestId("setup-done-missing")).toBeNull();
   });
 });
