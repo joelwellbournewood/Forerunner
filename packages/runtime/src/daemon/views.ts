@@ -1168,8 +1168,8 @@ export const MODE_LABELS: Record<Mode, string> = {
   planning: "Session planning",
   coder: "Coding specialist",
   researcher: "Research specialist",
-  critic_t1: "Critic tier 1",
-  critic_t23: "Critic tier 2 and 3",
+  critic_t1: "Critic, light review",
+  critic_t23: "Critic, full review",
 };
 
 /**

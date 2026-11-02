@@ -506,6 +506,84 @@ describe("Tasks tab (design §3.5)", () => {
     );
   });
 
+  it("Edit keeps a deploy at the full review and says so when Save raises it; a level left as it is goes back as stored (ADR 0104)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ sandbox: { state: "not_running" } });
+    const coder = harness.daemon.state.modelSettings.specialists[0];
+    if (coder)
+      harness.daemon.state.modelSettings.specialists.push({ ...coder, name: "ops-deploy" });
+    // A deploy stored at the light review (as New task could make one) and a planner's tier 0.
+    addTask(harness, "task_deploy", "Deploy the site", {
+      status: "ready",
+      riskTier: 1,
+      specialist: "ops-deploy",
+    });
+    addTask(harness, "task_zero", "Write the changelog", {
+      status: "ready",
+      riskTier: 0,
+      specialist: "coder",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const openEdit = async (id: string) => {
+      await user.click(within(await rowOf(id)).getByTestId("task-title"));
+      const drawer = await screen.findByTestId("task-drawer");
+      await user.click(await within(drawer).findByTestId("drawer-action-edit"));
+      return { drawer, form: await within(drawer).findByTestId("edit-task-form") };
+    };
+
+    // The deploy: only the full review levels, the full review shown, and what Save does said.
+    let { drawer, form } = await openEdit("task_deploy");
+    let level = within(form).getByTestId("edit-risk-tier") as HTMLSelectElement;
+    expect([...level.options].map((o) => o.textContent)).toEqual([
+      "Full review: needs Docker, not running on this computer",
+      "Full review and your sign-off: needs Docker, not running on this computer",
+    ]);
+    expect(level.value).toBe("2");
+    expect(within(form).getByTestId("edit-full-review-note")).toHaveTextContent(
+      "A deploy keeps the full review and your sign-off: saving moves this task to the full review.",
+    );
+    await user.click(within(form).getByTestId("save-task"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_deploy")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/task_deploy")[0]?.body).toMatchObject({
+      riskTier: 2,
+      specialist: "ops-deploy",
+    });
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    // A planner's tier 0 reads as the light review; a new title alone sends the level as stored.
+    ({ drawer, form } = await openEdit("task_zero"));
+    level = within(form).getByTestId("edit-risk-tier") as HTMLSelectElement;
+    expect(level.value).toBe("1");
+    expect(level.selectedOptions[0]?.textContent).toBe(
+      "Light review: the critic reads the work, nothing runs in isolation",
+    );
+    expect(within(form).queryByTestId("edit-full-review-note")).toBeNull();
+    const title = within(form).getByTestId("edit-title");
+    await user.clear(title);
+    await user.type(title, "Write the changelog for 2.0");
+    await user.click(within(form).getByTestId("save-task"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_zero")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/task_zero")[0]?.body).toMatchObject({
+      title: "Write the changelog for 2.0",
+      riskTier: 0,
+    });
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    // Handing a light-review task to the deploy specialist: the levels follow, and Save sends
+    // the full review the select shows.
+    ({ form } = await openEdit("task_zero"));
+    await user.selectOptions(within(form).getByTestId("edit-who"), "ops-deploy");
+    level = within(form).getByTestId("edit-risk-tier") as HTMLSelectElement;
+    expect(level.value).toBe("2");
+    expect(within(form).getByTestId("edit-full-review-note")).toBeInTheDocument();
+    await user.click(within(form).getByTestId("save-task"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_zero")).toHaveLength(2));
+    expect(postedCalls(harness, "/tasks/task_zero")[1]?.body).toMatchObject({
+      riskTier: 2,
+      specialist: "ops-deploy",
+    });
+  });
+
   it("New task says that Full review needs Docker, offers Who does it, and takes a decimal comma", async () => {
     const user = userEvent.setup();
     const harness = createHarness({ sandbox: { state: "not_running" } });

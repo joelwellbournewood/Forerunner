@@ -2,6 +2,16 @@ import type { SettingView } from "../api/client.ts";
 import { Field, INPUT_CLASS } from "../components/ui.tsx";
 import { chfToMicro } from "../lib/money.ts";
 import { AUTONOMY_LEVELS } from "../lib/plain-words.ts";
+import { reviewLevelName, reviewLevelValue } from "../lib/task-actions.ts";
+
+/**
+ * The review levels in words (ADR 0104: no tier numbers on a person's screen; a light review is
+ * the least any task gets), for the calibration's and the handover's choice of level.
+ */
+const REVIEW_LEVEL_OPTIONS = [1, 2, 3].map((t) => ({
+  value: String(t),
+  label: reviewLevelName(t),
+}));
 
 /**
  * Settings as a person reads and changes them (U-060): a plain label for every key, a value in
@@ -157,7 +167,7 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
     case "calibration": {
       const c = obj(v);
       if (c.enabled === false) return "off";
-      return `on, day ${str(c.day, "1")} at ${str(c.time, "06:00")}, up to USD ${str(c.budget_usd, "10")}, review tier ${str(c.tier, "1")}`;
+      return `on, day ${str(c.day, "1")} at ${str(c.time, "06:00")}, up to USD ${str(c.budget_usd, "10")}, grades the ${reviewLevelName(Number(str(c.tier, "1"))).toLowerCase()}`;
     }
     case "handover": {
       const h = obj(v);
@@ -344,13 +354,9 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
           ...MONTH_FIELDS,
           {
             name: "tier",
-            label: "Review tier graded",
+            label: "Review graded",
             kind: "select",
-            options: [
-              { value: "1", label: "1" },
-              { value: "2", label: "2" },
-              { value: "3", label: "3" },
-            ],
+            options: REVIEW_LEVEL_OPTIONS,
           },
         ],
         (current) => {
@@ -392,9 +398,9 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
           { name: "files", label: "Files it may touch (one per line)", kind: "lines" },
           {
             name: "riskTier",
-            label: "Review tier",
+            label: "Review level",
             kind: "select",
-            options: ["0", "1", "2", "3"].map((t) => ({ value: t, label: t })),
+            options: REVIEW_LEVEL_OPTIONS,
           },
         ],
         (current) => {
@@ -411,7 +417,8 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
               ? seed.acceptanceCriteria.join("\n")
               : "",
             files: Array.isArray(seed.files) ? seed.files.join("\n") : "",
-            riskTier: str(seed.riskTier, "1"),
+            // A stored tier 0 reads as the light review (ADR 0104: every task is reviewed).
+            riskTier: String(reviewLevelValue(Number(str(seed.riskTier, "1")))),
           };
         },
         (v) => {
@@ -429,7 +436,7 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
           if (title) {
             const criteria = lines(v.criteria);
             const files = lines(v.files);
-            const riskTier = int(v.riskTier, 0, 3);
+            const riskTier = int(v.riskTier, 1, 3);
             if (!(v.outcome ?? "").trim() || criteria.length === 0 || files.length === 0)
               return null;
             if (riskTier === null) return null;

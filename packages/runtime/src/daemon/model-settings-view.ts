@@ -148,7 +148,7 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
         editable: false,
         note:
           a.kind === "critic"
-            ? "The critic's model and effort follow its review tiers (spec H): tier 1 and tiers 2 and 3."
+            ? "The critic's model and effort follow the review: one for the light review, one for the full review."
             : "Runs with the effort table's defaults.",
         modes: a.kind === "critic" ? [critic("critic_t1"), critic("critic_t23")] : [],
       })),

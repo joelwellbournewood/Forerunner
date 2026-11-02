@@ -137,13 +137,17 @@ export function reviewLevelName(tier: number): string {
   return "Full review and your sign-off";
 }
 
+/** The first level that is a full review (the work runs in Docker). */
+export const FULL_REVIEW_TIER = 2;
+
 /**
  * Specialists whose work keeps the full review and the person's sign-off (ADR 0104, the owner's
- * decision 4: deploys and data migrations); the Edit dialog offers them no light review.
+ * decision 4: deploys and data migrations), with what their work is called; the Edit dialog
+ * offers them no light review.
  */
-export const FULL_REVIEW_SPECIALISTS: ReadonlySet<string> = new Set([
-  "ops-deploy",
-  "migration-specialist",
+export const FULL_REVIEW_SPECIALISTS: ReadonlyMap<string, string> = new Map([
+  ["ops-deploy", "A deploy"],
+  ["migration-specialist", "A data migration"],
 ]);
 
 /**
@@ -151,7 +155,7 @@ export const FULL_REVIEW_SPECIALISTS: ReadonlySet<string> = new Set([
  * deploy or a migration is at least the full review.
  */
 export function reviewLevelValue(tier: number, specialist?: string | null): number {
-  const floor = specialist && FULL_REVIEW_SPECIALISTS.has(specialist) ? 2 : 1;
+  const floor = specialist && FULL_REVIEW_SPECIALISTS.has(specialist) ? FULL_REVIEW_TIER : 1;
   return Math.min(3, Math.max(floor, Math.round(tier)));
 }
 

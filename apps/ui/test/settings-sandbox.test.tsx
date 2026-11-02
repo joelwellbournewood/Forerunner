@@ -19,7 +19,7 @@ describe("Settings: Sandbox (Docker)", () => {
       "Docker not installed",
     );
     expect(within(card).getByTestId("sandbox-why")).toHaveTextContent(
-      "Full-review tasks (risk tier 2 and above) run their tests and builds in this sandbox, isolated from your computer, so the critic sees real results.",
+      "Full-review tasks run their tests and builds in this sandbox, isolated from your computer, so the critic sees real results.",
     );
     expect(within(card).getByTestId("sandbox-headline")).toHaveTextContent(
       "Docker is not installed on this computer.",

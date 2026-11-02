@@ -120,7 +120,7 @@ export function settingsView(input: SettingsViewInput): Row[] {
       label: "Monthly critic calibration",
       value: prefOf(h, "calibration"),
       description:
-        "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd, tier (defaults: on, day 1, 06:00, USD 10, tier 1)",
+        "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd and the review graded (defaults: on, day 1, 06:00, USD 10, the light review)",
       risk: "medium",
     }),
     human({
@@ -193,7 +193,7 @@ export function settingsView(input: SettingsViewInput): Row[] {
           key: "project.small_project_mode",
           label: "Small-project mode",
           value: p.small_project_mode === true,
-          description: `One milestone, a flat task list and critic tier 0 for new tasks on ${p.name}`,
+          description: `One milestone, a flat task list and the light review for new tasks on ${p.name}`,
           risk: "low",
         }),
         project({

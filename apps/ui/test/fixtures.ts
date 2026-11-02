@@ -627,7 +627,7 @@ export const SETTINGS: SettingView[] = [
     scopeId: "human_alice",
     value: null,
     description:
-      "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd, tier (defaults: on, day 1, 06:00, USD 10, tier 1)",
+      "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd and the review graded (defaults: on, day 1, 06:00, USD 10, the light review)",
     risk: "medium",
   },
   {
@@ -691,7 +691,7 @@ export const SETTINGS: SettingView[] = [
     scope: "project",
     scopeId: "proj_atlas",
     value: false,
-    description: "One milestone, a flat task list and critic tier 0 for new tasks on Atlas",
+    description: "One milestone, a flat task list and the light review for new tasks on Atlas",
     risk: "low",
   },
   {
@@ -1925,7 +1925,7 @@ export const PERFORMANCE: PerformanceView = {
     },
     {
       mode: "critic_t1",
-      label: "Critic tier 1",
+      label: "Critic, light review",
       targetMs: 30_000,
       targetKind: "total",
       tier: "sonnet",
@@ -1947,7 +1947,7 @@ export const PERFORMANCE: PerformanceView = {
     },
     {
       mode: "critic_t23",
-      label: "Critic tier 2 and 3",
+      label: "Critic, full review",
       targetMs: 0,
       targetKind: "by_task",
       tier: "opus",
@@ -2550,7 +2550,7 @@ export const MODEL_SETTINGS: ModelSettingsView = {
       name: "Critic",
       kind: "critic",
       editable: false,
-      note: "The critic's model and effort follow its review tiers (spec H): tier 1 and tiers 2 and 3.",
+      note: "The critic's model and effort follow the review: one for the light review, one for the full review.",
       modes: [
         {
           mode: "critic_t1",
