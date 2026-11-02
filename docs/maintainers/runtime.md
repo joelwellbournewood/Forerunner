@@ -1278,7 +1278,9 @@ project's open milestone instead of adding one. `dependsOn` takes plan keys or i
 project's own tasks and the rows are written dependencies first; an unknown reference, a cycle,
 a duplicate key, an empty plan or one over the caps (`MAX_PLAN_MILESTONES` 20,
 `MAX_PLAN_TASKS` 200) is refused as `validation` (409 `conflict` on the route, ADR 0025) with
-nothing written. Milestone target dates are calendar dates (`YYYY-MM-DD`). The project card
+nothing written; a reason, a task title or a milestone name over its limit is shortened at a
+sentence or a word (`planProse`, ADR 0103), on this route as in the intake
+(`small-project.test.ts`). Milestone target dates are calendar dates (`YYYY-MM-DD`). The project card
 carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither, and its
 `nextMilestone` is the open milestone (`views.ts#openMilestone`: the first `planned` or `active`
 row by order, the one the plan writer joins), so a `done` or `cancelled` row from before the mode
