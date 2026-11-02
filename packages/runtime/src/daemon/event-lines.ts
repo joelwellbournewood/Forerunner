@@ -192,6 +192,12 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       }
       if (outcome === "timeout") return `${taskName(p)} ran out of time.`;
       if (outcome === "budget_exceeded") return `${taskName(p)} stopped: the budget is used.`;
+      // ADR 0111: the run's own sentence names the limit ("The run paused before its budget of
+      // CHF 0.40 ran out: ..."), said of the task.
+      if (outcome === "paused")
+        return /^The run /.test(summary)
+          ? `${capital(taskName(p))} ${summary.replace(/^The run /, "")}`
+          : `${capital(taskName(p))} paused at a budget.`;
       if (outcome === "killed") return `${capital(taskName(p))} was stopped.`;
       if (outcome === "needs_human")
         return `${capital(who)} has questions for you about ${taskName(p)} (Inbox).`;

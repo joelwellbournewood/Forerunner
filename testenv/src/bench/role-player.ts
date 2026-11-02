@@ -84,6 +84,13 @@ export interface BenchOptions {
    * live critic did.
    */
   missing: string[];
+  /**
+   * Task-title substrings whose specialist keeps working (FORERUNNER_BENCH_LONG, ADR 0111): it
+   * writes its file one part per call until it hears the wrap-up (then it reports with "Where I
+   * stopped:" and "Left to do:") or a budget stops it; after 30 parts it reports as usual. So a
+   * budget a few times the run's reserve shows the wrap-up and the pause on the bench.
+   */
+  long?: string[];
   /** `ok`, or a planted intake failure (FORERUNNER_BENCH_INTAKE=malformed|error). */
   intake: "ok" | "malformed" | "error";
   /**
@@ -167,6 +174,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     ask: list(env.FORERUNNER_BENCH_ASK),
     askStyle: askStyleOf(env.FORERUNNER_BENCH_ASK_STYLE),
     missing: list(env.FORERUNNER_BENCH_MISSING),
+    long: list(env.FORERUNNER_BENCH_LONG),
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
     intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
     delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 250,
@@ -515,6 +523,12 @@ function specialistAnswer(
         ? outcomeFile
         : [defaultFile(brief.title, who)];
   const mentioned = filesNamed(`${brief.title}\n${brief.outcome}\n${brief.criteria.join("\n")}`);
+  const longHit = matchesAny(brief.title, opts.long ?? []);
+
+  // 0. Told that about a fifth of the budget is left (ADR 0111): start nothing new and report
+  // with the two headings the brief names.
+  if (req.messages.some((m) => m.role === "user" && messageText(m).includes(WRAP_UP_MARK)))
+    return text(wrapUpReport(brief, who, calls, targets, !!longHit), "wrap-up heard");
 
   // 1. Look around first, as a careful worker does.
   if (!did("list_dir") && offered(req.tools, "list_dir"))
@@ -558,6 +572,24 @@ function specialistAnswer(
     );
   }
   if (did("ask_person")) return text(`${STAND_IN} I asked the person and wait for the answers.`);
+
+  // 2b. Planted: long work (FORERUNNER_BENCH_LONG): one part of its file per call, until it
+  // hears the wrap-up (step 0) or a budget stops it.
+  const parts = calls.filter((c) => c.name === "write_file" && !c.isError).length;
+  if (longHit && parts < LONG_PARTS && offered(req.tools, "write_file")) {
+    const path = targets[0] ?? defaultFile(brief.title, who);
+    const content = Array.from(
+      { length: parts + 1 },
+      (_, i) => `## Part ${i + 1}\n\n${STAND_IN} part ${i + 1} of "${brief.title}".\n`,
+    ).join("\n");
+    return {
+      text: `Writing part ${parts + 1} of ${path}.`,
+      toolCalls: [
+        { name: "write_file", input: { path, content: `# ${brief.title}\n\n${content}` } },
+      ],
+      injected: `long=${longHit}`,
+    };
+  }
 
   // 3. Planted: the run fails.
   const failHit = matchesAny(brief.title, opts.fail);
@@ -892,6 +924,44 @@ function report(
     lessonLine(who),
   ];
   return lines.join("\n");
+}
+
+/**
+ * What the runtime's wrap-up message starts with (`WRAP_UP_TEXT` in the runtime's agent loop,
+ * ADR 0111); testenv does not import the runtime.
+ */
+export const WRAP_UP_MARK = "About a fifth of this task's budget is left";
+/** How many parts a FORERUNNER_BENCH_LONG specialist writes before it reports as usual. */
+const LONG_PARTS = 30;
+
+/**
+ * The report of a run told to wrap up (ADR 0111): what it did, "Where I stopped:" and a "Left
+ * to do:" list; "Left to do: nothing" when its file is written (and, for JavaScript, checked).
+ */
+function wrapUpReport(
+  brief: BriefParts,
+  who: string,
+  calls: readonly PastToolCall[],
+  targets: readonly string[],
+  long: boolean,
+): string {
+  const writes = calls.filter((c) => c.name === "write_file" && !c.isError);
+  const files = [...new Set(writes.map((c) => String(c.input.path)))];
+  const jsUnchecked =
+    files.some((f) => /\.m?js$/.test(f)) && !calls.some((c) => c.name === "run_command");
+  const left: string[] = [];
+  if (long || !files.length) left.push(`write the rest of ${targets[0] ?? files[0] ?? "the file"}`);
+  if (long || jsUnchecked || !files.length)
+    left.push(`check ${targets[0] ?? files[0] ?? "the work"} against the criteria`);
+  return [
+    `**Summary** ${STAND_IN} ${who} ${files.length ? `wrote ${files.join(", ")}` : "changed no file"} for "${brief.title}" and stopped when told that about a fifth of the budget was left.`,
+    "",
+    `Where I stopped: ${files.length ? `${files.join(", ")} ${long ? `has ${writes.length} part${writes.length === 1 ? "" : "s"}` : "is written"}` : "nothing is written yet"}.`,
+    "",
+    ...(left.length ? ["Left to do:", ...left.map((l) => `- ${l}`)] : ["Left to do: nothing"]),
+    "",
+    lessonLine(who),
+  ].join("\n");
 }
 
 /** The lesson the stand-in keeps, as its final message's last line. */

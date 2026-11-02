@@ -26,6 +26,7 @@ import {
   type RunEvent,
   type RunOutcome,
   type RunPricing,
+  WRAP_UP_TEXT,
   wholeMs,
 } from "../agent/loop.ts";
 import type { SdkAgentDriver, SdkRunRequest } from "../agent/sdk.ts";
@@ -110,6 +111,16 @@ import {
   type TaskBillingPick,
   type TaskBillingPort,
 } from "./billing.ts";
+import {
+  budgetLineWords,
+  handoffArtifact,
+  limitWords,
+  parseHandoff,
+  pauseSentence,
+  type RunHandoff,
+  stopSourceOf,
+  WRAP_UP_BRIEF_LINE,
+} from "./budget-pause.ts";
 import { screenLessons } from "./lessons.ts";
 import { renderHeardLines } from "./live-chat.ts";
 import { renderQueueNotes } from "./next-session.ts";
@@ -495,7 +506,10 @@ interface DriverOutcome {
   costUsdMicro: number;
   ttftMs: number | null;
   durationMs: number;
-  error?: { code: string; message: string; resetAt?: string };
+  /** `level`, `capUsdMicro`: a budget refusal's level and cap, so the pause names its limit. */
+  error?: { code: string; message: string; resetAt?: string; level?: string; capUsdMicro?: number };
+  /** The run was told to wrap up (ADR 0111). */
+  wrapUpSent: boolean;
   /** The loop driver's context-layer numbers; the SDK path measures none. */
   context: RunContextStats | null;
   injectionReports: number;
@@ -754,9 +768,10 @@ export class LoopTaskExecutor implements TaskExecutor {
     const cap = runCapOf(task, defaultSpec.maxBudgetUsdMicro);
     if (cap.source === "task_budget" && cap.usdMicro <= 0) {
       // Live walk 2 (B2): the stop says it in CHF and the runner files its card (Raise the
-      // budget, Cancel task); before, the task waited with no card and dollar amounts.
+      // budget, Cancel task); before, the task waited with no card and dollar amounts. It is a
+      // pause at its budget (ADR 0111): nothing ran, so nothing is reviewed or counted.
       return {
-        outcome: "needs_human",
+        outcome: "paused",
         summary: `Its budget of ${this.chfText(task.budget_usd_micro)} is spent (${this.chfText(task.actual_cost_usd_micro)} so far), so nothing ran.`,
         costUsdMicro: 0,
         budgetStop: {
@@ -764,10 +779,21 @@ export class LoopTaskExecutor implements TaskExecutor {
           spentUsdMicro: task.actual_cost_usd_micro,
           source: "task_budget",
           specialist: defaultSpec.name,
+          stoppedBy: "budget",
         },
+        handoff: { stopped: "", leftToDo: [], stoppedBy: "budget" },
       };
     }
-    const sessionLeftUsdMicro = Math.min(token.claims.budgetUsdMicro, budget.remainingUsdMicro());
+    // ADR 0111: a run may spend at most what is left of the session's work budget (its cap less
+    // the review reserve), so a running task cannot eat the share kept for reviews. Before, it
+    // was what the whole session had left, and the task's review then had no money.
+    const sessionLeftUsdMicro = Math.min(
+      token.claims.budgetUsdMicro,
+      budget.workRemainingUsdMicro(),
+    );
+    // Where the run's cap comes from: its own (the task's budget, the specialist's limit), or
+    // the session's work budget when that is smaller.
+    const runCapSource = cap.usdMicro <= sessionLeftUsdMicro ? cap.source : "session";
     const brief: DelegationBrief = validateBrief({
       goal: `${task.title}: ${task.outcome}`,
       contextLinks: [
@@ -794,6 +820,8 @@ export class LoopTaskExecutor implements TaskExecutor {
         LESSONS_CONSTRAINT,
         // U-022: the person is the one who can answer; a specialist never guesses for them.
         `If the acceptance criteria need answers only the person can give (a choice of stack, hosting, repository, domain, an account), do not guess: call ${ASK_PERSON_TOOL} with the questions when it is offered, else end the report with "Questions for the person:" and one question per line.`,
+        // ADR 0111: what the wrap-up's two headings are for.
+        WRAP_UP_BRIEF_LINE,
         ...retryConstraints(task.attempt, openFindings, { kept: keptByLadder }),
       ],
       // The critic reviews against the same criterion (live2 #8: a generic one was "met").
@@ -1081,7 +1109,16 @@ export class LoopTaskExecutor implements TaskExecutor {
     const onEvent = (ev: RunEvent) => {
       this.deps.onEvent?.(task.id, ev);
       if (!ctx.onStep) return;
-      if (ev.type === "model_call_end")
+      // ADR 0111: the run's budget line at its start (the reserve, or "save only") and its
+      // wrap-up are lines of the session's log.
+      if (ev.type === "budget_line")
+        ctx.onStep({ kind: "note", text: budgetLineWords(ev, (n) => this.chfText(n)) });
+      else if (ev.type === "wrap_up_sent")
+        ctx.onStep({
+          kind: "note",
+          text: `Told the ${spec.name} to wrap up: about a fifth of this task's budget is left (it spent ${this.chfText(ev.spentUsdMicro)} of ${this.chfText(ev.capUsdMicro)}).`,
+        });
+      else if (ev.type === "model_call_end")
         ctx.onStep({ kind: "model", costUsdMicro: ev.costUsdMicro });
       else if (ev.type === "tool_call") calls.set(ev.id, { name: ev.name, input: ev.input });
       else if (ev.type === "tool_result" || ev.type === "tool_denied") {
@@ -1141,6 +1178,8 @@ export class LoopTaskExecutor implements TaskExecutor {
           // The runner's hold on the task: a person's move stops the run even when it lands
           // before the run registers with the kill switch (U-039).
           signal: ctx.signal,
+          // ADR 0111: a task's run hears the wrap-up once, at its line.
+          wrapUp: WRAP_UP_TEXT,
         });
         result = {
           outcome: r.outcome,
@@ -1150,6 +1189,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           ttftMs: r.ttftMs,
           durationMs: r.durationMs,
           ...(r.error ? { error: r.error } : {}),
+          wrapUpSent: r.wrapUpSent,
           context: null,
           injectionReports: 0,
           artifacts: [
@@ -1199,6 +1239,8 @@ export class LoopTaskExecutor implements TaskExecutor {
           // The runner's hold on the task: a person's move stops the run even when it lands
           // before the run registers with the kill switch (U-039).
           signal: ctx.signal,
+          // ADR 0111: a task's run hears the wrap-up once, at its line.
+          wrapUp: WRAP_UP_TEXT,
         });
         result = {
           outcome: r.outcome,
@@ -1208,6 +1250,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           ttftMs: r.ttftMs[0] ?? null,
           durationMs: r.durationMs,
           ...(r.error ? { error: r.error } : {}),
+          wrapUpSent: r.wrapUpSent,
           context: r.context,
           injectionReports: r.injectionReports.length,
           artifacts: [
@@ -1233,19 +1276,41 @@ export class LoopTaskExecutor implements TaskExecutor {
     // U-022: a run that asked the person (`ask_person` filed a card and ended the run) waits
     // for the answers; it is no work for the critic to review or the ladder to retry.
     const askedPerson = await questionsAskedByRun(store, task.id, run.id);
+    // A driver's error message, and a successful run's final text, may quote what the
+    // subprocess or the provider said (its own environment included); the store has no
+    // redaction layer, so both are redacted here before they become the task's summary, the
+    // report the critic reads and the lesson candidates (ADR 0044 item 9).
+    const finalText = redact(result.finalText);
+    // ADR 0111 (the owner's decision of 2026-11-02): a run that stopped at a budget of any level,
+    // or that heard the wrap-up in this run and listed work left, is paused: no critic, no failed
+    // try, its report kept beside the stop's words and its two headings parsed as data. A run
+    // that ends normally without a wrap-up, or after one with nothing left, is reviewed.
+    const parsed = parseHandoff(finalText);
+    const stoppedBy: RunHandoff["stoppedBy"] | null = askedPerson
+      ? null
+      : result.outcome === "budget_exceeded"
+        ? "budget"
+        : result.outcome === "completed" && result.wrapUpSent && parsed.leftToDo.length > 0
+          ? "wrap_up"
+          : null;
+    const handoff: RunHandoff | null = stoppedBy ? { ...parsed, stoppedBy } : null;
     const outcome: TaskExecutionResult["outcome"] = askedPerson
       ? "needs_human"
-      : result.outcome === "completed"
-        ? "done"
-        : result.outcome === "needs_human"
-          ? "needs_human"
-          : result.outcome === "budget_exceeded"
-            ? "budget_exceeded"
+      : handoff
+        ? "paused"
+        : result.outcome === "completed"
+          ? "done"
+          : result.outcome === "needs_human"
+            ? "needs_human"
             : result.outcome === "timeout"
               ? "timeout"
               : result.outcome === "killed"
                 ? "killed"
                 : "failed";
+    const reportArtifact = finalText.trim() ? [{ report: finalText.trim().slice(0, 1_500) }] : [];
+    const errorArtifact = result.error
+      ? [{ error: failureWords({ ...result.error, message: redact(result.error.message) }) }]
+      : [];
     try {
       await store.run.patch(run.id, {
         tokens_in: result.usage.input_tokens,
@@ -1256,31 +1321,29 @@ export class LoopTaskExecutor implements TaskExecutor {
         // Integers only: the timing columns are INTEGER and the store rejects a fraction.
         ttft_ms: wholeMs(result.ttftMs),
         duration_ms: wholeMs(result.durationMs),
-        outcome: result.outcome,
+        // A graceful pause is "paused" (written here, not the driver's "completed"); a hard stop
+        // stays "budget_exceeded". The estimates' learner skips both (a pause is a lower bound).
+        outcome: handoff?.stoppedBy === "wrap_up" ? "paused" : result.outcome,
         timed_out: result.outcome === "timeout",
         tokens_before_compression: result.context?.tokensBefore ?? 0,
         tokens_after_compression: result.context?.tokensAfter ?? 0,
         context_transforms: result.context?.transforms ?? [],
         headroom_used: result.context?.headroomUsed ?? headroomUsed,
         // What the next attempt's brief reads (design §4.6): the report, or the error in words.
+        // A paused run keeps its report, the stop's words beside it, and its handoff (ADR 0111).
         artifacts: [
           ...result.artifacts,
-          ...(result.error
-            ? [{ error: failureWords({ ...result.error, message: redact(result.error.message) }) }]
-            : redact(result.finalText).trim()
-              ? [{ report: redact(result.finalText).trim().slice(0, 1_500) }]
-              : []),
+          ...(handoff
+            ? [...reportArtifact, ...errorArtifact, handoffArtifact(handoff)]
+            : errorArtifact.length
+              ? errorArtifact
+              : reportArtifact),
         ],
       });
     } catch (e) {
       // The result is never lost because bookkeeping failed, and the failure is on record.
       await this.runPersistFailed(runIds, "end", e);
     }
-    // A driver's error message, and a successful run's final text, may quote what the
-    // subprocess or the provider said (its own environment included); the store has no
-    // redaction layer, so both are redacted here before they become the task's summary, the
-    // report the critic reads and the lesson candidates (ADR 0044 item 9).
-    const finalText = redact(result.finalText);
     // The credential's usage limit stopped the run (U-078, ADR 0100): the source rests until its
     // reset (else an hour) and the task goes back to ready for the next credential. It is no
     // failure of the work, so the retry ladder's attempt is not counted and no critic reviews it.
@@ -1303,37 +1366,51 @@ export class LoopTaskExecutor implements TaskExecutor {
         ...(worktree ? { worktree } : {}),
       };
     }
-    // A run that stopped at the task's own cap (its budget, or the specialist's limit) while the
-    // session still had room is this task's matter (U-042): it waits for the person with what
-    // was spent and what to do, and the session goes on with the rest. Only a stop at the
-    // session's budget ends the session.
-    if (outcome === "budget_exceeded" && cap.usdMicro < sessionLeftUsdMicro) {
-      const what =
-        cap.source === "task_budget"
-          ? `its budget of ${this.chfText(task.budget_usd_micro)}`
-          : `the ${spec.name}'s limit of ${this.chfText(cap.usdMicro)} per run (it has no budget of its own)`;
+    // A paused run (ADR 0111) names the limit it paused at: the refusal's level (the task's
+    // budget, the specialist's limit, the session, the project, the month, the subscription's
+    // share), not only where the run's cap came from (U-042, before: every stop below the
+    // session's remainder read as the task's budget). The runner files its card; a stop at the
+    // task's own limit lets the session go on with the rest.
+    if (handoff) {
+      const source = stopSourceOf(result.error, runCapSource);
+      const capUsdMicro =
+        source === "task_budget"
+          ? task.budget_usd_micro
+          : source === "specialist_limit"
+            ? cap.usdMicro
+            : source === "session"
+              ? budget.limits.budgetUsdMicro
+              : source === "plan"
+                ? brief.budgetUsdMicro
+                : (result.error?.capUsdMicro ?? brief.budgetUsdMicro);
+      const what = limitWords(source, capUsdMicro, (n) => this.chfText(n), spec.name);
       return {
-        outcome: "needs_human",
-        // The hooks stop a run before a call that would go over its cap: "after spending CHF
-        // 0.00" read as a contradiction on the bench (the stop came before anything was spent).
-        summary:
-          result.costUsdMicro < cap.usdMicro
-            ? `The run stopped at ${what}: it spent ${this.chfText(result.costUsdMicro)}, and its next step would have gone over.`
-            : `The run stopped at ${what}, after spending ${this.chfText(result.costUsdMicro)}.`,
+        outcome: "paused",
+        summary: pauseSentence(
+          handoff,
+          what,
+          result.costUsdMicro,
+          source === "specialist_limit" || source === "task_budget" ? cap.usdMicro : capUsdMicro,
+          (n) => this.chfText(n),
+        ),
         costUsdMicro: result.costUsdMicro,
         budgetStop: {
-          capUsdMicro: cap.source === "task_budget" ? task.budget_usd_micro : cap.usdMicro,
+          capUsdMicro,
           spentUsdMicro: task.actual_cost_usd_micro + result.costUsdMicro,
-          source: cap.source,
+          source,
           specialist: spec.name,
+          stoppedBy: handoff.stoppedBy,
         },
+        handoff,
+        ...(result.error ? { errorCode: result.error.code } : {}),
         checksPassed: false,
         runId: run.id,
         ...(worktree ? { worktree } : {}),
         finalReport: finalText,
-        lessons: [],
+        lessons: this.screenedLessons(task.id, finalText, spec.name),
       };
     }
+
     // A run that ended on an error is named by the error in words (design §4.4); before, any
     // text the model wrote first ("I'll look at what is already in the folder first.") won.
     // A timeout keeps its partial output (spec D.17); the error's message is redacted (ADR 0044).

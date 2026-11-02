@@ -227,7 +227,16 @@ export interface RunResult {
    * a `provider_usage_limit` with when the credential's limit resets and the source it was
    * met on (ADR 0100).
    */
-  error?: { code: string; message: string; source?: string; resetAt?: string; sourceId?: string };
+  error?: {
+    code: string;
+    message: string;
+    source?: string;
+    /** A budget refusal's `details.level` and `details.capUsdMicro` (ADR 0111). */
+    level?: string;
+    capUsdMicro?: number;
+    resetAt?: string;
+    sourceId?: string;
+  };
   /**
    * The billing source the run's last call was booked to: the request's, or the one a routed
    * provider chose for the call (`ModelResponse.billing`, ADR 0100).
@@ -672,6 +681,9 @@ export class LoopAgentDriver {
         code,
         message: errorMessage(e),
         ...(typeof details.source === "string" ? { source: details.source } : {}),
+        // A budget refusal's level and cap (ADR 0111): the pause names the limit that stopped it.
+        ...(typeof details.level === "string" ? { level: details.level } : {}),
+        ...(typeof details.capUsdMicro === "number" ? { capUsdMicro: details.capUsdMicro } : {}),
         ...(typeof details.resetAt === "string" ? { resetAt: details.resetAt } : {}),
         ...(typeof details.sourceId === "string" ? { sourceId: details.sourceId } : {}),
       };

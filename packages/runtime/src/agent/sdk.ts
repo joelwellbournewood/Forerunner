@@ -81,7 +81,14 @@ export interface SdkRunResult {
    * hooks' `budget_exceeded`; "run" for Claude Code's own `error_max_budget_usd`), so the
    * executor names the limit that stopped it (ADR 0111).
    */
-  error?: { code: string; message: string; resetAt?: string; level?: string; source?: string };
+  error?: {
+    code: string;
+    message: string;
+    resetAt?: string;
+    level?: string;
+    source?: string;
+    capUsdMicro?: number;
+  };
   /** The run was told to wrap up (`SdkRunRequest.wrapUp`, ADR 0111). */
   wrapUpSent: boolean;
 }
@@ -426,6 +433,7 @@ export class SdkAgentDriver {
         message: errorMessage(e),
         ...(typeof details.level === "string" ? { level: details.level } : {}),
         ...(typeof details.source === "string" ? { source: details.source } : {}),
+        ...(typeof details.capUsdMicro === "number" ? { capUsdMicro: details.capUsdMicro } : {}),
       };
       if (outcome === "error")
         this.logger.error("sdk run failed", { runId: claims.runId, error: error.message });

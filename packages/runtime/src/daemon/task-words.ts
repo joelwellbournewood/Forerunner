@@ -169,6 +169,27 @@ export function cardKindOf(
 }
 
 /**
+ * A task's status while its budget card is open (ADR 0111): paused at the limit the card names
+ * (`change_card.source`). A session's budget that stopped it twice (C-36) asks a decision.
+ */
+export function budgetPauseLabel(source: unknown): string {
+  switch (source) {
+    case "session_budget":
+      return "Needs your decision: a session's budget is too small";
+    case "session":
+      return "Paused at the session's budget";
+    case "project":
+      return "Paused at the project's budget";
+    case "month":
+      return "Paused at this month's cap";
+    case "plan":
+      return "Paused at your Claude subscription's share";
+    default:
+      return "Paused at its budget";
+  }
+}
+
+/**
  * Whether an open card holds its task on the Tasks tab ("Needs your answer", "Needs your
  * decision"). The Docker card (`sandbox.not_ready`, one per project, naming its task for Cancel
  * task) asks nothing of the task: the row reads "Waiting for Docker", or "Paused by you" with
@@ -271,12 +292,11 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
     case "needs_human": {
       if (card && cardKindOf(card) === "budget")
         // Live walk 2 (B2): it read "Paused" with no card; the card asks to raise the budget.
-        // C-36: a session's budget that stopped it twice says so.
+        // C-36: a session's budget that stopped it twice says so. ADR 0111: every other stop at
+        // a budget is a pause, named by the limit that stopped it.
         return display(
           "answer",
-          (card.change_card as { source?: unknown } | null)?.source === "session_budget"
-            ? "Needs your decision: a session's budget is too small"
-            : "Needs your decision: its budget is used",
+          budgetPauseLabel((card.change_card as { source?: unknown } | null)?.source),
           "warn",
           {
             detail: "Its card is in the Inbox: raise its budget, or cancel it.",

@@ -174,6 +174,11 @@ function runOutcomeWords(outcome: string): string {
       return "Ran out of time";
     case "usage_limit":
       return "Stopped at the usage limit";
+    // ADR 0111: a run that wrapped up with work left, and one a budget stopped.
+    case "paused":
+      return "Paused";
+    case "budget_exceeded":
+      return "Stopped at a budget";
     case "error":
     case "failed":
       return "Failed";
@@ -213,13 +218,23 @@ export function pairReports(
   const finished: { at: string; report: RunReport }[] = [];
   let files: string[] = [];
   for (const e of [...events].sort((x, y) => x.seq - y.seq)) {
-    const p = (e.payload ?? {}) as { taskId?: unknown; summary?: unknown; files?: unknown };
+    const p = (e.payload ?? {}) as {
+      taskId?: unknown;
+      summary?: unknown;
+      report?: unknown;
+      files?: unknown;
+    };
     if (p.taskId !== taskId) continue;
     if (e.type === TASK_FILES_EVENT && Array.isArray(p.files)) {
       files = p.files.filter((x): x is string => typeof x === "string");
     } else if (e.type === "task.finished") {
-      const report = typeof p.summary === "string" ? reportText(p.summary) : null;
-      const whole = typeof p.summary === "string" ? reportText(p.summary, FULL_REPORT_LINES) : null;
+      // A paused run (ADR 0111) carries its own report beside its sentence: both are shown.
+      const said =
+        typeof p.summary === "string" && typeof p.report === "string" && p.report.trim()
+          ? `${p.summary}\n\n${p.report}`
+          : p.summary;
+      const report = typeof said === "string" ? reportText(said) : null;
+      const whole = typeof said === "string" ? reportText(said, FULL_REPORT_LINES) : null;
       finished.push({
         at: e.created_at,
         report: { report, ...(whole && whole !== report ? { fullReport: whole } : {}), files },

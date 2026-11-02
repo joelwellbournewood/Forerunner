@@ -171,12 +171,13 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     ]);
     // The session's result points at a card that is there.
     expect(String(ended.summary)).toContain('"Contact page" needs your decision (Inbox).');
-    // The Tasks tab says the same as the Inbox, with the card to open.
+    // The Tasks tab says the same as the Inbox, with the card to open. ADR 0111: a stop at a
+    // budget is a pause (before: "Needs your decision: its budget is used").
     const view = await taskView();
     expect(view.status).toBe("needs_human");
     expect(view.display).toMatchObject({
       key: "answer",
-      label: "Needs your decision: its budget is used",
+      label: "Paused at its budget",
       blocker: { kind: "card", requestId: card.id, cardKind: "budget" },
     });
     // CHF everywhere a person reads it: no dollar amounts.

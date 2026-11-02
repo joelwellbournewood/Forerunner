@@ -509,6 +509,13 @@ describe("live steps (design §4.14)", () => {
       onStep: (s) => steps.push(s),
     });
     expect(steps).toEqual([
+      // ADR 0111: the run's budget line comes first, a line of the session's log.
+      {
+        kind: "note",
+        text: expect.stringMatching(
+          /^This run may spend CHF [\d.]+: at CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/,
+        ),
+      },
       { kind: "model", costUsdMicro: expect.any(Number) },
       {
         kind: "tool",

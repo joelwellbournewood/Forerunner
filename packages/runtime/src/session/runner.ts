@@ -56,6 +56,7 @@ import {
   sessionBudgetStops,
   sessionBudgetTitle,
 } from "./budget-card.ts";
+import { type BudgetStopSource, type RunHandoff, stopEndsSession } from "./budget-pause.ts";
 import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import {
@@ -209,7 +210,13 @@ export interface TaskExecutionResult {
      * back to ready (its claim released, no attempt counted) for the next credential; `summary`
      * is the session log's sentence.
      */
-    | "usage_limit";
+    | "usage_limit"
+    /**
+     * The run paused at a budget (ADR 0111): it stopped at one of any level, or it heard the
+     * wrap-up and listed work left. No critic reviews it and no try is counted; `budgetStop`
+     * names the limit and `handoff` what it left. The runner files today's budget card.
+     */
+    | "paused";
   summary: string;
   costUsdMicro: number;
   /**
@@ -233,23 +240,31 @@ export interface TaskExecutionResult {
   /** Lessons the specialist spelled out ("Lesson: ..."), recorded at session end. */
   lessons?: LessonCandidate[];
   /**
-   * Set on a `needs_human` result when the run stopped at the task's own cap (U-042): its
-   * budget, or the specialist's per-run limit when it has none. The runner files the budget
-   * card (`session/budget-card.ts`: Raise the budget, Cancel task; live walk 2, B2).
+   * Set on a `paused` result (ADR 0111; before, a `needs_human` one at the task's own cap,
+   * U-042): the limit the run paused at. The runner files the budget card
+   * (`session/budget-card.ts`: Raise the budget, Cancel task; live walk 2, B2).
    */
   budgetStop?: BudgetStop;
+  /** A paused run's "Where I stopped:" and "Left to do:" (ADR 0111), data only. */
+  handoff?: RunHandoff;
   /** The web pages the run read (ADR 0107); the critic checks cited claims against them. */
   webSources?: WebSource[];
 }
 
-/** Where a run stopped at its task's own cap, in micro-USD (`TaskExecutionResult.budgetStop`). */
+/** Where a run paused at a budget, in micro-USD (`TaskExecutionResult.budgetStop`). */
 export interface BudgetStop {
-  /** The cap it stopped at: the task's budget, or the specialist's limit per run. */
+  /**
+   * The cap it stopped at: the task's budget, the specialist's limit per run, the session's
+   * budget, the project's budget or the month's cap (for the subscription's share: the run's cap).
+   */
   capUsdMicro: number;
   /** What the task has spent in all its runs, this one included. */
   spentUsdMicro: number;
-  source: "task_budget" | "specialist_limit";
+  /** Which limit it was (ADR 0111): the refusal's level, not only where the run's cap came from. */
+  source: BudgetStopSource;
   specialist: string;
+  /** `wrap_up`: it heard the wrap-up and listed work left; `budget`: a budget refused a call. */
+  stoppedBy?: RunHandoff["stoppedBy"];
 }
 
 export interface TaskExecutor {
@@ -309,7 +324,9 @@ async function lastWorkSpecialist(store: StateStore, taskId: string): Promise<st
 /** One step of a task's run, as the executor reports it to the runner (`onStep`). */
 export type TaskStep =
   | { kind: "model"; costUsdMicro: number }
-  | { kind: "tool"; name: string; input?: unknown; isError: boolean; denied?: boolean };
+  | { kind: "tool"; name: string; input?: unknown; isError: boolean; denied?: boolean }
+  /** A line of the run's own (its budget line, its wrap-up, ADR 0111): the log says `text`. */
+  | { kind: "note"; text: string };
 
 export interface SessionStartOptions {
   agentId: string;
@@ -1498,6 +1515,11 @@ export class SessionRunner {
               await store.session.recordSpend(session.id, Math.max(0, step.costUsdMicro), 1);
               return;
             }
+            // A line of the run's own (its budget line, its wrap-up; ADR 0111): no step.
+            if (step.kind === "note") {
+              await emit("task.step", { taskId: t.id, title: t.title, ok: true, text: step.text });
+              return;
+            }
             await store.session.recordSpend(session.id, 0, 1);
             await emit("task.step", {
               taskId: t.id,
@@ -1614,6 +1636,10 @@ export class SessionRunner {
               outcome: result.outcome,
               costUsdMicro: result.costUsdMicro,
               summary: result.summary,
+              // A paused run's own report (ADR 0111): the drawer shows it under the sentence.
+              ...(result.outcome === "paused" && result.finalReport?.trim()
+                ? { report: result.finalReport.trim().slice(0, 4_000) }
+                : {}),
               ...(toCritic ? { review: true } : {}),
               ...(couldNot !== null ? { couldNot } : {}),
               ...(again ? { again: true } : {}),
@@ -1928,7 +1954,15 @@ export class SessionRunner {
                   inReview.push(task.id);
               }
             }
-          } else if (result.outcome === "needs_human") {
+          } else if (
+            result.outcome === "needs_human" ||
+            (result.outcome === "paused" && result.budgetStop?.source !== "session")
+          ) {
+            // ADR 0111: a paused run (a budget of any level, or a wrap-up with work left) is no
+            // work for the critic and no failed try: it waits on today's budget card, which
+            // names the limit ('budget-resume' replaces the card). A stop at the project's
+            // budget, the month's cap or the subscription's share ends the session after it:
+            // nothing else of it can run there.
             const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
             const waiting = await store.task.transition(
               task.id,
@@ -1976,6 +2010,16 @@ export class SessionRunner {
                 error: errorMessage(e),
               });
             }
+            if (
+              result.outcome === "paused" &&
+              result.budgetStop &&
+              stopEndsSession(result.budgetStop.source)
+            ) {
+              stopReason = "budget_exceeded";
+              skipped.push(...queue.map((i) => i.taskId));
+              queue.length = 0;
+              break;
+            }
           } else if (
             result.outcome === "failed" &&
             isTransientError(result.errorCode) &&
@@ -2019,7 +2063,9 @@ export class SessionRunner {
                 error: errorMessage(e),
               });
             }
-          } else if (result.outcome === "budget_exceeded") {
+          } else if (result.outcome === "budget_exceeded" || result.outcome === "paused") {
+            // A pause at the session's own budget (ADR 0111) goes this way until 'budget-resume'
+            // pauses it with the same card at the first stop.
             // The session's own budget is used (design §4.2: the session stops there). The task
             // is no matter for the person: it goes back to ready by its claim's release, its
             // attempt count unchanged, and the next session continues it. Before, it waited

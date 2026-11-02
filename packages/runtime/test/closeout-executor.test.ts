@@ -136,7 +136,7 @@ function sessionBudget(h: Harness, sessionId: string, budgetUsdMicro: number): S
 }
 
 describe("closeout: sub-agent caps (C.6)", () => {
-  it("the specialist's token gets the parent's remaining budget when that is the smallest cap, at depth + 1", async () => {
+  it("the specialist's token gets what is left of the parent's work budget when that is the smallest cap, at depth + 1", async () => {
     const h = harness();
     const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
     const s = await seed(store);
@@ -170,7 +170,10 @@ describe("closeout: sub-agent caps (C.6)", () => {
     const [run] = await store.run.forTask(s.task.id);
     const child = h.tokens.claimsForRun(run?.id ?? "");
     expect(child).toBeDefined();
-    expect(child?.budgetUsdMicro).toBe(300_000);
+    // ADR 0111: what is left of the session's work budget (USD 1 less the fifth kept for
+    // reviews, less the USD 0.70 spent), so the run cannot eat the review's share. Before:
+    // the whole remainder, USD 0.30.
+    expect(child?.budgetUsdMicro).toBe(100_000);
     expect(child?.depth).toBe(1);
     expect(child?.maxDepth).toBe(parent.claims.maxDepth);
     expect(run?.depth).toBe(1);
