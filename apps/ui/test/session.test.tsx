@@ -262,6 +262,10 @@ describe("a finished session's page (U-071)", () => {
     await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("Working"));
     await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("Done"));
     await waitFor(() => expect(screen.getByTestId("stream-mode")).toHaveTextContent("finished"));
+    // The whole log was read: the person lines, and all six events under Details (the step
+    // line is a detail, design §3.7).
+    expect(screen.getAllByTestId("event-row").length).toBeGreaterThanOrEqual(5);
+    await userEvent.setup().click(screen.getByTestId("details-toggle"));
     expect(screen.getAllByTestId("event-row").length).toBeGreaterThanOrEqual(6);
     const polled = h.gets.filter((p) => p === `/sessions/${session.id}/events`).length;
     await new Promise((r) => setTimeout(r, 150));

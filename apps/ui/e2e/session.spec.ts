@@ -36,7 +36,10 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(page.getByTestId("event-row").nth(1)).toBeVisible();
   await expect(page.getByTestId("current-task")).toContainText("Decide the versioning scheme");
   await expect(page.getByTestId("current-task")).toContainText("researcher");
-  await expect(page.getByTestId("event-row")).toHaveCount(6, { timeout: 10_000 });
+  // Design §3.7: the person lines by default; the step line ("read docs/versioning.md") is a
+  // detail, so five of the six events show until Details is ticked.
+  await expect(page.getByTestId("event-row")).toHaveCount(5, { timeout: 10_000 });
+  await expect(page.getByTestId("event-log")).not.toContainText("read docs/versioning.md");
   // Ended: no task in flight and nothing to stop (design §3.7).
   await expect(page.getByTestId("session-status")).toHaveText("Done");
   await expect(page.getByTestId("current-task")).toHaveCount(0);
@@ -47,8 +50,11 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(page.getByTestId("steps")).toHaveText("6");
   await expect(page.getByTestId("session-spend")).toContainText("CHF 3.60");
 
-  // Details: the event types, the level filters and the raw payloads.
+  // Details: the detail events, the event types, the level filters and the raw payloads.
   await page.getByTestId("details-toggle").check();
+  await expect(page.getByTestId("event-row")).toHaveCount(6);
+  await expect(page.getByTestId("event-log")).toContainText("read docs/versioning.md");
+  await expect(page.getByTestId("event-type").first()).toHaveText("session.started");
   await page.getByTestId("filter-info").click();
   await expect(page.getByTestId("event-row")).toHaveCount(2);
   await expect(page.getByTestId("event-raw")).toHaveCount(2);
