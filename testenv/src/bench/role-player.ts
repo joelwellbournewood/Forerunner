@@ -513,7 +513,8 @@ function specialistAnswer(
 
   // 2. Planted: needs the person's answers before it can work.
   const askHit = matchesAny(brief.title, opts.ask);
-  // "Go ahead without" reaches the brief as the person's note, not as answers.
+  // "Go ahead without" reaches the brief under "Answers from the person" (live L-3), and
+  // `ask_person` is refused on the task from then on.
   const wentAhead = /chose to go ahead without answering/i.test(firstUserText(req.messages));
   // FORERUNNER_BENCH_ASK_STYLE=plain|bullets: it works with a placeholder and asks in its report.
   const askInReport =

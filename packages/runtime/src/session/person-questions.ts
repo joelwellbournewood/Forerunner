@@ -19,12 +19,13 @@ import {
   personQuestionsAnswer,
 } from "../wiring/request-answers.ts";
 import { answerApplied, markAnswer } from "./answer-mark.ts";
-import { noteAboutTask, recordStart, resumeWork } from "./resume-work.ts";
+import { recordStart, resumeWork } from "./resume-work.ts";
 import type { StartRequest } from "./triggers.ts";
 
 /**
  * What the person chose when they went on without answering (the commands' `WITHOUT_ANSWERS_NOTE`,
- * the Tasks tab's Go ahead without): it reaches the task's next brief as a note.
+ * the Tasks tab's Go ahead without, the Inbox card's): the task's next brief says it, read from
+ * the card or the change when the run starts (`answersBlockFor`).
  */
 export const WITHOUT_ANSWERS_NOTE =
   "The person chose to go ahead without answering the questions asked about this task: decide yourself and say in the report what you assumed.";
@@ -543,6 +544,11 @@ export function askPersonTool(
         return { content: "ask_person works only inside a task's run.", isError: true };
       const task = await deps.store.task.get(ctx.taskId);
       if (!task) return { content: `task ${ctx.taskId} not found`, isError: true };
+      // Go ahead without (design §3.8: "the specialist decides and says what it assumed"): the
+      // person said not to be asked on this task. Live (L-3) the next run asked the same
+      // question again and the Inbox showed a second card, at a run's cost each time.
+      if (await wentAheadWithout(deps.store, task.id))
+        return { content: ASK_REFUSED_AFTER_WITHOUT, isError: true };
       const { request, reused } = await filePersonQuestions(deps.store, {
         task,
         humanId: ctx.humanId,
@@ -567,15 +573,69 @@ export function askPersonTool(
 // ---------------------------------------------------------------------------------------
 // The answers in the next run's brief
 
+/** What `ask_person` says on a task the person went ahead on without answering. */
+export const ASK_REFUSED_AFTER_WITHOUT =
+  "Not asked: the person chose to go ahead without answering the questions asked about this task, so no question is put to them again. Decide yourself and say in your report what you assumed; if the work cannot be done at all without an answer (an input that is missing), say so in your report.";
+
+/** The store a task's "Go ahead without" is read from: its cards, and the Tasks tab's moves. */
+type WithoutStore = Pick<StateStore, "humanRequest"> &
+  Partial<Pick<StateStore, "task" | "changeLog">>;
+
 /**
- * The answers the person gave to the questions a specialist or the critic asked on this task
- * (applied cards, oldest first), as a block for the next run's first message; empty when there
- * are none. The person's words are quoted as they were given.
+ * The questions the person went ahead without answering on this task, oldest first, or null
+ * when they never did: a questions card answered "Go ahead without" in the Inbox, or the Tasks
+ * tab's Go ahead without (`task.resume` with the answers left out: its change records the note
+ * it queued, `without_answers_note_id`), unless undone. Read from the store when a run starts,
+ * so a session that was already running when the person chose sees it (live L-3: the note the
+ * answer queued was not in the queue that session had read at its start).
  */
-export async function answersBlockFor(
-  store: Pick<StateStore, "humanRequest">,
+export async function withoutAnswersOn(
+  store: WithoutStore,
   taskId: string,
-): Promise<string> {
+): Promise<{ questions: string[] } | null> {
+  const rows = (await store.humanRequest.list({ task_id: taskId } as never, { limit: 200 }))
+    .filter((r) => keyOf(r) === personQuestionsKey(taskId))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  let found = false;
+  const questions: string[] = [];
+  const add = (qs: readonly string[]) => {
+    for (const q of qs) if (!questions.includes(q)) questions.push(q);
+  };
+  for (const row of rows) {
+    if (row.status !== "answered" || personQuestionsAnswer(row.answer)?.kind !== "without")
+      continue;
+    found = true;
+    add(personQuestionsCardOf(row)?.questions ?? row.steps);
+  }
+  const task = store.task ? await store.task.get(taskId) : undefined;
+  if (store.changeLog && task?.project_id) {
+    for (const change of await store.changeLog.forProject(task.project_id, { limit: 200 })) {
+      if (change.undo_state === "undone") continue;
+      const after = change.after as JsonObject | null;
+      if (after?.task_id !== taskId || typeof after.without_answers_note_id !== "string") continue;
+      found = true;
+      // The questions it went without: the cards the move withdrew.
+      const withdrawn = Array.isArray(after.withdrawn_requests) ? after.withdrawn_requests : [];
+      for (const row of rows) if (withdrawn.includes(row.id)) add(row.steps);
+    }
+  }
+  return found ? { questions: questions.slice(0, MAX_PERSON_QUESTIONS) } : null;
+}
+
+/** Whether the person went ahead without answering on this task (`withoutAnswersOn`). */
+export async function wentAheadWithout(store: WithoutStore, taskId: string): Promise<boolean> {
+  return (await withoutAnswersOn(store, taskId)) !== null;
+}
+
+/**
+ * What the person said to the questions a specialist or the critic asked on this task, as a
+ * block for the next run's first message (design §4.6: "answers the person gave or 'the person
+ * chose to go ahead without answering'"); empty when there is nothing. The answers of applied
+ * cards, oldest first, quoted as they were given; then, when the person went ahead without
+ * answering (`withoutAnswersOn`), that choice, the questions it covers and that they are not
+ * asked again.
+ */
+export async function answersBlockFor(store: WithoutStore, taskId: string): Promise<string> {
   const rows = (await store.humanRequest.list({ task_id: taskId } as never, { limit: 200 }))
     .filter((r) => keyOf(r) === personQuestionsKey(taskId) && r.status === "answered")
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -586,14 +646,32 @@ export async function answersBlockFor(
     const card = personQuestionsCardOf(row);
     parts.push(...renderPairs(card?.questions ?? row.steps, read.answers));
   }
-  if (!parts.length) return "";
+  const without = await withoutAnswersOn(store, taskId);
+  if (!parts.length && !without) return "";
   return [
     "## Answers from the person",
     "",
-    "The person answered the questions asked on this task. Use these answers to meet the acceptance criteria; do not ask them again.",
-    "",
-    ...parts,
-  ].join("\n");
+    ...(parts.length
+      ? [
+          "The person answered the questions asked on this task. Use these answers to meet the acceptance criteria; do not ask them again.",
+          "",
+          ...parts,
+        ]
+      : []),
+    ...(without
+      ? [
+          WITHOUT_ANSWERS_NOTE,
+          "",
+          ...(without.questions.length
+            ? ["The questions they left open:", ...without.questions.map((q) => `- ${q}`), ""]
+            : []),
+          "Do not ask the person again: ask_person is refused for this task. If the work cannot be done at all without an answer (an input that is missing), say so in your report.",
+          "",
+        ]
+      : []),
+  ]
+    .join("\n")
+    .trimEnd();
 }
 
 /** What the person said on a task another task waited on (`personAnswersOn`). */
@@ -898,7 +976,10 @@ async function applyAnswers(
     try {
       if (answer.kind === "without") {
         // Design §3.8 "Go ahead without": the specialist decides and says what it assumed. The
-        // task goes back to ready with that note for its next brief, and work resumes.
+        // task goes back to ready and work resumes; its next brief says the person chose to go
+        // ahead without answering, read from this card when the run starts (`answersBlockFor`),
+        // and `ask_person` is refused on it. No note is queued for it: a session already running
+        // reads the queue only at its start, so the next run missed it (live L-3).
         let follow = false;
         await store.transaction(async (tx) => {
           const claimed = await markAnswer(tx, clock, row, "without");
@@ -916,15 +997,6 @@ async function applyAnswers(
             follow = true;
           } else if (current && current.status === "needs_human") {
             const t = await tx.task.transition(current.id, current.version, "ready", reason, actor);
-            await tx.queue.enqueue({
-              project_id: t.project_id,
-              human_id: deps.humanId,
-              kind: "note",
-              text: noteAboutTask(t, WITHOUT_ANSWERS_NOTE),
-              priority: 8,
-              status: "queued",
-              author_agent: deps.agentId,
-            });
             status = t.status;
             follow = true;
           }

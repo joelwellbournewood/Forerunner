@@ -1532,14 +1532,33 @@ are resolved and it closes along the graph (`needs_human -> ready -> claimed -> 
 in_review -> done`), and a paused one goes `needs_human -> ready` and the scheduler is asked for
 a `message` start of its project (the daemon only, not a one-shot). The next run's first
 message carries "Answers from the person" (`answersBlockFor`: every answered card of the task,
-the questions with the person's words). The decision log records the answer as for any
+the questions with the person's words). **Go ahead without** (design §3.8, §4.6) reaches it the
+same way: `withoutAnswersOn` reads, when the run starts, a card of the task answered "Go ahead
+without" in the Inbox, or the Tasks tab's Go ahead without (the `task.resume` change whose
+`after` records `without_answers_note_id`, not undone, with the questions of the cards it
+withdrew), and the block says `WITHOUT_ANSWERS_NOTE`, the questions left open, and that they
+are not asked again. Live (L-3, 2026-11-02, "Members chart") the person pressed it while the
+session ran another task; the answer queued a note, but a running session reads the queue only
+at its start, so the next run of the chart in that session was not told, asked the same
+question again and the Inbox showed a second card with Go ahead without, a run's cost each
+time. So the Inbox path queues no note (the card is the one place), the executor leaves out a
+queued note that only repeats it (the Tasks tab still queues one), and from then on the task
+gets no second questions card: `ask_person` answers `ASK_REFUSED_AFTER_WITHOUT` (an error
+result; the run goes on and reports what it assumed, or why it cannot do the work) and the
+critic path files no questions for it (`wentAheadWithout`; a `human` verdict files its sign-off,
+which shows what was done without the answers). The decision log records the answer as for any
 `decision` (the answer route). Tests: `person-questions.test.ts` (which tasks, what a report
 asks, the reader, the critic path with a `human` and a `revise` verdict: one attempt, the
-questions and no sign-off), `person-questions-daemon.test.ts` (the composed daemon: planned and
+questions and no sign-off; after Go ahead without no second questions card),
+`person-questions-daemon.test.ts` (the composed daemon: planned and
 1.0.3 tasks asked at once with no run and no model call, a restart files no second card, the
 form's answers in the decision doc and the task done, "Cancel the task", a blank answer
 refused, `ask_person` ending the run without a review and the next run's brief carrying the
-answer), `apps/ui/test/inbox.test.tsx` and `real-daemon.test.ts`. Requirement: J.3.
+answer), `go-ahead-without.test.ts` (the composed daemon, the live L-3 case: Go ahead without
+pressed while the session runs another task, the chart's next run in that session told so, its
+second `ask_person` refused, one card; after a restart the refusal holds),
+`task-actions.test.ts` (the Tasks tab's Go ahead without said once in the brief),
+`apps/ui/test/inbox.test.tsx` and `real-daemon.test.ts`. Requirement: J.3.
 
 **Reasons on plan and milestone changes (spec B.5).** Every change to a plan, task or
 milestone is versioned with author and reason, and the store enforces it: `TaskRepo.transition`
@@ -2197,8 +2216,9 @@ waits on you" while 4 tasks waited on it).
   running session, when a task of the project can run (`readyTasks`); nothing runnable starts
   nothing. The same for the blocked-findings and failed-review cards, the person's answers (the
   existing start, now through `resumeWork`) and the questions card's new **Go ahead without**
-  (`personQuestionsAnswer` reads it as `without`: the task goes back to ready with
-  `WITHOUT_ANSWERS_NOTE` queued for its brief). A planned person task (`on_answer: "done"`,
+  (`personQuestionsAnswer` reads it as `without`: the task goes back to ready, and its next
+  brief says so from the card, `answersBlockFor`; no note is queued since live L-3, see the
+  questions section). A planned person task (`on_answer: "done"`,
   New task's "Me") that the answers close calls `resumeWork` too, so the task that waited on it
   runs without a Start click (the review of fix/needs-me found it closed the task and started
   nothing; the Done line reads 'Answers saved in the decision record; "X" is done; a session

@@ -5,6 +5,7 @@ import type { HumanRequestRow, JsonObject } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { requestWords } from "../src/daemon/request-words.ts";
 import {
+  filePersonQuestions,
   isPersonTask,
   listedQuestions,
   PERSON_QUESTIONS_KEY_PREFIX,
@@ -12,11 +13,13 @@ import {
   questionsForTask,
   questionsReason,
   reportedQuestions,
+  wentAheadWithout,
 } from "../src/session/person-questions.ts";
 import {
   ANSWER_CARD_KEYS,
   acceptsAnswer,
   CANCEL_TASK_OPTION,
+  GO_AHEAD_WITHOUT_OPTION,
   personQuestionsAnswer,
 } from "../src/wiring/request-answers.ts";
 import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpers.ts";
@@ -407,6 +410,43 @@ describe("the critic path: a run that needs the person's answers (U-022)", () =>
         "The specialist said: \"The brief doesn't give the club's real name.\"",
       );
       expect(words.choices.map((c) => c.label)).toEqual(["Go ahead without", "Cancel task"]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("after Go ahead without, a report that lists questions again files no second questions card (live L-3)", async () => {
+    const w = await loopWorld({ replies: [submitReply({}, { times: 2 }), closingReply()] });
+    try {
+      const task = await w.addTask("Members chart");
+      // The person's earlier card on the task, answered "Go ahead without" in the Inbox.
+      const card = await filePersonQuestions(w.store, {
+        task,
+        humanId: w.human,
+        agentId: null,
+        source: "specialist",
+        questions: ["Where is data/members.csv?"],
+      });
+      await w.store.humanRequest.answer(
+        card.request.id,
+        card.request.version,
+        GO_AHEAD_WITHOUT_OPTION,
+        w.human,
+      );
+      expect(await wentAheadWithout(w.store, task.id)).toBe(true);
+      const result = await w.start(
+        w.runner(
+          doneExecutor(w, {
+            finalReport:
+              "No chart: data/members.csv is missing.\n\nQuestions for the person:\n- Where is data/members.csv?",
+          }),
+        ),
+      );
+      expect(result.completed).toEqual([]);
+      const open = await w.store.humanRequest.open({ humanId: w.human });
+      // No new questions card; the critic's sign-off shows what was done without the answers.
+      expect(open.filter((r) => personQuestionsCardOf(r) !== null)).toEqual([]);
+      expect(open.map((r) => (r.change_card as JsonObject | null)?.key)).toContain(SIGNOFF_KEY);
     } finally {
       await w.close();
     }

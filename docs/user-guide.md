@@ -423,8 +423,10 @@ questions, each with its own answer field.
   plan is approved, or when Forerunner starts. No specialist runs and nothing is spent.
 - **A specialist that needs your answer while working** asks you on the same kind of card and
   stops; the task waits.
-- **A run that reports it needs your answers** is not retried: its questions are filed at once,
-  with the critic's note, instead of a sign-off.
+- **A run that reports it needs your answers** is not retried: its questions are filed at once
+  instead of a sign-off, however the report lists them (with or without bullets). The card
+  quotes why the specialist asks ("The specialist said: "The email address is a placeholder,
+  because the brief gave no real one."").
 
 Type your answers and click **Send answers**; leave a question blank if you have no answer yet.
 Your answers are written to the project's decision record (`docs/decisions/0001-…` in the
@@ -432,7 +434,10 @@ project's workspace folder) and the decision log. A task planned for you is then
 done, and if a task was waiting on it, a session starts and works on that task (the card's Done
 line says so); a task a specialist was working on goes back to ready, a session starts, and its
 next run gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
-and say in its report what it assumed; the task goes on in a session. **Cancel task** cancels it
+and say in its report what it assumed; the task goes on in a session, also when you press it while
+another task runs. You are not asked about that task again: if the work cannot be done without
+your answer (a file that is missing), its card shows what the specialist did and why, and you
+accept it, send it back or cancel it. **Cancel task** cancels it
 instead (asked once, naming the tasks that wait on it). You can also answer in your own words
 from the phone; one text then answers all the questions.
 

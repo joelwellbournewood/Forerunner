@@ -55,6 +55,7 @@ import {
   listedQuestions,
   questionsReason,
   reportedQuestions,
+  wentAheadWithout,
 } from "../session/person-questions.ts";
 import { webSourceEvidence } from "../session/web-sources.ts";
 import {
@@ -530,9 +531,14 @@ export class CriticLoop implements CriticPort {
     // U-022: a run that reports it needs the person's answers and that the critic does not
     // accept waits for the person. Its questions are filed, not a sign-off (which asks nothing
     // the person can answer), and the retry ladder stops at this first verdict: a rerun by a
-    // specialist cannot answer them, it only spends again.
+    // specialist cannot answer them, it only spends again. Once the person chose "Go ahead
+    // without" on the task, its questions are not filed again (live L-3: a second card offered
+    // Go ahead without again, a run's cost each time): the verdict stands, a human verdict its
+    // sign-off, which shows what the specialist did without the answers.
     const reported =
-      output.verdict === "accept" ? null : reportedQuestions(result.finalReport ?? result.summary);
+      output.verdict === "accept" || (await wentAheadWithout(store, task.id))
+        ? null
+        : reportedQuestions(result.finalReport ?? result.summary);
     let askedPerson: string | undefined;
     if (reported) {
       askedPerson = await this.askPersonInstead({
