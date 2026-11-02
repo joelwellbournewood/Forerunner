@@ -220,7 +220,7 @@ function namesList(titles: readonly string[]): string {
  * one-line consequence (design §3.5).
  */
 export function moveAsk(
-  task: Pick<TaskRow, "title">,
+  task: Pick<TaskRow, "title"> & Partial<Pick<TaskRow, "pr_url">>,
   from: TaskStatus,
   to: TaskStatus,
   stuck = 0,
@@ -229,14 +229,21 @@ export function moveAsk(
 ): string {
   const t = quote(task.title);
   if (to === "cancelled") {
-    // As the row's Cancel dialog (L-10): what happens to a run or a review going on; a review
-    // only when one goes on here (L-7: a task left "Being reviewed" by a quit was promised a
-    // removal that never came).
-    const work = RUNNING.includes(from)
-      ? "; its run stops now and what it changed is removed"
+    // As the row's Cancel dialog (L-10, the UI's `cancelWorkLine`) and the line after Yes
+    // (`personMove`): what happens to a run or a review going on; a review only when one goes
+    // on here (L-7: a task left "Being reviewed" by a quit was promised a removal that never
+    // came). A task with a pull request keeps it and nothing is taken out of the folder
+    // (review of fix/stops: a GitHub project's task carries one from the end of its run).
+    const what = RUNNING.includes(from)
+      ? "its run"
       : from === "in_review" && live === true
-        ? "; its review stops now and what it changed is removed"
-        : "";
+        ? "its review"
+        : null;
+    const work = !what
+      ? ""
+      : task.pr_url
+        ? `; ${what} stops now; its pull request stays open`
+        : `; ${what} stops now and what it changed is removed`;
     return `Cancel ${t}? It is dropped${work}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
   }
   if (to === "needs_human")

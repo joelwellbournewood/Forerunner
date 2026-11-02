@@ -5248,4 +5248,64 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
       await rt.close();
     }
   }, 120_000);
+
+  it("a task with a pull request: the chat's read-back says its pull request stays open, as the Yes line and the row's Cancel do", async () => {
+    // Review of fix/stops: every task of a GitHub project carries its pull request from the
+    // end of its run, before its review. "skip the About page task" during the review read back
+    // 'It is dropped; its review stops now and what it changed is removed.', and Yes said
+    // 'its review stopped; its pull request stays open.' (nothing is removed).
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_CRITIC_DELAY_MS: "60000",
+    });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Garden club", goal: "Pages" });
+      const page = await client.createTask(project.id, {
+        title: "About page in about.html",
+        outcome: "about.html tells the club's story",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const view = async () => (await client.tasks(project.id)).find((t) => t.id === page.id);
+      await eventually(
+        async () => (await view())?.display?.label === "Being reviewed",
+        "the About page's review to begin",
+        async () => `${(await view())?.status}`,
+        30_000,
+      );
+      // Its pull request, as the runner records it for a repository project.
+      await rt.store.task.patch(page.id, { pr_url: "https://github.test/o/garden/pull/3" });
+      const shown = await view();
+      expect(shown?.prUrl).toBe("https://github.test/o/garden/pull/3");
+      expect(shown?.display?.live).toBe(true);
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      expect((await say("skip the About page task")).pendingConfirmation?.readback).toBe(
+        'Cancel "About page in about.html"? It is dropped; its review stops now; its pull request stays open.',
+      );
+      const yes = await say("yes");
+      expect(yes.actions.map((a) => a.kind)).toEqual(["task.transition"]);
+      expect(yes.reply).toBe(
+        'Cancelled "About page in about.html": its review stopped; its pull request stays open.',
+      );
+      expect((await view())?.display?.label).toBe("Cancelled");
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await view())?.status}`,
+        30_000,
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

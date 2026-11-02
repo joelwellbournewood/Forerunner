@@ -759,6 +759,71 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("a cancel's read-back of a task with a pull request says the pull request stays open, as the Yes line does (stops, L-7)", async () => {
+    // Review of fix/stops: the read-back promised "what it changed is removed" for a task
+    // whose pull request the cancel keeps open (every task of a GitHub project carries one
+    // from the end of its run, before its review); the line after Yes and the row's Cancel
+    // dialog said "its pull request stays open".
+    const w = await world();
+    const insert = (title: string, status: "in_progress" | "in_review", pr: string | null) =>
+      w.store.task.insert({
+        project_id: w.pharma.id,
+        title,
+        outcome: `${title} is done`,
+        acceptance_criteria: [],
+        risk_tier: 1,
+        status,
+        priority: 1,
+        specialist: "coder",
+        reason: "Wrote the page.",
+        ...(pr ? { pr_url: pr } : {}),
+      } as never);
+    const reviewed = await insert("About page", "in_review", "https://github.test/o/r/pull/7");
+    const running = await insert("Credits page", "in_progress", "https://github.test/o/r/pull/8");
+    const plain = await insert("Contact page", "in_review", null);
+    // A review or a run of each goes on here, and the cancel stops it.
+    w.ports.liveWork = () => true;
+    w.ports.stopTask = () => true;
+    const ask = async (task: string) =>
+      (
+        (await w.executor.execute({
+          name: "task.transition",
+          params: { task, to: "cancelled" },
+          ctx: w.ctx(),
+        })) as { readback?: string }
+      ).readback;
+    expect(await ask(reviewed.id)).toBe(
+      'Cancel "About page"? It is dropped; its review stops now; its pull request stays open.',
+    );
+    expect(await ask(running.id)).toBe(
+      'Cancel "Credits page"? It is dropped; its run stops now; its pull request stays open.',
+    );
+    // Without a pull request, what it changed is removed (ADR 0105).
+    expect(await ask(plain.id)).toBe(
+      'Cancel "Contact page"? It is dropped; its review stops now and what it changed is removed.',
+    );
+    // Yes does what the read-back said.
+    const asked = await w.executor.execute({
+      name: "task.transition",
+      params: { task: reviewed.id, to: "cancelled" },
+      ctx: w.ctx(),
+    });
+    const yes = done(
+      await w.executor.confirmByText((asked as { pendingId: string }).pendingId, "yes", {
+        kind: "human",
+        id: w.human.id,
+      }),
+    );
+    expect(yes.sentence).toBe(
+      'Cancelled "About page": its review stopped; its pull request stays open.',
+    );
+    // No review going on here: dropped only, pull request or not.
+    w.ports.liveWork = () => false;
+    const idle = await insert("FAQ page", "in_review", "https://github.test/o/r/pull/9");
+    expect(await ask(idle.id)).toBe('Cancel "FAQ page"? It is dropped.');
+    await w.store.close();
+  });
+
   it("task.create takes low, medium or high (medium when not said) and stores it to run in that order (U-041)", async () => {
     const w = await world();
     const create = async (title: string, priority?: unknown) =>

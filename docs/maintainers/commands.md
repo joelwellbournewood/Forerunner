@@ -334,7 +334,10 @@ of a cancel (`moveAsk`) says "its run stops now and what it changed is removed" 
 task, and "its review stops now ..." for a task in review only when the `liveWork` port answers
 that its review goes on here (the daemon: `KillSwitch.hasTask`; without the port a task in
 review to have no review going on; a running task's read-back always says its run stops;
-L-7). Every person's move of a task can be undone (design §3.5: "every
+L-7). A task with a pull request (`pr_url`: a GitHub project's task carries one from the end
+of its run, before its review) reads "its run (or review) stops now; its pull request stays
+open" instead, as the line after Yes and the Tasks tab's Cancel dialog (`cancelWorkLine`) say:
+the cancel keeps its pull request and takes nothing out of the folder. Every person's move of a task can be undone (design §3.5: "every
 action has one Undo right after it"): the undo puts the task back as it was. The move's
 `before` records the row's `status`, `reason`, `author_human`, `author_agent` and `attempt`;
 the undo restores them through `TaskRepo.restoreStatus` (a status only an agent sets comes
