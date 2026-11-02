@@ -319,6 +319,33 @@ describe("registry loader on the repository registry", () => {
     expect(reg.principals.get("conversation-agent")?.prompt).toMatch(/Read back/);
   });
 
+  it("each specialist is asked only for what its tools and its work allow: the tester documents its test command, the reviewer's findings are its report, the writer leaves only the requested files (phase E #96, #100, #95; ADR 0108)", () => {
+    // Live walk B2: the tester added tests and left docs/testing.md a stub ("To be written"),
+    // so the critic raised doc drift on work that was done.
+    const tester = reg.specialist("tester").prompt;
+    expect(tester).toMatch(/docs\/testing\.md/);
+    expect(tester).toMatch(/Commands/);
+    // Live walk 4: the reviewer has no write tool but wrote review.md with `node -e` through
+    // its command tool. Its findings are its final report; it writes and changes no file, and
+    // its commands only run checks (run_command is not read-only, ADR 0108).
+    const reviewer = reg.specialist("reviewer").prompt;
+    expect(reviewer).toMatch(/findings are your final\s+report/i);
+    expect(reviewer).toMatch(/never create or change a\s+file/i);
+    expect(reg.specialist("reviewer").allowed_tools).not.toEqual(
+      expect.arrayContaining(["cc:Write"]),
+    );
+    // The planner (the intake and the session planner read the PM prompt) gives a reviewer no
+    // outcome that asks for a file.
+    expect(reg.principals.get("project-manager")?.prompt).toMatch(
+      /reviewer[^.]*no outcome[^.]*file/i,
+    );
+    // Live walk 4: the writer-marketing left a scratch notes.md at the project's root, as its
+    // entry asked; its notes go in its final report now.
+    const writer = reg.specialist("writer-marketing").prompt;
+    expect(writer).not.toMatch(/`notes\.md`/);
+    expect(writer).toMatch(/In your final report, not in a\s+file/);
+  });
+
   it("counts the golden eval sets for coder and researcher", () => {
     expect(reg.specialist("coder").evalTaskCount).toBe(20);
     expect(reg.specialist("researcher").evalTaskCount).toBe(20);

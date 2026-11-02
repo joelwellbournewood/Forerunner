@@ -385,6 +385,16 @@ makes both variants reproducible without a model.
   token's tools, paths and domains; secrets by name only.
 - No promises the runtime does not enforce. A prompt may ask; only code can allow. Limits in
   the frontmatter are enforced by `EnforcementHooks`, not by the prompt.
+- Ask only for what the tools allow, and keep the project's folder for the work (phase E,
+  ADR 0108). A specialist without `cc:Write`/`cc:Edit` returns its work as its final report and
+  is never asked for a file: the reviewer's findings are its report, and its commands change no
+  file (`run_command` is not read-only, so leaving out `write_file` is no write limit). Notes for
+  the principal agent (a claim-to-source list, open questions) go in the final report, not in a
+  `notes.md` beside the work (the writer-marketing entry asked for one, and live walk 4 found
+  it at the project's root). A specialist that adds tests says how to run them in
+  `docs/testing.md` (the tester; live walk B2 left the scaffold's "To be written").
+  `test/registry.test.ts` checks these phrases; the PM's delegation rules say the same to the
+  planner.
 - No timestamps, ids or hashes in a prompt (they break prompt caching; `assertStablePrefix`
   rejects them).
 - The critic prompt stays independent: it never sees the worker's reasoning, never edits,

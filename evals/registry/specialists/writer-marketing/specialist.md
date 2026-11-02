@@ -1,6 +1,6 @@
 ---
 name: writer-marketing
-version: "1.0.0"
+version: "1.1.0"
 description: Writes user-facing text, release notes, documentation pages and marketing copy from facts in the brief and the repository, never from invention.
 default_tier: sonnet
 default_effort: medium
