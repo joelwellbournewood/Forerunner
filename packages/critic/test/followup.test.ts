@@ -4,6 +4,7 @@ import {
   type FollowupContext,
   SIGNOFF_KEY,
   SIGNOFF_OPTIONS,
+  saidByName,
 } from "../src/followup.ts";
 import type { ReviewFinding } from "../src/types.ts";
 import { reviewOutput, type World, world } from "./helpers.ts";
@@ -57,6 +58,23 @@ const ctxOf = (w: World, over: Partial<FollowupContext> = {}): FollowupContext =
   sessionId: w.ids.session,
   runId: null,
   ...over,
+});
+
+describe("saidByName: a specialist as a person names it", () => {
+  it("names each registry specialist in words, never a half of its id", () => {
+    // The role-played walk's retry went to "migration-specialist" and the log read "The
+    // migration could not do …" (fixup of fix/system-text).
+    expect(saidByName("coder")).toBe("coder");
+    expect(saidByName("designer")).toBe("designer");
+    expect(saidByName("writer-marketing")).toBe("writer");
+    expect(saidByName("migration-specialist")).toBe("migration specialist");
+    expect(saidByName("data-analyst")).toBe("data analyst");
+    expect(saidByName("ops-deploy")).toBe("deployment specialist");
+    expect(saidByName("science-evaluator")).toBe("evaluator");
+    expect(saidByName("Some_New-Kind")).toBe("some new kind");
+    expect(saidByName("")).toBeNull();
+    expect(saidByName(null)).toBeNull();
+  });
 });
 
 describe("applyVerdict (B.4, D.2)", () => {

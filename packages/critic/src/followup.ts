@@ -110,11 +110,24 @@ export function quotedWords(text: string | null | undefined, max = 160): string 
   return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
-/** A specialist as the card names it: "writer-marketing" is "the writer". */
+/** The registry's specialists whose id is not how a person names them. */
+const SPECIALIST_WORDS: Readonly<Record<string, string>> = {
+  "writer-marketing": "writer",
+  "migration-specialist": "migration specialist",
+  "data-analyst": "data analyst",
+  "ops-deploy": "deployment specialist",
+  "science-evaluator": "evaluator",
+};
+
+/**
+ * A specialist as a card and the session log name it: "writer-marketing" is "the writer",
+ * "migration-specialist" "the migration specialist" (before, the id's first half: "The
+ * migration could not do …"); another id in words ("some_new-kind": "some new kind").
+ */
 export function saidByName(specialist: string | null | undefined): string | null {
-  if (!specialist) return null;
-  const head = specialist.split(/[-_]/)[0]?.trim();
-  return head ? head.toLowerCase() : null;
+  const id = specialist?.trim().toLowerCase();
+  if (!id) return null;
+  return SPECIALIST_WORDS[id] ?? (id.replace(/[-_\s]+/g, " ").trim() || null);
 }
 
 /** A task title as a card's title names it: whole when short, else cut at a word. */

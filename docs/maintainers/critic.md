@@ -261,6 +261,10 @@ reads `"<title>" failed 4 times. The <specialist> said: "<its report>"` (`retryC
 `quotedWords` of the run's final report passed in `FollowupContext.workReport`, the critic's
 summary only when the run reported nothing; no ladder, ceiling or "attempt(s)") with
 `RETRY_CARD_OPTIONS` (Try again, Mark done anyway, Cancel task; `signoffOptionsFor(reason)`).
+The specialist is named by `saidByName`, which the session log uses too: "writer-marketing" is
+"the writer", "migration-specialist" "the migration specialist", "data-analyst" "the data
+analyst", "ops-deploy" "the deployment specialist", "science-evaluator" "the evaluator", and any
+other id in words (before, the id's first half: "The migration could not do …").
 The "4 times" is `triedTimes(store, taskId, fallback)`: the specialists' runs of the task (not
 the critic's, no sub-run), as the Tasks tab lists them; the task's `attempt` counter also moves
 when Try again sends the task back to ready, so it overstated the tries ("failed 6 times" after
