@@ -183,6 +183,30 @@ describe("SDK driver: the subprocess environment", () => {
     expect(Object.values(out).join("\n")).not.toContain(DB_PASSWORD);
     expect(out.PATH).toBe("/bin");
   });
+
+  // Review of the GIT_CONFIG fix (2026-11-02): git's config from the environment is passed on
+  // (git stops every command when a numbered key is missing), but a credential in an entry's
+  // KEY (`url.https://<token>@github.com/.insteadOf`) went with it to the Claude Code path.
+  it("security: git's config from the environment reaches the subprocess without a credential in a key or a value", () => {
+    const out = scrubEnv({
+      PATH: "/bin",
+      GIT_CONFIG_COUNT: "4",
+      GIT_CONFIG_KEY_0: `url.https://x-access-token:${DB_PASSWORD}@github.com/.insteadOf`,
+      GIT_CONFIG_VALUE_0: "https://github.com/",
+      GIT_CONFIG_KEY_1: `url.https://${DB_PASSWORD}@git.example.com/.insteadOf`,
+      GIT_CONFIG_VALUE_1: "https://git.example.com/",
+      GIT_CONFIG_KEY_2: "remote.origin.url",
+      GIT_CONFIG_VALUE_2: `https://${DB_PASSWORD}@git.example.com/o/r.git`,
+      GIT_CONFIG_KEY_3: "core.quotepath",
+      GIT_CONFIG_VALUE_3: "off",
+    });
+    expect(Object.keys(out).join("\n") + Object.values(out).join("\n")).not.toContain(DB_PASSWORD);
+    expect(out).toMatchObject({
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.quotepath",
+      GIT_CONFIG_VALUE_0: "off",
+    });
+  });
 });
 
 describe("SDK driver: PreToolUse refusals", () => {

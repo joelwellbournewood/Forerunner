@@ -583,6 +583,22 @@ const GIT_CONFIG_ENV = /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/;
 /** Git config keys that carry or fetch a credential: an extra header, a password, a helper. */
 const GIT_CREDENTIAL_KEY =
   /(extraheader|password|token|credential\.helper|credential\..*\.helper)/i;
+/**
+ * A URL with a user part anywhere in a git config key or value (`https://<token>@github.com/`,
+ * `https://user:pass@host/`): git's config cannot tell a user name from a token there, so the
+ * entry goes whatever the user part is (`ssh://git@host/` too; the sandbox has no SSH agent).
+ */
+const GIT_URL_USERINFO = /[a-z][a-z0-9+.-]*:\/\/[^/\s@]+@/i;
+
+/** A git config key or value that holds a credential. */
+function gitConfigHoldsCredential(text: string): boolean {
+  return (
+    /authorization:/i.test(text) ||
+    GIT_URL_USERINFO.test(text) ||
+    USERINFO_URL.test(text) ||
+    redact(text) !== text
+  );
+}
 
 /**
  * Git's config entries from the environment, without the ones that carry a credential, numbered
@@ -590,8 +606,10 @@ const GIT_CREDENTIAL_KEY =
  * up to it, and stops every command with "missing config key GIT_CONFIG_KEY_0" when one is
  * absent: the name rule above dropped the keys (they hold `_KEY_`) and kept the count, so on a
  * machine whose environment configures git this way no git command a specialist ran worked
- * (live, 2026-11-02). An entry goes when its key carries or fetches a credential (an
- * `http.*.extraheader`, a `credential.helper`) or its value looks like one; the rest stay.
+ * (live, 2026-11-02). An entry goes when its key names a way to carry or fetch a credential (an
+ * `http.*.extraheader`, a `credential.helper`), or when its key or its value holds one (a URL
+ * with a user part, an `Authorization:` header, a token the platform's shapes find); the rest
+ * stay.
  */
 export function scrubGitConfigEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? "", 10);
@@ -602,9 +620,10 @@ export function scrubGitConfigEnv(env: NodeJS.ProcessEnv): Record<string, string
     const value = env[`GIT_CONFIG_VALUE_${i}`] ?? "";
     // Git refuses a set with a hole in it: nothing of it is passed on.
     if (!key) return {};
-    if (GIT_CREDENTIAL_KEY.test(key)) continue;
-    if (/authorization:/i.test(value) || USERINFO_URL.test(value) || redact(value) !== value)
-      continue;
+    // The key counts as much as the value: `url.<https://TOKEN@host/>.insteadOf` holds the
+    // token in the key (review, 2026-11-02: it reached the specialist's environment).
+    if (GIT_CREDENTIAL_KEY.test(key) || gitConfigHoldsCredential(key)) continue;
+    if (gitConfigHoldsCredential(value)) continue;
     kept.push([key, value]);
   }
   if (!kept.length) return {};

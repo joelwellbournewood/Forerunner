@@ -122,6 +122,60 @@ describe("ProcessSandbox", () => {
     }
   });
 
+  it("drops a git config entry whose KEY carries a credential (url.<https://TOKEN@host/>.insteadOf), as well as one whose value does", async () => {
+    // Review of the GIT_CONFIG fix (2026-11-02): the entries were checked by value only, and the
+    // key only against a list of words, so `url.https://<token>@github.com/.insteadOf` (the usual
+    // way to put a token into git's config) reached the specialist's environment, where the
+    // model reads it with `env` or `git config -l`. Before that fix every key was dropped.
+    const init = await run(["git", "init", "-q", worktree]);
+    expect(init.code).toBe(0);
+    const ghToken = `ghp_${"a1b2c3d4e5".repeat(4).slice(0, 36)}`;
+    const sb = await ProcessSandbox.create({
+      worktree,
+      limits: { timeoutMs: 20_000 },
+      network: { mode: "none" },
+      baseEnv: {
+        PATH: process.env.PATH,
+        HOME: worktree,
+        GIT_CONFIG_COUNT: "6",
+        GIT_CONFIG_KEY_0: `url.https://${ghToken}@github.com/.insteadOf`,
+        GIT_CONFIG_VALUE_0: "https://github.com/",
+        GIT_CONFIG_KEY_1: "url.https://user:s3cretpass@example.com/.insteadOf",
+        GIT_CONFIG_VALUE_1: "https://example.com/",
+        GIT_CONFIG_KEY_2: "core.quotepath",
+        GIT_CONFIG_VALUE_2: "off",
+        // A token with no known shape, as the user part of a URL, in a key and in a value.
+        GIT_CONFIG_KEY_3: "url.https://plainsecretvalue42@git.example.com/.pushInsteadOf",
+        GIT_CONFIG_VALUE_3: "https://git.example.com/",
+        GIT_CONFIG_KEY_4: "remote.origin.url",
+        GIT_CONFIG_VALUE_4: "https://othersecretvalue42@git.example.com/o/r.git",
+        GIT_CONFIG_KEY_5: "init.defaultBranch",
+        GIT_CONFIG_VALUE_5: "main",
+      },
+    });
+    try {
+      const env = sb.envFor();
+      expect(env.GIT_CONFIG_COUNT).toBe("2");
+      expect([env.GIT_CONFIG_KEY_0, env.GIT_CONFIG_VALUE_0]).toEqual(["core.quotepath", "off"]);
+      expect([env.GIT_CONFIG_KEY_1, env.GIT_CONFIG_VALUE_1]).toEqual([
+        "init.defaultBranch",
+        "main",
+      ]);
+      expect(env.GIT_CONFIG_KEY_2).toBeUndefined();
+      const all = JSON.stringify(env);
+      for (const secret of [ghToken, "s3cretpass", "plainsecretvalue42", "othersecretvalue42"])
+        expect(all, secret).not.toContain(secret);
+      // What the model would read with git itself: the kept entries, no credential.
+      const listed = await sb.run(["git", "config", "-l"]);
+      expect(listed.code, listed.stderr).toBe(0);
+      expect(listed.stdout).toContain("core.quotepath=off");
+      for (const secret of [ghToken, "s3cretpass", "plainsecretvalue42", "othersecretvalue42"])
+        expect(listed.stdout, secret).not.toContain(secret);
+    } finally {
+      await sb.destroy();
+    }
+  });
+
   it("pins cwd inside the worktree and refuses escapes", async () => {
     await mkdir(join(worktree, "sub"));
     const sb = await ProcessSandbox.create({
