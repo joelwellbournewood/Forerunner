@@ -1,6 +1,10 @@
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "@forerunner/platform";
+// Only the paths module: a setup file runs in the test's own module graph before the test, so
+// anything it loads is loaded before the test's `vi.mock`s. `@forerunner/platform` as a whole
+// would load the shell runner with the real `node:child_process`, and the spawn recorder of
+// scripts/handover-live.test.ts would see nothing.
+import { join } from "@forerunner/platform/paths";
 
 /**
  * Every test runs in the environment CI gives it, on any machine (docs/maintainers/testing.md,

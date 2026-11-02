@@ -664,7 +664,11 @@ fail on CI, which is what happened on c8c16fb (CI run 41533695121, Desktop app r
 and of `apps/ui`, so every test worker, on any machine, CI included, runs that way: git's global
 config is an empty file of the worker's (`GIT_CONFIG_GLOBAL`; the system config stays, as on
 CI), `GIT_AUTHOR_*`, `GIT_COMMITTER_*` and `EMAIL` are removed, `FORCE_COLOR=1` is set and
-`NO_COLOR` removed. The processes a test starts inherit it. So:
+`NO_COLOR` removed. The processes a test starts inherit it. The file imports nothing but
+`node:fs`, `node:os` and `@forerunner/platform/paths`: a setup file runs in the test's module
+graph before the test, so what it loads escapes the test's `vi.mock`s (with the whole platform
+package it loaded the shell runner, and `scripts/handover-live.test.ts`'s spawn recorder saw no
+process). So:
 
 - a test that makes a commit gives it an identity: a `GitOps` with `identity`, `-c user.name=…
   -c user.email=…` on a plain `git`, or `GIT_AUTHOR_*`/`GIT_COMMITTER_*` in the run's `env`; the
