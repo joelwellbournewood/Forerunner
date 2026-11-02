@@ -8,7 +8,8 @@ export default defineConfig({
     // Screen tests render whole pages through a fake daemon; loaded runners need more than 5 s.
     testTimeout: 20_000,
     include: ["test/**/*.test.tsx", "test/**/*.test.ts"],
-    setupFiles: ["./test/setup.ts"],
+    // CI's environment on any machine (no git identity, FORCE_COLOR=1): testenv/src/ci-env.ts.
+    setupFiles: ["../../testenv/src/ci-env.ts", "./test/setup.ts"],
     passWithNoTests: true,
   },
 });
