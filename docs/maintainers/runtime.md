@@ -1661,6 +1661,30 @@ at CHF y (coder limit)". Tests: `task-budget-cap.test.ts` (past the estimate wit
 budget, no budget, the budget reached mid-run, a spent budget, the session's own stop),
 `real-daemon.test.ts` and `tasks.test.tsx` in `apps/ui`.
 
+**A task stopped at its own cap asks the person once (`session/budget-card.ts`; live walk 2,
+B2).** Before, the `needs_human` above had no card: the session's result said '"Contact page"
+needs your decision (Inbox).' while the Inbox said "Nothing needs you", the Tasks tab said
+"Paused" and the reason spoke dollars on a CHF screen. Now the executor's result carries
+`budgetStop` (`BudgetStop`: the cap, what the task spent in all its runs, `task_budget` or
+`specialist_limit`, the specialist) and words its summary in CHF (`LoopTaskExecutorDeps.chfPerUsd`,
+"The run stopped at its budget of CHF 0.01, after spending CHF 0.01."); the runner sets the
+task's reason to the card's sentence ('"Contact page" stopped at its budget of CHF 0.01.') and
+files one blocking card (`fileBudgetStopCard`, key `task:budget_stop`, options **Raise the
+budget** and **Cancel task**, reused while open). `raisedBudgetUsdMicro` is the budget the
+button sets: what the task spent in all its runs plus room for the next one (the whole budget it
+stopped at, or twice the specialist's per-run limit it stopped at, and at least its estimate and
+USD 0.50), in steps of USD 0.05, stored on the card with the day's rate so its words name the
+amount ("Sets its budget to CHF 0.44 and starts a session that tries again."). `syncBudgetStopAnswers`
+(in `RuntimeApp.syncApprovals`) applies the answer once: Raise sets the budget (never lower than
+one set meanwhile with Edit), moves the task to ready and asks for a session of the project
+(`resumeWork`); Cancel task cancels it; a task that moved on is recorded `task_moved_on`. The
+reader is `budgetStopAnswer` (`wiring/request-answers.ts`), the words `budgetCard` in
+`daemon/request-words.ts`, and the Tasks tab reads "Needs your decision: its budget is used"
+(`cardKindOf` → `budget`; the UI offers Answer, Edit and Cancel). Tests:
+`continuity-budget.test.ts` (one card, the result, the Tasks tab and the Inbox agree, CHF only,
+the card across a restart, Raise the budget runs the task to done), `task-budget-cap.test.ts`,
+the phase 1 gate, `inbox.test.tsx` and `real-daemon.test.ts` ("continuity") in `apps/ui`.
+
 **The Run row.** `LoopTaskExecutor` inserts the task's Run row as `running` before the driver
 starts (model, effort, prompt version, the billing source the task picked, depth) and patches
 it with the result afterwards: tokens, cost, `ttft_ms`, `duration_ms`, outcome, `timed_out`,

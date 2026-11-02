@@ -100,6 +100,7 @@ import {
 import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
 import {
   acceptsAnswer,
+  budgetStopAnswer,
   personQuestionsAnswer,
   signoffAnswer,
 } from "@forerunner/runtime/wiring/request-answers";
@@ -2284,6 +2285,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         applied_at: new Date().toISOString(),
         outcome: read,
         ...(read !== "cancel" ? { start: "started" } : {}),
+      };
+    }
+    // As the daemon's `syncBudgetStopAnswers` (live walk 2, B2): Raise the budget sets the
+    // budget the card named (never lower than the task's own) and a session tries again;
+    // Cancel task cancels it.
+    const budgetCard = r.changeCard as { key?: unknown; raise_to_usd_micro?: unknown } | null;
+    if (budgetCard?.key === "task:budget_stop") {
+      const task = state.tasks.find((t) => t.id === r.taskId);
+      const read = budgetStopAnswer(parsed.data.answer as never);
+      const moved = !task || task.status !== "needs_human";
+      let budget: number | null = null;
+      if (task && !moved && read === "raise") {
+        budget = Math.max(task.budget.usdMicro, Number(budgetCard.raise_to_usd_micro) || 0);
+        task.budget = money(budget);
+        task.cap = money(budget);
+        task.capSource = "task_budget";
+        task.status = "ready";
+        task.reason = `you raised its budget to CHF ${(money(budget).chfMicro / 1e6).toFixed(2)} in the Inbox`;
+        touch(task);
+      } else if (task && !moved && read === "cancel") {
+        task.status = "cancelled";
+        task.reason = "you cancelled it in the Inbox when it stopped at its budget";
+        touch(task);
+      }
+      r.changeCard = {
+        ...budgetCard,
+        applied_at: new Date().toISOString(),
+        outcome: moved ? "task_moved_on" : read,
+        ...(budget !== null ? { budget_usd_micro: budget, start: "started" } : {}),
       };
     }
     if (r.kind === "capability_grant") {

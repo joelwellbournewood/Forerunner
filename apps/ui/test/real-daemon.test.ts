@@ -3836,3 +3836,107 @@ describe("the UI client against the real daemon: work continues correctly (phase
     ]);
   });
 });
+
+describe("the UI client against the real daemon: a task that stops waits on one card (phase C, continuity)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    ({ rt, client } = await composeWithRolePlayer({}));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  /** Starts a session on the project and waits (at least 10 s of real time) for it to end. */
+  const runSession = async (projectId: string) => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const before = (await client.sessions({ projectId })).length;
+    const started = await client.startSession({ agentId, projectId });
+    expect(started.session?.id, JSON.stringify(started)).toBeTruthy();
+    const sessions = async () => client.sessions({ projectId });
+    await eventually(
+      async () => {
+        const all = await sessions();
+        return all.length > before && all.every((s) => !["running", "paused"].includes(s.status));
+      },
+      "the session to end",
+      async () => (await sessions()).map((s) => `${s.status}: ${s.summary ?? ""}`).join(" | "),
+      20_000,
+    );
+    return client.session(started.session?.id ?? "");
+  };
+
+  it("a task stopped at its budget: one card in CHF that the session's result and the Tasks tab agree with; Raise the budget runs it to done (live walk 2, B2)", async () => {
+    const me = await client.me();
+    const project = await client.createProject({ name: "Budget card", goal: "Asked once" });
+    // What New task sends with a budget of CHF 0.01 (USD 0.0125 at the test's rate).
+    const created = await client.createTask(project.id, {
+      title: "Contact page",
+      outcome: "contact.html says how to reach the club",
+      acceptanceCriteria: ["contact.html exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 12_500,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    // Earlier runs spent the whole budget (setup, not under test): the next run stops before it
+    // calls the model, as the live walk's run did "after spending $0.00".
+    await rt.store.task.patch(created.id, { actual_cost_usd_micro: 12_500 });
+    const session = await runSession(project.id);
+
+    const cardsOf = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === created.id && r.status === "open",
+      );
+    const cards = await cardsOf();
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    expect(card?.title).toBe('"Contact page" stopped at its budget of CHF 0.01');
+    expect(card?.body).toBe("So far it spent CHF 0.01.");
+    expect(card?.choices?.map((c) => [c.label, c.explain, c.tone])).toEqual([
+      // What it spent (USD 0.0125) plus USD 0.50 of room, in steps of USD 0.05: USD 0.55.
+      [
+        "Raise the budget",
+        "Sets its budget to CHF 0.44 and starts a session that tries again.",
+        "primary",
+      ],
+      ["Cancel task", "Drops it. Nothing waits on it.", "danger"],
+    ]);
+    // The session's result points at the card that is there; the Tasks tab says the same.
+    expect(session.summary).toContain('"Contact page" needs your decision (Inbox).');
+    const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
+    expect(view?.display).toMatchObject({
+      key: "answer",
+      label: "Needs your decision: its budget is used",
+      blocker: { kind: "card", requestId: card?.id, cardKind: "budget" },
+    });
+    // CHF everywhere a person reads it.
+    for (const text of [card?.title, card?.body, view?.reason, JSON.stringify(view?.display)])
+      expect(String(text)).not.toMatch(/\$|USD/);
+
+    // The click sends the button's words; the budget is raised and a session runs the task.
+    const answered = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Raise the budget",
+    });
+    expect(answered.outcome).toMatch(
+      /^Raised the budget of "Contact page" to CHF 0\.44: (a session started|it runs after the current session)\.$/,
+    );
+    await eventually(
+      async () =>
+        (await client.tasks(project.id)).find((t) => t.id === created.id)?.status === "done",
+      "the task to be done after the raise",
+      async () => {
+        const t = (await client.tasks(project.id)).find((x) => x.id === created.id);
+        return `${t?.status}: ${t?.reason}`;
+      },
+      20_000,
+    );
+    const done = (await client.tasks(project.id)).find((t) => t.id === created.id);
+    expect(done?.budget.usdMicro).toBe(550_000);
+    expect(await cardsOf()).toEqual([]);
+  });
+});

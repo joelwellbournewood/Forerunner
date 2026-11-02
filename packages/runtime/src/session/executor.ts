@@ -1,5 +1,12 @@
 import { mkdirSync } from "node:fs";
-import { type BillingSource, BUILTIN_PRICING, type PricingTable } from "@forerunner/billing";
+import {
+  type BillingSource,
+  BUILTIN_PRICING,
+  DEFAULT_CHF_PER_USD,
+  formatChf,
+  type PricingTable,
+  usdToChfMicro,
+} from "@forerunner/billing";
 import {
   type Clock,
   errorMessage,
@@ -314,6 +321,12 @@ export interface LoopTaskExecutorDeps {
    */
   memory?: Pick<MemoryPort, "recall">;
   taskMemoryTokenBudget?: number;
+  /**
+   * The day's CHF per USD, for the amounts a person reads in a run's result (design §5 rule 7:
+   * CHF everywhere; live walk 2 read "stopped at this task's budget of $0.01" on a CHF
+   * screen). Absent: `DEFAULT_CHF_PER_USD`.
+   */
+  chfPerUsd?: () => number;
 }
 
 /** The constraint lines a brief carries for a retry (spec D.2): the rung and the open findings. */
@@ -377,7 +390,6 @@ export function runCapOf(
   return { usdMicro: Math.max(0, specialistLimitUsdMicro), source: "specialist_limit" };
 }
 
-const usdText = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
 const capitalFirst = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** What either driver came back with, in the shape the Run row and the result need. */
@@ -411,6 +423,12 @@ export class LoopTaskExecutor implements TaskExecutor {
 
   async execute(ctx: Parameters<TaskExecutor["execute"]>[0]): Promise<TaskExecutionResult> {
     return this.runTask(ctx, false);
+  }
+
+  /** An amount in micro-USD as a person reads it: "CHF 0.01" at the day's rate. */
+  private chfText(usdMicro: number): string {
+    const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+    return formatChf(usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate));
   }
 
   /** `execute`; `routed` is set on the second pass after a web-routing hand-over (U-044). */
@@ -549,10 +567,18 @@ export class LoopTaskExecutor implements TaskExecutor {
     // per-run limit; then the session token and what the session has left.
     const cap = runCapOf(task, defaultSpec.maxBudgetUsdMicro);
     if (cap.source === "task_budget" && cap.usdMicro <= 0) {
+      // Live walk 2 (B2): the stop says it in CHF and the runner files its card (Raise the
+      // budget, Cancel task); before, the task waited with no card and dollar amounts.
       return {
         outcome: "needs_human",
-        summary: `This task's budget of ${usdText(task.budget_usd_micro)} is spent (${usdText(task.actual_cost_usd_micro)} so far), so nothing ran. Raise its budget on the Tasks tab and set it back to ready, or cancel it.`,
+        summary: `Its budget of ${this.chfText(task.budget_usd_micro)} is spent (${this.chfText(task.actual_cost_usd_micro)} so far), so nothing ran.`,
         costUsdMicro: 0,
+        budgetStop: {
+          capUsdMicro: task.budget_usd_micro,
+          spentUsdMicro: task.actual_cost_usd_micro,
+          source: "task_budget",
+          specialist: defaultSpec.name,
+        },
       };
     }
     const sessionLeftUsdMicro = Math.min(token.claims.budgetUsdMicro, budget.remainingUsdMicro());
@@ -1041,12 +1067,18 @@ export class LoopTaskExecutor implements TaskExecutor {
     if (outcome === "budget_exceeded" && cap.usdMicro < sessionLeftUsdMicro) {
       const what =
         cap.source === "task_budget"
-          ? `this task's budget of ${usdText(task.budget_usd_micro)}`
-          : `the ${spec.name}'s limit of ${usdText(cap.usdMicro)} per run (the task has no budget of its own)`;
+          ? `its budget of ${this.chfText(task.budget_usd_micro)}`
+          : `the ${spec.name}'s limit of ${this.chfText(cap.usdMicro)} per run (it has no budget of its own)`;
       return {
         outcome: "needs_human",
-        summary: `The run stopped at ${what}, after spending ${usdText(result.costUsdMicro)}. Raise the task's budget on the Tasks tab and set it back to ready, split the task, or cancel it.`,
+        summary: `The run stopped at ${what}, after spending ${this.chfText(result.costUsdMicro)}.`,
         costUsdMicro: result.costUsdMicro,
+        budgetStop: {
+          capUsdMicro: cap.source === "task_budget" ? task.budget_usd_micro : cap.usdMicro,
+          spentUsdMicro: task.actual_cost_usd_micro + result.costUsdMicro,
+          source: cap.source,
+          specialist: spec.name,
+        },
         checksPassed: false,
         runId: run.id,
         ...(worktree ? { worktree } : {}),

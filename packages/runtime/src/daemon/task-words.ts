@@ -140,10 +140,14 @@ export function plainReason(reason: string, max = 100): string {
  * a blocked or failed review); `questions`, anything that asks the person (answer it, or go
  * ahead without).
  */
-export function cardKindOf(card: { change_card?: unknown } | undefined): "retry" | "questions" {
+export function cardKindOf(
+  card: { change_card?: unknown } | undefined,
+): "retry" | "questions" | "budget" {
   const c = card?.change_card;
   const key =
     c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
+  // A task stopped at its own budget (live walk 2, B2): Raise the budget or Cancel task.
+  if (key === "task:budget_stop") return "budget";
   return key === "critic:signoff" || key === "findings:blocked" || key === "critic:review_failed"
     ? "retry"
     : "questions";
@@ -233,6 +237,18 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       });
     }
     case "needs_human": {
+      if (card && cardKindOf(card) === "budget")
+        // Live walk 2 (B2): it read "Paused" with no card; the card asks to raise the budget.
+        return display("answer", "Needs your decision: its budget is used", "warn", {
+          detail: "Its card is in the Inbox: raise its budget, or cancel it.",
+          blocker: {
+            kind: "card",
+            taskId: null,
+            requestId: card.id,
+            title: null,
+            cardKind: "budget",
+          },
+        });
       if (card && cardKindOf(card) === "retry") {
         // Design §5 "Task row": "Needs your decision: tried 4 times [Answer]".
         const tried = /^tried \d+ times$/.test(plainReason(task.reason))

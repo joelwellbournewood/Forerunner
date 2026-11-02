@@ -47,6 +47,7 @@ import type { SchemaSyncPort } from "../update/sync.ts";
 import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
+import { budgetStopTitle, fileBudgetStopCard } from "./budget-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import {
   fileBlockedByFindingsRequest,
@@ -216,6 +217,22 @@ export interface TaskExecutionResult {
   finalReport?: string;
   /** Lessons the specialist spelled out ("Lesson: ..."), recorded at session end. */
   lessons?: LessonCandidate[];
+  /**
+   * Set on a `needs_human` result when the run stopped at the task's own cap (U-042): its
+   * budget, or the specialist's per-run limit when it has none. The runner files the budget
+   * card (`session/budget-card.ts`: Raise the budget, Cancel task; live walk 2, B2).
+   */
+  budgetStop?: BudgetStop;
+}
+
+/** Where a run stopped at its task's own cap, in micro-USD (`TaskExecutionResult.budgetStop`). */
+export interface BudgetStop {
+  /** The cap it stopped at: the task's budget, or the specialist's limit per run. */
+  capUsdMicro: number;
+  /** What the task has spent in all its runs, this one included. */
+  spentUsdMicro: number;
+  source: "task_budget" | "specialist_limit";
+  specialist: string;
 }
 
 export interface TaskExecutor {
@@ -1715,14 +1732,38 @@ export class SessionRunner {
               }
             }
           } else if (result.outcome === "needs_human") {
-            await store.task.transition(
+            const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+            const waiting = await store.task.transition(
               task.id,
               task.version,
               "needs_human",
-              result.summary.slice(0, 200),
+              // Live walk 2 (B2): a stop at the task's own budget names it in CHF, as its card.
+              result.budgetStop
+                ? `${budgetStopTitle(task, result.budgetStop, rate)}.`
+                : result.summary.slice(0, 200),
               { agentId: agent.id },
             );
             needsHuman.push(task.id);
+            // Design §3.8, live walk 2 (B2): a task stopped at its budget gets one card (Raise
+            // the budget, Cancel task), so the result's "needs your decision (Inbox)" is true.
+            if (result.budgetStop)
+              try {
+                await fileBudgetStopCard({
+                  store,
+                  task: waiting,
+                  session,
+                  humanId: agent.owner_human_id,
+                  agentId: agent.id,
+                  runId: result.runId ?? null,
+                  stop: result.budgetStop,
+                  chfPerUsd: rate,
+                });
+              } catch (e) {
+                this.logger.warn("budget card not filed", {
+                  taskId: task.id,
+                  error: errorMessage(e),
+                });
+              }
           } else if (
             result.outcome === "failed" &&
             isTransientError(result.errorCode) &&

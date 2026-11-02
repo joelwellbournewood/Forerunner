@@ -437,8 +437,12 @@ never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 bud
 without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
 run stops at CHF 2.40 (coder limit)"); a done or cancelled task shows no limit. The estimate a
 plan shows is only a
-forecast. When a task reaches its budget it waits for you with what it spent: raise the budget
-and set it back to ready, split it, or cancel it; the session goes on with the other tasks.
+forecast. When a task reaches its budget it waits for you and the session goes on with the
+other tasks. The Inbox gets one card, '"Contact page" stopped at its budget of CHF 0.01', with
+what it spent so far and two buttons: **Raise the budget** (it names the new amount, sets it and
+starts a session that tries again) and **Cancel task**. The Tasks tab reads "Needs your
+decision: its budget is used", with Answer (the card), Edit (set another budget yourself) and
+Cancel.
 
 When a task fails twice, the third attempt goes to another specialist that can do the same
 work (the coder's to the migration specialist, the tester's to the coder, and so on); the

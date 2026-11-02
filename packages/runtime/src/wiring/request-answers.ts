@@ -63,6 +63,11 @@ export const ANSWER_CARD_KEYS = {
   blockedFindings: "findings:blocked",
   /** A critic review that failed (U-045): rework, accept or cancel, read as the findings card. */
   reviewFailed: "critic:review_failed",
+  /**
+   * A task stopped at its own budget (live walk 2, B2; `session/budget-card.ts`): Raise the
+   * budget or Cancel task.
+   */
+  budgetStop: "task:budget_stop",
   planPrefix: "plan:",
   intakePrefix: "intake:",
   specialistPrefix: "specialist:",
@@ -112,6 +117,19 @@ export function signoffAnswer(answer: JsonValue | null): SignoffAnswer | null {
     return "accept";
   if (/^(revise|revised|rework|retry|redo|changes|try again|send it back|send back)$/.test(v))
     return "revise";
+  if (/^(cancel|cancelled|canceled|drop|cancel task|cancel the task)$/.test(v)) return "cancel";
+  return null;
+}
+
+/**
+ * The answer of a budget card (`session/budget-card.ts`) as one of its options, or null: "Raise
+ * the budget" (or "raise", "try again") raises it and tries again; "Cancel task" cancels it.
+ */
+export function budgetStopAnswer(answer: JsonValue | null): "raise" | "cancel" | null {
+  const v = answerWord(answer);
+  if (v === null) return null;
+  if (/^(raise the budget|raise budget|raise|raise the budget and try again|try again)$/.test(v))
+    return "raise";
   if (/^(cancel|cancelled|canceled|drop|cancel task|cancel the task)$/.test(v)) return "cancel";
   return null;
 }
@@ -372,6 +390,7 @@ const READERS: ReadonlyArray<{
   { matches: (k) => k === ANSWER_CARD_KEYS.signoff, read: signoffAnswer },
   { matches: (k) => k === ANSWER_CARD_KEYS.blockedFindings, read: blockedFindingsAnswer },
   { matches: (k) => k === ANSWER_CARD_KEYS.reviewFailed, read: blockedFindingsAnswer },
+  { matches: (k) => k === ANSWER_CARD_KEYS.budgetStop, read: budgetStopAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.planPrefix), read: planAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.intakePrefix), read: intakeAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.specialistPrefix), read: specialistAnswer },

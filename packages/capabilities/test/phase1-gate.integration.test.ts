@@ -381,11 +381,16 @@ describe("phase 1 gate", () => {
     expect(first?.cost_usd_micro).toBeLessThanOrEqual(60_000);
     // The person is asked about that task, with what to do; the session did not stop for it.
     expect(res.needsHuman).toEqual([over.id]);
-    // What the person reads on the task: what stopped it and what to do.
+    // What the person reads on the task: what stopped it, in CHF (design §5 rule 7), and one
+    // card that asks what to do (live walk 2, B2: before, the task waited with no card and the
+    // reason in dollars told the person to edit the budget, press Resume and Start).
     const after = await w.store.task.mustGet(over.id);
     expect(after.status).toBe("needs_human");
-    expect(after.reason).toContain("this task's budget of $0.06");
-    expect(after.reason).toContain("Raise the task's budget on the Tasks tab");
+    expect(after.reason).toBe('"Runaway" stopped at its budget of CHF 0.05.');
+    const cards = await w.store.humanRequest.list({ task_id: over.id, status: "open" } as never, {
+      limit: 10,
+    });
+    expect(cards.map((c) => c.options)).toEqual([["Raise the budget", "Cancel task"]]);
     // The session went on: the next task ran to the end and the session completed.
     expect(runs.filter((r) => r.task_id !== over.id).map((r) => r.outcome)).toEqual(["completed"]);
     expect(res.stopReason).toBe("completed");

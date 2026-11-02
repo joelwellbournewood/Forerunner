@@ -198,6 +198,7 @@ import {
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
 import type { TaskBillingPort } from "../session/billing.ts";
+import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
   type BlockedSyncResult,
@@ -941,6 +942,11 @@ export interface RuntimeApp {
      */
     reviewFailed?: BlockedSyncResult;
     signoffs: SignoffSyncResult;
+    /**
+     * Answered cards of tasks stopped at their own budget (live walk 2, B2). Optional for the
+     * harnesses that compose a partial sync.
+     */
+    budgetStops?: BudgetStopSyncResult;
     plans: PlanApprovalSyncResult;
     /**
      * Hooks approvals answered after their session ended (ADR 0088): the task back at `ready`
@@ -2025,6 +2031,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ? { pricingFor: (modelId: string) => pricingForProvider(provider, modelId, pricingTable) }
         : {}),
       pricingTable: () => pricingTable,
+      // A run's result names amounts in CHF (design §5 rule 7; live walk 2, B2).
+      chfPerUsd,
       tools,
       toolsFor: toolsForRun,
       sandbox: sandboxPort,
@@ -3114,6 +3122,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ...resumeStart,
       }),
       signoffs: await syncSignoffAnswers({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        ...resumeStart,
+      }),
+      // A task stopped at its own budget (live walk 2, B2): Raise the budget raises it and a
+      // session tries again; Cancel task cancels it.
+      budgetStops: await syncBudgetStopAnswers({
         store,
         clock,
         humanId: human.id,

@@ -60,6 +60,9 @@ export function actionsFor(
 ): readonly TaskActionKey[] {
   if (key === "answer" && task?.display?.blocker?.cardKind === "retry")
     return ["answer", "try_again", "cancel"];
+  // Stopped at its own budget (live walk 2, B2): its card raises the budget; Edit changes it.
+  if (key === "answer" && task?.display?.blocker?.cardKind === "budget")
+    return ["answer", "edit", "cancel"];
   if (key === "answer" && task?.specialist === WHO_PERSON) return ["answer", "cancel"];
   switch (key) {
     case "draft":
