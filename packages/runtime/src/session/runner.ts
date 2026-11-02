@@ -1696,9 +1696,9 @@ export class SessionRunner {
                 // Stop now, Stop all, Quit (design §4.9) or the session's own end stopped the
                 // review: the task goes back to Ready, its attempt unchanged and its files
                 // kept, as for a stopped run, and the next session runs it again. Before, it
-                // stayed "Being reviewed" for good: the in_review move had given up its claim,
-                // so the session's release at its end never reached it, no card was filed and
-                // no session plans a task in review (phase C review).
+                // stayed "Being reviewed" for good: the session's release at its end puts back
+                // only a claimed or running task, no card was filed and no session plans a task
+                // in review (phase C review).
                 const stop = personStopOf(controller.signal.reason);
                 await store.task.restoreStatus(
                   now.id,

@@ -1727,10 +1727,14 @@ the first two describes, and their `real-daemon.test.ts` and `tasks.test.tsx` si
 - **Stop now, Stop all or Quit during the review put the task back to Ready.** The critic's
   stopped review throws `killed` (no Review row); with the session's own controller aborted
   and the task still `in_review`, the runner puts it back with `restoreStatus(…, "in_review",
-  "Stopped by you")` (to `ready`, no claim, attempt unchanged; the `in_review` move had cleared
-  the claim, so `releaseAll` never reached it), names it in the stop line ('during "X". It is
-  ready again.') and the next session runs it again; its files stay (ADR 0102). Before, it
-  stayed "Being reviewed" for good with no card, and the Start dialog said nothing could run.
+  "Stopped by you")` (to `ready`, no claim, attempt unchanged; `releaseClaim`, which
+  `releaseAll` uses, puts back only a claimed or running task), names it in the stop line
+  ('during "X". It is ready again.') and the next session runs it again; its files stay (ADR
+  0102). Before, it stayed "Being reviewed" for good with no card, and the Start dialog said
+  nothing could run. The crash recovery (`endDeadSession`, `session/recovery.ts`) does the same
+  for a task whose review was going when the process died (`reviewBackToReady`), unless a card
+  waits on the person for it; before, it said the task was ready again and left it in review
+  (`session-recovery.test.ts`).
 - **The person's answers stay when a run is cancelled.** `writeAnswersToDecisionDoc` also
   commits the answers into the workspace's git on top of HEAD (`answersIntoBaseline`:
   `GitOps.commitFile`, HEAD's copy of the record plus the new section, through a temporary

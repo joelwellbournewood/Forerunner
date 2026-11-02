@@ -201,6 +201,67 @@ describe("a session a dead daemon left running is ended at the next start (desig
     expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
   }, 120_000);
 
+  it("a task the critic was reviewing when Forerunner closed is ready again; one whose card waits stays (phase C review)", async () => {
+    // Releasing a claim puts back only a claimed or running task: one whose review was going
+    // read "Being reviewed" for good, with no card, while the result said it was ready again,
+    // and no session plans a task in review.
+    const home = mkdtempSync(join(tmpdir(), "fr-recovery-review-"));
+    const clock = new SimulatedClock("2026-11-01T12:00:00Z");
+    const first = await compose(home, clock, false);
+    const ghost = await leaveAGhost(first);
+    const reviewing = await first.store.task.mustGet(ghost.task.id);
+    await first.store.task.transition(reviewing.id, reviewing.version, "in_review", "Wrote it.", {
+      agentId: first.agent.id,
+    });
+    // An earlier task of the same session whose review failed waits on its card (U-045).
+    const waiting = await first.store.task.insert({
+      project_id: ghost.project.id,
+      title: "Style the page",
+      outcome: "styles.css exists",
+      acceptance_criteria: ["styles.css exists"],
+      risk_tier: 1,
+      status: "in_review",
+      priority: 3,
+    } as never);
+    await first.store.run.insert({
+      task_id: waiting.id,
+      session_id: ghost.session.id,
+      specialist: "coder",
+      model: "fake",
+      provider: "fake",
+      effort: "low",
+      prompt_version: "v1",
+      billing_source_id: null,
+      outcome: "success",
+      author_agent: first.agent.id,
+    });
+    const human = (await first.store.human.list({}, { limit: 1 }))[0];
+    await first.store.humanRequest.insert({
+      human_id: human?.id ?? "",
+      project_id: ghost.project.id,
+      task_id: waiting.id,
+      session_id: ghost.session.id,
+      kind: "approval",
+      why: '"Style the page" could not be reviewed.',
+      steps: [],
+      options: ["Try again", "Mark done anyway", "Cancel task"],
+      blocking: true,
+      risk: "medium",
+      change_card: { key: "critic:review_failed", task_id: waiting.id },
+      author_agent: first.agent.id,
+    } as never);
+    opened.splice(0);
+
+    const rt = await compose(home, clock, true);
+    const task = await rt.store.task.mustGet(ghost.task.id);
+    expect(task.status).toBe("ready");
+    expect(task.reason).toBe("Forerunner closed while it ran");
+    expect((await rt.store.session.mustGet(ghost.session.id)).summary).toBe(
+      'Interrupted: Forerunner closed while this session ran. "Create the page skeleton" is ready again.',
+    );
+    expect((await rt.store.task.mustGet(waiting.id)).status).toBe("in_review");
+  }, 120_000);
+
   it("a background job's row (the critic's calibration) is ended without telling the person", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-recovery-critic-"));
     const clock = new SimulatedClock("2026-11-01T12:00:00Z");

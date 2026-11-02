@@ -56,8 +56,9 @@ cancel restores the files.
 
 Stop now (ADR 0102, point 3) is unchanged: it keeps what was written. A Stop now, Stop all or
 Quit while the critic reviews a task puts it back to Ready as for a running task (the stopped
-review records nothing), and the next session runs it again; before the review of the fix it
-stayed "Being reviewed" for good.
+review records nothing), and the next session runs it again; the start after a crash does the
+same for a task whose review was going, unless a card waits on the person for it. Before the
+review of the fix such a task stayed "Being reviewed" for good.
 
 ## Consequences
 
