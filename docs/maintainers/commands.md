@@ -427,7 +427,7 @@ and each clause goes through the patterns, in English and German:
 | stop after this task, stop when the current task is done, finish this task and then stop | `session.pause` (matched on the whole line, before "and" splits it) |
 | resume, continue, allow sessions again, resume work | `session.resume` |
 | make the FAQ task depend on the README task, make X wait for Y, X should wait for Y, run X after Y | `task.dependencies {task: X, add: [Y]}` (whole line; never a question) |
-| skip X [for now], postpone X, pause the X task, stop the X task; cancel X, drop X; resume X; reopen X, redo X; try X again, retry X; make X ready | `task.pause`; `task.transition {cancelled}`; `task.resume`; `task.reopen`; `task.transition {ready}` (X by title within the project; "the" and "task" dropped; the session or work itself is never a task's name) |
+| skip X for now, postpone X, pause the X task, stop the X task; skip X, cancel X, drop X (L-10: "skip X" is the row's Cancel, its read-back says a run or review going on stops and its changes are removed); resume X; reopen X, redo X; try X again, retry X; make X ready | `task.pause`; `task.transition {cancelled}`; `task.resume`; `task.reopen`; `task.transition {ready}` (X by title within the project; "the" and "task" dropped; the session or work itself is never a task's name) |
 | summarise the last session, summarize it, recap | `summary.speak` |
 | remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
 | note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |

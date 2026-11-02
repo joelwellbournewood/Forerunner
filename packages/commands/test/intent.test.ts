@@ -570,7 +570,27 @@ describe("IntentParser: steering phrases (design §3.9)", () => {
     expect((await parser.parse("what does the FAQ depend on?", ctx())).commands).toEqual([]);
   });
 
-  it("one task by name: skip / postpone / pause / stop -> pause; cancel; resume; reopen; try again", async () => {
+  it("'skip the X task' cancels it, as the row's Cancel; 'skip X for now' pauses it (L-10)", async () => {
+    // Live check of phase C: "Skip the Credits page task" was read back as 'Stop "Credits
+    // page in credits.html"? Its run stops now and it is paused', and Yes paused it.
+    for (const text of ["Skip the Credits page task", "skip the LICENSE task", "drop the FAQ"])
+      expect(await one(text), text).toMatchObject({
+        name: "task.transition",
+        params: { to: "cancelled" },
+      });
+    expect(await one("Skip the Credits page task")).toEqual({
+      name: "task.transition",
+      params: { task: "Credits page", to: "cancelled" },
+    });
+    expect(await one("überspringe die README Aufgabe")).toMatchObject({
+      name: "task.transition",
+      params: { to: "cancelled" },
+    });
+    for (const text of ["skip the LICENSE task for now", "skip the LICENSE task until later"])
+      expect(await one(text), text).toEqual({ name: "task.pause", params: { task: "LICENSE" } });
+  });
+
+  it("one task by name: postpone / pause / stop / skip for now -> pause; cancel; resume; reopen; try again", async () => {
     expect(await one("skip the LICENSE task for now")).toEqual({
       name: "task.pause",
       params: { task: "LICENSE" },

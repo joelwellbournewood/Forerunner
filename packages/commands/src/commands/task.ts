@@ -226,8 +226,15 @@ export function moveAsk(
   stuck = 0,
 ): string {
   const t = quote(task.title);
-  if (to === "cancelled")
-    return `Cancel ${t}? It is dropped${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+  if (to === "cancelled") {
+    // As the row's Cancel dialog (L-10): what happens to a run or a review going on.
+    const live = RUNNING.includes(from)
+      ? "; its run stops now and what it changed is removed"
+      : from === "in_review"
+        ? "; its review stops now and what it changed is removed"
+        : "";
+    return `Cancel ${t}? It is dropped${live}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+  }
   if (to === "needs_human")
     return RUNNING.includes(from)
       ? `Stop ${t}? Its run stops now and it is paused; the session goes on with the rest.`

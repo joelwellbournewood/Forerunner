@@ -202,7 +202,9 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   runs now, the cards waiting for you and where the files are, and it can look up a task's runs
   and review. Ask "what is going on?", "what failed and why?", "what is left?". Tell it what to
   change: "add a task: …" (a ready task, with **Undo**), "make the FAQ task depend on the README
-  task", "skip the LICENSE task" (a pause), "resume …", "cancel …", "try … again", "start working
+  task", "skip the LICENSE task" or "cancel …" (it is cancelled, as with Cancel on its row: a run
+  or review going on stops and what it changed is removed), "skip … for now" or "pause …" (a
+  pause), "resume …", "try … again", "start working
   now", "stop" (stops the running session now; its task is ready again), "stop after this task",
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
   session, "summary". A change to a task is read back once in one line ('Make "Write the FAQ"

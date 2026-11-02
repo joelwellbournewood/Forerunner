@@ -4046,15 +4046,16 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     const status = async () =>
       (await client.tasks(quote.id)).find((t) => t.id === faq.id)?.display?.label;
 
-    // No: the card's No, then "yes".
-    const first = await say("skip the FAQ task");
+    // No: the card's No, then "yes". ("Skip the FAQ task" cancels it since L-10; a pause is
+    // "pause" or "skip it for now".)
+    const first = await say("pause the FAQ task");
     expect(first.pendingConfirmation?.readback).toMatch(/^Pause "Write the FAQ"\?/);
     expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
     expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
     expect(await status()).toBe("Ready");
 
     // Yes: the card's Yes, then "yes".
-    await say("skip the FAQ task");
+    await say("skip the FAQ task for now");
     expect((await say("yes")).actions.map((a) => a.kind)).toEqual(["task.pause"]);
     expect(await status()).toBe("Paused by you");
     expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
@@ -5096,6 +5097,63 @@ describe("the UI client against the real daemon: Cancel in the first moment of '
       expect(await files()).not.toContain("credits.html");
       const detail = await client.task(page.id);
       expect(detail.review).toBeNull();
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: 'Skip the … task' in Chat cancels it (stops, L-10)", () => {
+  it("read back as a cancel; Yes cancels it with the line the row's Cancel gives", async () => {
+    // Live check of phase C (2026-11-02): "Skip the Credits page task" while it ran was read
+    // back as 'Stop "Credits page in credits.html"? Its run stops now and it is paused', and
+    // Yes left it "Paused by you".
+    // Each specialist reply waits a minute, so the task stays Running while the chat is used.
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_DELAY_MS: "60000" });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Quote page", goal: "Credits" });
+      const page = await client.createTask(project.id, {
+        title: "Credits page in credits.html",
+        outcome: "credits.html names who made the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === page.id);
+      await eventually(
+        async () => (await row())?.display?.label === "Running",
+        "the task to run",
+        async () => `${(await row())?.status}`,
+        30_000,
+      );
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const asked = await say("Skip the Credits page task");
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Cancel "Credits page in credits.html"? It is dropped; its run stops now and what it changed is removed.',
+      );
+      const yes = await say("yes");
+      expect(yes.actions.map((a) => a.kind)).toEqual(["task.transition"]);
+      // The same line as the row's Cancel (`POST /tasks/:id/action` with "cancel").
+      expect(yes.reply).toBe(
+        'Cancelled "Credits page in credits.html": its run stopped and what it changed is removed; Undo brings it back.',
+      );
+      expect((await row())?.display?.label).toBe("Cancelled");
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await row())?.status}`,
+        30_000,
+      );
     } finally {
       await rt.close();
     }

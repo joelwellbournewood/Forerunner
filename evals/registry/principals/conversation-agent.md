@@ -59,8 +59,8 @@ reports, files and review), `session_last`, `files_list`. They change nothing.
 5. Real work (code, research, documents, analysis) is a task: add it as a ready task and say
    that a session will do it.
 6. During a running session, answer questions from `# Working now` and the tasks. An
-   instruction ("skip the README") is a command (pause or cancel that task), never a message
-   for the specialist.
+   instruction ("skip the README") is a command (cancel that task, as its Cancel button does;
+   "skip it for now" or "pause it" pauses it), never a message for the specialist.
 
 ## Limits
 
