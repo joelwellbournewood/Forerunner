@@ -563,6 +563,8 @@ const PROXY_NAME = /(^|_)PROXY$/i;
 export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(env)) {
+    // Git's config from the environment is a numbered set, taken whole below.
+    if (GIT_CONFIG_ENV.test(k)) continue;
     if (DENIED_ENV_PREFIX.test(k) || DENIED_ENV_NAME.test(k) || CLAUDE_CODE_AUTH_ENV.test(k))
       continue;
     if (typeof v === "string" && USERINFO_URL.test(v)) {
@@ -572,6 +574,45 @@ export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string | undefi
     if (typeof v === "string" && redact(v) !== v) continue;
     out[k] = v;
   }
+  Object.assign(out, scrubGitConfigEnv(env));
+  return out;
+}
+
+/** `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>` (git 2.31+). */
+const GIT_CONFIG_ENV = /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/;
+/** Git config keys that carry or fetch a credential: an extra header, a password, a helper. */
+const GIT_CREDENTIAL_KEY =
+  /(extraheader|password|token|credential\.helper|credential\..*\.helper)/i;
+
+/**
+ * Git's config entries from the environment, without the ones that carry a credential, numbered
+ * again so the count matches the keys. Git reads `GIT_CONFIG_COUNT` and then every key and value
+ * up to it, and stops every command with "missing config key GIT_CONFIG_KEY_0" when one is
+ * absent: the name rule above dropped the keys (they hold `_KEY_`) and kept the count, so on a
+ * machine whose environment configures git this way no git command a specialist ran worked
+ * (live, 2026-11-02). An entry goes when its key carries or fetches a credential (an
+ * `http.*.extraheader`, a `credential.helper`) or its value looks like one; the rest stay.
+ */
+export function scrubGitConfigEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? "", 10);
+  if (!Number.isFinite(count) || count <= 0) return {};
+  const kept: [string, string][] = [];
+  for (let i = 0; i < count; i++) {
+    const key = env[`GIT_CONFIG_KEY_${i}`];
+    const value = env[`GIT_CONFIG_VALUE_${i}`] ?? "";
+    // Git refuses a set with a hole in it: nothing of it is passed on.
+    if (!key) return {};
+    if (GIT_CREDENTIAL_KEY.test(key)) continue;
+    if (/authorization:/i.test(value) || USERINFO_URL.test(value) || redact(value) !== value)
+      continue;
+    kept.push([key, value]);
+  }
+  if (!kept.length) return {};
+  const out: Record<string, string> = { GIT_CONFIG_COUNT: String(kept.length) };
+  kept.forEach(([key, value], i) => {
+    out[`GIT_CONFIG_KEY_${i}`] = key;
+    out[`GIT_CONFIG_VALUE_${i}`] = value;
+  });
   return out;
 }
 

@@ -229,8 +229,35 @@ describe("what a specialist is told (design §4.6)", () => {
       brief.indexOf("## Acceptance"),
     );
     expect(constraints).toContain(
-      "- Do not commit, push or open a pull request: Forerunner records your changes after the run (it commits them in the project's folder, or opens the pull request).",
+      "- Forerunner commits your changes in the project's folder after the run: do not commit yourself. A criterion that asks for a commit is Forerunner's step: do not report it as not met.",
     );
+    expect(constraints).toContain(
+      "- Git's read commands (git status, git diff, git log) work in the folder, to see what you changed.",
+    );
+  });
+
+  it("a task on a repository's branch is told Forerunner commits, pushes and opens the pull request (GitHub walk, 2026-11-02)", async () => {
+    // On GitHub the coder found git "not working", wrote "Git doesn't work in this sandbox, so
+    // I can't commit, push or open a PR" into its report, marked its criterion "Open a PR" not
+    // met, and that text became the commit message and the PR body.
+    w = await world();
+    await w.store.project.patch(w.project, { repos: ["robin/greeting"] });
+    const task = await add(w, "Build the quote page", {
+      branch: "fr/01a1-build-the-quote-page",
+      acceptance_criteria: ["index.html shows a quote", "Open a pull request with the change"],
+    });
+    const provider = new ScriptedProvider([{ text: "Done." }], w.h.clock);
+    await run(w, task, provider);
+    const brief = provider.calls[0]?.messages[0]?.content as string;
+    const constraints = brief.slice(
+      brief.indexOf("## Constraints"),
+      brief.indexOf("## Acceptance"),
+    );
+    expect(constraints).toContain(
+      "- Forerunner commits your changes on the branch fr/01a1-build-the-quote-page, pushes it and opens the pull request after the run: do not commit, push or open a pull request yourself. A criterion that asks for a commit, a push or a pull request is Forerunner's step: do not report it as not met.",
+    );
+    expect(constraints).toContain("Git's read commands (git status, git diff, git log) work");
+    expect(constraints).not.toContain("in the project's folder after the run");
   });
 
   it("a retry carries the previous attempt's error, and no 'findings below' line when none follow", async () => {

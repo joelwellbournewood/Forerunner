@@ -316,6 +316,31 @@ export interface LoopTaskExecutorDeps {
   taskMemoryTokenBudget?: number;
 }
 
+/**
+ * Who does each git step, in the brief's constraints. Forerunner records a run's changes itself
+ * (`PrTaskExecutor`): in a repository it commits them on the task's branch, pushes it and opens
+ * the pull request; in a project's folder it commits them in the folder's history. The
+ * specialist never commits, and a criterion asking for a commit, push or pull request is met by
+ * Forerunner, so the report must not call it unmet. Git's read commands work in the folder
+ * (the sandbox keeps git's own configuration, `scrubGitConfigEnv`).
+ */
+export function gitConstraints(
+  branch: string | null | undefined,
+  repos: readonly string[] | undefined,
+): string[] {
+  const linked = repos?.[0]?.trim() ?? "";
+  // A project linked to a local folder of the person's runs with no folder of its own and
+  // records nothing: only the rule not to commit applies.
+  if (!branch && linked)
+    return ["Do not commit, push or open a pull request: the person keeps the history."];
+  return [
+    branch
+      ? `Forerunner commits your changes on the branch ${branch}, pushes it and opens the pull request after the run: do not commit, push or open a pull request yourself. A criterion that asks for a commit, a push or a pull request is Forerunner's step: do not report it as not met.`
+      : "Forerunner commits your changes in the project's folder after the run: do not commit yourself. A criterion that asks for a commit is Forerunner's step: do not report it as not met.",
+    "Git's read commands (git status, git diff, git log) work in the folder, to see what you changed.",
+  ];
+}
+
 /** The constraint lines a brief carries for a retry (spec D.2): the rung and the open findings. */
 export function retryConstraints(
   attempt: number,
@@ -566,8 +591,11 @@ export class LoopTaskExecutor implements TaskExecutor {
       constraints: [
         "Stay inside the worktree and the allowed tools.",
         // Live (2026-11-01) a planned outcome asked the coder for a commit it never makes: the
-        // executor records each run's changes itself (the workspace's history, or the PR).
-        "Do not commit, push or open a pull request: Forerunner records your changes after the run (it commits them in the project's folder, or opens the pull request).",
+        // executor records each run's changes itself (the workspace's history, or the PR). On
+        // GitHub (2026-11-02) the coder found git "not working", wrote "I can't commit, push or
+        // open a PR" into its report and marked the criterion not met; that text became the
+        // commit message and the PR body. The brief says who does each git step.
+        ...gitConstraints(task.branch, project?.repos),
         "Report evidence (commands and output), not claims.",
         "End the report with one line per lesson worth keeping, as 'Lesson: ...'.",
         // U-022: the person is the one who can answer; a specialist never guesses for them.

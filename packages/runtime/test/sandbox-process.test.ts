@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isForerunnerError, join, Logger, type LogRecord } from "@forerunner/platform";
+import { isForerunnerError, join, Logger, type LogRecord, run } from "@forerunner/platform";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PROCESS_SANDBOX_WARNING, ProcessSandbox } from "../src/sandbox/process.ts";
 
@@ -63,6 +63,60 @@ describe("ProcessSandbox", () => {
         env: { HTTPS_PROXY: "http://evil:1" },
       });
       expect(r2.stdout.trim()).toBe(env.HTTPS_PROXY);
+    } finally {
+      await sb.destroy();
+    }
+  });
+
+  it("keeps git working when the environment carries GIT_CONFIG_* entries, without a credential among them", async () => {
+    // Live (2026-11-02, phase D and the GitHub walk): on a machine whose environment sets git
+    // config through GIT_CONFIG_COUNT / _KEY_n / _VALUE_n, every git command a specialist ran
+    // exited 128 "missing config key GIT_CONFIG_KEY_0": the scrub dropped the keys (their names
+    // hold "_KEY_") and kept the count, and the coder wrote "Git doesn't work in this sandbox"
+    // into its report and the pull request.
+    const init = await run(["git", "init", "-q", worktree]);
+    expect(init.code).toBe(0);
+    const header = `AUTHORIZATION: basic ${Buffer.from("x-access-token:abc123", "utf8").toString("base64")}`;
+    const sb = await ProcessSandbox.create({
+      worktree,
+      limits: { timeoutMs: 20_000 },
+      network: { mode: "none" },
+      baseEnv: {
+        PATH: process.env.PATH,
+        HOME: worktree,
+        GIT_CONFIG_COUNT: "4",
+        GIT_CONFIG_KEY_0: "credential.interactive",
+        GIT_CONFIG_VALUE_0: "false",
+        GIT_CONFIG_KEY_1: "http.https://github.com/.extraheader",
+        GIT_CONFIG_VALUE_1: header,
+        GIT_CONFIG_KEY_2: "core.quotepath",
+        GIT_CONFIG_VALUE_2: "off",
+        GIT_CONFIG_KEY_3: "credential.helper",
+        GIT_CONFIG_VALUE_3: "store",
+      },
+    });
+    try {
+      for (const argv of [
+        ["git", "status", "--short", "--branch"],
+        ["git", "branch", "--show-current"],
+        ["git", "log", "--oneline", "-n", "1"],
+      ]) {
+        const r = await sb.run(argv);
+        expect(`${argv.join(" ")}: ${r.stderr}`).not.toContain("missing config key");
+        if (argv[1] !== "log") expect(r.code, `${argv.join(" ")}: ${r.stderr}`).toBe(0);
+      }
+      const env = sb.envFor();
+      // The entries without a credential stay, renumbered so the count matches the keys.
+      expect(env.GIT_CONFIG_COUNT).toBe("2");
+      expect([env.GIT_CONFIG_KEY_0, env.GIT_CONFIG_VALUE_0]).toEqual([
+        "credential.interactive",
+        "false",
+      ]);
+      expect([env.GIT_CONFIG_KEY_1, env.GIT_CONFIG_VALUE_1]).toEqual(["core.quotepath", "off"]);
+      expect(env.GIT_CONFIG_KEY_2).toBeUndefined();
+      expect(env.GIT_CONFIG_VALUE_2).toBeUndefined();
+      expect(env.GIT_CONFIG_VALUE_3).toBeUndefined();
+      expect(JSON.stringify(env)).not.toContain("AUTHORIZATION");
     } finally {
       await sb.destroy();
     }

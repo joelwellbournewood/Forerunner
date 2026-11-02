@@ -4276,9 +4276,15 @@ without findings points to the previous attempt instead. A run that ended on an 
 named by `failureWords` ("Claude did not answer (model call failed).", the redacted message
 otherwise), never by the text the model wrote before the error, and carries
 `TaskExecutionResult.errorCode`; a timeout keeps its partial output (D.17). The constraints say
-"Do not commit, push or open a pull request: Forerunner records your changes after the run":
-the executor commits a workspace's changes (the next run's baseline) or opens the pull request
-itself; live (2026-11-01) a planned outcome asked the coder for a commit it never makes
+who does each git step (`gitConstraints`): on a repository's branch "Forerunner commits your
+changes on the branch <branch>, pushes it and opens the pull request after the run", in a
+project's folder "Forerunner commits your changes in the project's folder after the run", each
+with "a criterion that asks for a commit ... is Forerunner's step: do not report it as not met",
+and "Git's read commands (git status, git diff, git log) work in the folder"; a project linked
+to a local folder of the person's gets only "do not commit, push or open a pull request". Live
+(2026-11-01) a planned outcome asked the coder for a commit it never makes; on GitHub
+(2026-11-02) the coder found git broken (`scrubGitConfigEnv`, sandbox.md), wrote "I can't
+commit, push or open a PR" into its report, and that text became the PR body
 (`executor-brief.test.ts`).
 
 ### Injection (`src/injection/scan.ts`)
