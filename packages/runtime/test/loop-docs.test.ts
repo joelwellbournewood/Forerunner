@@ -6,7 +6,7 @@ import { STATUS_DOC } from "@forerunner/memory";
 import { fromPosix, join, run } from "@forerunner/platform";
 import type { ProjectRow } from "@forerunner/state";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProjectDocs, statusBranchFor, WORKSPACE_DIR } from "../src/loop/docs.ts";
+import { ProjectDocs, STATUS_BRANCH, WORKSPACE_DIR } from "../src/loop/docs.ts";
 import type { TaskExecutor } from "../src/session/runner.ts";
 import {
   closingReply,
@@ -19,9 +19,10 @@ import {
 /**
  * The PM keeps `docs/status.md` current (spec G.5): at session end the runner writes what was
  * done, blocked and next with the session id and the date from the Clock. With a repository
- * the update rides on the session's pull request, or on a small PR of its own when the
- * session opened none; the default branch is never pushed. Without a repository it lands
- * under the project's data directory. A failure never fails the session.
+ * the update goes on Forerunner's own status branch and its one pull request, never on a
+ * task's reviewed pull request (ADR 0104); the default branch is never pushed, except for the
+ * first commit of an empty repository. Without a repository it lands in the project's folder,
+ * committed with the session's work. A failure never fails the session.
  */
 const identity = { name: "Forerunner", email: "agent@example.test" };
 const REPO = { owner: "o", name: "sample" };
@@ -100,7 +101,7 @@ function prExecutor(
 }
 
 describe("project docs at session end (spec G.5)", () => {
-  it("the session's pull request carries docs/status.md: scaffolded first, with the task done, the session id and the date; main untouched", async () => {
+  it("the status update goes on Forerunner's status branch and pull request, never on the task's reviewed one: scaffolded first, with the task done, the session id and the date; main untouched (GitHub walk, 2026-11-02)", async () => {
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
     await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const { root, bare } = await bareRepo();
@@ -110,10 +111,12 @@ describe("project docs at session end (spec G.5)", () => {
       w.runner(prExecutor(w, root, bare, host, "fr/add-clamp"), { docs }),
     );
     expect(result.completed).toEqual([task.id]);
-    // One pull request: the task's. The status update is a commit on its branch.
+    // Before: the status commit was pushed onto fr/add-clamp after the critic accepted it, so
+    // the reviewed PR held a file the critic never saw. Now: the task's PR holds only its work.
     const prs = await host.listPullRequests(REPO, { state: "open" });
-    expect(prs.map((p) => p.head.ref)).toEqual(["fr/add-clamp"]);
-    const status = await show(bare, "fr/add-clamp", STATUS_DOC);
+    expect(prs.map((p) => p.head.ref)).toEqual(["fr/add-clamp", STATUS_BRANCH]);
+    expect(await show(bare, "fr/add-clamp", STATUS_DOC)).toBeNull();
+    const status = await show(bare, STATUS_BRANCH, STATUS_DOC);
     expect(status).not.toBeNull();
     expect(status).toContain("maintained-by: forerunner");
     expect(status).toContain(`### 2026-10-20 session ${result.sessionId}`);
@@ -122,25 +125,26 @@ describe("project docs at session end (spec G.5)", () => {
     // The ledger's CHF for USD 0.30 (U-074).
     expect(status).toContain("- Note: stop reason completed; spent CHF 0.24");
     expect(await show(bare, "fr/add-clamp", "src/x.ts")).toBe("export const x = 1;\n");
+    expect(await show(bare, STATUS_BRANCH, "src/x.ts")).toBeNull();
     expect(await show(bare, "main", STATUS_DOC)).toBeNull();
     expect(await show(bare, "main", "README.md")).toBe("# sample\n");
     const ev = w.events.find((e) => e.type === "docs.status_written");
     expect(ev?.payload).toMatchObject({
       location: "repo",
-      branch: "fr/add-clamp",
+      branch: STATUS_BRANCH,
       path: STATUS_DOC,
       created: true,
-      prUrl: prs[0]?.htmlUrl,
+      prUrl: prs[1]?.htmlUrl,
     });
     const session = await w.store.session.mustGet(result.sessionId);
     expect((session.handoff as { docs: unknown }).docs).toMatchObject({
       location: "repo",
-      branch: "fr/add-clamp",
+      branch: STATUS_BRANCH,
     });
     await w.close();
   });
 
-  it("a session that opened no pull request files a small docs PR of its own, listing blocked work and the project's open tasks", async () => {
+  it("a session that opened no pull request files the status PR, listing blocked work and the project's open tasks; the next session adds to the same PR", async () => {
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
     await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const { root, bare } = await bareRepo();
@@ -149,11 +153,11 @@ describe("project docs at session end (spec G.5)", () => {
     const later = await w.addTask("Write the runbook", { status: "draft" });
     const result = await w.start(w.runner(doneExecutor(w, { outcome: "needs_human" }), { docs }));
     expect(result.needsHuman).toEqual([task.id]);
-    const branch = statusBranchFor(result.sessionId);
+    const branch = STATUS_BRANCH;
     const prs = await host.listPullRequests(REPO, { state: "open" });
     expect(prs).toHaveLength(1);
     expect(prs[0]).toMatchObject({ head: { ref: branch }, base: { ref: "main" } });
-    expect(prs[0]?.title).toContain("docs: status after session");
+    expect(prs[0]?.title).toBe("docs: project status");
     expect(prs[0]?.body).toContain(result.sessionId);
     const status = await show(bare, branch, STATUS_DOC);
     expect(status).toContain(`session ${result.sessionId}`);
@@ -168,17 +172,21 @@ describe("project docs at session end (spec G.5)", () => {
       branch,
       prUrl: prs[0]?.htmlUrl,
     });
-    // A second session on the same project adds its entry on its own branch and PR.
+    // A second session adds its entry to the same branch and pull request (one status PR at
+    // a time, not one per session for the person to merge).
     const second = await w.addTask("Add retries", { risk_tier: 0 });
     const again = await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
     expect(again.completed).toEqual([second.id]);
-    const twice = await show(bare, statusBranchFor(again.sessionId), STATUS_DOC);
+    const twice = await show(bare, STATUS_BRANCH, STATUS_DOC);
     expect(twice).toContain(`session ${again.sessionId}`);
+    expect(twice).toContain(`session ${result.sessionId}`);
     expect(twice).toMatch(/## Done\n\n- Add retries\n/);
     expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
       branch,
-      statusBranchFor(again.sessionId),
     ]);
+    expect(
+      (await host.listPullRequestComments(REPO, prs[0]?.number ?? 0)).map((c) => c.body).join("\n"),
+    ).toContain(again.sessionId);
     await w.close();
   });
 
@@ -266,6 +274,103 @@ describe("project docs at session end (spec G.5)", () => {
     const folder = join(root, "seed");
     const linked = await w.store.project.patch(w.project, { repos: [folder] });
     expect(docs.docsDirsFor(linked)[0]).toBe(folder);
+    await w.close();
+  });
+
+  it("an empty repository gets the doc set as its first commit on main, with no pull request; the status PR then starts from it (GitHub walk, 2026-11-02)", async () => {
+    // Before: the scaffold failed at project creation ("'origin/main' is not a commit"), only
+    // in the daemon log, and the status update failed the same way at every session end.
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    const root = mkdtempSync(join(tmpdir(), "fr-loop-docs-"));
+    roots.push(root);
+    const bare = join(root, "sample.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const { host, docs } = await docsFor(w, root, bare);
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const out = await docs.scaffoldProject(project);
+    expect(out).toMatchObject({ location: "repo", branch: "main", prUrl: null, firstCommit: true });
+    expect(out.created).toContain("README.md");
+    expect(out.created).toContain("docs/overview.md");
+    expect(await show(bare, "main", "README.md")).toContain(project.name);
+    expect(await show(bare, "main", "docs/overview.md")).not.toBeNull();
+    expect(await show(bare, "main", ".forerunner/project.json")).toContain(project.id);
+    expect(await host.listPullRequests(REPO, { state: "open" })).toEqual([]);
+    expect((await w.store.project.mustGet(w.project)).summary_cache.docs).toMatchObject({
+      location: "repo",
+      first_commit: true,
+    });
+    // The docs clone is on main, so the Docs tab reads the set from it.
+    const clone = join(root, "worktrees", w.project);
+    expect(existsSync(join(clone, "docs", "overview.md"))).toBe(true);
+
+    await w.addTask("Add clamp", { risk_tier: 1 });
+    const result = await w.start(w.runner(doneExecutor(w), { docs }));
+    expect(result.completed).toHaveLength(1);
+    const prs = await host.listPullRequests(REPO, { state: "open" });
+    expect(prs.map((p) => p.head.ref)).toEqual([STATUS_BRANCH]);
+    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(`session ${result.sessionId}`);
+    // Back on main after the write: the status waits in its PR, main is unchanged.
+    expect(await show(bare, "main", STATUS_DOC)).toContain("maintained-by: forerunner");
+    await w.close();
+  });
+
+  it("the docs waiting in a docs pull request are named with its number and link (the Docs tab)", async () => {
+    const w = await loopWorld();
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    // Nothing cloned yet: nothing to name, and no network to find out.
+    expect(await docs.docsInPullRequests(project)).toEqual([]);
+    const out = await docs.scaffoldProject(project);
+    expect(out.prUrl).toContain("/pull/1");
+    const waiting = await docs.docsInPullRequests(project);
+    expect(waiting.find((d) => d.path === "docs/overview.md")).toEqual({
+      path: "docs/overview.md",
+      number: 1,
+      url: out.prUrl,
+    });
+    // README.md is on main already (the seed): it does not wait anywhere.
+    expect(waiting.some((d) => d.path === "README.md")).toBe(false);
+    // The clone is back on main: the docs that wait are not read as present.
+    expect(existsSync(join(root, "worktrees", w.project, "docs", "overview.md"))).toBe(false);
+    await w.close();
+  });
+
+  it("in a project's folder the session's work and the status update are committed at the end: git status is clean (live, 2026-11-02)", async () => {
+    // Before: only "Workspace before <task>" baselines were committed, so the last task's
+    // files and docs/status.md stayed staged or modified after the project was done, and a
+    // Python run's __pycache__ was staged into the project.
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    const { root } = await bareRepo();
+    const { docs } = await docsFor(w, root, null);
+    const folder = join(root, "projects", w.project, WORKSPACE_DIR);
+    await docs.scaffoldProject(await w.store.project.mustGet(w.project));
+    await w.addTask("Write 404.html", { risk_tier: 1 });
+    const inner = doneExecutor(w);
+    const writing: TaskExecutor = {
+      async execute(ctx) {
+        // The last task's work, left in the folder as the PR executor leaves it (staged).
+        writeFileSync(join(folder, "404.html"), "<h1>Not found</h1>\n");
+        await mkdir(join(folder, "__pycache__"), { recursive: true });
+        writeFileSync(join(folder, "__pycache__", "x.cpython-312.pyc"), "x");
+        return inner.execute(ctx);
+      },
+    };
+    const result = await w.start(w.runner(writing, { docs }));
+    expect(result.completed).toHaveLength(1);
+    const status = await run(["git", "-C", folder, "status", "--porcelain"]);
+    expect(status.stdout.trim()).toBe("");
+    const log = await run(["git", "-C", folder, "log", "-n", "1", "--name-only", "--format=%s"]);
+    expect(log.stdout).toContain('Did "Write 404.html"');
+    expect(log.stdout).toContain("404.html");
+    expect(log.stdout).toContain("docs/status.md");
+    expect(log.stdout).not.toContain("__pycache__");
+    const ignore = await readFile(join(folder, ".gitignore"), "utf8");
+    expect(ignore).toContain("__pycache__/");
+    expect(w.events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
+      location: "data_dir",
+      commit: expect.stringMatching(/^[0-9a-f]{40}$/),
+    });
     await w.close();
   });
 

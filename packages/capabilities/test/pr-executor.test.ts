@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, run, SimulatedClock } from "@forerunner/platform";
 import { KillSwitch, SessionBudget, type TaskExecutor, TokenIssuer } from "@forerunner/runtime";
@@ -207,6 +207,109 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
     expect(
       (await w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1))[0]?.body,
     ).toContain("Updated by session");
+    await w.store.close();
+  });
+
+  it("an empty repository gets a first commit (a README) on its default branch, then the task's branch and pull request (GitHub walk, 2026-11-02)", async () => {
+    // Before: every task of a project linked to a repository just created on GitHub failed with
+    // "git checkout -B fr/... failed: fatal: 'origin/main' is not a commit and a branch ...
+    // cannot be created from it".
+    const w = await world();
+    const empty = join(w.root, "empty.git");
+    await run(["git", "init", "--bare", "-b", "main", empty]);
+    await w.host.createRepo({ owner: "o", name: "empty", private: true, cloneUrl: empty });
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Create index.html",
+      outcome: "index.html exists",
+      acceptance_criteria: ["index.html shows a quote"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: innerWriting({ "index.html": "<h1>quote</h1>\n" }),
+      repoFor: async () => ({ clone: empty, repo: { owner: "o", name: "empty" }, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    const res = await exec.execute({
+      task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    expect(res.summary).not.toContain("is not a commit");
+    expect(res.outcome).toBe("in_review");
+    expect(res.prUrl).toContain("/pull/1");
+    // main holds the first commit: the README with the project's name and goal.
+    const main = new GitOps({ cwd: join(w.root, "main-check"), identity });
+    await main.clone(empty, { branch: "main" });
+    expect((await main.log(5)).map((c) => c.subject)).toEqual([
+      "Start the repository with a README",
+    ]);
+    expect(readFileSync(join(w.root, "main-check", "README.md"), "utf8")).toBe("# Sample\n\ng\n");
+    // The task's branch starts from it and carries only the task's change.
+    const check = new GitOps({ cwd: join(w.root, "branch-check"), identity });
+    await check.clone(empty, { branch: res.branch });
+    expect((await check.log(5)).map((c) => c.subject)).toEqual([
+      "Create index.html",
+      "Start the repository with a README",
+    ]);
+    expect(res.changedFiles).toEqual(["index.html"]);
+    await w.store.close();
+  });
+
+  it("a repository with branches but not the default one fails in words, with what to check", async () => {
+    const w = await world();
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Edit readme",
+      outcome: "o",
+      acceptance_criteria: [],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: innerWriting({ "README.md": "# x\n" }),
+      // The seeded repository has main; the host says its default branch is "trunk".
+      repoFor: async () => ({ clone: w.bare, repo: { owner: "o", name: "sample" }, base: "trunk" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    await expect(
+      exec.execute({
+        task,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      'o/sample has no branch "trunk" to start from (it has main). Set its default branch on GitHub, then press Try again.',
+    );
     await w.store.close();
   });
 

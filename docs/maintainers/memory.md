@@ -341,8 +341,9 @@ with the lines `- Done:`, `- In flight:`, `- Blocked:`, `- Next:` (titles joined
 "none" when empty) and `- Note:` when given; an entry for the same session id replaces the
 earlier one, so a rerun of the same session changes nothing; the log keeps the newest
 `MAX_STATUS_SESSIONS` (20). Titles are made one line and cut at 120 characters. The runtime's
-`ProjectDocs` (runtime.md, "Project docs") commits the result on the session's pull request
-branch or a small PR of its own.
+`ProjectDocs` (runtime.md, "Project docs") commits the result on Forerunner's own status
+branch with one pull request at a time, never on a task's (ADR 0104), or in the project's
+folder with the session's work.
 
 ### Docs search (`src/docs-search.ts`, spec J.1, ADR 0061)
 

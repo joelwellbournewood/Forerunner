@@ -2136,9 +2136,8 @@ files one non-blocking `decision` request for the human (`fileLeftOpenRequest`: 
 the status; `syncPrAnswers` applies the answer, below); every outcome is written on the task row (`reason`, versioned with the agent), comes
 back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or `pr.left_open` event
 (`pr.merge_failed` when the port threw; never fatal) and is counted in the summary ("Merged 1
-reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). A merged
-branch is taken out of the session's PR branches, so the status update of `ProjectDocs` opens
-its own PR instead of committing to a merged branch. Tier 0 tasks close without a review and
+reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). The status
+update of `ProjectDocs` never goes on a task's branch (ADR 0104), merged or not. Tier 0 tasks close without a review and
 are never merged; a tier 3 task's accepting verdict becomes the human sign-off (`needs_human`,
 spec H), so it never reaches the merge either and the human who signs off merges. The kill
 switch ends the step as it ends the session: a `killed` refusal of the hooks (the revoked
@@ -2365,7 +2364,7 @@ project's `data/`). The outcome is recorded on the row as `summary_cache.docs` (
 `error` and `failed_at`); a git host that cannot serve the repository is a warning in the
 daemon log and the creation still answers 201, the critic's drift check reporting the
 missing docs at the first review.
-`writeSessionStatus({ project, session, update, prBranch })` runs in the runner's step 4
+`writeSessionStatus({ project, session, update })` runs in the runner's step 4
 once the task states are final, for a session that executed a plan and changed at least one
 task (`docs.status_skipped` otherwise; a paused session writes nothing): the update is the
 session's completed, in-review plus sent-back, blocked (needs human, failed, blocked by
@@ -2373,13 +2372,25 @@ findings) and skipped task titles with the session id, the end instant from the 
 a note (`stop reason <x>; spent $<n>`), and the four top sections come from the project's
 state in the store (the latest 15 done tasks, every task claimed, in progress or in review,
 every needs-human or failed one, the ready and draft ones highest priority first). With a
-repository it is committed as `docs: status after session <id>` on the branch of the last
-pull request the session opened or updated (`prBranch`, from the executor's `branch` and
-`prUrl`), so the session's PR carries it, or on `fr/status-<session id>`
-(`statusBranchFor`) with a small PR of its own ("docs: status after session <id8>") when the
-session opened none; a repository without `docs/status.md` gets it scaffolded in the same
-commit. Without a repository the file under the workspace is updated. The result is the
-`docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`) and
+repository it is committed as `docs: status after session <id>` on Forerunner's own status
+branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status"):
+a later session adds its commit to the open PR and comments the entry on it; once the PR is
+merged or closed the branch starts again from the default branch (pushed with a lease) and a
+new PR opens. It never goes on a task's branch (ADR 0104): the critic had accepted that branch,
+and the status commit pushed onto it after the review put a file the critic never saw into the
+reviewed PR (GitHub walk, 2026-11-02). A repository without `docs/status.md` gets it scaffolded
+in the same commit. Without a repository the file in the project's folder is updated and the
+session's work is committed with it (`statusInFolder`: "Did "<task>", …", after a `.gitignore`
+for caches when the folder has none; `commit` on the outcome), since the executor commits only a
+baseline before each run and the last task's files stayed uncommitted (live, 2026-11-02). Every
+docs write on a repository first makes sure the default branch exists (`ensureBaseBranch`, ADR
+0104): an empty repository gets the doc set as its first commit there (`scaffoldProject`
+answers `firstCommit: true`, `branch` the default branch, no PR; `summary_cache.docs.first_commit`).
+After each write the docs clone is back on the default branch (`backToBase`), so what reads it
+sees what is merged; `docsInPullRequests(project)` fetches the clone and lists the docs that wait
+in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, the intake's
+`fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab. The result is the
+`docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`, `commit`) and
 `handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
 the session ends as it would have. The critic's tier 2+ drift check runs before this write
 and is told so (`CriticLoopDeps.statusDocManaged`, set by the daemon): it neither expects
@@ -2387,7 +2398,7 @@ the specialist's change to touch `docs/status.md` nor reports it missing.
 `docsDirsFor(project)` lists where the chat's docs search reads the set (spec J.1, ADR 0061),
 in order and without cloning or fetching: a local folder the project is linked to (an absolute
 `repos[0]`, spec A.4), this install's docs clone `<worktreeRoot>/<project id>` (made by the
-scaffold and the status updates), and the workspace, each only when it exists (empty when none
+scaffold and the status updates, on the default branch), and the workspace, each only when it exists (empty when none
 does). A linked folder is not a host repository (`parseRepoRef` is null for a path), so G.5
 writes such a project's set to the workspace and the list carries both; the search lets the
 first root win on the same repo-relative path.
@@ -4735,14 +4746,19 @@ search a project's workspace docs and record a stated lesson into `rt.memory`.
 
 `loop-docs.test.ts` (spec G.5, ADR 0058; the runner with `ProjectDocs` on a `MemoryGitHost`
 whose repository clones from a local bare repo): a session whose executor pushed a branch and
-opened its PR gets `docs/status.md` scaffolded and committed on that branch (the session id,
-the date, the task under Done and in the entry, the note, `src/x.ts` still there), the only
-open PR is the task's, `main` has no status doc and its README is unchanged, the event and
-`handoff.docs` name the branch and PR; a session that opened no PR (a task that needs the
-human) files `fr/status-<session id>` with its own PR, the entry listing the blocked task and
-the top sections the project's state (a draft task under Next), a second session adding its
-own branch and PR; a project without a repository writes under
-`<projectsRoot>/<id>/workspace`; a session that touched no task writes nothing
+opened its PR gets `docs/status.md` scaffolded and committed on `fr/status` with its own PR (the
+session id, the date, the task under Done and in the entry, the note), the task's branch holds
+no status doc and the status branch none of the task's files, `main` has no status doc and its
+README is unchanged, the event and `handoff.docs` name the status branch and PR; a session that
+opened no PR (a task that needs the human) files the status PR, the entry listing the blocked
+task and the top sections the project's state (a draft task under Next), a second session
+adding its entry to the same branch and PR (a comment names it); an empty repository gets the
+doc set as its first commit on `main` with no PR, the marker included, the clone on `main`, and
+the status PR then starts from it; `docsInPullRequests` names the scaffold PR's docs with its
+number and link once the clone exists (nothing before), while the clone stays on `main`; a
+project's folder ends the session with `git status` clean, the last commit "Did "<task>"" holding
+the task's file and `docs/status.md`, `__pycache__` ignored by the written `.gitignore`; a
+project without a repository writes under `<projectsRoot>/<id>/workspace`; a session that touched no task writes nothing
 (`docs.status_skipped`), a session that only filed its plan (assisted mode) emits no `docs.*`
 event and writes nothing, and a port that throws ends the session `completed` with
 `docs.status_failed`. `docs-scaffold.test.ts` (through `composeRuntime` and `POST /projects`
@@ -4759,7 +4775,7 @@ the marker; a project created by `project.create` through `POST /commands/execut
 scaffolded in the background (the row's `summary_cache.docs`, the workspace); a session
 started through the composed `rt.runner` (the PR executor and loop executor on the scripted
 provider, whose text-only reply leaves no change and so no task PR) writing its status
-update on `fr/status-<session id>` with a PR of its own, the entry naming the session and
+update on `fr/status` with a PR of its own, the entry naming the session and
 the task, `main` untouched, `handoff.docs` on the session row; a repository the host cannot
 serve answering 201 with the error recorded. The other creation paths and the marker's
 reader: `sources-routes.test.ts` (an accepted repository candidate scaffolded through the
@@ -5365,8 +5381,9 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   2026-10-25 showed 5.5 accepts it and still runs fast (`usage.speed: "fast"`).
 - Chat retrieval (ADR 0061): the docs search reads and ranks the doc set on every model turn
   (no index or cache; bounded by the memory package's file caps) and ranks lexically, so a
-  question worded unlike the doc finds nothing. The docs clone `docsDirsFor` lists is whatever
-  branch the last scaffold or status update checked out; it is not fetched for the chat. A
+  question worded unlike the doc finds nothing. The docs clone `docsDirsFor` lists is on the
+  default branch as the last scaffold or status update fetched it; it is not fetched for the
+  chat. A
   project linked to a host repository that was never scaffolded on this install has no docs
   dir until the first scaffold or status update. The registry's `conversation-agent` prompt
   (`evals/registry`, synced from the registry repository) still says "If the context does not

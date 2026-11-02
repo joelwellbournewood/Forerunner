@@ -20,5 +20,12 @@ if (!args["keep-ui"]) {
     isAlive(ui) ? `ui: ${(await killTree(ui)) ? "ended" : "STILL ALIVE"}` : "ui: not running",
   );
 }
+const githost = bench.pids?.githost;
+if (githost)
+  report.push(
+    isAlive(githost)
+      ? `githost: ${(await killTree(githost)) ? "ended" : "STILL ALIVE"}`
+      : "githost: not running",
+  );
 writeBench(args.name, { ...bench, stoppedAt: new Date().toISOString() });
 console.log(`bench ${args.name}: ${report.join("; ")}`);

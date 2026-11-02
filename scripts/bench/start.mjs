@@ -2,6 +2,7 @@
 // Start a test bench: the real daemon on an isolated home plus the real UI dev server.
 //   node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u>
 //        [--provider bench|fake|bench-live|none] [--home <dir>] [--fresh] [--env KEY=VAL ...]
+//        [--githost <port>]
 // Writes <bench root>/<n>/bench.json { daemonUrl, uiUrl, home, token, pids, ... } and prints it.
 // See README.md. Stop with stop.mjs, restart only the daemon with restart-daemon.mjs.
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -21,6 +22,8 @@ import {
   readBench,
   spawnLogged,
   startDaemon,
+  startGithost,
+  storeGithubToken,
   storeLiveKey,
   waitFor,
   writeBench,
@@ -50,20 +53,32 @@ if (existsSync(benchFile(name))) {
 }
 const home = path.resolve(typeof args.home === "string" ? args.home : path.join(dir, "home"));
 if (args.fresh) {
-  for (const sub of ["home", "steps", "daemon.log", "ui.log"])
+  for (const sub of ["home", "steps", "daemon.log", "ui.log", "githost", "githost.json"])
     rmSync(path.join(dir, sub), { recursive: true, force: true });
   if (typeof args.home === "string") rmSync(home, { recursive: true, force: true });
 }
 mkdirSync(home, { recursive: true });
 mkdirSync(path.join(dir, "steps"), { recursive: true });
 
+const githostPort = args.githost === undefined ? null : Number(args.githost);
+if (githostPort !== null && !Number.isInteger(githostPort))
+  fail("--githost <port> needs the port of the stand-in for GitHub");
 for (const [label, port] of [
   ["daemon", daemonPort],
   ["ui", uiPort],
+  ...(githostPort === null ? [] : [["githost", githostPort]]),
 ])
   if (!(await portFree(port))) fail(`port ${port} (${label}) is in use; pick another`);
 
 const extra = envPairs(args.env);
+// `--githost <port>`: a stand-in for GitHub (the fake git host) with an empty and a seeded
+// repository; its token goes into the vault and its URL into the config, as `fr setup` does.
+let githost = null;
+if (githostPort !== null) {
+  console.log(`bench ${name}: starting the stand-in for GitHub on port ${githostPort} ...`);
+  githost = await startGithost({ dir, port: githostPort });
+  storeGithubToken({ dir, home, githost });
+}
 if (provider === "bench-live") {
   console.log(`bench ${name}: storing the key in the home's vault (fr setup checks it first) ...`);
   storeLiveKey({ dir, home, extra });
@@ -116,7 +131,8 @@ const bench = {
   env: extra,
   daemonPort,
   uiPort,
-  pids: { daemon: daemon.pid, ui: uiPid },
+  pids: { daemon: daemon.pid, ui: uiPid, ...(githost ? { githost: githost.pid } : {}) },
+  ...(githost ? { githost: { url: githost.url, repos: githost.repos } } : {}),
   daemonNodePid: daemon.nodePid,
   projectsRoot: path.join(home, "data", "projects"),
   modelCallLog: path.join(home, "bench", "model-calls.jsonl"),

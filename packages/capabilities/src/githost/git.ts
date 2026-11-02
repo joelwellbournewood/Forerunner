@@ -390,6 +390,20 @@ export class GitOps {
       .sort();
   }
 
+  /** The branches `remote` has as this checkout last fetched them, without `HEAD`, sorted. */
+  async remoteBranches(remote = "origin"): Promise<string[]> {
+    const r = this.must(
+      await this.git(["for-each-ref", "--format=%(refname:short)", `refs/remotes/${remote}/`]),
+      "for-each-ref",
+    );
+    return r.stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith(`${remote}/`) && l !== `${remote}/HEAD`)
+      .map((l) => l.slice(remote.length + 1))
+      .sort();
+  }
+
   /** True when `ref` names a commit in this checkout (`origin/<branch>`, a local branch, a sha). */
   async hasRef(ref: string): Promise<boolean> {
     const r = await this.git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
@@ -525,8 +539,9 @@ export class GitOps {
     return false;
   }
 
-  async changedFiles(base: string): Promise<string[]> {
-    return this.must(await this.git(["diff", "--name-only", `${base}...HEAD`]), "diff")
+  /** The files `head` (default HEAD) changes since it left `base`. */
+  async changedFiles(base: string, head = "HEAD"): Promise<string[]> {
+    return this.must(await this.git(["diff", "--name-only", `${base}...${head}`]), "diff")
       .stdout.split(/\r?\n/)
       .filter(Boolean);
   }

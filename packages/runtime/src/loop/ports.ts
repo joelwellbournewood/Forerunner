@@ -413,6 +413,11 @@ export interface DocsScaffoldOutcome {
   marker?:
     | { path: string; status: "created" | "kept" }
     | { path: string; status: "other_project"; project: string | null };
+  /**
+   * True when the repository was empty and the set went in as its first commit on the default
+   * branch (ADR 0104): no pull request then.
+   */
+  firstCommit?: boolean;
 }
 
 export interface SessionStatusOutcome {
@@ -425,21 +430,26 @@ export interface SessionStatusOutcome {
   dir?: string;
   /** True when the doc did not exist and was scaffolded first. */
   created: boolean;
+  /**
+   * A project's folder (no repository): the commit that recorded the session's work and the
+   * status update in the folder's history, null when nothing was left to commit.
+   */
+  commit?: string | null;
 }
 
 export interface ProjectDocsPort {
   /** Scaffold the missing docs of the standard set for a new project; never overwrites. */
   scaffoldProject(project: ProjectRow): Promise<DocsScaffoldOutcome>;
   /**
-   * Write the session's update into `docs/status.md`: on the session's pull request branch
-   * when it opened one (`prBranch`), else on a small PR of its own; without a repository
-   * under the project's data directory.
+   * Write the session's update into `docs/status.md`: with a repository on Forerunner's own
+   * status branch and its one pull request, never on a task's reviewed pull request branch
+   * (ADR 0104); without one in the project's folder, where the session's work is committed
+   * with it.
    */
   writeSessionStatus(input: {
     project: ProjectRow;
     session: SessionRow;
     update: SessionStatusUpdate;
-    prBranch?: string | null;
   }): Promise<SessionStatusOutcome>;
 }
 

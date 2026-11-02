@@ -125,8 +125,21 @@ with their milestone.
   `identity` was given) runs with `-c user.name=Forerunner`; a person's own name is never
   overridden. The data module's GitHub repository import
   (`data.md`) uses it to clone a project's repository onto its migration branch.
+- `ensureBaseBranch` (`base-branch.ts`, ADR 0104) makes sure `origin/<base>` exists before a
+  branch is made from it: an empty repository (no branch at all on the remote, as one just
+  created on GitHub) gets one first commit on its default branch, written by the caller's
+  `first(dir)` into a scratch repository and pushed (the doc set from `ProjectDocs` or the
+  intake, a README with the project's name and goal from `PrTaskExecutor`), then the clone is
+  fetched. A remote with branches but not `base` is `not_found` in words ("<repo> has no branch
+  "<base>" to start from (it has main). Set its default branch on GitHub, then press Try
+  again."); a first push that fails is `provider_error` saying the repository is empty and to add
+  a first commit on GitHub (when someone else's first commit arrived meanwhile, theirs is used).
+  Before, every task on an empty repository failed with git's "'origin/main' is not a commit".
+  `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
+  head)` takes a head other than HEAD.
 - `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone
-  or fetch into a per-task worktree, branch from the base (or the existing PR branch), run the
+  or fetch into a per-task worktree (`ensureBaseBranch` for an empty repository), branch from
+  the base (or the existing PR branch), run the
   inner executor inside the worktree, commit, rebase onto the base, push and open a pull
   request whose body carries the outcome and acceptance criteria; a second run on the same
   task updates the PR. A rebase conflict pushes the branch as it is (so the person can fetch
@@ -143,7 +156,10 @@ with their milestone.
   runtime's alone. A request filed before the key (the same options) is read the same way. No
   changes means `failed`. A task without a repository runs in the folder `workspaceFor` names
   (U-037, ADR 0097: the runtime passes the project's workspace for a project with no repository
-  link), kept as a local git repository: `inWorkspace` commits what is there as the baseline
+  link), kept as a local git repository: `inWorkspace` writes a `.gitignore` for caches when the
+  folder has none (`ensureWorkspaceGitignore`, `WORKSPACE_GITIGNORE`: `__pycache__/`, `*.pyc`,
+  `node_modules/`, `.venv/`, ...; live, 2026-11-02, a Python run's bytecode was staged into the
+  project), commits what is there as the baseline
   ("Workspace before ..."; an empty first commit for a fresh folder), runs the inner executor
   with that folder as its worktree, stages the run's change (`GitOps.stageAll`) and returns the
   folder as `worktree` with the staged files as `changedFiles`, so the critic's `git diff HEAD`
@@ -409,7 +425,9 @@ the helper is never called; a wrong token fails with the token redacted, the hel
 called (the old code asked it to `get` and then `erase`) and the stale credential never sent.
 
 `pr-executor.test.ts` runs `PrTaskExecutor` against local bare repositories and
-`MemoryGitHost`: the PR flow end to end, a rebase conflict as a blocking human request with no
+`MemoryGitHost`: the PR flow end to end, an empty repository getting its README commit on
+`main` before the task's branch and PR (the branch holding only the task's change), a base
+branch the remote lacks failing in words, a rebase conflict as a blocking human request with no
 PR, and no changes as a failure. What each of the conflict request's options does, answered
 through the daemon's route with the strings the Inbox shows and followed by the task's next
 run, is `packages/runtime/test/pr-answers.test.ts` (U-028). Like `git.test.ts` it spawns dozens of git processes, so both

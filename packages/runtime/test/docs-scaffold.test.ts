@@ -12,7 +12,7 @@ import {
   DOCS_SCAFFOLD_BRANCH,
   gitAuthFor,
   parseRepoRef,
-  statusBranchFor,
+  STATUS_BRANCH,
   WORKSPACE_DIR,
 } from "../src/loop/docs.ts";
 import { INSTALL_MARKER_FILE, parseInstallMarker } from "../src/sources/marker.ts";
@@ -369,7 +369,7 @@ describe("standard doc set at project creation (G.5)", () => {
       ...result.inReview,
       ...result.needsHuman,
     ]).toEqual([task.id]);
-    const branch = statusBranchFor(result.sessionId);
+    const branch = STATUS_BRANCH;
     expect(events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
       location: "repo",
       branch,

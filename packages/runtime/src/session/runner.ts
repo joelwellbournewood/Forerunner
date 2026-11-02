@@ -716,8 +716,6 @@ export class SessionRunner {
       opts.memoryTokenBudget ?? this.deps.memoryTokenBudget ?? DEFAULT_MEMORY_TOKEN_BUDGET,
     );
     const filesByTask = new Map<string, string[]>();
-    /** Branches of the pull requests this session opened or updated, in order. */
-    const prBranches: string[] = [];
     const overlapNotified = new Set<string>();
     let peerIds: string[] = [];
     const needsHuman: string[] = [];
@@ -1452,7 +1450,6 @@ export class SessionRunner {
             ...(task.owner_agent_id ? {} : { owner_agent_id: agent.id }),
           });
           task = await store.task.mustGet(task.id);
-          if (result.prUrl && result.branch) prBranches.push(result.branch);
           if (result.changedFiles?.length) {
             filesByTask.set(task.id, result.changedFiles);
             await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
@@ -1669,7 +1666,7 @@ export class SessionRunner {
                 case "accepted": {
                   completed.push(task.id);
                   // Level 3 merges the reviewed PR (J.9); the hooks decide, the outcome is
-                  // reported either way. A merged branch no longer carries the status doc.
+                  // reported either way.
                   const merged = await this.mergeReviewed({
                     task: await store.task.mustGet(task.id),
                     session,
@@ -1679,13 +1676,7 @@ export class SessionRunner {
                     agentId: agent.id,
                     emit,
                   });
-                  if (merged) {
-                    merges.push(merged);
-                    if (merged.status === "merged" && result.branch) {
-                      const at = prBranches.lastIndexOf(result.branch);
-                      if (at >= 0) prBranches.splice(at, 1);
-                    }
-                  }
+                  if (merged) merges.push(merged);
                   break;
                 }
                 case "revise":
@@ -1993,9 +1984,10 @@ export class SessionRunner {
       openPrs: merges.filter((m) => m.status !== "merged").length,
     });
     const summary = resultLines.join("\n");
-    // Project docs (spec G.5): the PM's status update into docs/status.md, carried by the
-    // session's pull request or a small one of its own; a session that touched no task
-    // writes nothing, and a failure is an event, never fatal.
+    // Project docs (spec G.5): the PM's status update into docs/status.md, on Forerunner's own
+    // status branch and pull request, never on a task's reviewed one (ADR 0104); in a project's
+    // folder it is committed with the session's work. A session that touched no task writes
+    // nothing, and a failure is an event, never fatal.
     let docsOutcome: SessionStatusOutcome | null = null;
     if (project && this.deps.docs && plan && stopReason !== "plan_awaiting_approval") {
       const touched = [completed, inReview, failed, needsHuman, retried, blockedByFindings].some(
@@ -2027,7 +2019,6 @@ export class SessionRunner {
               next: endState.readyNow.map((t) => t.title),
               note: `stop reason ${stopReason}; spent ${formatChf(spentChf)}`,
             },
-            prBranch: prBranches.at(-1) ?? null,
           });
           await emit("docs.status_written", { ...docsOutcome });
         } catch (e) {
