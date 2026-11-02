@@ -355,17 +355,29 @@ lands in the store. Nothing is kept in the browser: a reload or a restart reads 
 turns. Before, the Chat tab kept its lines in `localStorage` (`store/chat-history.ts`, removed)
 and Talk in its own memory, so the two disagreed and a restart of the app lost Talk's.
 
-**Model text** (`components/RichText.tsx`; design §3.7, §3.9, §5 rule 6). A chat reply (the
-streamed one too) and a session log line (`SessionPage`'s event rows) are rendered through
-`RichText`: a safe markdown subset (**bold** and __bold__, *italic* and _italic_ but not inside
-a word, `code`, "- " and "1. " lists, a "#" heading as a bold line, a rule dropped, line breaks
-kept with `whitespace-pre-wrap`); a link shows its text and its address in brackets and is not
-clickable. Nothing is ever rendered as HTML (only text nodes and fixed elements), and text
-without markers comes out unchanged. No lookbehind in its pattern (WebKitGTK before 2.40). The
-chat model is also told to write plain sentences (`CHAT_PLAN_RULES`, runtime.md). Before (the
-live run of 2026-11-01) both showed raw `**…**` and "**Summary**:". The mobile screens still
-show plain text. Tests: `test/rich-text.test.tsx` (a reply through the fake daemon's
-`nextChatReply`, a session line, plain text unchanged, raw HTML as text).
+**Model text** (`components/RichText.tsx`; design §3.7, §3.9, §5 rule 6). Text a model wrote is
+rendered through `RichText`: a chat reply (the streamed one too), the session log lines that end
+in a model's words (`EventText` with `MODEL_TEXT_EVENTS`: `session.planned`, `task.finished`,
+`critic.verdict`, `critic.session_review`, `chat.reply`), and the Task drawer's run reports and
+review summary. Every other session line is the runtime's own words (`task.step`: "wrote
+<path>", "ran <command>: ok") and shows exactly as it came. `RichText` renders a safe markdown
+subset (**bold** and __bold__, *italic* and _italic_, `code`, "- " and "1. " lists, a "#"
+heading as a bold line, a rule dropped, line breaks kept with `whitespace-pre-wrap`); a link
+shows its text and its address in brackets and is not clickable. A marker formats only where a
+person reads it as one (`delimited`): no letter, digit, path separator or marker of its kind
+touches it on the outside, no dot joins it to a name, no path separator sits right inside it,
+and a lower-case `__name__` is a dunder name. So `__tests__/a.test.js`, `app/__init__.py`,
+`test/**/*.test.js`, `2*3` and snake_case stay as typed, and the nearest closing marker ends a
+bold part ("**2** of **3**" is two). Nothing is ever rendered as HTML (only text nodes and fixed
+elements), and text without markers comes out unchanged. No lookbehind in its pattern
+(WebKitGTK before 2.40). The chat model is also told to write plain sentences
+(`CHAT_PLAN_RULES`, runtime.md). Before (the live run of 2026-11-01) both showed raw `**…**` and
+"**Summary**:"; then (the review of 2026-11-02) every session line went through `RichText`, so
+step lines lost the underscores of `__tests__` and bolded the path between two globs. The
+mobile screens still show plain text. Tests: `test/rich-text.test.tsx` (a reply through the fake
+daemon's `nextChatReply`, a session line, step lines with paths and globs kept as typed, names
+and arithmetic kept, two bold parts on a line, plain text unchanged, raw HTML as text) and
+`test/tasks.test.tsx` (a run report with markdown in the drawer).
 
 ### Money
 

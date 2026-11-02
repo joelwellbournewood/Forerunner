@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router";
 import { describeError, type EventView, type SessionView } from "../api/client.ts";
 import { type StreamMode, subscribeSessionEvents } from "../api/sse.ts";
 import { ReadAloud } from "../components/ReadAloud.tsx";
-import { RichText } from "../components/RichText.tsx";
+import { EventText } from "../components/RichText.tsx";
 import {
   Badge,
   Button,
@@ -397,7 +397,7 @@ export function SessionPage() {
                     {e.level}
                   </Badge>
                 ) : null}
-                <RichText text={e.text} className="font-sans text-sm" />
+                <EventText type={e.type} text={e.text} className="font-sans text-sm" />
                 {e.cost.chfMicro > 0 ? (
                   <Money value={e.cost} className="ml-auto text-neutral-500" />
                 ) : null}

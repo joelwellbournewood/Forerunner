@@ -424,6 +424,32 @@ describe("Tasks tab (design §3.5)", () => {
     await user.click(within(drawer).getByRole("button", { name: "Close" }));
   });
 
+  it("a run's report with a specialist's markdown reads as text, its file names as typed", async () => {
+    // The live run of 2026-11-01: specialists write "**Summary**:" and lists; the drawer showed
+    // them as typed, as the session log did.
+    const harness = createHarness();
+    const work = RUNS.find((r) => r.taskId === "task_2") as (typeof RUNS)[number];
+    const index = harness.daemon.state.runs.findIndex((r) => r.id === work.id);
+    harness.daemon.state.runs[index] = {
+      ...work,
+      report:
+        "**Summary**: wrote index.html and __tests__/search.test.js.\n- Typing searches\n- Results under 200 ms",
+    } as (typeof RUNS)[number];
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const own = (await within(drawer).findAllByTestId("drawer-run")).find(
+      (r) => r.getAttribute("data-kind") === "work",
+    ) as HTMLElement;
+    expect(own.textContent).not.toContain("**");
+    expect(own).toHaveTextContent("Summary: wrote index.html and __tests__/search.test.js.");
+    expect(within(own).getByText("Summary").tagName).toBe("STRONG");
+    expect(
+      within(own)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["Typing searches", "Results under 200 ms"]);
+  });
+
   it("the drawer shows what a task asks for and its runs; Edit lowers the review level and the row follows", async () => {
     const user = userEvent.setup();
     const harness = createHarness({ sandbox: { state: "not_running" } });

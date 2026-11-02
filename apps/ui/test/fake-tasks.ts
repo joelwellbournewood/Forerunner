@@ -170,6 +170,8 @@ export function fakeTaskDetail(
     outcome: string;
     verdict: string | null;
     reviewId: string | null;
+    /** The specialist's report as the daemon serves it (a test may set its own). */
+    report?: string;
   }[],
 ): TaskDetailView {
   const byId = new Map(views.map((v) => [v.id, v]));
@@ -202,7 +204,7 @@ export function fakeTaskDetail(
         durationMs: r.durationMs,
         cost: r.cost,
         outcome: r.outcome === "success" ? "Finished" : r.outcome,
-        report: review ? null : "Wrote the page and checked it loads.",
+        report: review ? null : (r.report ?? "Wrote the page and checked it loads."),
         files: review ? [] : ["index.html"],
       };
     }),

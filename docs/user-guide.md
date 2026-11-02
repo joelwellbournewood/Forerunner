@@ -129,8 +129,10 @@ again as soon as the service answers.
   waits for your approval) says why at once, as the Start dialog does. Asked about a project
   whose plan from the brief is still being drafted, waits in the Inbox, or failed, Chat says so
   (after a failure: the reason and **Try again** on the project page) instead of "no tasks yet".
-  Replies show bold, lists and code as formatting, never as asterisks; the session page's lines
-  do the same. During a session a question is
+  Replies show bold, lists and code as formatting, never as asterisks; so do the session page's
+  lines with a specialist's or the critic's words and the reports in a task's details. File
+  names and commands (`__tests__/quote.test.js`, `test/**/*.test.js`) show exactly as written.
+  During a session a question is
   answered from what runs now; nothing you type is handed silently to the specialist. "Make
   this a task" under one of your own lines turns it into a ready task. Each project has its own
   conversation, kept by Forerunner: a reload or a restart keeps it, and **Talk** on this
