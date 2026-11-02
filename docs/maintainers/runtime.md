@@ -2273,12 +2273,22 @@ waits on you" while 4 tasks waited on it).
   session" says the same sentence, with "Review it in the Inbox." for the button and no Yes/No
   card.
 - **Chat answering a high-risk card**: `request.answer` whose card needs a device confirmation
-  is refused with a pointer to the card ("Answer it on its card in the Inbox …"), no second card
-  (commands.md).
+  is refused with a pointer to the card ("Answer it on its card in the Inbox: "X" failed 4
+  times. Nothing else was filed.", the card's title from `cardWords`), no second card
+  (commands.md). The retry card after the ladder's last rung is high when the critic found a
+  high or critical problem (`loop/critic.ts`); the runner's failed-task card
+  (`fileFailedTaskCard`) and the review-failed card are medium.
 - **Chat answering a medium-risk card** (phase E): the read-back is the chat's own, in the card's
   words (compose wires `cardWords` to `requestViews`); its pending row is `chat_only`
   (`isChatOnlyCard`, `wiring/request-answers.ts`), which `GET /inbox` (open and Answered), the
-  stream's `inbox.changed` counts and the chat's `open_requests` leave out. The chat refers to a
+  stream's `inbox.changed` counts, the chat's `open_requests`, the project card's
+  `statusLine`, `waitingOnYou`, `health` and `needsYou` (`views.ts`, `project-health.ts`: Home
+  and the project header) leave out, and compose's `humanRequest.insert` hook sends no
+  `request_opened` notification for it (phase E review: the header said "Waiting for you: 2
+  questions" beside an Inbox of one, and a notification pointed to a card the Inbox hid). A
+  task move said in chat or voice on a task whose card offers it ("try X again", "cancel X",
+  "mark X done", "go ahead without the answers on X") is that card's answer (the commands'
+  `redirect`, commands.md), so it takes this path too. The chat refers to a
   card by `cardReference(id, openIds)` (`conversation/agent.ts`): the shortest start of its id,
   8 characters or more, that no other open card shares; ids are time-ordered, so cards filed in
   the same minute (a plan's person cards) shared their first 8 and the answer was refused.

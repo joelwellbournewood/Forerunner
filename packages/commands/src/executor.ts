@@ -159,6 +159,8 @@ interface Step {
   params: unknown;
   card: ChangeCard;
   risk: Risk;
+  /** Said in words as a command that is read back first (`askFromChat`), then redirected. */
+  askedAs?: boolean;
 }
 
 interface DoneStep {
@@ -223,9 +225,15 @@ export class CommandExecutor {
     return mergeCards(steps.map((s) => s.card));
   }
 
-  private async prepare(call: CommandCall, ctx: CommandContext): Promise<Step> {
+  private async prepare(call: CommandCall, ctx: CommandContext, redirected = false): Promise<Step> {
     const def = this.registry.mustGet(call.name);
     const params = this.registry.validate(call.name, call.params);
+    // A move said in words on a task whose card offers it is that card's answer (`redirect`).
+    const instead = !redirected && def.redirect ? await def.redirect(params, ctx) : null;
+    // The answer is read back as the move would have been ("cancel X" on a person's card that
+    // asks nothing risky still gets its one-line question first, design §3.9).
+    if (instead)
+      return { ...(await this.prepare(instead, ctx, true)), askedAs: def.askFromChat === true };
     const risk = typeof def.risk === "function" ? await def.risk(params, ctx) : def.risk;
     const card = def.plan ? await def.plan(params, ctx) : genericCard(def, params, risk);
     card.impact.risk = risk;
@@ -266,7 +274,8 @@ export class CommandExecutor {
       perform: () => this.perform([step], req.ctx),
       redecide: async () => this.decideSteps([await this.prepare(call, req.ctx)], req.ctx),
       answer: req.confirmation,
-      calls: [{ name: call.name, params: step.params }],
+      // The call as planned: a redirected move is stored as the card's answer it became.
+      calls: [{ name: step.def.name, params: step.params }],
     });
   }
 
@@ -281,7 +290,7 @@ export class CommandExecutor {
     if (
       decision === "act" &&
       (ctx.source === "chat" || ctx.source === "voice") &&
-      steps.some((s) => s.def.askFromChat === true)
+      steps.some((s) => s.def.askFromChat === true || s.askedAs === true)
     )
       return "needs_yes";
     return decision;
@@ -352,12 +361,30 @@ export class CommandExecutor {
       return refusal(
         new ForerunnerError(
           "approval_required",
-          `Answer it on its card in the Inbox (${g.card.what.replace(/^the request /, "")}): it is open there, and nothing else was filed.`,
+          // The card as the Inbox titles it ('"X" failed 3 times'); before, the card's why cut
+          // at 60 characters in quotes of its own ('("\"X\" failed 4 t…")', phase E review).
+          `Answer it on its card in the Inbox: ${await this.cardTitleOf(g)}. Nothing else was filed.`,
           { details: { reason: "answer_on_card" } },
         ),
         g.card,
       );
     return this.createPending(g.decision, g.card, g.ctx, g.perform, g.redecide, g.calls);
+  }
+
+  /** The title of the card a `request.answer` answers, as the Inbox shows it. */
+  private async cardTitleOf(g: Gate): Promise<string> {
+    const fallback = g.card.what.replace(/^the request /, "");
+    const params = g.calls?.[0]?.params as { request?: unknown } | undefined;
+    const id = typeof params?.request === "string" ? params.request : null;
+    // The chat's model names a card by the start of its id (`cardReference`).
+    const row = id
+      ? ((await this.store.humanRequest.get(id).catch(() => undefined)) ??
+        (await this.store.humanRequest.open({ humanId: g.ctx.humanId }, { limit: 200 })).find((r) =>
+          r.id.startsWith(id),
+        ))
+      : undefined;
+    const words = row ? await g.ctx.ports.cardWords?.(row).catch(() => null) : null;
+    return words?.title?.trim() || fallback;
   }
 
   private async createPending(

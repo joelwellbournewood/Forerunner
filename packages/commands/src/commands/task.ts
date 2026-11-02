@@ -194,6 +194,54 @@ async function withdrawCards(ctx: CommandContext, taskId: string): Promise<strin
   return out;
 }
 
+/** Normalised as the answer readers compare words: case, spaces, `_` and `-` do not matter. */
+const optionWord = (s: string) =>
+  s
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, " ");
+
+/**
+ * A move said in chat or voice as the answer of the task's open card that offers it (design
+ * §3.8: one card per question; §3.9: an answer to a card is read back once): "try X again" on
+ * a task whose failed card offers Try again is that card's Try again, "cancel X" its Cancel
+ * task, "mark X done" its Mark done anyway, "go ahead without the answers" its Go ahead without.
+ * Before (phase E review), the move was filed as a second card ('Resume "X"?') beside the one
+ * about the same task, and a yes there moved the task past what its card does (the session the
+ * card's Try again starts, its Done line). The answer then goes the card's way: read back in the
+ * card's words when the chat may answer it, or the reply points to the card when it needs this
+ * computer's OK. The Tasks tab's buttons (source ui) move the task as before. Null: no card of
+ * the task offers it, so the move is planned as said.
+ */
+export async function moveAsCardAnswer(
+  ctx: CommandContext,
+  params: { task: string; project?: string | undefined },
+  option: string,
+): Promise<{ name: "request.answer"; params: { request: string; answer: string } } | null> {
+  if (ctx.source !== "chat" && ctx.source !== "voice") return null;
+  if (!ctx.ports.cardWords) return null;
+  const task = await findTask(params, ctx).catch(() => null);
+  if (!task) return null;
+  const open = await ctx.store.humanRequest.list({ task_id: task.id, status: "open" } as never, {
+    orderBy: [{ column: "created_at" }, { column: "id" }],
+    limit: 50,
+  });
+  for (const r of open) {
+    const words = await ctx.ports.cardWords(r).catch(() => null);
+    const choice = words?.choices.find((c) => optionWord(c.label) === optionWord(option));
+    if (choice) return { name: "request.answer", params: { request: r.id, answer: choice.label } };
+  }
+  return null;
+}
+
+/** The card option a move to `to` is, when a card offers it. */
+function cardOptionFor(to: TaskStatus): string | null {
+  if (to === "ready") return "Try again";
+  if (to === "cancelled") return "Cancel task";
+  if (to === "done") return "Mark done anyway";
+  return null;
+}
+
 /** The open tasks of the project that wait on this one: Cancel names them (design §3.5). */
 export async function waitingOn(
   ctx: Pick<CommandContext, "store">,
@@ -684,6 +732,11 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   scope: "project",
   reversible: true,
   undoStrategy: "put the task back to the status it had",
+  async redirect(params, ctx) {
+    const option = cardOptionFor(params.to);
+    // A person's note goes with the move; a card's answer has no room for it: as said.
+    return option && !params.note?.trim() ? moveAsCardAnswer(ctx, params, option) : null;
+  },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
     assertMove(task, params.to);
@@ -779,6 +832,10 @@ export const taskResume: CommandDef<TaskResumeParams> = {
   scope: "project",
   reversible: true,
   undoStrategy: "pause the task again",
+  async redirect(params, ctx) {
+    if (params.note?.trim()) return null;
+    return moveAsCardAnswer(ctx, params, params.without_answers ? "Go ahead without" : "Try again");
+  },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
     assertFrom(task, ["needs_human"], "paused or waiting for your answers");

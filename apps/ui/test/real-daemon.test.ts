@@ -5258,7 +5258,118 @@ describe("the UI client against the real daemon: answers do what the person said
       );
     const cards = await openCards();
     expect(cards.map((c) => c.taskId)).toEqual([task.id]);
+    const card = cards[0];
+    if (!card) throw new Error("no card");
+    const before = (await client.inbox(me.id)).needsYouCount;
+    // "Try X again" in the chat about that task is an answer to its card, not a second card
+    // beside it (phase E review: it read back 'Resume "…"?' and filed a Resume card).
+    const said = await client.chat({
+      humanId: me.id,
+      agentId,
+      projectId: project.id,
+      projectTab: true,
+      text: 'try the task "Build the notes CLI in src/notes.js" again',
+      source: "text",
+    });
+    expect((await openCards()).map((c) => c.id)).toEqual([card.id]);
+    expect((await client.inbox(me.id)).needsYouCount).toBe(before);
+    // The card after the ladder's last rung carries the critic's high findings: it needs this
+    // computer's OK, so the reply points to it, and nothing else is filed.
+    expect((await rt.store.humanRequest.mustGet(card.id)).risk).toBe("high");
+    expect(said.pendingConfirmation ?? null).toBeNull();
+    expect(said.reply).toBe(
+      `Answer it on its card in the Inbox: ${card.title}. Nothing else was filed.`,
+    );
+    expect(card.title).toBe('"Build the notes CLI in src/notes.js" failed 4 times');
+    expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("open");
+    expect((await rt.store.task.mustGet(task.id)).status).toBe("needs_human");
   }, 90_000);
+
+  it('"try X again" in the chat on a task whose failed card is open answers that card, read back in its words; Yes is its Try again (phase E review)', async () => {
+    const project = await client.createProject({ name: "Quote retry", goal: "A quote page" });
+    const task = await client.createTask(project.id, {
+      title: "Write the quote page in quote.html",
+      outcome: "quote.html shows a quote",
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    await eventually(
+      async () => (await client.sessions({})).every((s) => s.status !== "running"),
+      "the sessions of the cases before to end",
+      async () => (await client.sessions({})).map((s) => s.status).join(", "),
+      30_000,
+    );
+    // The run errors (the model call fails): the session files the failed-task card.
+    bench.fail = ["Write the quote page"];
+    bench.failMode = "error";
+    const openCards = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    try {
+      await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () => (await openCards()).length > 0,
+        "the failed task's card",
+        async () => `${(await client.task(task.id)).task.status}`,
+        60_000,
+      );
+      await eventually(
+        async () => (await client.sessions({})).every((s) => s.status !== "running"),
+        "the session to end",
+        async () => (await client.sessions({})).map((s) => s.status).join(", "),
+        30_000,
+      );
+    } finally {
+      bench.fail = [];
+      bench.failMode = "report";
+    }
+    const cards = await openCards();
+    expect(cards.map((c) => c.taskId)).toEqual([task.id]);
+    const card = cards[0];
+    if (!card) throw new Error("no card");
+    expect((await rt.store.humanRequest.mustGet(card.id)).risk).toBe("medium");
+    const tryAgain = card.choices?.find((c) => c.label === "Try again");
+    expect(tryAgain).toBeDefined();
+    const before = await client.project(project.id);
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    const asked = await say('try the task "Write the quote page in quote.html" again');
+    expect(asked.pendingConfirmation?.readback).toBe(
+      `Try again (${card.title})? ${tryAgain?.explain ?? ""}`.trim(),
+    );
+    // One card about the task; Home and the header say the same as before.
+    expect((await openCards()).map((c) => c.id)).toEqual([card.id]);
+    const after = await client.project(project.id);
+    expect({ statusLine: after.statusLine, waitingOnYou: after.waitingOnYou }).toEqual({
+      statusLine: before.statusLine,
+      waitingOnYou: before.waitingOnYou,
+    });
+    const yes = await say("yes");
+    // The card's own Try again: its Done line, and the card is answered with its option.
+    expect(yes.reply).toMatch(
+      /^Trying "Write the quote page in quote\.html" again: (a session started|it runs after the current session)\.$/,
+    );
+    const answered = await rt.store.humanRequest.mustGet(card.id);
+    expect(answered.status).toBe("answered");
+    expect(answered.answer).toBe("Try again");
+    expect((await openCards()).map((c) => c.id)).toEqual([]);
+    await eventually(
+      async () => (await client.sessions({})).every((s) => s.status !== "running"),
+      "the session the answer started to end",
+      async () => (await client.sessions({})).map((s) => s.status).join(", "),
+      30_000,
+    );
+  }, 120_000);
 
   it("'start a session' in the chat waits for the run and links the session it started", async () => {
     const project = await client.createProject({ name: "Quote chat", goal: "A quote page" });

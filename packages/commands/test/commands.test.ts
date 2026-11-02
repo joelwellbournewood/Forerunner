@@ -913,6 +913,111 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("a move said in chat on a task whose card offers it answers that card: one read-back, no second card; the Tasks tab and a move with a note move the task as before (phase E review)", async () => {
+    const w = await world();
+    const task = await w.store.task.insert({
+      project_id: w.pharma.id,
+      title: "Write the digest page",
+      outcome: "digest.html",
+      status: "failed",
+    });
+    const card = await w.store.humanRequest.insert({
+      kind: "approval",
+      why: '"Write the digest page" failed: the model did not answer.',
+      options: ["Try again", "Mark done anyway", "Cancel task"],
+      human_id: w.human.id,
+      project_id: w.pharma.id,
+      task_id: task.id,
+      risk: "medium",
+      blocking: true,
+    });
+    // The card's words as the Inbox shows them (the runtime's `requestViews`).
+    w.ports.cardWords = async (r) =>
+      r.id === card.id
+        ? {
+            title: '"Write the digest page" failed',
+            choices: [
+              { label: "Try again", explain: "Starts a session that tries again." },
+              { label: "Mark done anyway", explain: "Closes it although nothing passed review." },
+              { label: "Cancel task", explain: "Drops it." },
+            ],
+            outcome: null,
+          }
+        : null;
+    const say = (name: string, params: Record<string, unknown>, source = "chat" as const) =>
+      w.executor.execute({ name, params, ctx: { ...w.ctx(), source } });
+    for (const [name, params, option] of [
+      ["task.transition", { task: "digest", to: "ready" }, "Try again"],
+      ["task.resume", { task: "digest" }, "Try again"],
+      ["task.transition", { task: "digest", to: "cancelled" }, "Cancel task"],
+      ["task.transition", { task: "digest", to: "done" }, "Mark done anyway"],
+    ] as const) {
+      const asked = await say(name, params);
+      expect(asked.status, `${name} ${JSON.stringify(params)}`).toBe("pending");
+      expect(asked.card?.command).toBe("request.answer");
+      const explain = {
+        "Try again": "Starts a session that tries again.",
+        "Mark done anyway": "Closes it although nothing passed review.",
+        "Cancel task": "Drops it.",
+      }[option];
+      expect((asked as { readback: string }).readback).toBe(
+        `${option} ("Write the digest page" failed)? ${explain}`,
+      );
+      const row = await w.store.humanRequest.mustGet((asked as { pendingId: string }).pendingId);
+      // The chat's own read-back: the Inbox leaves it out, the card stays the one card.
+      expect((row.change_card as { chat_only?: unknown }).chat_only).toBe(true);
+      expect((row.change_card as { calls?: { name: string }[] }).calls?.[0]?.name).toBe(
+        "request.answer",
+      );
+      await w.executor.cancel(row.id, w.ctx().actor);
+    }
+    // The yes answers the card with its option, as its button would.
+    const asked = await say("task.transition", { task: "digest", to: "ready" });
+    const yes = await w.executor.confirmByText(
+      (asked as { pendingId: string }).pendingId,
+      "yes",
+      w.ctx().actor,
+    );
+    expect(yes.status).toBe("done");
+    expect((await w.store.humanRequest.mustGet(card.id)).answer).toBe("Try again");
+    // The Tasks tab's move (source ui) and a move that carries a note are planned as said.
+    const task2 = await w.store.task.insert({
+      project_id: w.pharma.id,
+      title: "Write the archive page",
+      outcome: "archive.html",
+      status: "failed",
+    });
+    await w.store.humanRequest.insert({
+      kind: "approval",
+      why: '"Write the archive page" failed.',
+      options: ["Try again", "Mark done anyway", "Cancel task"],
+      human_id: w.human.id,
+      project_id: w.pharma.id,
+      task_id: task2.id,
+      risk: "medium",
+      blocking: true,
+    });
+    w.ports.cardWords = async () => ({
+      title: '"Write the archive page" failed',
+      choices: [{ label: "Try again", explain: null }],
+      outcome: null,
+    });
+    const withNote = await say("task.transition", {
+      task: "archive",
+      to: "ready",
+      note: "Use the old layout.",
+    });
+    expect(withNote.card?.command).toBe("task.transition");
+    const fromUi = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "archive", to: "ready" },
+      ctx: { ...w.ctx(), source: "ui" },
+    });
+    expect(fromUi.status).toBe("done");
+    expect(fromUi.card?.command).toBe("task.transition");
+    await w.store.close();
+  });
+
   it("email.mode.set writes the capability row the email module reads, and undo restores the mode", async () => {
     const w = await world();
     const r = done(

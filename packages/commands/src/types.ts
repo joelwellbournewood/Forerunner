@@ -417,6 +417,14 @@ export interface CommandDef<P = unknown> {
   actionClass?: ActionClass;
   /** The command changes a limit (budget, autonomy, capability, permissions). */
   limit?: boolean;
+  /**
+   * The call this one is said as instead, or null (the executor asks before it plans): a move
+   * said in chat or voice on a task whose Inbox card offers the same thing is that card's
+   * answer (`request.answer` with the option as its button says it), so the card stays the one
+   * card about it (design §3.8, §3.9; phase E review: "try X again" filed a Resume card beside
+   * the failed task's card). A redirected call is never redirected again.
+   */
+  redirect?(params: P, ctx: CommandContext): Promise<CommandCall | null>;
   /** Preview without acting. */
   plan?(params: P, ctx: CommandContext): Promise<ChangeCard>;
   run(params: P, ctx: CommandContext): Promise<CommandOutcome>;

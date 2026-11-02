@@ -210,10 +210,15 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   things, and "yes" with nothing waiting asks "Yes to what?" (or, when the card it meant was
   answered in the Inbox or expired, says so). Under each read-back the conversation says what
   became of it: you said yes, you said no, or not answered. You can answer an Inbox card in
-  Chat too ("approve the plan", "try the contact page again"): Chat reads it back in the card's
-  own words ('Approve and start (Plan for "Bakery": 3 tasks)? Writes these 3 tasks and starts
-  working on them now.') and your **Yes** answers the card; the Inbox keeps that one card, with
-  no second card about it. "start a session" when nothing can
+  Chat too ("approve the plan"; "try the contact page again", "cancel …" or "mark … done" on a
+  task whose card offers **Try again**, **Cancel task** or **Mark done anyway**): Chat reads it
+  back in the card's own words ('Approve and start (Plan for "Bakery": 3 tasks)? Writes these 3
+  tasks and starts working on them now.') and your **Yes** answers the card; the Inbox, Home
+  and the project's header keep that one card, with no second card about it and no
+  notification. A card that needs this computer's OK (a task that failed after its retries
+  with a serious problem the critic found) is answered on its card: Chat says "Answer it on its
+  card in the Inbox: "…" failed 4 times. Nothing else was filed." A move with a note ("try …
+  again, note: …") is read back as the move. "start a session" when nothing can
   start (Stop all is on, Claude is not connected, no task can run, the plan from your brief still
   waits for your approval) says why at once, as the Start dialog does. Asked about a project
   whose plan from the brief is still being drafted, waits in the Inbox, or failed, Chat says so
