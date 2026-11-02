@@ -185,7 +185,19 @@ describe("the UI client against the real daemon", () => {
     expect(failures).toEqual([]);
   });
 
+  /**
+   * A ready task for the next start: a session runs only when there is something to run
+   * (design §4.8; POST /sessions refuses with the start check's sentence otherwise, later #38).
+   */
+  const someWork = (title: string) =>
+    client.createTask(projectId, { title, outcome: `${title} exists`, riskTier: 0 });
+
   it("start session: answers with the session it started, which the dialog opens (U-003)", async () => {
+    // Nothing to run yet: refused in the Start dialog's words, no session.
+    await expect(
+      client.startSession({ agentId, projectId, trigger: "manual" }),
+    ).rejects.toMatchObject({ code: "conflict", message: "Nothing can run: no task is ready." });
+    await someWork("Write contract.md");
     const started = await client.startSession({ agentId, projectId, trigger: "manual" });
     expect(started.result).toBe("started");
     expect(started.startId).toEqual(expect.any(String));
@@ -204,6 +216,7 @@ describe("the UI client against the real daemon", () => {
       if (running.length === 0) break;
       await new Promise((r) => setTimeout(r, 25));
     }
+    await someWork("Write note.md");
     const started = await client.startSession({
       agentId,
       projectId,
@@ -317,7 +330,17 @@ describe("the UI client against the real daemon", () => {
     const paths = after.entries.map((e) => e.path);
     expect(paths).toEqual(expect.arrayContaining(["README.md", "site", "site/index.html"]));
     expect(after.entries.find((e) => e.path === "site")?.kind).toBe("dir");
-    expect(paths.some((p) => p.startsWith("node_modules") || p.startsWith(".git"))).toBe(false);
+    // The git folder and node_modules are left out; a session's .gitignore is a file like any
+    // other (ADR 0106), listed now that the cases above ran sessions in this project.
+    expect(
+      paths.some(
+        (p) =>
+          p === "node_modules" ||
+          p.startsWith("node_modules/") ||
+          p === ".git" ||
+          p.startsWith(".git/"),
+      ),
+    ).toBe(false);
     const page = await client.projectFile(projectId, "site/index.html");
     expect(page).toMatchObject({ path: "site/index.html", binary: false });
     expect(page.content).toContain("<h1>Quotes</h1>");
@@ -367,6 +390,7 @@ describe("the UI client against the real daemon", () => {
   });
 
   it("stop session: answers with the session, and Stop all set before stays in force (U-032)", async () => {
+    await someWork("Write stop.md");
     const started = await client.startSession({ agentId, projectId, trigger: "manual" });
     const id = started.session?.id ?? (await client.sessions({ projectId }))[0]?.id ?? "";
     expect(id).not.toBe("");
