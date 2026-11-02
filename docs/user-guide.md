@@ -231,9 +231,14 @@ pull request when it is done; Forerunner makes the commits, pushes and opens the
 repository just created on GitHub, with nothing in it, gets a first commit from Forerunner on its
 default branch (the project's docs, or a README), so its tasks have something to start from; if
 that cannot be done, the task says so ("… is empty and Forerunner could not make its first commit
-…") and what to do. The project's status file (`docs/status.md`) goes in a pull request of its
-own, "docs: project status", which each session adds to; it never goes into a task's reviewed
-pull request. Docs that wait in a pull request say so on the Docs tab, with the link.
+…") and what to do. The project's status file (`docs/status.md`) stays in the app: each
+session's update is under **Docs**, Status ("kept in the app"), and no pull request is opened
+for it. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
+Advanced, Other settings): each session then adds its update to one pull request of its own,
+"docs: project status", which you merge when you like; it never goes into a task's reviewed
+pull request. Docs that wait in a pull request say so on the Docs tab, with the link; only this
+project's docs pull requests are listed, never one another project left on the same
+repository.
 A task that waits for another whose pull request you have not merged yet starts from that work:
 its branch includes it, so a check finds the page it checks. Its own pull request still goes to
 the default branch and says so in its first lines ("Builds on #4 ("Add index.html"), not merged

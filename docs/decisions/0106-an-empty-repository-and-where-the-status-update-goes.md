@@ -50,6 +50,19 @@ commit of a repository it created for a project.
    task's files stayed uncommitted before), and a `.gitignore` keeps caches such as
    `__pycache__/` and `node_modules/` out of it.
 
+   **Since 2026-11-02 (phase E, C-57; the session lead's default, pending the owner's
+   confirmation) the status pull request is off by default**: a repository project keeps
+   `docs/status.md` in the app (`<data>/projects/<id>/app-status/docs/status.md`, no commit, no
+   pull request), the Docs tab reads its Status from there first ("kept in the app: no status
+   pull request (Settings turns it on)") and the session log says "kept in the app". One pull
+   request to merge after every session was noise, even for a one-task project. The project
+   setting **Status pull request** (Settings, Other settings; `settings.set status_pull_request`)
+   turns the behaviour above back on for that project. Only this project's docs pull requests are
+   listed on its Overview and Docs tab (L-16): the status PR while its setting is on, the intake's
+   set on the branch named for the project, a scaffold PR that names the project in its body
+   ("Forerunner project <id>.") or that the project's scaffold wrote its docs onto; an open
+   scaffold PR of another project on the same repository is no longer recorded or shown as this
+   one's. Alternative the owner may still choose: the status PR on by default (as before).
 6. **A task that waits for unmerged work builds on it** (added 2026-11-02, phase E; the session
    lead's default, pending the owner's confirmation at hand-over). Every task used to branch from
    the default branch, so a task that waits for a done task whose pull request was not merged

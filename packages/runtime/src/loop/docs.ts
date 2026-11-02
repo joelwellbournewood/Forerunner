@@ -17,7 +17,15 @@ import {
   scaffoldDocs,
   writeStatusUpdate,
 } from "@forerunner/memory";
-import { type Clock, errorMessage, isAbsolute, join, log, safeSegment } from "@forerunner/platform";
+import {
+  type Clock,
+  errorMessage,
+  fromPosix,
+  isAbsolute,
+  join,
+  log,
+  safeSegment,
+} from "@forerunner/platform";
 import type { ProjectRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
 import type {
@@ -50,6 +58,22 @@ export const DOCS_SCAFFOLD_BRANCH = "fr/docs-scaffold";
 /** Forerunner's branch for `docs/status.md` in a repository: one pull request at a time. */
 export const STATUS_BRANCH = "fr/status";
 
+/**
+ * The project setting that sends each session's status update to the repository as a pull
+ * request (C-57, ADR 0106 point 3, the session lead's default): off unless the person turns it
+ * on (`settings.set status_pull_request`); off, a repository project's `docs/status.md` stays in
+ * the app (`STATUS_IN_APP_DIR`), read by the Docs tab, and no status pull request is opened.
+ */
+export const STATUS_PR_SETTING = "status_pull_request";
+
+/** Whether the project sends its status update to its repository as a pull request (C-57). */
+export function statusPullRequestOn(project: Pick<ProjectRow, "settings">): boolean {
+  return project.settings?.[STATUS_PR_SETTING] === true;
+}
+
+/** `<projectsRoot>/<project id>/app-status`: where a repository project's status stays (C-57). */
+export const STATUS_IN_APP_DIR = "app-status";
+
 /** The branches Forerunner keeps the project's docs on (scaffold, the intake's set, status). */
 export function isDocsBranch(branch: string): boolean {
   return (
@@ -57,6 +81,40 @@ export function isDocsBranch(branch: string): boolean {
     branch === STATUS_BRANCH ||
     /^fr\/intake-[^/]+-docs$/.test(branch)
   );
+}
+
+/** The line a scaffold pull request's body ends with, naming the project it is for (L-16). */
+export function scaffoldProjectLine(project: Pick<ProjectRow, "id">): string {
+  return `Forerunner project ${project.id}.`;
+}
+
+/**
+ * Whether one of Forerunner's docs pull requests on the repository is this project's (L-16):
+ * live, the Overview listed another project's stale scaffold PR ("The project's standard docs ·
+ * pull request #1", from an earlier project on the same repository) as this one's. The intake's
+ * set is on a branch named for the project; the status PR is this project's only while its
+ * status pull request is on (C-57); a scaffold PR names its project in its body (since L-16;
+ * before, by name in its first line).
+ */
+export function isProjectDocsPr(
+  project: Pick<ProjectRow, "id" | "name" | "settings"> &
+    Partial<Pick<ProjectRow, "summary_cache">>,
+  pr: { head: { ref: string }; body: string; htmlUrl?: string },
+): boolean {
+  const ref = pr.head.ref;
+  if (ref === STATUS_BRANCH) return statusPullRequestOn(project);
+  const intake = /^fr\/intake-(.+)-docs$/.exec(ref);
+  if (intake) return intake[1] === safeSegment(project.id, "project");
+  if (ref === DOCS_SCAFFOLD_BRANCH) {
+    // The PR the project's scaffold wrote its docs onto (recorded at creation) is its own.
+    const recorded = (project.summary_cache?.docs as { pr_url?: unknown } | undefined)?.pr_url;
+    if (pr.htmlUrl && recorded === pr.htmlUrl) return true;
+    const body = pr.body ?? "";
+    if (body.includes(scaffoldProjectLine(project))) return true;
+    if (/Forerunner project \S+\./.test(body)) return false;
+    return body.startsWith(`Standard project docs for ${project.name} (spec G.5)`);
+  }
+  return false;
 }
 
 /** A doc of the set that is not on the default branch yet: the pull request it waits in. */
@@ -136,6 +194,23 @@ export class ProjectDocs implements ProjectDocsPort {
     return join(this.deps.projectsRoot, safeSegment(projectId, "project"), WORKSPACE_DIR);
   }
 
+  /** `<projectsRoot>/<project id>/app-status`: a repository project's status in the app (C-57). */
+  statusInAppDir(projectId: string): string {
+    return join(this.deps.projectsRoot, safeSegment(projectId, "project"), STATUS_IN_APP_DIR);
+  }
+
+  /**
+   * Where the Docs tab reads `docs/status.md` first (C-57): the app's copy of a repository
+   * project whose status pull request is off, once a session wrote it; null otherwise (the
+   * repository's, as merged, or the project's folder).
+   */
+  statusDocRoot(project: ProjectRow): string | null {
+    if (!parseRepoRef(project.repos[0] ?? "") || isAbsolute(project.repos[0] ?? "")) return null;
+    if (statusPullRequestOn(project)) return null;
+    const dir = this.statusInAppDir(project.id);
+    return existsSync(join(dir, fromPosix(STATUS_DOC))) ? dir : null;
+  }
+
   /**
    * Where the chat's docs search reads a project's doc set (spec J.1, ADR 0061), in order,
    * without cloning or fetching anything: a local folder the project is linked to (an absolute
@@ -192,8 +267,14 @@ export class ProjectDocs implements ProjectDocsPort {
         } else {
           const res = await scaffoldDocs(dir, info);
           const marker = await this.mark(project, dir);
-          let prUrl = existingPr?.htmlUrl ?? null;
           const written = [...res.created, ...(marker.status === "created" ? [marker.path] : [])];
+          // An open scaffold PR this project adds nothing to and that is not its own (another
+          // project's on the same repository) is never recorded as its docs PR (L-16): the
+          // Overview listed one as "The project's standard docs".
+          let prUrl =
+            existingPr && (written.length > 0 || isProjectDocsPr(project, existingPr))
+              ? existingPr.htmlUrl
+              : null;
           if (written.length) {
             const list = written.map((p) => `- ${p}`).join("\n");
             const markerNote =
@@ -211,7 +292,7 @@ export class ProjectDocs implements ProjectDocsPort {
             } else {
               const pr = await this.deps.host.createPullRequest(target.repo, {
                 title: "docs: scaffold the standard project doc set",
-                body: `Standard project docs for ${project.name} (spec G.5), written from templates for the files the repository lacked:\n${list}${markerNote}\n\nExisting files were left as they are${res.existing.length ? ` (${res.existing.join(", ")})` : ""}. Opened by Forerunner.`,
+                body: `Standard project docs for ${project.name} (spec G.5), written from templates for the files the repository lacked:\n${list}${markerNote}\n\nExisting files were left as they are${res.existing.length ? ` (${res.existing.join(", ")})` : ""}. Opened by Forerunner. ${scaffoldProjectLine(project)}`,
                 head: branch,
                 base: target.base,
               });
@@ -267,6 +348,14 @@ export class ProjectDocs implements ProjectDocsPort {
     const update: StatusUpdate = { ...input.update, state: await this.projectState(project.id) };
     const target = await this.deps.repoFor(project);
     if (!target) return this.statusInFolder(project, session, update);
+    // C-57: unless the person turned the status pull request on, a repository project's status
+    // stays in the app: one PR to merge after every session was noise, even for one task.
+    if (!statusPullRequestOn(project)) {
+      const dir = this.statusInAppDir(project.id);
+      mkdirSync(dir, { recursive: true });
+      const res = await writeStatusUpdate(dir, update);
+      return { location: "app", dir, path: res.path, created: res.created };
+    }
     // Forerunner's own status branch, never a task's: the critic accepted the task's branch,
     // and a commit after the review would put a file it never saw into the reviewed PR.
     const branch = STATUS_BRANCH;
@@ -358,8 +447,10 @@ export class ProjectDocs implements ProjectDocsPort {
       identity: this.deps.identity,
     });
     await git.fetch();
+    // Only this project's docs PRs (L-16): another project's on the same repository is not
+    // where this project's docs wait.
     const prs = (await this.deps.host.listPullRequests(target.repo, { state: "open" })).filter(
-      (p) => isDocsBranch(p.head.ref),
+      (p) => isDocsBranch(p.head.ref) && isProjectDocsPr(project, p),
     );
     const out: DocInPullRequest[] = [];
     for (const pr of prs) {

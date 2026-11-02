@@ -2565,8 +2565,16 @@ session's completed, in-review plus sent-back, blocked (needs human, failed, blo
 findings) and skipped task titles with the session id, the end instant from the Clock and
 a note (`stop reason <x>; spent $<n>`), and the four top sections come from the project's
 state in the store (the latest 15 done tasks, every task claimed, in progress or in review,
-every needs-human or failed one, the ready and draft ones highest priority first). With a
-repository it is committed as `docs: status after session <id>` on Forerunner's own status
+every needs-human or failed one, the ready and draft ones highest priority first). **With a
+repository and the project setting `status_pull_request` off (the default since C-57, ADR 0106,
+`statusPullRequestOn`)** the update is written to the app's own folder
+`<projectsRoot>/<id>/app-status/docs/status.md` (`statusInAppDir`, no git, outcome `location:
+"app"`, the log line "…, kept in the app"); `statusDocRoot(project)` names that folder once it
+holds the file, and the docs routes read `docs/status.md` from it first (`DocsRoutesDeps.statusDocRoot`,
+the note "kept in the app: no status pull request (Settings turns it on)"). `settings.set
+status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in
+`GET /settings` for repository projects only) turns the following on. With a
+repository and the setting on it is committed as `docs: status after session <id>` on Forerunner's own status
 branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status"):
 a later session adds its commit to the open PR and comments the entry on it; once the PR is
 merged or closed the branch starts again from the default branch (pushed with a lease) and a
@@ -2583,7 +2591,13 @@ answers `firstCommit: true`, `branch` the default branch, no PR; `summary_cache.
 After each write the docs clone is back on the default branch (`backToBase`), so what reads it
 sees what is merged; `docsInPullRequests(project)` fetches the clone and lists the docs that wait
 in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, the intake's
-`fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab. The result is the
+`fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab; only this
+project's (`isProjectDocsPr`, L-16: the status PR while its setting is on, the intake branch named
+for the project, a scaffold PR whose body ends "Forerunner project <id>." or that the project's
+scaffold wrote onto, `summary_cache.docs.pr_url`; an older body naming the project by name), the
+same filter `projectPullRequests` (`daemon/pull-requests.ts`) applies to the Overview's docs
+group, and the scaffold records another project's open scaffold PR it added nothing to as no PR
+of its own. The result is the
 `docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`, `commit`) and
 `handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
 the session ends as it would have. The critic's tier 2+ drift check runs before this write

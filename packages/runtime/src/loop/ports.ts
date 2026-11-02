@@ -421,7 +421,11 @@ export interface DocsScaffoldOutcome {
 }
 
 export interface SessionStatusOutcome {
-  location: "repo" | "data_dir";
+  /**
+   * `app`: a repository project whose status pull request is off keeps it in the app's folder
+   * (C-57, `STATUS_IN_APP_DIR`), with no commit and no pull request.
+   */
+  location: "repo" | "data_dir" | "app";
   /** Repo-relative POSIX path of the doc (`docs/status.md`). */
   path: string;
   /** Repository: the branch the update was committed to and the pull request carrying it. */

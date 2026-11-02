@@ -223,6 +223,18 @@ export function settingsView(input: SettingsViewInput): Row[] {
           description: fastModeDescription(input.pricing),
           risk: "medium",
         }),
+        // C-57: a repository project's status as a pull request, off unless turned on.
+        ...(p.repos.length
+          ? [
+              project({
+                key: "project.status_pull_request",
+                label: "Status pull request",
+                value: p.settings.status_pull_request === true,
+                description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
+                risk: "low",
+              }),
+            ]
+          : []),
         // The slider (spec D.16): -1 speed, 0 balanced, +1 quality, as every mode reads it.
         project({
           key: "project.speed_quality_offset",

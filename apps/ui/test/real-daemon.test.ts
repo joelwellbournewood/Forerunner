@@ -5080,5 +5080,72 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
       expect(m).toContain("diff --git a/summary.md");
       expect(m).not.toContain("diff --git a/notes.md");
     }
+
+    // C-57: no status pull request by default; the session's status is in the app, where the
+    // Docs tab reads it, and Settings lists the switch for this repository project.
+    expect(open.some((p) => p.head.ref === "fr/status")).toBe(false);
+    expect(waiting.waiting.some((w) => w.branch === "fr/status")).toBe(false);
+    const status = (await client.docs(project.id)).find((d) => d.path === "docs/status.md");
+    expect(status).toMatchObject({
+      exists: true,
+      note: "kept in the app: no status pull request (Settings turns it on)",
+    });
+    expect((await client.doc(project.id, "docs/status.md")).content).toContain(
+      `session ${sessionId}`,
+    );
+    const row = (await client.settings()).find(
+      (s) => s.key === "project.status_pull_request" && s.scopeId === project.id,
+    );
+    expect(row).toMatchObject({ label: "Status pull request", value: false });
+    const turnedOn = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "status_pull_request", value: true, project: project.id },
+        },
+      ],
+      source: "ui",
+    });
+    expect(turnedOn.status).toBe("done");
+    expect(
+      (await client.settings()).find(
+        (s) => s.key === "project.status_pull_request" && s.scopeId === project.id,
+      )?.value,
+    ).toBe(true);
+  }, 120_000);
+
+  it("a second project on the same repository lists only its own docs pull requests, never the first one's scaffold (L-16)", async () => {
+    // Live (2026-11-02): "The project's standard docs · pull request #1" on the Overview was a
+    // scaffold PR an earlier project had left on forerunner-sandbox.
+    const sharedBare = join(bare, "..", "shared.git");
+    await run(["git", "init", "--bare", "-b", "main", sharedBare]);
+    const seed = new GitOps({
+      cwd: join(bare, "..", "shared-seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(sharedBare);
+    writeFileSync(join(bare, "..", "shared-seed", "README.md"), "# shared\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "shared", private: true, cloneUrl: sharedBare });
+    const first = await client.createProject({
+      name: "Shared one",
+      goal: "A page in a shared repository",
+      repos: ["o/shared"],
+    });
+    const firstDocs = (await client.projectPullRequests(first.id)).waiting.filter(
+      (w) => w.kind === "docs",
+    );
+    expect(firstDocs.map((w) => w.branch)).toEqual(["fr/docs-scaffold"]);
+    const second = await client.createProject({
+      name: "Shared two",
+      goal: "More notes in the same repository",
+      repos: ["o/shared"],
+    });
+    const listed = await client.projectPullRequests(second.id);
+    expect(listed.waiting.filter((w) => w.kind === "docs")).toEqual([]);
+    // Its Docs tab does not say its docs wait in the first project's pull request.
+    for (const d of await client.docs(second.id))
+      expect(d.note ?? "", d.path).not.toMatch(/waiting in pull request/);
   }, 120_000);
 });

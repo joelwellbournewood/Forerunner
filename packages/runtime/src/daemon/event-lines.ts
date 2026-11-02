@@ -430,7 +430,13 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
     }
     case "docs.status_written": {
       const where = s("path") || "docs/status.md";
-      const on = s("prUrl") ? ` on ${s("prUrl")}` : s("branch") ? ` on branch ${s("branch")}` : "";
+      const on = s("prUrl")
+        ? ` on ${s("prUrl")}`
+        : s("branch")
+          ? ` on branch ${s("branch")}`
+          : s("location") === "app"
+            ? ", kept in the app"
+            : "";
       return `${p.created === true ? "Created" : "Updated"} the project status in ${where}${on}.`;
     }
     case "docs.status_skipped":
