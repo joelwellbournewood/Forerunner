@@ -227,12 +227,12 @@ export function moveAsk(
 ): string {
   const t = quote(task.title);
   if (to === "cancelled") {
-    // C-38: what Yes does to a task at work (ADR 0105, the Tasks tab's `cancelWorkLine`): its
-    // run stops and what it changed is taken out of the folder.
-    const what =
-      RUNNING.includes(from) || from === "in_review"
-        ? "Its run stops now and what it changed is removed"
-        : "It is dropped";
+    // C-38: what Yes does to a task whose run is going (ADR 0105, the Tasks tab's
+    // `cancelWorkLine`): its run stops and what it changed is taken out of the folder. A task
+    // left in review with no review running (phase C review) is only dropped.
+    const what = RUNNING.includes(from)
+      ? "Its run stops now and what it changed is removed"
+      : "It is dropped";
     return `Cancel ${t}? ${what}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
   }
   if (to === "needs_human")
