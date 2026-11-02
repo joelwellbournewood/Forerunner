@@ -30,6 +30,8 @@ mod supervisor;
 mod test_http;
 mod tray;
 mod version;
+#[cfg(test)]
+mod webview_acl;
 mod window_state;
 mod windows;
 
@@ -94,6 +96,20 @@ fn log_plugin(dirs: &AppDirs) -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
+/// The opener plugin, without the script its default build puts into every page. That script
+/// (tauri-plugin-opener's `init-iife.js`) cancels a click on a `target="_blank"` link, or on
+/// any link with Ctrl or Shift held, and calls `plugin:opener|open_url` from the page; no
+/// window is granted a plugin command (`capabilities/default.json`), so the ACL refused the
+/// call and the click did nothing (Desktop app run 41442343517). Links leave the app one way:
+/// the main window's `on_navigation` and `on_new_window` handlers (`windows.rs`), behind the
+/// app-origin allowlist, which hand a web page to the system browser through this plugin's
+/// Rust API (`OpenerExt`) and log it. `webview_acl.rs` fails if the script comes back.
+pub fn opener_plugin<R: tauri::Runtime>() -> impl tauri::plugin::Plugin<R> {
+    tauri_plugin_opener::Builder::new()
+        .open_js_links_on_click(false)
+        .build::<R>()
+}
+
 fn splash_response(
     _ctx: tauri::UriSchemeContext<'_, tauri::Wry>,
     _req: tauri::http::Request<Vec<u8>>,
@@ -134,7 +150,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(opener_plugin())
         .plugin(hotkey_shell::plugin())
         .invoke_handler(tauri::generate_handler![
             hotkey_shell::hotkey_status,

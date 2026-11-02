@@ -85,6 +85,18 @@ export interface TimeoutOptions {
   timeout?: number;
 }
 
+/** A key a click can hold (CDP's `modifiers` bits: Alt 1, Control 2, Meta 4, Shift 8). */
+export type ModifierKey = "Alt" | "Control" | "Meta" | "Shift";
+
+export interface ClickOptions extends TimeoutOptions {
+  /** Keys held through the click's mouse events (a Ctrl+click: `["Control"]`). */
+  modifiers?: readonly ModifierKey[];
+}
+
+export declare const MODIFIER_BITS: Readonly<Record<ModifierKey, number>>;
+/** The bit field for `keys`; an unknown name throws `cdp.bad_modifier`. */
+export declare function modifierMask(keys?: readonly string[]): number;
+
 export declare class Page {
   constructor(client: CdpClient, options?: PageOptions);
   readonly client: CdpClient;
@@ -95,7 +107,8 @@ export declare class Page {
   evaluate(expression: string, options?: { timeoutMs?: number }): Promise<unknown>;
   title(): Promise<string>;
   url(): Promise<string>;
-  mouseClick(x: number, y: number): Promise<void>;
+  /** `modifiers` is a `modifierMask` bit field held through the move, press and release. */
+  mouseClick(x: number, y: number, modifiers?: number): Promise<void>;
   /** One tap through `Input.dispatchTouchEvent` (touchStart, touchEnd) at viewport CSS coordinates. */
   touchTap(x: number, y: number): Promise<void>;
   insertText(text: string): Promise<void>;
@@ -127,10 +140,12 @@ export declare class Locator {
    * stops events that land outside the element and the click is sent again. After three
    * guarded misses at one unchanged box the fallback ladder runs (a shifted mouse click, a
    * tap, `element.click()` in the page), each announced on `page.log` as `click fallback:`.
+   * With `modifiers` the keys are held through every mouse event, and the ladder stops after
+   * the shifted mouse click (a tap or `element.click()` cannot hold a key).
    * Errors: `cdp.click_missed`, `cdp.click_intercepted`, `cdp.click_unsettled`,
-   * `cdp.click_lost`.
+   * `cdp.click_lost`, `cdp.bad_modifier`.
    */
-  click(options?: TimeoutOptions): Promise<void>;
+  click(options?: ClickOptions): Promise<void>;
   fill(value: string, options?: TimeoutOptions): Promise<void>;
   innerText(options?: TimeoutOptions): Promise<string>;
   getAttribute(name: string, options?: TimeoutOptions): Promise<string | null>;

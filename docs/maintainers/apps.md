@@ -1172,8 +1172,9 @@ apps/desktop/src-tauri/
   runtime/            the bundled runtime (ADR 0092; scripts/build-runtime-payload.mjs; gitignored)
   src/
     lib.rs            run(): directories, log plugin, plugins (single-instance, notification, dialog,
-                      deep-link, opener), the frshell:// splash protocol, setup (install id, tray,
-                      deep links, bootstrap), close-to-tray, "never exit while only the tray is left"
+                      deep-link, opener without its page script: opener_plugin()), the frshell://
+                      splash protocol, setup (install id, tray, deep links, bootstrap),
+                      close-to-tray, "never exit while only the tray is left"
     main.rs           calls run(); windows_subsystem = "windows" in release
     env.rs            Env trait (ProcessEnv; MapEnv fixture in tests)
     dirs.rs           app_dirs(): mirror of packages/platform/src/paths.ts appDirs()
@@ -1210,6 +1211,8 @@ apps/desktop/src-tauri/
                       pages only (the conversation panel), the camera denied (pure, unit-tested)
     test_http.rs      tests only: a std-only HTTP server on 127.0.0.1 (canned, delayed, hung
                       answers; stops listening after a route) for the client and Quit tests
+    webview_acl.rs    tests only: every plugin's page script and the commands it calls, held
+                      against capabilities/ (the opener plugin puts none into the page)
 ```
 
 **Directories.** `dirs::app_dirs(env, opts)` returns `config, data, cache, logs, worktrees,
@@ -1293,7 +1296,43 @@ origin and opens `http(s)` targets in the OS browser (opener plugin; `windows::l
 A new-window request (`target="_blank"`, `window.open`) goes through `on_new_window`
 (`windows::new_window_action`): an `http(s)` page opens in the OS browser, the app's own pages
 and other schemes are refused, and no second window is ever created. Before, nothing handled
-it and the webview dropped the click (the Tasks tab's PR link did nothing). The UI opens every
+it and the webview dropped the click (the Tasks tab's PR link did nothing).
+
+**How a link leaves the app: one way.** `on_navigation` and `on_new_window` on the main window
+are the only path out, behind the app-origin allowlist, and they log every hand-off (below).
+The opener plugin is registered without its page script (`lib.rs`, `opener_plugin`:
+`tauri_plugin_opener::Builder::new().open_js_links_on_click(false)`). The plugin's default
+build puts a click listener into every page (its `init-iife.js`) that cancels the click on a
+`target="_blank"` link, or on any `http`, `https`, `mailto` or `tel` link clicked with Ctrl or
+Shift held, and calls `plugin:opener|open_url` from the page. No window is granted a plugin
+command (`capabilities/default.json`), so the ACL refused that call ("Command
+plugin:opener|open_url not allowed by ACL") and the click did nothing; the window check found
+it (Desktop app run 41442343517). Without the script, a Ctrl- or Shift-click is the webview's
+own new-window request: an external page goes to the system browser ("handed to the system
+browser (new window)"), and a Ctrl+click on one of the app's own links (the sidebar's Inbox)
+opens nothing: a second window would have no daemon token and the system browser cannot show
+the app's page, so the shell refuses it ("opening http from the window refused (new window)")
+and the window stays on its page. Granting the page `opener:allow-open-url` instead would
+open a second way out that skips the allowlist and the log. The capabilities stay as they
+are: the core IPC and the shell's own commands, never a plugin command.
+
+What the pages can call is tested on both sides. `webview_acl.rs` (cargo test) builds every
+plugin `run()` registers, reads the commands its page script calls and fails on one the
+windows are refused unless `REFUSED_SCRIPT_CALLS` lists it with what in the page sets it
+off; it also fails if the opener plugin injects a script again, if `run()` registers a
+plugin the test does not build, or if a capability grants a window a plugin command. The
+other scripts' refused calls are reviewed there: tauri-plugin-dialog's replaces
+`window.alert` and `window.confirm` (`confirm` then returns a Promise, always truthy) and
+tauri-plugin-notification's the web Notification API, neither of which the UI uses; on Linux
+the notification script also asks `is_permission_granted` at every page load, refused, one
+uncaught rejection in the page's console that nobody sees (on Windows it does not ask).
+`apps/ui/test/shell-commands.test.ts` reads every `invoke` in the UI: a desktop screen's
+command must be in `generate_handler!`, in `build.rs`'s app manifest and granted to the main
+window; the desktop screens may import only `@tauri-apps/api/core` and
+`@tauri-apps/api/event` (`listen`, in `core:default`) and use `__TAURI_INTERNALS__` only to
+tell the shell apart; no screen may call `alert(` or `confirm(`, use the web Notification API
+or mark a `data-tauri-drag-region` (Tauri's drag script calls `start_dragging`, not in
+`core:default`); a phone screen's command must be one the Android shell registers or grants. The UI opens every
 external link through `ExternalLink` (no target in the shell; `variant="inline"` for a text
 link), and `apps/ui/test/external-links.test.tsx` fails on `_blank` anywhere else in the
 desktop screens. `installId` is the UUID
@@ -1582,7 +1621,10 @@ struct that carries it. `node scripts/secret-scan.mjs apps/desktop` is clean.
   both test suites run every case, and
   `every_canonical_chord_is_accepted_by_the_plugin_parser` fails for a key the plugin does
   not know. **Another shell command**: add it to `build.rs`'s app manifest, the
-  `generate_handler!` list in `lib.rs` and a capability (an unlisted command is refused).
+  `generate_handler!` list in `lib.rs` and a capability (an unlisted command is refused);
+  `apps/ui/test/shell-commands.test.ts` fails until all three are there. **Another plugin**:
+  build it in `webview_acl.rs` (`page_scripts`, `REGISTERED_PLUGINS`); a page script that calls
+  a command no window is granted does nothing in the page.
 - **The email routes move**: change `actions::email_settings_path` / `email_action_path`;
   `actions::tests::email_paths_match_the_route_table_source` fails until they match
   `packages/capabilities/src/email/routes.ts` again.
@@ -1630,7 +1672,9 @@ query, a fragment or credentials); `devtools` (FORERUNNER_WEBVIEW_DEVTOOLS_PORT 
 decimal port from 1024 to 65535 and refuses the rest in an escaped, shortened warning; the
 arguments keep wry's whole default, its features and its autoplay policy, and add the port, on
 Windows only; that default is from the wry Cargo.lock names; every window is built by
-`windows::new_window`); `folder` (the hand-off line names the folder); `actions` (Quit asks from the count `/health` gives when it is
+`windows::new_window`); `webview_acl` (the opener plugin puts no script into the page; every
+plugin page script's refused calls are the reviewed ones; no window is granted a plugin
+command); `folder` (the hand-off line names the folder); `actions` (Quit asks from the count `/health` gives when it is
 chosen, U-077); `state` (tray view for unreachable, kill/resume, email availability and
 toggle, busy, desktop control on (title, tooltip first line, item, stop enabled) and cleared
 on off, "the desktop" without an app and a new `on` replacing the names, the last report kept
@@ -1950,7 +1994,10 @@ apps/mobile/
                      guarded misses at one unchanged box the fallback ladder (ADR 0087
                      amendment of 2026-10-25: a mouse click shifted by the reported offset, an
                      Input.dispatchTouchEvent tap, element.click() in the page), each step a
-                     `click fallback:` line on stdout; describePage for the runner's page:
+                     `click fallback:` line on stdout; click({ modifiers: ["Control"] }) holds
+                     the keys through every mouse event (a Ctrl+click; modifierMask) and ends
+                     the ladder after the shifted mouse click, since a tap or element.click()
+                     would drop the key; describePage for the runner's page:
                      lines; cdp.test.ts against a fake endpoint
   e2e/cdp.d.mts      types of cdp.mjs for the test (keep in step); e2e/jsdom.d.ts: the jsdom slice it uses
   src-tauri/
@@ -2373,6 +2420,9 @@ warnings and messages, suppressed inside quiet hours.
   `getAttribute`, `innerText`; `waitFor` timing out on an attached but hidden element,
   resolving only after it is unhidden, and timing out with the locator named; `click` as
   `mouseMoved` / `mousePressed` / `mouseReleased` at the box centre after `scrollIntoView`,
+  a click with `modifiers` carrying the keys' bits on all three (Control 2, Shift 8; an
+  unknown key refused before anything is sent) and, when it keeps missing, failing after the
+  mouse path instead of a tap or `element.click()` that would drop the key,
   landing on the second position when the box moves once after the scroll, strict-mode
   refusal, an intercepting overlay reported; the click guard (ADR 0087, android.yml run
   40000764444): a nav that moves down between the measurement and the press (the base's

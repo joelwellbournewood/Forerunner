@@ -2,12 +2,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 import { join } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  ACL_REFUSAL,
   APP_ORIGINS,
+  ARM_CLICK_PROBE,
   appIdentifier,
   asArray,
+  clickSeenWords,
   collectWebviewDiagnostics,
   DEVTOOLS_PORT_ENV,
   DOCKER_DESKTOP_URL,
@@ -19,8 +23,11 @@ import {
   endpointWords,
   fallbackEndpoints,
   freePort,
+  heldKey,
   installStandIn,
   isAppUrl,
+  pageErrorsCheck,
+  pageErrorText,
   parseArgs,
   parseExcludedPortRanges,
   parseHandoffs,
@@ -28,6 +35,7 @@ import {
   parseSwitches,
   powerShellReport,
   powerShellWords,
+  READ_CLICK_PROBE,
   REPO,
   runCaptured,
   sameFolder,
@@ -36,6 +44,7 @@ import {
   summaryMarkdown,
   switchMechanism,
   tcpProbe,
+  UNCAUGHT_ERRORS_REQUIRED,
   userDataClues,
   viaWords,
   WEBVIEW_DIAG_PS,
@@ -859,6 +868,167 @@ describe("the shell's hand-offs in its log", () => {
       "utf8",
     );
     expect(words).toContain(`export const DOCKER_DESKTOP_URL = "${DOCKER_DESKTOP_URL}";`);
+  });
+});
+
+describe("Ctrl- and Shift-clicked links, and what the page threw", () => {
+  /**
+   * Run 41442343517: the page's one uncaught error was the ACL refusing the opener plugin's
+   * `open_url`, a rejection with a string, which the check recorded as "Uncaught (in promise)"
+   * only (the console line had the words).
+   */
+  it("reads an unhandled rejection with a string whole, as the refusal of run 41442343517 was thrown", () => {
+    expect(
+      pageErrorText({
+        timestamp: 1,
+        exceptionDetails: {
+          exceptionId: 1,
+          text: "Uncaught (in promise)",
+          lineNumber: 330,
+          columnNumber: 10,
+          exception: { type: "string", value: "Command plugin:opener|open_url not allowed by ACL" },
+        },
+      }),
+    ).toBe("Uncaught (in promise) Command plugin:opener|open_url not allowed by ACL");
+    expect(
+      pageErrorText({
+        exceptionDetails: {
+          text: "Uncaught",
+          exception: {
+            type: "object",
+            subtype: "error",
+            className: "TypeError",
+            description:
+              "TypeError: x is not a function\n    at f (http://tauri.localhost/a.js:1:2)",
+          },
+        },
+      }),
+    ).toBe("Uncaught TypeError: x is not a function");
+    expect(pageErrorText({ exceptionDetails: { text: "Uncaught SyntaxError: bad" } })).toBe(
+      "Uncaught SyntaxError: bad",
+    );
+    expect(pageErrorText({})).toBe("Uncaught");
+  });
+
+  it("fails on the shell refusing the page always, and on any other uncaught error, since the journey throws none", () => {
+    for (const refused of [
+      "Uncaught (in promise) Command plugin:opener|open_url not allowed by ACL",
+      "Uncaught (in promise) opener.open_url not allowed. Permissions associated with this command: opener:allow-open-url, opener:default",
+      "Uncaught (in promise) notification.is_permission_granted not allowed. Command not found",
+      'Uncaught (in promise) hotkey_set not allowed on window "splash", webview "splash", URL: local',
+    ])
+      expect(ACL_REFUSAL.test(refused), refused).toBe(true);
+    for (const other of [
+      "Uncaught (in promise) TypeError: Failed to fetch",
+      "Uncaught Error: not allowed to start a session",
+    ])
+      expect(ACL_REFUSAL.test(other), other).toBe(false);
+
+    expect(UNCAUGHT_ERRORS_REQUIRED).toBe(true);
+    expect(pageErrorsCheck([])).toEqual({ ok: true, required: true, detail: "none" });
+    const refusal = "Uncaught (in promise) Command plugin:opener|open_url not allowed by ACL";
+    expect(pageErrorsCheck([refusal], false)).toEqual({
+      ok: false,
+      required: true,
+      detail: `the shell refused 1 command(s) the page sent (the control did nothing): ${refusal}`,
+    });
+    const other = "Uncaught TypeError: x is not a function";
+    expect(pageErrorsCheck([other], false)).toEqual({
+      ok: false,
+      required: false,
+      detail: `1 other: ${other}`,
+    });
+    expect(pageErrorsCheck([other])).toMatchObject({ ok: false, required: true });
+    expect(pageErrorsCheck([other, refusal], false)).toEqual({
+      ok: false,
+      required: true,
+      detail: `the shell refused 1 command(s) the page sent (the control did nothing): ${refusal}; 1 other: ${other}`,
+    });
+  });
+
+  /** A window with listeners in the DOM's order: capture first, then bubble, each in order. */
+  function probeWindow() {
+    type Listener = { fn: (e: Record<string, unknown>) => void; capture: boolean; once: boolean };
+    const listeners: Listener[] = [];
+    const win: Record<string, unknown> = {
+      addEventListener(
+        type: string,
+        fn: (e: Record<string, unknown>) => void,
+        opts: { capture?: boolean; once?: boolean } = {},
+      ) {
+        if (type === "click") listeners.push({ fn, capture: !!opts.capture, once: !!opts.once });
+      },
+    };
+    const click = (init: { ctrlKey?: boolean; shiftKey?: boolean; isTrusted?: boolean }) => {
+      const event: Record<string, unknown> = {
+        ctrlKey: false,
+        shiftKey: false,
+        isTrusted: true,
+        ...init,
+        defaultPrevented: false,
+      };
+      event.preventDefault = () => {
+        event.defaultPrevented = true;
+      };
+      for (const capture of [true, false])
+        for (const l of listeners.filter((x) => x.capture === capture)) {
+          l.fn(event);
+          if (l.once) listeners.splice(listeners.indexOf(l), 1);
+        }
+    };
+    const run = (script: string) => runInNewContext(script, { window: win });
+    return { win, click, run };
+  }
+
+  it("records the keys of the next click the page sees, and whether a script cancelled it (as the opener plugin's did)", () => {
+    const w = probeWindow();
+    expect(w.run(READ_CLICK_PROBE)).toBeNull();
+    expect(w.run(ARM_CLICK_PROBE)).toBe(true);
+    expect(w.run(READ_CLICK_PROBE)).toBeNull();
+    w.click({ ctrlKey: true });
+    const seen = w.run(READ_CLICK_PROBE);
+    expect(seen).toEqual({ ctrl: true, shift: false, trusted: true, prevented: false });
+    expect(heldKey(seen, "Control")).toBe(true);
+    expect(heldKey(seen, "Shift")).toBe(false);
+    expect(clickSeenWords(seen, "Control")).toBe("the page saw the click with Ctrl held");
+    // Only the next click: a later one leaves the record alone.
+    w.click({ shiftKey: true });
+    expect(w.run(READ_CLICK_PROBE)).toEqual(seen);
+
+    // tauri-plugin-opener's init-iife.js: a window click listener, registered at page start
+    // (before the probe), that cancels a Ctrl/Shift-click on a link.
+    const opener = probeWindow();
+    (opener.win.addEventListener as (t: string, f: (e: Record<string, unknown>) => void) => void)(
+      "click",
+      (e) => {
+        if (e.ctrlKey || e.shiftKey) (e.preventDefault as () => void)();
+      },
+    );
+    opener.run(ARM_CLICK_PROBE);
+    opener.click({ shiftKey: true });
+    const cancelled = opener.run(READ_CLICK_PROBE);
+    expect(cancelled).toEqual({ ctrl: false, shift: true, trusted: true, prevented: true });
+    expect(clickSeenWords(cancelled, "Shift")).toBe(
+      "the page saw the click with Shift held; a script in the page cancelled it (preventDefault)",
+    );
+
+    expect(clickSeenWords(null, "Control")).toBe("the page saw no click");
+    expect(
+      clickSeenWords({ ctrl: false, shift: false, trusted: true, prevented: false }, "Control"),
+    ).toBe("the page saw the click without Ctrl (the held key did not arrive)");
+    const synthetic = { ctrl: true, shift: false, trusted: false, prevented: false };
+    expect(heldKey(synthetic, "Control")).toBe(false);
+    expect(clickSeenWords(synthetic, "Control")).toBe(
+      "the page saw a click that did not come from the input path",
+    );
+  });
+
+  it("the shell builds the opener plugin without its page script, so these clicks reach its new-window handler", () => {
+    const lib = shellSource("lib.rs");
+    expect(lib).toContain(".plugin(opener_plugin())");
+    expect(lib).toContain(".open_js_links_on_click(false)");
+    expect(lib).not.toContain("tauri_plugin_opener::init(");
+    expect(shellSource("windows.rs")).toMatch(/\.on_new_window\(move \|url, _features\| \{/);
   });
 });
 

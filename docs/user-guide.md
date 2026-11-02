@@ -564,6 +564,14 @@ so, with **Allow sessions again**.
 The command palette opens with **Ctrl+K** (**⌘K** on a Mac) and has **Start session** for the
 active project.
 
+## Links
+
+In the desktop app, a link that leaves Forerunner (a pull request, "Get Docker Desktop", a page
+named in a task) opens in your browser, also when you hold Ctrl or Shift while clicking. The
+app's own links stay in its one window: a Ctrl-click on one opens nothing else and leaves you
+where you are. **Open folder** opens a project's folder in your file manager; nothing in the app
+opens or runs a file.
+
 ## Closing and quitting
 
 Closing the window keeps Forerunner running in the tray, so sessions, scheduled work, the phone

@@ -86,6 +86,9 @@ Problems and their status, released or not, are tracked in
   not exercised in CI and broke on some paths (U-066); uninstall left the voice dependencies
   (U-067); arguments with `&` or `%` broke through `cmd` (U-068); voice failed in a deep install
   folder (U-069); an installer was accepted as an update (U-070).
+- In the desktop app, a link clicked with Ctrl or Shift held (the PR link, "Get Docker
+  Desktop", any link that leaves the app) and a link that opens a new window did nothing; they
+  now open in your browser. A Ctrl-click on one of the app's own links keeps you where you are.
 - The voice install could not open the speech model it downloaded (U-024).
 - Status and counts: "connected" while the service was gone, Chat lost on a tab switch (U-071);
   counts that disagreed between the summary, the log and the notification (U-072); Update and

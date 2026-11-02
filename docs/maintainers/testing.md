@@ -2572,7 +2572,8 @@ was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no hand
    endpoint answered last (Node's WebSocket sends no Origin header, so WebView2's DevTools takes
    the driver without `--remote-allow-origins`, which is never set). Then it
    drives the page over raw CDP with the Android emulator job's driver (`apps/mobile/e2e/cdp.mjs`,
-   ADR 0054; the page's console is forwarded as `webview:` lines): Set up later, New project with
+   ADR 0054; the page's console is forwarded as `webview:` lines; `click({ modifiers })` holds
+   Ctrl or Shift through the mouse events): Set up later, New project with
    a one-line brief, the plan card in the Inbox (by its title, with its task lines), Approve and
    start ("Plan approved: N tasks written"), the session to its end, every task done and shown on
    the Tasks tab;
@@ -2586,10 +2587,28 @@ was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no hand
      browser's first run may not load it);
    - Settings → Sandbox, "Get Docker Desktop": the same line with the docker.com page;
    - a `target="_blank"` link added to the page: "handed to the system browser (new window)";
+   - a Ctrl+click and a Shift+click on a link added to the page with no target, as
+     `ExternalLink` renders one in the shell (driver: `click({ modifiers: ["Control"] })`,
+     `apps/mobile/e2e/cdp.mjs`): "handed to the system browser" with that URL, by whichever
+     way the shell reports (`new window` from WebView2's new-window request); the page must
+     have seen the click with the key held, from the input path (`ARM_CLICK_PROBE`, which also
+     says when a script in the page cancelled it, as tauri-plugin-opener's page script did:
+     run 41442343517, `apps.md`, "How a link leaves the app"), and the window's page targets
+     must not grow (no second window);
+   - a Ctrl+click on the sidebar's Inbox link, one of the app's own: no hand-off to a browser,
+     no second window, the window stays on its page (the shell refuses the new window,
+     `windows::new_window_action`; the detail says whether its refusal line came);
    - a `file:` link added to the page: no hand-off of any kind;
    - Open folder on the Overview: "handed to the file manager: <folder>", the folder the
      Overview shows, and no error under the button;
    - after each, the window still shows the same app page (the shell must not navigate away);
+   - at the end, "the page threw no uncaught error", required: every `Runtime.exceptionThrown`
+     since the attach, with what was thrown (`pageErrorText`: a rejection with a string, as
+     Tauri's refusals are, was recorded as "Uncaught (in promise)" only before). A refusal by
+     the ACL (`ACL_REFUSAL`: "not allowed by ACL", or a debug build's "not allowed.
+     Permissions ...") is named as the shell refusing the page; any other uncaught error fails
+     too (`UNCAUGHT_ERRORS_REQUIRED`), since the whole journey of run 41442343517 threw one, the
+     opener plugin's refusal, and none once that is gone (the dry run below throws none);
 6. saves a screenshot (`Page.captureScreenshot`) and the visible text of every step and of the
    page where the journey stopped, when it stopped: also the whole screen then (Windows
    PowerShell, `desktopScreenshot`, `99-stopped-…-desktop.png`), for a stop before the window's
@@ -2622,9 +2641,21 @@ another port, none; Chromium uses the last of two), the `DevToolsActivePort` fil
 DevTools lines of `chrome_debug.log` in its data folder (`userDataClues`), and says it in one
 sentence (`devtoolsVerdict`).
 
-How to read the next run (the first, run 41423382129 on 6048d50, failed at "the window's page is
-reachable over DevTools" with "GET http://127.0.0.1:9333/json: fetch failed", while the window
-had painted and the daemon ran on the stand-in, so the app's environment had arrived):
+Run 41442343517 (on 9a24edb) walked the whole journey in the window for the first time;
+every check passed but 'a `target="_blank"` link goes to the system browser (new window)':
+nothing in the shell's log, and the page's console said "Uncaught (in promise) Command
+plugin:opener|open_url not allowed by ACL". The opener plugin's page script took the click
+over and the ACL refused its call; the plugin is now built without it (`apps.md`). The next run
+should pass that check, the Ctrl+ and Shift+click checks ("new window" hand-offs, the page saw
+the key held) and the in-app Ctrl+click (refused, nothing opens), with "the page threw no
+uncaught error: none". A Ctrl+click check that fails with "the page saw the click with Ctrl
+held" and nothing in the log means WebView2 raised no new-window request for it; one with "a
+script in the page cancelled it" means a page script took the click over again.
+
+How to read a run that stops at DevTools (the first, run 41423382129 on 6048d50, failed at
+"the window's page is reachable over DevTools" with "GET http://127.0.0.1:9333/json: fetch
+failed", while the window had painted and the daemon ran on the stand-in, so the app's
+environment had arrived):
 
 - **The journey runs.** "the window's page is reachable over DevTools" names the port that
   answered: 9333 means the shell's switch, 9334 means `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`.
@@ -2655,7 +2686,12 @@ had painted and the daemon ran on the stand-in, so the app's environment had arr
     (`powerShellWords`), and `devtools-unreachable.ps.txt` in the artifact has all it wrote.
 
 A dry run of the journey without the shell, against a bench in Chromium (the hand-off checks
-are reported as skipped; in a browser a link opens a tab):
+are reported as skipped; in a browser a link opens a tab; the Ctrl+ and Shift+click steps say
+whether the page saw the key and whether the browser opened the link in a tab, which shows the
+driver's modified click is a real one). On 2026-11-02 (`--name links`, headless Chrome for Testing 153)
+every required check passed, the three new steps skipped with "the page saw the click with
+Ctrl held" (Shift for the second) and "this browser opened the link in a new tab or window",
+and the page threw no uncaught error:
 
 ```
 node scripts/bench/start.mjs --name win --daemon-port 48731 --ui-port 1871 --fresh
@@ -2666,7 +2702,12 @@ node scripts/bench/stop.mjs --name win
 ```
 
 Tests: `scripts/desktop-window-check.test.ts` (the options, `--cdp-port` within what the shell
-accepts; the app's environment with both DevTools switches on two ports, and that the variables,
+accepts; a rejection with a string read whole (run 41442343517's shape) and an Error's first
+line; the uncaught-error check, required for an ACL refusal in release and debug words and
+for any other error, a note for others only when `UNCAUGHT_ERRORS_REQUIRED` is off; the click
+probe in a window with listeners in the DOM's order, the held key, a synthetic click, and the
+opener plugin's listener cancelling a Shift-click; the shell builds the opener without its
+page script and has `on_new_window`; the app's environment with both DevTools switches on two ports, and that the variables,
 the provider name, the shell's feature lists, wry's autoplay policy (both ways carry wry's whole
 default) and the shell's log line are the ones `supervisor.rs` and `devtools.rs` use; a port
 that cannot be bound replaced and the other switch's never handed out twice; a TCP probe accepted and refused; the endpoints' answers in words; the WebView2

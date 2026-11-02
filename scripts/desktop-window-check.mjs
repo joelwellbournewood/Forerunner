@@ -28,8 +28,12 @@
 //      "handed to the file manager: <folder>"): the PR link on the Tasks tab (the task's pr_url is
 //      written into the store first, pointing at a page this script serves, so it can also see
 //      the browser fetch it), Settings → Sandbox's "Get Docker Desktop" link, a target="_blank"
-//      link (the new-window path), a file: link (must open nothing) and Open folder on the
-//      Overview. After each, the window must still show the app on the same page;
+//      link (the new-window path), a Ctrl+click and a Shift+click on a link with no target (as
+//      ExternalLink renders one in the shell), a Ctrl+click on the app's own Inbox link (no
+//      browser, no second window), a file: link (must open nothing) and Open folder on the
+//      Overview. After each, the window must still show the app on the same page; the page
+//      must throw no uncaught error (a refusal by the shell's ACL above all: the opener
+//      plugin's page script once made Ctrl/Shift-clicks do nothing that way);
 //   5. saves a screenshot (Page.captureScreenshot) and the visible text of every step, and of
 //      the page where the journey stopped (with `--exe`, the whole screen there too:
 //      `desktopScreenshot`), the shell's and the daemon's logs and result.json under --out;
@@ -59,7 +63,7 @@ import { connect as connectTcp, createServer as createNetServer } from "node:net
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectPage, describePage, listTargets } from "../apps/mobile/e2e/cdp.mjs";
-import { forwardPageConsole } from "../apps/mobile/e2e/webview-console.mjs";
+import { forwardPageConsole, remoteObjectText } from "../apps/mobile/e2e/webview-console.mjs";
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -1052,6 +1056,107 @@ export function parseHandoffs(text) {
 }
 
 /**
+ * One uncaught error or unhandled rejection of the page (`Runtime.exceptionThrown`) on one
+ * line: the head ("Uncaught", "Uncaught (in promise)") and the first line of what was thrown.
+ * A rejection with a string has no description, only a value: Tauri rejects a refused command
+ * with one ("Command plugin:opener|open_url not allowed by ACL"), and run 41442343517 recorded
+ * only "Uncaught (in promise)" for it.
+ * @param {Record<string, any>} params
+ */
+export function pageErrorText(params) {
+  const details = params?.exceptionDetails ?? {};
+  const head = typeof details.text === "string" && details.text ? details.text : "Uncaught";
+  const thrown = details.exception ? remoteObjectText(details.exception) : "";
+  const first = String(thrown).split(/\r?\n/)[0]?.trim() ?? "";
+  return first && !head.includes(first) ? `${head} ${first}` : head;
+}
+
+/**
+ * Tauri's words when the ACL refuses a command the page sent: "Command <cmd> not allowed by
+ * ACL" in a release build (tauri 2.12 `webview/mod.rs`), the detailed forms of
+ * `ipc/authority.rs` in a debug build.
+ */
+export const ACL_REFUSAL =
+  /\bnot allowed by ACL\b|\bnot allowed\. (?:Permissions associated|Command not found|Plugin not found)|\bnot allowed on (?:window|origin)\b|\bexplicitly denied on origin\b/;
+
+/**
+ * Whether any uncaught error of the page fails the check, not only the shell's refusals. The
+ * whole journey of run 41442343517 threw one uncaught error, the ACL's refusal of the opener
+ * plugin's `open_url`; with that gone the page throws none, so any other is new and fails too.
+ */
+export const UNCAUGHT_ERRORS_REQUIRED = true;
+
+/**
+ * "the page threw no uncaught error": a refusal by the shell (`ACL_REFUSAL`, a control that
+ * did nothing) always fails it; another uncaught error fails it when `othersRequired`, else it
+ * is a note.
+ * @param {string[]} errors `pageErrorText` lines
+ * @param {boolean} [othersRequired]
+ * @returns {{ ok: boolean, required: boolean, detail: string }}
+ */
+export function pageErrorsCheck(errors, othersRequired = UNCAUGHT_ERRORS_REQUIRED) {
+  const refused = errors.filter((e) => ACL_REFUSAL.test(e));
+  const others = errors.filter((e) => !ACL_REFUSAL.test(e));
+  const parts = [];
+  if (refused.length)
+    parts.push(
+      `the shell refused ${refused.length} command(s) the page sent (the control did nothing): ${refused.slice(0, 3).join(" | ")}`,
+    );
+  if (others.length) parts.push(`${others.length} other: ${others.slice(0, 3).join(" | ")}`);
+  return {
+    ok: errors.length === 0,
+    required: refused.length > 0 || othersRequired,
+    detail: parts.join("; ") || "none",
+  };
+}
+
+/**
+ * Arms a record of the next click the page sees: the keys it carried, whether it was the
+ * input path's (trusted) and whether a script in the page cancelled it (`preventDefault`,
+ * read after every other window listener, as the opener plugin's script did). Read back with
+ * `READ_CLICK_PROBE`; `clickSeenWords` says it.
+ */
+export const ARM_CLICK_PROBE = `(() => {
+  window.__frClickSeen = null;
+  window.addEventListener("click", (e) => {
+    window.__frClickSeen = { ctrl: e.ctrlKey === true, shift: e.shiftKey === true, trusted: e.isTrusted === true, prevented: false };
+  }, { capture: true, once: true });
+  window.addEventListener("click", (e) => {
+    if (window.__frClickSeen) window.__frClickSeen.prevented = e.defaultPrevented === true;
+  }, { once: true });
+  return true;
+})()`;
+export const READ_CLICK_PROBE = "(() => window.__frClickSeen ?? null)()";
+
+/** The probe's field for a held key (`Control`, `Shift`). */
+const PROBE_KEY = { Control: "ctrl", Shift: "shift" };
+
+/**
+ * Whether the page saw the click with `key` held, from the input path.
+ * @param {{ ctrl?: boolean, shift?: boolean, trusted?: boolean } | null | undefined} seen
+ * @param {"Control" | "Shift"} key
+ */
+export function heldKey(seen, key) {
+  return !!seen && seen.trusted === true && seen[PROBE_KEY[key]] === true;
+}
+
+/**
+ * The probe in words, for a check's detail.
+ * @param {{ ctrl?: boolean, shift?: boolean, trusted?: boolean, prevented?: boolean } | null | undefined} seen
+ * @param {"Control" | "Shift"} key
+ */
+export function clickSeenWords(seen, key) {
+  const name = key === "Control" ? "Ctrl" : key;
+  if (!seen) return "the page saw no click";
+  const how = heldKey(seen, key)
+    ? `the page saw the click with ${name} held`
+    : seen.trusted !== true
+      ? "the page saw a click that did not come from the input path"
+      : `the page saw the click without ${name} (the held key did not arrive)`;
+  return seen.prevented ? `${how}; a script in the page cancelled it (preventDefault)` : how;
+}
+
+/**
  * Two spellings of one folder: on Windows case and `/` versus `\` do not matter; a trailing
  * separator never does.
  * @param {string} a
@@ -1443,14 +1548,7 @@ async function main() {
     client = connected.client;
     const page = connected.page;
     client.onEvent(({ method, params }) => {
-      if (method === "Runtime.exceptionThrown")
-        pageErrors.push(
-          String(
-            params?.exceptionDetails?.exception?.description ??
-              params?.exceptionDetails?.text ??
-              "exception",
-          ).split("\n")[0],
-        );
+      if (method === "Runtime.exceptionThrown") pageErrors.push(pageErrorText(params));
     });
     await forwardPageConsole(client, { timeoutMs: 10_000 });
     await client.send("Page.bringToFront", {}).catch(() => undefined);
@@ -1673,6 +1771,91 @@ async function main() {
     } else
       skip('a target="_blank" link goes to the system browser (new window)', "no shell (--attach)");
 
+    // The window's page targets: a link must never open a second window (it would have no
+    // daemon token). In a browser (--attach) a modified click opens a tab, so only the shell
+    // is held to it.
+    const pageTargets = async () =>
+      (await listTargets(cdpBase, { timeoutMs: 10_000 }).catch(() => [])).filter(
+        (t) => t.type === "page",
+      ).length;
+
+    // Ctrl+click and Shift+click on a link that leaves the app, with no target, as
+    // ExternalLink renders it in the shell (the PR link, "Get Docker Desktop"): the webview
+    // asks for a new window, which the shell hands to the system browser. tauri-plugin-opener's
+    // page script used to cancel these clicks and call `plugin:opener|open_url`, which the ACL
+    // refuses, so they did nothing (run 41442343517).
+    for (const key of /** @type {const} */ (["Control", "Shift"])) {
+      const word = key === "Control" ? "ctrl" : "shift";
+      const name = `a ${key === "Control" ? "Ctrl" : "Shift"}+click on a link that leaves the app goes to the system browser`;
+      const id = `fr-check-${word}-click`;
+      const linkPath = `/window-check/${word}-click`;
+      const target = `${link.base}${linkPath}`;
+      await page.evaluate(injectLinkScript(id, target, ""));
+      await page.evaluate(ARM_CLICK_PROBE);
+      offset = logSize(shellLog);
+      const windowsBefore = shellMode ? await pageTargets() : 0;
+      const before = await page.url();
+      await page.getByTestId(id).click({ modifiers: [key] });
+      await backToPage();
+      const seen = await page.evaluate(READ_CLICK_PROBE).catch(() => null);
+      if (shellMode) {
+        const h = await handoffSince(offset, (x) => x.kind === "browser" && x.target === target);
+        const windowsAfter = await pageTargets();
+        check(
+          name,
+          !!h && heldKey(seen, key) && windowsAfter === windowsBefore,
+          `${h ? `${h.via}: ${h.target}` : shellSaid(shellLog, offset)}; ${clickSeenWords(seen, key)}; ${windowsAfter} page target(s), ${windowsBefore} before`,
+        );
+        await stays(before, `a ${key === "Control" ? "Ctrl" : "Shift"}+click on a link`);
+      } else {
+        const opened = await until("the browser to fetch the link", 5_000, 500, async () =>
+          link.hits.some((x) => x.path === linkPath),
+        ).catch(() => false);
+        skip(
+          name,
+          `no shell (--attach); ${clickSeenWords(seen, key)}; this browser ${opened ? "opened the link in a new tab or window" : "opened no tab for it"}`,
+        );
+      }
+    }
+
+    // A Ctrl+click on one of the app's own links (the sidebar's Inbox): the webview asks for a
+    // new window, and the shell refuses it (`windows::new_window_action`): a second window
+    // would have no daemon token, and the system browser cannot show the app's own page. The
+    // person stays on the page they were on; nothing else opens.
+    {
+      const name =
+        "a Ctrl+click on one of the app's own links opens no browser and no second window";
+      const inApp = page.getByRole("link", { name: "Inbox" }).first();
+      await page.evaluate(ARM_CLICK_PROBE);
+      offset = logSize(shellLog);
+      const windowsBefore = shellMode ? await pageTargets() : 0;
+      const before = await page.url();
+      await inApp.click({ modifiers: ["Control"] });
+      await backToPage();
+      const seen = await page.evaluate(READ_CLICK_PROBE).catch(() => null);
+      if (shellMode) {
+        await sleep(3_000);
+        const said = parseHandoffs(logSince(shellLog, offset));
+        const handed = said.filter((x) => x.kind !== "refused");
+        const refusal = said.find((x) => x.kind === "refused");
+        const windowsAfter = await pageTargets();
+        check(
+          name,
+          handed.length === 0 && heldKey(seen, "Control") && windowsAfter === windowsBefore,
+          [
+            handed.length
+              ? `handed off: ${handed.map((x) => x.target).join(", ")}`
+              : refusal
+                ? `the shell refused it (${refusal.scheme}, ${refusal.via ?? "?"})`
+                : "nothing reached the shell",
+            clickSeenWords(seen, "Control"),
+            `${windowsAfter} page target(s), ${windowsBefore} before`,
+          ].join("; "),
+        );
+        await stays(before, "a Ctrl+click on an in-app link");
+      } else skip(name, `no shell (--attach); ${clickSeenWords(seen, "Control")}`);
+    }
+
     // A file: link opens nothing, in no program.
     await page.evaluate(injectLinkScript("fr-check-file", "file:///C:/Windows/win.ini", ""));
     offset = logSize(shellLog);
@@ -1693,7 +1876,7 @@ async function main() {
       await stays(beforeFile, "a file: link");
     } else skip("a file: link is handed to no program", "no shell (--attach)");
     await page.evaluate(
-      "(() => { for (const id of ['fr-check-new-window', 'fr-check-file']) document.getElementById(id)?.remove(); return true; })()",
+      "(() => { for (const id of ['fr-check-new-window', 'fr-check-ctrl-click', 'fr-check-shift-click', 'fr-check-file']) document.getElementById(id)?.remove(); return true; })()",
     );
 
     // Open folder on the Overview.
@@ -1767,12 +1950,10 @@ async function main() {
       );
     }
     await shot("end");
-    check(
-      "the page threw no uncaught error",
-      pageErrors.length === 0,
-      pageErrors.slice(0, 5).join(" | ") || "none",
-      { required: false },
-    );
+    const errors = pageErrorsCheck(pageErrors);
+    check("the page threw no uncaught error", errors.ok, errors.detail, {
+      required: errors.required,
+    });
   } catch (e) {
     if (!(e instanceof Stop))
       check(
