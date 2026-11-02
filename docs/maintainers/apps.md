@@ -363,8 +363,8 @@ and Talk in its own memory, so the two disagreed and a restart of the app lost T
 rendered through `RichText`: a chat reply (the streamed one too), the session log lines that end
 in a model's words (`EventText` with `MODEL_TEXT_EVENTS`: `session.planned`, `task.finished`,
 `critic.verdict`, `critic.session_review`, `chat.reply`), and the Task drawer's run reports and
-review summary. Every other session line is the runtime's own words (`task.step`: "wrote
-<path>", "ran <command>: ok") and shows exactly as it came. `RichText` renders a safe markdown
+review summary. Every other session line is the runtime's own words (`task.step`, a detail
+line shown under Details: "wrote <path>", "ran <command>: ok") and shows exactly as it came. `RichText` renders a safe markdown
 subset (**bold** and __bold__, *italic* and _italic_, `code`, "- " and "1. " lists, a "#"
 heading as a bold line, a rule dropped, line breaks kept with `whitespace-pre-wrap`); a link
 shows its text and its address in brackets and is not clickable. A marker formats only where a

@@ -1,3 +1,4 @@
+import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
@@ -66,6 +67,7 @@ describe("model text in the chat and the session log", () => {
       cost: { usdMicro: 0, chfMicro: 0 },
       at: "2026-10-19T19:10:00.000Z",
       level: "info",
+      audience: eventAudience("task.finished"),
     });
     renderApp("/sessions/sess_1", harness);
     const rows = await screen.findAllByTestId("event-row");
@@ -97,6 +99,8 @@ describe("model text in the chat and the session log", () => {
         cost: { usdMicro: 0, chfMicro: 0 },
         at: "2026-10-19T19:10:00.000Z",
         level: "info",
+        // The daemon's split (design §3.7): a step line is a detail, a finished task a person line.
+        audience: eventAudience(l.type),
       });
     renderApp("/sessions/sess_1", harness);
   };
@@ -115,6 +119,8 @@ describe("model text in the chat and the session log", () => {
       "Task step: ran node --test test/**/*.test.js spec/**/*.js: ok",
     ];
     sessionWith(steps.map((text) => ({ type: "task.step", text })));
+    // Step lines are the runtime's internals: the session page shows them under Details.
+    await userEvent.setup().click(await screen.findByTestId("details-toggle"));
     for (const [i, text] of steps.entries()) {
       const row = await rowAt(20 + i);
       expect(row).toHaveTextContent(text, { normalizeWhitespace: false });
