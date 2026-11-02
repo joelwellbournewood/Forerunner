@@ -164,7 +164,11 @@ export const NEVER_PASSED = [
   "ANTHROPIC_BASE_URL",
   "FORERUNNER_GITHUB_TOKEN",
 ];
-/** Model credentials, passed only to `--provider bench-live`. */
+/**
+ * Model credentials: never passed from this machine's environment. `--provider bench-live`
+ * gets its key back as ANTHROPIC_API_KEY (`daemonEnv`), and `fr setup` as
+ * FORERUNNER_ANTHROPIC_KEY (`setupEnv`).
+ */
 export const MODEL_CREDENTIALS = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
@@ -173,15 +177,77 @@ export const MODEL_CREDENTIALS = [
   "CLAUDE_CODE_OAUTH_TOKEN",
 ];
 
+/** The key `--provider bench-live` uses: ANTHROPIC_API_KEY, else FORERUNNER_ANTHROPIC_KEY. */
+export function liveKey(env = process.env) {
+  return env.ANTHROPIC_API_KEY?.trim() || env.FORERUNNER_ANTHROPIC_KEY?.trim() || "";
+}
+
+/**
+ * The daemon's environment: the bench's home, its vault a file in that home (never the OS
+ * keyring, so a bench neither sees nor writes this machine's own credentials), and no model
+ * credential except the key of `--provider bench-live`.
+ */
 export function daemonEnv({ home, provider, extra }) {
   const env = { ...process.env };
+  const key = provider === "bench-live" ? liveKey(env) : "";
   for (const k of NEVER_PASSED) delete env[k];
-  if (provider !== "bench-live") for (const k of MODEL_CREDENTIALS) delete env[k];
+  for (const k of MODEL_CREDENTIALS) delete env[k];
   for (const k of Object.keys(env)) if (k.startsWith("FORERUNNER_")) delete env[k];
+  if (key) env.ANTHROPIC_API_KEY = key;
   env.FORERUNNER_HOME = home;
+  env.FORERUNNER_VAULT_BACKEND = "file";
   for (const [k, v] of Object.entries(extra)) env[k] = v;
   return env;
 }
+
+/**
+ * `--provider bench-live`: the key goes into the home's vault the way an install gets it, with
+ * the app's own `fr setup --non-interactive` (it checks the key with Anthropic, then stores it),
+ * so the setup assistant and Settings see Claude connected as on a real install with a key (the
+ * live run of 2026-11-01 read "Claude is not connected yet" while the bench served the real
+ * model from the environment). Ends the start with setup's own reason when the key is refused;
+ * the key itself is never printed.
+ */
+export function storeLiveKey({ dir, home, extra = {} }) {
+  const key = liveKey();
+  if (!key) fail(LIVE_KEY_MISSING);
+  const env = setupEnv({ home, extra });
+  const r = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      path.join("packages", "runtime", "src", "cli", "main.ts"),
+      "setup",
+      "--non-interactive",
+    ],
+    { cwd: REPO, env, encoding: "utf8", timeout: 120_000, windowsHide: true },
+  );
+  const said = `${r.stdout ?? ""}${r.stderr ?? ""}`.split(key).join("[the key]");
+  writeFileSync(path.join(dir, "setup.log"), said);
+  if (r.status !== 0)
+    fail(
+      `fr setup refused the key for --provider bench-live (exit ${r.status ?? r.signal}); nothing was started. Last lines:\n${said.trim().split("\n").slice(-5).join("\n")}`,
+    );
+}
+
+/**
+ * `fr setup`'s environment for `storeLiveKey`: the daemon's without a provider, the key as
+ * FORERUNNER_ANTHROPIC_KEY, and the API base the start's `--env` names
+ * (FORERUNNER_ANTHROPIC_API, else FORERUNNER_BENCH_LIVE_API, the daemon's), so a live start can
+ * be dry-run against a local stand-in of the API without spending: setup checks the key where
+ * the daemon will call. Without either, setup checks it with Anthropic.
+ */
+export function setupEnv({ home, extra = {} }) {
+  const env = daemonEnv({ home, provider: "none", extra: {} });
+  env.FORERUNNER_ANTHROPIC_KEY = liveKey();
+  const base = extra.FORERUNNER_ANTHROPIC_API?.trim() || extra.FORERUNNER_BENCH_LIVE_API?.trim();
+  if (base) env.FORERUNNER_ANTHROPIC_API = base;
+  return env;
+}
+
+export const LIVE_KEY_MISSING =
+  "--provider bench-live needs ANTHROPIC_API_KEY (or FORERUNNER_ANTHROPIC_KEY) in the environment: it calls the real Messages API. Nothing was started.";
 
 /** `KEY=VAL` pairs from repeated --env options. */
 export function envPairs(list) {
@@ -223,8 +289,10 @@ export async function startDaemon({ dir, home, provider, port, extra }) {
     env: daemonEnv({ home, provider, extra }),
     logFile,
   });
+  // A daemon that ends during its start (a provider that cannot load, a lock held) ends the
+  // wait at once with its log; before, the exit was swallowed and the start waited 120 s.
   const info = await waitFor(async () => {
-    if (!isAlive(pid)) throw new Error("exited");
+    if (!isAlive(pid)) return { exited: true };
     if (!existsSync(runtimeFile)) return null;
     const raw = readFileSync(runtimeFile, "utf8");
     if (raw === before) return null;
@@ -232,11 +300,11 @@ export async function startDaemon({ dir, home, provider, port, extra }) {
     const res = await fetch(`${d.url}/health`, { signal: AbortSignal.timeout(3000) });
     return res.ok ? d : null;
   }, 120_000);
-  if (!info) {
+  if (!info || info.exited) {
     const tail = readFileSync(logFile, "utf8").split("\n").slice(-25).join("\n");
     await killTree(pid);
     fail(
-      `the daemon did not come up within 120 s (pid ${pid}${isAlive(pid) ? "" : ", exited"}). Last lines of ${logFile}:\n${tail}`,
+      `${info?.exited ? `the daemon exited during its start (pid ${pid})` : `the daemon did not come up within 120 s (pid ${pid}${isAlive(pid) ? "" : ", exited"})`}. Last lines of ${logFile}:\n${tail}`,
     );
   }
   return { pid, nodePid: info.pid, token: info.token, url: info.url };

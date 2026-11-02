@@ -290,4 +290,47 @@ describe("setup assistant", () => {
     expect(postedCalls(harness, "/setup/finish")).toHaveLength(1);
     expect(postedCalls(harness, "/setup/anthropic")).toHaveLength(0);
   });
+
+  // The live run of 2026-11-01: an install with a Claude key and no GitHub token read "Until
+  // Claude is connected your agent cannot start work" on the Done step, under "✓ Claude is
+  // connected". The sentence showed whenever either credential was missing.
+  const toDone = async (credentials: { anthropicApiKey: boolean; github: boolean }) => {
+    const user = userEvent.setup();
+    const harness = createHarness({
+      setup: { ...FRESH.setup, credentials: { ...credentials, subscription: false } },
+    });
+    renderApp("/", harness);
+    await screen.findByTestId("setup-page");
+    await user.click(screen.getByTestId("setup-next"));
+    await screen.findByTestId("setup-anthropic-input");
+    await user.click(screen.getByTestId("setup-next"));
+    await screen.findByTestId("setup-github-input");
+    await user.click(screen.getByTestId("setup-next"));
+    return screen.findByTestId("setup-done");
+  };
+
+  it("with a Claude key and no GitHub token, the Done step says what is true: work starts, in the project's folder", async () => {
+    const done = await toDone({ anthropicApiKey: true, github: false });
+    expect(done).toHaveTextContent("✓ Claude is connected.");
+    expect(done).toHaveTextContent("✗ GitHub is not connected yet.");
+    expect(done).not.toHaveTextContent("Until Claude is connected");
+    expect(done).toHaveTextContent(
+      "Without GitHub your agent works in each project's own folder on this computer.",
+    );
+  });
+
+  it("without a Claude key the Done step says work cannot start", async () => {
+    const none = await toDone({ anthropicApiKey: false, github: true });
+    expect(none).toHaveTextContent("Until Claude is connected your agent cannot start work.");
+    expect(none).not.toHaveTextContent("Without GitHub");
+  });
+
+  it("with a Claude key and a GitHub token the Done step says neither sentence", async () => {
+    const both = await toDone({ anthropicApiKey: true, github: true });
+    expect(both).toHaveTextContent("✓ Claude is connected.");
+    expect(both).toHaveTextContent("✓ GitHub is connected.");
+    expect(both).not.toHaveTextContent("Until Claude is connected");
+    expect(both).not.toHaveTextContent("Without GitHub");
+    expect(screen.queryByTestId("setup-done-missing")).toBeNull();
+  });
 });

@@ -1,0 +1,80 @@
+{
+  "source": "the live-model run of 2026-11-01 (bench live1, --provider bench-live, the real Messages API): each intake call as the model-call log recorded it (line number, model, stop reason, usage); model output metadata, no key",
+  "calls": [
+    {
+      "line": 1,
+      "role": "intake",
+      "model": "claude-sonnet-5-5",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 137,
+        "output_tokens": 5783,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 2195
+      }
+    },
+    {
+      "line": 3,
+      "role": "intake",
+      "model": "claude-sonnet-5-5",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 137,
+        "output_tokens": 5545,
+        "cache_read_input_tokens": 2195,
+        "cache_creation_input_tokens": 0
+      }
+    },
+    {
+      "line": 22,
+      "role": "intake",
+      "model": "claude-sonnet-5-5",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 102,
+        "output_tokens": 5665,
+        "cache_read_input_tokens": 2195,
+        "cache_creation_input_tokens": 0
+      }
+    },
+    {
+      "line": 23,
+      "role": "intake",
+      "model": "claude-sonnet-5-5",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 102,
+        "output_tokens": 5582,
+        "cache_read_input_tokens": 2195,
+        "cache_creation_input_tokens": 0
+      }
+    },
+    {
+      "line": 24,
+      "role": "intake",
+      "model": "claude-sonnet-5-5",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 102,
+        "output_tokens": 6164,
+        "cache_read_input_tokens": 2195,
+        "cache_creation_input_tokens": 0
+      }
+    },
+    {
+      "line": 25,
+      "role": "intake",
+      "model": "claude-sonnet-5-5",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 102,
+        "output_tokens": 5665,
+        "cache_read_input_tokens": 2195,
+        "cache_creation_input_tokens": 0
+      }
+    }
+  ],
+  "reportedUsd": {
+    "intake": 0.353
+  }
+}

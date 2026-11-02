@@ -13,12 +13,15 @@ import {
   fail,
   isAlive,
   killTree,
+  LIVE_KEY_MISSING,
+  liveKey,
   parseArgs,
   portFree,
   REPO,
   readBench,
   spawnLogged,
   startDaemon,
+  storeLiveKey,
   waitFor,
   writeBench,
 } from "./lib.mjs";
@@ -33,6 +36,8 @@ if (!Number.isInteger(daemonPort) || !Number.isInteger(uiPort))
   fail("--daemon-port <p> and --ui-port <u> are required");
 if (!["bench", "fake", "bench-live", "none"].includes(provider))
   fail(`--provider must be bench, fake, bench-live or none (got ${provider})`);
+// The real Messages API needs a key: refused here, before anything starts (not after a wait).
+if (provider === "bench-live" && !liveKey()) fail(LIVE_KEY_MISSING);
 
 const dir = benchDir(name);
 if (existsSync(benchFile(name))) {
@@ -59,6 +64,10 @@ for (const [label, port] of [
   if (!(await portFree(port))) fail(`port ${port} (${label}) is in use; pick another`);
 
 const extra = envPairs(args.env);
+if (provider === "bench-live") {
+  console.log(`bench ${name}: storing the key in the home's vault (fr setup checks it first) ...`);
+  storeLiveKey({ dir, home, extra });
+}
 console.log(`bench ${name}: starting the daemon (provider ${provider}) on port ${daemonPort} ...`);
 const daemon = await startDaemon({ dir, home, provider, port: daemonPort, extra });
 
@@ -102,6 +111,8 @@ const bench = {
   home,
   token: daemon.token,
   provider,
+  // A journey reads this to check structure instead of the stand-in's texts (smoke.cjs).
+  live: provider === "bench-live",
   env: extra,
   daemonPort,
   uiPort,

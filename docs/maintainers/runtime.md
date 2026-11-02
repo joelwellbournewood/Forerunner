@@ -2485,6 +2485,28 @@ in one project cancelled a task in another. Now:
   the options; this project's first, eight at most). The system prompt keeps only the projects
   by name and goal (stage, autonomy and the cut summary are gone). `docs/status.md` is left out
   of the doc search: its sections go stale and come in any order.
+- **The plan from the brief** (`planBlock`, from `ConversationDeps.intakeStatus`, which compose
+  wires to `IntakeService.status`): `# Plan from the brief`, before the task list it explains:
+  drafting "The plan from your brief is being drafted."; waiting "The plan from your brief waits
+  for your approval in the Inbox."; failed "Planning failed: <cause>. The person can press Try
+  again on the project page." (the cause is the status's `error`, the words the project page
+  shows; a cause that says Try again itself, such as a lost "Change the plan" draft or a usage
+  limit, ends "The Try again button is on the project page." instead of the same sentence
+  again); rejected "... They can press Draft a new plan on the project page."; nothing once the
+  plan is approved or when none was asked for. The empty task list below it says why it is
+  empty in the same terms (`emptyTasksLine`): "(none yet: the plan from the brief writes them
+  once it is approved)" while drafted or waiting, "(none yet: planning failed, so nothing was
+  written)", "(none yet: the plan was rejected, so nothing was written)", and "(no tasks yet)"
+  only when no plan was asked for (before, "(no tasks yet)" stood next to the plan block and only
+  the reply rules kept the model from repeating it). `CHAT_PLAN_RULES` (in the stable system part
+  after the role prompt, like the retrieval and open-request rules) tells the model to say where
+  the plan stands, never "no tasks yet, I can add tasks" while it does, to point to Try again
+  after a failure, and to write plain sentences without markdown. Before (the live run of
+  2026-11-01) the chat got only "(no tasks yet)" and answered a person whose planning had
+  failed "The Quote page project has no tasks yet… I can add tasks…". There is no command to
+  retry the plan from chat; Try again is the project page's button (`POST
+  /projects/:id/intake/retry`). Tests: `chat-plan-state.test.ts`; the real daemon with the
+  stand-in in `apps/ui/test/real-daemon.test.ts` ("planning failed: a chat turn ...").
 - **Mentioned means named.** A card counts as mentioned in the conversation only when the reply
   named it (`replyNames`: its task's title or its subject whole, or two telling words of one);
   before, every listed card was marked after any completed turn.
@@ -3304,7 +3326,16 @@ credentials decide), `fake` is the echoing shim, an unknown name is refused, and
 bench's `bench` (the role-playing stand-in model) and `bench-live` (the Messages API with every
 call logged) load `testenv/src/bench/` from a repository checkout by a computed import and
 refuse with the reason where it is absent, so an installed app never runs them
-(`scripts/bench/README.md`; test: `packages/runtime/test/cli-daemon-provider.test.ts`).
+(`scripts/bench/README.md`; test: `packages/runtime/test/cli-daemon-provider.test.ts`). Both get
+`benchPriceOf(env)`: the app's own price table (`loadPricing`: the built-ins plus
+`<config>/pricing.json`, as compose loads it), so every line of the bench's model-call log
+carries `usd` and the `price` row used (a `-fast` row for `speed: "fast"`; `usd: null` with
+`priceError` for a model without a row); testenv takes it as a function, since it does not
+depend on billing. `bench-live` passes its key as a secret of the log, which replaces it whole
+and in any run of 8 or more of its characters (`withoutSecretParts`). The test drives
+`--provider bench-live` against a local stub of the Messages API with the usage the live run's
+intake calls had (`test/fixtures/live1-intake-usage.json`: the six sum to USD 0.353, what the
+live helper priced them at) and an API that echoes the key and quotes part of it.
 
 **Starting a session from the app (`POST /sessions`; U-003 in `docs/status/UPDATE-LOG.md`).**
 The route calls `Scheduler.requestStart` and answers `202 StartSessionView`: `result`

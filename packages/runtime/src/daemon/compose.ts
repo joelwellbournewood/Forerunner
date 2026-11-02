@@ -3228,6 +3228,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       }
     },
     chfPerUsd,
+    // Design §3.3, §3.9: the plan from the brief drafted, waiting, failed (and why), rejected;
+    // the live run of 2026-11-01 answered "no tasks yet… I can add tasks" after a failure.
+    intakeStatus: (projectId) => intake.status(projectId),
   });
   // Voice (spec O; ADR 0012, ADR 0048): the loop over the conversation agent, behind the
   // daemon's /voice routes. The providers are the local helpers and the cloud ones by secret

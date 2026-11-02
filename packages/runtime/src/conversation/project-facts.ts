@@ -13,6 +13,7 @@ import {
   runOrder,
   taskDisplay,
 } from "../daemon/task-display.ts";
+import type { IntakeState } from "../session/intake.ts";
 import type { LastSessionOutcome } from "../session/result.ts";
 
 /**
@@ -68,15 +69,16 @@ async function taskLine(
 
 /**
  * `# Tasks`: every task of the project in run order (at most `max` by name), each with its
- * status as the person sees it. Empty when the project has none.
+ * status as the person sees it. A project with none says `empty` ("(no tasks yet)" by default;
+ * `emptyTasksLine` while the plan from the brief is not approved).
  */
 export async function tasksBlock(
   store: StateStore,
   projectId: string,
-  opts: { sandboxReady?: boolean | null; max?: number; heading?: string } = {},
+  opts: { sandboxReady?: boolean | null; max?: number; heading?: string; empty?: string } = {},
 ): Promise<string> {
   const rows = await store.task.forProject(projectId, {}, { limit: 10_000 });
-  if (!rows.length) return `${opts.heading ?? "# Tasks"}\n(no tasks yet)`;
+  if (!rows.length) return `${opts.heading ?? "# Tasks"}\n${opts.empty ?? "(no tasks yet)"}`;
   const ctx = await loadTaskDisplayContext(store, rows, opts.sandboxReady ?? null);
   const ordered = runOrder(rows);
   const titles = new Map(rows.map((t) => [t.id, t.title]));
@@ -260,6 +262,71 @@ export function cardLine(
       : "";
   const options = r.options.length ? ` Options: ${r.options.map(String).join(" / ")}.` : "";
   return `${where ? `[${where}] ` : ""}${why}${steps}${options}`;
+}
+
+/** Where the plan from the brief stands, as the chat is told it (`IntakeService.status`). */
+export interface PlanState {
+  state: IntakeState;
+  /** Why planning failed, in words (`intakeFailureWords`), for `failed`. */
+  error: string | null;
+}
+
+/**
+ * `# Plan from the brief` (design §3.3, §3.9): the plan the intake drafts from the brief, while
+ * it is drafted, waits in the Inbox, failed or was rejected; empty once it is approved (the
+ * tasks speak for themselves) or when none was asked for. Before (the live run of 2026-11-01)
+ * the chat got only "(no tasks yet)" and answered a person whose planning had failed "The
+ * Quote page project has no tasks yet… I can add tasks…", with no word of the failure or of
+ * Try again.
+ */
+export function planBlock(plan: PlanState): string {
+  const line = planLine(plan);
+  return line ? `# Plan from the brief\n${line}` : "";
+}
+
+function planLine({ state, error }: PlanState): string {
+  switch (state) {
+    case "drafting":
+      return "The plan from your brief is being drafted.";
+    case "pending":
+      return "The plan from your brief waits for your approval in the Inbox.";
+    case "failed": {
+      const cause = (error ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/[.\s]+$/, "");
+      // A cause that says Try again itself (a lost "Change the plan" draft, a usage limit) is
+      // not followed by the same sentence: only where the button is.
+      const where = /\btry again\b/i.test(cause)
+        ? "The Try again button is on the project page."
+        : "The person can press Try again on the project page.";
+      return `Planning failed${cause ? `: ${cause}` : ""}. ${where}`;
+    }
+    case "rejected":
+      return "The person rejected the plan; nothing was written. They can press Draft a new plan on the project page.";
+    default:
+      return "";
+  }
+}
+
+/**
+ * What an empty `# Tasks` list says while the plan from the brief is not approved: why it is
+ * empty, in the plan's terms. Before, it said "(no tasks yet)" next to the plan block, and the
+ * live run's reply echoed exactly that ("no tasks yet… I can add tasks…"); the reply rules
+ * alone kept the model from it (the review of 2026-11-02).
+ */
+export function emptyTasksLine(plan: PlanState | null): string {
+  switch (plan?.state) {
+    case "drafting":
+    case "pending":
+      return "(none yet: the plan from the brief writes them once it is approved)";
+    case "failed":
+      return "(none yet: planning failed, so nothing was written)";
+    case "rejected":
+      return "(none yet: the plan was rejected, so nothing was written)";
+    default:
+      return "(no tasks yet)";
+  }
 }
 
 /** `# Your files`: where the project's files are (its folder or checkout). */

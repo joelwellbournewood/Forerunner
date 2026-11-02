@@ -264,6 +264,59 @@ function modelCalls(name, role) {
     .filter((r) => !role || r.role === role);
 }
 
+const KINDS = ["intake", "specialist", "critic", "chat", "unknown"];
+
+/**
+ * Calls and USD by kind (intake, specialist, critic, chat, unknown) from model-call log lines.
+ * `usd` is what the daemon wrote on each line from the app's price table; a line without it
+ * (the stand-in's `fake-*` rungs, or a log written before prices were logged) counts as
+ * unpriced, with its models named.
+ */
+function callSummary(records) {
+  const byKind = {};
+  let usd = 0;
+  let priced = 0;
+  const unpriced = {};
+  for (const r of records) {
+    const kind = KINDS.includes(r.role) ? r.role : "unknown";
+    const k = byKind[kind] ?? { calls: 0, usd: 0, models: [] };
+    k.calls += 1;
+    if (!k.models.includes(r.model)) k.models.push(r.model);
+    if (typeof r.usd === "number") {
+      k.usd += r.usd;
+      usd += r.usd;
+      priced += 1;
+    } else unpriced[r.model] = (unpriced[r.model] ?? 0) + 1;
+    byKind[kind] = k;
+  }
+  return { calls: records.length, usd, priced, unpriced, byKind };
+}
+
+/** The summary as lines a person reads; `cap` (USD) adds what is left or that it is over. */
+function formatCallSummary(s, { title = "model calls", cap } = {}) {
+  const money = (n) => `USD ${n.toFixed(3)}`;
+  const lines = [
+    `${title}: ${s.calls} call${s.calls === 1 ? "" : "s"}, ${money(s.usd)}${s.priced < s.calls ? ` (${s.calls - s.priced} without a price)` : ""}`,
+  ];
+  for (const kind of KINDS) {
+    const k = s.byKind[kind];
+    if (!k) continue;
+    lines.push(
+      `  ${kind.padEnd(10)} ${String(k.calls).padStart(4)} call${k.calls === 1 ? " " : "s"}  ${money(k.usd)}  (${k.models.join(", ")})`,
+    );
+  }
+  const none = Object.entries(s.unpriced);
+  if (none.length)
+    lines.push(`  without a price: ${none.map(([m, n]) => `${m} x${n}`).join(", ")}`);
+  if (typeof cap === "number")
+    lines.push(
+      s.usd >= cap
+        ? `OVER the cap of ${money(cap)} by ${money(s.usd - cap)}`
+        : `cap ${money(cap)}: ${money(cap - s.usd)} left`,
+    );
+  return lines.join("\n");
+}
+
 /** The last `n` lines of the daemon's log. */
 function daemonLog(name, n = 80) {
   const file = bench(name).logs.daemon;
@@ -392,6 +445,8 @@ module.exports = {
   reconnect,
   bench,
   modelCalls,
+  callSummary,
+  formatCallSummary,
   daemonLog,
   problems,
   until,

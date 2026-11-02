@@ -14,6 +14,7 @@ import {
 } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
 import { ExternalLink } from "../../components/ExternalLink.tsx";
+import { RichText } from "../../components/RichText.tsx";
 import {
   Badge,
   Button,
@@ -229,7 +230,7 @@ function DrawerBody({
                   {r.kind === "review" ? "Review by the critic" : whoName(r.specialist)} ·{" "}
                   {formatDateTime(r.startedAt)} · {r.outcome} · <Money value={r.cost} />
                 </div>
-                {r.report ? <p className="mt-1 whitespace-pre-wrap">{r.report}</p> : null}
+                {r.report ? <RichText text={r.report} className="mt-1" /> : null}
                 {r.files.length > 0 ? (
                   <p className="mt-1 text-xs" data-testid="drawer-files">
                     Changed: {r.files.join(", ")}
@@ -246,9 +247,10 @@ function DrawerBody({
           <h3 className="font-medium">Review</h3>
           <p>{detail.review.verdict}</p>
           {detail.review.summary ? (
-            <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
-              {detail.review.summary}
-            </p>
+            <RichText
+              text={detail.review.summary}
+              className="text-neutral-700 dark:text-neutral-300"
+            />
           ) : null}
           {detail.review.open.length > 0 ? (
             <ul className="list-disc pl-5">

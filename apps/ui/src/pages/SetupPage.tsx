@@ -576,10 +576,15 @@ export function SetupPage() {
             <li>{hasModel ? "✓ Claude is connected." : "✗ Claude is not connected yet."}</li>
             <li>{creds.github ? "✓ GitHub is connected." : "✗ GitHub is not connected yet."}</li>
           </ul>
+          {/* Each sentence only when it is true (the live run of 2026-11-01: a key saved and
+              GitHub skipped read "Until Claude is connected your agent cannot start work"). */}
           {!hasModel || !creds.github ? (
-            <p className="text-sm">
-              You can finish this any time from Settings → Accounts and keys. Until Claude is
-              connected your agent cannot start work.
+            <p className="text-sm" data-testid="setup-done-missing">
+              You can finish this any time from Settings → Accounts and keys.
+              {hasModel ? "" : " Until Claude is connected your agent cannot start work."}
+              {creds.github
+                ? ""
+                : " Without GitHub your agent works in each project's own folder on this computer."}
             </p>
           ) : null}
           <p className="text-sm text-neutral-600 dark:text-neutral-400">

@@ -2427,7 +2427,24 @@ screenshots and visible text, `api`, problems from the console and the network).
 failure-injection variables and where everything lands are in `scripts/bench/README.md`; the
 smoke journey is `scripts/bench/journeys/smoke.cjs` (after Start it clicks the dialog's "Open the
 session", since the Start dialog keeps the person on the project page; one Start runs the whole
-approved plan). `scripts/bench/journeys/session-engine.cjs
+approved plan). Its checks (`journeys/smoke-checks.cjs`, tested in `scripts/bench-scripts.test.ts`)
+look at structure and states, so the same journey runs on the real model: the live run of
+2026-11-01 passed 4 of 14 checks and every failure was the bench's (the stand-in's task titles,
+file names and "[stand-in model]" reply, no Try again after a failed plan, "every planned task
+is done" passed on 0 of 0, "plan card missing" said the plan waited in the Inbox when the page
+said planning failed). Now a failed plan is asked about in the chat and tried again up to twice,
+each failure a finding with what the project page said; a try is read from the daemon first and
+only after the Try again POST is answered, so the last try's banner is never counted as the
+next. Start is pressed only while a session has a task to run (`runnableTasks`: ready or
+running, not held by the person, Docker or such a task, not stuck), whether or not a task is
+done, and a Start the dialog keeps disabled is a finding with the dialog's reason, not a click
+(the review of 2026-11-02 walked live mode with the real intake replies: nothing done and all
+held, the journey pressed a disabled Start and ended on a 30 s click timeout before its files
+and chat checks; reproduced on the stand-in with `FORERUNNER_BENCH_ASK=page skeleton`). The page
+check accepts a stylesheet and a script in their own files or inline, and fails on a link to a
+file that was not written (`pageParts`). `smoke.cjs` runs only as a script; required, it gives
+its steps (`pressStart`, `runSession`, `planShown`, `askChat`) to a scratch walk of one of them.
+`scripts/bench/journeys/session-engine.cjs
 <bench> <label>` walks the session engine's acceptance (core-experience design §4): a 7-task chain
 (`FORERUNNER_BENCH_PLAN=chain`) started once from the Start dialog, then a hard daemon restart
 while a task runs, the session page after it and the next Start; its checks and the session
@@ -2462,16 +2479,30 @@ so the real flow goes on: an intake proposal `parseIntakeReply` accepts (a small
 tasks with no riskTier, the README and the decision only, when the request says "Plan size:
 small"; the live model's bad first replies with `FORERUNNER_BENCH_INTAKE_BAD`, `too-big` among
 them, the retry's request, which carries the refused reply, getting the plan), specialist runs through
-the app's own tools, a `submit_review` verdict, a chat reply that says what context it got.
+the app's own tools, a `submit_review` verdict, a chat reply that says what context it got
+and quotes back the plan's state (`# Plan from the brief`) and the first task line it was told
+(`chatFacts`), so a journey can check that a reply names a task as a real model's would.
 Every request is a line of `<home>/bench/model-calls.jsonl` (`call-log.ts`), which is how a
 tester sees what the app sends a model. `--provider bench-live` wraps the Messages API in the
-same log (`withModelCallLog`, the key replaced and every string redacted); it is unproven
-against the real API until a session with a key runs it. Tests:
-`testenv/test/bench-role-player.test.ts` (the stand-in against the runtime's own intake parser,
-plan writer and critic schema; the live wrapper over a stubbed provider).
+same log (`withModelCallLog`, the key replaced whole and in part, every string redacted); it
+first ran against the real API on 2026-11-01 (bench `live1`, 25 calls, USD 0.63). Every line
+carries `usd` and the `price` row from the app's own table (`benchPriceOf` in
+`packages/runtime/src/cli/main.ts`), and `scripts/bench/calls.mjs` sums calls and USD by kind,
+with `--cap` for a live run's spend cap. A live start stores the key in the bench home's vault
+with `fr setup --non-interactive` (the setup assistant then shows Claude connected, as on an
+install with a key), refuses at once without a key, and a daemon that exits during its start
+ends the start at once. Setup checks the key where the daemon will call (`setupEnv`: the
+start's `--env FORERUNNER_BENCH_LIVE_API`, or `FORERUNNER_ANTHROPIC_API` on its own), so a live
+start can be dry-run against a local stand-in of the API without spending (the review of
+2026-11-02 had to edit `lib.mjs` to do it). Tests: `testenv/test/bench-role-player.test.ts` (the stand-in against
+the runtime's own intake parser, plan writer and critic schema; the live wrapper over a stubbed
+provider), `packages/runtime/test/cli-daemon-provider.test.ts` (the live path end to end
+against a stub of the Messages API: prices, no part of the key), `scripts/bench-scripts.test.ts`
+(calls.mjs, the daemon's and setup's environment, a live start without a key, a daemon that exits,
+the smoke journey's checks).
 
-Known limits: the stand-in proves mechanics, never model quality; the setup assistant and
-Settings still say no Claude key is connected while it serves; the daemon gets a new token on
+Known limits: the stand-in proves mechanics, never model quality; on the stand-in the setup
+assistant and Settings still say no Claude key is connected; the daemon gets a new token on
 every start, so a page open across `restart-daemon.mjs` needs `reconnect(page, name)` (what the
 desktop shell does after its own daemon restarts is not covered); injection counters live in
 the daemon process and start again with it.
