@@ -23,7 +23,7 @@ import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
-import { type EstimatePort, planEstimateUsdMicro } from "../estimates/model.ts";
+import { type EstimatePort, planEstimateUsdMicro, withinTaskBudget } from "../estimates/model.ts";
 import {
   type CriticPort,
   DEFAULT_MEMORY_TOKEN_BUDGET,
@@ -47,6 +47,8 @@ import type { SchemaSyncPort } from "../update/sync.ts";
 import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
+import { budgetStopTitle, fileBudgetStopCard } from "./budget-card.ts";
+import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import {
   fileBlockedByFindingsRequest,
@@ -216,6 +218,22 @@ export interface TaskExecutionResult {
   finalReport?: string;
   /** Lessons the specialist spelled out ("Lesson: ..."), recorded at session end. */
   lessons?: LessonCandidate[];
+  /**
+   * Set on a `needs_human` result when the run stopped at the task's own cap (U-042): its
+   * budget, or the specialist's per-run limit when it has none. The runner files the budget
+   * card (`session/budget-card.ts`: Raise the budget, Cancel task; live walk 2, B2).
+   */
+  budgetStop?: BudgetStop;
+}
+
+/** Where a run stopped at its task's own cap, in micro-USD (`TaskExecutionResult.budgetStop`). */
+export interface BudgetStop {
+  /** The cap it stopped at: the task's budget, or the specialist's limit per run. */
+  capUsdMicro: number;
+  /** What the task has spent in all its runs, this one included. */
+  spentUsdMicro: number;
+  source: "task_budget" | "specialist_limit";
+  specialist: string;
 }
 
 export interface TaskExecutor {
@@ -245,6 +263,12 @@ export interface TaskExecutor {
      */
     onStep?: (step: TaskStep) => void;
   }): Promise<TaskExecutionResult>;
+  /**
+   * A task the person cancelled while it ran or was reviewed (phase C, live walk 2 C1): what
+   * its run changed is taken out of the folder it ran in and kept for Undo of the cancel, so
+   * the next task never builds on it. Returns the files taken out. Absent: the files stay.
+   */
+  setAside?(task: TaskRow): Promise<string[]>;
 }
 
 /** One step of a task's run, as the executor reports it to the runner (`onStep`). */
@@ -760,11 +784,24 @@ export class SessionRunner {
       heldClaims.clear();
     };
     /**
+     * Whether a person's move of the task stopped this live run or review (`KillSwitch.stopTask`
+     * aborts the task's own controller), not the session's own stop: a controller the session
+     * aborted carries the session's abort reason.
+     */
+    const stoppedByMove = (c: AbortController) =>
+      c.signal.aborted && c.signal.reason !== controller.signal.reason;
+    /**
      * A task someone else moved while this session held it (U-039: during its run; U-045:
      * during its review): the state set stands, it is counted in the list of that state and
-     * named, and the session goes on.
+     * named, and the session goes on. `stopped`: the move stopped its live run or review
+     * (`stoppedByMove`), which is when the cancel's line promised its work is removed.
      */
-    const recordMove = async (t: TaskRow, outcome: string, during: "run" | "review") => {
+    const recordMove = async (
+      t: TaskRow,
+      outcome: string,
+      during: "run" | "review",
+      stopped: boolean,
+    ) => {
       const moved: MovedWhileRunning = {
         taskId: t.id,
         title: t.title,
@@ -780,11 +817,30 @@ export class SessionRunner {
         done: completed,
       };
       (into[t.status] ?? skipped).push(t.id);
+      // Cancelled while it ran or was reviewed (phase C, live walk 2 C1): what its run changed
+      // is taken out of the folder, kept for Undo of the cancel, before the next task starts,
+      // so no later task builds on work the person dropped. Only when the cancel stopped the
+      // live run or review: then the cancel's line said so (`moveSentence`, from what
+      // `stopTask` stopped); a cancel that came between the run's end and its review stopped
+      // nothing and said nothing about the files, which stay. A failure here leaves the files
+      // where they are and says so in the log; it never ends the session.
+      let setAside: string[] | null = null;
+      if (t.status === "cancelled" && stopped && this.deps.executor.setAside) {
+        try {
+          setAside = await this.deps.executor.setAside(t);
+        } catch (e) {
+          this.logger.warn("the cancelled task's changes were not set aside", {
+            taskId: t.id,
+            error: errorMessage(e),
+          });
+        }
+      }
       await emit("task.moved_while_running", {
         ...moved,
         during,
         reason: t.reason,
         outcome,
+        ...(setAside?.length ? { setAside: setAside.length, files: setAside.slice(0, 20) } : {}),
         warning: `"${t.title}" was moved to ${t.status} while ${
           during === "run" ? "it ran; its run was stopped" : "it was reviewed"
         } and the session goes on`,
@@ -1454,7 +1510,9 @@ export class SessionRunner {
           });
           task = await store.task.mustGet(task.id);
           if (result.prUrl && result.branch) prBranches.push(result.branch);
-          if (result.changedFiles?.length) {
+          // A run the person cancelled changed nothing that stays (`recordMove` sets it aside):
+          // the session's result and the task's files never list it.
+          if (result.changedFiles?.length && task.status !== "cancelled") {
             filesByTask.set(task.id, result.changedFiles);
             await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
           }
@@ -1502,12 +1560,17 @@ export class SessionRunner {
           }
           // The task is read again now that the run returned: a state a person set while it ran
           // stands, and the runner never moves the task from it (U-039). A session stopped by
-          // the kill switch still ends as killed.
-          if (controller.signal.aborted && result.outcome === "killed")
+          // the kill switch still ends as killed; when the person's move of the task stopped
+          // the run first (a cancel, then Stop now), the move is recorded before, so a
+          // cancel's work is set aside as its line said.
+          const sessionStopped = controller.signal.aborted && result.outcome === "killed";
+          const movedByPerson = task.status !== "in_progress" && stoppedByMove(taskController);
+          if (sessionStopped && !movedByPerson)
             throw new ForerunnerError("killed", "session stopped during task");
           runningTask = null;
           if (task.status !== "in_progress") {
-            await recordMove(task, result.outcome, "run");
+            await recordMove(task, result.outcome, "run", movedByPerson);
+            if (sessionStopped) throw new ForerunnerError("killed", "session stopped during task");
             continue;
           }
           if (result.outcome === "usage_limit") {
@@ -1576,33 +1639,85 @@ export class SessionRunner {
               result.summary.slice(0, 200),
               { agentId: agent.id },
             );
+            // A task cancelled between its run and its review is never reviewed (phase C, live
+            // walk 2 C1: the critic "accepted" a cancelled task).
+            // Nothing live was stopped then (its run had ended, its review had not begun), so
+            // its files stay, as the cancel's line said.
+            const toReview = await store.task.mustGet(task.id);
+            if (toReview.status !== "in_review") {
+              await recordMove(toReview, result.outcome, "review", false);
+              continue;
+            }
+            // The review is stopped with the task's run when the person cancels it meanwhile
+            // (`KillSwitch.stopTask`, as for the run, U-039): its own controller, registered
+            // under the task, which a stop of the session aborts too.
+            const reviewController = new AbortController();
+            const onReviewAbort = () => reviewController.abort(controller.signal.reason);
+            if (controller.signal.aborted) onReviewAbort();
+            else controller.signal.addEventListener("abort", onReviewAbort, { once: true });
+            const unregisterReview = this.deps.kill.register({
+              agentId: agent.id,
+              sessionId: session.id,
+              taskId: task.id,
+              controller: reviewController,
+              label: `review of task ${task.id} in session ${session.id}`,
+            });
             // The critic (spec H, ADR 0104): every task is reviewed before it can count as
             // done (tier 0 as the light review); the verdict is applied through the state
             // workflow.
-            const reviewed = this.deps.critic
-              ? await this.reviewTask({
-                  task: await store.task.mustGet(task.id),
-                  session,
-                  token,
-                  budget,
-                  item,
-                  result,
-                  agentId: agent.id,
-                  signal: controller.signal,
-                  emit,
-                })
-              : null;
+            let reviewed: Awaited<ReturnType<SessionRunner["reviewTask"]>>;
+            try {
+              reviewed = this.deps.critic
+                ? await this.reviewTask({
+                    task: toReview,
+                    session,
+                    token,
+                    budget,
+                    item,
+                    result,
+                    agentId: agent.id,
+                    signal: reviewController.signal,
+                    emit,
+                  })
+                : null;
+            } finally {
+              unregisterReview();
+              controller.signal.removeEventListener("abort", onReviewAbort);
+            }
             if (!reviewed) {
               inReview.push(task.id);
             } else if ("failed" in reviewed) {
-              // U-045: the review failed (an error, not a verdict). A session stopped meanwhile
-              // ends as killed; a task the person moved meanwhile stays as they set it; else
-              // the task waits in review and the person gets one card whose options act.
-              if (controller.signal.aborted)
-                throw new ForerunnerError("killed", "session stopped during the review");
+              // U-045: the review failed (an error, not a verdict), or was stopped (the critic
+              // records no review then). A task the person moved meanwhile stays as they set it
+              // (a cancel's work set aside when the cancel stopped the review); a session
+              // stopped meanwhile ends as killed; else the task waits in review and the person
+              // gets one card whose options act.
               const now = await store.task.mustGet(task.id);
+              const movedByPerson = now.status !== "in_review" && stoppedByMove(reviewController);
+              if (controller.signal.aborted && !movedByPerson) {
+                // Stop now, Stop all, Quit (design §4.9) or the session's own end stopped the
+                // review: the task goes back to Ready, its attempt unchanged and its files
+                // kept, as for a stopped run, and the next session runs it again. Before, it
+                // stayed "Being reviewed" for good: the session's release at its end puts back
+                // only a claimed or running task, no card was filed and no session plans a task
+                // in review (phase C review).
+                if (now.status === "in_review") {
+                  const stop = personStopOf(controller.signal.reason);
+                  await store.task.restoreStatus(
+                    now.id,
+                    now.version,
+                    "in_review",
+                    stop ? taskReasonForStop(stop) : "the session ended during its review",
+                    { agentId: agent.id },
+                  );
+                  runningTask = { id: task.id, title: task.title };
+                }
+                throw new ForerunnerError("killed", "session stopped during the review");
+              }
               if (now.status !== "in_review") {
-                await recordMove(now, "review_failed", "review");
+                await recordMove(now, "review_failed", "review", movedByPerson);
+                if (controller.signal.aborted)
+                  throw new ForerunnerError("killed", "session stopped during the review");
                 continue;
               }
               inReview.push(task.id);
@@ -1722,14 +1837,53 @@ export class SessionRunner {
               }
             }
           } else if (result.outcome === "needs_human") {
-            await store.task.transition(
+            const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+            const waiting = await store.task.transition(
               task.id,
               task.version,
               "needs_human",
-              result.summary.slice(0, 200),
+              // Live walk 2 (B2): a stop at the task's own budget names it in CHF, as its card.
+              // Live walk 4: any other reason in whole sentences, without tool names (it was
+              // cut at 200 characters mid-word).
+              result.budgetStop
+                ? `${budgetStopTitle(task, result.budgetStop, rate)}.`
+                : plainStopReason(result.summary, 200, 1),
               { agentId: agent.id },
             );
             needsHuman.push(task.id);
+            // Design §3.8: every task a run leaves waiting has one card, so the result's "needs
+            // your decision (Inbox)" is true. A stop at its budget: Raise the budget, Cancel task
+            // (live walk 2, B2). Anything else that asked nothing (live walk 4: the researcher
+            // refused at once): Try again, Cancel task. A run that asked (its questions, an
+            // approval, a rebase conflict) filed its own card, and no second one is filed.
+            try {
+              if (result.budgetStop)
+                await fileBudgetStopCard({
+                  store,
+                  task: waiting,
+                  session,
+                  humanId: agent.owner_human_id,
+                  agentId: agent.id,
+                  runId: result.runId ?? null,
+                  stop: result.budgetStop,
+                  chfPerUsd: rate,
+                });
+              else
+                await fileCannotRunCard({
+                  store,
+                  task: waiting,
+                  session,
+                  humanId: agent.owner_human_id,
+                  agentId: agent.id,
+                  runId: result.runId ?? null,
+                  reason: result.summary,
+                });
+            } catch (e) {
+              this.logger.warn("card of the waiting task not filed", {
+                taskId: task.id,
+                error: errorMessage(e),
+              });
+            }
           } else if (
             result.outcome === "failed" &&
             isTransientError(result.errorCode) &&
@@ -1774,16 +1928,17 @@ export class SessionRunner {
               });
             }
           } else if (result.outcome === "budget_exceeded") {
-            await store.task.transition(
-              task.id,
-              task.version,
-              "needs_human",
-              "budget exhausted mid-task",
-              { agentId: agent.id },
-            );
-            needsHuman.push(task.id);
+            // The session's own budget is used (design §4.2: the session stops there). The task
+            // is no matter for the person: it goes back to ready by its claim's release, its
+            // attempt count unchanged, and the next session continues it. Before, it waited
+            // in needs_human with no card while the result said '"X" needs your decision
+            // (Inbox).' over an empty Inbox (phase C, the sibling of live walk 2 B2).
             stopReason = "budget_exceeded";
-            await releaseIfHeld(task.id, "budget exhausted");
+            await releaseIfHeld(
+              task.id,
+              "the session's budget was used during its run; the next session continues it",
+            );
+            skipped.push(task.id);
             skipped.push(...queue.map((i) => i.taskId));
             queue.length = 0;
             break;
@@ -3019,7 +3174,10 @@ export class StaticPlanner implements Planner {
       specialist: t.specialist ?? "coder",
       estimateUsdMicro: this.estimates
         ? planEstimateUsdMicro(this.estimates, t)
-        : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
+        : withinTaskBudget(
+            t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
+            t,
+          ),
     }));
     return {
       items,

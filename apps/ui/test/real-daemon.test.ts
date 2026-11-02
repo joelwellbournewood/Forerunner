@@ -13,6 +13,7 @@ import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
+import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -4127,4 +4128,384 @@ describe("a project name another project has (wave 1 handoff)", () => {
     expect((await client.projects()).map((p) => p.name)).toEqual(["Quote page"]);
     await rt.close();
   }, 120_000);
+});
+
+describe("the UI client against the real daemon: work continues correctly (phase C, continuity)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-continuity-"));
+    const clock = new SimulatedClock("2026-11-01T08:00:00Z");
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "ok" }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("GET /projects/:id/start-check prices a task at most at what is left of its own budget (live walk 2, B3)", async () => {
+    const project = await client.createProject({ name: "Estimates", goal: "Priced right" });
+    // As New task sends it: a budget of USD 0.20, below what the planner would estimate.
+    await client.createTask(project.id, {
+      title: "About page",
+      outcome: "about.html",
+      acceptanceCriteria: ["about.html exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 200_000,
+      specialist: "coder",
+    });
+    const check = await client.startCheck(project.id, { budgetUsdMicro: 5_000_000 });
+    expect(check.runnable.map((t) => [t.title, t.estimate.usdMicro])).toEqual([
+      ["About page", 200_000],
+    ]);
+  });
+});
+
+describe("the UI client against the real daemon: a task that stops waits on one card (phase C, continuity)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let bench: BenchOptions;
+
+  beforeAll(async () => {
+    ({ rt, client, bench } = await composeWithRolePlayer({}));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  /** Waits (at least 10 s of real time) until no session of any project runs. */
+  const allEnded = async () => {
+    const running = async () =>
+      (await client.sessions({})).filter((s) => ["running", "paused"].includes(s.status));
+    await eventually(
+      async () => (await running()).length === 0,
+      "every session to end",
+      async () => (await running()).map((s) => `${s.status}: ${s.summary ?? ""}`).join(" | "),
+      20_000,
+    );
+  };
+
+  /** Starts a session on the project and waits (at least 10 s of real time) for it to end. */
+  const runSession = async (projectId: string) => {
+    await allEnded();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const before = (await client.sessions({ projectId })).length;
+    const started = await client.startSession({ agentId, projectId });
+    expect(started.session?.id, JSON.stringify(started)).toBeTruthy();
+    const sessions = async () => client.sessions({ projectId });
+    await eventually(
+      async () => {
+        const all = await sessions();
+        return all.length > before && all.every((s) => !["running", "paused"].includes(s.status));
+      },
+      "the session to end",
+      async () => (await sessions()).map((s) => `${s.status}: ${s.summary ?? ""}`).join(" | "),
+      20_000,
+    );
+    return client.session(started.session?.id ?? "");
+  };
+
+  it("a task stopped at its budget: one card in CHF that the session's result and the Tasks tab agree with; Raise the budget runs it to done (live walk 2, B2)", async () => {
+    const me = await client.me();
+    const project = await client.createProject({ name: "Budget card", goal: "Asked once" });
+    // What New task sends with a budget of CHF 0.01 (USD 0.0125 at the test's rate).
+    const created = await client.createTask(project.id, {
+      title: "Contact page",
+      outcome: "contact.html says how to reach the club",
+      acceptanceCriteria: ["contact.html exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 12_500,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    // Earlier runs spent the whole budget (setup, not under test): the next run stops before it
+    // calls the model, as the live walk's run did "after spending $0.00".
+    await rt.store.task.patch(created.id, { actual_cost_usd_micro: 12_500 });
+    const session = await runSession(project.id);
+
+    const cardsOf = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === created.id && r.status === "open",
+      );
+    const cards = await cardsOf();
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    expect(card?.title).toBe('"Contact page" stopped at its budget of CHF 0.01');
+    expect(card?.body).toBe("So far it spent CHF 0.01.");
+    expect(card?.choices?.map((c) => [c.label, c.explain, c.tone])).toEqual([
+      // What it spent (USD 0.0125) plus USD 0.50 of room, in steps of USD 0.05: USD 0.55.
+      [
+        "Raise the budget",
+        "Sets its budget to CHF 0.44 and starts a session that tries again.",
+        "primary",
+      ],
+      ["Cancel task", "Drops it. Nothing waits on it.", "danger"],
+    ]);
+    // The session's result points at the card that is there; the Tasks tab says the same.
+    expect(session.summary).toContain('"Contact page" needs your decision (Inbox).');
+    const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
+    expect(view?.display).toMatchObject({
+      key: "answer",
+      label: "Needs your decision: its budget is used",
+      blocker: { kind: "card", requestId: card?.id, cardKind: "budget" },
+    });
+    // CHF everywhere a person reads it.
+    for (const text of [card?.title, card?.body, view?.reason, JSON.stringify(view?.display)])
+      expect(String(text)).not.toMatch(/\$|USD/);
+
+    // The click sends the button's words; the budget is raised and a session runs the task.
+    const answered = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Raise the budget",
+    });
+    expect(answered.outcome).toMatch(
+      /^Raised the budget of "Contact page" to CHF 0\.44: (a session started|it runs after the current session)\.$/,
+    );
+    await eventually(
+      async () =>
+        (await client.tasks(project.id)).find((t) => t.id === created.id)?.status === "done",
+      "the task to be done after the raise",
+      async () => {
+        const t = (await client.tasks(project.id)).find((x) => x.id === created.id);
+        return `${t?.status}: ${t?.reason}`;
+      },
+      20_000,
+    );
+    const done = (await client.tasks(project.id)).find((t) => t.id === created.id);
+    expect(done?.budget.usdMicro).toBe(550_000);
+    expect(await cardsOf()).toEqual([]);
+    // Nothing left running for the next case.
+    await allEnded();
+  });
+
+  it("a task the run refused at once: one card that says why, the Tasks tab offers no Resume, Cancel task cancels it (live walk 4)", async () => {
+    const me = await client.me();
+    const project = await client.createProject({ name: "Research club", goal: "Other clubs" });
+    // The researcher works from the web; the stand-in is billed like an API key, which gives
+    // it no web tools and no other specialist has them: the run refuses before any call.
+    const created = await client.createTask(project.id, {
+      title: "Research three other garden clubs",
+      outcome: "docs/research.md lists what three other clubs offer",
+      acceptanceCriteria: ["three clubs with a link each"],
+      priority: "high",
+      status: "ready",
+      dependsOn: [],
+      specialist: "researcher",
+      riskTier: 1,
+    });
+    const session = await runSession(project.id);
+    const cards = (await client.inbox(me.id)).requests.filter(
+      (r) => r.taskId === created.id && r.status === "open",
+    );
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    expect(card?.title).toBe('"Research three other garden clubs" could not run');
+    expect(card?.body).toMatch(/^The researcher works from the web, .*so nothing ran\./);
+    expect(card?.body).not.toMatch(/cc:/);
+    expect(card?.choices?.map((c) => [c.label, c.tone])).toEqual([
+      ["Try again", "primary"],
+      ["Cancel task", "danger"],
+    ]);
+    expect(session.summary).toContain(
+      '"Research three other garden clubs" needs your decision (Inbox).',
+    );
+    const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
+    expect(view?.display).toMatchObject({
+      key: "answer",
+      label: "Needs your decision: it could not run",
+      blocker: { kind: "card", requestId: card?.id, cardKind: "cannot_run" },
+    });
+    const cancelled = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Cancel task",
+    });
+    expect(cancelled.outcome).toBe('"Research three other garden clubs" was cancelled.');
+    expect((await client.tasks(project.id)).find((t) => t.id === created.id)?.status).toBe(
+      "cancelled",
+    );
+  });
+
+  it("Cancel while the task runs: the reply says its work is removed, its file leaves the folder, Undo brings it back (ADR 0105)", async () => {
+    const project = await client.createProject({ name: "About club", goal: "An about page" });
+    const created = await client.createTask(project.id, {
+      title: "Write the About page in about.html",
+      outcome: "about.html tells the club's story",
+      acceptanceCriteria: ["about.html exists"],
+      priority: "high",
+      status: "ready",
+      dependsOn: [],
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const files = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
+    await allEnded();
+    // Each of the stand-in's replies takes a while, so the run is still going after it wrote.
+    bench.delayMs = 400;
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () =>
+          (await client.tasks(project.id)).find((t) => t.id === created.id)?.status ===
+            "in_progress" && (await files()).includes("about.html"),
+        "the run to write about.html",
+        async () => (await files()).join(", "),
+        20_000,
+      );
+      const row = (await client.tasks(project.id)).find((t) => t.id === created.id);
+      const cancelled = await client.taskAction(created.id, {
+        version: row?.version ?? 0,
+        action: "cancel",
+      });
+      expect(cancelled.change?.sentence).toBe(
+        'Cancelled "Write the About page in about.html": its run stopped and what it changed is removed; Undo brings it back.',
+      );
+      await allEnded();
+    } finally {
+      bench.delayMs = 0;
+    }
+    expect((await client.tasks(project.id)).find((t) => t.id === created.id)?.status).toBe(
+      "cancelled",
+    );
+    expect(await files()).not.toContain("about.html");
+    // Nothing reviewed the cancelled task.
+    expect((await client.task(created.id)).runs.filter((r) => r.kind !== "work")).toEqual([]);
+    const changeId = (await client.changes({ projectId: project.id })).find((c) =>
+      c.sentence.startsWith('Cancelled "Write the About page'),
+    )?.id;
+    const undone = await client.undoChange(changeId ?? "");
+    expect(undone.sentence).toBe(
+      'Undone: reopened the task "Write the About page in about.html"; it is ready again and a session picks it up. What it changed is back in the folder.',
+    );
+    expect(await files()).toContain("about.html");
+  });
+
+  it("Stop now while the critic reviews: the task is Ready again with its file and no review, and the next session reviews it (design §4.9, phase C review)", async () => {
+    const project = await client.createProject({ name: "Contact club", goal: "A contact page" });
+    const created = await client.createTask(project.id, {
+      title: "Write the Contact page in contact.html",
+      outcome: "contact.html says how to reach the club",
+      acceptanceCriteria: ["contact.html exists"],
+      priority: "high",
+      status: "ready",
+      dependsOn: [],
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const row = async () => (await client.tasks(project.id)).find((t) => t.id === created.id);
+    const files = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
+    await allEnded();
+    // The stand-in critic takes its time, as the real model's review does.
+    bench.criticDelayMs = 60_000;
+    let sessionId = "";
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      sessionId = (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      await eventually(
+        async () => (await row())?.display?.key === "review",
+        "the critic to review the task",
+        async () => `${(await row())?.display?.label}`,
+        20_000,
+      );
+      // The session page's Stop now.
+      await client.stopSession(sessionId);
+      await allEnded();
+    } finally {
+      bench.criticDelayMs = 0;
+    }
+    const after = await row();
+    expect(after?.status).toBe("ready");
+    expect(after?.display?.label).toBe("Ready");
+    // Stop now keeps what it wrote (ADR 0102); no review was recorded (the critic's run, when
+    // it had begun, reads Stopped), no card waits.
+    expect(await files()).toContain("contact.html");
+    const stopped = await client.task(created.id);
+    expect(stopped.review).toBeNull();
+    expect(
+      stopped.runs.filter((r) => r.kind !== "work").every((r) => r.outcome === "Stopped"),
+    ).toBe(true);
+    const me = await client.me();
+    expect(
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === created.id && r.status === "open",
+      ),
+    ).toEqual([]);
+    expect((await client.session(sessionId)).summary).toContain(
+      '"Write the Contact page in contact.html" is ready to continue.',
+    );
+    expect((await client.startCheck(project.id)).runnable.map((t) => t.taskId)).toContain(
+      created.id,
+    );
+    // The next Start runs it again, and the critic reviews it this time.
+    await runSession(project.id);
+    expect((await row())?.status).toBe("done");
+    expect((await client.task(created.id)).review?.verdict).toBeTruthy();
+  });
+
+  it("a task in review whose card waits reads Needs your decision, and Cancel says only that it is cancelled (phase C review)", async () => {
+    const project = await client.createProject({ name: "Review club", goal: "A contact page" });
+    // Its review failed in a session that ended (U-045): in review, with its card; no review runs.
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write the Contact page in contact.html",
+      outcome: "contact.html says how to reach the club",
+      acceptance_criteria: ["contact.html exists"],
+      risk_tier: 1,
+      status: "in_review",
+      priority: 5,
+      specialist: "coder",
+      reason: "Wrote contact.html.",
+    } as never);
+    const me = await client.me();
+    await fileReviewFailedRequest({
+      store: rt.store,
+      task,
+      session: null,
+      humanId: me.id,
+      agentId: (await client.agents())[0]?.id ?? "",
+      runId: null,
+      error: "the critic's model did not answer",
+    });
+    const view = (await client.tasks(project.id)).find((t) => t.id === task.id);
+    expect(view?.display).toMatchObject({
+      key: "answer",
+      label: "Needs your decision",
+      blocker: { kind: "card", cardKind: "retry" },
+    });
+    const cancelled = await client.taskAction(task.id, {
+      version: view?.version ?? 0,
+      action: "cancel",
+    });
+    expect(cancelled.change?.sentence).toBe(
+      'Cancelled "Write the Contact page in contact.html". Its card in the Inbox was withdrawn.',
+    );
+  });
 });

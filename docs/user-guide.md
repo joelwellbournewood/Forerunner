@@ -124,8 +124,13 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   failed**, **Waiting for Docker** (a full review needs Docker, and it is not running), **Running
   (Alice, 2 min)**, **Being reviewed**, **Needs your answer** (its card is in the Inbox),
   **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
-  and the row offers **Answer**, **Try again** and **Cancel**), **Paused by you**, **Failed:
-  why**, **Done** (or **Done: accepted without review**), **Cancelled**. A task is **Done** only
+  and the row offers **Answer**, **Try again** and **Cancel**), **Needs your decision: its
+  budget is used** and **Needs your decision: it could not run** (its card in the Inbox says
+  why; the row offers **Answer** and **Cancel**, and **Edit** is in the task), **Needs your
+  decision** on a task whose review could not finish or found something still open (its card
+  offers **Try again**, **Mark done anyway** and **Cancel task**; the row offers **Answer** and
+  **Cancel**), **Paused by you**, **Failed: why**, **Done** (or **Done: accepted without
+  review**), **Cancelled**. A task is **Done** only
   after the critic reviewed it; the row then says how it was checked: **Reviewed** (the critic
   read the work and the project's files against each point, and the project's own build and
   tests ran when it has them) or **Reviewed and tried** (a page it made was also opened in a
@@ -143,7 +148,12 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   (opens its card in the Inbox) or **Go ahead without** (the specialist decides and says what it
   assumed; not offered on a task only you can do), **Redo** (a done task: say what is wrong),
   **Reopen** (a cancelled task) and **Cancel** (it names the tasks that wait on it and will be
-  stuck). Every action asks for an optional **note for the agent**, which goes into the task's
+  stuck; on a task that is running or being reviewed its run or review stops at once, and what
+  it changed is taken out of the project's folder before the next task starts, so nothing builds
+  on work you dropped; **Undo** puts the files back, and the answers you gave in the Inbox
+  meanwhile stay in the decision record; a task that already has a pull request keeps it open.
+  The line after Cancel says what happened: a task whose review is not running, because its
+  card waits for you, keeps its files and reads only "Cancelled"). Every action asks for an optional **note for the agent**, which goes into the task's
   next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it
@@ -273,13 +283,19 @@ monthly cap is refused in words. "Note for this session" goes into the brief of 
 session runs. When nothing can run, Start is greyed out and the dialog says why in one sentence
 with the button that fixes it (Allow sessions again, Open it, Open Tasks, Set up Docker,
 Connect Claude). After Start you stay where you were; **Open the session** opens its page.
+A task that does not fit is named one of two ways: "needs about CHF 3.00, more than this
+session's work budget of CHF 2.40" when it alone is too large, or "(about CHF 1.20) may be left
+for next time: the tasks that run first take about CHF 1.50 of this session's work budget of
+CHF 2.40" when it only does not fit after them. A task with a budget of its own is counted at
+most at what is left of that budget, since its runs never spend more.
 
 **One Start keeps going.** A session works until nothing it can run is left: after each task it
 looks again and takes the tasks that just became ready (what they waited for is done), a task
 the critic sent back (the next attempt runs in the same session, up to the retry limit; after
 the last one you get one card), and tasks you made ready meanwhile. So a chain of seven tasks
 is one Start. It stops when nothing more can run, the session's budget is used (a fifth is kept
-for reviews), you stop it, or its time runs out. A run that fails because Claude did not answer
+for reviews; a task whose run the session's budget stopped is ready again and the next session
+continues it), you stop it, or its time runs out. A run that fails because Claude did not answer
 (the network, a rate limit) is tried again once at once; if it fails again the task reads
 "Failed:" with what went wrong, never the model's first sentence.
 
@@ -312,7 +328,8 @@ lower grade from the critic's session review.
 **Stopping and crashes.** A session's page has two stops. **Stop after this task** (the usual
 one) lets the task in flight finish, starts no other, and ends the session ("Stopped after the
 task, as asked"). **Stop now** asks once, then stops the task at once: it goes back to Ready with
-"Stopped by you", and what it wrote so far stays in the project's folder. The session reads
+"Stopped by you", and what it wrote so far stays in the project's folder. A task the critic was
+reviewing goes back to Ready too, and the next session runs and reviews it again. The session reads
 "Stopped by you", not an error, and the Inbox gets no line about your own click unless the
 session finished something first. **Stop all** in the header (or the tray, `fr kill`, a kill from
 your phone, or "stop everything" typed in Chat) stops every session the same way: they read
@@ -451,14 +468,24 @@ never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 bud
 without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
 run stops at CHF 2.40 (coder limit)"); a done or cancelled task shows no limit. The estimate a
 plan shows is only a
-forecast. When a task reaches its budget it waits for you with what it spent: raise the budget
-and set it back to ready, split it, or cancel it; the session goes on with the other tasks.
+forecast. When a task reaches its budget it waits for you and the session goes on with the
+other tasks. The Inbox gets one card, '"Contact page" stopped at its budget of CHF 0.01', with
+what it spent so far and two buttons: **Raise the budget** (it names the new amount, sets it and
+starts a session that tries again) and **Cancel task**. The Tasks tab reads "Needs your
+decision: its budget is used", with Answer (the card), Edit (set another budget yourself) and
+Cancel.
 
 When a task fails twice, the third attempt goes to another specialist that can do the same
 work (the coder's to the migration specialist, the tester's to the coder, and so on); the
-session log says so. When no other specialist can, the task waits for you on the Tasks tab
-with what to do (split it into smaller tasks, or cancel it) instead of running the same way a
-third time.
+session log says so. When no other specialist can, the task waits for you instead of running
+the same way a third time.
+
+Every task that waits for you has exactly one card in the Inbox. A task that could not run and
+asked nothing (no other specialist can take it, a specialist that does not exist, the researcher
+on an API key, which gives it no web tools) gets '"Research three garden clubs" could not run'
+with why in one or two sentences and two buttons: **Try again** (a session tries again: change
+what stopped it first, for example who does it with **Edit** on the Tasks tab) and **Cancel
+task**. Nothing waits silently with only a "Resume" that would run into the same stop.
 
 Research on the web needs a Claude subscription: runs billed to an API key have no web tools.
 On an install with an API key only, project setup plans no web research, and a task given to

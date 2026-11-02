@@ -226,11 +226,20 @@ export interface CommandPorts {
   pauseSession?(sessionId: string, reason: string): Promise<void>;
   resumeSession?(sessionId: string, reason: string): Promise<void>;
   /**
-   * Stops the run working on one task now (U-039): a person paused, stopped or cancelled it.
-   * The session goes on with its other tasks. Absent: the session notices the move at the
-   * task's end (the daemon's Tasks tab route also stops it).
+   * Stops the run working on one task now (U-039), or the critic's review of it (phase C): a
+   * person paused, stopped or cancelled it. The session goes on with its other tasks. Answers
+   * whether a live run or review of the task was stopped: only then does a cancel's sentence
+   * say its work is removed (the session sets aside exactly such a run's changes). Absent: the
+   * session notices the move at the task's end (the daemon's Tasks tab route also stops it).
    */
-  stopTask?(taskId: string, reason: string): Promise<void> | void;
+  stopTask?(taskId: string, reason: string): Promise<boolean | undefined> | boolean | undefined;
+  /**
+   * Undo of the cancel of a task that ran (phase C, live walk 2 C1): what its run changed,
+   * which the session took out of the folder, goes back in. `missing` when nothing was taken
+   * out; `conflict` when the folder changed since in the same places (nothing is put back).
+   * Absent: the undo moves the task only.
+   */
+  bringBackWork?(taskId: string): Promise<"restored" | "missing" | "conflict">;
   /**
    * Lifts Stop all ("Allow sessions again", design §3.1): new sessions may start. Answers
    * whether sessions were stopped. Absent: `session.resume` is refused as unavailable.
@@ -399,8 +408,16 @@ export interface CommandDef<P = unknown> {
   /** Preview without acting. */
   plan?(params: P, ctx: CommandContext): Promise<ChangeCard>;
   run(params: P, ctx: CommandContext): Promise<CommandOutcome>;
-  /** State-based undo from the change log (works after a restart). */
-  undo?(params: P, before: JsonValue, after: JsonValue, ctx: CommandContext): Promise<void>;
+  /**
+   * State-based undo from the change log (works after a restart). A sentence it returns is
+   * added to the undo's own ("What it changed is back in the folder.").
+   */
+  undo?(
+    params: P,
+    before: JsonValue,
+    after: JsonValue,
+    ctx: CommandContext,
+  ): Promise<void | string | undefined>;
   /**
    * The risk of the undo (U-057, ADR 0099): the risk of putting `before` back on the current
    * state. An undo that raises or widens a limit is confirmed like the forward change that

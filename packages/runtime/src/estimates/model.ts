@@ -540,10 +540,28 @@ function round4(n: number): number {
 
 /** Convenience for the planner: the learned estimate for a task row, in micro-USD. */
 export function planEstimateUsdMicro(port: EstimatePort, task: TaskRow): number {
-  return port.estimate({
-    specialist: task.specialist,
-    risk_tier: task.risk_tier,
-    est_cost_usd_micro: task.est_cost_usd_micro,
-    budget_usd_micro: task.budget_usd_micro,
-  }).usdMicro;
+  return withinTaskBudget(
+    port.estimate({
+      specialist: task.specialist,
+      risk_tier: task.risk_tier,
+      est_cost_usd_micro: task.est_cost_usd_micro,
+      budget_usd_micro: task.budget_usd_micro,
+    }).usdMicro,
+    task,
+  );
+}
+
+/**
+ * An estimate no larger than what is left of the task's own budget (U-042: the budget caps its
+ * runs, so a run never spends more). Live walk 2 (phase C): a task with a budget of CHF 0.80
+ * was estimated at about CHF 1.00, and the Start dialog and the plan counted the larger figure.
+ * A task without a budget keeps the estimate.
+ */
+export function withinTaskBudget(
+  estimateUsdMicro: number,
+  task: Pick<TaskRow, "budget_usd_micro" | "actual_cost_usd_micro">,
+): number {
+  if (!(task.budget_usd_micro > 0)) return estimateUsdMicro;
+  const left = Math.max(0, task.budget_usd_micro - (task.actual_cost_usd_micro ?? 0));
+  return Math.min(estimateUsdMicro, left);
 }

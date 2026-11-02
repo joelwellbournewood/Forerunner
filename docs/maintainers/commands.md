@@ -315,7 +315,18 @@ read the note; `session.pause` once the session ended; `capability.grant` once t
 gone. State-based undos that used to return without a change now throw. `undoSentence` gives
 the sentence when "<what> is back to <old value>" would not be true (`task.create`: "Undone:
 cancelled the task ..."; a move: "Undone: the task "X" is ready again.", a cancel: "Undone:
-reopened the task ..."). Every person's move of a task can be undone (design §3.5: "every
+reopened the task ..."). A command's `undo` may return a sentence that is added to the undo's
+own (the closure kept from the run returns those of its steps too): the undo of the cancel of a
+task that ran or was reviewed calls the `bringBackWork` port (the session took what the run
+changed out of the folder, ADR 0105) and adds "What it changed is back in the folder." or
+"What it changed could not be put back: the folder changed in the same places since." The
+cancel's own sentence says what happens to the work ('Cancelled "X": its run stopped and what
+it changed is removed; Undo brings it back.', or "its pull request stays open" for a task with
+a pull request), and a person's move out of `in_review` stops the review through `stopTask` as
+a move out of `claimed` or `in_progress` stops the run. The sentence says so only when
+`stopTask` answers `true` (a live run or review was stopped; the session sets aside exactly
+those): a task in review that no session reviews (its card waits, or Forerunner closed during
+its review) reads 'Cancelled "X".', and its files stay (phase C review). Every person's move of a task can be undone (design §3.5: "every
 action has one Undo right after it"): the undo puts the task back as it was. The move's
 `before` records the row's `status`, `reason`, `author_human`, `author_agent` and `attempt`;
 the undo restores them through `TaskRepo.restoreStatus` (a status only an agent sets comes

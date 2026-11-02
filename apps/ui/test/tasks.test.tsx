@@ -293,6 +293,67 @@ describe("Tasks tab (design §3.5)", () => {
     ]);
   });
 
+  it("Cancel on a running task says its run stops and what it changed is removed, with Undo; a task with a pull request keeps it (ADR 0105)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_run", "Write the About page", {
+      status: "in_progress",
+      claimedBy: "agent_1",
+    });
+    addTask(harness, "t_pr", "Add the contact form", {
+      status: "in_review",
+      prUrl: "https://github.com/acme/site/pull/7",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("t_run")).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(
+      "Drops it. Its run stops now and what it changed is removed; Undo brings it back.",
+    );
+    await user.click(within(dialog).getByTestId("confirm-action"));
+    expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+      'Cancelled "Write the About page": its run stopped and what it changed is removed; Undo brings it back.',
+    );
+    expect(screen.getByTestId("task-moved-undo")).toBeInTheDocument();
+    expect(postedCalls(harness, "/tasks/t_run/action").map((c) => c.body)).toEqual([
+      { version: 1, action: "cancel" },
+    ]);
+    // Being reviewed, with a pull request: the review stops, the pull request stays open.
+    await user.click(within(await rowOf("t_pr")).getByTestId("action-cancel"));
+    const review = await screen.findByTestId("action-dialog");
+    expect(within(review).getByTestId("action-explain")).toHaveTextContent(
+      "Drops it. Its review stops now; its pull request stays open.",
+    );
+  });
+
+  it("a task in review whose card waits reads Needs your decision; Cancel promises nothing about its files (phase C review)", async () => {
+    // Its review failed in a session that ended (U-045): no review runs, its card waits. It
+    // read "Being reviewed", and Cancel said its review stops and its work is removed.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_failed_review", "Write the Contact page", { status: "in_review" });
+    harness.daemon.state.requests.push({
+      ...(harness.daemon.state.requests[0] as (typeof harness.daemon.state.requests)[number]),
+      id: "req_review_failed",
+      taskId: "t_failed_review",
+      projectId: "proj_atlas",
+      status: "open",
+      why: '"Write the Contact page" could not be reviewed.',
+      changeCard: { key: "critic:review_failed", task_id: "t_failed_review" },
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("t_failed_review");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent("Needs your decision");
+    expect(actionsOf(row)).toEqual(["Answer", "Cancel"]);
+    await user.click(within(row).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(/^Drops it\.$/);
+    await user.click(within(dialog).getByTestId("confirm-action"));
+    expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+      'Cancelled "Write the Contact page". Its card in the Inbox was withdrawn.',
+    );
+  });
+
   it("Redo on a done task sends what to fix", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

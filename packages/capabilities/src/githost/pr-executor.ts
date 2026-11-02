@@ -120,6 +120,11 @@ interface ConflictAnswer {
 /** The identity of a workspace's baseline commits when the executor is given none (U-037). */
 export const WORKSPACE_IDENTITY = { name: "Forerunner", email: "forerunner@localhost" } as const;
 
+/** Where a cancelled task's changes are kept until Undo brings them back (`setAside`). */
+export function setAsideRef(taskId: string): string {
+  return `refs/forerunner/set-aside/${safeSegment(taskId)}`;
+}
+
 export class PrTaskExecutor implements TaskExecutor {
   private readonly logger = log("pr-executor");
 
@@ -216,6 +221,43 @@ export class PrTaskExecutor implements TaskExecutor {
     if (answered) await this.consume(answered.row);
     this.logger.info("pull request ready", { taskId: task.id, branch, prUrl });
     return { ...result, outcome: "in_review", prUrl, branch, changedFiles };
+  }
+
+  /**
+   * The folder a task's run changes: the project's workspace (a project without a repository),
+   * else the task's own worktree of the repository. Null when neither is a git checkout yet (a
+   * project linked to the person's own folder has neither: a run never writes there unasked).
+   */
+  private async changedFolderOf(task: TaskRow): Promise<GitOps | null> {
+    const dir =
+      (await this.deps.workspaceFor?.(task)) ?? join(this.deps.worktreeRoot, safeSegment(task.id));
+    if (!existsSync(join(dir, ".git"))) return null;
+    const git = new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
+    return (await git.hasCommits()) ? git : null;
+  }
+
+  /**
+   * A task cancelled while it ran or was reviewed (phase C, live walk 2 C1): what its run
+   * changed since its baseline ("Workspace before …", or the branch's last commit) is taken out
+   * of the folder and kept under `setAsideRef(task)`, so the next task never builds on it and
+   * Undo of the cancel brings it back (`bringBack`). Returns the files taken out.
+   */
+  async setAside(task: TaskRow): Promise<string[]> {
+    const git = await this.changedFolderOf(task);
+    if (!git) return [];
+    return git.setAside(
+      setAsideRef(task.id),
+      `Set aside: "${task.title}" was cancelled (task ${task.id})`,
+    );
+  }
+
+  /** Undo of a cancel: what `setAside` took out goes back into the folder, uncommitted. */
+  async bringBack(
+    task: TaskRow,
+  ): Promise<{ result: "restored"; files: string[] } | { result: "missing" | "conflict" }> {
+    const git = await this.changedFolderOf(task);
+    if (!git) return { result: "missing" };
+    return git.bringBack(setAsideRef(task.id));
   }
 
   /**

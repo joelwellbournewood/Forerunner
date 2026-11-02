@@ -808,7 +808,12 @@ names and nothing run, validated brief, the billing source picked for the task a
 that follows it, derived narrower token, specialist prompt and model from the registry, Run
 row recorded; ADR 0044), then moves it to done (tier 0 with checks passed), in review,
 needs human or failed; the inbox is re-checked between tasks and a human "stop" ends the
-session; at 80% of the budget or a mid-task cap no new task starts. Session end writes the
+session; at 80% of the budget or a mid-task cap no new task starts. A run the session's own
+budget stops (`budget_exceeded` with the session's remaining budget as the cap) ends the
+session, and its task goes back to ready by its claim's release, its attempt count unchanged,
+listed with the tasks left for next time ('The session's budget is used. "X" and "Y" are ready
+to continue.'); before (phase C), it waited in `needs_human` with no card while the result said
+it needed the person's decision in the Inbox. Session end writes the
 project summary cache, sends a handoff (requires ack) to the project's peers
 (`settings.members` or agents that touched the project), notifies the human and records the
 session summary, handoff and spend; with a docs port it also writes the session's status
@@ -995,7 +1000,7 @@ cycle, each 409 conflict with cause `validation` and a message naming the tasks.
 `GET /projects/:id/start-check?budgetUsdMicro=` (`session/start-check.ts`, `rt.startCheck`)
 answers what a session started now would plan: the ready count, `runnable`, `overBudget` and
 `waiting`, priced as the composed planner prices (`planEstimateUsdMicro` over the learned
-estimates) and cut as the runner cuts (`DEFAULT_RESERVE_SHARE`), with the project's session cap
+estimates, at most what is left of a task's own budget: `withinTaskBudget`) and cut as the runner cuts (`DEFAULT_RESERVE_SHARE`), with the project's session cap
 when no budget is given. Tests: `task-dependencies.test.ts` (the cut; a large task and two small
 ones; tasks waiting on a cancelled and a failed one; the routes' refusals with their messages;
 the start check), `packages/state/test/suite.ts` (`waitingTasks`, `checkDependencies`) and
@@ -1660,6 +1665,107 @@ a runnable specialist is known), which shows "of CHF x budget" or "no budget; ea
 at CHF y (coder limit)". Tests: `task-budget-cap.test.ts` (past the estimate within the
 budget, no budget, the budget reached mid-run, a spent budget, the session's own stop),
 `real-daemon.test.ts` and `tasks.test.tsx` in `apps/ui`.
+
+**A task stopped at its own cap asks the person once (`session/budget-card.ts`; live walk 2,
+B2).** Before, the `needs_human` above had no card: the session's result said '"Contact page"
+needs your decision (Inbox).' while the Inbox said "Nothing needs you", the Tasks tab said
+"Paused" and the reason spoke dollars on a CHF screen. Now the executor's result carries
+`budgetStop` (`BudgetStop`: the cap, what the task spent in all its runs, `task_budget` or
+`specialist_limit`, the specialist) and words its summary in CHF (`LoopTaskExecutorDeps.chfPerUsd`,
+"The run stopped at its budget of CHF 0.40: it spent CHF 0.40, and its next step would have gone
+over.", since the hooks stop a run before a call that would pass its cap; "after spending" only
+when it spent the whole cap); the card's body says the same ("So far it spent CHF 0.24; its next
+step would have gone over the budget."); the runner sets the
+task's reason to the card's sentence ('"Contact page" stopped at its budget of CHF 0.01.') and
+files one blocking card (`fileBudgetStopCard`, key `task:budget_stop`, options **Raise the
+budget** and **Cancel task**, reused while open). `raisedBudgetUsdMicro` is the budget the
+button sets: what the task spent in all its runs plus room for the next one (the whole budget it
+stopped at, or twice the specialist's per-run limit it stopped at, and at least its estimate and
+USD 0.50), in steps of USD 0.05, stored on the card with the day's rate so its words name the
+amount ("Sets its budget to CHF 0.44 and starts a session that tries again."). `syncBudgetStopAnswers`
+(in `RuntimeApp.syncApprovals`) applies the answer once: Raise sets the budget (never lower than
+one set meanwhile with Edit), moves the task to ready and asks for a session of the project
+(`resumeWork`); Cancel task cancels it; a task that moved on is recorded `task_moved_on`. The
+reader is `budgetStopAnswer` (`wiring/request-answers.ts`), the words `budgetCard` in
+`daemon/request-words.ts`, and the Tasks tab reads "Needs your decision: its budget is used"
+(`cardKindOf` → `budget`; the UI offers Answer, Edit and Cancel). Tests:
+`continuity-budget.test.ts` (one card, the result, the Tasks tab and the Inbox agree, CHF only,
+the card across a restart, Raise the budget runs the task to done), `task-budget-cap.test.ts`,
+the phase 1 gate, `inbox.test.tsx` and `real-daemon.test.ts` ("continuity") in `apps/ui`.
+
+**Cancelling a task that runs or is reviewed (phase C, live walk 2 C1, ADR 0105).** Before, the
+run was stopped (U-039) but its files stayed in the project's folder, the next task built on
+them, and a cancel during the review let the critic "accept" the cancelled task. Now the Tasks
+tab route and the commands' person moves call `KillSwitch.stopTask` for a task in `in_review`
+too, and the runner registers the review under the task with its own controller (aborted by
+the session's), so the critic's run stops; a task found cancelled before its review starts is
+never reviewed. `recordMove` of a task the person cancelled calls the executor's optional
+`setAside(task)` (`PrTaskExecutor.setAside`, `@forerunner/capabilities`) before the next task
+starts, so what the run changed is out of the folder, kept for Undo; the run's changed files
+are not listed in the result; the log line reads 'You cancelled it while "X" ran; what it
+changed is removed (Undo brings it back) and the session goes on.' (`setAside` count on
+`task.moved_while_running`). The commands' `bringBackWork` port (`PrTaskExecutor.bringBack`)
+puts it back on Undo of the cancel, also after a restart (the ref is in the folder's own git).
+Tests: `continuity-cancel.test.ts` (Cancel on the Tasks tab while it runs: the files out, the
+next task's listing without them, no review, the log line; Undo after a restart; a cancel from
+the commands while the critic reviews: no review row, no critic's call, the files out),
+`tasks.test.tsx` (the Cancel dialog says it) and `real-daemon.test.ts` in `apps/ui`.
+
+The review of the fix found three holes, closed so (`continuity-cancel.test.ts`, the cases after
+the first two describes, and their `real-daemon.test.ts` and `tasks.test.tsx` siblings):
+- **Only a live run or review is set aside, and only then does the cancel say so.** The
+  commands' `stopTask` port answers whether `KillSwitch.stopTask` stopped something
+  (`stoppedRuns > 0`); `moveSentence` gets `work` only then. The runner sets aside only when the
+  move stopped its run or review (`stoppedByMove`: the task's or review's controller was aborted
+  with a reason that is not the session's). A task in review that no session reviews (its
+  review failed or a finding is open, with its card; or Forerunner closed during its review)
+  reads 'Cancelled "X".' and keeps its files; before, the line promised they were removed. Such
+  a task with its retry card reads "Needs your decision" with Answer and Cancel
+  (`taskDisplay`, `actionsFor`), not "Being reviewed". A move recorded after the run is
+  recorded before a Stop now that came with it ends the session, so a cancel's files go as its
+  line said.
+- **Stop now, Stop all or Quit during the review put the task back to Ready.** The critic's
+  stopped review throws `killed` (no Review row); with the session's own controller aborted
+  and the task still `in_review`, the runner puts it back with `restoreStatus(…, "in_review",
+  "Stopped by you")` (to `ready`, no claim, attempt unchanged; `releaseClaim`, which
+  `releaseAll` uses, puts back only a claimed or running task), names it in the stop line
+  ('during "X". It is ready again.') and the next session runs it again; its files stay (ADR
+  0102). Before, it stayed "Being reviewed" for good with no card, and the Start dialog said
+  nothing could run. The crash recovery (`endDeadSession`, `session/recovery.ts`) does the same
+  for a task whose review was going when the process died (`reviewBackToReady`), unless a card
+  waits on the person for it; before, it said the task was ready again and left it in review
+  (`session-recovery.test.ts`).
+- **The person's answers stay when a run is cancelled.** `writeAnswersToDecisionDoc` also
+  commits the answers into the workspace's git on top of HEAD (`answersIntoBaseline`:
+  `GitOps.commitFile`, HEAD's copy of the record plus the new section, through a temporary
+  index, the files in the folder untouched), so a run going on in that folder, measured
+  against HEAD, never holds them: a cancel's `setAside` leaves them, Undo brings back only the
+  run's files, and the critic's diff no longer reads them as the run's work. A workspace with
+  no git yet is left as it is (the first run's baseline takes the answers in).
+
+**Every task a run leaves waiting has exactly one card (`session/cannot-run-card.ts`; live walk
+4).** Before, a run that could not go on and asked nothing (the researcher refused at once on an
+API key, a specialist name the registry does not know, no other specialist after two failed
+attempts) moved its task to `needs_human` with the first 200 characters of its summary and no
+card: the Inbox said "Nothing needs you", Home "Waiting on you 0", the session's result '"X"
+needs your decision (Inbox).', the badge "Paused" with "Press Resume", and Resume only started
+the same refusal again. Now, for every `needs_human` result without `budgetStop`, the runner
+sets the reason to the summary's first sentence (`plainStopReason`: no `(cc:…)` tool list, whole
+sentences, a long one cut at a word) and calls `fileCannotRunCard`, which files nothing when an
+open card already holds the task (the person's questions, a hooks approval, a rebase conflict;
+the Docker wait card does not count, it asks nothing about the task) and otherwise one blocking
+card, key `task:cannot_run`: title '"X" could not run', body the reason in at most two sentences
+("set the task back to ready" reads "try again", which the card does), options **Try again**
+("Starts a session that tries again; first fix what stopped it (Edit changes who does it).") and
+**Cancel task**. `syncCannotRunAnswers` (in `RuntimeApp.syncApprovals`) applies the answer once:
+Try again moves the task to ready without counting a retry (nothing ran) and asks for a session
+(`resumeWork`); a refusal that is still there files one new card. The reader is
+`cannotRunAnswer`, the words `cannotRunCard` in `daemon/request-words.ts`; the Tasks tab reads
+"Needs your decision: it could not run" (`cardKindOf` → `cannot_run`; Answer, Edit, Cancel; no
+Resume). Tests: `continuity-cannot-run.test.ts` (one card, the result, the Tasks tab and the
+Inbox agree, no tool names, across a restart, Try again files one new card, Cancel task, a
+person task keeps its one questions card), `inbox.test.tsx` and `real-daemon.test.ts` in
+`apps/ui`.
 
 **The Run row.** `LoopTaskExecutor` inserts the task's Run row as `running` before the driver
 starts (model, effort, prompt version, the billing source the task picked, depth) and patches
@@ -4314,8 +4420,16 @@ criteria, budget, risk tier or specialist with `brief_incomplete` and the list o
 delegation brief, `LoopTaskExecutor` adds `taskContextBlock`, read from the store when the run
 starts: `## Project` (name, goal, the person's brief from `summary_cache.brief` as a quoted
 string, and where `docs/overview.md` and the decision record are), `## Done before this task`
-(each dependency's title, the first line of its last worker run's report, or its outcome, and
-the files that run changed from its session's `task.files` event), `## The previous attempt`
+(each dependency's title, the first line of its last worker run's report, and the files that
+run changed from its session's `task.files` event; a dependency without a run says what the
+person did: "the person answered its questions (their answers are below)", "the person chose
+to go ahead without answering…", or "done by the person" for a person task, and only a task
+nobody ran falls back to its planned outcome), `## Answers from the person to "<dependency>"`
+(phase C, live walk 2: the question → answer pairs of every answered `person_questions:` card
+of a dependency, from `personAnswersOn` in `person-questions.ts`, said to be the person's own
+answers with the decision record they are also in, "do not ask the person these questions
+again"; before, the next task's coder asked the same seven questions again because its brief
+held only the plan's promise for the person's task), `## The previous attempt`
 (the last worker run's report, or "It failed: <the error in words>"), `## The person's note on
 this task` (the words of the person's newest change-log row naming the task) and `## Note for
 this session (from the person)` (`SessionStartOptions.note`, from the Start dialog through

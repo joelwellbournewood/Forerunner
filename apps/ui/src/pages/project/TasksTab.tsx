@@ -26,6 +26,7 @@ import { verdictLabel } from "../../lib/plain-words.ts";
 import {
   ACTIONS,
   actionsFor,
+  cancelWorkLine,
   displayOf,
   elapsed,
   isFinished,
@@ -604,6 +605,7 @@ export function ActionDialog({
   const def = ACTIONS[action];
   const offered = actionsFor(displayOf(task).key, task).includes(action);
   const stuck = action === "cancel" ? stuckLine(waitingOn(task, tasks).map((t) => t.title)) : null;
+  const work = action === "cancel" ? cancelWorkLine(task) : null;
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
@@ -623,6 +625,7 @@ export function ActionDialog({
       <form onSubmit={submit} className="space-y-3">
         <p className="text-sm" data-testid="action-explain">
           {def.explain}
+          {work ? ` ${work}` : ""}
           {stuck ? ` ${stuck}` : ""}
         </p>
         {offered ? (

@@ -101,6 +101,8 @@ import {
 import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
 import {
   acceptsAnswer,
+  budgetStopAnswer,
+  cannotRunAnswer,
   personQuestionsAnswer,
   signoffAnswer,
 } from "@forerunner/runtime/wiring/request-answers";
@@ -130,6 +132,7 @@ import {
   createTaskMeta,
   type FakeTaskMeta,
   fakeTaskDetail,
+  liveWork,
   projectTaskViews,
 } from "./fake-tasks.ts";
 import {
@@ -597,6 +600,16 @@ const FAKE_SESSION_CAP_USD_MICRO = 6_250_000;
 /** What is left of the fixture human's monthly cap (CHF 120 at the fake's rate of 0.8). */
 const FAKE_MONTH_LEFT_USD_MICRO = 150_000_000;
 
+/**
+ * A task's price as the daemon's planner gives it: its estimate, else its budget, else the
+ * planner's 500 000, never more than what is left of its own budget (`withinTaskBudget`).
+ */
+function fakePrice(t: TaskView): number {
+  const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
+  if (!(t.budget.usdMicro > 0)) return estimate;
+  return Math.min(estimate, Math.max(0, t.budget.usdMicro - t.actual.usdMicro));
+}
+
 function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
@@ -629,7 +642,7 @@ function fakeStartCheck(
       waiting.push({ taskId: t.id, title: t.title, waitsOn });
       continue;
     }
-    const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
+    const estimate = fakePrice(t);
     const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
     // U-079: a full-review task waits while the Docker sandbox is not ready.
     if (sandbox && !sandbox.ready && t.riskTier >= 2) sandboxTasks.push(named);
@@ -651,7 +664,7 @@ function fakeStartCheck(
       later.push({
         taskId: w.taskId,
         title: w.title,
-        estimate: money(t?.estimate.usdMicro || t?.budget.usdMicro || 500_000),
+        estimate: money(t ? fakePrice(t) : 500_000),
       });
       changed = true;
     }
@@ -1753,6 +1766,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if ("refused" in target) return errorBody(c, 409, "conflict", target.refused);
     const from = task.status;
     const { action, note } = parsed.data;
+    // As the daemon: whether the move stops a live run or review (the cancel's sentence and
+    // whether its work is set aside follow it).
+    const live = liveWork(viewOf(task));
+    const setAside = target.to === "cancelled" && live && !task.prUrl;
     // The row as it was, for the undo (as the daemon's change log records it).
     const was = {
       reason: task.reason,
@@ -1821,6 +1838,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...(noteId ? { note_id: noteId } : {}),
         ...(withoutAnswers ? { without_answers_note_id: withoutAnswers } : {}),
         ...(withdrawn ? { withdrawn_requests: withdrawnIds } : {}),
+        // The fake's own mark: the undo says the work is back, as the daemon's does.
+        ...(setAside ? { set_aside: true } : {}),
       },
       scope: "project",
       projectId: task.projectId,
@@ -1831,6 +1850,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         withdrawn,
         noted: noteId !== null,
         stuck,
+        live,
       }),
       reversible: true,
     });
@@ -1858,6 +1878,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         `task: illegal transition ${task.status} -> ${parsed.data.to}`,
       );
     const from = task.status;
+    const live = liveWork(viewOf(task));
+    const setAside = parsed.data.to === "cancelled" && live && !task.prUrl;
     task.status = parsed.data.to;
     task.reason = parsed.data.reason ?? parsed.data.note ?? `Moved by you`;
     if (parsed.data.to === "needs_human") state.taskMeta.pausedByPerson.add(task.id);
@@ -1870,12 +1892,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
       ],
       before: { task_id: task.id, status: from, title: task.title },
-      after: { task_id: task.id, status: parsed.data.to, title: task.title },
+      after: {
+        task_id: task.id,
+        status: parsed.data.to,
+        title: task.title,
+        ...(setAside ? { set_aside: true } : {}),
+      },
       scope: "project",
       projectId: task.projectId,
       source: "ui",
       wordsUsed: parsed.data.reason ?? "",
-      sentence: actionSentence(task, from, parsed.data.to),
+      sentence: actionSentence(task, from, parsed.data.to, { live }),
       reversible: true,
     });
     return c.json(changeOf(task, entry));
@@ -2313,6 +2340,58 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         applied_at: new Date().toISOString(),
         outcome: read,
         ...(read !== "cancel" ? { start: "started" } : {}),
+      };
+    }
+    // As the daemon's `syncBudgetStopAnswers` (live walk 2, B2): Raise the budget sets the
+    // budget the card named (never lower than the task's own) and a session tries again;
+    // Cancel task cancels it.
+    const budgetCard = r.changeCard as { key?: unknown; raise_to_usd_micro?: unknown } | null;
+    if (budgetCard?.key === "task:budget_stop") {
+      const task = state.tasks.find((t) => t.id === r.taskId);
+      const read = budgetStopAnswer(parsed.data.answer as never);
+      const moved = !task || task.status !== "needs_human";
+      let budget: number | null = null;
+      if (task && !moved && read === "raise") {
+        budget = Math.max(task.budget.usdMicro, Number(budgetCard.raise_to_usd_micro) || 0);
+        task.budget = money(budget);
+        task.cap = money(budget);
+        task.capSource = "task_budget";
+        task.status = "ready";
+        task.reason = `you raised its budget to CHF ${(money(budget).chfMicro / 1e6).toFixed(2)} in the Inbox`;
+        touch(task);
+      } else if (task && !moved && read === "cancel") {
+        task.status = "cancelled";
+        task.reason = "you cancelled it in the Inbox when it stopped at its budget";
+        touch(task);
+      }
+      r.changeCard = {
+        ...budgetCard,
+        applied_at: new Date().toISOString(),
+        outcome: moved ? "task_moved_on" : read,
+        ...(budget !== null ? { budget_usd_micro: budget, start: "started" } : {}),
+      };
+    }
+    // As the daemon's `syncCannotRunAnswers` (live walk 4): Try again puts the task back to
+    // ready and a session tries again; Cancel task cancels it.
+    const cannotRun = r.changeCard as { key?: unknown } | null;
+    if (cannotRun?.key === "task:cannot_run") {
+      const task = state.tasks.find((t) => t.id === r.taskId);
+      const read = cannotRunAnswer(parsed.data.answer as never);
+      const moved = !task || task.status !== "needs_human";
+      if (task && !moved && read === "retry") {
+        task.status = "ready";
+        task.reason = "you asked to try again in the Inbox";
+        touch(task);
+      } else if (task && !moved && read === "cancel") {
+        task.status = "cancelled";
+        task.reason = "you cancelled it in the Inbox when it could not run";
+        touch(task);
+      }
+      r.changeCard = {
+        ...cannotRun,
+        applied_at: new Date().toISOString(),
+        outcome: moved ? "task_moved_on" : read,
+        ...(!moved && read === "retry" ? { start: "started" } : {}),
       };
     }
     if (r.kind === "capability_grant") {
@@ -5091,6 +5170,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       note_id?: string;
       without_answers_note_id?: string;
       withdrawn_requests?: string[];
+      set_aside?: boolean;
     };
     const task = state.tasks.find((t) => t.id === after.task_id);
     const words = (s: string) =>
@@ -5143,6 +5223,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         after.status === "cancelled"
           ? `Undone: reopened the task "${task.title}"; it ${again}${back ? ` and ${back}` : ""}.`
           : `Undone: the task "${task.title}" ${again}${back ? `; ${back}` : ""}.`;
+      // As the daemon (phase C): the undo of a cancel that set a run's work aside puts it back.
+      if (after.set_aside) sentence += " What it changed is back in the folder.";
     }
     if (first?.name === "task.update" && task) {
       const fields = ((before as { fields?: Record<string, unknown> } | null)?.fields ??

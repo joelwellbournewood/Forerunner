@@ -56,10 +56,20 @@ export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: s
  */
 export function actionsFor(
   key: TaskDisplayKey,
-  task?: Pick<TaskView, "specialist"> & Partial<Pick<TaskView, "display">>,
+  task?: Pick<TaskView, "specialist"> & Partial<Pick<TaskView, "display" | "status">>,
 ): readonly TaskActionKey[] {
+  // A task in review whose card waits (its review failed, or a finding is still open): the
+  // card's own options move it (Try again there sends it back to work); here Answer opens the
+  // card, and Cancel drops it. No review is running, so Cancel stops nothing.
+  if (key === "answer" && task?.status === "in_review") return ["answer", "cancel"];
   if (key === "answer" && task?.display?.blocker?.cardKind === "retry")
     return ["answer", "try_again", "cancel"];
+  // Stopped at its own budget (live walk 2, B2): its card raises the budget; Edit changes it.
+  // Could not run (live walk 4): its card tries again; Edit changes what stopped it (who does
+  // it). Neither offers Resume, which only started the same stop again.
+  const kind = task?.display?.blocker?.cardKind;
+  if (key === "answer" && (kind === "budget" || kind === "cannot_run"))
+    return ["answer", "edit", "cancel"];
   if (key === "answer" && task?.specialist === WHO_PERSON) return ["answer", "cancel"];
   switch (key) {
     case "draft":
@@ -85,6 +95,23 @@ export function actionsFor(
     case "cancelled":
       return ["reopen"];
   }
+}
+
+/**
+ * What Cancel does to the work of a task that runs or is being reviewed (phase C, live walk 2
+ * C1: the cancelled page's files stayed and the next task described it): its run stops, and
+ * what it changed is taken out of the folder, which Undo puts back; a pull request already
+ * opened stays open. Null for a task that is not running.
+ */
+export function cancelWorkLine(
+  task: Pick<TaskView, "status" | "prUrl" | "display" | "reason">,
+): string | null {
+  const key = displayOf(task).key;
+  if (key !== "running" && key !== "review") return null;
+  const what = key === "review" ? "Its review" : "Its run";
+  return task.prUrl
+    ? `${what} stops now; its pull request stays open.`
+    : `${what} stops now and what it changed is removed; Undo brings it back.`;
 }
 
 /** The actions that open a form or a page instead of the confirm dialog. */

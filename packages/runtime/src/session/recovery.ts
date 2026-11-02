@@ -1,5 +1,6 @@
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import { holdsTask } from "../daemon/task-words.ts";
 
 /**
  * Crash recovery (core-experience design §4.10, ADR 0102). A daemon that died while a session
@@ -100,7 +101,9 @@ export async function endDeadSession(
   const tasks: TaskRow[] = [];
   for (const t of held) {
     try {
-      tasks.push(await store.task.releaseClaim(t.id, row.agent_id, opts.taskReason));
+      const released = await store.task.releaseClaim(t.id, row.agent_id, opts.taskReason);
+      const back = await reviewBackToReady(store, released, row.agent_id, opts.taskReason);
+      if (back) tasks.push(back);
     } catch (e) {
       logger.warn("interrupted task not released", { taskId: t.id, error: errorMessage(e) });
     }
@@ -124,6 +127,29 @@ export async function endDeadSession(
     released: tasks.map((t) => ({ taskId: t.id, title: t.title })),
   } as never);
   return { session: ended, tasks };
+}
+
+/**
+ * A released task that was being reviewed when its session ended without a verdict (phase C
+ * review): releasing a claim puts back only a claimed or running task, so it stayed "Being
+ * reviewed" for good, while the session's result said it was ready again, and no session plans
+ * a task in review. It goes back to ready, as a stopped review does in a live session (design
+ * §4.9, §4.10), unless a card waits on the person for it (its review failed, or a finding is
+ * still open): then it stays, and null says it is not ready again. Any other task is returned
+ * as it is.
+ */
+async function reviewBackToReady(
+  store: StateStore,
+  t: TaskRow,
+  agentId: string,
+  reason: string,
+): Promise<TaskRow | null> {
+  if (t.status !== "in_review") return t;
+  const open = await store.humanRequest.list({ task_id: t.id, status: "open" } as never, {
+    limit: 20,
+  });
+  if (open.some(holdsTask)) return null;
+  return store.task.restoreStatus(t.id, t.version, "in_review", reason, { agentId });
 }
 
 /**

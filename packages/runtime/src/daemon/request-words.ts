@@ -2,6 +2,8 @@ import type { HumanRequestRow, JsonObject } from "@forerunner/state";
 import {
   ANSWER_CARD_KEYS,
   blockedFindingsAnswer,
+  budgetStopAnswer,
+  cannotRunAnswer,
   normalAnswer,
   optionLabel,
   signoffAnswer,
@@ -437,6 +439,159 @@ function intakeOutcome(card: JsonObject): string | null {
   return null;
 }
 
+/** An amount in micro-USD as "CHF 0.40" at the card's rate (design §5 rule 7). */
+function chfAt(usdMicro: unknown, rate: unknown): string | null {
+  if (typeof usdMicro !== "number" || !Number.isFinite(usdMicro)) return null;
+  const r = typeof rate === "number" && rate > 0 ? rate : 0.8;
+  const cents = Math.round(Math.round(Math.max(0, usdMicro) * r) / 10_000);
+  return `CHF ${(cents / 100).toFixed(2)}`;
+}
+
+/**
+ * A task stopped at its own budget (live walk 2, B2; `session/budget-card.ts`): Raise the
+ * budget (to the amount the card names, and a session tries again) or Cancel task.
+ */
+function budgetCard(
+  r: Pick<HumanRequestRow, "why" | "options">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const task = ctx.taskTitle ?? str(card.task_title) ?? "the task";
+  const waiting = ctx.waiting ?? [];
+  const spent = chfAt(card.spent_usd_micro, card.chf_per_usd);
+  const raiseTo = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
+  // The hooks stop a run before a call that would go over the cap, so it may have spent less
+  // than the budget: then the next step is what did not fit (the bench read "stopped at its
+  // budget of CHF 0.01. So far it spent CHF 0.00.").
+  const under =
+    typeof card.spent_usd_micro === "number" &&
+    typeof card.cap_usd_micro === "number" &&
+    card.spent_usd_micro < card.cap_usd_micro;
+  const body =
+    [
+      spent
+        ? under
+          ? `So far it spent ${spent}; its next step would have gone over the budget.`
+          : `So far it spent ${spent}.`
+        : null,
+      waitingSentence(waiting),
+    ]
+      .filter(Boolean)
+      .join(" ") || null;
+  const choices: RequestChoiceWords[] = [];
+  for (const option of r.options.map(optionLabel)) {
+    const what = budgetStopAnswer(option);
+    if (what === "raise")
+      choices.push({
+        label: option,
+        explain: raiseTo
+          ? `Sets its budget to ${raiseTo} and starts a session that tries again.`
+          : "Raises its budget and starts a session that tries again.",
+        tone: "primary",
+        confirm: null,
+        input: null,
+      });
+    else if (what === "cancel")
+      choices.push({
+        label: option,
+        explain: cancelExplain(waiting),
+        tone: "danger",
+        confirm: cancelConfirm(task, waiting),
+        input: null,
+      });
+  }
+  return {
+    title: str(card.title) ?? firstSentence(r.why),
+    body,
+    choices,
+    links: [],
+    reply: "none",
+    details: [],
+    outcome: null,
+  };
+}
+
+function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
+  const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
+  const started = startWords(card.start);
+  switch (card.outcome) {
+    case "raise": {
+      const to = chfAt(card.budget_usd_micro ?? card.raise_to_usd_micro, card.chf_per_usd);
+      return `Raised the budget of ${task}${to ? ` to ${to}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
+    }
+    case "cancel":
+      return `${task} was cancelled.`;
+    case "task_moved_on":
+      return `${task} had moved on already, so nothing changed.`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * A task a run left waiting without asking anything (live walk 4; `session/cannot-run-card.ts`):
+ * why, in at most two sentences, then Try again or Cancel task.
+ */
+function cannotRunCard(
+  r: Pick<HumanRequestRow, "why" | "options">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const task = ctx.taskTitle ?? str(card.task_title) ?? "the task";
+  const waiting = ctx.waiting ?? [];
+  const reason = str(card.reason) ?? afterFirstSentence(r.why);
+  const choices: RequestChoiceWords[] = [];
+  for (const option of r.options.map(optionLabel)) {
+    const what = cannotRunAnswer(option);
+    if (what === "retry")
+      choices.push({
+        label: option,
+        explain:
+          "Starts a session that tries again; first fix what stopped it (Edit changes who does it).",
+        tone: "primary",
+        confirm: null,
+        input: null,
+      });
+    else if (what === "cancel")
+      choices.push({
+        label: option,
+        explain: cancelExplain(waiting),
+        tone: "danger",
+        confirm: cancelConfirm(task, waiting),
+        input: null,
+      });
+  }
+  return {
+    title: str(card.title) ?? firstSentence(r.why),
+    // Design §5 rule 1: a card body is at most two sentences, so what waits on it is said
+    // only when the reason is one sentence.
+    body:
+      [reason, reason && /[.!?]\s+\S/.test(reason) ? null : waitingSentence(waiting)]
+        .filter(Boolean)
+        .join(" ") || null,
+    choices,
+    links: [],
+    reply: "none",
+    details: [],
+    outcome: null,
+  };
+}
+
+function cannotRunOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
+  const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
+  const started = startWords(card.start);
+  switch (card.outcome) {
+    case "retry":
+      return `Trying ${task} again${started ? `: ${started}` : ": the next session runs it"}.`;
+    case "cancel":
+      return `${task} was cancelled.`;
+    case "task_moved_on":
+      return `${task} had moved on already, so nothing changed.`;
+    default:
+      return null;
+  }
+}
+
 /** The Docker wait (design §3.8, ADR 0101/0102): per project, Set up Docker, Cancel task. */
 function dockerCard(
   r: Pick<HumanRequestRow, "why" | "steps" | "options">,
@@ -583,6 +738,12 @@ export function requestWords(
       return a === "rework" ? "revise" : a;
     });
     outcome = retryOutcome(card, ctx, false);
+  } else if (key === ANSWER_CARD_KEYS.budgetStop) {
+    words = budgetCard(r, card, ctx);
+    outcome = budgetOutcome(card, ctx);
+  } else if (key === ANSWER_CARD_KEYS.cannotRun) {
+    words = cannotRunCard(r, card, ctx);
+    outcome = cannotRunOutcome(card, ctx);
   } else if (key?.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix)) {
     words = questionsCard(card, ctx);
     outcome = questionsOutcome(card, ctx);

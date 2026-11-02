@@ -149,7 +149,23 @@ with their milestone.
   folder as `worktree` with the staged files as `changedFiles`, so the critic's `git diff HEAD`
   there is that run's change; without `workspaceFor` the inner executor runs directly, as before.
   The workspace's commits use the executor's `identity`, else `WORKSPACE_IDENTITY`
-  (Forerunner, forerunner@localhost). `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
+  (Forerunner, forerunner@localhost). A task the person cancels while it runs or is reviewed
+  (phase C, ADR 0105): `setAside(task)` takes what its run changed out of the folder it ran in
+  (the workspace, else the task's own worktree of the repository; nothing for a project linked
+  to the person's own folder) with `GitOps.setAside(ref, message)`: every change since HEAD,
+  new and deleted files included, becomes one commit under `setAsideRef(task.id)`
+  (`refs/forerunner/set-aside/<task>`, HEAD does not move) and the folder goes back to HEAD;
+  with nothing to set aside an older commit under the ref is dropped. `bringBack(task)` (Undo
+  of the cancel) applies that commit's diff on top of the folder as it is now
+  (`GitOps.bringBack`: `git apply`, all or nothing): `restored` with the files, `conflict` when
+  the folder changed in the same places since (the ref stays), `missing` when nothing is set
+  aside. Ignored files stay where they are. `GitOps.commitFile(path, content, message)` commits
+  one file's content on top of HEAD through a temporary index (`GIT_INDEX_FILE`), the files in
+  the worktree untouched, and moves HEAD only if nothing moved it meanwhile; `fileAt(rev, path)`
+  reads a file as a commit holds it. The runtime uses them for the person's answers in a
+  workspace's decision record, so a run going on there never holds them in its change set (a
+  cancel's `setAside` took them out before, phase C review). A variable a caller passes in
+  `env` adds to the ones `GitOps` sets. `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
   and `setRemote` for it and for the repository creation; `createRepo` takes `autoInit` (default
   true, the host's README commit; false: an empty repository for a first push).
 - `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests

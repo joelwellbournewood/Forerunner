@@ -389,4 +389,50 @@ describe("GitOps", { timeout: 120_000 }, () => {
     await g.commitAll("second", { allowEmpty: false });
     expect(await who()).toBe("Pat Person <person@example.test> / Pat Person <person@example.test>");
   });
+
+  it("commitFile puts one file's content on top of HEAD without touching the worktree; a set-aside then holds only the rest (phase C review)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "fr-git-commit-file-"));
+    const g = new GitOps({ cwd, identity });
+    const git = async (...args: string[]) => (await run(["git", ...args], { cwd })).stdout;
+    await g.init("main");
+    writeFileSync(join(cwd, "index.html"), "<h1>Club</h1>\n");
+    mkdirSync(join(cwd, "docs"), { recursive: true });
+    writeFileSync(join(cwd, "docs", "decisions.md"), "# Decisions\n");
+    await g.commitAll("Workspace before the run");
+    const before = (await git("rev-parse", "HEAD")).trim();
+    // A run changes index.html and the record; the app then records the person's answers.
+    writeFileSync(join(cwd, "index.html"), "<h1>Club</h1>\n<a href=about.html>About</a>\n");
+    writeFileSync(join(cwd, "about.html"), "<h1>About</h1>\n");
+    writeFileSync(join(cwd, "docs", "decisions.md"), "# Decisions\n\nRun's note.\n\nAnswers.\n");
+    expect(await g.fileAt("HEAD", "docs/decisions.md")).toBe("# Decisions\n");
+    expect(await g.fileAt("HEAD", "docs/none.md")).toBeNull();
+    const commit = await g.commitFile(
+      "docs/decisions.md",
+      "# Decisions\n\nAnswers.\n",
+      "Answers recorded",
+    );
+    expect(commit).toMatch(/^[0-9a-f]{40}$/);
+    expect((await git("rev-parse", "HEAD~1")).trim()).toBe(before);
+    // The worktree's files are as the run left them.
+    expect(await g.fileAt("HEAD", "docs/decisions.md")).toBe("# Decisions\n\nAnswers.\n");
+    expect(await git("show", "--stat", "--format=", "HEAD")).toContain("docs/decisions.md");
+    expect((await git("status", "--porcelain")).split("\n").filter(Boolean).sort()).toEqual([
+      " M docs/decisions.md",
+      " M index.html",
+      "?? about.html",
+    ]);
+    // The same content again commits nothing.
+    expect(await g.commitFile("docs/decisions.md", "# Decisions\n\nAnswers.\n", "again")).toBe(
+      null,
+    );
+    // A cancel's set-aside takes the run's changes and leaves the answers.
+    const files = await g.setAside("refs/forerunner/set-aside/t1", "set aside");
+    expect(files.sort()).toEqual(["about.html", "docs/decisions.md", "index.html"]);
+    expect((await git("show", "HEAD:docs/decisions.md")).trim()).toBe("# Decisions\n\nAnswers.");
+    expect(await git("status", "--porcelain")).toBe("");
+    expect(await g.bringBack("refs/forerunner/set-aside/t1")).toMatchObject({
+      result: "restored",
+    });
+    expect(await git("diff", "HEAD", "--", "docs/decisions.md")).toContain("+Run's note.");
+  });
 });

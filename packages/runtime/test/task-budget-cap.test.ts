@@ -210,8 +210,16 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
     // session, which has USD 10) waits for the person with what to do.
     expect(provider.calls).toHaveLength(1);
     expect(result.outcome).toBe("needs_human");
-    expect(result.summary).toContain("The run stopped at this task's budget of $0.50");
-    expect(result.summary).toContain("Raise the task's budget on the Tasks tab");
+    // In CHF (design §5 rule 7, live walk 2 B2), with what the runner needs to file the card.
+    expect(result.summary).toBe(
+      "The run stopped at its budget of CHF 0.40: it spent CHF 0.40, and its next step would have gone over.",
+    );
+    expect(result.budgetStop).toEqual({
+      capUsdMicro: 500_000,
+      spentUsdMicro: result.costUsdMicro,
+      source: "task_budget",
+      specialist: "coder",
+    });
     expect(result.costUsdMicro).toBeGreaterThanOrEqual(499_000);
   });
 
@@ -225,9 +233,14 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
     expect(provider.calls).toHaveLength(0);
     expect(result).toEqual({
       outcome: "needs_human",
-      summary:
-        "This task's budget of $0.50 is spent ($0.50 so far), so nothing ran. Raise its budget on the Tasks tab and set it back to ready, or cancel it.",
+      summary: "Its budget of CHF 0.40 is spent (CHF 0.40 so far), so nothing ran.",
       costUsdMicro: 0,
+      budgetStop: {
+        capUsdMicro: 500_000,
+        spentUsdMicro: 500_000,
+        source: "task_budget",
+        specialist: "coder",
+      },
     });
   });
 

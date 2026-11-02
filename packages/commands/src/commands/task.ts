@@ -245,11 +245,28 @@ export function moveSentence(
   task: Pick<TaskRow, "title">,
   from: TaskStatus,
   to: TaskStatus,
-  extra: { withdrawn?: number; noted?: boolean; stuck?: readonly string[]; redo?: boolean } = {},
+  extra: {
+    withdrawn?: number;
+    noted?: boolean;
+    stuck?: readonly string[];
+    redo?: boolean;
+    /**
+     * What happens to the work of a task cancelled while it ran or was reviewed (phase C, live
+     * walk 2 C1): `removed`, what it changed is taken out of the folder it ran in (Undo brings
+     * it back); `pull_request`, its pull request stays open.
+     */
+    work?: "removed" | "pull_request";
+  } = {},
 ): string {
   const t = quote(task.title);
   let s: string;
-  if (to === "cancelled") s = `Cancelled ${t}.`;
+  if (to === "cancelled" && extra.work) {
+    const what = from === "in_review" ? "its review" : "its run";
+    s =
+      extra.work === "removed"
+        ? `Cancelled ${t}: ${what} stopped and what it changed is removed; Undo brings it back.`
+        : `Cancelled ${t}: ${what} stopped; its pull request stays open.`;
+  } else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
     s = RUNNING.includes(from)
       ? `Stopped ${t}: its run ended and it is paused until you press Resume.`
@@ -310,9 +327,24 @@ async function personMove(
       ? await queueNote(ctx, task, WITHOUT_ANSWERS_NOTE)
       : null;
   const noteId = await queueNote(ctx, task, opts.note);
-  // A task that is running stops now (U-039); the session goes on with the rest.
-  if (RUNNING.includes(from)) await ctx.ports.stopTask?.(task.id, `${statusWords(to)} by you`);
+  // A task that is running stops now (U-039), and one being reviewed too (a cancelled task is
+  // never reviewed, phase C); the session goes on with the rest.
+  const stopped =
+    RUNNING.includes(from) || from === "in_review"
+      ? await ctx.ports.stopTask?.(task.id, `${statusWords(to)} by you`)
+      : undefined;
   const stuck = to === "cancelled" ? (await waitingOn(ctx, task)).map((t) => t.title) : [];
+  // What happens to the work of a task cancelled while it ran or was reviewed: the session's
+  // runner takes it out of the folder it ran in once the run stops (phase C); a pull request
+  // already opened stays open. Said only when a live run or review was stopped: a task in
+  // review that no session reviews (its card waits, or Forerunner closed during its review)
+  // has nothing taken out, and its line says only that it is cancelled.
+  const work =
+    to === "cancelled" && stopped === true
+      ? task.pr_url
+        ? ("pull_request" as const)
+        : ("removed" as const)
+      : undefined;
   return {
     // The row as it was, so the undo puts it back whole: its reason and who set the status
     // (an agent's pause reads "Needs your answer" or "Paused", a person's "Paused by you"), and
@@ -339,6 +371,7 @@ async function personMove(
       noted: noteId !== null,
       stuck,
       redo: from === "done",
+      ...(work ? { work } : {}),
     }),
     projectId: task.project_id,
     reversible: true,
@@ -407,6 +440,19 @@ async function undoMove(before: JsonValue, after: JsonValue, ctx: CommandContext
       await ctx.store.humanRequest.reopenWithdrawn(card.id, card.version);
   }
   await dismissNotes(ctx, after);
+  // The cancel of a task that ran took what it changed out of the folder (phase C): the undo
+  // puts it back, on top of the folder as it is now.
+  if (
+    a.status === "cancelled" &&
+    (RUNNING.includes(b.status as TaskStatus) || b.status === "in_review") &&
+    ctx.ports.bringBackWork
+  ) {
+    const back = await ctx.ports.bringBackWork(task.id);
+    if (back === "restored") return "What it changed is back in the folder.";
+    if (back === "conflict")
+      return "What it changed could not be put back: the folder changed in the same places since.";
+  }
+  return undefined;
 }
 
 /** How the task reads again after an undo, for its sentence ("needs your answer again"). */

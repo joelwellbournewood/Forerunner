@@ -605,6 +605,12 @@ export class CriticService {
         });
       }
     }
+    // A review stopped from outside (the person cancelled the task while it was reviewed, or
+    // stopped the session) is no review: its Run row says what it spent, and no Review or
+    // finding is recorded (phase C, live walk 2 C1: a cancelled task read "Cancelled ·
+    // accepted"; a stopped one would have read as escalated with an open finding).
+    if (ctx.signal?.aborted)
+      throw new ForerunnerError("killed", "the review was stopped before it finished");
     return this.persist(input, ctx, output, {
       openFindings,
       resolved: submitted?.resolved ?? [],

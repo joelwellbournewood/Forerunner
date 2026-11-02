@@ -199,6 +199,8 @@ import {
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
 import type { TaskBillingPort } from "../session/billing.ts";
+import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
+import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
   type BlockedSyncResult,
@@ -949,6 +951,16 @@ export interface RuntimeApp {
      */
     reviewFailed?: BlockedSyncResult;
     signoffs: SignoffSyncResult;
+    /**
+     * Answered cards of tasks stopped at their own budget (live walk 2, B2). Optional for the
+     * harnesses that compose a partial sync.
+     */
+    budgetStops?: BudgetStopSyncResult;
+    /**
+     * Answered cards of tasks a run left waiting without asking anything (live walk 4): Try
+     * again or Cancel task. Optional for the harnesses that compose a partial sync.
+     */
+    cannotRun?: CannotRunSyncResult;
     plans: PlanApprovalSyncResult;
     /**
      * Hooks approvals answered after their session ended (ADR 0088): the task back at `ready`
@@ -2054,6 +2066,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ? { pricingFor: (modelId: string) => pricingForProvider(provider, modelId, pricingTable) }
         : {}),
       pricingTable: () => pricingTable,
+      // A run's result names amounts in CHF (design §5 rule 7; live walk 2, B2).
+      chfPerUsd,
       tools,
       toolsFor: toolsForRun,
       sandbox: sandboxPort,
@@ -2935,9 +2949,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // message between tasks); its undo withdraws the message (wiring/session-ports.ts).
       ...sessionPausePorts({ store, kill, agentId: agent.id, humanId: human.id }),
       // A pause, stop or cancel of a RUNNING task by chat or voice stops its run at once, as
-      // the Tasks tab's route does (U-039); the session goes on with the rest.
-      stopTask: (taskId, reason) => {
-        kill.stopTask(taskId, reason);
+      // the Tasks tab's route does (U-039); the session goes on with the rest. Whether a live
+      // run or review was stopped is what a cancel's sentence says of its work (phase C).
+      stopTask: (taskId, reason) => kill.stopTask(taskId, reason).stoppedRuns > 0,
+      // Undo of the cancel of a task that ran (phase C): what the session took out of the
+      // folder when the person cancelled it goes back in (`PrTaskExecutor.bringBack`).
+      bringBackWork: async (taskId) => {
+        const task = await store.task.mustGet(taskId);
+        return (await executor.bringBack(task)).result;
       },
       // session.resume ("resume", "allow sessions again", design §3.1): Stop all lifted, as
       // POST /kill/resume does (kill.json removed by `onResume`), the header told.
@@ -3143,6 +3162,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ...resumeStart,
       }),
       signoffs: await syncSignoffAnswers({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        ...resumeStart,
+      }),
+      // A task stopped at its own budget (live walk 2, B2): Raise the budget raises it and a
+      // session tries again; Cancel task cancels it.
+      budgetStops: await syncBudgetStopAnswers({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        ...resumeStart,
+      }),
+      // A task a run left waiting without asking anything (live walk 4): Try again starts a
+      // session that tries again; Cancel task cancels it.
+      cannotRun: await syncCannotRunAnswers({
         store,
         clock,
         humanId: human.id,

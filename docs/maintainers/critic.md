@@ -62,7 +62,10 @@ Ignored, the review stays standard. The reasons are a `subscription` or `plan_cr
 decision is also a `warning` event on `ctx.onEvent`. Applied or ignored, a persisted review
 writes one `model.fast_mode` audit row on its run, with `specialist: "critic"`, the review
 tier, the rung, the model, the variant, the source and its kind. A calibration run
-(`persist: false`) writes nothing. A review below the Opus rung, or a project with the flag
+(`persist: false`) writes nothing. A review stopped from outside (`ctx.signal` aborted: the
+person cancelled the task while it was reviewed, or stopped the session) writes its Run row and
+throws `killed`: no Review row and no "Critic review did not complete" finding (phase C, ADR
+0105: a cancelled task read "Cancelled · accepted"). A review below the Opus rung, or a project with the flag
 off, is unchanged and writes nothing.
 
 Checks: `ctx.checks` (argv commands, `ctx.cwd` the worktree) are run through the `CheckRunner`

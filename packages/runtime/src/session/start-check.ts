@@ -1,5 +1,5 @@
 import type { StateStore, WaitsOn } from "@forerunner/state";
-import { type EstimatePort, planEstimateUsdMicro } from "../estimates/model.ts";
+import { type EstimatePort, planEstimateUsdMicro, withinTaskBudget } from "../estimates/model.ts";
 import { cutPlanToBudget, DEFAULT_RESERVE_SHARE, type PlanItem } from "./runner.ts";
 import { needsContainerSandbox, type SandboxGate, type SandboxGateAnswer } from "./sandbox-gate.ts";
 
@@ -71,7 +71,7 @@ export async function startCheck(
   const price = (t: (typeof runnableRows)[number]) =>
     estimates
       ? planEstimateUsdMicro(estimates, t)
-      : t.est_cost_usd_micro || t.budget_usd_micro || fallback;
+      : withinTaskBudget(t.est_cost_usd_micro || t.budget_usd_micro || fallback, t);
   if (deps.sandbox && runnableRows.some(needsContainerSandbox)) {
     const answer = await deps.sandbox.check();
     if (!answer.ready) {
