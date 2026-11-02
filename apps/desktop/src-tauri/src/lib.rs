@@ -99,8 +99,8 @@ fn log_plugin(dirs: &AppDirs) -> tauri::plugin::TauriPlugin<tauri::Wry> {
 /// The opener plugin, without the script its default build puts into every page. That script
 /// (tauri-plugin-opener's `init-iife.js`) cancels a click on a `target="_blank"` link, or on
 /// any link with Ctrl or Shift held, and calls `plugin:opener|open_url` from the page; no
-/// window is granted a plugin command (`capabilities/default.json`), so the ACL refused the
-/// call and the click did nothing (Desktop app run 41442343517). Links leave the app one way:
+/// window is granted an opener command (`capabilities/`), so the ACL refused the call and the
+/// click did nothing (Desktop app run 41442343517). Links leave the app one way:
 /// the main window's `on_navigation` and `on_new_window` handlers (`windows.rs`), behind the
 /// app-origin allowlist, which hand a web page to the system browser through this plugin's
 /// Rust API (`OpenerExt`) and log it. `webview_acl.rs` fails if the script comes back.

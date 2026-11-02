@@ -1,9 +1,11 @@
 //! What the windows' pages may call in the shell, held against `capabilities/` (tests only).
 //!
-//! The windows are granted the core IPC and the shell's own commands, never a plugin command
-//! (`capabilities/default.json`): every plugin is driven from Rust. A plugin can still put a
-//! script into every page (`Plugin::initialization_script`) that calls the plugin's commands
-//! from the page. The ACL refuses each such call ("Command plugin:<name>|<command> not allowed
+//! The windows are granted the core IPC and the shell's own commands (`capabilities/`): every
+//! plugin is driven from Rust. The one plugin command a page may call is the notification
+//! permission read, granted to the main window only (`capabilities/notification.json`), because
+//! tauri-plugin-notification's page script makes it at every page load on Linux and macOS. A
+//! plugin can still put a script into every page (`Plugin::initialization_script`) that calls
+//! the plugin's commands from the page. The ACL refuses each such call ("Command plugin:<name>|<command> not allowed
 //! by ACL"), so whatever the script took over from the page does nothing: tauri-plugin-opener's
 //! click script made every Ctrl- or Shift-clicked link and every `target="_blank"` link do
 //! nothing (the desktop window check, Desktop app run 41442343517). These tests build every
@@ -22,8 +24,9 @@ use crate::env::MapEnv;
 
 /// Every command a plugin's page script can call that no window is granted, with what in the
 /// page sets the call off. The UI does none of these (`apps/ui/test/shell-commands.test.ts`
-/// fails on `alert(`, `confirm(` and the web Notification API); the third is the notification
-/// script's own call on Linux, refused there at every page load with nothing a person sees.
+/// fails on `alert(`, `confirm(` and the web Notification API). A call the page makes by
+/// itself, at load, cannot be here: it would be refused in every page, an uncaught rejection
+/// the window check fails on.
 const REFUSED_SCRIPT_CALLS: &[(&str, &str)] = &[
     (
         "plugin:dialog|confirm",
@@ -34,12 +37,6 @@ const REFUSED_SCRIPT_CALLS: &[(&str, &str)] = &[
         "window.alert(), which tauri-plugin-dialog's script replaces; the UI never calls it",
     ),
     (
-        "plugin:notification|is_permission_granted",
-        "tauri-plugin-notification's script asks once per page load on Linux (on Windows it \
-         takes the permission as granted without asking); refused, it is one uncaught \
-         rejection in the page's console, and the shell's notifications go through Rust",
-    ),
-    (
         "plugin:notification|notify",
         "new Notification(...), the web Notification API the script replaces; the UI never uses it",
     ),
@@ -47,6 +44,27 @@ const REFUSED_SCRIPT_CALLS: &[(&str, &str)] = &[
         "plugin:notification|request_permission",
         "Notification.requestPermission(); the UI never uses the web Notification API",
     ),
+];
+
+/// What the splash is refused beyond `REFUSED_SCRIPT_CALLS`. The notification permission read
+/// is granted to the main window only: the splash has no script of its own and shows
+/// "Starting…" until the main window opens, so on Linux and macOS this call is refused in its
+/// page, at most one uncaught rejection that no check and no person reads.
+const SPLASH_ALSO_REFUSED: &[(&str, &str)] = &[(
+    "plugin:notification|is_permission_granted",
+    "tauri-plugin-notification's script asks at every page load on Linux and macOS (on Windows \
+     it takes the permission as granted without asking); the main window is granted it",
+)];
+
+/// The plugin permissions a window is granted, all of them: the main window may read the
+/// notification permission, which tauri-plugin-notification's page script asks at every page
+/// load on Linux and macOS (refused, every page threw an uncaught rejection); nothing else.
+const PLUGIN_PERMISSIONS: &[(&str, &[&str])] = &[
+    (
+        crate::windows::MAIN,
+        &["notification:allow-is-permission-granted"],
+    ),
+    (crate::windows::SPLASH, &[]),
 ];
 
 /// The `.plugin(...)` calls of `run()` in `lib.rs`, in order: a plugin added there must be
@@ -192,7 +210,8 @@ fn the_opener_plugin_puts_no_script_into_the_page() {
 }
 
 /// Every plugin page script's call that the ACL refuses is one the page never makes (or, for
-/// the notification script on Linux, one nobody sees). A plugin added to `run()`, a plugin
+/// the splash's notification permission read, one nobody sees). A call a script makes by
+/// itself at page load must be granted to the main window. A plugin added to `run()`, a plugin
 /// update whose script calls something new, or a capability change shows up here.
 #[test]
 fn every_plugin_script_calls_only_what_its_window_may_or_what_the_page_never_does() {
@@ -223,48 +242,66 @@ fn every_plugin_script_calls_only_what_its_window_may_or_what_the_page_never_doe
 
     let scripts = page_scripts();
     assert_eq!(scripts.len(), REGISTERED_PLUGINS.len());
-    let main = granted_to(crate::windows::MAIN);
-    let splash = granted_to(crate::windows::SPLASH);
-    let mut refused = BTreeSet::new();
-    for (plugin, script) in &scripts {
-        for call in plugin_calls(script.as_deref().unwrap_or("")) {
-            // Every page gets every plugin's script; the splash has no link or dialog, but
-            // what it is granted counts the same way.
-            if !grants(&main, &call) || !grants(&splash, &call) {
-                refused.insert(format!("{call} (from {plugin})"));
+    let labelled = |calls: &[(&str, &str)]| -> BTreeSet<String> {
+        calls
+            .iter()
+            .map(|(call, _)| {
+                let plugin = call
+                    .strip_prefix("plugin:")
+                    .and_then(|c| c.split_once('|'))
+                    .map(|(p, _)| p)
+                    .unwrap_or("");
+                format!("{call} (from {plugin})")
+            })
+            .collect()
+    };
+    let reviewed = labelled(REFUSED_SCRIPT_CALLS);
+    let splash_reviewed: BTreeSet<String> = reviewed
+        .union(&labelled(SPLASH_ALSO_REFUSED))
+        .cloned()
+        .collect();
+    // Every page gets every plugin's script, the splash's too; each window is held to its
+    // own list.
+    for (window, reviewed, list) in [
+        (crate::windows::MAIN, &reviewed, "REFUSED_SCRIPT_CALLS"),
+        (
+            crate::windows::SPLASH,
+            &splash_reviewed,
+            "REFUSED_SCRIPT_CALLS or SPLASH_ALSO_REFUSED",
+        ),
+    ] {
+        let granted = granted_to(window);
+        let mut refused = BTreeSet::new();
+        for (plugin, script) in &scripts {
+            for call in plugin_calls(script.as_deref().unwrap_or("")) {
+                if !grants(&granted, &call) {
+                    refused.insert(format!("{call} (from {plugin})"));
+                }
             }
         }
+        let unreviewed: Vec<&String> = refused.difference(reviewed).collect();
+        assert!(
+            unreviewed.is_empty(),
+            "a plugin's page script calls {unreviewed:?}, which the ACL refuses in the {window} \
+             window: whatever the script took over from the page does nothing, and a call it \
+             makes at page load throws in every page. Build the plugin without its script, grant \
+             a call the script makes by itself, or, when the page can never set the call off, \
+             add it to {list} with what would"
+        );
+        let gone: Vec<&String> = reviewed.difference(&refused).collect();
+        assert!(
+            gone.is_empty(),
+            "{list} lists {gone:?}, which no plugin script calls any more (or the {window} \
+             window is now granted): take it out"
+        );
     }
-    let reviewed: BTreeSet<String> = REFUSED_SCRIPT_CALLS
-        .iter()
-        .map(|(call, _)| {
-            let plugin = call
-                .strip_prefix("plugin:")
-                .and_then(|c| c.split_once('|'))
-                .map(|(p, _)| p)
-                .unwrap_or("");
-            format!("{call} (from {plugin})")
-        })
-        .collect();
-    let unreviewed: Vec<&String> = refused.difference(&reviewed).collect();
-    assert!(
-        unreviewed.is_empty(),
-        "a plugin's page script calls {unreviewed:?}, which the ACL refuses: whatever the script \
-         took over from the page does nothing. Build the plugin without its script, or, when the \
-         page can never set the call off, add it to REFUSED_SCRIPT_CALLS with what would"
-    );
-    let gone: Vec<&String> = reviewed.difference(&refused).collect();
-    assert!(
-        gone.is_empty(),
-        "REFUSED_SCRIPT_CALLS lists {gone:?}, which no plugin script calls any more (or a \
-         window is now granted): take it out"
-    );
 }
 
-/// The policy of `capabilities/default.json`: the core IPC and the shell's own commands
-/// (declared in `build.rs`), never a plugin command, for any window.
+/// The policy of `capabilities/`: the core IPC and the shell's own commands (declared in
+/// `build.rs`), and of the plugins' commands only `PLUGIN_PERMISSIONS`: the main window's
+/// notification permission read, nothing for the splash.
 #[test]
-fn no_window_is_granted_a_plugin_command() {
+fn the_only_plugin_command_a_window_is_granted_is_the_notification_permission_read() {
     let build = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"))
         .expect("build.rs");
     let manifest = build
@@ -280,14 +317,36 @@ fn no_window_is_granted_a_plugin_command() {
         .collect();
     assert!(own.contains("allow-open-folder"), "{own:?}");
     for window in [crate::windows::MAIN, crate::windows::SPLASH] {
-        for permission in granted_to(window) {
-            assert!(
-                permission.starts_with("core:") || own.contains(&permission),
-                "{window} is granted {permission}: a plugin command from the page (every \
-                 plugin is driven from Rust; capabilities/default.json)"
-            );
-        }
+        let plugin: BTreeSet<String> = granted_to(window)
+            .into_iter()
+            .filter(|p| !p.starts_with("core:") && !own.contains(p))
+            .collect();
+        let allowed: BTreeSet<String> = PLUGIN_PERMISSIONS
+            .iter()
+            .filter(|(w, _)| *w == window)
+            .flat_map(|(_, ps)| ps.iter().map(|p| p.to_string()))
+            .collect();
+        assert_eq!(
+            plugin, allowed,
+            "the {window} window's plugin permissions: every plugin is driven from Rust, and a \
+             page may only read the notification permission (capabilities/notification.json)"
+        );
     }
+    // No plugin's default set, and nothing that sends, asks or opens.
+    let main = granted_to(crate::windows::MAIN);
+    for refused in [
+        "plugin:notification|notify",
+        "plugin:notification|request_permission",
+        "plugin:opener|open_url",
+        "plugin:dialog|message",
+        "plugin:dialog|confirm",
+    ] {
+        assert!(
+            !grants(&main, refused),
+            "the main window is granted {refused}"
+        );
+    }
+    assert!(grants(&main, "plugin:notification|is_permission_granted"));
 }
 
 #[test]

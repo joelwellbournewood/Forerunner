@@ -145,7 +145,8 @@ describe("what the UI calls in the shell its window runs in", () => {
       for (const name of names) {
         seen.add(name);
         if (name.startsWith("plugin:")) {
-          // No window is granted a plugin command (capabilities/default.json, webview_acl.rs).
+          // The shell drives its plugins from Rust: a page is granted no plugin command but the
+          // notification script's permission read (capabilities/, webview_acl.rs).
           problems.push(`${file}: invokes ${name}; the desktop shell drives its plugins from Rust`);
           continue;
         }
@@ -187,8 +188,9 @@ describe("what the UI calls in the shell its window runs in", () => {
   it("no screen calls what a plugin's page script turns into a command its window is refused", () => {
     // tauri-plugin-dialog's script replaces window.alert and window.confirm (confirm then
     // returns a Promise, which is always truthy), tauri-plugin-notification's replaces the web
-    // Notification API, and Tauri's drag script acts on data-tauri-drag-region: each calls a
-    // command no window is granted (webview_acl.rs, REFUSED_SCRIPT_CALLS).
+    // Notification API (only its permission read at page load is granted), and Tauri's drag
+    // script acts on data-tauri-drag-region: each calls a command no window is granted
+    // (webview_acl.rs, REFUSED_SCRIPT_CALLS).
     const problems: string[] = [];
     for (const file of Object.keys(SOURCES)) {
       const text = withoutComments(SOURCES[file] ?? "");

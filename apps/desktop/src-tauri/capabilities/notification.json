@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "notification",
+  "description": "A read of the notification permission, nothing more: tauri-plugin-notification's page script asks it at every page load on Linux and macOS (to set window.Notification.permission), and refused it threw an uncaught rejection in every page. The shell sends its notifications from Rust; notify and request_permission stay refused, and the UI never uses the web Notification API (apps/ui/test/shell-commands.test.ts). The main window only; webview_acl.rs pins it.",
+  "windows": ["main"],
+  "permissions": ["notification:allow-is-permission-granted"]
+}
