@@ -336,7 +336,29 @@ export function daemonArgv(provider, port) {
   ];
 }
 
-/** Start the daemon, wait for daemon.json and /health; returns { pid, nodePid, token, url }. */
+/**
+ * The daemon's argv under the bench's supervisor (`supervise.mjs`), which starts it again when it
+ * exits to restart (code 86 with a restart request: finishing setup with a new credential, an
+ * update), as the desktop shell does, and puts the new token into `benchFile`.
+ */
+export function supervisedArgv(provider, port, { home, benchFile }) {
+  return [
+    process.execPath,
+    path.join(REPO, "scripts", "bench", "supervise.mjs"),
+    "--home",
+    home,
+    "--bench",
+    benchFile,
+    "--",
+    ...daemonArgv(provider, port),
+  ];
+}
+
+/**
+ * Start the daemon (under the supervisor), wait for daemon.json and /health; returns
+ * { pid, nodePid, token, url }: `pid` is the supervisor's (its process group holds the daemon),
+ * `nodePid` the daemon's own.
+ */
 export async function startDaemon({ dir, home, provider, port, extra }) {
   const runtimeFile = path.join(home, "runtime", "daemon.json");
   const before = existsSync(runtimeFile) ? readFileSync(runtimeFile, "utf8") : "";
@@ -346,11 +368,14 @@ export async function startDaemon({ dir, home, provider, port, extra }) {
     `\n=== bench start ${new Date().toISOString()} provider=${provider} port=${port}\n`,
     { flag: "a" },
   );
-  const pid = spawnLogged(daemonArgv(provider, port), {
-    cwd: REPO,
-    env: daemonEnv({ home, provider, extra }),
-    logFile,
-  });
+  const pid = spawnLogged(
+    supervisedArgv(provider, port, { home, benchFile: path.join(dir, "bench.json") }),
+    {
+      cwd: REPO,
+      env: daemonEnv({ home, provider, extra }),
+      logFile,
+    },
+  );
   // A daemon that ends during its start (a provider that cannot load, a lock held) ends the
   // wait at once with its log; before, the exit was swallowed and the start waited 120 s.
   const info = await waitFor(async () => {

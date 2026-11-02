@@ -2524,11 +2524,22 @@ against a stub of the Messages API: prices, no part of the key), `scripts/bench-
 (calls.mjs, the daemon's and setup's environment, a live start without a key, a daemon that exits,
 the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (one call, so the critic's read path runs on every review), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card.
 
+The daemon runs under `scripts/bench/supervise.mjs`, the bench's stand-in for the desktop
+shell's supervisor (`restart.rs` `decide_after_exit`): an exit 86 with `restart.json` (finishing
+setup with a new credential, an update) removes the request and starts the daemon again with
+the same argv and environment, once in a row (twice for a rollback) unless it stayed up 30 s;
+the new token and pid go into `bench.json` and every decision is a "=== bench supervisor" line
+of `daemon.log`. `recorder.cjs`'s `openApp` follows `bench.json` and reloads its pages with a
+new token, as the shell reloads its window. Before, finishing setup left the daemon gone and the
+page "not connected" (gh1 and live2 walks). `start.mjs --githost <port> --githost-in-setup`
+leaves the stand-in's GitHub token for the setup assistant, so that restart can be walked.
+Tested in `scripts/bench-scripts.test.ts` with a stand-in daemon (a restart, a crash, an exit
+86 without a request, a daemon that keeps asking).
+
 Known limits: the stand-in proves mechanics, never model quality; on the stand-in the setup
 assistant and Settings still say no Claude key is connected; the daemon gets a new token on
-every start, so a page open across `restart-daemon.mjs` needs `reconnect(page, name)` (what the
-desktop shell does after its own daemon restarts is not covered); injection counters live in
-the daemon process and start again with it.
+every start (open pages reload with it; `reconnect(page, name)` does it at once); injection
+counters live in the daemon process and start again with it.
 
 ## CI checks no local test can make (phase F2)
 
