@@ -22,6 +22,7 @@ import {
   graphqlUrlFor,
 } from "./github-graphql.ts";
 import {
+  type BranchRules,
   type CheckRunInfo,
   type CommentInfo,
   type CommitStatusInfo,
@@ -29,6 +30,7 @@ import {
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
   type IssueInfo,
+  type MergeMethod,
   markAgentText,
   type ProjectFieldInfo,
   type ProjectFieldSpec,
@@ -418,11 +420,14 @@ export class GitHubHost implements GitHost {
   async mergePullRequest(
     repo: RepoRef,
     number: number,
-    opts: { method?: "merge" | "squash" | "rebase"; title?: string; sha?: string } = {},
+    opts: { method?: MergeMethod; title?: string; sha?: string } = {},
   ): Promise<{ merged: boolean; sha: string | null; message: string }> {
     try {
       const r = await this.request<Json>("PUT", `${this.repoPath(repo)}/pulls/${number}/merge`, {
-        merge_method: opts.method ?? "squash",
+        // A merge commit unless the caller says otherwise (ADR 0111): the pull request's commits
+        // reach the base as they are, so a pull request that carries another's commits marks
+        // that one merged too and nothing is copied.
+        merge_method: opts.method ?? "merge",
         ...(opts.title ? { commit_title: opts.title } : {}),
         ...(opts.sha ? { sha: opts.sha } : {}),
       });
@@ -436,6 +441,66 @@ export class GitHubHost implements GitHost {
         return { merged: false, sha: null, message: e.message };
       throw e;
     }
+  }
+
+  /**
+   * The branch's rules (ADR 0111). The rulesets that apply to it (`rules/branches`, readable
+   * with read access; a server without the endpoint answers 404, read as none), then classic
+   * protection: the branch says whether it is protected and its required checks to anyone who
+   * may read it; the full protection is readable only by an admin, who is also the only one
+   * GitHub lets go around it, so an unreadable protection on an admin token is `unreadable`.
+   */
+  async getBranchRules(repo: RepoRef, branch: string): Promise<BranchRules> {
+    const out: BranchRules = {
+      requiredApprovals: 0,
+      codeOwnerReview: false,
+      upToDate: false,
+      requiredChecks: [],
+      allowedMethods: null,
+      blockers: [],
+      unreadable: false,
+    };
+    const branchPath = branch.split("/").map(encodeURIComponent).join("/");
+    const rules =
+      (await this.request<Json[] | null>(
+        "GET",
+        `${this.repoPath(repo)}/rules/branches/${branchPath}?per_page=100`,
+        undefined,
+        { allow404: true },
+      )) ?? [];
+    for (const rule of Array.isArray(rules) ? rules : []) readRule(out, rule, branch);
+    const info = await this.request<Json | null>(
+      "GET",
+      `${this.repoPath(repo)}/branches/${branchPath}`,
+      undefined,
+      { allow404: true },
+    );
+    if (info?.protected === true) {
+      const visible = (info.protection as Json | undefined)?.required_status_checks as
+        | Json
+        | undefined;
+      for (const c of (visible?.contexts as unknown[]) ?? []) addCheck(out, c);
+      let protection: Json | null = null;
+      try {
+        protection = await this.request<Json | null>(
+          "GET",
+          `${this.repoPath(repo)}/branches/${branchPath}/protection`,
+          undefined,
+          { allow404: true },
+        );
+      } catch (e) {
+        if (!(e instanceof ForerunnerError && e.code === "tool_not_allowed")) throw e;
+      }
+      if (protection) readProtection(out, protection, branch);
+      else {
+        const admin = (await this.getRepo(repo)).permissions?.admin === true;
+        // Only an admin can go around classic protection; for anyone else GitHub applies it.
+        if (admin) out.unreadable = true;
+      }
+    }
+    out.requiredChecks = [...new Set(out.requiredChecks)].sort();
+    out.blockers = [...new Set(out.blockers)];
+    return out;
   }
 
   async commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo> {
@@ -1036,22 +1101,115 @@ function toRepo(r: Json): RepoInfo {
     permissions: perms
       ? { pull: Boolean(perms.pull), push: Boolean(perms.push), admin: Boolean(perms.admin) }
       : undefined,
+    ...(typeof r.allow_merge_commit === "boolean"
+      ? { allowMergeCommit: r.allow_merge_commit }
+      : {}),
   };
 }
 
 function toPr(r: Json): PullRequestInfo {
+  const merged = Boolean(r.merged ?? r.merged_at);
   return {
     number: Number(r.number),
     title: String(r.title ?? ""),
     body: String(r.body ?? ""),
     state: r.state === "closed" ? "closed" : "open",
-    merged: Boolean(r.merged ?? r.merged_at),
+    merged,
     mergeable: typeof r.mergeable === "boolean" ? r.mergeable : null,
     head: { ref: String((r.head as Json)?.ref ?? ""), sha: String((r.head as Json)?.sha ?? "") },
     base: { ref: String((r.base as Json)?.ref ?? ""), sha: String((r.base as Json)?.sha ?? "") },
     htmlUrl: String(r.html_url ?? ""),
     draft: Boolean(r.draft),
+    // On an open pull request GitHub's merge_commit_sha is its test merge: only a merged one's is real.
+    mergeCommitSha: merged && r.merge_commit_sha ? String(r.merge_commit_sha) : null,
   };
+}
+
+const METHODS: readonly MergeMethod[] = ["merge", "squash", "rebase"];
+
+function addCheck(out: BranchRules, context: unknown): void {
+  const name =
+    typeof context === "string" ? context : String((context as Json | null)?.context ?? "");
+  if (name) out.requiredChecks.push(name);
+}
+
+function narrowMethods(out: BranchRules, allowed: readonly MergeMethod[]): void {
+  out.allowedMethods = (out.allowedMethods ?? [...METHODS]).filter((m) => allowed.includes(m));
+}
+
+/** One ruleset rule (`GET /rules/branches/{branch}`) into what a merge must meet. */
+function readRule(out: BranchRules, rule: Json, branch: string): void {
+  const p = (rule.parameters as Json | undefined) ?? {};
+  switch (String(rule.type ?? "")) {
+    case "pull_request": {
+      out.requiredApprovals = Math.max(
+        out.requiredApprovals,
+        Number(p.required_approving_review_count ?? 0) || 0,
+      );
+      if (p.require_code_owner_review === true) out.codeOwnerReview = true;
+      if (p.required_review_thread_resolution === true)
+        out.blockers.push("every review conversation resolved");
+      if (Array.isArray(p.allowed_merge_methods))
+        narrowMethods(
+          out,
+          p.allowed_merge_methods.filter((m): m is MergeMethod =>
+            METHODS.includes(m as MergeMethod),
+          ),
+        );
+      return;
+    }
+    case "required_status_checks":
+      for (const c of (p.required_status_checks as unknown[]) ?? []) addCheck(out, c);
+      if (p.strict_required_status_checks_policy === true) out.upToDate = true;
+      return;
+    case "required_linear_history":
+      narrowMethods(out, ["squash", "rebase"]);
+      return;
+    case "required_signatures":
+      out.blockers.push("signed commits");
+      return;
+    case "merge_queue":
+      out.blockers.push("a merge queue");
+      return;
+    case "required_deployments":
+      out.blockers.push("a successful deployment first");
+      return;
+    case "update":
+      out.blockers.push(`only some people may change ${branch}`);
+      return;
+    case "code_scanning":
+      out.blockers.push("code scanning results");
+      return;
+    default:
+      // Push rules (names, sizes, paths, messages) and required workflows: GitHub enforces
+      // them on the merge itself, and a workflow reports as a check.
+      return;
+  }
+}
+
+/** Classic branch protection (`GET /branches/{branch}/protection`, an admin's read). */
+function readProtection(out: BranchRules, p: Json, branch: string): void {
+  const reviews = p.required_pull_request_reviews as Json | undefined;
+  if (reviews) {
+    out.requiredApprovals = Math.max(
+      out.requiredApprovals,
+      Number(reviews.required_approving_review_count ?? 0) || 0,
+    );
+    if (reviews.require_code_owner_reviews === true) out.codeOwnerReview = true;
+  }
+  const checks = p.required_status_checks as Json | undefined;
+  if (checks) {
+    if (checks.strict === true) out.upToDate = true;
+    for (const c of (checks.contexts as unknown[]) ?? []) addCheck(out, c);
+    for (const c of (checks.checks as unknown[]) ?? []) addCheck(out, c);
+  }
+  const on = (k: string) => (p[k] as Json | undefined)?.enabled === true;
+  if (on("required_linear_history")) narrowMethods(out, ["squash", "rebase"]);
+  if (on("required_signatures")) out.blockers.push("signed commits");
+  if (on("required_conversation_resolution"))
+    out.blockers.push("every review conversation resolved");
+  if (on("lock_branch")) out.blockers.push(`${branch} is locked`);
+  if (p.restrictions) out.blockers.push(`only some people may change ${branch}`);
 }
 
 function toIssue(r: Json): IssueInfo {

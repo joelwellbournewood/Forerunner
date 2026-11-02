@@ -241,6 +241,14 @@ export interface RepoRecord {
   projects: ProjectRecord[];
   /** Lowercase logins with push access besides the owner (and org members). */
   collaborators: Set<string>;
+  /** "Allow merge commits", "Allow squash merging", "Allow rebase merging" (repository settings). */
+  allowMergeCommit: boolean;
+  allowSquashMerge: boolean;
+  allowRebaseMerge: boolean;
+  /** Ruleset rules per branch, as `GET /rules/branches/{branch}` answers them (no bypass actors). */
+  branchRules: Map<string, Json[]>;
+  /** Classic protection per branch, as `GET /branches/{branch}/protection` answers it. */
+  protection: Map<string, Json>;
 }
 
 export const DEFAULT_LABELS: Array<[string, string, string]> = [
@@ -432,6 +440,9 @@ export class HostStore {
       updated_at: repo.updatedAt,
       pushed_at: repo.pushedAt,
       permissions: { admin, maintain: admin, push, triage: push, pull },
+      allow_merge_commit: repo.allowMergeCommit,
+      allow_squash_merge: repo.allowSquashMerge,
+      allow_rebase_merge: repo.allowRebaseMerge,
       branches_url: this.api(`${base}/branches{/branch}`),
       contents_url: this.api(`${base}/contents/{+path}`),
       pulls_url: this.api(`${base}/pulls{/number}`),
@@ -865,10 +876,24 @@ export class HostStore {
   }
 
   branchJson(repo: RepoRecord, name: string, sha: string): Json {
+    const protection = repo.protection.get(name);
+    const checks = protection?.required_status_checks as Json | undefined;
     return {
       name,
       commit: { sha, url: this.api(`/repos/${repo.fullName}/commits/${sha}`) },
-      protected: false,
+      protected: protection !== undefined,
+      // What GitHub shows anyone who may read the branch; the rest needs an admin's read.
+      ...(protection
+        ? {
+            protection: {
+              enabled: true,
+              required_status_checks: {
+                enforcement_level: checks ? "non_admins" : "off",
+                contexts: (checks?.contexts as unknown[]) ?? [],
+              },
+            },
+          }
+        : {}),
     };
   }
 

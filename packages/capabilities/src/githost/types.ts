@@ -15,7 +15,15 @@ export interface RepoInfo extends RepoRef {
   htmlUrl: string;
   cloneUrl: string;
   permissions?: { pull: boolean; push: boolean; admin: boolean };
+  /**
+   * Whether the repository allows merge commits (GitHub's `allow_merge_commit`; ADR 0111:
+   * Forerunner merges only with a merge commit). Absent when the host did not say.
+   */
+  allowMergeCommit?: boolean;
 }
+
+/** How a pull request is merged; Forerunner itself always uses "merge" (ADR 0111). */
+export type MergeMethod = "merge" | "squash" | "rebase";
 
 export interface PullRequestInfo {
   number: number;
@@ -28,6 +36,35 @@ export interface PullRequestInfo {
   base: { ref: string; sha: string };
   htmlUrl: string;
   draft: boolean;
+  /** A merged pull request's merge commit on the base (GitHub's `merge_commit_sha`); else null. */
+  mergeCommitSha?: string | null;
+}
+
+/**
+ * What a branch's rules ask of a merge into it (ADR 0111): the rulesets that apply to it
+ * (`GET /repos/{o}/{r}/rules/branches/{b}`) and, when the token may read it, its classic
+ * protection. Forerunner never goes around them: what it cannot satisfy (an approving review,
+ * a code owner's review, signed commits, a merge queue, ...) is in `blockers`, in words, and
+ * nothing merges; required checks are waited for as checks.
+ */
+export interface BranchRules {
+  /** Approving reviews a pull request needs before it merges (0: none). */
+  requiredApprovals: number;
+  /** A code owner must approve. */
+  codeOwnerReview: boolean;
+  /** The branch must be up to date with the base before it merges. */
+  upToDate: boolean;
+  /** Check names (contexts) that must pass. */
+  requiredChecks: string[];
+  /** The merge methods the rules allow; null when they say nothing. */
+  allowedMethods: MergeMethod[] | null;
+  /** Other rules Forerunner cannot satisfy or cannot check, each a short phrase. */
+  blockers: string[];
+  /**
+   * The branch is protected but its protection could not be read while this token could go
+   * around it (an admin): nothing is known that would stop an admin's merge.
+   */
+  unreadable: boolean;
 }
 
 export interface IssueInfo {
@@ -246,8 +283,13 @@ export interface GitHost {
   mergePullRequest(
     repo: RepoRef,
     number: number,
-    opts?: { method?: "merge" | "squash" | "rebase"; title?: string; sha?: string },
+    opts?: { method?: MergeMethod; title?: string; sha?: string },
   ): Promise<{ merged: boolean; sha: string | null; message: string }>;
+  /**
+   * The rules a merge into `branch` must meet (ADR 0111): rulesets and, when readable, classic
+   * protection. Throws when the host does not answer (the merge then waits, never guesses).
+   */
+  getBranchRules(repo: RepoRef, branch: string): Promise<BranchRules>;
   commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo>;
   /**
    * Every conversation comment of the pull request, oldest first (the adapter follows the

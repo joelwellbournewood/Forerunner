@@ -2,6 +2,7 @@
  * Pull requests: list, open, read (with mergeability), edit, merge, files, commits, reviews
  * and "update branch".
  */
+import { checkRepoAccess } from "./auth.ts";
 import type { MergeMethod } from "./git.ts";
 import type { HostApp, HostContext } from "./http.ts";
 import {
@@ -150,6 +151,7 @@ export function registerPullRoutes(app: HostApp, ctx: RouteContext): void {
       message: str(body, "commit_message"),
       sha: str(body, "sha"),
       user: login,
+      admin: checkRepoAccess(c.get("auth").subject, repo, "administration", "write") === "ok",
     });
     return c.json({ sha, merged: true, message: "Pull Request successfully merged" });
   });

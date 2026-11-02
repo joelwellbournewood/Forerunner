@@ -92,6 +92,11 @@ export class RepoOps {
       hooks: new Map(),
       projects: [],
       collaborators: new Set(),
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: true,
+      branchRules: new Map(),
+      protection: new Map(),
     };
     for (const [name, color, description] of DEFAULT_LABELS) {
       const l: LabelRecord = { id: this.store.nextId(), name, color, description, isDefault: true };
@@ -315,6 +320,22 @@ export class RepoOps {
         );
       } else if (p.baseRef === branch) {
         p.baseSha = deleted ? p.baseSha : after;
+        // Like GitHub: a pull request whose head reached its base by another way (a pull
+        // request that carried its commits was merged, a push) is marked merged.
+        if (!deleted && p.headSha && (await repo.git.isAncestor(p.headSha, after))) {
+          const now = this.clock.nowIso();
+          p.merged = true;
+          p.mergedAt = now;
+          p.mergedBy = actor;
+          p.mergeCommitSha = after;
+          p.mergeable = null;
+          p.mergeableState = "unknown";
+          issue.state = "closed";
+          issue.closedAt = now;
+          issue.updatedAt = now;
+          this.store.emit(repo, "pull_request", "closed", this.pullPayload(repo, issue), actor);
+          continue;
+        }
         await this.computeMergeability(repo, issue);
       }
     }
@@ -461,7 +482,15 @@ export class RepoOps {
   async mergePull(
     repo: RepoRecord,
     issue: IssueRecord & { pull: PullData },
-    input: { method: MergeMethod; title?: string; message?: string; sha?: string; user: string },
+    input: {
+      method: MergeMethod;
+      title?: string;
+      message?: string;
+      sha?: string;
+      user: string;
+      /** The merging user may administer the repository (GitHub lets an admin go around classic protection). */
+      admin?: boolean;
+    },
   ): Promise<{ sha: string }> {
     const p = issue.pull;
     if (issue.state !== "open" || p.merged)
@@ -470,6 +499,16 @@ export class RepoOps {
     if (input.sha && input.sha !== p.headSha) {
       throw new HttpError(409, "Head branch was modified. Review and try the merge again.");
     }
+    const allowed = {
+      merge: repo.allowMergeCommit,
+      squash: repo.allowSquashMerge,
+      rebase: repo.allowRebaseMerge,
+    }[input.method];
+    if (!allowed) {
+      const what = { merge: "Merge commits", squash: "Squash merges", rebase: "Rebase merges" };
+      throw new HttpError(405, `${what[input.method]} are not allowed on this repository.`);
+    }
+    this.enforceBranchRules(repo, issue, input.method, input.admin === true);
     if (!p.mergeable) throw new HttpError(405, "Pull Request is not mergeable");
     const title =
       input.title ??
@@ -507,6 +546,59 @@ export class RepoOps {
     after.set(`refs/heads/${p.baseRef}`, sha);
     await this.applyRefChanges(repo, before, after, input.user);
     return { sha };
+  }
+
+  /**
+   * The base branch's rules as GitHub applies them to a merge: a ruleset's rules for everyone
+   * (the fake has no bypass actors), classic protection for everyone but an admin unless
+   * `enforce_admins` is on. Approving reviews count once per reviewer other than the author,
+   * the reviewer's latest review deciding; linear history and the ruleset's allowed methods
+   * refuse a merge commit.
+   */
+  private enforceBranchRules(
+    repo: RepoRecord,
+    issue: IssueRecord & { pull: PullData },
+    method: MergeMethod,
+    admin: boolean,
+  ): void {
+    const p = issue.pull;
+    const rules = repo.branchRules.get(p.baseRef) ?? [];
+    const classic = repo.protection.get(p.baseRef);
+    const enforced = classic && (!admin || (classic.enforce_admins as Json | undefined)?.enabled);
+    let approvals = 0;
+    let linear = false;
+    let methods: string[] | null = null;
+    for (const rule of rules) {
+      const params = (rule.parameters as Json | undefined) ?? {};
+      if (rule.type === "pull_request") {
+        approvals = Math.max(approvals, Number(params.required_approving_review_count ?? 0));
+        if (Array.isArray(params.allowed_merge_methods))
+          methods = params.allowed_merge_methods.map(String);
+      }
+      if (rule.type === "required_linear_history") linear = true;
+    }
+    if (enforced) {
+      const reviews = classic.required_pull_request_reviews as Json | undefined;
+      approvals = Math.max(approvals, Number(reviews?.required_approving_review_count ?? 0));
+      if ((classic.required_linear_history as Json | undefined)?.enabled) linear = true;
+    }
+    if (method === "merge" && linear)
+      throw new HttpError(405, "Merge commits are not allowed on this branch.");
+    if (methods && !methods.includes(method))
+      throw new HttpError(405, `Merge method ${method} is not allowed on this branch.`);
+    if (approvals > 0) {
+      const latest = new Map<string, string>();
+      for (const r of p.reviews)
+        if (r.state !== "PENDING" && r.state !== "COMMENTED")
+          latest.set(r.user.toLowerCase(), r.state);
+      latest.delete(issue.user.toLowerCase());
+      const approved = [...latest.values()].filter((s) => s === "APPROVED").length;
+      if (approved < approvals)
+        throw new HttpError(
+          405,
+          `At least ${approvals} approving review${approvals === 1 ? " is" : "s are"} required by reviewers with write access.`,
+        );
+    }
   }
 
   /** Merge the base branch into the PR head ("Update branch"). */
