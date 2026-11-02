@@ -542,8 +542,8 @@ evaluator can search the web through Claude Code but cannot open the pages thems
 refuses their page reading there); the plan card and New task say "Searches the web but opens no
 page on a Claude subscription", and their brief tells them to cite the results they used and say
 what they could not check. There is no screen for a project's site list or block list yet; a
-project that must stay closed can only be closed for the whole install
-(`FORERUNNER_WEB_FETCH=off`). The session log
+project that must stay closed can only be closed for the whole install (page reading off, as
+said below). The session log
 names each page read ("read the web page gohugo.io/about/"), the research file cites each page
 by its address, and the critic checks the claims against the pages the researcher actually
 got. A page that cannot be read (refused, missing, not a text page) is said in words to the
@@ -556,7 +556,8 @@ default autonomy for new projects, the monthly spending cap, quiet hours (a time
 where notifications go, reading urgent notifications aloud, the monthly critic calibration, the
 model watch's evaluations; and per project the autonomy, the project budget, the budget per
 session, the highest model its runs may use, small-project mode, the monthly handover test,
-Opus fast mode and speed or quality. Every change shows the same change card as in chat and is
+Opus fast mode, speed or quality and, for a project on GitHub, the status pull request. Every
+change shows the same change card as in chat and is
 listed in Changes. The language is shown but cannot be changed yet: the app works in English.
 **Desktop control: allowed applications** lists the programs your agent may use when desktop
 control is on; any other program needs your yes in the Inbox each session.
