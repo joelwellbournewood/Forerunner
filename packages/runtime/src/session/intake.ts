@@ -574,7 +574,7 @@ function fieldWords(path: readonly PropertyKey[]): string {
   const words: Record<string, string> = {
     outcome: "a task's outcome",
     title: inTask ? "a task's title" : "a title",
-    key: "a task's key",
+    key: "a task's short name",
     acceptanceCriteria: "a task's checks",
     dependsOn: "what a task waits for",
     specialist: "who does a task",
@@ -605,20 +605,35 @@ function issueWords(issue: z.core.$ZodIssue): string {
     return "Claude's plan listed a first step that is not one of its tasks.";
   if (/docs may only name/.test(msg))
     return "Claude's plan named a document Forerunner does not keep.";
-  if (/duplicate task key/.test(msg)) return "Claude's plan gave two tasks the same key.";
+  if (/duplicate task key/.test(msg)) return "Claude's plan listed the same task twice.";
   if (/a plan holds at most/.test(msg)) return "Claude's plan had more tasks than a plan may hold.";
+  // The keys go to the model (`problems`); the person reads plain words (design §5.6).
   if (issue.code === "unrecognized_keys")
-    return `Claude's plan had parts Forerunner does not know (${issue.keys.join(", ")}).`;
+    return "Claude's plan had parts Forerunner does not know.";
   if (issue.code === "invalid_type" && /received undefined/.test(msg))
     return issue.path.length === 1 && issue.path[0] === "plan"
       ? "Claude's answer had no plan in it."
       : `Claude's plan was missing ${fieldWords(issue.path)}.`;
-  if (issue.code === "too_big") return `Claude's plan had too much in ${fieldWords(issue.path)}.`;
-  if (issue.code === "too_small")
-    return issue.path.at(-1) === "tasks" || issue.path.at(-1) === "items"
-      ? `Claude's plan was missing ${fieldWords(issue.path)}.`
-      : `Claude's plan had ${fieldWords(issue.path)} that was too short.`;
-  return `Claude's plan did not have the form Forerunner needs (${fieldWords(issue.path)}).`;
+  // An entry of a list ("acceptanceCriteria", 0) is one of the list's.
+  const field =
+    typeof issue.path.at(-1) === "number"
+      ? `one of ${fieldWords(issue.path)}`
+      : fieldWords(issue.path);
+  if (issue.code === "too_big")
+    return issue.origin === "string"
+      ? `Claude's plan had ${field} that was too long.`
+      : issue.origin === "array"
+        ? `Claude's plan had too many entries in ${field}.`
+        : `Claude's plan had ${field} out of range.`;
+  if (issue.code === "too_small") {
+    if (issue.origin === "array") return `Claude's plan was missing ${fieldWords(issue.path)}.`;
+    if (issue.origin === "string")
+      return Number(issue.minimum) <= 1
+        ? `Claude's plan left ${field} empty.`
+        : `Claude's plan had ${field} that was too short.`;
+    return `Claude's plan had ${field} out of range.`;
+  }
+  return `Claude's plan did not have the form Forerunner needs (${field}).`;
 }
 
 function replyError(message: string, problem: IntakeReplyProblem): ForerunnerError {

@@ -446,6 +446,35 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
     expect(
       await failedWith([{ text: JSON.stringify(missing) }, { text: JSON.stringify(missing) }]),
     ).toBe("Claude's plan was missing a task's outcome. Forerunner asked Claude twice.");
+    // Plain words (design §5.6): no JSON key names, no plan-internal words, and a number is
+    // never "too short".
+    const twice = async (bad: unknown) =>
+      failedWith([{ text: JSON.stringify(bad) }, { text: JSON.stringify(bad) }]);
+    expect(await twice({ ...proposal(), notes: "extra" })).toBe(
+      "Claude's plan had parts Forerunner does not know. Forerunner asked Claude twice.",
+    );
+    const dup = proposal();
+    const dupTasks = (dup.plan.milestones[0] as { tasks: Record<string, unknown>[] }).tasks;
+    dupTasks.push({ ...dupTasks[0], title: "Build it again" });
+    expect(await twice(dup)).toBe(
+      "Claude's plan listed the same task twice. Forerunner asked Claude twice.",
+    );
+    const tier = proposal();
+    (tier.plan.milestones[0] as { tasks: Record<string, unknown>[] }).tasks[0] = {
+      ...(tier.plan.milestones[0] as { tasks: Record<string, unknown>[] }).tasks[0],
+      riskTier: -1,
+    };
+    expect(await twice(tier)).toBe(
+      "Claude's plan had a task's review level out of range. Forerunner asked Claude twice.",
+    );
+    const emptyCheck = proposal();
+    (emptyCheck.plan.milestones[0] as { tasks: Record<string, unknown>[] }).tasks[0] = {
+      ...(emptyCheck.plan.milestones[0] as { tasks: Record<string, unknown>[] }).tasks[0],
+      acceptanceCriteria: [""],
+    };
+    expect(await twice(emptyCheck)).toBe(
+      "Claude's plan left one of a task's checks empty. Forerunner asked Claude twice.",
+    );
   });
 
   it("a call that did not answer is not repeated and says so; the usage limit says to wait for the reset", async () => {

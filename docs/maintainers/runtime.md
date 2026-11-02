@@ -1393,7 +1393,10 @@ before it ended.", "Claude's plan was missing its tasks.", "Claude's plan was mi
 outcome.", "Claude's plan had tasks waiting for each other in a circle.", with " Forerunner asked
 Claude twice." after a refused retry; "Claude did not answer (model call failed).", "Your Claude
 usage limit is reached. Try again once it resets." (`provider_usage_limit`), "Claude did not finish
-the plan in time." (5) The prompt states every limit the reader enforces, asks the decision
+the plan in time." The words are plain (design §5.6): no JSON key names ("Claude's plan had parts
+Forerunner does not know."), no plan-internal words ("Claude's plan listed the same task twice."
+for a duplicate key), an empty text "left … empty", a number "out of range", an entry of a list
+"one of a task's checks". (5) The prompt states every limit the reader enforces, asks the decision
 record to open with a "Decision: " line in one or two sentences (the plan card shows it), asks for
 an estimate for every task a specialist does (`firstSession.items`, in run order: the card has a
 cost per task), never asks a specialist to commit, push or open a pull request (the executor
