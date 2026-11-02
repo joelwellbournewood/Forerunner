@@ -1784,7 +1784,8 @@ describe("the UI client against the real daemon", () => {
       source: "text",
     });
     const changeId = created.actions[0]?.id ?? "";
-    const made = (await client.tasks(projectId)).find((t) => t.title === "finish me");
+    // Its title as a title (phase E: capitalised), the words as said its outcome.
+    const made = (await client.tasks(projectId)).find((t) => t.title === "Finish me");
     for (const to of ["claimed", "in_progress", "in_review", "done"] as const) {
       const t = await rt.store.task.mustGet(made?.id ?? "");
       await rt.store.task.transition(t.id, t.version, to, "work", { agentId });
