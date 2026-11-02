@@ -288,8 +288,25 @@ describe("scenario 2: email task", () => {
     expect(completion.parsed.text).toContain(`Pull requests:\n- ${task.pr_url}`);
     expect(completion.parsed.text).toContain(`Session log: forerunner://sessions/${session.id}`);
     expect(completion.parsed.text).toMatch(/Cost: CHF /);
-    // Both replies are in the agent's sent log, threaded under J's email (T.10).
-    const sentLog = await w.store.auditLog.list({ agentId: w.alice.agent.id, tool: "email.send" });
+    // Both replies are in the agent's sent log, threaded under J's email (T.10). The mail can
+    // arrive before its send is logged (it failed once under load with ["ack"] only), so the
+    // log is waited for, never read once.
+    const kinds = (rows: { input_summary: string }[]) =>
+      rows.map((r) => (JSON.parse(r.input_summary) as { kind?: string }).kind).sort();
+    let lastSeen: string[] = [];
+    const sentLog = await waitFor(
+      async () => {
+        const rows = await w.store.auditLog.list({ agentId: w.alice.agent.id, tool: "email.send" });
+        lastSeen = kinds(rows).map(String);
+        return rows.length >= 2 ? rows : undefined;
+      },
+      "the sent log with both replies",
+      30_000,
+    ).catch((e: unknown) => {
+      throw new Error(
+        `${e instanceof Error ? e.message : String(e)}; saw ${JSON.stringify(lastSeen)}`,
+      );
+    });
     expect(sentLog.every((r) => r.allowed)).toBe(true);
     expect(
       sentLog.map((r) => (JSON.parse(r.input_summary) as { kind?: string }).kind).sort(),

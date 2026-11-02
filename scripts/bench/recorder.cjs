@@ -97,6 +97,7 @@ async function openApp(name, opts = {}) {
     browser = context;
   }
   await context.addInitScript(injection(b));
+  if (opts.reconnect !== false) followDaemon(name, context, b.token);
   const page = context.pages()[0] || (await context.newPage());
   state.set(page, { name, lastStep: null });
   page.on("console", (msg) => {
@@ -159,6 +160,43 @@ async function skipSetup(page) {
   await later.first().click();
   await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
   return true;
+}
+
+/**
+ * What the desktop shell does when its daemon comes back with a new token (it reloads the window
+ * with the new `daemon.json`): when bench.json names a new token (the supervisor restarted the
+ * daemon after setup, or restart-daemon.mjs ran), every page of the context gets the new
+ * injection and is reloaded, once. `openApp(name, { reconnect: false })` leaves pages on the old
+ * token (to see what a page that is not reconnected does). Before, a finished setup left the
+ * page on the old token: "not connected" for good.
+ */
+function followDaemon(name, context, token) {
+  let known = token;
+  let busy = false;
+  const timer = setInterval(async () => {
+    if (busy) return;
+    let b;
+    try {
+      b = bench(name);
+    } catch {
+      return;
+    }
+    if (!b.token || b.token === known) return;
+    busy = true;
+    known = b.token;
+    try {
+      await context.addInitScript(injection(b));
+      for (const p of context.pages())
+        await p.reload({ waitUntil: "domcontentloaded" }).catch(() => undefined);
+      console.log(
+        `[bench] ${name}: the daemon came back with a new token (${b.daemonUrl}); the page reconnected, as the desktop shell reloads its window`,
+      );
+    } finally {
+      busy = false;
+    }
+  }, 1000);
+  timer.unref();
+  context.on("close", () => clearInterval(timer));
 }
 
 /** After restart-daemon.mjs: give the open page the new token and reload it. */

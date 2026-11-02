@@ -2174,7 +2174,13 @@ of the file. What it assembles, and why this way:
   `holdPlan` does the same at the install's planner, after the plan is made from the ready
   tasks the runner read, so two sessions can plan the same task on purpose. Holds and event
   waits (`waitForEvent`) time out in real time (60 s by default) so a broken scenario fails
-  instead of hanging. `setEstimate(taskId, usdMicro)` overrides a plan item's estimate.
+  instead of hanging. `setEstimate(taskId, usdMicro)` overrides a plan item's estimate. A
+  scenario never reads a log once and hopes it is complete: the email scenario waits for both
+  replies in the sent log (a reply can reach the mailbox before its send is logged; it failed
+  once under load with `["ack"]`), and a timeout says what it saw. The unit tests do the same:
+  `monthly-jobs-wiring.test.ts` waits for the calibration's state and notification with a
+  message (before: a 30 s loop that said nothing), and the `repo-create.test.ts` cases that
+  push and clone through the fake git host have 120 s, not the 20 s default (phase E, C-8).
 - **The clock** is a `SimulatedClock`; `advanceTo(iso)` moves it in scheduler ticks (60 s by
   default), so a schedule added with `schedule(install, { time: "06:00" })` fires through the
   real `Scheduler` in the human's time zone, and claim renewals, the budget's wall clock and the
@@ -2461,7 +2467,8 @@ failing (`FORERUNNER_BENCH_FAIL`, its retries in one session, one card, the step
 attempted) and a failed model call (`FORERUNNER_BENCH_FAIL_MODE=error`, the task reads "Claude
 did not answer (model call failed)."). The injections match task titles, so they name the chain
 plan's titles ("quote list", "random quote"), not "Step 3". `scripts/bench/journeys/intake.cjs
-<bench> [--brief ...]` walks New project with a one-line brief and no Goal, the plan card and
+<bench> [--brief ...]` walks New project with a one-line brief and no Goal (the project named after
+the brief, `names.cjs`, unless `--project`; before, every one was "Quote page HH:MM:SS"), the plan card and
 Approve and start through the UI, pressing Try again at most twice, and records the checks, the
 plan card's lines and every intake call (the Plan size line sent, what the second call was told,
 output tokens) in `steps/intake-result.json`; with `--watch` it waits for the session Approve and
@@ -2490,7 +2497,22 @@ of them first and writes its markdown file from them: each fact quoted with its 
 the pages not read under "Uncertainty" with the refusal's words, every page under "Sources
 read", ADR 0107; `urlsNamed`, `factsOf`, `researchContent` in `plans.ts`), a `submit_review` verdict, a chat reply that says what context it got
 and quotes back the plan's state (`# Plan from the brief`) and the first task line it was told
-(`chatFacts`), so a journey can check that a reply names a task as a real model's would.
+(`chatFacts`), so a journey can check that a reply names a task as a real model's would. The
+intake stand-in reads the person's words after "Change the plan" (`splitChanges` reads them
+from the brief as `briefWithChanges` in `session/intake.ts` writes them; `applyChanges` in
+`plans.ts`): "drop|remove|... <name>" removes the tasks it names, "add|include|insert <name>"
+adds one, words it cannot place are named in the plan's reason, so the Change the plan journey
+can be walked on the bench (phase E; before, every new draft was the first plan again).
+`FORERUNNER_BENCH_PLAN=research` adds a researcher task whose brief names a web address. The
+stand-in's own sentences follow the writing rules (no "(s)": "Accepted: the changed file
+matches the brief", "1 earlier turn", "no command tool"). The real-daemon file's "what the bench
+walks" block runs Change the plan through the stand-in and checks the fields only the fake
+covered before (rule 3): a project's `working` while a session runs (the stand-in's first
+specialist call held), `lastSession.changedFiles`, the session's `statusText` "Ended: 1 task
+needs you", and the decisions' `plan` and `record` entries; another runs a session on a
+repository (a bare repository behind the memory git host, as `--githost` serves one) and reads
+the pull request it opened from `GET /projects/:id/pull-requests` (before, that case put the
+done task and its PR into the store by hand; C-62).
 `FORERUNNER_BENCH_DELAY_MS` waits before each reply but the critic's; `criticDelayMs`
 (`FORERUNNER_BENCH_CRITIC_DELAY_MS`, default 0) waits before each of the critic's, abortable
 like the other, so Stop now or Cancel during "Being reviewed" can be walked and tested
@@ -2512,13 +2534,24 @@ the runtime's own intake parser, plan writer and critic schema; the live wrapper
 provider), `packages/runtime/test/cli-daemon-provider.test.ts` (the live path end to end
 against a stub of the Messages API: prices, no part of the key), `scripts/bench-scripts.test.ts`
 (calls.mjs, the daemon's and setup's environment, a live start without a key, a daemon that exits,
-the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (one call, so the critic's read path runs on every review), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card. The stand-in reads two brief lines as the live model did (phase E #95, `briefAsRead`): a brief that still says "End the report with one line per lesson" gets the lesson line at the end of a report deliverable (report.md, evaluation.md, ...), and a writer whose brief does not mention scratch notes leaves a `notes.md` at the root; the brief's `LESSONS_CONSTRAINT` keeps both out, so the bench shows what the brief causes instead of passing by construction (`packages/runtime/test/lessons-out-of-deliverables.test.ts`).
+the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (so the critic's read path runs on every review), and since phase E (C-10) also the files the criteria name, in the same turn: a criterion is met only when a changed or read file shows it (`judgeCriterion`: a named file not in the folder, or "<A> links <B>" where A does not name B, is not met and sent back; no file named, or one not read, is "not checked by the stand-in"), so a walk's drawer no longer says met where the try said the file was missing; the stand-in's own plans were made to meet their criteria for it (the full web plan's page task no longer promises links to files later tasks write; a tester writes the test file its title names; `filesNamed` sees dotted names such as `main.test.js` and skips technology names such as Node.js), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card. The stand-in reads two brief lines as the live model did (phase E #95, `briefAsRead`): a brief that still says "End the report with one line per lesson" gets the lesson line at the end of a report deliverable (report.md, evaluation.md, ...), and a writer whose brief does not mention scratch notes leaves a `notes.md` at the root; the brief's `LESSONS_CONSTRAINT` keeps both out, so the bench shows what the brief causes instead of passing by construction (`packages/runtime/test/lessons-out-of-deliverables.test.ts`).
+
+The daemon runs under `scripts/bench/supervise.mjs`, the bench's stand-in for the desktop
+shell's supervisor (`restart.rs` `decide_after_exit`): an exit 86 with `restart.json` (finishing
+setup with a new credential, an update) removes the request and starts the daemon again with
+the same argv and environment, once in a row (twice for a rollback) unless it stayed up 30 s;
+the new token and pid go into `bench.json` and every decision is a "=== bench supervisor" line
+of `daemon.log`. `recorder.cjs`'s `openApp` follows `bench.json` and reloads its pages with a
+new token, as the shell reloads its window. Before, finishing setup left the daemon gone and the
+page "not connected" (gh1 and live2 walks). `start.mjs --githost <port> --githost-in-setup`
+leaves the stand-in's GitHub token for the setup assistant, so that restart can be walked.
+Tested in `scripts/bench-scripts.test.ts` with a stand-in daemon (a restart, a crash, an exit
+86 without a request, a daemon that keeps asking).
 
 Known limits: the stand-in proves mechanics, never model quality; on the stand-in the setup
 assistant and Settings still say no Claude key is connected; the daemon gets a new token on
-every start, so a page open across `restart-daemon.mjs` needs `reconnect(page, name)` (what the
-desktop shell does after its own daemon restarts is not covered); injection counters live in
-the daemon process and start again with it.
+every start (open pages reload with it; `reconnect(page, name)` does it at once); injection
+counters live in the daemon process and start again with it.
 
 ## CI checks no local test can make (phase F2)
 

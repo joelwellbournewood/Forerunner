@@ -36,6 +36,7 @@ import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../sr
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
 import { reviewLevelName, reviewLevelValue } from "../src/lib/task-actions.ts";
+import { intakeCardOf } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
 /**
@@ -6198,4 +6199,234 @@ describe("the UI client against the real daemon: a start on a project with nothi
     }
     expect(await client.sessions({ projectId: empty.id })).toEqual([]);
   }, 60_000);
+});
+
+describe("the UI client against the real daemon: what the bench walks (phase E, bench)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  /** Holds the next specialist call until `release()`: a session is seen while it runs. */
+  let hold: { armed: boolean; held: boolean; release: () => void; gate: Promise<void> } = {
+    armed: false,
+    held: false,
+    release: () => undefined,
+    gate: Promise.resolve(),
+  };
+  const arm = () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    hold = { armed: true, held: false, release, gate };
+  };
+
+  beforeAll(async () => {
+    // The bench's stand-in as `fr daemon --provider bench` runs it: the check task asks the
+    // person first (FORERUNNER_BENCH_ASK), so a session ends with a task that needs them.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-bench-"));
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0", FORERUNNER_BENCH_ASK: "Check that" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = async function* (req) {
+      if (hold.armed && !hold.held && detectRole(req).role === "specialist") {
+        hold.held = true;
+        await hold.gate;
+      }
+      yield* stream(req);
+    };
+    ({ rt, client } = await composeWithRolePlayer({}, { provider: player }));
+  }, 120_000);
+  afterAll(async () => {
+    hold.release();
+    await rt?.close();
+  });
+
+  const BRIEF = "A page that shows a random quote";
+  const planCard = async (name: string) => {
+    const project = await client.createProject({
+      name,
+      goal: goalFromBrief(BRIEF),
+      brief: BRIEF,
+      intake: true,
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.projectId === project.id && r.status === "open",
+    );
+    if (!card) throw new Error("no plan card");
+    return { project, card, me };
+  };
+  /** The task titles the plan card shows (the Inbox's own reading of the card). */
+  const shownTasks = (card: { changeCard?: unknown } | undefined) =>
+    (intakeCardOf(card?.changeCard)?.milestones ?? []).flatMap((m) => m.tasks.map((t) => t.title));
+
+  it("Change the plan with the stand-in: the new plan card shows the change the person typed", async () => {
+    const { project, card, me } = await planCard("Changed by words");
+    const before = shownTasks(card);
+    expect(before.some((t) => /^Check /.test(t))).toBe(true);
+    // What the Inbox sends for Change the plan with the words in its text box.
+    await client.answerRequest(card.id, {
+      version: card.version,
+      answer: { choice: "Change the plan", text: "drop the check and add a README task" },
+    });
+    await rt.intake.inFlight(project.id);
+    const status = await client.intakeStatus(project.id);
+    expect(status.state).toBe("pending");
+    const next = (await client.inbox(me.id)).requests.find((r) => r.id === status.requestId);
+    const after = shownTasks(next);
+    expect(after).toContain(before[0]);
+    expect(after.some((t) => /check/i.test(t))).toBe(false);
+    expect(after.filter((t) => /README/.test(t))).toHaveLength(1);
+    expect(next?.title).toBe(`Plan for "Changed by words": ${after.length} tasks`);
+    // Nothing is left open for the next case: Reject writes nothing.
+    await client.answerRequest(next?.id ?? "", { version: next?.version ?? 0, answer: "Reject" });
+    expect(await client.tasks(project.id)).toEqual([]);
+  }, 60_000);
+
+  it("a session Approve and start began: Working now while it runs, then 'Ended: 1 task needs you', the files it changed, and the plan and its record among the decisions (rule 3)", async () => {
+    const { project, card } = await planCard("Seen working");
+    arm();
+    await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+    const tasks = await client.tasks(project.id);
+    const build = tasks.find((t) => t.specialist === "coder");
+    if (!build) throw new Error(`no coder task in ${tasks.map((t) => t.title).join(", ")}`);
+    const states = async () =>
+      `${(await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ")}; held=${hold.held}`;
+    // The specialist's first call is held: the session runs the build task now.
+    await eventually(async () => hold.held, "the build task's first model call", states, 30_000);
+    const session = (await client.sessions({ projectId: project.id })).find(
+      (s) => s.status === "running",
+    );
+    if (!session) throw new Error("no running session");
+    const running = (await client.projects()).find((p) => p.id === project.id);
+    expect(running?.working).toMatchObject({
+      sessionId: session.id,
+      agentName: "Alice",
+      taskId: build.id,
+      taskTitle: build.title,
+    });
+    expect(running?.working?.since).toBeTruthy();
+    expect((await client.project(project.id)).working?.sessionId).toBe(session.id);
+    hold.release();
+    await eventually(
+      async () => (await client.session(session.id)).status !== "running",
+      "the session to end",
+      states,
+      60_000,
+    );
+    // The check task asked the person; the session finished with it waiting for them.
+    const ended = await client.session(session.id);
+    expect(ended.status).toBe("completed");
+    expect(ended.statusText).toBe("Ended: 1 task needs you");
+    expect((await client.project(project.id)).working).toBeNull();
+    const summary = await client.projectSummary(project.id);
+    expect(summary.lastSession?.id).toBe(session.id);
+    expect(summary.lastSession?.changedFiles).toEqual(
+      expect.arrayContaining(["index.html", "script.js", "styles.css"]),
+    );
+    // The plan the person approved and the decision record it wrote are decisions too.
+    const decisions = await client.decisions(project.id);
+    expect(decisions.find((d) => d.kind === "plan")).toMatchObject({
+      id: card.id,
+      question: "The plan for Seen working",
+      chosen: "Approved.",
+      decidedByName: "J",
+      path: null,
+    });
+    expect(decisions.find((d) => d.kind === "record")).toMatchObject({
+      question: "A plain static page, no build step",
+      chosen: "docs/decisions/0001-plain-static-page.md",
+      path: "docs/decisions/0001-plain-static-page.md",
+      decidedByName: null,
+    });
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: a session on a repository opens the pull request the Overview lists (phase E, bench, C-62)", () => {
+  // The repository block above puts the done task and its PR into the store by hand; here a
+  // session does the work on a git host (bare repositories behind the memory host, as the
+  // bench's --githost serves them) and the Overview's list is read after it.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  const host = new MemoryGitHost("alice");
+
+  beforeAll(async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-pr-"));
+    const bare = join(dir, "seeded.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(dir, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(dir, "seed", "README.md"), "# seeded\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "seeded", private: true, cloneUrl: bare });
+    ({ rt, client } = await composeWithRolePlayer({}, { gitHost: host }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("Start runs the task on a branch, the critic accepts it, and its pull request waits for the person with its link", async () => {
+    const project = await client.createProject({
+      name: "On a repository",
+      goal: "A page in a repository",
+      repos: ["o/seeded"],
+    });
+    const task = await client.createTask(project.id, {
+      title: "Create the page skeleton in index.html",
+      outcome: "index.html is a valid HTML5 page with a heading",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    const states = async () =>
+      (await client.tasks(project.id))
+        .map((t) => `${t.title}=${t.status} (${t.reason})`)
+        .join(", ");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      states,
+      90_000,
+    );
+    const done = await client.task(task.id);
+    expect(done.task.status, await states()).toBe("done");
+    expect(done.runs.map((r) => [r.kind, r.specialist])).toEqual([
+      ["review", "critic"],
+      ["work", "coder"],
+    ]);
+    // The work is on its own branch of the repository, in the pull request the session opened.
+    const prUrl = done.task.prUrl ?? "";
+    expect(prUrl).toMatch(/^memory:\/\/o\/seeded\/pull\/\d+$/);
+    const view = await client.projectPullRequests(project.id);
+    expect(view.error).toBeNull();
+    expect(view.repository).toEqual({
+      fullName: "o/seeded",
+      url: "https://github.com/o/seeded",
+    });
+    const waiting = view.waiting.find((w) => w.kind === "task");
+    expect(waiting).toMatchObject({
+      taskId: task.id,
+      title: "Create the page skeleton in index.html",
+      url: prUrl,
+      review: "critic",
+    });
+    expect(waiting?.branch).toMatch(/^fr\//);
+    expect(waiting?.number).toBe(Number(prUrl.split("/").at(-1)));
+    // Merged on the host: no longer waiting, read from the host when asked.
+    await host.mergePullRequest({ owner: "o", name: "seeded" }, waiting?.number ?? 0);
+    expect(
+      (await client.projectPullRequests(project.id)).waiting.filter((w) => w.kind === "task"),
+    ).toEqual([]);
+  }, 150_000);
 });

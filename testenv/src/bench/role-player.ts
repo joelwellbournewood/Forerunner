@@ -25,6 +25,7 @@ import {
   type PageRead,
   type PlanOptions,
   researchContent,
+  splitChanges,
   urlsNamed,
 } from "./plans.ts";
 import {
@@ -129,11 +130,13 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
   const rawDelay = (env.FORERUNNER_BENCH_DELAY_MS ?? "").trim();
   const delay = rawDelay ? Number(rawDelay) : 250;
   const criticDelay = Number((env.FORERUNNER_BENCH_CRITIC_DELAY_MS ?? "").trim() || 0);
+  // FORERUNNER_BENCH_PLAN: `chain`, `research`, or both (`chain,research`).
+  const plans = list(env.FORERUNNER_BENCH_PLAN).map((v) => v.toLowerCase());
   return {
     log,
     plan: {
-      kind:
-        (env.FORERUNNER_BENCH_PLAN ?? "").trim().toLowerCase() === "chain" ? "chain" : "default",
+      kind: plans.includes("chain") ? "chain" : "default",
+      research: plans.includes("research"),
       personTask: ["1", "true", "yes", "on"].includes(
         (env.FORERUNNER_BENCH_PERSON ?? "").trim().toLowerCase(),
       ),
@@ -310,13 +313,17 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
 export function parseIntakeRequest(req: ModelRequest): IntakeInput {
   const user = firstUserText(req.messages);
   const field = (name: string) => new RegExp(`^${name}: (.*)$`, "m").exec(user)?.[1]?.trim() ?? "";
-  const brief = /<<<BRIEF\n([\s\S]*?)\nBRIEF>>>/.exec(user)?.[1]?.trim() ?? "";
+  // After "Change the plan" the person's words follow the brief inside the markers (design §3.3).
+  const { brief, changes } = splitChanges(
+    /<<<BRIEF\n([\s\S]*?)\nBRIEF>>>/.exec(user)?.[1]?.trim() ?? "",
+  );
   return {
     project: field("Project"),
     goal: field("Goal"),
     brief,
     // "Plan size: small (a short brief: …)" asks for one to three tasks (the intake's Size rules).
     smallProject: field("Plan size").startsWith("small"),
+    changes,
   };
 }
 
@@ -446,6 +453,8 @@ const offered = (tools: readonly ToolDefinition[] | undefined, name: string) =>
   (tools ?? []).some((t) => t.name === name);
 
 const CHECKER = new Set(["tester", "reviewer"]);
+/** A test file a checker writes when its title names one (test/x.test.js, tests/y.mjs). */
+const TEST_FILE = /(?:^|\/)tests?\/|\.(?:test|spec)\.m?[jt]s$/;
 const COMMON_FILES = ["index.html", "script.js", "src/main.js", "README.md"];
 
 /** The files a `list_dir` result names (one path per line, directories end in "/"). */
@@ -478,8 +487,11 @@ function specialistAnswer(
   // A checker (tester, reviewer) never rewrites the work; it writes its own notes.
   const titleFiles = filesNamed(brief.title);
   const outcomeFile = filesNamed(brief.outcome).slice(0, 1);
+  // A checker never rewrites the work: it writes its notes, and the test file its title names
+  // ("Add a check for src/main.js in test/main.test.js": the criterion names that file, C-10).
+  const testFiles = titleFiles.filter((f) => TEST_FILE.test(f));
   const targets = checker
-    ? [`checks/${slug(brief.title)}.md`]
+    ? [...testFiles, `checks/${slug(brief.title)}.md`]
     : titleFiles.length
       ? titleFiles
       : outcomeFile.length
@@ -641,20 +653,22 @@ function specialistAnswer(
     const ran = calls.filter((c) => c.name === "run_command");
     const literal = briefAsRead(firstUserText(req.messages), who);
     const writes = targets.map((path) => {
-      const content = checker
-        ? [
-            `# Check: ${brief.title}`,
-            "",
-            ...ran.map(
-              (c) =>
-                `- \`${((c.input.argv as string[]) ?? []).join(" ")}\`: ${c.isError ? "failed" : "passed"}`,
-            ),
-            ...brief.criteria.map((c) => `- ${c}: checked by reading the files`),
-            "",
-          ].join("\n")
-        : pages.length && path.endsWith(".md")
-          ? researchContent(brief, pages, STAND_IN)
-          : contentFor(path, brief, seen, [...files, ...targets]);
+      // A tester writes the test file its title names as code, beside its notes (bench, C-10).
+      const content =
+        checker && !TEST_FILE.test(path)
+          ? [
+              `# Check: ${brief.title}`,
+              "",
+              ...ran.map(
+                (c) =>
+                  `- \`${((c.input.argv as string[]) ?? []).join(" ")}\`: ${c.isError ? "failed" : "passed"}`,
+              ),
+              ...brief.criteria.map((c) => `- ${c}: checked by reading the files`),
+              "",
+            ].join("\n")
+          : pages.length && path.endsWith(".md")
+            ? researchContent(brief, pages, STAND_IN)
+            : contentFor(path, brief, seen, [...files, ...targets]);
       return {
         name: "write_file",
         input: {
@@ -804,6 +818,74 @@ export function reviewedTitle(brief: string, report: string, known: Iterable<str
   return brief.split(": ")[0] ?? brief;
 }
 
+/** Words that say one file names another: "index.html links styles.css". */
+const NAMES_ANOTHER = /\b(?:links?|loads?|references?|includes?|imports?)\b/i;
+
+/**
+ * Whether the work shows a criterion (C-10), from what the stand-in critic has: the changed
+ * files and the files it read. A criterion that names no file is "not checked by the stand-in";
+ * one that names a file not in the task's folder (its read failed) is not met; "<A> links|loads|
+ * references|includes|imports <B>" is met only when the read A names B; a file it neither
+ * changed nor read is "not checked". Deterministic: the same evidence, the same marks.
+ */
+export function judgeCriterion(
+  text: string,
+  changed: readonly string[],
+  calls: readonly PastToolCall[],
+): { text: string; met: boolean; evidence: string } {
+  const files = filesNamed(text);
+  if (!files.length)
+    return {
+      text,
+      met: true,
+      evidence: "not checked by the stand-in: the criterion names no file",
+    };
+  const reads = new Map(
+    calls.filter((c) => c.name === "read_file").map((c) => [String(c.input.path), c]),
+  );
+  const readOk = (f: string) => {
+    const r = reads.get(f);
+    return r !== undefined && r.isError !== true && r.result !== undefined;
+  };
+  const missing = files.filter((f) => !changed.includes(f) && reads.get(f)?.isError === true);
+  const notThere = () => ({
+    text,
+    met: false,
+    evidence: `${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not in the task's folder`,
+  });
+  // The criterion's own claim first ("index.html links styles.css"), then the files it names.
+  const verb = NAMES_ANOTHER.exec(text);
+  const subject = verb ? filesNamed(text.slice(0, verb.index)).at(-1) : undefined;
+  const objects = verb ? filesNamed(text.slice(verb.index)) : [];
+  if (subject && objects.length && !missing.includes(subject)) {
+    if (!readOk(subject))
+      return {
+        text,
+        met: true,
+        evidence: `not checked by the stand-in: it did not read ${subject}`,
+      };
+    const body = reads.get(subject)?.result ?? "";
+    const absent = objects.filter((f) => !body.includes(f));
+    if (absent.length)
+      return { text, met: false, evidence: `${subject} does not name ${absent.join(" or ")}` };
+    if (missing.length) return notThere();
+    return { text, met: true, evidence: `read ${subject}: it names ${objects.join(" and ")}` };
+  }
+  if (missing.length) return notThere();
+  const unseen = files.filter((f) => !changed.includes(f) && !readOk(f));
+  if (unseen.length)
+    return {
+      text,
+      met: true,
+      evidence: `not checked by the stand-in: it did not read ${unseen.join(", ")}`,
+    };
+  return {
+    text,
+    met: true,
+    evidence: files.map((f) => (readOk(f) ? `read ${f}` : `${f} changed`)).join("; "),
+  };
+}
+
 function criticAnswer(
   req: ModelRequest,
   opts: BenchOptions,
@@ -813,74 +895,110 @@ function criticAnswer(
   const calls = pastToolCalls(req.messages);
   if (calls.some((c) => c.name === "submit_review")) return text(`${STAND_IN} Review submitted.`);
   const evidence = firstUserText(req.messages);
-  // ADR 0104: the critic may read the task's folder. A careful reviewer reads the first changed
-  // file before it grades (one call, so the read path is exercised on every review).
-  const changedFirst = section(evidence, "Changed files")
-    .split("\n")
-    .map((l) => l.replace(/^-\s*/, "").trim())
-    .find(Boolean);
-  if (changedFirst && offered(req.tools, "read_file") && !calls.some((c) => c.name === "read_file"))
-    return {
-      text: `Reading ${changedFirst} before I grade.`,
-      toolCalls: [{ name: "read_file", input: { path: changedFirst } }],
-    };
   const criteria = numbered(section(evidence, "Acceptance criteria"));
-  const brief = section(evidence, "Brief");
-  const workerReport = section(evidence, "Worker's final report");
   const changed = section(evidence, "Changed files")
     .split("\n")
     .map((l) => l.replace(/^-\s*/, "").trim())
     .filter(Boolean);
+  // ADR 0104: the critic may read the task's folder. A careful reviewer reads the first changed
+  // file and the files the criteria name before it grades (C-10: it marks a criterion met only
+  // when a changed or read file shows it), in one turn.
+  const toRead = [...new Set([changed[0], ...criteria.flatMap((c) => filesNamed(c))])]
+    .filter((f): f is string => Boolean(f))
+    .slice(0, 4);
+  if (
+    toRead.length &&
+    offered(req.tools, "read_file") &&
+    !calls.some((c) => c.name === "read_file")
+  )
+    return {
+      text: `Reading ${toRead.join(", ")} before I grade.`,
+      toolCalls: toRead.map((path) => ({ name: "read_file", input: { path } })),
+    };
+  const brief = section(evidence, "Brief");
+  const workerReport = section(evidence, "Worker's final report");
   const subject = /^Subject: (.*)$/m.exec(evidence)?.[1] ?? "the work";
   const runId = req.origin?.runId ?? "no-run-id";
   // FORERUNNER_BENCH_CRITIC_REJECT matches the task's title, as FAIL and ASK do.
   const title = reviewedTitle(brief, workerReport, known) || subject;
   const rejectHit = matchesAny(title, opts.reject);
   const workerFailed = /could not complete this task|changed no file/i.test(workerReport);
-  const reject = workerFailed || (rejectHit !== null && rejectThisReview(title, runId));
-  const where = changed[0] ?? "the change";
-  const review = reject
-    ? {
-        grade: 35,
-        confidence: "high",
-        verdict: "revise",
-        summary: `${STAND_IN} Sent back for rework: ${workerFailed ? "the worker reports it could not do the work" : `planted rejection (FORERUNNER_BENCH_CRITIC_REJECT=${rejectHit})`}.`,
-        findings: [
-          {
-            severity: "major",
-            what: workerFailed
-              ? "The worker changed nothing; the acceptance criteria are not met."
-              : "The change does not meet the first acceptance criterion as written.",
-            where,
-            required_action:
-              "Do the work the brief asks for and show the evidence for each criterion.",
-          },
-        ],
-        criteria: criteria.map((c, i) => ({
-          text: c,
-          met: i > 0 && !workerFailed,
-          evidence: i > 0 ? `read ${where}` : "not shown",
-        })),
-        checks_run: [],
-        evidence: changed.slice(0, 5),
-      }
-    : {
-        grade: 86,
-        confidence: "high",
-        verdict: "accept",
-        summary: `${STAND_IN} Accepted: ${changed.length ? `${changed.length} changed file(s) match the brief` : "the report and the evidence match the brief"}.`,
-        findings: [],
-        criteria: criteria.map((c) => ({
+  // FORERUNNER_BENCH_MISSING plays the live critic, which accepted a report that made nothing.
+  const missingHit = matchesAny(title, opts.missing ?? []);
+  const judged = criteria.map((c) =>
+    missingHit
+      ? {
           text: c,
           met: true,
-          evidence: changed.length
-            ? `read ${changed.slice(0, 3).join(", ")}`
-            : "the worker's report",
-        })),
-        checks_run: [],
-        evidence: changed.slice(0, 5),
-      };
-  const injected = reject && !workerFailed ? `critic_reject=${rejectHit}` : undefined;
+          evidence: `not checked by the stand-in: FORERUNNER_BENCH_MISSING=${missingHit} plays the live critic, which accepted`,
+        }
+      : judgeCriterion(c, changed, calls),
+  );
+  const unmet = judged.filter((c) => !c.met);
+  const reject =
+    workerFailed || unmet.length > 0 || (rejectHit !== null && rejectThisReview(title, runId));
+  const where = changed[0] ?? "the change";
+  const review =
+    unmet.length && !workerFailed
+      ? {
+          grade: 55,
+          confidence: "high",
+          verdict: "revise",
+          summary: `${STAND_IN} Sent back for rework: ${unmet[0]?.text}: ${unmet[0]?.evidence}.`,
+          findings: unmet.map((c) => ({
+            severity: "major",
+            what: `Acceptance criterion not met: ${c.text}: ${c.evidence}.`,
+            where,
+            required_action: "Meet the criterion and show the evidence for it.",
+          })),
+          criteria: judged,
+          checks_run: [],
+          evidence: changed.slice(0, 5),
+        }
+      : reject
+        ? {
+            grade: 35,
+            confidence: "high",
+            verdict: "revise",
+            summary: `${STAND_IN} Sent back for rework: ${workerFailed ? "the worker reports it could not do the work" : `planted rejection (FORERUNNER_BENCH_CRITIC_REJECT=${rejectHit})`}.`,
+            findings: [
+              {
+                severity: "major",
+                what: workerFailed
+                  ? "The worker changed nothing; the acceptance criteria are not met."
+                  : "The change does not meet the first acceptance criterion as written.",
+                where,
+                required_action:
+                  "Do the work the brief asks for and show the evidence for each criterion.",
+              },
+            ],
+            criteria: criteria.map((c, i) => ({
+              text: c,
+              met: i > 0 && !workerFailed,
+              evidence: i > 0 ? `read ${where}` : "not shown",
+            })),
+            checks_run: [],
+            evidence: changed.slice(0, 5),
+          }
+        : {
+            grade: 86,
+            confidence: "high",
+            verdict: "accept",
+            // Design §5 rule 6: no "(s)"; the verb agrees ("Accepted: 1 changed file match").
+            summary: `${STAND_IN} Accepted: ${
+              changed.length === 1
+                ? "the changed file matches the brief"
+                : changed.length
+                  ? `the ${changed.length} changed files match the brief`
+                  : "the report and the evidence match the brief"
+            }.`,
+            findings: [],
+            criteria: judged,
+            checks_run: [],
+            evidence: changed.slice(0, 5),
+          };
+  const injected =
+    reject && !workerFailed && !unmet.length ? `critic_reject=${rejectHit}` : undefined;
   if (offered(req.tools, "submit_review"))
     return {
       text: "",
@@ -925,7 +1043,13 @@ export function describeChatContext(req: ModelRequest): string {
     .map((l) => /^- ([a-z_]+):/.exec(l)?.[1])
     .filter(Boolean);
   const tools = (req.tools ?? []).length;
-  return `I was given ${earlier} earlier turn(s) of this conversation, ${projects.length} project(s) in the system prompt${active ? " with one marked active" : ""}, ${hasTasks ? "a task list" : "no task list"}, ${hasDocs ? "project doc excerpts" : "no project doc excerpts"}, ${hasLessons ? "lessons" : "no lessons"}, the facts ${factNames.length ? factNames.join(", ") : "(none)"}, and ${tools} command tool(s).`;
+  // The reply is shown in the chat: plural words as the number says (design §5 rule 6).
+  return `I was given ${counted(earlier, "earlier turn")} of this conversation, ${counted(projects.length, "project")} in the system prompt${active ? " with one marked active" : ""}, ${hasTasks ? "a task list" : "no task list"}, ${hasDocs ? "project doc excerpts" : "no project doc excerpts"}, ${hasLessons ? "lessons" : "no lessons"}, the facts ${factNames.length ? factNames.join(", ") : "(none)"}, and ${counted(tools, "command tool")}.`;
+}
+
+/** "no project", "1 project", "2 projects". */
+function counted(n: number, what: string): string {
+  return n === 0 ? `no ${what}` : n === 1 ? `1 ${what}` : `${n} ${what}s`;
 }
 
 function chatAnswer(req: ModelRequest): Answer {

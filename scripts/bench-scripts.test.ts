@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
+// @ts-expect-error plain JS module
+import { projectNameFor } from "./bench/journeys/names.cjs";
 import {
   agentsDone,
   allDone,
@@ -17,7 +19,7 @@ import {
   // @ts-expect-error plain JS module
 } from "./bench/journeys/smoke-checks.cjs";
 // @ts-expect-error plain JS module
-import { daemonEnv, liveKey, setupEnv } from "./bench/lib.mjs";
+import { daemonArgv, daemonEnv, liveKey, setupEnv, supervisedArgv } from "./bench/lib.mjs";
 
 /**
  * The bench scripts with a real model (scripts/bench/README.md; the live run of 2026-11-01): what
@@ -215,6 +217,154 @@ describe("bench: the daemon's environment and a live start", () => {
  * names and "[stand-in model]" in the chat reply, and passed "every planned task is done" on 0
  * of 0 tasks). These are what the live plan, files and reply looked like.
  */
+/**
+ * Finishing setup with a new credential restarts the daemon (`POST /setup/finish`: restart.json
+ * and exit 86, packages/runtime/src/daemon/restart.ts); the desktop shell starts it again. The
+ * bench had nothing that did, so the daemon stayed gone and the UI "not connected" (gh1, live2
+ * #13). A stand-in daemon here writes daemon.json and answers /health as the real one does.
+ */
+describe("bench: the supervisor starts the daemon again when it asks to restart (exit 86), as the desktop shell does", () => {
+  const SUPERVISE = join(BENCH, "supervise.mjs");
+  const FAKE = [
+    'import { createServer } from "node:http";',
+    'import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";',
+    // Every file is given by the test (the paths are built with @forerunner/platform there).
+    "const [mode, runtime, countFile, daemonFile, restartFile] = process.argv.slice(2);",
+    "mkdirSync(runtime, { recursive: true });",
+    'const n = (existsSync(countFile) ? Number(readFileSync(countFile, "utf8")) : 0) + 1;',
+    "writeFileSync(countFile, String(n));",
+    "console.log('stand-in daemon: start ' + n);",
+    "const askRestart = () => writeFileSync(restartFile, JSON.stringify({ schema: 1, reason: 'setup', targetVersion: '1.0.4', fromVersion: '1.0.4', pid: process.pid, exitCode: 86 }));",
+    "const server = createServer((req, res) => { res.writeHead(200); res.end('ok'); });",
+    'server.listen(0, "127.0.0.1", () => {',
+    "  const url = 'http://127.0.0.1:' + server.address().port;",
+    "  writeFileSync(daemonFile, JSON.stringify({ url, token: 'token-' + n, pid: process.pid }));",
+    "  if (mode === 'restart' && n === 1) { askRestart(); setTimeout(() => process.exit(86), 100); }",
+    "  else if (mode === 'restart') {",
+    "    // Up again: it quits once bench.json names this start's token (the supervisor wrote it).",
+    "    setInterval(() => { try { if (JSON.parse(readFileSync(process.env.TEST_BENCH_FILE, 'utf8')).token === 'token-' + n) process.exit(0); } catch {} }, 100);",
+    "  }",
+    "  else if (mode === 'again') { askRestart(); setTimeout(() => process.exit(86), 100); }",
+    "  else if (mode === 'no-request') setTimeout(() => process.exit(86), 100);",
+    "  else setTimeout(() => process.exit(3), 100);",
+    "});",
+  ].join("\n");
+  const supervised = (mode: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-bench-supervise-"));
+    const home = join(dir, "home");
+    const benchFile = join(dir, "bench.json");
+    const daemon = join(dir, "stand-in-daemon.mjs");
+    writeFileSync(daemon, FAKE);
+    writeFileSync(
+      benchFile,
+      JSON.stringify({ name: "sup", token: "token-0", daemonUrl: "http://old", restarts: [] }),
+    );
+    const runtime = join(home, "runtime");
+    const files = [
+      runtime,
+      join(runtime, "starts"),
+      join(runtime, "daemon.json"),
+      join(runtime, "restart.json"),
+    ];
+    const r = spawnSync(
+      process.execPath,
+      [
+        SUPERVISE,
+        "--home",
+        home,
+        "--bench",
+        benchFile,
+        "--",
+        process.execPath,
+        daemon,
+        mode,
+        ...files,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, TEST_BENCH_FILE: benchFile },
+        timeout: 60_000,
+      },
+    );
+    const starts = Number(readFileSync(join(runtime, "starts"), "utf8"));
+    return { r, out: `${r.stdout}${r.stderr}`, starts, home, benchFile };
+  };
+
+  it("exit 86 with a restart request: started again, the request removed, bench.json gets the new token and pid", () => {
+    const { r, out, starts, home, benchFile } = supervised("restart");
+    expect(r.status, out).toBe(0);
+    expect(starts).toBe(2);
+    expect(out).toMatch(
+      /=== bench supervisor .*: the daemon exited with 86 and asked for a restart \(setup\); starting it again, as the desktop shell does/,
+    );
+    expect(out).toMatch(
+      /=== bench supervisor .*: the daemon is back at http:\/\/127\.0\.0\.1:\d+ \(pid \d+\); bench\.json has its new token/,
+    );
+    expect(out).toMatch(/the daemon exited with 0; not started again/);
+    const b = JSON.parse(readFileSync(benchFile, "utf8"));
+    expect(b).toMatchObject({ name: "sup", token: "token-2" });
+    expect(b.daemonUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(b.daemonNodePid).toBeGreaterThan(0);
+    expect(b.restarts).toEqual([
+      expect.objectContaining({ by: "supervisor", reason: "setup", hard: false }),
+    ]);
+    // The desktop shell removes the request once it acted on it; so does the supervisor.
+    expect(() => readFileSync(join(home, "runtime", "restart.json"))).toThrow();
+  }, 90_000);
+
+  it("any other exit, or 86 without a request, ends it with the daemon's code; a daemon that keeps asking is started again once", () => {
+    const plain = supervised("crash");
+    expect(plain.r.status).toBe(3);
+    expect(plain.starts).toBe(1);
+    expect(plain.out).toMatch(/the daemon exited with 3; not started again/);
+    const bare = supervised("no-request");
+    expect(bare.r.status).toBe(86);
+    expect(bare.starts).toBe(1);
+    expect(bare.out).toMatch(
+      /the daemon exited with 86 without a restart request; not started again/,
+    );
+    const again = supervised("again");
+    expect(again.r.status).toBe(86);
+    expect(again.starts).toBe(2);
+    expect(again.out).toMatch(
+      /asked for a restart \(setup\) 2 times in a row without staying up; not started again/,
+    );
+    expect(JSON.parse(readFileSync(again.benchFile, "utf8")).token).toBe("token-0");
+  }, 90_000);
+
+  it("start.mjs and restart-daemon.mjs run the daemon under it (lib.mjs startDaemon)", () => {
+    const argv = supervisedArgv("bench", 48103, { home: "/h", benchFile: "/b/bench.json" });
+    expect(argv.slice(1, 7)).toEqual([SUPERVISE, "--home", "/h", "--bench", "/b/bench.json", "--"]);
+    expect(argv.slice(7)).toEqual(daemonArgv("bench", 48103));
+    expect(readFileSync(join(BENCH, "lib.mjs"), "utf8")).toMatch(
+      /spawnLogged\(\s*supervisedArgv\(/,
+    );
+  });
+});
+
+describe("bench: the intake journey names the project after the brief (live B, 2026-11-02)", () => {
+  const at = new Date("2026-11-02T16:45:30.000Z");
+
+  it("without --project the name is the brief's first words and the time, not 'Quote page'", () => {
+    expect(projectNameFor("A todo list", at)).toBe("A todo list 16:45:30");
+    expect(projectNameFor("  A todo list.\nWith due dates", at)).toBe("A todo list 16:45:30");
+    // A long brief is cut at a word, at most 40 characters before the time.
+    const long = projectNameFor(
+      "A small web app that tracks the books I read and lends to friends",
+      at,
+    );
+    expect(long).toBe("A small web app that tracks the books I 16:45:30");
+    expect(long.length).toBeLessThanOrEqual(49);
+    expect(projectNameFor("", at)).toBe("Project 16:45:30");
+  });
+
+  it("intake.cjs uses it when --project is not given", () => {
+    const script = readFileSync(join(BENCH, "journeys", "intake.cjs"), "utf8");
+    expect(script).toContain('const PROJECT = opt("--project", projectNameFor(BRIEF));');
+    expect(script).not.toMatch(/`Quote page \$\{/);
+  });
+});
+
 describe("bench: the smoke journey's checks on structure and states", () => {
   type T = {
     id: string;

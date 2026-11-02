@@ -2,9 +2,11 @@
 // Start a test bench: the real daemon on an isolated home plus the real UI dev server.
 //   node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u>
 //        [--provider bench|fake|bench-live|none] [--home <dir>] [--fresh] [--env KEY=VAL ...]
-//        [--githost <port>]
+//        [--githost <port> [--githost-in-setup]]
 // Writes <bench root>/<n>/bench.json { daemonUrl, uiUrl, home, token, pids, ... } and prints it.
-// See README.md. Stop with stop.mjs, restart only the daemon with restart-daemon.mjs.
+// See README.md. Stop with stop.mjs, restart only the daemon with restart-daemon.mjs. The daemon
+// runs under supervise.mjs, which starts it again when it asks to restart (exit 86), as the
+// desktop shell does; bench.json then gets its new token.
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -74,10 +76,16 @@ const extra = envPairs(args.env);
 // `--githost <port>`: a stand-in for GitHub (the fake git host) with an empty and a seeded
 // repository; its token goes into the vault and its URL into the config, as `fr setup` does.
 let githost = null;
+// `--githost-in-setup`: the token is not stored; the person pastes it (bench.json
+// `githost.token`) in the setup assistant's GitHub step, which checks it against the stand-in,
+// and finishing setup then restarts the daemon (supervise.mjs starts it again).
+const githostInSetup = args["githost-in-setup"] === true;
+if (githostInSetup && githostPort === null) fail("--githost-in-setup needs --githost <port>");
 if (githostPort !== null) {
   console.log(`bench ${name}: starting the stand-in for GitHub on port ${githostPort} ...`);
   githost = await startGithost({ dir, port: githostPort });
-  storeGithubToken({ dir, home, githost });
+  if (githostInSetup) extra.FORERUNNER_GITHUB_API ??= githost.url;
+  else storeGithubToken({ dir, home, githost });
 }
 if (provider === "bench-live") {
   console.log(`bench ${name}: storing the key in the home's vault (fr setup checks it first) ...`);
@@ -132,7 +140,16 @@ const bench = {
   daemonPort,
   uiPort,
   pids: { daemon: daemon.pid, ui: uiPid, ...(githost ? { githost: githost.pid } : {}) },
-  ...(githost ? { githost: { url: githost.url, repos: githost.repos } } : {}),
+  ...(githost
+    ? {
+        githost: {
+          url: githost.url,
+          repos: githost.repos,
+          // The token to paste in the setup assistant (a stand-in's token, never a real one).
+          ...(githostInSetup ? { token: githost.token, inSetup: true } : {}),
+        },
+      }
+    : {}),
   daemonNodePid: daemon.nodePid,
   projectsRoot: path.join(home, "data", "projects"),
   modelCallLog: path.join(home, "bench", "model-calls.jsonl"),

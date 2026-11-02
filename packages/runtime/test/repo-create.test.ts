@@ -38,6 +38,12 @@ describe("a repository for a project without one (U-037)", () => {
   let worktrees: string;
   let req: (path: string, init?: RequestInit) => Promise<Response>;
   const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+  /**
+   * The cases that create, push and clone a repository through the fake host's real
+   * http-backend: about 1 s here, several times that on Windows CI and under load (one failed in
+   * a full `pnpm check`), so not the 20 s default.
+   */
+  const REPO_WORK_MS = 120_000;
 
   const json = async (res: Response) => (await res.json()) as Record<string, unknown>;
 
@@ -183,131 +189,151 @@ describe("a repository for a project without one (U-037)", () => {
     expect(again?.status === "open" ? again : undefined).toBeUndefined();
   });
 
-  it("Create the repository: private, the workspace as the first commit, linked; the next run clones it", async () => {
-    const { id, task } = await projectWithCodeWork("Garden Planner");
-    await session(id);
-    const card = await proposalCard(id);
-    if (!card) throw new Error("no proposal card");
-    await answer(card, card.options[0] as string);
-    const repo = await github.getRepo({ owner: "alice", name: "garden-planner" });
-    expect(repo.private).toBe(true);
-    expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/garden-planner"]);
-    // One commit on main holding the workspace: the scaffolded docs and the person's file.
-    const check = new GitOps({
-      cwd: join(root, "check-garden"),
-      auth: gitAuthFor(ghToken, repo.cloneUrl),
-    });
-    await check.clone(repo.cloneUrl);
-    const commits = await check.log(10);
-    expect(commits.map((c) => c.subject)).toEqual([
-      "Start Garden Planner from its Forerunner workspace",
-    ]);
-    expect(readFileSync(join(root, "check-garden", "notes.md"), "utf8")).toBe("# Notes\n");
-    expect(existsSync(join(root, "check-garden", "README.md"))).toBe(true);
-    expect(existsSync(join(root, "check-garden", ".git", "refs", "heads", "main"))).toBe(true);
-    // The change log names it as the person's change, confirmed in the Inbox.
-    const changes = await rt.store.changeLog.list({ project_id: id } as never);
-    expect(changes.map((c) => c.sentence).join("\n")).toContain(
-      "Created the private GitHub repository alice/garden-planner",
-    );
-    // The next run of the project's task works in a clone of it.
-    const session2 = await rt.store.session.insert({
-      agent_id: rt.agent.id,
-      project_id: id,
-      trigger: "manual",
-      status: "running",
-      runner: "pc",
-    });
-    const grant = await rt.sessionGrant(id);
-    const token = rt.tokens.issue({
-      runId: "run-session",
-      sessionId: session2.id,
-      agentId: rt.agent.id,
-      ownerHumanId: rt.human.id,
-      projectId: id,
-      allowedTools: grant?.allowedTools ?? [],
-      allowedPaths: grant?.allowedPaths ?? [],
-      allowedDomains: [],
-      grantedSecrets: [],
-      budgetUsdMicro: 1_000_000,
-      depth: 0,
-      maxDepth: 2,
-      autonomy: 2,
-      planApproved: true,
-      expiresAt: new Date(clock.now() + 60_000).toISOString(),
-    });
-    await rt.executor.execute({
-      task: await rt.store.task.mustGet(task.id),
-      session: session2,
-      token,
-      budget: new SessionBudget({
+  it(
+    "Create the repository: private, the workspace as the first commit, linked; the next run clones it",
+    async () => {
+      const { id, task } = await projectWithCodeWork("Garden Planner");
+      await session(id);
+      const card = await proposalCard(id);
+      if (!card) throw new Error("no proposal card");
+      await answer(card, card.options[0] as string);
+      // The answer's sync created it before the route answered; if not, say what the card and
+      // the project say now (it failed once under load with nothing said of what it saw).
+      const repo = await github
+        .getRepo({ owner: "alice", name: "garden-planner" })
+        .catch(async (e: unknown) => {
+          throw new Error(
+            `no repository after "${card.options[0]}": ${e instanceof Error ? e.message : String(e)}; the card now: ${JSON.stringify(await proposalCard(id))}; the project's repos: ${JSON.stringify((await rt.store.project.mustGet(id)).repos)}`,
+          );
+        });
+      expect(repo.private).toBe(true);
+      expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/garden-planner"]);
+      // One commit on main holding the workspace: the scaffolded docs and the person's file.
+      const check = new GitOps({
+        cwd: join(root, "check-garden"),
+        auth: gitAuthFor(ghToken, repo.cloneUrl),
+      });
+      await check.clone(repo.cloneUrl);
+      const commits = await check.log(10);
+      expect(commits.map((c) => c.subject)).toEqual([
+        "Start Garden Planner from its Forerunner workspace",
+      ]);
+      expect(readFileSync(join(root, "check-garden", "notes.md"), "utf8")).toBe("# Notes\n");
+      expect(existsSync(join(root, "check-garden", "README.md"))).toBe(true);
+      expect(existsSync(join(root, "check-garden", ".git", "refs", "heads", "main"))).toBe(true);
+      // The change log names it as the person's change, confirmed in the Inbox.
+      const changes = await rt.store.changeLog.list({ project_id: id } as never);
+      expect(changes.map((c) => c.sentence).join("\n")).toContain(
+        "Created the private GitHub repository alice/garden-planner",
+      );
+      // The next run of the project's task works in a clone of it.
+      const session2 = await rt.store.session.insert({
+        agent_id: rt.agent.id,
+        project_id: id,
+        trigger: "manual",
+        status: "running",
+        runner: "pc",
+      });
+      const grant = await rt.sessionGrant(id);
+      const token = rt.tokens.issue({
+        runId: "run-session",
         sessionId: session2.id,
-        budgetUsdMicro: 1_000_000,
-        stepCap: 20,
-        deadlineMs: clock.now() + 60_000,
-        reserveShare: 0,
-      }),
-      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
-      signal: new AbortController().signal,
-    });
-    await rt.store.session.patch(session2.id, { status: "completed", ended_at: clock.nowIso() });
-    const clone = join(worktrees, safeSegment(task.id));
-    expect(existsSync(join(clone, ".git"))).toBe(true);
-    expect(readFileSync(join(clone, "notes.md"), "utf8")).toBe("# Notes\n");
-  });
-
-  it("the project page's button: the card says what is created, and a tap creates it", async () => {
-    const { id } = await projectWithCodeWork("Recipe Box");
-    const res = await req("/commands/execute", {
-      method: "POST",
-      body: JSON.stringify({
-        commands: [{ name: "repo.create", params: { project: id, private: true } }],
-        source: "ui",
+        agentId: rt.agent.id,
+        ownerHumanId: rt.human.id,
         projectId: id,
-        wordsUsed: "Create a repository (project page)",
-      }),
-    });
-    const pending = await json(res);
-    expect(pending.status).toBe("pending");
-    const cardJson = pending.card as Record<string, unknown>;
-    expect(cardJson.newValue).toBe("alice/recipe-box (private, under your GitHub account alice)");
-    expect(await hostHas("alice/recipe-box")).toBe(false);
-    const confirmed = await json(
-      await req(`/commands/${String(pending.pendingId)}/confirm`, {
-        method: "POST",
-        body: JSON.stringify({ answer: "tap" }),
-      }),
-    );
-    expect(confirmed.status).toBe("done");
-    expect(await hostHas("alice/recipe-box")).toBe(true);
-    expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/recipe-box"]);
-    // A second one for the same project is refused with the reason: it has one now.
-    const again = await json(
-      await req("/commands/execute", {
+        allowedTools: grant?.allowedTools ?? [],
+        allowedPaths: grant?.allowedPaths ?? [],
+        allowedDomains: [],
+        grantedSecrets: [],
+        budgetUsdMicro: 1_000_000,
+        depth: 0,
+        maxDepth: 2,
+        autonomy: 2,
+        planApproved: true,
+        expiresAt: new Date(clock.now() + 60_000).toISOString(),
+      });
+      await rt.executor.execute({
+        task: await rt.store.task.mustGet(task.id),
+        session: session2,
+        token,
+        budget: new SessionBudget({
+          sessionId: session2.id,
+          budgetUsdMicro: 1_000_000,
+          stepCap: 20,
+          deadlineMs: clock.now() + 60_000,
+          reserveShare: 0,
+        }),
+        item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      });
+      await rt.store.session.patch(session2.id, { status: "completed", ended_at: clock.nowIso() });
+      const clone = join(worktrees, safeSegment(task.id));
+      expect(existsSync(join(clone, ".git"))).toBe(true);
+      expect(readFileSync(join(clone, "notes.md"), "utf8")).toBe("# Notes\n");
+    },
+    REPO_WORK_MS,
+  );
+
+  it(
+    "the project page's button: the card says what is created, and a tap creates it",
+    async () => {
+      const { id } = await projectWithCodeWork("Recipe Box");
+      const res = await req("/commands/execute", {
         method: "POST",
         body: JSON.stringify({
-          commands: [{ name: "repo.create", params: { project: id } }],
+          commands: [{ name: "repo.create", params: { project: id, private: true } }],
           source: "ui",
+          projectId: id,
+          wordsUsed: "Create a repository (project page)",
         }),
-      }),
-    );
-    expect(again.status).toBe("refused");
-    expect(String(again.reason)).toContain("already has a repository (alice/recipe-box)");
-  });
+      });
+      const pending = await json(res);
+      expect(pending.status).toBe("pending");
+      const cardJson = pending.card as Record<string, unknown>;
+      expect(cardJson.newValue).toBe("alice/recipe-box (private, under your GitHub account alice)");
+      expect(await hostHas("alice/recipe-box")).toBe(false);
+      const confirmed = await json(
+        await req(`/commands/${String(pending.pendingId)}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        }),
+      );
+      expect(confirmed.status).toBe("done");
+      expect(await hostHas("alice/recipe-box")).toBe(true);
+      expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/recipe-box"]);
+      // A second one for the same project is refused with the reason: it has one now.
+      const again = await json(
+        await req("/commands/execute", {
+          method: "POST",
+          body: JSON.stringify({
+            commands: [{ name: "repo.create", params: { project: id } }],
+            source: "ui",
+          }),
+        }),
+      );
+      expect(again.status).toBe("refused");
+      expect(String(again.reason)).toContain("already has a repository (alice/recipe-box)");
+    },
+    REPO_WORK_MS,
+  );
 
-  it("at Autopilot (level 4) the agent creates the private repository itself, no card, and says so", async () => {
-    const { id } = await projectWithCodeWork("Bird Counter");
-    await rt.store.project.patch(id, { autonomy_level: 4 });
-    await session(id);
-    expect(await hostHas("alice/bird-counter")).toBe(true);
-    expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/bird-counter"]);
-    expect(await proposalCard(id)).toBeUndefined();
-    // The change is the agent's, on record, with the sentence the person reads.
-    const rows = await rt.store.changeLog.list({ project_id: id } as never);
-    const row = rows.find((r) => r.sentence.includes("alice/bird-counter"));
-    expect(row?.agent_id).toBe(rt.agent.id);
-    expect(row?.sentence).toContain("Created the private GitHub repository alice/bird-counter");
-  });
+  it(
+    "at Autopilot (level 4) the agent creates the private repository itself, no card, and says so",
+    async () => {
+      const { id } = await projectWithCodeWork("Bird Counter");
+      await rt.store.project.patch(id, { autonomy_level: 4 });
+      await session(id);
+      expect(await hostHas("alice/bird-counter")).toBe(true);
+      expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/bird-counter"]);
+      expect(await proposalCard(id)).toBeUndefined();
+      // The change is the agent's, on record, with the sentence the person reads.
+      const rows = await rt.store.changeLog.list({ project_id: id } as never);
+      const row = rows.find((r) => r.sentence.includes("alice/bird-counter"));
+      expect(row?.agent_id).toBe(rt.agent.id);
+      expect(row?.sentence).toContain("Created the private GitHub repository alice/bird-counter");
+    },
+    REPO_WORK_MS,
+  );
 
   it("a typed answer that is neither option is refused with the options; the card stays (U-034)", async () => {
     const { id } = await projectWithCodeWork("Seed Bank");

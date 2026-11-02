@@ -22,11 +22,22 @@ export interface PlanShape {
   successCriteria: string[];
   tasks: PlanTaskOut[];
   decision: { slug: string; title: string; body: string };
+  /**
+   * What the person's changes did to the plan ("Change the plan", design §3.3), in words, for
+   * the plan's reason: the tasks removed and added, and the words it could not place.
+   */
+  changed: string[];
 }
 
 export interface PlanOptions {
   /** `chain`: seven tasks, each waiting on the one before (FORERUNNER_BENCH_PLAN=chain). */
   kind: "default" | "chain";
+  /**
+   * Add a researcher task whose brief names a web address (FORERUNNER_BENCH_PLAN=research,
+   * alone or with chain: `chain,research`), so the plan card's "Cannot read the web on this
+   * computer" and the research path can be walked (ADR 0107).
+   */
+  research?: boolean;
   /** Add a task only the person can answer (FORERUNNER_BENCH_PERSON=1). */
   personTask: boolean;
   /** Tasks whose title contains one of these get risk tier 2 (FORERUNNER_BENCH_RISK2). */
@@ -36,9 +47,39 @@ export interface PlanOptions {
 export interface IntakeInput {
   project: string;
   goal: string;
+  /** The brief alone, without the person's changes after it. */
   brief: string;
   /** The request asked for "Plan size: small" (a short brief). */
   smallProject: boolean;
+  /**
+   * The person's words from "Change the plan" (design §3.3), in the order they asked; the
+   * later one wins where they differ. Empty for a plan from the brief alone.
+   */
+  changes?: readonly string[];
+}
+
+/**
+ * How the intake writes the person's changes after the brief (`briefWithChanges` in
+ * packages/runtime/src/session/intake.ts): one change in a sentence, several as a numbered list.
+ */
+const ONE_CHANGE = /\n\nThe person read the first plan and asked for this change: ([\s\S]*)$/;
+const MANY_CHANGES =
+  /\n\nThe person read the earlier plans and asked for these changes, in order; the later one wins where they differ:\n([\s\S]*)$/;
+
+/** The brief and the person's changes after it, as the intake request carries them. */
+export function splitChanges(text: string): { brief: string; changes: string[] } {
+  const one = ONE_CHANGE.exec(text);
+  if (one) return { brief: text.slice(0, one.index).trim(), changes: [one[1]?.trim() ?? ""] };
+  const many = MANY_CHANGES.exec(text);
+  if (many)
+    return {
+      brief: text.slice(0, many.index).trim(),
+      changes: (many[1] ?? "")
+        .split("\n")
+        .map((l) => /^\s*\d+\.\s+(.*)$/.exec(l)?.[1]?.trim() ?? "")
+        .filter(Boolean),
+    };
+  return { brief: text, changes: [] };
 }
 
 const WEB = /\b(web\s?site|web\s?page|webpage|html|landing page|site|page)\b/i;
@@ -54,9 +95,11 @@ function webTasks(quotes: boolean): PlanTaskOut[] {
       key: "page",
       title: "Create the page skeleton in index.html",
       outcome: `index.html is a valid HTML5 page that loads styles.css and script.js and has a place for ${what}.`,
+      // Only what this task's own run makes: styles.css and script.js are written by the tasks
+      // after it, so a criterion that the page links them could not be met here (C-10).
       acceptanceCriteria: [
         "index.html exists and is valid HTML5",
-        "index.html links styles.css and script.js",
+        `index.html has a place for ${what}`,
       ],
       priority: "high",
       dependsOn: [],
@@ -244,6 +287,171 @@ function chainTasks(web: boolean): PlanTaskOut[] {
   }));
 }
 
+/**
+ * The researcher's task of FORERUNNER_BENCH_PLAN=research: its outcome names a web address, so
+ * the stand-in researcher reads it with `web_fetch` when that is offered and writes the notes
+ * from it (or says under "Uncertainty" that the page could not be read).
+ */
+function researchTask(): PlanTaskOut {
+  return {
+    key: "research",
+    title: "Research the subject in research/notes.md",
+    outcome:
+      "research/notes.md says what the brief needs to know, each fact with the address of the page it came from, starting at https://example.com/.",
+    acceptanceCriteria: ["research/notes.md cites the page each fact came from"],
+    priority: "medium",
+    dependsOn: [],
+    specialist: "researcher",
+  };
+}
+
+// ---------------------------------------------------------------------------------------
+// "Change the plan" (design §3.3): the stand-in reads the person's words
+// ---------------------------------------------------------------------------------------
+
+const REMOVE = /^(?:please\s+)?(?:drop|remove|delete|skip|cut|omit|leave\s+out)\s+(.+)$/i;
+const ADD = /^(?:please\s+)?(?:also\s+)?(?:add|include|insert)\s+(.+)$/i;
+/** A clause starts at a verb the stand-in knows; "and", "then", commas and full stops join them. */
+const CLAUSE_BREAK =
+  /\s*(?:[,;.]\s*(?:and\s+|then\s+)?|\s+(?:and\s+then|and|then)\s+)(?=(?:please\s+)?(?:also\s+)?(?:drop|remove|delete|skip|cut|omit|leave\s+out|add|include|insert)\b)/i;
+const NOT_A_NAME = new Set([
+  "the",
+  "a",
+  "an",
+  "one",
+  "another",
+  "and",
+  "for",
+  "with",
+  "of",
+  "task",
+]);
+
+/** "the check task." -> "check"; "a README task" -> "README". */
+function objectOf(words: string): string {
+  return words
+    .replace(/[.!?]+$/, "")
+    .replace(/^(?:the|a|an|one|another)\s+/i, "")
+    .replace(/\s+(?:tasks?|steps?)$/i, "")
+    .trim();
+}
+
+/** The tasks a name points at: the key, the title holding it, or every word of it (or its stem). */
+function named(tasks: readonly PlanTaskOut[], name: string): PlanTaskOut[] {
+  const n = name.toLowerCase();
+  const words = n.split(/[^a-z0-9.]+/).filter((w) => w.length >= 3 && !NOT_A_NAME.has(w));
+  const hit = (t: PlanTaskOut, stem: boolean) => {
+    const title = t.title.toLowerCase();
+    if (t.key === n || title.includes(n)) return true;
+    return (
+      words.length > 0 &&
+      words.every((w) => title.includes(stem ? w.slice(0, Math.max(4, w.length - 3)) : w))
+    );
+  };
+  const exact = tasks.filter((t) => hit(t, false));
+  return exact.length ? exact : tasks.filter((t) => hit(t, true));
+}
+
+/** The task added for "add <name>": the stand-in's own README or check task, else the words. */
+function addedTask(
+  name: string,
+  clause: string,
+  tasks: readonly PlanTaskOut[],
+  ctx: { web: boolean; quotes: boolean; goal: string },
+): PlanTaskOut {
+  const full = ctx.web ? webTasks(ctx.quotes) : genericTasks(ctx.goal);
+  const template = /readme/i.test(name)
+    ? full.find((t) => t.key === "readme")
+    : /\b(?:checks?|tests?)\b/i.test(name)
+      ? full.find((t) => t.key === "check" || t.key === "test")
+      : undefined;
+  const keys = new Set(tasks.map((t) => t.key));
+  const first = tasks.find((t) => t.specialist !== "person")?.key;
+  const base: PlanTaskOut = template ?? {
+    key: slug(name, 20),
+    title: `${clause.charAt(0).toUpperCase()}${clause.slice(1)}`
+      .replace(/[.!?]+$/, "")
+      .replace(/\s+(?:tasks?|steps?)$/i, ""),
+    outcome: `${name}, as the person asked when they changed the plan.`,
+    acceptanceCriteria: [`${name.charAt(0).toUpperCase()}${name.slice(1)} is done as asked`],
+    priority: "medium",
+    dependsOn: [],
+    specialist: "coder",
+  };
+  let key = base.key;
+  for (let i = 2; keys.has(key); i++) key = `${base.key}-${i}`;
+  const deps = base.dependsOn.filter((d) => keys.has(d));
+  return {
+    ...base,
+    key,
+    dependsOn: deps.length ? deps : first ? [first] : [],
+  };
+}
+
+/**
+ * The plan after the person's changes, in order: "drop|remove|delete|skip|cut|omit|leave out
+ * <name>" removes the tasks it names (its key, a title holding it, or every word of it), "add|
+ * include|insert <name>" adds a task (the stand-in's own README or check task for a README,
+ * check or test, else a task titled with the person's words), and anything else is named as
+ * words it could not place. The plan keeps at least one task; a task that waited on a removed
+ * one waits on what that one waited on.
+ */
+export function applyChanges(
+  tasks: readonly PlanTaskOut[],
+  changes: readonly string[],
+  ctx: { web: boolean; quotes: boolean; goal: string },
+): { tasks: PlanTaskOut[]; changed: string[] } {
+  let out = [...tasks];
+  const changed: string[] = [];
+  for (const change of changes) {
+    for (const raw of change.split(CLAUSE_BREAK)) {
+      const said = raw.trim();
+      const clause = said.replace(/[.!?]+$/, "");
+      if (!clause) continue;
+      const remove = REMOVE.exec(clause);
+      const add = remove ? null : ADD.exec(clause);
+      if (remove?.[1]) {
+        const hits = named(out, objectOf(remove[1]));
+        if (!hits.length) {
+          changed.push(`could not place "${said}": no task is called that`);
+          continue;
+        }
+        let gone = hits;
+        if (gone.length >= out.length) {
+          const keep = gone.at(0) as PlanTaskOut;
+          gone = gone.slice(1);
+          changed.push(`kept "${keep.title}" so the plan has a task`);
+        }
+        const removed = new Map(gone.map((t) => [t.key, t]));
+        const resolve = (key: string, seen = new Set<string>()): string[] => {
+          const r = removed.get(key);
+          if (!r) return [key];
+          if (seen.has(key)) return [];
+          seen.add(key);
+          return r.dependsOn.flatMap((d) => resolve(d, seen));
+        };
+        out = out
+          .filter((t) => !removed.has(t.key))
+          .map((t) => ({ ...t, dependsOn: [...new Set(t.dependsOn.flatMap((d) => resolve(d)))] }));
+        for (const t of gone) changed.push(`removed "${t.title}"`);
+      } else if (add?.[1]) {
+        const name = objectOf(add[1]);
+        const task = addedTask(name, clause, out, ctx);
+        const already = out.find((t) => t.title === task.title);
+        if (already) {
+          changed.push(`kept "${already.title}", which was already in the plan`);
+          continue;
+        }
+        out = [...out, task];
+        changed.push(`added "${task.title}"`);
+      } else {
+        changed.push(`could not place "${said}"`);
+      }
+    }
+  }
+  return { tasks: out, changed };
+}
+
 function personTask(web: boolean): PlanTaskOut {
   return {
     key: "decide",
@@ -282,6 +490,14 @@ export function planFor(input: IntakeInput, opts: PlanOptions): PlanShape {
       ...(last ? [{ ...last, dependsOn: [...last.dependsOn, decide.key] }] : []),
     ];
   }
+  if (opts.research) tasks = [...tasks, researchTask()];
+  // The person's changes come last: they change the plan the brief gave (design §3.3).
+  const asked = applyChanges(tasks, input.changes ?? [], {
+    web,
+    quotes,
+    goal: input.goal || input.brief,
+  });
+  tasks = asked.tasks;
   if (opts.risk2.length)
     tasks = tasks.map((t) =>
       opts.risk2.some((n) => n && t.title.toLowerCase().includes(n.toLowerCase()))
@@ -335,6 +551,7 @@ export function planFor(input: IntakeInput, opts: PlanOptions): PlanShape {
       : ["The first version runs", "README.md says how to run it"],
     tasks,
     decision,
+    changed: asked.changed,
   };
 }
 
@@ -367,7 +584,13 @@ export function intakeProposal(input: IntakeInput, opts: PlanOptions): Record<st
       };
   return {
     plan: {
-      reason: `planned from the brief for ${name}`,
+      // What the person's changes did, in words (the plan's reason is in the model-call log).
+      reason: plan.changed.length
+        ? `planned from the brief for ${name}; the person's changes: ${plan.changed.join("; ")}`.slice(
+            0,
+            480,
+          )
+        : `planned from the brief for ${name}`,
       milestones: [
         {
           name: plan.milestone,
@@ -406,15 +629,19 @@ export function intakeProposal(input: IntakeInput, opts: PlanOptions): Record<st
 // What a specialist writes
 // ---------------------------------------------------------------------------------------
 
+/** A file name in a brief, a dotted one too ("test/main.test.js"; before, it was not seen). */
 const FILE_RE =
-  /(?:^|[\s(`'"])((?:[\w-]+\/)*[\w-]+\.(?:html|css|js|mjs|ts|md|json|txt|py|yml|yaml|csv|svg))\b/gi;
+  /(?:^|[\s(`'"])((?:[\w-]+\/)*[\w-]+(?:\.[\w-]+)*\.(?:html|css|js|mjs|ts|md|json|txt|py|yml|yaml|csv|svg))\b/gi;
 
 /** Files a brief names (title, outcome, criteria), in order, at most six. */
 export function filesNamed(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(FILE_RE)) {
     const f = m[1];
-    if (f && !out.includes(f) && !/^(e\.g|i\.e)\./i.test(f)) out.push(f);
+    // "Node.js", "Vue.js": a technology's name, not a file in the folder (the critic would
+    // look for it and say it is missing).
+    if (f && !out.includes(f) && !/^(e\.g|i\.e)\./i.test(f) && !/^[A-Z][A-Za-z0-9]*\.js$/.test(f))
+      out.push(f);
   }
   return out.slice(0, 6);
 }

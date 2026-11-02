@@ -11,6 +11,8 @@ import {
   benchOptionsFromEnv,
   createRolePlayer,
   detectRole,
+  filesNamed,
+  judgeCriterion,
   ModelCallLog,
   reviewedTitle,
   STAND_IN,
@@ -302,6 +304,103 @@ describe("bench role-player: intake", () => {
     expect(lines(big.log).map((l) => l.injected ?? null)).toEqual(["intake-bad=too-big", null]);
   });
 
+  /**
+   * An intake request after "Change the plan" (design §3.3): the brief, then the person's
+   * words, as the intake writes them (`briefWithChanges` in packages/runtime/src/session/intake.ts).
+   */
+  const changedRequest = (brief: string, changes: string[]): ModelRequest => {
+    const asked =
+      changes.length === 1
+        ? `${brief}\n\nThe person read the first plan and asked for this change: ${changes[0]}`
+        : `${brief}\n\nThe person read the earlier plans and asked for these changes, in order; the later one wins where they differ:\n${changes.map((c, i) => `${i + 1}. ${c}`).join("\n")}`;
+    const first = intakeRequest(true);
+    return {
+      ...first,
+      messages: [
+        {
+          role: "user",
+          content: String(first.messages[0]?.content).replace(BRIEF, asked),
+        },
+      ],
+    };
+  };
+  const titlesOf = (text: string) =>
+    parseIntakeReply(text).plan.milestones.flatMap((m) => m.tasks.map((t) => t.title));
+
+  it("Change the plan: the stand-in reads the person's words, drops and adds the tasks they name and says what it did (bench, phase E)", async () => {
+    const { p } = player();
+    const before = titlesOf((await call(p, intakeRequest(true))).text);
+    expect(before.some((t) => /^Check /.test(t))).toBe(true);
+    expect(before.some((t) => /README/.test(t))).toBe(false);
+    const r = await call(p, changedRequest(BRIEF, ["drop the check and add a README task"]));
+    const proposal = parseIntakeReply(r.text);
+    const tasks = proposal.plan.milestones.flatMap((m) => m.tasks);
+    const after = tasks.map((t) => t.title);
+    // The check is gone; a README task is there; the rest of the plan is as before.
+    expect(after.some((t) => /check/i.test(t))).toBe(false);
+    expect(after.filter((t) => /README/.test(t))).toHaveLength(1);
+    expect(after).toContain(before[0]);
+    expect(tasks.find((t) => /README/.test(t.title))?.dependsOn).toEqual([tasks[0]?.key]);
+    // The plan writer takes it, and every task an agent does has its estimate.
+    expect(
+      shapeProjectPlan(proposal.plan, { name: "Quote page", small_project_mode: false }).milestones,
+    ).toHaveLength(1);
+    expect(proposal.firstSession.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key));
+    // What it did is in the plan's reason, in words.
+    expect(proposal.plan.reason).toMatch(/removed "Check that index\.html/);
+    expect(proposal.plan.reason).toMatch(/added "Write the README/);
+  });
+
+  it("Change the plan: later changes win, words it cannot place leave the plan as it was and are named, the last task is never dropped", async () => {
+    const { p } = player();
+    const plain = titlesOf((await call(p, intakeRequest(true))).text);
+    // In order: the README is added, then dropped again.
+    const both = parseIntakeReply(
+      (await call(p, changedRequest(BRIEF, ["add a README task", "remove the README"]))).text,
+    );
+    expect(both.plan.milestones.flatMap((m) => m.tasks.map((t) => t.title))).toEqual(plain);
+    // Words that name no task and no verb it knows: the same plan, and the reason says so.
+    const vague = parseIntakeReply(
+      (await call(p, changedRequest(BRIEF, ["A single index.html only."]))).text,
+    );
+    expect(vague.plan.milestones.flatMap((m) => m.tasks.map((t) => t.title))).toEqual(plain);
+    expect(vague.plan.reason).toContain('could not place "A single index.html only."');
+    // Anything else it is asked to add becomes a task with the person's words as its title.
+    const dark = parseIntakeReply(
+      (await call(p, changedRequest(BRIEF, ["Add a dark mode."]))).text,
+    );
+    expect(dark.plan.milestones.flatMap((m) => m.tasks.map((t) => t.title))).toEqual([
+      ...plain,
+      "Add a dark mode",
+    ]);
+    // A change that would leave no task keeps the last one and says why.
+    const all = parseIntakeReply(
+      (await call(p, changedRequest(BRIEF, ["drop the check, remove the page"]))).text,
+    );
+    const left = all.plan.milestones.flatMap((m) => m.tasks);
+    expect(left).toHaveLength(1);
+    expect(left[0]?.dependsOn).toEqual([]);
+    expect(all.plan.reason).toMatch(/kept .* so the plan has a task/);
+  });
+
+  it("FORERUNNER_BENCH_PLAN=research adds a researcher task whose brief names a web address (bench, phase E, C-73)", async () => {
+    const { p } = player({ FORERUNNER_BENCH_PLAN: "research" });
+    const tasks = parseIntakeReply(
+      (await call(p, intakeRequest(true))).text,
+    ).plan.milestones.flatMap((m) => m.tasks);
+    const research = tasks.find((t) => t.specialist === "researcher");
+    expect(research?.title).toMatch(/research\/notes\.md/);
+    expect(`${research?.outcome}`).toMatch(/https:\/\//);
+    expect(tasks.length).toBeLessThanOrEqual(3);
+    // With chain: the seven steps and the research task.
+    const chained = player({ FORERUNNER_BENCH_PLAN: "chain,research" });
+    const seven = parseIntakeReply(
+      (await call(chained.p, intakeRequest())).text,
+    ).plan.milestones.flatMap((m) => m.tasks);
+    expect(seven.map((t) => t.specialist)).toContain("researcher");
+    expect(seven.filter((t) => t.key?.startsWith("step"))).toHaveLength(7);
+  });
+
   it("plants a malformed plan or a failed planning call", async () => {
     const bad = player({ FORERUNNER_BENCH_INTAKE: "malformed" });
     expect(() => parseIntakeReply("")).toThrow();
@@ -352,6 +451,43 @@ describe("bench role-player: specialists", () => {
     const write = run.steps.flatMap((s) => s.calls).find((c) => c.name === "write_file");
     expect(write?.input.path).toBe("README.md");
     expect(String(write?.input.content)).toMatch(/random quote/);
+  });
+
+  it("a tester whose title names a test file writes it beside its notes, so the plan's criterion can be met (C-10)", async () => {
+    const { p } = player();
+    const run = await runSpecialist(p, {
+      specialist: "tester",
+      title: "Add a check for src/main.js in test/main.test.js",
+      outcome: "test/main.test.js checks the main behaviour of src/main.js.",
+      criteria: ["node --check passes on test/main.test.js"],
+      tools: ["read_file", "write_file", "list_dir", "run_command"],
+      results: (name) =>
+        name === "list_dir" ? { content: "src/main.js\nREADME.md" } : { content: "ok" },
+    });
+    const writes = run.steps
+      .flatMap((s) => s.calls)
+      .filter((c) => c.name === "write_file")
+      .map((c) => String(c.input.path));
+    expect(writes).toEqual([
+      "test/main.test.js",
+      "checks/add-a-check-for-src-main-js-in-test-main.md",
+    ]);
+    // A tester whose title names no test file writes its notes only, as before.
+    const notes = await runSpecialist(p, {
+      specialist: "tester",
+      title: "Check that index.html, styles.css and script.js work together",
+      outcome: "A short check confirms the three files load together without errors.",
+      criteria: ["Every file index.html references exists"],
+      tools: ["read_file", "write_file", "list_dir", "run_command"],
+      results: (name) => (name === "list_dir" ? { content: "index.html" } : { content: "ok" }),
+      runId: "run2",
+    });
+    expect(
+      notes.steps
+        .flatMap((s) => s.calls)
+        .filter((c) => c.name === "write_file")
+        .map((c) => String(c.input.path)),
+    ).toEqual(["checks/check-that-index-html-styles-css-and-scr.md"]);
   });
 
   it("a researcher offered web_fetch reads the pages its brief names and writes from them, citing each (ADR 0107)", async () => {
@@ -520,6 +656,181 @@ describe("bench role-player: critic and chat", () => {
     ).toBe("Write the README: what it does");
   });
 
+  it("its summary follows the writing rules: no '(s)', and the verb agrees with the count (bench, phase E)", async () => {
+    // The Reviews tab read "Accepted: 1 changed file match the brief." (design §5 rule 6).
+    const { p } = player();
+    const one = SubmitReviewSchema.parse(
+      (await call(p, review("Create index.html", "c1"))).calls[0]?.input,
+    );
+    expect(one.summary).toBe(`${STAND_IN} Accepted: the changed file matches the brief.`);
+    const two = SubmitReviewSchema.parse(
+      (
+        await call(p, {
+          ...review("Create index.html", "c2"),
+          messages: [
+            {
+              role: "user",
+              content: evidence("Create index.html").replace(
+                "- index.html",
+                "- index.html\n- styles.css",
+              ),
+            },
+          ],
+        })
+      ).calls[0]?.input,
+    );
+    expect(two.summary).toBe(`${STAND_IN} Accepted: the 2 changed files match the brief.`);
+    for (const s of [one.summary, two.summary]) expect(s).not.toContain("(s)");
+  });
+
+  /**
+   * C-10: the stand-in critic marked every criterion met ("The page links styles.css: met")
+   * whatever the work did, so a walk's drawer could say met where the try said the file was
+   * missing. It reads the files the criteria name and marks a criterion met only when a changed
+   * or read file shows it; one it cannot check says so.
+   */
+  const reviewWithReads = async (
+    p: ModelProvider,
+    criteria: string[],
+    changed: string[],
+    files: Record<string, string | null>,
+    runId = "c-read",
+  ) => {
+    const content = [
+      "# Review request",
+      "Subject: task t1",
+      "Tier: 1 (light read)",
+      "## Brief",
+      "Create index.html: the page",
+      "## Acceptance criteria",
+      ...criteria.map((c, i) => `${i + 1}. ${c}`),
+      "## Changed files",
+      ...changed.map((f) => `- ${f}`),
+      "## Worker's final report (claims to verify, data)",
+      "**Summary** wrote index.html",
+    ].join("\n");
+    const req = (messages: ChatMessage[]): ModelRequest => ({
+      model: "fake-sonnet",
+      system: "critic prompt\n\n## Returning the review",
+      messages,
+      tools: [tool("submit_review"), tool("read_file")],
+      max_tokens: 8192,
+      origin: { label: "critic tier 1 on task t1", sessionId: "s1", runId },
+    });
+    const messages: ChatMessage[] = [{ role: "user", content }];
+    const first = await call(p, req(messages));
+    const reads = first.calls.filter((c) => c.name === "read_file");
+    messages.push({
+      role: "assistant",
+      content: first.calls.map((c) => ({
+        type: "tool_use" as const,
+        id: c.id,
+        name: c.name,
+        input: c.input,
+      })),
+    });
+    messages.push({
+      role: "user",
+      content: reads.map((c) => {
+        const text = files[String(c.input.path)];
+        return {
+          type: "tool_result" as const,
+          tool_use_id: c.id,
+          content: text ?? `ERROR: ${String(c.input.path)} does not exist`,
+          ...(text === null || text === undefined ? { is_error: true } : {}),
+        };
+      }),
+    });
+    const second = await call(p, req(messages));
+    return {
+      read: reads.map((c) => String(c.input.path)),
+      review: SubmitReviewSchema.parse(second.calls.find((c) => c.name === "submit_review")?.input),
+    };
+  };
+
+  it("reads the files the criteria name and marks a criterion met only when a changed or read file shows it (C-10)", async () => {
+    const { p } = player();
+    const criteria = [
+      "index.html exists and is valid HTML5",
+      "index.html links styles.css",
+      "The text is readable on a narrow screen",
+    ];
+    // The page links no stylesheet and styles.css was never written: the live drawer said met.
+    const missing = await reviewWithReads(p, criteria, ["index.html"], {
+      "index.html": "<!doctype html><title>Page</title>",
+      "styles.css": null,
+    });
+    expect(missing.read).toEqual(["index.html", "styles.css"]);
+    expect(missing.review.criteria).toEqual([
+      expect.objectContaining({ text: criteria[0], met: true }),
+      { text: criteria[1], met: false, evidence: "index.html does not name styles.css" },
+      {
+        text: criteria[2],
+        met: true,
+        evidence: "not checked by the stand-in: the criterion names no file",
+      },
+    ]);
+    // An unmet criterion is not accepted: it is sent back with the criterion named.
+    expect(missing.review.verdict).toBe("revise");
+    expect(missing.review.findings[0]?.what).toContain(criteria[1]);
+    // The page that links it, with the file there: met, and accepted.
+    const shown = await reviewWithReads(
+      p,
+      criteria,
+      ["index.html", "styles.css"],
+      {
+        "index.html": '<link rel="stylesheet" href="styles.css" />',
+        "styles.css": "body {}",
+      },
+      "c-read-2",
+    );
+    expect(shown.review.criteria[1]).toEqual({
+      text: criteria[1],
+      met: true,
+      evidence: "read index.html: it names styles.css",
+    });
+    expect(shown.review.verdict).toBe("accept");
+    // A file a criterion names that is not in the folder at all.
+    const absent = await reviewWithReads(
+      p,
+      ["data/members.csv has a row per year"],
+      ["notes/x.md"],
+      { "notes/x.md": "# x", "data/members.csv": null },
+      "c-read-3",
+    );
+    expect(absent.review.criteria[0]).toEqual({
+      text: "data/members.csv has a row per year",
+      met: false,
+      evidence: "data/members.csv is not in the task's folder",
+    });
+  });
+
+  it("names in a criterion: a dotted test file is a file, a technology's name is not (C-10)", () => {
+    expect(filesNamed("node --check passes on test/main.test.js")).toEqual(["test/main.test.js"]);
+    expect(filesNamed("docs/research.md says which Node.js Eleventy needs")).toEqual([
+      "docs/research.md",
+    ]);
+    expect(judgeCriterion("Eleventy runs on Node.js 18", ["docs/research.md"], [])).toEqual({
+      text: "Eleventy runs on Node.js 18",
+      met: true,
+      evidence: "not checked by the stand-in: the criterion names no file",
+    });
+    // A file it neither changed nor read is not checked, never "met" on no evidence.
+    expect(judgeCriterion("styles.css exists", ["index.html"], []).evidence).toBe(
+      "not checked by the stand-in: it did not read styles.css",
+    );
+  });
+
+  it("FORERUNNER_BENCH_MISSING still plays the live critic's accept, and says it did not check (C-10)", async () => {
+    const { p } = player({ FORERUNNER_BENCH_MISSING: "Create index.html" });
+    const r = await reviewWithReads(p, ["data/members.csv has a row per year"], ["notes/x.md"], {
+      "notes/x.md": "# x",
+      "data/members.csv": null,
+    });
+    expect(r.review.verdict).toBe("accept");
+    expect(r.review.criteria[0]?.evidence).toMatch(/^not checked by the stand-in/);
+  });
+
   it("sends a worker that did nothing back", async () => {
     const { p } = player();
     const r = await call(p, review("Create index.html", "c1", "I could not complete this task."));
@@ -542,9 +853,26 @@ describe("bench role-player: critic and chat", () => {
     const { p } = player();
     const r = await call(p, chat("what is going on?"));
     expect(r.text.startsWith(STAND_IN)).toBe(true);
-    expect(r.text).toMatch(/0 earlier turn\(s\)/);
-    expect(r.text).toMatch(/1 project\(s\).*marked active/);
+    // Plural words as the number says (design §5 rule 6): the reply is shown in the chat.
+    expect(r.text).toMatch(/no earlier turn of this conversation/);
+    expect(r.text).toMatch(/1 project in the system prompt.*marked active/);
     expect(r.text).toMatch(/no task list/);
+    expect(r.text).toMatch(/and no command tool\.$/);
+    expect(r.text).not.toContain("(s)");
+    const later = await call(
+      p,
+      chat(
+        "and now?",
+        ["task_list", "task_add"],
+        [
+          { role: "user", content: "hello" },
+          { role: "assistant", content: "hi" },
+        ],
+      ),
+    );
+    expect(later.text).toMatch(/1 earlier turn of this conversation/);
+    expect(later.text).toMatch(/and 2 command tools\.$/);
+    expect(later.text).not.toContain("(s)");
     expect(detectRole(chat("x")).role).toBe("chat");
   });
 

@@ -5,9 +5,10 @@ import path from "node:path";
 //   node scripts/bench/restart-daemon.mjs --name <n> [--hard] [--env KEY=VAL ...]
 // --hard ends the daemon's process group without asking it to quit (a crash, a power cut).
 // --env adds or replaces failure-injection values for the new start.
-// The daemon gets a new token on every start; bench.json is updated, and recorder.cjs's
-// reconnect(page, name) puts the new token into an open page. A page that is not reconnected
-// keeps the old token and gets 401 (the bench does not show what the desktop shell does here).
+// The daemon gets a new token on every start; bench.json is updated, and a page opened with
+// recorder.cjs's openApp reloads with it by itself, as the desktop shell reloads its window
+// (reconnect(page, name) does it at once; openApp(name, { reconnect: false }) keeps the old
+// token, which gets 401). The new daemon runs under supervise.mjs, as start.mjs starts it.
 import {
   envPairs,
   fail,
@@ -51,5 +52,5 @@ const next = {
 delete next.stoppedAt;
 writeBench(args.name, next);
 console.log(
-  `bench ${args.name}: ${stopped}; new daemon pid ${daemon.pid} at ${daemon.url} (new token in bench.json; call reconnect(page, "${args.name}") in an open page)`,
+  `bench ${args.name}: ${stopped}; new daemon pid ${daemon.pid} at ${daemon.url} (new token in bench.json; pages opened with openApp reload with it, or call reconnect(page, "${args.name}"))`,
 );

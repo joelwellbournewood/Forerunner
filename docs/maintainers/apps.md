@@ -304,7 +304,10 @@ the page is open (a `session.ended` event on the stream, or a `session.changed` 
 status from the poll) closes the stream after one last read of the header and the log. The page
 reuses the provider's `streamOptions` (`useStreamOptions`), so tests poll fast. Its log shows
 the events whose `audience` is `person` (design §3.7: names, no event type names, at most about
-eight lines per task); **Details** (`details-toggle`, the page's one Details checkbox) adds the
+eight lines per task; the fake daemon splits its lines with the daemon's `eventAudience` and the
+line's payload, `fakeEventAudience`, so the marks `again`, `handedFrom`, `review`, `couldNot` and
+a killed run split them on the screen tests as on the daemon, `fake-daemon-audience.test.ts`);
+**Details** (`details-toggle`, the page's one Details checkbox) adds the
 `detail` events with their seq and type (`event-type`), the level filters and the raw payloads
 (`event-raw`). Its badge shows
 the session's `statusText` ("Working", "Done", "Stopped by you", "Interrupted: Forerunner

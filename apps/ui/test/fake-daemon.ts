@@ -578,6 +578,23 @@ const SCRIPTED_PERSON_TYPES = new Set([
   "escalation",
 ]);
 
+/**
+ * Who a line of the stand-in's log is for: the daemon's split (`eventAudience` with the line's
+ * payload, so its marks `again`, `handedFrom`, `review`, `couldNot` and a killed run's outcome
+ * split it as the daemon's `eventView` does; validation rule 3), and the scripted lines that
+ * stand for what a person follows. Before, the payload was not passed, so a marked line was a
+ * person line here and a detail on the real daemon.
+ */
+export function fakeEventAudience(type: string, payload: unknown): EventView["audience"] {
+  const p =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  return eventAudience(type, p) === "person" || SCRIPTED_PERSON_TYPES.has(type)
+    ? "person"
+    : "detail";
+}
+
 function errorBody(c: Context, status: 400 | 401 | 403 | 404 | 409, code: string, message: string) {
   return c.json({ code, message }, status);
 }
@@ -6321,10 +6338,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       cost: money(costUsdMicro),
       at: new Date().toISOString(),
       level,
-      // The daemon's split (design §3.7); the stand-in's scripted lines (`task.claimed`,
-      // `run.*`, `escalation`) stand for what a person follows, so they are person lines too.
-      audience:
-        eventAudience(type) === "person" || SCRIPTED_PERSON_TYPES.has(type) ? "person" : "detail",
+      // The daemon's split (design §3.7), with the line's payload (`fakeEventAudience`).
+      audience: fakeEventAudience(type, payload),
     };
     state.events.push(event);
     emit("session.event", event);
