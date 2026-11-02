@@ -2409,7 +2409,11 @@ running or in review, or of someone else's, is not listed; a host that does not 
 `error` in words. `GET /projects/:id/docs` reads `docsInPullRequests` and marks a doc missing on
 the default branch that waits in such a PR (`pullRequest` and the note "waiting in pull request
 #N: merge it to add it"). The runner's `task.files` event carries the task's `prUrl` and `branch`,
-and its line reads "Changed index.html, in pull request #2." (`prNumberWords`). The chat's
+and its line reads "Changed index.html, in pull request #2." (`prNumberWords`); `pr.left_open`
+reads "Pull request #3 waits for you to merge it: Forerunner merges only at Trusted."
+(`leftOpenWords`: the merge step's "PR left open for you:" prefix and URLs taken out, the level's
+refusal in the setting's name) and `pr.merged` "Merged pull request #5."; before, both carried the
+URL and "autonomy level 2 does not merge (level 3 Trusted does)". The chat's
 `# Your files` for a repository project (`repositoryFacts`, `filesBlock`) names the repository,
 says the work waits in pull requests until the person merges it, lists the done tasks' PR links
 and this computer's copy of the default branch; a folder project's names the folder.

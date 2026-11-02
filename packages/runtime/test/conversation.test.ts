@@ -1175,7 +1175,9 @@ describe("chat context: where the files are (live, 2026-11-01; ADR 0104)", () =>
     // Live, the chat answered "where are my files?" with "the files are in the project folder
     // you already set up", naming no folder. For a project linked to a repository the work
     // waits in pull requests until the person merges them.
-    const w = await setup([textReply("In pull request #2 on o/game.")], { docs: true });
+    const w = await setup([textReply("In pull request #2 on o/game.")], {
+      docs: { "README.md": "# Game\n" },
+    });
     await w.store.project.patch(w.game, { repos: ["o/game"] });
     await w.store.task.insert({
       project_id: w.game,
@@ -1208,7 +1210,7 @@ describe("chat context: where the files are (live, 2026-11-01; ADR 0104)", () =>
   });
 
   it("a project's folder: the folder itself", async () => {
-    const w = await setup([textReply("In your folder.")], { docs: true });
+    const w = await setup([textReply("In your folder.")], { docs: { "README.md": "# Game\n" } });
     await w.chat("where are my files?");
     expect(w.firstUser()).toMatch(/# Your files\nThe project's folder: \S+/);
     expect(w.firstUser()).not.toContain("The repository:");

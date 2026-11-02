@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, run, SimulatedClock } from "@forerunner/platform";
 import { KillSwitch, SessionBudget, type TaskExecutor, TokenIssuer } from "@forerunner/runtime";
@@ -268,6 +268,56 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
       "Start the repository with a README",
     ]);
     expect(res.changedFiles).toEqual(["index.html"]);
+    await w.store.close();
+  });
+
+  it("a push the host refuses fails the task in words with what to do, not git's output", async () => {
+    // Before: "push failed: git push fr/... failed: remote: ... error: failed to push some refs".
+    const w = await world();
+    // The host refuses every push to the repository, as GitHub does for a read-only token.
+    const hook = join(w.bare, "hooks", "pre-receive");
+    writeFileSync(
+      hook,
+      "#!/bin/sh\necho 'Permission to o/sample denied to the token.' >&2\nexit 1\n",
+    );
+    chmodSync(hook, 0o755);
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Add health endpoint",
+      outcome: "GET /health works",
+      acceptance_criteria: ["returns 200"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: innerWriting({ "health.ts": "export const ok = true;\n" }),
+      repoFor: async () => ({ clone: w.bare, repo: { owner: "o", name: "sample" }, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    const res = await exec.execute({
+      task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.summary).toBe(
+      `Forerunner could not push the branch ${res.branch} to o/sample: GitHub refused it (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`,
+    );
+    expect(res.summary).not.toContain("git push");
     await w.store.close();
   });
 

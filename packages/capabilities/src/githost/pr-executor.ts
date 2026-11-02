@@ -253,7 +253,7 @@ export class PrTaskExecutor implements TaskExecutor {
     } catch (e) {
       return {
         outcome: "failed",
-        summary: `push failed: ${errorMessage(e)}`,
+        summary: pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
         costUsdMicro: result.costUsdMicro,
         branch,
       };
@@ -356,7 +356,7 @@ export class PrTaskExecutor implements TaskExecutor {
       } catch (e) {
         return {
           outcome: "failed",
-          summary: `push failed: ${errorMessage(e)}`,
+          summary: pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
           costUsdMicro: 0,
           branch,
         };
@@ -511,6 +511,33 @@ export class PrTaskExecutor implements TaskExecutor {
     });
     return pr.htmlUrl;
   }
+}
+
+/**
+ * A push the host refused, in words with what to do (design §5.8): before, the task's reason was
+ * git's own output ("push failed: git push fr/... failed: remote: ... error: failed to push some
+ * refs"), which the person read on the Tasks tab and in the session result.
+ */
+export function pushFailedWords(repoName: string, branch: string, e: unknown): string {
+  const raw = errorMessage(e);
+  const head = `Forerunner could not push the branch ${branch} to ${repoName}`;
+  if (
+    /could not resolve host|unable to access|timed out|connection (refused|reset)|network/i.test(
+      raw,
+    )
+  )
+    return `${head}: GitHub could not be reached. Try again later.`;
+  if (
+    /\b(401|403)\b|denied|permission|not allowed|protected branch|authentication|no token/i.test(
+      raw,
+    )
+  )
+    return `${head}: GitHub refused it (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`;
+  const said = raw
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^remote:\s*/i, "").trim())
+    .find((l) => l && !/^(git push .* failed:?|to |error: failed to push|hint:)/i.test(l));
+  return `${head}${said ? `: git said "${said.slice(0, 160)}"` : ""}. Press Try again; if it fails again, look at the repository on GitHub.`;
 }
 
 export function requireRepo(e: unknown): never {

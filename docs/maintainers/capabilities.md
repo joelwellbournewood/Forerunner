@@ -425,7 +425,10 @@ the helper is never called; a wrong token fails with the token redacted, the hel
 called (the old code asked it to `get` and then `erase`) and the stale credential never sent.
 
 `pr-executor.test.ts` runs `PrTaskExecutor` against local bare repositories and
-`MemoryGitHost`: the PR flow end to end, an empty repository getting its README commit on
+`MemoryGitHost`: the PR flow end to end, a push the host refuses (a pre-receive hook) failing
+the task with `pushFailedWords` ("Forerunner could not push the branch <branch> to <repo>: GitHub
+refused it (...). Check the GitHub token in Settings, then press Try again."; the network and
+other refusals have their own words; before, the reason was git's output), an empty repository getting its README commit on
 `main` before the task's branch and PR (the branch holding only the task's change), a base
 branch the remote lacks failing in words, a rebase conflict as a blocking human request with no
 PR, and no changes as a failure. What each of the conflict request's options does, answered
