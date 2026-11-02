@@ -1,7 +1,7 @@
 import { ForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
-import { type QueryLike, SdkAgentDriver, scrubEnv } from "../src/agent/sdk.ts";
-import { budget, flatPricing, harness, issue, registry } from "./helpers.ts";
+import { type QueryLike, SDK_STOP_WAIT_MS, SdkAgentDriver, scrubEnv } from "../src/agent/sdk.ts";
+import { budget, flatPricing, harness, issue, registry, until } from "./helpers.ts";
 
 function fakeQuery(script: (opts: Record<string, unknown>) => Record<string, unknown>[]): {
   q: QueryLike;
@@ -76,7 +76,9 @@ describe("SdkAgentDriver", () => {
     const env = opts.env as Record<string, string>;
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oat-value");
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(opts.maxBudgetUsd).toBe(2.5);
+    // Claude Code's own limit is a second layer just above the run's cap of USD 2.50, so
+    // Forerunner's stop comes first (budget-stop, ADR 0111); before, it was the cap itself.
+    expect(opts.maxBudgetUsd).toBe(2.76);
     expect(opts.allowedTools).toEqual(["Edit", "Read", "mcp__forerunner__echo"]);
     expect(opts.permissionMode).toBe("dontAsk");
     expect(opts.allowDangerouslySkipPermissions).toBe(false);
@@ -85,16 +87,31 @@ describe("SdkAgentDriver", () => {
 
   it("PreToolUse hook denies tools outside the token and stops on budget exhaustion", async () => {
     const h = harness();
-    let hooks: {
-      PreToolUse: { hooks: ((i: Record<string, unknown>) => Promise<Record<string, unknown>>)[] }[];
-    } | null = null;
-    const { q } = fakeQuery((opts) => {
-      hooks = opts.hooks as typeof hooks;
-      return [
-        assistant("x"),
-        { type: "result", subtype: "success", is_error: false, result: "x", total_cost_usd: 0 },
-      ];
-    });
+    type Pre = (i: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    // The hooks are asked while the run goes on, as Claude Code asks them: after the run they
+    // refuse everything (its token is ended, budget-stop), which the next case shows.
+    let denied: Record<string, unknown> = {};
+    let allowed: Record<string, unknown> = {};
+    const q: QueryLike = ({ options }) => {
+      const pre = (options as { hooks: { PreToolUse: { hooks: Pre[] }[] } }).hooks.PreToolUse[0]!
+        .hooks[0]!;
+      return (async function* () {
+        yield assistant("x");
+        denied = await pre({ tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "t1" });
+        allowed = await pre({
+          tool_name: "mcp__forerunner__echo",
+          tool_input: { text: "hi" },
+          tool_use_id: "t2",
+        });
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "x",
+          total_cost_usd: 0,
+        };
+      })();
+    };
     const driver = new SdkAgentDriver({
       hooks: h.hooks,
       kill: h.kill,
@@ -114,20 +131,9 @@ describe("SdkAgentDriver", () => {
       pricing: flatPricing,
       timeoutMs: 60_000,
     });
-    const pre = hooks!.PreToolUse[0]!.hooks[0]!;
-    const denied = await pre({
-      tool_name: "Bash",
-      tool_input: { command: "ls" },
-      tool_use_id: "t1",
-    });
     expect((denied.hookSpecificOutput as { permissionDecision: string }).permissionDecision).toBe(
       "deny",
     );
-    const allowed = await pre({
-      tool_name: "mcp__forerunner__echo",
-      tool_input: { text: "hi" },
-      tool_use_id: "t2",
-    });
     expect((allowed.hookSpecificOutput as { permissionDecision: string }).permissionDecision).toBe(
       "allow",
     );
@@ -347,5 +353,258 @@ describe("SdkAgentDriver: only the subscription's token runs through Claude Code
         "The Claude subscription's usage limit is reached: You've hit your limit · resets 3pm",
       resetAt: "2026-11-01T15:00:00.000Z",
     });
+  });
+});
+
+/**
+ * Budget-stop (ADR 0111, U-042): Forerunner's budget refusal used to end only Forerunner's
+ * for-await loop. Claude Code went on editing the task's folder and using the plan, out of
+ * reach of Stop now (the run had left the kill switch) and with the hooks still allowing tools.
+ * Now every stop that is not the kill switch's waits until Claude Code has exited (bounded, then
+ * it is ended), the run stays reachable by Stop now meanwhile, and its token is refused after.
+ */
+describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)", () => {
+  type Pre = (i: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /**
+   * A stand-in for Claude Code: after each assistant message it asks PreToolUse for a tool (what
+   * the real process does before it edits a file), and it goes on until its abort controller
+   * fires; then it takes `exitMs` to wind down. With `ignoreAbort` it goes on until `close()`.
+   * From the second message on, each costs more than the run's cap, so the budget stops it.
+   */
+  function claudeCodeLike(opts: { exitMs: number; ignoreAbort?: boolean }) {
+    const state = {
+      exited: false,
+      closed: false,
+      decisions: [] as { afterStop: boolean; allowed: boolean }[],
+    };
+    const q: QueryLike = ({ options }) => {
+      const ac = (options as { abortController: AbortController }).abortController;
+      const pre = (options as { hooks: { PreToolUse: { hooks: Pre[] }[] } }).hooks.PreToolUse[0]!
+        .hooks[0]!;
+      const gen = (async function* () {
+        yield { type: "system", subtype: "init", session_id: "cc" };
+        for (let i = 0; ; i++) {
+          if (state.closed || (ac.signal.aborted && !opts.ignoreAbort)) {
+            if (!state.closed) await new Promise((r) => setTimeout(r, opts.exitMs));
+            state.exited = true;
+            return;
+          }
+          yield {
+            type: "assistant",
+            message: {
+              id: `msg_${i}`,
+              content: [{ type: "tool_use", id: `t${i}`, name: "mcp__forerunner__echo" }],
+              usage: {
+                input_tokens: 100,
+                output_tokens: i >= 1 ? 2_000_000 : 1,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+              },
+            },
+          };
+          const d = await pre({
+            tool_name: "mcp__forerunner__echo",
+            tool_input: { text: `write ${i}` },
+            tool_use_id: `t${i}`,
+          });
+          const allowed =
+            (d.hookSpecificOutput as { permissionDecision?: string } | undefined)
+              ?.permissionDecision === "allow";
+          state.decisions.push({ afterStop: ac.signal.aborted, allowed });
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      })();
+      return Object.assign(gen, {
+        close() {
+          state.closed = true;
+        },
+      });
+    };
+    return { q, state };
+  }
+
+  const req = (h: ReturnType<typeof harness>, taskId = "task-1") => ({
+    token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 1_000_000, taskId }),
+    budget: budget("sess-1", 50_000_000, h.clock),
+    billingSourceId: "bs",
+    credential: { kind: "oauth_token" as const, value: "oat-value" },
+    model: "claude-sonnet-5-5",
+    systemPrompt: "sys",
+    prompt: "p",
+    cwd: process.cwd(),
+    tools: registry(),
+    pricing: flatPricing,
+    timeoutMs: 600_000,
+  });
+  const driverOf = (h: ReturnType<typeof harness>, q: QueryLike) =>
+    new SdkAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock, queryImpl: q });
+
+  it("returns only after Claude Code has exited, and no tool is allowed after the stop", async () => {
+    const h = harness();
+    const { q, state } = claudeCodeLike({ exitMs: 150 });
+    const res = await driverOf(h, q).run(req(h));
+    expect(res.outcome).toBe("budget_exceeded");
+    // Before: the run returned while the stand-in went on asking for tools, and they were allowed.
+    expect(state.exited).toBe(true);
+    expect(state.decisions.some((d) => d.afterStop)).toBe(true);
+    expect(state.decisions.filter((d) => d.afterStop && d.allowed)).toEqual([]);
+    expect(h.kill.activeCount()).toBe(0);
+  });
+
+  it("the hooks refuse a tool call that arrives after run() returned (its token is ended)", async () => {
+    const h = harness();
+    let pre: Pre | undefined;
+    const { q } = fakeQuery((opts) => {
+      pre = (opts.hooks as { PreToolUse: { hooks: Pre[] }[] }).PreToolUse[0]!.hooks[0]!;
+      return [
+        assistant("x"),
+        { type: "result", subtype: "success", is_error: false, result: "x", total_cost_usd: 0 },
+      ];
+    });
+    const res = await driverOf(h, q).run(req(h));
+    expect(res.outcome).toBe("completed");
+    const late = await pre!({
+      tool_name: "mcp__forerunner__echo",
+      tool_input: { text: "late" },
+      tool_use_id: "late",
+    });
+    // Before: allowed.
+    expect(late.continue).toBe(false);
+    expect(
+      (late.hookSpecificOutput as { permissionDecision?: string } | undefined)?.permissionDecision,
+    ).not.toBe("allow");
+  });
+
+  it("Stop now reaches the run while Claude Code winds down, and ends it at once", async () => {
+    const h = harness();
+    const { q, state } = claudeCodeLike({ exitMs: 0, ignoreAbort: true });
+    let done = false;
+    const run = driverOf(h, q)
+      .run(req(h, "task-7"))
+      .then((r) => {
+        done = true;
+        return r;
+      });
+    // The budget stop came (the second message is over the cap); the stand-in ignores the abort.
+    await until(() => state.decisions.some((d) => d.afterStop), "a tool call after the stop");
+    expect(done).toBe(false);
+    // Before: the run had left the kill switch, so Stop now found nothing to stop.
+    expect(h.kill.hasTask("task-7")).toBe(true);
+    const report = await h.kill.stop("all", "Stop now", { by: "you", freeze: false });
+    expect(report.stoppedRuns).toBeGreaterThanOrEqual(1);
+    const res = await run;
+    expect(res.outcome).toBe("budget_exceeded");
+    expect(state.closed).toBe(true);
+    expect(state.decisions.filter((d) => d.afterStop && d.allowed)).toEqual([]);
+  });
+
+  it("a process that does not wind down is ended after the wait", async () => {
+    const h = harness();
+    const { q, state } = claudeCodeLike({ exitMs: 0, ignoreAbort: true });
+    let done = false;
+    const run = driverOf(h, q)
+      .run(req(h))
+      .then((r) => {
+        done = true;
+        return r;
+      });
+    await until(() => state.decisions.some((d) => d.afterStop), "a tool call after the stop");
+    expect(done).toBe(false);
+    await h.clock.advance(SDK_STOP_WAIT_MS);
+    const res = await run;
+    expect(res.outcome).toBe("budget_exceeded");
+    expect(state.closed).toBe(true);
+    expect(h.kill.activeCount()).toBe(0);
+  });
+
+  it("counts each message once by its id and takes the output from the result", async () => {
+    const h = harness();
+    const msg = (id: string, input: number, block: Record<string, unknown>) => ({
+      type: "assistant",
+      message: {
+        id,
+        content: [block],
+        // The output count on a streamed message is a placeholder (Agent SDK cost tracking).
+        usage: {
+          input_tokens: input,
+          output_tokens: 1,
+          cache_read_input_tokens: 10,
+          cache_creation_input_tokens: 0,
+        },
+      },
+    });
+    const { q } = fakeQuery(() => [
+      // Two parallel tool calls: two messages with one id and one usage.
+      msg("msg_1", 100, { type: "tool_use", id: "a", name: "Read" }),
+      msg("msg_1", 100, { type: "tool_use", id: "b", name: "Read" }),
+      msg("msg_2", 200, { type: "text", text: "done" }),
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "done",
+        total_cost_usd: 0.00036,
+        usage: {
+          input_tokens: 300,
+          output_tokens: 60,
+          cache_read_input_tokens: 20,
+          cache_creation_input_tokens: 0,
+        },
+        modelUsage: {
+          "claude-sonnet-5-5": {
+            inputTokens: 300,
+            outputTokens: 60,
+            cacheReadInputTokens: 20,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 0.00036,
+            contextWindow: 200_000,
+            maxOutputTokens: 32_000,
+          },
+        },
+      },
+    ]);
+    const res = await driverOf(h, q).run(req(h));
+    expect(res.outcome).toBe("completed");
+    // Before: input 400 (msg_1 twice) and output 3 (the placeholders).
+    expect(res.usage).toEqual({
+      input_tokens: 300,
+      output_tokens: 60,
+      cache_read_input_tokens: 20,
+      cache_creation_input_tokens: 0,
+    });
+    expect(res.costUsdMicro).toBe(360);
+    expect(h.ledger.entries.reduce((n, e) => n + e.usdMicro, 0)).toBe(360);
+    expect(h.ledger.entries.reduce((n, e) => n + e.tokensIn, 0)).toBe(300);
+  });
+
+  it("Claude Code's own spending stop reads as a budget stop, not a passing glitch", async () => {
+    const h = harness();
+    const { q } = fakeQuery(() => [
+      assistant("working"),
+      {
+        type: "result",
+        subtype: "error_max_budget_usd",
+        is_error: true,
+        errors: [],
+        total_cost_usd: 1.2,
+      },
+    ]);
+    const res = await driverOf(h, q).run(req(h));
+    // Before: "error" with provider_error, which the runner tries again at once.
+    expect(res.outcome).toBe("budget_exceeded");
+    expect(res.error?.code).toBe("budget_exceeded");
+    expect(res.error?.level).toBe("run");
+  });
+
+  it("sets Claude Code's own limit slightly above the run's cap, so Forerunner's stop comes first", async () => {
+    const h = harness();
+    const { q, seen } = fakeQuery(() => [
+      { type: "result", subtype: "success", is_error: false, result: "", total_cost_usd: 0 },
+    ]);
+    await driverOf(h, q).run(req(h));
+    const max = seen[0]?.maxBudgetUsd as number;
+    expect(max).toBeGreaterThan(1);
+    expect(max).toBeLessThanOrEqual(1.2);
   });
 });

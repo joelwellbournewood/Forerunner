@@ -219,6 +219,16 @@ export class EnforcementHooks {
     };
   }
 
+  /**
+   * The run is over (budget-stop, ADR 0111): its driver returned, and on the Agent SDK path its
+   * Claude Code process has exited or was ended. Its token is revoked, so every hook refuses a
+   * call that still arrives for it (`claims` throws "capability token revoked"): before, the
+   * hooks allowed tools after `run()` had returned. Idempotent.
+   */
+  endRun(ctx: Pick<RunContext, "token">): void {
+    this.deps.tokens.revoke(ctx.token.claims.id);
+  }
+
   /** After a model call: account the real cost. */
   async afterModelCall(ctx: RunContext, usage: Usage, usdMicro: number): Promise<void> {
     const claims = this.deps.tokens.verify(ctx.token, this.deps.clock.now());

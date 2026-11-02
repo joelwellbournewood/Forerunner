@@ -91,11 +91,15 @@ async function world(driver: "loop" | "sdk") {
     h.clock,
   );
   let sdkCwd: string | null = null;
+  // The run's claims as they are while it runs: its token is ended when it returns (ADR 0111).
+  let sdkClaims: ReturnType<typeof h.tokens.claimsForRun>;
   const q: QueryLike = (params) => {
     sdkCwd = (params.options as { cwd?: string }).cwd ?? null;
     // The subprocess writes where it runs, as Claude Code's Write tool does.
     if (sdkCwd) writeFileSync(join(sdkCwd, "notes.md"), "notes\n", "utf8");
     return (async function* () {
+      const runs = await store.run.forTask(task.id);
+      sdkClaims = h.tokens.claimsForRun(runs.at(-1)?.id ?? "");
       yield { type: "system", subtype: "init", session_id: "sdk-1" };
       yield {
         type: "result",
@@ -187,7 +191,7 @@ async function world(driver: "loop" | "sdk") {
     signal: new AbortController().signal,
   });
   const runs = await store.run.forTask(task.id);
-  const claims = h.tokens.claimsForRun(runs[0]?.id ?? "");
+  const claims = driver === "sdk" ? sdkClaims : h.tokens.claimsForRun(runs[0]?.id ?? "");
   return { h, store, task, workspace, result, provider, claims, sdkCwd: () => sdkCwd };
 }
 
