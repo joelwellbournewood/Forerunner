@@ -236,6 +236,8 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0111)", () => {
     // The Run row says paused, keeps the report and the handoff (data only).
     expect(r.runs).toHaveLength(1);
     expect(r.runs[0]?.outcome).toBe("paused");
+    // A pause is a lower bound of what the task costs: the estimates are not fed it.
+    expect(rt.estimates.recentSamples().some((x) => x.taskId === r.taskId)).toBe(false);
     expect(JSON.stringify(r.runs[0]?.artifacts)).toContain("Left to do:");
     expect(handoffOf(r.runs[0]?.artifacts)).toEqual({
       stopped: "the first two sections are written.",
@@ -267,6 +269,8 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0111)", () => {
     expect((await rt.store.task.mustGet(r.taskId)).status).toBe("done");
     expect(await reviewOf(r.taskId)).toBeDefined();
     expect(r.runs[0]?.outcome).toBe("completed");
+    // A finished task is a sample, as before.
+    expect(rt.estimates.recentSamples().some((x) => x.taskId === r.taskId)).toBe(true);
   }, 60_000);
 
   it("a run never told to wrap up that lists work left is reviewed as usual", async () => {
