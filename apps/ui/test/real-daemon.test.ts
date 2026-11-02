@@ -5032,6 +5032,11 @@ describe("the UI client against the real daemon: answers do what the person said
     await say("what is waiting for me?");
     const ref = referenceIn("Bakery chat");
     expect(card.id.startsWith(ref)).toBe(true);
+    const header = async () => {
+      const shown = await client.project(project.id);
+      return { statusLine: shown.statusLine, waitingOnYou: shown.waitingOnYou };
+    };
+    const headerBefore = await header();
     const asked = await say(
       `tool: request_answer {"request": "${ref}", "answer": "Approve and start"}`,
     );
@@ -5046,6 +5051,8 @@ describe("the UI client against the real daemon: answers do what the person said
     // One card about the plan: the read-back is not filed as a second card beside it.
     expect((await open()).map((r) => r.id)).toEqual([card.id]);
     expect((await client.inbox(me.id)).needsYouCount).toBe(before);
+    // The header's sentence and count are the Inbox's: still the one plan card.
+    expect(await header()).toEqual(headerBefore);
     const yes = await say("yes");
     const tasks = await client.tasks(project.id);
     expect(tasks.length).toBeGreaterThan(0);
@@ -5102,6 +5109,30 @@ describe("the UI client against the real daemon: answers do what the person said
         source: "text",
       });
     await say("what is waiting for me?");
+    // What Home and the project's header say before the chat answers the card.
+    const shown = async () => {
+      const card = await client.project(project.id);
+      const onHome = (await client.projects()).find((p) => p.id === project.id);
+      return {
+        statusLine: card.statusLine,
+        waitingOnYou: card.waitingOnYou,
+        health: card.health,
+        needsYou: card.needsYou ?? null,
+        home: onHome
+          ? {
+              statusLine: onHome.statusLine,
+              waitingOnYou: onHome.waitingOnYou,
+              health: onHome.health,
+            }
+          : null,
+      };
+    };
+    const before = await shown();
+    expect(before.statusLine?.text).toBe(`Waiting for you: "${task.title}"`);
+    expect(before.waitingOnYou).toBe(1);
+    const told: { kind: string; title: string }[] = [];
+    const onNotification = (n: { kind: string; title: string }) => told.push(n);
+    rt.events.on("notification", onNotification);
     const asked = await say(
       `tool: request_answer {"request": "${referenceIn("Review club")}", "answer": "Try again"}`,
     );
@@ -5109,6 +5140,12 @@ describe("the UI client against the real daemon: answers do what the person said
       `Try again (${card.title})? ${option?.explain ?? ""}`.trim(),
     );
     expect((await open()).map((r) => r.id)).toEqual([card.id]);
+    // The read-back is the chat's: Home and the header still say the one card, not "2
+    // questions", and no notification points to an Inbox card the Inbox does not show.
+    expect(await shown()).toEqual(before);
+    await new Promise((r) => setTimeout(r, 50));
+    rt.events.off("notification", onNotification);
+    expect(told.filter((n) => n.kind === "request_opened")).toEqual([]);
     await say("yes");
     expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("answered");
     expect((await open()).map((r) => r.id)).toEqual([]);

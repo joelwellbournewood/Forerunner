@@ -312,7 +312,7 @@ import {
   notificationEmailPort,
   SecretCheckedChannel,
 } from "../wiring/notification-ports.ts";
-import { assertAnswerAccepted } from "../wiring/request-answers.ts";
+import { assertAnswerAccepted, isChatOnlyCard } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { specialistCommandPort } from "../wiring/specialist-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
@@ -2613,7 +2613,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const insertHumanRequest = store.humanRequest.insert.bind(store.humanRequest);
   store.humanRequest.insert = async (input) => {
     const row = await insertHumanRequest(input);
-    if (row.human_id === human.id) {
+    // The chat's read-back of an answer to a card (`isChatOnlyCard`) is asked in the chat the
+    // person is typing in, and the Inbox does not show it: no notification points there for it
+    // (phase E review: before, "Try again (...)? Answer it in the Inbox." was sent).
+    if (row.human_id === human.id && !isChatOnlyCard(row)) {
       // The notification names the project and the task (design §5, "Notification"). The
       // names are read before the insert returns, so the notification is recorded by then, as
       // it was before it named them.

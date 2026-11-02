@@ -42,7 +42,7 @@ import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
-import { optionLabel } from "../wiring/request-answers.ts";
+import { isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
 import type {
   AgentView,
   ChangeLogView,
@@ -147,11 +147,6 @@ export async function projectCard(
   const spend = await store.costLedger.sum({ projectId: p.id });
   const milestones = await store.milestone.forProject(p.id, { limit: 50 });
   const next = openMilestone(milestones);
-  const waiting = await store.humanRequest.count({
-    status: "open",
-    project_id: p.id,
-    human_id: humanId,
-  } as never);
   const tasks = await store.task.list({ project_id: p.id } as never, { limit: 1000 });
   const reviews = await store.review.list({} as never, {
     orderBy: [{ column: "created_at", direction: "desc" }],
@@ -165,10 +160,16 @@ export async function projectCard(
   // The status sentence (design §2), from the tasks, cards, plan and session as they are now.
   const ctx = await loadTaskDisplayContext(store, tasks, facts?.sandboxReady ?? null);
   const displays = new Map(tasks.map((t) => [t.id, taskDisplay(t, ctx)]));
-  const cards = await store.humanRequest.list(
-    { status: "open", project_id: p.id, human_id: humanId } as never,
-    { orderBy: [{ column: "created_at" }, { column: "id" }], limit: 1000 },
-  );
+  // The open cards as the Inbox shows them: the chat's read-back of an answer to a card is the
+  // conversation's, never a second card (phase E, `isChatOnlyCard`), so the status sentence,
+  // `waitingOnYou` and the Inbox's count say the same (design §5.4).
+  const cards = (
+    await store.humanRequest.list(
+      { status: "open", project_id: p.id, human_id: humanId } as never,
+      { orderBy: [{ column: "created_at" }, { column: "id" }], limit: 1000 },
+    )
+  ).filter((r) => !isChatOnlyCard(r));
+  const waiting = cards.length;
   const plan = facts?.plan ? await facts.plan(p.id) : { state: null, error: null };
   // A repository project's work is on the repository and in its pull requests (ADR 0106): this
   // install's docs clone holds the default branch only, so it is not "your files".
