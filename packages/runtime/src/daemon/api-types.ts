@@ -303,10 +303,11 @@ export const TaskDisplay = z.object({
       /**
        * A card's kind (design §3.8): `retry`, the decision after failed tries (Try again, Mark
        * done anyway, Cancel task); `questions`, a card that asks (answer, or go ahead without);
-       * `budget`, a task stopped at its own budget (Raise the budget, Cancel task). Absent from
-       * an older service.
+       * `budget`, a task stopped at its own budget (Raise the budget, Cancel task);
+       * `cannot_run`, a task a run left waiting without asking anything (Try again, Cancel
+       * task). Absent from an older service.
        */
-      cardKind: z.enum(["retry", "questions", "budget"]).optional(),
+      cardKind: z.enum(["retry", "questions", "budget", "cannot_run"]).optional(),
     })
     .nullable(),
 });

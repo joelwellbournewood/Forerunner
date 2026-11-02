@@ -124,7 +124,10 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   failed**, **Waiting for Docker** (a full review needs Docker, and it is not running), **Running
   (Alice, 2 min)**, **Being reviewed**, **Needs your answer** (its card is in the Inbox),
   **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
-  and the row offers **Answer**, **Try again** and **Cancel**), **Paused by you**, **Failed:
+  and the row offers **Answer**, **Try again** and **Cancel**), **Needs your decision: its
+  budget is used** and **Needs your decision: it could not run** (its card in the Inbox says
+  why; the row offers **Answer** and **Cancel**, and **Edit** is in the task), **Paused by
+  you**, **Failed:
   why**, **Done** (or **Done: accepted without review**), **Cancelled**. The rows follow a running session
   by themselves. Each task offers what fits its status, each with a line saying what it does:
   **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
@@ -446,9 +449,15 @@ Cancel.
 
 When a task fails twice, the third attempt goes to another specialist that can do the same
 work (the coder's to the migration specialist, the tester's to the coder, and so on); the
-session log says so. When no other specialist can, the task waits for you on the Tasks tab
-with what to do (split it into smaller tasks, or cancel it) instead of running the same way a
-third time.
+session log says so. When no other specialist can, the task waits for you instead of running
+the same way a third time.
+
+Every task that waits for you has exactly one card in the Inbox. A task that could not run and
+asked nothing (no other specialist can take it, a specialist that does not exist, the researcher
+on an API key, which gives it no web tools) gets '"Research three garden clubs" could not run'
+with why in one or two sentences and two buttons: **Try again** (a session tries again: change
+what stopped it first, for example who does it with **Edit** on the Tasks tab) and **Cancel
+task**. Nothing waits silently with only a "Resume" that would run into the same stop.
 
 Research on the web needs a Claude subscription: runs billed to an API key have no web tools.
 On an install with an API key only, project setup plans no web research, and a task given to

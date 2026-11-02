@@ -68,6 +68,11 @@ export const ANSWER_CARD_KEYS = {
    * budget or Cancel task.
    */
   budgetStop: "task:budget_stop",
+  /**
+   * A task a run left waiting without asking anything (live walk 4; `session/cannot-run-card.ts`):
+   * Try again or Cancel task.
+   */
+  cannotRun: "task:cannot_run",
   planPrefix: "plan:",
   intakePrefix: "intake:",
   specialistPrefix: "specialist:",
@@ -130,6 +135,19 @@ export function budgetStopAnswer(answer: JsonValue | null): "raise" | "cancel" |
   if (v === null) return null;
   if (/^(raise the budget|raise budget|raise|raise the budget and try again|try again)$/.test(v))
     return "raise";
+  if (/^(cancel|cancelled|canceled|drop|cancel task|cancel the task)$/.test(v)) return "cancel";
+  return null;
+}
+
+/**
+ * The answer of a could-not-run card (`session/cannot-run-card.ts`) as one of its options, or
+ * null: "Try again" puts the task back to ready and a session tries again; "Cancel task"
+ * cancels it.
+ */
+export function cannotRunAnswer(answer: JsonValue | null): "retry" | "cancel" | null {
+  const v = answerWord(answer);
+  if (v === null) return null;
+  if (/^(try again|retry|again|resume)$/.test(v)) return "retry";
   if (/^(cancel|cancelled|canceled|drop|cancel task|cancel the task)$/.test(v)) return "cancel";
   return null;
 }
@@ -391,6 +409,7 @@ const READERS: ReadonlyArray<{
   { matches: (k) => k === ANSWER_CARD_KEYS.blockedFindings, read: blockedFindingsAnswer },
   { matches: (k) => k === ANSWER_CARD_KEYS.reviewFailed, read: blockedFindingsAnswer },
   { matches: (k) => k === ANSWER_CARD_KEYS.budgetStop, read: budgetStopAnswer },
+  { matches: (k) => k === ANSWER_CARD_KEYS.cannotRun, read: cannotRunAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.planPrefix), read: planAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.intakePrefix), read: intakeAnswer },
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.specialistPrefix), read: specialistAnswer },

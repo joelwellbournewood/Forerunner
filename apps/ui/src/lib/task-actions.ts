@@ -61,7 +61,10 @@ export function actionsFor(
   if (key === "answer" && task?.display?.blocker?.cardKind === "retry")
     return ["answer", "try_again", "cancel"];
   // Stopped at its own budget (live walk 2, B2): its card raises the budget; Edit changes it.
-  if (key === "answer" && task?.display?.blocker?.cardKind === "budget")
+  // Could not run (live walk 4): its card tries again; Edit changes what stopped it (who does
+  // it). Neither offers Resume, which only started the same stop again.
+  const kind = task?.display?.blocker?.cardKind;
+  if (key === "answer" && (kind === "budget" || kind === "cannot_run"))
     return ["answer", "edit", "cancel"];
   if (key === "answer" && task?.specialist === WHO_PERSON) return ["answer", "cancel"];
   switch (key) {

@@ -989,6 +989,106 @@ describe("Inbox", () => {
     });
   });
 
+  describe("a task the run left waiting without asking anything (live walk 4)", () => {
+    const reason =
+      "The researcher works from the web, but runs billed to an API key get no web tools, and no other specialist has them there, so nothing ran. Add a Claude subscription in the setup assistant (its runs have web tools) and try again, or cancel it.";
+    /** The card the runner files, as `/inbox` serves it. */
+    const cannotRunCard = () => ({
+      id: "req_cannot",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_3",
+      taskTitle: "Decide the versioning scheme",
+      sessionId: "sess_1",
+      kind: "approval",
+      why: `"Decide the versioning scheme" could not run. ${reason}`,
+      steps: [],
+      options: ["Try again", "Cancel task"],
+      blocking: true,
+      risk: "medium" as const,
+      changeCard: {
+        key: "task:cannot_run",
+        task_id: "task_3",
+        task_title: "Decide the versioning scheme",
+        title: '"Decide the versioning scheme" could not run',
+        reason,
+        run_id: null,
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-02T09:00:00.000Z",
+      version: 1,
+    });
+    const setUp = () => {
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(cannotRunCard());
+      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+      if (t3) {
+        t3.status = "needs_human";
+        t3.reason =
+          "The researcher works from the web, but runs billed to an API key get no web tools, and no other specialist has them there, so nothing ran.";
+      }
+      return harness;
+    };
+    const cardOf = async () =>
+      (await screen.findAllByTestId("request")).find(
+        (r) => r.getAttribute("data-request-id") === "req_cannot",
+      ) as HTMLElement;
+
+    it("says why in at most two sentences, without tool names; Try again sends the option and a session starts", async () => {
+      const user = userEvent.setup();
+      const harness = setUp();
+      renderApp("/inbox", harness);
+      const card = await cardOf();
+      expect(within(card).getByTestId("request-title")).toHaveTextContent(
+        '"Decide the versioning scheme" could not run',
+      );
+      expect(within(card).getByTestId("request-body")).toHaveTextContent(reason);
+      expect(card).not.toHaveTextContent(/cc:|Press Resume/);
+      expect(
+        within(card)
+          .getAllByTestId("option-explain")
+          .map((e) => e.textContent),
+      ).toEqual([
+        "Starts a session that tries again; first fix what stopped it (Edit changes who does it).",
+        "Drops it. Nothing waits on it.",
+      ]);
+      await user.click(within(card).getByRole("button", { name: "Try again" }));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_cannot/answer")[0]?.body).toEqual({
+          version: 1,
+          answer: "Try again",
+        }),
+      );
+      expect(await screen.findByTestId("done-line")).toHaveTextContent(
+        'Done: Trying "Decide the versioning scheme" again: a session started.',
+      );
+      expect(harness.daemon.state.tasks.find((t) => t.id === "task_3")?.status).toBe("ready");
+    });
+
+    it("on the Tasks tab the row reads Needs your decision: it could not run, with Answer and Cancel; Edit in the drawer, no Resume", async () => {
+      const harness = setUp();
+      renderApp("/projects/proj_atlas/tasks?task=task_3", harness);
+      const row = (await screen.findAllByTestId("task-row")).find(
+        (r) => r.getAttribute("data-task-id") === "task_3",
+      ) as HTMLElement;
+      expect(within(row).getByTestId("task-status")).toHaveTextContent(
+        "Needs your decision: it could not run",
+      );
+      expect(
+        within(row)
+          .getAllByRole("button")
+          .map((b) => b.textContent)
+          .filter((t) => t !== "Decide the versioning scheme"),
+      ).toEqual(["Answer", "Cancel"]);
+      const drawer = await screen.findByTestId("task-drawer");
+      expect(within(drawer).getByTestId("drawer-action-edit")).toBeInTheDocument();
+      expect(within(drawer).queryByTestId("drawer-action-resume")).toBeNull();
+      expect(drawer).not.toHaveTextContent(/cc:|Paused|Press Resume/);
+    });
+  });
+
   it("intakeCardOf reads only intake cards that carry a proposal", () => {
     expect(intakeCardOf(null)).toBeNull();
     expect(intakeCardOf({ target: "staging", reversible: true })).toBeNull();

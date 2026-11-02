@@ -3,6 +3,7 @@ import {
   ANSWER_CARD_KEYS,
   blockedFindingsAnswer,
   budgetStopAnswer,
+  cannotRunAnswer,
   normalAnswer,
   optionLabel,
   signoffAnswer,
@@ -513,6 +514,70 @@ function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | nul
   }
 }
 
+/**
+ * A task a run left waiting without asking anything (live walk 4; `session/cannot-run-card.ts`):
+ * why, in at most two sentences, then Try again or Cancel task.
+ */
+function cannotRunCard(
+  r: Pick<HumanRequestRow, "why" | "options">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const task = ctx.taskTitle ?? str(card.task_title) ?? "the task";
+  const waiting = ctx.waiting ?? [];
+  const reason = str(card.reason) ?? afterFirstSentence(r.why);
+  const choices: RequestChoiceWords[] = [];
+  for (const option of r.options.map(optionLabel)) {
+    const what = cannotRunAnswer(option);
+    if (what === "retry")
+      choices.push({
+        label: option,
+        explain:
+          "Starts a session that tries again; first fix what stopped it (Edit changes who does it).",
+        tone: "primary",
+        confirm: null,
+        input: null,
+      });
+    else if (what === "cancel")
+      choices.push({
+        label: option,
+        explain: cancelExplain(waiting),
+        tone: "danger",
+        confirm: cancelConfirm(task, waiting),
+        input: null,
+      });
+  }
+  return {
+    title: str(card.title) ?? firstSentence(r.why),
+    // Design §5 rule 1: a card body is at most two sentences, so what waits on it is said
+    // only when the reason is one sentence.
+    body:
+      [reason, reason && /[.!?]\s+\S/.test(reason) ? null : waitingSentence(waiting)]
+        .filter(Boolean)
+        .join(" ") || null,
+    choices,
+    links: [],
+    reply: "none",
+    details: [],
+    outcome: null,
+  };
+}
+
+function cannotRunOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
+  const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
+  const started = startWords(card.start);
+  switch (card.outcome) {
+    case "retry":
+      return `Trying ${task} again${started ? `: ${started}` : ": the next session runs it"}.`;
+    case "cancel":
+      return `${task} was cancelled.`;
+    case "task_moved_on":
+      return `${task} had moved on already, so nothing changed.`;
+    default:
+      return null;
+  }
+}
+
 /** The Docker wait (design §3.8, ADR 0101/0102): per project, Set up Docker, Cancel task. */
 function dockerCard(
   r: Pick<HumanRequestRow, "why" | "steps" | "options">,
@@ -662,6 +727,9 @@ export function requestWords(
   } else if (key === ANSWER_CARD_KEYS.budgetStop) {
     words = budgetCard(r, card, ctx);
     outcome = budgetOutcome(card, ctx);
+  } else if (key === ANSWER_CARD_KEYS.cannotRun) {
+    words = cannotRunCard(r, card, ctx);
+    outcome = cannotRunOutcome(card, ctx);
   } else if (key?.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix)) {
     words = questionsCard(card, ctx);
     outcome = questionsOutcome(card, ctx);

@@ -1685,6 +1685,30 @@ reader is `budgetStopAnswer` (`wiring/request-answers.ts`), the words `budgetCar
 the card across a restart, Raise the budget runs the task to done), `task-budget-cap.test.ts`,
 the phase 1 gate, `inbox.test.tsx` and `real-daemon.test.ts` ("continuity") in `apps/ui`.
 
+**Every task a run leaves waiting has exactly one card (`session/cannot-run-card.ts`; live walk
+4).** Before, a run that could not go on and asked nothing (the researcher refused at once on an
+API key, a specialist name the registry does not know, no other specialist after two failed
+attempts) moved its task to `needs_human` with the first 200 characters of its summary and no
+card: the Inbox said "Nothing needs you", Home "Waiting on you 0", the session's result '"X"
+needs your decision (Inbox).', the badge "Paused" with "Press Resume", and Resume only started
+the same refusal again. Now, for every `needs_human` result without `budgetStop`, the runner
+sets the reason to the summary's first sentence (`plainStopReason`: no `(cc:…)` tool list, whole
+sentences, a long one cut at a word) and calls `fileCannotRunCard`, which files nothing when an
+open card already holds the task (the person's questions, a hooks approval, a rebase conflict;
+the Docker wait card does not count, it asks nothing about the task) and otherwise one blocking
+card, key `task:cannot_run`: title '"X" could not run', body the reason in at most two sentences
+("set the task back to ready" reads "try again", which the card does), options **Try again**
+("Starts a session that tries again; first fix what stopped it (Edit changes who does it).") and
+**Cancel task**. `syncCannotRunAnswers` (in `RuntimeApp.syncApprovals`) applies the answer once:
+Try again moves the task to ready without counting a retry (nothing ran) and asks for a session
+(`resumeWork`); a refusal that is still there files one new card. The reader is
+`cannotRunAnswer`, the words `cannotRunCard` in `daemon/request-words.ts`; the Tasks tab reads
+"Needs your decision: it could not run" (`cardKindOf` → `cannot_run`; Answer, Edit, Cancel; no
+Resume). Tests: `continuity-cannot-run.test.ts` (one card, the result, the Tasks tab and the
+Inbox agree, no tool names, across a restart, Try again files one new card, Cancel task, a
+person task keeps its one questions card), `inbox.test.tsx` and `real-daemon.test.ts` in
+`apps/ui`.
+
 **The Run row.** `LoopTaskExecutor` inserts the task's Run row as `running` before the driver
 starts (model, effort, prompt version, the billing source the task picked, depth) and patches
 it with the result afterwards: tokens, cost, `ttft_ms`, `duration_ms`, outcome, `timed_out`,

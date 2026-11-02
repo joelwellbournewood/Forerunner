@@ -3848,8 +3848,21 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     await rt?.close();
   });
 
+  /** Waits (at least 10 s of real time) until no session of any project runs. */
+  const allEnded = async () => {
+    const running = async () =>
+      (await client.sessions({})).filter((s) => ["running", "paused"].includes(s.status));
+    await eventually(
+      async () => (await running()).length === 0,
+      "every session to end",
+      async () => (await running()).map((s) => `${s.status}: ${s.summary ?? ""}`).join(" | "),
+      20_000,
+    );
+  };
+
   /** Starts a session on the project and waits (at least 10 s of real time) for it to end. */
   const runSession = async (projectId: string) => {
+    await allEnded();
     const agentId = (await client.agents())[0]?.id ?? "";
     const before = (await client.sessions({ projectId })).length;
     const started = await client.startSession({ agentId, projectId });
@@ -3938,5 +3951,54 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     const done = (await client.tasks(project.id)).find((t) => t.id === created.id);
     expect(done?.budget.usdMicro).toBe(550_000);
     expect(await cardsOf()).toEqual([]);
+    // Nothing left running for the next case.
+    await allEnded();
+  });
+
+  it("a task the run refused at once: one card that says why, the Tasks tab offers no Resume, Cancel task cancels it (live walk 4)", async () => {
+    const me = await client.me();
+    const project = await client.createProject({ name: "Research club", goal: "Other clubs" });
+    // The researcher works from the web; the stand-in is billed like an API key, which gives
+    // it no web tools and no other specialist has them: the run refuses before any call.
+    const created = await client.createTask(project.id, {
+      title: "Research three other garden clubs",
+      outcome: "docs/research.md lists what three other clubs offer",
+      acceptanceCriteria: ["three clubs with a link each"],
+      priority: "high",
+      status: "ready",
+      dependsOn: [],
+      specialist: "researcher",
+      riskTier: 1,
+    });
+    const session = await runSession(project.id);
+    const cards = (await client.inbox(me.id)).requests.filter(
+      (r) => r.taskId === created.id && r.status === "open",
+    );
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    expect(card?.title).toBe('"Research three other garden clubs" could not run');
+    expect(card?.body).toMatch(/^The researcher works from the web, .*so nothing ran\./);
+    expect(card?.body).not.toMatch(/cc:/);
+    expect(card?.choices?.map((c) => [c.label, c.tone])).toEqual([
+      ["Try again", "primary"],
+      ["Cancel task", "danger"],
+    ]);
+    expect(session.summary).toContain(
+      '"Research three other garden clubs" needs your decision (Inbox).',
+    );
+    const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
+    expect(view?.display).toMatchObject({
+      key: "answer",
+      label: "Needs your decision: it could not run",
+      blocker: { kind: "card", requestId: card?.id, cardKind: "cannot_run" },
+    });
+    const cancelled = await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Cancel task",
+    });
+    expect(cancelled.outcome).toBe('"Research three other garden clubs" was cancelled.');
+    expect((await client.tasks(project.id)).find((t) => t.id === created.id)?.status).toBe(
+      "cancelled",
+    );
   });
 });

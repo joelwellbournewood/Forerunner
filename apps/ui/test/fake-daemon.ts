@@ -101,6 +101,7 @@ import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/s
 import {
   acceptsAnswer,
   budgetStopAnswer,
+  cannotRunAnswer,
   personQuestionsAnswer,
   signoffAnswer,
 } from "@forerunner/runtime/wiring/request-answers";
@@ -2314,6 +2315,29 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         applied_at: new Date().toISOString(),
         outcome: moved ? "task_moved_on" : read,
         ...(budget !== null ? { budget_usd_micro: budget, start: "started" } : {}),
+      };
+    }
+    // As the daemon's `syncCannotRunAnswers` (live walk 4): Try again puts the task back to
+    // ready and a session tries again; Cancel task cancels it.
+    const cannotRun = r.changeCard as { key?: unknown } | null;
+    if (cannotRun?.key === "task:cannot_run") {
+      const task = state.tasks.find((t) => t.id === r.taskId);
+      const read = cannotRunAnswer(parsed.data.answer as never);
+      const moved = !task || task.status !== "needs_human";
+      if (task && !moved && read === "retry") {
+        task.status = "ready";
+        task.reason = "you asked to try again in the Inbox";
+        touch(task);
+      } else if (task && !moved && read === "cancel") {
+        task.status = "cancelled";
+        task.reason = "you cancelled it in the Inbox when it could not run";
+        touch(task);
+      }
+      r.changeCard = {
+        ...cannotRun,
+        applied_at: new Date().toISOString(),
+        outcome: moved ? "task_moved_on" : read,
+        ...(!moved && read === "retry" ? { start: "started" } : {}),
       };
     }
     if (r.kind === "capability_grant") {

@@ -142,12 +142,14 @@ export function plainReason(reason: string, max = 100): string {
  */
 export function cardKindOf(
   card: { change_card?: unknown } | undefined,
-): "retry" | "questions" | "budget" {
+): "retry" | "questions" | "budget" | "cannot_run" {
   const c = card?.change_card;
   const key =
     c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
   // A task stopped at its own budget (live walk 2, B2): Raise the budget or Cancel task.
   if (key === "task:budget_stop") return "budget";
+  // A task a run left waiting without asking anything (live walk 4): Try again or Cancel task.
+  if (key === "task:cannot_run") return "cannot_run";
   return key === "critic:signoff" || key === "findings:blocked" || key === "critic:review_failed"
     ? "retry"
     : "questions";
@@ -247,6 +249,19 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
             requestId: card.id,
             title: null,
             cardKind: "budget",
+          },
+        });
+      if (card && cardKindOf(card) === "cannot_run")
+        // Live walk 4: it read "Paused" with "Press Resume", and Resume only started the same
+        // refusal again; its card says why and offers Try again once that is fixed.
+        return display("answer", "Needs your decision: it could not run", "warn", {
+          detail: "Its card is in the Inbox: fix what stopped it and try again, or cancel it.",
+          blocker: {
+            kind: "card",
+            taskId: null,
+            requestId: card.id,
+            title: null,
+            cardKind: "cannot_run",
           },
         });
       if (card && cardKindOf(card) === "retry") {

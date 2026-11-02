@@ -199,6 +199,7 @@ import {
 } from "../secrets/index.ts";
 import type { TaskBillingPort } from "../session/billing.ts";
 import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
+import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
   type BlockedSyncResult,
@@ -947,6 +948,11 @@ export interface RuntimeApp {
      * harnesses that compose a partial sync.
      */
     budgetStops?: BudgetStopSyncResult;
+    /**
+     * Answered cards of tasks a run left waiting without asking anything (live walk 4): Try
+     * again or Cancel task. Optional for the harnesses that compose a partial sync.
+     */
+    cannotRun?: CannotRunSyncResult;
     plans: PlanApprovalSyncResult;
     /**
      * Hooks approvals answered after their session ended (ADR 0088): the task back at `ready`
@@ -3131,6 +3137,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // A task stopped at its own budget (live walk 2, B2): Raise the budget raises it and a
       // session tries again; Cancel task cancels it.
       budgetStops: await syncBudgetStopAnswers({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        ...resumeStart,
+      }),
+      // A task a run left waiting without asking anything (live walk 4): Try again starts a
+      // session that tries again; Cancel task cancels it.
+      cannotRun: await syncCannotRunAnswers({
         store,
         clock,
         humanId: human.id,

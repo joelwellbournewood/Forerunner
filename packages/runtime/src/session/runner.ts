@@ -48,6 +48,7 @@ import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { budgetStopTitle, fileBudgetStopCard } from "./budget-card.ts";
+import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import {
   fileBlockedByFindingsRequest,
@@ -1738,16 +1739,21 @@ export class SessionRunner {
               task.version,
               "needs_human",
               // Live walk 2 (B2): a stop at the task's own budget names it in CHF, as its card.
+              // Live walk 4: any other reason in whole sentences, without tool names (it was
+              // cut at 200 characters mid-word).
               result.budgetStop
                 ? `${budgetStopTitle(task, result.budgetStop, rate)}.`
-                : result.summary.slice(0, 200),
+                : plainStopReason(result.summary, 200, 1),
               { agentId: agent.id },
             );
             needsHuman.push(task.id);
-            // Design §3.8, live walk 2 (B2): a task stopped at its budget gets one card (Raise
-            // the budget, Cancel task), so the result's "needs your decision (Inbox)" is true.
-            if (result.budgetStop)
-              try {
+            // Design §3.8: every task a run leaves waiting has one card, so the result's "needs
+            // your decision (Inbox)" is true. A stop at its budget: Raise the budget, Cancel task
+            // (live walk 2, B2). Anything else that asked nothing (live walk 4: the researcher
+            // refused at once): Try again, Cancel task. A run that asked (its questions, an
+            // approval, a rebase conflict) filed its own card, and no second one is filed.
+            try {
+              if (result.budgetStop)
                 await fileBudgetStopCard({
                   store,
                   task: waiting,
@@ -1758,12 +1764,22 @@ export class SessionRunner {
                   stop: result.budgetStop,
                   chfPerUsd: rate,
                 });
-              } catch (e) {
-                this.logger.warn("budget card not filed", {
-                  taskId: task.id,
-                  error: errorMessage(e),
+              else
+                await fileCannotRunCard({
+                  store,
+                  task: waiting,
+                  session,
+                  humanId: agent.owner_human_id,
+                  agentId: agent.id,
+                  runId: result.runId ?? null,
+                  reason: result.summary,
                 });
-              }
+            } catch (e) {
+              this.logger.warn("card of the waiting task not filed", {
+                taskId: task.id,
+                error: errorMessage(e),
+              });
+            }
           } else if (
             result.outcome === "failed" &&
             isTransientError(result.errorCode) &&
