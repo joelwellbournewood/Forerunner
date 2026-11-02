@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyVerdict,
   type FollowupContext,
+  quotedWords,
   SIGNOFF_KEY,
   SIGNOFF_OPTIONS,
   saidByName,
@@ -358,5 +359,19 @@ describe("applyVerdict (B.4, D.2)", () => {
     } finally {
       await w.close();
     }
+  });
+});
+
+describe("quotedWords: the specialist's own words on a card", () => {
+  it('a file name\'s dot does not end a sentence (live 2026-11-02: the quote began at "csv is missing")', () => {
+    expect(
+      quotedWords(
+        "**Summary** [stand-in model] data-analyst wrote notes/members-chart.md: no chart, because data/members.csv is missing. A blocked report is the right outcome.\n\nQuestions for the person:\n- Please add it.",
+      ),
+    ).toBe(
+      "data-analyst wrote notes/members-chart.md: no chart, because data/members.csv is missing. A blocked report is the right outcome.",
+    );
+    expect(quotedWords("Styled index.html. Done!")).toBe("Styled index.html. Done!");
+    expect(quotedWords("I could not complete this task")).toBe("I could not complete this task");
   });
 });

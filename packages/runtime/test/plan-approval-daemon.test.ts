@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { approvedPlanIdOf, PLAN_APPROVAL_AUDIT_TOOL } from "../src/session/plan-approval.ts";
+import { AcceptingCriticProvider } from "./helpers.ts";
 
 /**
  * J.7 on the desktop daemon (ADR 0053): a project at autonomy 1 starts a session that files
@@ -34,7 +35,10 @@ async function compose(clock: SimulatedClock, remote: boolean): Promise<RuntimeA
     clock,
     stateUrl: "sqlite::memory:",
     vault: new MemoryVault(),
-    provider: new FakeProvider({ replies: [], onNoMatch: "echo", clock, latency: "none" }),
+    // The critic reviews every task (ADR 0104), tier 0 too: it accepts here; the subject is elsewhere.
+    provider: new AcceptingCriticProvider(
+      new FakeProvider({ replies: [], onNoMatch: "echo", clock, latency: "none" }),
+    ),
     registryDir: REGISTRY,
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.1.0-test",

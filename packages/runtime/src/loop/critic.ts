@@ -1,12 +1,16 @@
+import { existsSync } from "node:fs";
 import {
   applyVerdict,
   type CheckCommand,
+  type CheckRunner,
   type CriticDeps,
   type CriticPromptSource,
   CriticService,
   DEFAULT_WORK_TIER,
   escalationCeiling,
   type FollowupDecision,
+  type MeasuredFinding,
+  measuredFindingOf,
   quotedWords,
   RETRY_CARD_OPTIONS,
   type ReviewEvidence,
@@ -15,6 +19,7 @@ import {
   retryCardWords,
   saidByName,
   signoffCard,
+  type TriedEvidence,
   triedTimes,
 } from "@forerunner/critic";
 import { checkDocDrift, STATUS_DOC } from "@forerunner/memory";
@@ -28,18 +33,28 @@ import {
   type RunResult,
   run as runProcess,
   safeSegment,
+  which,
 } from "@forerunner/platform";
 import type { JsonObject, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
 import type { LoopAgentDriver, RunPricing } from "../agent/loop.ts";
+import type { ToolSpec } from "../agent/tools.ts";
 import type { ContextManager } from "../context/manager.ts";
+import { fileTools } from "../daemon/tools.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import { DEFAULT_CEILING, nextRung, retryAction, tierOfModel } from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelTier } from "../provider/types.ts";
+import type { Sandbox } from "../sandbox/types.ts";
+import type { RunSandboxPort } from "../session/executor.ts";
 import { screenLessons } from "../session/lessons.ts";
-import { filePersonQuestions, reportedQuestions } from "../session/person-questions.ts";
+import { TASK_FILES_EVENT } from "../session/peers.ts";
+import {
+  filePersonQuestions,
+  listedQuestions,
+  reportedQuestions,
+} from "../session/person-questions.ts";
 import {
   type CriticPort,
   type LessonCandidate,
@@ -55,6 +70,9 @@ import {
   type TaskReviewOutcome,
   type TaskReviewRequest,
 } from "./ports.ts";
+import { isCodeChange, notRunWords, projectChecks, projectFileList } from "./project-checks.ts";
+import { MAX_PAGES_TRIED, pagesToTry, type TryItPort } from "./try-it.ts";
+import { outcomeCriterion, reviewFloorOf, reviewTierOf, signoffReasonOf } from "./verification.ts";
 
 /**
  * The critic in the loop (spec H, phase 3). For every task the runner finished above the
@@ -116,6 +134,33 @@ export interface CriticLoopDeps {
    * reviews on an API-style source. Absent: the critic package's default (API-style, built-ins).
    */
   fastMode?: CriticDeps["fastMode"];
+  /**
+   * The sandbox every run opens a lease on (ADR 0007, U-079): the review's checks (the project's
+   * build, lint and tests, ADR 0104) run in a lease on the task's folder, the container for a
+   * full-review task and the process sandbox below that. Without it they run as plain processes
+   * in the folder (a test world).
+   */
+  sandbox?: RunSandboxPort;
+  /**
+   * "Try it" (ADR 0104): pages a change made or styled are opened in a headless browser and
+   * what a person would see is evidence. Without it the work is reviewed, not tried.
+   */
+  tryIt?: TryItPort;
+  /**
+   * Read access to the task's folder for the critic (ADR 0104): read-only tools (`read_file`,
+   * `list_dir`). Default: the runtime's own file tools, read-only ones only; `false` turns it off.
+   */
+  readTools?: readonly ToolSpec[] | false;
+  /**
+   * The registry's `risk_tier_floor` of a specialist (ADR 0104): a task's review is never below
+   * its specialist's floor, and a deploy or a migration ends with the person's sign-off.
+   */
+  specialistFloor?: (name: string) => number | undefined;
+  /**
+   * Whether a command the project's checks need (`npm`) can be found where they run. Default:
+   * on the PATH (`which`). Without it the checks are not run and the review says why.
+   */
+  hasCommand?: (cmd: string) => Promise<boolean>;
   /**
    * The PM writes `docs/status.md` at session end through the runner's docs port (spec G.5,
    * ADR 0058), so the tier 2+ drift check neither expects a specialist's change to touch it
@@ -276,7 +321,13 @@ export class CriticLoop implements CriticPort {
   async reviewTask(req: TaskReviewRequest): Promise<TaskReviewOutcome> {
     const { store } = this.deps;
     const { task, session, result } = req;
-    const tier = (Math.min(3, Math.max(0, task.risk_tier)) | 0) as ReviewTier;
+    // Every task is reviewed by the critic (ADR 0104): a task at tier 0 gets the light review,
+    // the lowest review there is ("automated checks only" no longer closes a task), never below
+    // its specialist's registry floor; an accepted deploy or migration ends with the person's
+    // sign-off whatever its tier says.
+    const specialist = req.item.specialist || task.specialist;
+    const tier = reviewTierOf(task.risk_tier, reviewFloorOf(specialist, this.deps.specialistFloor));
+    const signoff = signoffReasonOf(specialist);
     const project = await store.project.get(task.project_id);
     const settings = project?.settings ?? null;
     const worktree =
@@ -285,22 +336,47 @@ export class CriticLoop implements CriticPort {
 
     // Evidence: the diff and the changed files, the project's checks, the standard-doc drift.
     const diff = await this.diffPort.diffFor(task, worktree);
-    const changedFiles = result.changedFiles?.length
-      ? result.changedFiles
-      : (diff?.changedFiles ?? []);
-    const { checks, invalid } = checksFromSettings(settings);
+    const runFiles = result.changedFiles?.length ? result.changedFiles : (diff?.changedFiles ?? []);
+    // What the task changed over all its attempts, this run's files first (ADR 0104, the review
+    // of 2026-11-02): the review checks the task's work, not the last run's diff. On the bench a
+    // retry that changed no file got no checks and no try, its accept closed a test that still
+    // failed, and the task was Done. (On the workspace path every run is committed, so the diff
+    // of a run that changed nothing is empty.)
+    const changedFiles = await this.filesOfTask(task.id, session.id, runFiles);
+    // A failed check or try still open is measured again, whatever this run changed.
+    const measured = (await store.finding.openFor(task.id))
+      .map((f) => measuredFindingOf(f.description))
+      .filter((m): m is MeasuredFinding => m !== null);
+    const { checks: configured, invalid } = checksFromSettings(settings);
+    // ADR 0104: the project's build, lint and tests always run for a code task, besides the
+    // commands the project's settings name.
+    const root = worktree && existsSync(worktree) ? worktree : undefined;
+    const code = isCodeChange(changedFiles) || measured.some((m) => m.kind === "check");
+    const own = code ? projectChecks(root) : { checks: [], skipped: null };
+    const ownChecks = own.checks.filter((c) => !configured.some((k) => k.name === c.name));
+    let checks = [...configured, ...ownChecks];
+    const report = result.finalReport ?? result.summary;
+    const questions = listedQuestions(report);
     const evidence: ReviewEvidence = {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
-        : ["The outcome described in the goal is achieved and verified."],
+        : [outcomeCriterion(task.outcome)],
       brief: `${task.title}: ${task.outcome}`,
-      finalReport: result.finalReport ?? result.summary,
+      finalReport: report,
+      ...(questions.length ? { questionsForPerson: questions } : {}),
+      notChecked: own.skipped ? [own.skipped] : [],
+      ...(signoff ? { signoffRequired: signoff } : {}),
       ...(diff?.diff ? { diff: diff.diff } : {}),
       ...(changedFiles.length ? { changedFiles } : {}),
       ...(result.prUrl ? { prUrl: result.prUrl } : {}),
       ...(result.runId ? { runId: result.runId } : {}),
       artifacts: [
         `attempt ${task.attempt + 1} by ${req.item.specialist}`,
+        ...(runFiles.length === 0 && changedFiles.length
+          ? [
+              `attempt ${task.attempt + 1} changed no file; the changed files listed are what the task's earlier attempts changed, and its checks and tries ran on them again`,
+            ]
+          : []),
         ...(invalid ? [`${invalid} malformed check(s) in settings.checks ignored`] : []),
         ...(result.artifacts ?? []).map((a) => (typeof a === "string" ? a : JSON.stringify(a))),
       ],
@@ -332,23 +408,109 @@ export class CriticLoop implements CriticPort {
       }
     }
 
+    // Try it (ADR 0104): a page the task made or styled is opened as a person would, and a
+    // page an open finding says did not work is opened again first.
+    const again = measured.flatMap((m) =>
+      m.kind === "tried" && root && existsSync(join(root, ...m.target.split("/")))
+        ? [m.target]
+        : [],
+    );
+    const pages = this.deps.tryIt
+      ? [...new Set([...again, ...pagesToTry(changedFiles, root)])].slice(0, MAX_PAGES_TRIED)
+      : [];
+    if (pages.length && root && this.deps.tryIt) {
+      try {
+        const tried = await this.deps.tryIt.tryPages({
+          taskId: task.id,
+          reviewKey: safeSegment(result.runId ?? `attempt-${task.attempt + 1}`),
+          root,
+          pages,
+          ...(req.signal ? { signal: req.signal } : {}),
+        });
+        if ("tried" in tried)
+          evidence.tried = tried.tried.map((t) => attributeTry(t, changedFiles));
+        else evidence.notChecked?.push(`${pagesWords(pages)} not tried: ${tried.unavailable}`);
+      } catch (e) {
+        evidence.notChecked?.push(
+          `${pagesWords(pages)} not tried: ${errorMessage(e).split("\n")[0]?.slice(0, 200)}`,
+        );
+      }
+    }
+    // Read access to the task's folder (ADR 0104): the critic reads what it needs, not only
+    // the diff; the list of the folder's files saves it a call.
+    const readTools =
+      this.deps.readTools === false ? [] : (this.deps.readTools ?? defaultReadTools());
+    if (root && readTools.length) evidence.projectFiles = projectFileList(root);
+
     const sessionContext = await this.deps.context?.forSession(session.id, task.project_id);
     const criticService = sessionContext
       ? new CriticService(this.serviceDeps(sessionContext.pipeline))
       : this.service;
     const owner = req.token.claims.ownerHumanId;
-    const output: ReviewOutput = await criticService.review(
-      { subject: { kind: "task", taskId: task.id }, tier, evidence },
-      {
-        sessionToken: req.token,
-        budget: req.budget,
-        projectSettings: settings,
-        checks,
-        cwd: worktree,
-        signal: req.signal,
-        humanId: owner,
-      },
-    );
+    // The checks run in the task's sandbox (the container for a full review, the process
+    // sandbox below that), never on the host when a sandbox port is wired: a lease the port
+    // refuses means the checks are not run, and the review says why.
+    let lease: Awaited<ReturnType<RunSandboxPort["open"]>> | null = null;
+    if (checks.length && root && this.deps.sandbox) {
+      try {
+        lease = await this.deps.sandbox.open({
+          task,
+          worktree: root,
+          allowedDomains: [],
+          timeoutMs: checks.reduce((n, c) => n + (c.timeoutMs ?? 120_000), 0),
+          signal: req.signal ?? new AbortController().signal,
+        });
+      } catch (e) {
+        this.logger.warn("review sandbox not opened; the checks are not run", {
+          taskId: task.id,
+          error: errorMessage(e),
+        });
+        evidence.notChecked?.push(
+          `${checks.map((c) => c.name).join(", ")} not run: the sandbox could not be opened (${errorMessage(e).split("\n")[0]?.slice(0, 200)})`,
+        );
+        checks = [];
+      }
+    }
+    // The project's scripts need npm where they run (in the lease, whose environment is not
+    // the daemon's); without it they are not run, and the review says so instead of failing the
+    // work for a tool the computer lacks, or failing the review on a command that cannot start.
+    if (ownChecks.length && checks.length) {
+      const hasNpm = this.deps.hasCommand
+        ? await this.deps.hasCommand("npm")
+        : lease
+          ? await startsIn(lease.sandbox, ["npm", "--version"])
+          : await onPath("npm");
+      if (!hasNpm) {
+        evidence.notChecked?.push(
+          `${notRunWords(ownChecks.map((c) => c.name))}: npm is not installed where the checks run`,
+        );
+        checks = checks.filter((c) => !ownChecks.includes(c));
+      }
+    }
+    let output: ReviewOutput;
+    try {
+      output = await (lease
+        ? new CriticService({
+            ...this.serviceDeps(sessionContext?.pipeline),
+            checkRunner: sandboxCheckRunner(lease.sandbox),
+          })
+        : criticService
+      ).review(
+        { subject: { kind: "task", taskId: task.id }, tier, evidence },
+        {
+          sessionToken: req.token,
+          budget: req.budget,
+          projectSettings: settings,
+          checks,
+          cwd: worktree,
+          signal: req.signal,
+          humanId: owner,
+          ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
+        },
+      );
+    } finally {
+      await lease?.sandbox.destroy().catch(() => {});
+    }
 
     // The rung the failed attempt ran on, for the ladder: the Run row's model.
     const currentTier = await this.tierOfRun(result.runId);
@@ -662,9 +824,39 @@ export class CriticLoop implements CriticPort {
       runId: args.result.runId ?? null,
       source: "critic",
       questions: args.questions,
-      context: `The critic: ${output.summary}`,
+      // The card says what the specialist said (design §3.8): its report's own words. Live
+      // (2026-11-02) a report that made no chart was accepted by the critic, and the card
+      // quoted "The critic: Accepted ..." as the specialist's words.
+      context:
+        quotedWords(args.result.finalReport ?? args.result.summary) ??
+        `The critic: ${output.summary}`,
     });
     return request.id;
+  }
+
+  /**
+   * The files a task changed over all its attempts (ADR 0104): this run's, then those of the
+   * task's earlier runs from their sessions' `task.files` events (the runner writes one per run
+   * that changed files, before the review). Relative paths, forward slashes, each once.
+   */
+  private async filesOfTask(
+    taskId: string,
+    sessionId: string,
+    runFiles: readonly string[],
+  ): Promise<string[]> {
+    const { store } = this.deps;
+    const files = new Set(runFiles.map(relPath));
+    const sessions = new Set([sessionId]);
+    for (const r of await store.run.forTask(taskId)) if (r.session_id) sessions.add(r.session_id);
+    for (const id of sessions) {
+      for (const e of await store.event.list(id, 0, 10_000)) {
+        if (e.type !== TASK_FILES_EVENT) continue;
+        const p = (e.payload ?? {}) as { taskId?: unknown; files?: unknown };
+        if (p.taskId !== taskId || !Array.isArray(p.files)) continue;
+        for (const f of p.files) if (typeof f === "string" && f.trim()) files.add(relPath(f));
+      }
+    }
+    return [...files];
   }
 
   /**
@@ -675,5 +867,105 @@ export class CriticLoop implements CriticPort {
     if (!runId) return DEFAULT_WORK_TIER;
     const run = await this.deps.store.run.get(runId);
     return (run && tierOfModel(run.model, this.deps.modelConfig?.().ladder)) || DEFAULT_WORK_TIER;
+  }
+}
+
+/** The runtime's read-only file tools for the critic (ADR 0104): `read_file` and `list_dir`. */
+export function defaultReadTools(): ToolSpec[] {
+  const all = fileTools();
+  return [all.get("read_file"), all.get("list_dir")].filter((t): t is ToolSpec => !!t);
+}
+
+/** Output kept per check (its end, where test runners print the summary). */
+const CHECK_OUTPUT_TAIL = 4000;
+
+/**
+ * A check runner over a sandbox lease: the command runs in the task's sandbox, with the same
+ * evidence as a process check ("<argv> -> exit <code> in <ms> ms", then the end of the output).
+ * A relative `cwd` runs under the worktree; an absolute one is refused by the sandbox, so it
+ * runs at the worktree's root.
+ */
+export function sandboxCheckRunner(sandbox: Sandbox): CheckRunner {
+  return {
+    async run(cmd, opts) {
+      const relative = cmd.cwd && !/^([a-zA-Z]:)?[\\/]/.test(cmd.cwd) ? cmd.cwd : undefined;
+      let r: Awaited<ReturnType<Sandbox["run"]>>;
+      try {
+        r = await sandbox.run(cmd.argv, {
+          ...(relative ? { cwd: relative } : {}),
+          timeoutMs: cmd.timeoutMs ?? 120_000,
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          maxOutputBytes: 256 * 1024,
+        });
+      } catch (e) {
+        // A command that cannot start (not installed in the sandbox) is a check that did not
+        // pass, with the reason as its output, never a review that failed with an error.
+        if (opts.signal?.aborted) throw e;
+        return {
+          name: cmd.name,
+          passed: false,
+          output: `${cmd.argv.join(" ")} -> could not start: ${errorMessage(e).split("\n")[0]?.slice(0, 300)}`,
+          required: cmd.required !== false,
+        };
+      }
+      const body = `${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`.trim();
+      const tail = body.length > CHECK_OUTPUT_TAIL ? `...${body.slice(-CHECK_OUTPUT_TAIL)}` : body;
+      const head = `${cmd.argv.join(" ")} -> ${r.timedOut ? "timeout" : `exit ${r.code}`} in ${r.durationMs} ms`;
+      return {
+        name: cmd.name,
+        passed: r.code === 0 && !r.timedOut,
+        output: tail ? `${head}\n${tail}` : head,
+        required: cmd.required !== false,
+      };
+    },
+  };
+}
+
+/** A changed file as the review compares it: forward slashes, no leading "./". */
+function relPath(f: string): string {
+  return f.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+/** Files a page loads that run nothing (styles, images, fonts): they cannot throw an error. */
+const INERT_FILE = /\.(css|png|jpe?g|gif|webp|avif|bmp|ico|svg|woff2?|ttf|otf|eot)$/i;
+
+/**
+ * Who a page's error belongs to (ADR 0104, the review of 2026-11-02). A page that opened and
+ * threw an error is the task's blocker when the task changed a file that runs on the page (the
+ * page itself, a script, data it reads; a file the page asked for and the task deleted). When the
+ * task changed none of them (it only styled the page) the error was there before the task: it is
+ * told in the try's output and becomes a low finding, never a reason to send the task back that
+ * no rework of the task can remove. A page that did not open is always a blocker.
+ */
+export function attributeTry(t: TriedEvidence, taskFiles: readonly string[]): TriedEvidence {
+  if (t.ok || !t.blocking || !t.pageFiles?.length) return t;
+  if (/did not open/i.test(t.output)) return t;
+  const runs = t.pageFiles.map(relPath).filter((f) => !INERT_FILE.test(f));
+  const changed = new Set(taskFiles.map(relPath));
+  if (runs.some((f) => changed.has(f))) return t;
+  return {
+    ...t,
+    blocking: false,
+    causedByTask: false,
+    output: `${t.output}\nnot caused by this task: it changed none of the files that run on this page (${runs.join(", ")})`,
+  };
+}
+
+/** "index.html was" / "index.html and about.html were", for a line about pages. */
+function pagesWords(pages: readonly string[]): string {
+  return pages.length === 1 ? `${pages[0]} was` : `${pages.join(" and ")} were`;
+}
+
+async function onPath(cmd: string): Promise<boolean> {
+  return (await which(cmd).catch(() => null)) !== null;
+}
+
+/** Whether a command starts and exits 0 in a sandbox (a probe such as `npm --version`). */
+async function startsIn(sandbox: Sandbox, argv: readonly string[]): Promise<boolean> {
+  try {
+    const r = await sandbox.run(argv, { timeoutMs: 30_000, maxOutputBytes: 4096 });
+    return r.code === 0 && !r.timedOut;
+  } catch {
+    return false;
   }
 }

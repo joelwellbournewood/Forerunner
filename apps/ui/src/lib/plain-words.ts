@@ -37,9 +37,9 @@ export function withoutUndoWord(text: string): { text: string; undo: boolean } {
 /** How carefully the critic reviews a task of this risk tier (the tier in brackets). */
 export function reviewLevel(tier: number | null | undefined): string {
   switch (tier) {
-    // Design §2, §5 rule 6: the level in words, never "tier N".
+    // Design §2, §5 rule 6: the level in words, never "tier N". Tier 0 is reviewed as the
+    // light review (ADR 0104).
     case 0:
-      return "checks only";
     case 1:
       return "light review";
     case 2:

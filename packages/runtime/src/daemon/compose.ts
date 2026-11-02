@@ -125,6 +125,7 @@ import {
 } from "../loop/memory.ts";
 import { MERGE_PR_TOOL, ReviewedPrMerge } from "../loop/merge.ts";
 import { RepoCreator, RepoProposals } from "../loop/repo-create.ts";
+import { evidenceRootOf, type TryItPort } from "../loop/try-it.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
 import { modelIdFor } from "../models/ladder.ts";
 import {
@@ -388,6 +389,13 @@ export interface ComposeOptions {
   priceListUrl?: string;
   /** Sandbox port for task commands; default: container when reachable, else the process stand-in. */
   sandbox?: RunSandboxPort;
+  /**
+   * "Try it" for the critic's review (ADR 0104): pages a task made or changed are opened in a
+   * headless Chromium, the network off, and what a person would meet is evidence. Default: the
+   * capabilities package's `tryPages` with the Chromium this environment has (none found: the
+   * review says the work was not tried). `false` turns it off; tests hand in a stand-in.
+   */
+  tryIt?: TryItPort | false;
   /** Pre-computed engine detection (tests never probe docker). */
   sandboxDetection?: EngineDetection;
   sandboxRun?: RunFn;
@@ -1970,6 +1978,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // The critic (spec H): the registry critic prompt, the task's tier, the project's ceiling,
   // the diff from the task's worktree, the project's check commands, the session pipeline for
   // the compression bypass, critic memory for repeat findings.
+  // "Try it" (ADR 0104): screenshots under `<data>/evidence/<task>/<review>/`, read back by
+  // `GET /tasks/:id/evidence` for the task drawer.
+  const tryIt: TryItPort | undefined =
+    opts.tryIt === false
+      ? undefined
+      : (opts.tryIt ?? {
+          tryPages: (req) =>
+            browser.tryPages({
+              root: req.root,
+              pages: req.pages,
+              outDir: join(evidenceRootOf(dirs), safeSegment(req.taskId), req.reviewKey),
+              filePrefix: `${req.reviewKey}/`,
+              env,
+              ...(req.signal ? { signal: req.signal } : {}),
+            }),
+        });
   const critic = new CriticLoop({
     store,
     clock,
@@ -1992,6 +2016,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // The PM's `ProjectDocs` (below) writes docs/status.md on the session's PR right after the
     // review (spec G.5), so the drift check leaves the status doc to it.
     statusDocManaged: true,
+    // ADR 0104: the project's build, lint and tests run in the task's sandbox (never on the
+    // host), pages are tried, and a specialist's registry floor sets the least review.
+    sandbox: sandboxPort,
+    ...(tryIt ? { tryIt } : {}),
+    specialistFloor: (name) => registry.specialists.get(name)?.risk_tier_floor,
     // The tables in force at every review's pick (ADR 0039): an adopted sonnet or opus rung
     // moves the tier-1 and tier-2/3 reviews with the executor and the chat.
     modelConfig: () => modelConfig.get(),

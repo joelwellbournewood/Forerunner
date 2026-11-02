@@ -64,6 +64,7 @@ import type {
   ReviewView,
   RunView,
   SessionView,
+  TaskCheck,
   TaskDisplay,
   TaskView,
 } from "./api-types.ts";
@@ -295,7 +296,7 @@ export function taskView(
   chfPerUsd: number,
   specialistLimit?: (name: string) => number | undefined,
   /** The status in words (`taskDisplay`) and the place in the run order, when known. */
-  extra: { display?: TaskDisplay; runOrder?: number } = {},
+  extra: { display?: TaskDisplay; runOrder?: number; check?: TaskCheck | null } = {},
 ): TaskView {
   const limit = specialistLimit?.(t.specialist ?? "coder");
   const cap = t.budget_usd_micro > 0 || limit !== undefined ? runCapOf(t, limit ?? 0) : null;
@@ -327,6 +328,7 @@ export function taskView(
     version: t.version,
     ...(extra.display ? { display: extra.display } : {}),
     ...(extra.runOrder !== undefined ? { runOrder: extra.runOrder } : {}),
+    ...(extra.check !== undefined ? { check: extra.check } : {}),
   };
 }
 
@@ -1166,8 +1168,8 @@ export const MODE_LABELS: Record<Mode, string> = {
   planning: "Session planning",
   coder: "Coding specialist",
   researcher: "Research specialist",
-  critic_t1: "Critic tier 1",
-  critic_t23: "Critic tier 2 and 3",
+  critic_t1: "Critic, light review",
+  critic_t23: "Critic, full review",
 };
 
 /**

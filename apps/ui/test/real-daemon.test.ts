@@ -4,14 +4,22 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { appDirs, join, SimulatedClock, SystemClock } from "@forerunner/platform";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
-import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
+import {
+  type ComposeOptions,
+  composeRuntime,
+  type RuntimeApp,
+} from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
+import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { ScriptedProvider } from "../../../packages/runtime/test/helpers.ts";
+import {
+  AcceptingCriticProvider,
+  ScriptedProvider,
+} from "../../../packages/runtime/test/helpers.ts";
 import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
 import {
   type BenchOptions,
@@ -619,6 +627,21 @@ describe("the UI client against the real daemon", () => {
       "Full review needs Docker, not running on this computer. Set it up, or edit to a light review.",
     );
     expect(docker.length).toBeLessThanOrEqual(100);
+    // A deploy keeps the full review (ADR 0104, the owner's decision 4): its wait suggests no
+    // light review as a way out.
+    const ops = await client.createProject({ name: "Site deploy", goal: "Deploy the site" });
+    const deploy = await client.createTask(ops.id, {
+      title: "Deploy the site",
+      outcome: "The site is live with a rollback runbook",
+      riskTier: 2,
+      specialist: "ops-deploy",
+    });
+    const deployRow = (await client.tasks(ops.id)).find((t) => t.id === deploy.id);
+    expect(deployRow?.display?.label).toBe("Waiting for Docker");
+    expect(deployRow?.display?.detail).toBe(
+      "A deploy or a migration keeps the full review, which needs Docker. Set it up in Settings.",
+    );
+    expect(deployRow?.display?.detail?.length).toBeLessThanOrEqual(100);
     // No raw state, tier or id in anything the row says.
     const said = JSON.stringify(rows.map((t) => t.display));
     expect(said).not.toMatch(/needs_human|in_progress|claimed|tier \d|request 01/);
@@ -1838,7 +1861,9 @@ async function composeWithWaitingRun(
     clock,
     stateUrl: "sqlite::memory:",
     vault: new MemoryVault(),
-    provider,
+    // The critic reviews every task (ADR 0104), tier 0 too: it accepts here, so the script
+    // (and `provider.calls`) sees only the specialists' calls it was written for.
+    provider: new AcceptingCriticProvider(provider),
     registryDir: REGISTRY,
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.0.0-ui-contract",
@@ -2613,7 +2638,10 @@ describe("the UI client against the real daemon: Settings → Sandbox (Docker) (
  * The UI client against a real daemon whose model is the bench's role-playing stand-in, with
  * its failure injection (`FORERUNNER_BENCH_*`), on a clock that moves as in the app.
  */
-async function composeWithRolePlayer(env: Record<string, string>): Promise<{
+async function composeWithRolePlayer(
+  env: Record<string, string>,
+  over: Partial<ComposeOptions> = {},
+): Promise<{
   rt: RuntimeApp;
   client: DaemonClient;
   /** The stand-in's knobs, read at each call: a case can plant a failure for one step. */
@@ -2622,6 +2650,8 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
   intakeCalls: ModelRequest[];
   /** The chat turns' calls the stand-in received, in order (what the chat was told). */
   chatCalls: ModelRequest[];
+  /** The critic's calls the stand-in received, in order (what each review was given). */
+  criticCalls: ModelRequest[];
 }> {
   const home = mkdtempSync(join(tmpdir(), "fr-ui-real-needs-me-"));
   const bench = benchOptionsFromEnv(
@@ -2631,10 +2661,12 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
   const provider = createRolePlayer(bench);
   const intakeCalls: ModelRequest[] = [];
   const chatCalls: ModelRequest[] = [];
+  const criticCalls: ModelRequest[] = [];
   const stream = provider.stream.bind(provider);
   provider.stream = (req) => {
     const role = detectRole(req).role;
     if (role === "intake") intakeCalls.push(req);
+    if (role === "critic") criticCalls.push({ ...req, messages: structuredClone(req.messages) });
     // A copy: the loop appends the reply to the same messages after the call.
     if (role === "chat") chatCalls.push({ ...req, messages: structuredClone(req.messages) });
     return stream(req);
@@ -2651,6 +2683,7 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.0.0-ui-contract",
     sandboxDetection: NO_ENGINE,
+    ...over,
   });
   const { app, token } = createDaemonApp(rt);
   const client = createClient(
@@ -2664,8 +2697,324 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
     },
     (input, init) => Promise.resolve(app.request(input, init)),
   );
-  return { rt, client, bench, intakeCalls, chatCalls };
+  return { rt, client, bench, intakeCalls, chatCalls, criticCalls };
 }
+
+/** A PNG of one pixel: what a try's screenshot file holds here. */
+const ONE_PIXEL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+describe("the UI client against the real daemon: nothing is Done without the right check (ADR 0104)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  const tries: TryPagesRequest[] = [];
+
+  beforeAll(async () => {
+    // The try port stands in for the headless browser (its own test drives a real Chromium):
+    // it stores a screenshot where the daemon keeps them and says what a person would see.
+    let evidenceRoot = "";
+    ({ rt, client } = await composeWithRolePlayer(
+      { FORERUNNER_BENCH_ASK: "Members chart", FORERUNNER_BENCH_MISSING: "Members chart" },
+      {
+        tryIt: {
+          tryPages: async (req) => {
+            tries.push(req);
+            const dir = join(evidenceRoot, req.taskId, req.reviewKey);
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, "index-1280.png"), ONE_PIXEL_PNG);
+            return {
+              tried: req.pages.map((page) => ({
+                what: `opened ${page} in a browser, 1280 pixels wide`,
+                target: page,
+                ok: true,
+                blocking: false,
+                output: `opened ${page} at 1280 pixels wide, the network off\ntitle: Page\ntext seen: Hello`,
+                screenshots: [
+                  {
+                    label: "1280 pixels wide (a computer)",
+                    file: `${req.reviewKey}/index-1280.png`,
+                  },
+                ],
+              })),
+            };
+          },
+        },
+      },
+    ));
+    evidenceRoot = evidenceRootOf(rt.dirs);
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const runSession = async (projectId: string) => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+      30_000,
+    );
+  };
+
+  it("a page task the planner put at tier 0: the critic reviews it, the page is tried, the task says Reviewed and tried, and the drawer opens the evidence", async () => {
+    const project = await client.createProject({ name: "Garden page", goal: "A welcome page" });
+    const page = await client.createTask(project.id, {
+      title: "Build index.html with the club's welcome page",
+      outcome: "index.html shows the club's name and a welcome line",
+      riskTier: 0,
+      specialist: "coder",
+    });
+    await runSession(project.id);
+    const row = (await client.tasks(project.id)).find((t) => t.id === page.id);
+    expect(row?.status).toBe("done");
+    expect(row?.check).toEqual({ label: "Reviewed and tried", tried: true });
+    // The page was tried in the task's folder.
+    expect(tries.map((t) => [t.taskId, t.pages])).toEqual([[page.id, ["index.html"]]]);
+    const detail = await client.task(page.id);
+    // Reviewed by the critic (its run is in the drawer), never closed on the coder's word.
+    expect(detail.runs.map((r) => [r.kind, r.specialist])).toEqual([
+      ["review", "critic"],
+      ["work", "coder"],
+    ]);
+    expect(detail.review?.check).toEqual({ label: "Reviewed and tried", tried: true });
+    const tried = detail.review?.evidence?.tried ?? [];
+    expect(tried.map((t) => [t.target, t.ok])).toEqual([["index.html", true]]);
+    expect(tried[0]?.output).toContain("text seen: Hello");
+    const file = tried[0]?.screenshots[0]?.file ?? "";
+    expect(file).toMatch(/^[A-Za-z0-9._-]+\/index-1280\.png$/);
+    // One click away: the screenshot itself, as the drawer reads it.
+    const shot = await client.taskEvidence(page.id, file);
+    expect(shot).toMatchObject({ file, contentType: "image/png" });
+    expect(Buffer.from(shot.base64, "base64").equals(ONE_PIXEL_PNG)).toBe(true);
+    // Nothing outside the task's own evidence folder is served.
+    for (const bad of ["../../runtime/daemon.json", `${file}/../../x.png`, "x.png"])
+      await expect(client.taskEvidence(page.id, bad)).rejects.toMatchObject({ status: 404 });
+  }, 60_000);
+
+  it("a data task whose input file is missing, answered Go ahead without: it ends waiting for you with a card that asks for the file, never Done", async () => {
+    const project = await client.createProject({ name: "Garden data", goal: "A members chart" });
+    const chart = await client.createTask(project.id, {
+      title: "Members chart",
+      outcome: "charts/members.svg: a bar chart of members per year from data/members.csv",
+      acceptanceCriteria: [
+        "Every bar uses the exact number from data/members.csv",
+        "No number is invented",
+      ],
+      specialist: "data-analyst",
+    });
+    await runSession(project.id);
+    const me = await client.me();
+    const cardsOf = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === chart.id && r.status === "open",
+      );
+    // First the specialist asks; the person answers with the card's own button.
+    const [asked] = await cardsOf();
+    if (!asked) throw new Error("no question card");
+    const goAhead = asked.choices?.find((c) => c.label === "Go ahead without");
+    expect(goAhead).toBeDefined();
+    const sessionsBefore = (await client.sessions({ projectId: project.id })).length;
+    await client.answerRequest(asked.id, { version: asked.version, answer: "Go ahead without" });
+    await eventually(
+      async () => {
+        const sessions = await client.sessions({ projectId: project.id });
+        return sessions.length > sessionsBefore && sessions.every((s) => s.status !== "running");
+      },
+      "the session the answer started to end",
+      async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
+      30_000,
+    );
+    // The work made no chart and asked for the file: not done, it needs you.
+    const row = (await client.tasks(project.id)).find((t) => t.id === chart.id);
+    expect(row?.status).toBe("needs_human");
+    expect(row?.check ?? null).toBeNull();
+    expect(row?.display?.label).toMatch(/^Needs your answer/);
+    const cards = await cardsOf();
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    expect(card?.title).toBe('"Members chart": the specialist asks you');
+    expect(card?.steps).toEqual([
+      'Please add data/members.csv to the project\'s folder: "Members chart" needs it and no number may be invented.',
+    ]);
+    // In the specialist's own words, never the critic's accept of a chart that was not made.
+    expect(card?.body).toContain("data/members.csv is missing");
+    expect(card?.body).not.toMatch(/Accepted/);
+    expect((await client.inbox(me.id)).needsYouCount).toBeGreaterThan(0);
+  }, 90_000);
+});
+
+describe("the UI client against the real daemon: a retry that changes no file is checked again (review of 2026-11-02)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let criticCalls: ModelRequest[];
+
+  beforeAll(async () => {
+    // The project's test runs through npm in the task's sandbox, as on a person's computer: the
+    // daemon's environment carries what finds and starts npm there (the other cases give it
+    // FORERUNNER_HOME only).
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-checks-"));
+    const env: Record<string, string> = { FORERUNNER_HOME: home };
+    for (const k of ["PATH", "Path", "PATHEXT", "SystemRoot", "ComSpec", "TEMP", "TMP", "HOME"])
+      if (process.env[k]) env[k] = process.env[k] as string;
+    ({ rt, client, criticCalls } = await composeWithRolePlayer(
+      {},
+      { env, dirs: appDirs({ env: { FORERUNNER_HOME: home } }), tryIt: false },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("a code task whose project test always fails: every review runs the test, also after a run that changed nothing, and the task is never Done", async () => {
+    // Bench walk C: reviews 1 and 2 ran the failing test and sent the work back; attempt 3
+    // rewrote src/clamp.js as it was, review 3 had no files, no checks and accepted, and the
+    // accept closed the failed test: "Done · Reviewed" with the test still failing.
+    const project = await client.createProject({ name: "Clamp lib", goal: "A tiny maths library" });
+    const folder = (await client.projectFiles(project.id)).folder ?? "";
+    expect(folder).not.toBe("");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(
+      join(folder, "package.json"),
+      JSON.stringify({ name: "clamp-lib", private: true, scripts: { test: "node fail.js" } }),
+    );
+    writeFileSync(
+      join(folder, "fail.js"),
+      "console.log('not ok 1 - clamp keeps 5 inside 0..3');\nprocess.exit(1);\n",
+    );
+    const clamp = await client.createTask(project.id, {
+      title: "Add clamp in src/clamp.js",
+      outcome: "src/clamp.js exports clamp(x, lo, hi)",
+      acceptanceCriteria: ["clamp(5, 0, 3) is 3"],
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
+      60_000,
+    );
+    const detail = await client.task(clamp.id);
+    const work = detail.runs.filter((r) => r.kind === "work");
+    const reviews = detail.runs.filter((r) => r.kind === "review");
+    expect(work.length, JSON.stringify(detail.runs)).toBeGreaterThan(1);
+    // The walk's hole: a run after the first changed no file, and was still checked.
+    expect(
+      work.slice(0, -1).some((r) => r.files.length === 0),
+      JSON.stringify(work),
+    ).toBe(true);
+    // Each review was given the project's test result, the failure included.
+    const firstTurns = criticCalls.filter(
+      (c) =>
+        JSON.stringify(c.messages).includes("Add clamp in src/clamp.js") && c.messages.length === 1,
+    );
+    expect(firstTurns).toHaveLength(reviews.length);
+    for (const c of firstTurns)
+      expect(JSON.stringify(c.messages)).toContain("not ok 1 - clamp keeps 5 inside 0..3");
+    // Never Done while the test fails; what the drawer opens says the test failed.
+    const row = (await client.tasks(project.id)).find((t) => t.id === clamp.id);
+    expect(row?.status).not.toBe("done");
+    expect(row?.check ?? null).toBeNull();
+    expect(detail.review?.evidence?.checks.find((c) => c.name === "test")).toMatchObject({
+      passed: false,
+    });
+    // What the critic still asks for, in the drawer: the test to pass.
+    expect(detail.review?.open).toContain(
+      'Make the check "test" pass; if it failed before this task, say so and why under "Questions for the person:"',
+    );
+  }, 90_000);
+});
+
+describe("the UI client against the real daemon: what was checked survives a restart (ADR 0104)", () => {
+  it("a page task reads 'Reviewed and tried', with its evidence and its screenshot, after the daemon starts again on the same home", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-evidence-"));
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    const first = await composeWithRolePlayer(
+      {},
+      {
+        env,
+        dirs,
+        stateUrl,
+        tryIt: {
+          tryPages: async (req) => {
+            const dir = join(evidenceRootOf(dirs), req.taskId, req.reviewKey);
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, "index-1280.png"), ONE_PIXEL_PNG);
+            return {
+              tried: req.pages.map((page) => ({
+                what: `opened ${page} in a browser, 1280 pixels wide`,
+                target: page,
+                ok: true,
+                blocking: false,
+                output: `opened ${page} at 1280 pixels wide, the network off\ntitle: Quotes\ntext seen: Hello`,
+                screenshots: [
+                  {
+                    label: "1280 pixels wide (a computer)",
+                    file: `${req.reviewKey}/index-1280.png`,
+                  },
+                ],
+              })),
+            };
+          },
+        },
+      },
+    );
+    let projectId = "";
+    let taskId = "";
+    try {
+      const project = await first.client.createProject({ name: "Quotes", goal: "A quote page" });
+      projectId = project.id;
+      const page = await first.client.createTask(project.id, {
+        title: "Build index.html with a random quote",
+        outcome: "index.html shows a quote",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      taskId = page.id;
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const started = await first.client.startSession({ agentId, projectId });
+      await eventually(
+        async () => (await first.client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => (await first.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      const before = (await first.client.tasks(projectId)).find((t) => t.id === taskId);
+      expect(before?.check).toEqual({ label: "Reviewed and tried", tried: true });
+    } finally {
+      await first.rt.close();
+    }
+
+    // The daemon starts again on the same home: the same words, the same evidence, the same file.
+    const second = await composeWithRolePlayer({}, { env, dirs, stateUrl, tryIt: false });
+    try {
+      const row = (await second.client.tasks(projectId)).find((t) => t.id === taskId);
+      expect(row?.status).toBe("done");
+      expect(row?.check).toEqual({ label: "Reviewed and tried", tried: true });
+      const detail = await second.client.task(taskId);
+      expect(detail.review?.check).toEqual({ label: "Reviewed and tried", tried: true });
+      const tried = detail.review?.evidence?.tried ?? [];
+      expect(tried.map((t) => [t.target, t.ok])).toEqual([["index.html", true]]);
+      const file = tried[0]?.screenshots[0]?.file ?? "";
+      const shot = await second.client.taskEvidence(taskId, file);
+      expect(Buffer.from(shot.base64, "base64").equals(ONE_PIXEL_PNG)).toBe(true);
+    } finally {
+      await second.rt.close();
+    }
+  }, 90_000);
+});
 
 describe("the UI client against the real daemon: a task that fails gets one card, and answering it resumes work (design §3.8)", () => {
   let rt: RuntimeApp;

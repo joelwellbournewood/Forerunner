@@ -109,14 +109,20 @@ describe("critic in the loop", () => {
     expect(managed.sent).toContain("docs/architecture.md: missing from the standard doc set");
   });
 
-  it("tier 0 keeps the mechanical path: no critic call, the task closes on passed checks", async () => {
+  it("tier 0 is reviewed by the critic as the light review (ADR 0104); only a runner without a critic closes it on its run", async () => {
     const w = await loopWorld({ replies: [submitReply(), closingReply()] });
     const task = await w.addTask("Rename a file", { risk_tier: 0 });
     const result = await w.start(w.runner(doneExecutor(w)));
     expect(result.completed).toEqual([task.id]);
-    expect(result.reviews).toHaveLength(0);
-    expect(w.provider.calls.filter((c) => c.request.tools?.length)).toHaveLength(0);
+    expect(result.reviews).toMatchObject([{ taskId: task.id, tier: 1, decision: "accepted" }]);
+    expect(w.provider.calls.some((c) => c.request.tools?.length)).toBe(true);
     expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    // An engine test world composed without a critic keeps the mechanical close.
+    const plain = await w.addTask("Rename another file", { risk_tier: 0 });
+    const without = await w.start(w.runner(doneExecutor(w), { critic: undefined }));
+    expect(without.completed).toEqual([plain.id]);
+    expect(without.reviews).toHaveLength(0);
+    expect((await w.store.task.mustGet(plain.id)).reason).toBe("tier 0: automated checks only");
     await w.close();
   });
 
@@ -195,7 +201,9 @@ describe("critic in the loop", () => {
       fingerprint: "fp-build",
       author_agent: w.criticAgent,
     });
-    const result = await w.start(w.runner(doneExecutor(w)));
+    // The mechanical close is a runner's without a critic (ADR 0104: with one, tier 0 is reviewed).
+    const noCritic = { critic: undefined };
+    const result = await w.start(w.runner(doneExecutor(w), noCritic));
     expect(result.completed).toEqual([]);
     expect(result.blockedByFindings).toEqual([task.id]);
     expect(result.inReview).toEqual([task.id]);
@@ -216,7 +224,7 @@ describe("critic in the loop", () => {
     expect(request.steps[0]).toContain("Build script deletes the wrong directory");
     expect((request.change_card as { key?: string }).key).toBe(BLOCKED_FINDINGS_KEY);
     // A second session reuses the open request instead of filing another.
-    await w.start(w.runner(doneExecutor(w)));
+    await w.start(w.runner(doneExecutor(w), noCritic));
     expect(
       (await w.store.humanRequest.open({ humanId: w.human })).filter((r) => r.task_id === task.id),
     ).toHaveLength(1);
@@ -269,7 +277,8 @@ describe("critic in the loop", () => {
       fingerprint: "fp-sep",
       author_agent: w.criticAgent,
     });
-    await w.start(w.runner(doneExecutor(w)));
+    // The mechanical close is a runner's without a critic (ADR 0104: with one, tier 0 is reviewed).
+    await w.start(w.runner(doneExecutor(w), { critic: undefined }));
     const [request] = (await w.store.humanRequest.open({ humanId: w.human })).filter(
       (r) => r.task_id === task.id,
     );

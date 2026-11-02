@@ -97,7 +97,11 @@ export function quotedWords(text: string | null | undefined, max = 160): string 
     .replace(/\s+/g, " ")
     .trim();
   if (!t) return null;
-  const sentences = t.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g) ?? [t];
+  // A sentence ends at ".", "!" or "?" before a space or the end; a dot inside a word (a file
+  // name such as "data/members.csv") does not end it (before, the quote began at "csv ...").
+  const sentences = t.match(/(?:[^.!?]|[.!?](?=\S))+[.!?]+(?=\s|$)|(?:[^.!?]|[.!?](?=\S))+$/g) ?? [
+    t,
+  ];
   let out = "";
   for (const s of sentences.slice(0, 2)) {
     const next = `${out}${out ? " " : ""}${s.trim()}`;

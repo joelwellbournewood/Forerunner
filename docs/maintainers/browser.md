@@ -283,6 +283,26 @@ derived run token caps to the session's project. The catalog entry `browser`
 `routine_reversible` and `credential`. `RuntimeApp.capabilities.browser` exposes the mode,
 the manager and the presence switch; `rt.capabilities.refresh()` re-reads everything.
 
+### "Try it" for the critic (`try-page.ts`, ADR 0104)
+
+`tryPages({ root, pages, outDir, filePrefix?, widths?, timeoutMs?, signal?, env? })` is the
+critic's try of a page a task made, not an agent tool: a fresh headless Chromium (found with
+`resolveChromiumExecutable`, never an agent's profile, never `playwright install`) opens each
+page from a loopback server (`127.0.0.1`, a random port) that serves the task's folder read-only
+and nothing else (no dot files, nothing outside the folder; a missing file is a 404 with a body,
+so Chromium reports the status). Every other request is aborted (`blockedbyclient`): the network
+is off. At each width (1280 and 390 by default) it records whether the page opened, its title,
+the visible text (500 characters), linked files of the folder that did not load, uncaught
+errors, console errors (load failures excepted) and a screenshot (`<page>-<width>.png` in
+`outDir`). The result (`PageTry`) has the shape of the critic's `TriedEvidence`: `ok` when
+nothing went wrong, `blocking` when the page did not open or threw an error that no blocked
+request explains, and `pageFiles`: the files of the folder the page asked for, found or not, the
+page first (the runtime tells from it whether an error on the page can be the task's: ADR 0104
+point 9). `{ unavailable }` when no browser starts; a page that does not work is never
+an exception. The runtime's critic loop calls it through `TryItPort` (compose: screenshots under
+`<data>/evidence/<task>/<review key>/`). Test: `test/try-page.integration.test.ts` (a real
+Chromium, skipped with the reason without one).
+
 ## How to change it
 
 - **A new guard kind**: add it to `GuardKind` and `GUARD_RULES` with the action class that

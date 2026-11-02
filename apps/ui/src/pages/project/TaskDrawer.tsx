@@ -8,6 +8,7 @@ import { Link } from "react-router";
 import {
   describeError,
   type TaskDetailView,
+  type TaskReviewEvidence,
   type TaskTransitionView,
   type TaskView,
   type UpdateTaskInput,
@@ -35,8 +36,11 @@ import {
   ACTIONS,
   actionsFor,
   displayOf,
+  FULL_REVIEW_SPECIALISTS,
+  FULL_REVIEW_TIER,
   reviewLevelChoices,
   reviewLevelName,
+  reviewLevelValue,
   type TaskActionKey,
   WHO_AGENT,
   whoName,
@@ -245,7 +249,16 @@ function DrawerBody({
       {detail.review ? (
         <section data-testid="drawer-review">
           <h3 className="font-medium">Review</h3>
-          <p>{detail.review.verdict}</p>
+          {detail.review.check ? (
+            <p data-testid="drawer-check">
+              <Badge tone="good">{detail.review.check.label}</Badge>{" "}
+              {detail.review.check.tried
+                ? "The critic read the work and it was opened as you would open it."
+                : "The critic read the work against each point above."}
+            </p>
+          ) : (
+            <p>{detail.review.verdict}</p>
+          )}
           {detail.review.summary ? (
             <RichText
               text={detail.review.summary}
@@ -258,6 +271,9 @@ function DrawerBody({
                 <li key={f}>{f}</li>
               ))}
             </ul>
+          ) : null}
+          {detail.review.evidence ? (
+            <ReviewEvidence taskId={task.id} evidence={detail.review.evidence} />
           ) : null}
           <Link
             to={`/projects/${encodeURIComponent(task.projectId)}/reviews?review=${encodeURIComponent(detail.review.id)}`}
@@ -280,6 +296,101 @@ function DrawerBody({
   );
 }
 
+/**
+ * What was run and tried for the review (ADR 0104), one click away: the project's checks with
+ * the end of their output, each page tried with what a person would meet and its screenshots,
+ * and what could not be run and why. Screenshots load when the evidence is opened.
+ */
+function ReviewEvidence({ taskId, evidence }: { taskId: string; evidence: TaskReviewEvidence }) {
+  const [open, setOpen] = useState(false);
+  const count = evidence.checks.length + evidence.tried.length + evidence.notChecked.length;
+  if (count === 0) return null;
+  return (
+    <details
+      className="mt-2 rounded border border-neutral-200 p-2 dark:border-neutral-700"
+      data-testid="review-evidence"
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="cursor-pointer text-sm font-medium">See what was checked</summary>
+      {evidence.checks.length ? (
+        <div className="mt-2 space-y-1" data-testid="evidence-checks">
+          <h4 className="text-xs font-medium text-neutral-500">The project's checks</h4>
+          {evidence.checks.map((c) => (
+            <div key={c.name}>
+              <p>
+                {c.name}: {c.passed ? "passed" : "failed"}
+              </p>
+              {c.output ? (
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-neutral-100 p-1 text-xs dark:bg-neutral-800">
+                  {c.output}
+                </pre>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {evidence.tried.length ? (
+        <div className="mt-2 space-y-2" data-testid="evidence-tried">
+          <h4 className="text-xs font-medium text-neutral-500">Tried as you would use it</h4>
+          {evidence.tried.map((t) => (
+            <div key={t.target}>
+              <p>
+                {t.target}: {t.ok ? "worked" : "had a problem"}
+              </p>
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-neutral-100 p-1 text-xs dark:bg-neutral-800">
+                {t.output}
+              </pre>
+              {open ? (
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {t.screenshots.map((sh) => (
+                    <EvidenceShot key={sh.file} taskId={taskId} file={sh.file} label={sh.label} />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {evidence.notChecked.length ? (
+        <ul
+          className="mt-2 list-disc pl-5 text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="evidence-not-checked"
+        >
+          {evidence.notChecked.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      ) : null}
+    </details>
+  );
+}
+
+/** One screenshot of a try, read from the daemon (the image needs the daemon's token). */
+function EvidenceShot({ taskId, file, label }: { taskId: string; file: string; label: string }) {
+  const client = useClient();
+  const shot = useAsync(
+    (signal) => client.taskEvidence(taskId, file, signal),
+    [client, taskId, file],
+  );
+  return (
+    <figure className="w-full max-w-xs">
+      {shot.data ? (
+        <img
+          src={`data:${shot.data.contentType};base64,${shot.data.base64}`}
+          alt={`The page, ${label}`}
+          className="w-full rounded border border-neutral-200 dark:border-neutral-700"
+          data-testid="evidence-screenshot"
+        />
+      ) : shot.error ? (
+        <p className="text-xs text-neutral-500">The screenshot could not be read.</p>
+      ) : (
+        <Loading what="the screenshot" />
+      )}
+      <figcaption className="text-xs text-neutral-500">{label}</figcaption>
+    </figure>
+  );
+}
+
 /** Edit (design §3.5): the wording, criteria, priority, budget, review level and who does it. */
 function EditTaskForm({
   task,
@@ -299,13 +410,24 @@ function EditTaskForm({
   const [outcome, setOutcome] = useState(task.outcome);
   const [criteria, setCriteria] = useState(task.acceptanceCriteria.join("\n"));
   const [priority, setPriority] = useState<string>(task.priority ?? DEFAULT_TASK_PRIORITY);
-  const [tier, setTier] = useState(String(task.riskTier));
+  // The level the person chose; null while they leave it as it is.
+  const [tier, setTier] = useState<string | null>(null);
   const [budget, setBudget] = useState(
     task.budget.usdMicro > 0
       ? formatAmount(usdMicroToChfMicro(task.budget.usdMicro, reference ?? task.budget))
       : "",
   );
   const [specialist, setSpecialist] = useState(task.specialist ?? WHO_AGENT);
+  // What the select shows: the stored level (a stored tier 0 is the light review, ADR 0104), or
+  // the one chosen, never below what the chosen specialist keeps (a deploy or a migration keeps
+  // the full review, the owner's decision 4).
+  const level = reviewLevelValue(tier === null ? task.riskTier : Number(tier), specialist);
+  const keepsFull = FULL_REVIEW_SPECIALISTS.has(specialist);
+  // What Save sends: a level left as it is goes back as stored, unless the specialist keeps the
+  // full review and the task is below it; then it is raised, and the form says so.
+  const sentTier =
+    tier === null ? Math.max(task.riskTier, keepsFull ? FULL_REVIEW_TIER : 0) : level;
+  const raised = keepsFull && sentTier > task.riskTier && task.riskTier < FULL_REVIEW_TIER;
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -326,7 +448,7 @@ function EditTaskForm({
         .map((l) => l.trim())
         .filter(Boolean),
       priority: priority as UpdateTaskInput["priority"],
-      riskTier: Number(tier),
+      riskTier: sentTier,
       budgetUsdMicro: chf > 0 ? chfMicroToUsdMicro(chf, reference ?? task.budget) : 0,
       specialist: specialist === WHO_AGENT ? null : specialist,
       ...(note.trim() ? { note: note.trim() } : {}),
@@ -341,7 +463,7 @@ function EditTaskForm({
       setBusy(false);
     }
   };
-  const fullWithoutDocker = Number(tier) >= 2 && docker === false;
+  const fullWithoutDocker = level >= FULL_REVIEW_TIER && docker === false;
   return (
     <form onSubmit={submit} className="space-y-3" data-testid="edit-task-form">
       <p className="text-sm">{ACTIONS.edit.explain}</p>
@@ -377,15 +499,17 @@ function EditTaskForm({
         <Field label="Review level">
           <select
             className={INPUT_CLASS}
-            value={tier}
+            value={String(level)}
             onChange={(e) => setTier(e.target.value)}
             data-testid="edit-risk-tier"
           >
-            {reviewLevelChoices(docker).map((c) => (
-              <option key={c.tier} value={String(c.tier)}>
-                {c.label}
-              </option>
-            ))}
+            {reviewLevelChoices(docker)
+              .filter((c) => !keepsFull || c.tier >= FULL_REVIEW_TIER)
+              .map((c) => (
+                <option key={c.tier} value={String(c.tier)}>
+                  {c.label}
+                </option>
+              ))}
           </select>
         </Field>
         <Field label="Priority" hint="High runs first.">
@@ -429,6 +553,12 @@ function EditTaskForm({
           </select>
         </Field>
       </div>
+      {raised ? (
+        <p className="text-sm" data-testid="edit-full-review-note">
+          {FULL_REVIEW_SPECIALISTS.get(specialist)} keeps the full review and your sign-off: saving
+          moves this task to the full review.
+        </p>
+      ) : null}
       {fullWithoutDocker ? (
         <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="edit-docker-note">
           Full review needs Docker, which is not running on this computer: the task waits until it

@@ -182,16 +182,13 @@ const NEEDS_PERSON =
   /\b(?:need|needs|needed|require|requires|required|waiting\s+(?:on|for)|cannot\s+(?:proceed|continue|finish|decide|be\s+done)\s+without)\b[^.\n]{0,60}?\b(?:(?:the\s+)?(?:person|human|owner)(?:'s)?|your)\s+(?:answers?|decisions?|confirmation|choices?|input)\b/i;
 
 /**
- * Whether a run's report says it needs the person's answers, and the questions it asks: the
- * items under a "Questions for the person:" heading (the form the brief asks for where the
- * `ask_person` tool is not offered), else, when a sentence says the work needs the person's
- * answers or decision, the report's lines that end with a question mark (possibly none: the
- * caller then asks the task's own questions). Null when the report says nothing of the kind.
+ * The items under a report's "Questions for the person:" heading (the form the brief asks for),
+ * at most `MAX_PERSON_QUESTIONS`; none when it has no such list. Only this explicit list counts
+ * when the critic accepted the work (ADR 0104): an accepted report that mentions the person in
+ * passing is not a question.
  */
-export function reportedQuestions(
-  report: string | null | undefined,
-): { questions: string[] } | null {
-  if (!report) return null;
+export function listedQuestions(report: string | null | undefined): string[] {
+  if (!report) return [];
   const lines = report.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     if (!HEADING.test(lines[i] ?? "")) continue;
@@ -206,8 +203,25 @@ export function reportedQuestions(
       if (!line.trim() && questions.length === 0) continue;
       break;
     }
-    if (questions.length) return { questions: questions.slice(0, MAX_PERSON_QUESTIONS) };
+    if (questions.length) return questions.slice(0, MAX_PERSON_QUESTIONS);
   }
+  return [];
+}
+
+/**
+ * Whether a run's report says it needs the person's answers, and the questions it asks: the
+ * items under a "Questions for the person:" heading (the form the brief asks for where the
+ * `ask_person` tool is not offered), else, when a sentence says the work needs the person's
+ * answers or decision, the report's lines that end with a question mark (possibly none: the
+ * caller then asks the task's own questions). Null when the report says nothing of the kind.
+ */
+export function reportedQuestions(
+  report: string | null | undefined,
+): { questions: string[] } | null {
+  if (!report) return null;
+  const listed = listedQuestions(report);
+  if (listed.length) return { questions: listed };
+  const lines = report.split(/\r?\n/);
   if (!NEEDS_PERSON.test(report)) return null;
   const asked = lines
     .map((l) => ITEM.exec(l)?.[1] ?? l)

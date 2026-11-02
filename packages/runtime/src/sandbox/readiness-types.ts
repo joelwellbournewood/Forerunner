@@ -98,7 +98,7 @@ export const SANDBOX_ROUTES = {
 
 /** Why the sandbox exists, in the person's words. */
 export const SANDBOX_WHY =
-  "Full-review tasks (risk tier 2 and above) run their tests and builds in this sandbox, isolated from your computer, so the critic sees real results. Until it is ready they wait: nothing fails and no retry is used.";
+  "Full-review tasks run their tests and builds in this sandbox, isolated from your computer, so the critic sees real results. Until it is ready they wait: nothing fails and no retry is used.";
 
 /** Where the person fixes it. */
 export const SANDBOX_SETTINGS_PLACE = "Settings → Sandbox (Docker)";

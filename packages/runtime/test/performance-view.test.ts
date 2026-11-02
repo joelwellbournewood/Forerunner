@@ -316,7 +316,7 @@ describe("performanceView over seeded Run rows and turns", () => {
 
     const t1 = modeOf(v, "critic_t1");
     expect(t1).toMatchObject({
-      label: "Critic tier 1",
+      label: "Critic, light review",
       samples: 10,
       ttftP50Ms: 500,
       ttftP90Ms: 900,

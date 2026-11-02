@@ -266,3 +266,75 @@ export async function until(cond: () => boolean, what: string): Promise<void> {
   }
   throw new Error(`timed out waiting for ${what}`);
 }
+
+/** The critic's tool name (`@forerunner/critic`'s SUBMIT_REVIEW_TOOL), kept here to avoid a cycle. */
+const SUBMIT_REVIEW = "submit_review";
+
+/**
+ * A provider that accepts every critic review and hands every other call to `inner` (ADR 0104:
+ * the critic reviews every task, tier 0 included). For composed-runtime tests whose subject is
+ * not the review: their tasks are done after an accept, as a person's would be, and `inner`
+ * sees only the calls it was written for.
+ */
+export class AcceptingCriticProvider implements ModelProvider {
+  readonly name: string;
+  readonly reviews: ModelRequest[] = [];
+  constructor(private readonly inner: ModelProvider) {
+    this.name = inner.name;
+  }
+  listModels(): Promise<ModelRef[]> {
+    return this.inner.listModels();
+  }
+  countTokens(text: string): number {
+    return this.inner.countTokens(text);
+  }
+  async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
+    if (!(req.tools ?? []).some((t) => t.name === SUBMIT_REVIEW)) {
+      yield* this.inner.stream(req);
+      return;
+    }
+    this.reviews.push(req);
+    const last = req.messages.at(-1)?.content;
+    const answered =
+      Array.isArray(last) && last.some((b) => (b as { type?: string }).type === "tool_result");
+    yield { type: "message_start", model: req.model };
+    if (answered) {
+      yield { type: "text_delta", text: "Recorded." };
+    } else {
+      const input = {
+        grade: 90,
+        confidence: "high",
+        verdict: "accept",
+        summary: "The work matches the brief.",
+        findings: [],
+        criteria: [],
+        checks_run: [],
+      };
+      yield { type: "tool_use_start", id: `tu_review_${this.reviews.length}`, name: SUBMIT_REVIEW };
+      yield {
+        type: "tool_use_delta",
+        id: `tu_review_${this.reviews.length}`,
+        partial_json: JSON.stringify(input),
+      };
+      yield { type: "tool_use_end", id: `tu_review_${this.reviews.length}`, input };
+    }
+    yield {
+      type: "message_end",
+      stop_reason: answered ? "end_turn" : "tool_use",
+      usage: {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    };
+  }
+  async complete(req: ModelRequest): Promise<ModelResponse> {
+    let t = 0;
+    return collectStream(
+      this.stream(req),
+      () => t,
+      () => ++t,
+    );
+  }
+}

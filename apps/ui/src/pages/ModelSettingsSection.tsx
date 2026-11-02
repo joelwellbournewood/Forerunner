@@ -63,8 +63,8 @@ const NUMBER_RULES: Partial<
 const MODE_LABELS: Record<string, string> = {
   planning: "planning",
   text_chat: "chat",
-  critic_t1: "review tier 1",
-  critic_t23: "review tiers 2 and 3",
+  critic_t1: "light review",
+  critic_t23: "full review",
 };
 
 const SOURCE_LABELS: Record<SettingValue["defaultSource"], string> = {

@@ -65,6 +65,13 @@ export interface BenchOptions {
   rejectTimes: number;
   /** Task-title substrings whose specialist asks the person first (FORERUNNER_BENCH_ASK). */
   ask: string[];
+  /**
+   * Task-title substrings whose input is missing (FORERUNNER_BENCH_MISSING, the live "Members
+   * chart" of 2026-11-01): the specialist makes no deliverable, writes a note that says so and
+   * ends its report with "Questions for the person:"; the stand-in critic accepts it, as the
+   * live critic did.
+   */
+  missing: string[];
   /** `ok`, or a planted intake failure (FORERUNNER_BENCH_INTAKE=malformed|error). */
   intake: "ok" | "malformed" | "error";
   /**
@@ -129,6 +136,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     reject: list(env.FORERUNNER_BENCH_CRITIC_REJECT),
     rejectTimes: count(env.FORERUNNER_BENCH_CRITIC_REJECT_TIMES, 1),
     ask: list(env.FORERUNNER_BENCH_ASK),
+    missing: list(env.FORERUNNER_BENCH_MISSING),
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
     intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
     delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 250,
@@ -477,7 +485,9 @@ function specialistAnswer(
 
   // 2. Planted: needs the person's answers before it can work.
   const askHit = matchesAny(brief.title, opts.ask);
-  if (askHit && !brief.answers && !did("ask_person")) {
+  // "Go ahead without" reaches the brief as the person's note, not as answers.
+  const wentAhead = /chose to go ahead without answering/i.test(firstUserText(req.messages));
+  if (askHit && !brief.answers && !wentAhead && !did("ask_person")) {
     const questions = [
       `For "${brief.title}": which option do you prefer, A (simple) or B (complete)?`,
       "Is there anything this must not change?",
@@ -532,6 +542,40 @@ function specialistAnswer(
     );
   }
 
+  // 3b. Planted: an input the task needs is missing (FORERUNNER_BENCH_MISSING). Live, the
+  // data-analyst rightly made no chart and asked for the file in its report's last lines.
+  const missingHit = matchesAny(brief.title, opts.missing ?? []);
+  if (missingHit) {
+    const input = mentioned.find((f) => f.startsWith("data/")) ?? "the input file";
+    const note = `notes/${slug(brief.title)}.md`;
+    if (!did("write_file") && offered(req.tools, "write_file"))
+      return {
+        text: `Writing ${note}.`,
+        toolCalls: [
+          {
+            name: "write_file",
+            input: {
+              path: note,
+              content: `# ${brief.title}\n\nNot made yet: ${input} is not in the project's folder, and no number may be invented.\n`,
+            },
+          },
+        ],
+        injected: `missing=${missingHit}`,
+      };
+    return text(
+      [
+        `**Summary** ${STAND_IN} ${who} wrote ${note} for "${brief.title}": the deliverable is not made, because ${input} is missing. A blocked report is the right outcome.`,
+        "",
+        "**Files changed**",
+        `- ${note}`,
+        "",
+        "Questions for the person:",
+        `- Please add ${input} to the project's folder: "${brief.title}" needs it and no number may be invented.`,
+      ].join("\n"),
+      `missing=${missingHit}`,
+    );
+  }
+
   // 4. Read what is there that this task builds on.
   if (!did("read_file") && offered(req.tools, "read_file")) {
     const wanted = [
@@ -583,7 +627,7 @@ function specialistAnswer(
               ...brief.criteria.map((c) => `- ${c}: checked by reading the files`),
               "",
             ].join("\n")
-          : contentFor(path, brief, seen),
+          : contentFor(path, brief, seen, [...files, ...targets]),
       },
     }));
     return { text: `Writing ${targets.join(", ")}.`, toolCalls: writes };
@@ -685,6 +729,17 @@ function criticAnswer(
   const calls = pastToolCalls(req.messages);
   if (calls.some((c) => c.name === "submit_review")) return text(`${STAND_IN} Review submitted.`);
   const evidence = firstUserText(req.messages);
+  // ADR 0104: the critic may read the task's folder. A careful reviewer reads the first changed
+  // file before it grades (one call, so the read path is exercised on every review).
+  const changedFirst = section(evidence, "Changed files")
+    .split("\n")
+    .map((l) => l.replace(/^-\s*/, "").trim())
+    .find(Boolean);
+  if (changedFirst && offered(req.tools, "read_file") && !calls.some((c) => c.name === "read_file"))
+    return {
+      text: `Reading ${changedFirst} before I grade.`,
+      toolCalls: [{ name: "read_file", input: { path: changedFirst } }],
+    };
   const criteria = numbered(section(evidence, "Acceptance criteria"));
   const brief = section(evidence, "Brief");
   const workerReport = section(evidence, "Worker's final report");

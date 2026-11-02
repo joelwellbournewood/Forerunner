@@ -126,12 +126,37 @@ export function isFinished(task: Pick<TaskView, "status">): boolean {
   return task.status === "done" || task.status === "cancelled";
 }
 
-/** The review levels in words (ADR 0102 point 5); "full" says it needs Docker. */
+/**
+ * The review levels in words (ADR 0102 point 5); "full" says it needs Docker. Every task is
+ * reviewed (ADR 0104): a stored tier 0 is reviewed as the light review and reads as one; the
+ * project's own checks are never a level.
+ */
 export function reviewLevelName(tier: number): string {
-  if (tier <= 0) return "Checks only";
-  if (tier === 1) return "Light review";
+  if (tier <= 1) return "Light review";
   if (tier === 2) return "Full review";
   return "Full review and your sign-off";
+}
+
+/** The first level that is a full review (the work runs in Docker). */
+export const FULL_REVIEW_TIER = 2;
+
+/**
+ * Specialists whose work keeps the full review and the person's sign-off (ADR 0104, the owner's
+ * decision 4: deploys and data migrations), with what their work is called; the Edit dialog
+ * offers them no light review.
+ */
+export const FULL_REVIEW_SPECIALISTS: ReadonlyMap<string, string> = new Map([
+  ["ops-deploy", "A deploy"],
+  ["migration-specialist", "A data migration"],
+]);
+
+/**
+ * The level a select shows for a task: a stored tier 0 is the light review (ADR 0104), and a
+ * deploy or a migration is at least the full review.
+ */
+export function reviewLevelValue(tier: number, specialist?: string | null): number {
+  const floor = specialist && FULL_REVIEW_SPECIALISTS.has(specialist) ? FULL_REVIEW_TIER : 1;
+  return Math.min(3, Math.max(floor, Math.round(tier)));
 }
 
 /** The review level choices with their one-line meaning; Docker's state is said where it matters. */
@@ -141,7 +166,6 @@ export function reviewLevelChoices(dockerReady: boolean | null): { tier: number;
       ? "needs Docker, not running on this computer"
       : "the work runs in Docker, isolated";
   return [
-    { tier: 0, label: "Checks only: automatic checks, no critic" },
     { tier: 1, label: "Light review: the critic reads the work, nothing runs in isolation" },
     { tier: 2, label: `Full review: ${docker}` },
     { tier: 3, label: `Full review and your sign-off: ${docker}` },

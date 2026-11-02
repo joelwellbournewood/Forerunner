@@ -59,10 +59,12 @@ export function statusWords(status: TaskStatus): string {
   }
 }
 
-/** The review levels as New task and Edit name them (ADR 0102 point 5). */
+/**
+ * The review levels as New task and Edit name them (ADR 0102 point 5). Every task is reviewed
+ * (ADR 0104): a stored tier 0 is the light review, never "checks only".
+ */
 export function reviewLevelWords(tier: number): string {
-  if (tier <= 0) return "Checks only";
-  if (tier === 1) return "Light review";
+  if (tier <= 1) return "Light review";
   if (tier === 2) return "Full review";
   return "Full review and your sign-off";
 }
@@ -496,7 +498,7 @@ async function resolveDependencies(
 export const taskCreate: CommandDef<TaskCreateParams> = {
   name: "task.create",
   description:
-    "Add a task to a project, ready for the next session unless a draft is asked for: title, outcome, acceptance criteria, priority (low, medium or high; medium when not said), the tasks it waits for (titles), its review level (0 checks only, 1 light, 2 full: needs Docker, 3 full and the person's sign-off) and who does it (a specialist, or 'person' for a question only the person can answer).",
+    "Add a task to a project, ready for the next session unless a draft is asked for: title, outcome, acceptance criteria, priority (low, medium or high; medium when not said), the tasks it waits for (titles), its review level (1 light review, the default; 2 full review: needs Docker; 3 full review and the person's sign-off) and who does it (a specialist, or 'person' for a question only the person can answer).",
   params: createParams,
   risk: "low",
   scope: "project",
@@ -860,7 +862,7 @@ const updateParams = z.object({
   outcome: z.string().trim().min(3).optional(),
   acceptance_criteria: z.array(z.string()).optional(),
   priority: TaskPrioritySchema.optional(),
-  /** 0 checks only, 1 light review, 2 full review (needs Docker), 3 full and your sign-off. */
+  /** 1 light review (0 is reviewed as light too, ADR 0104), 2 full review (needs Docker), 3 full and your sign-off. */
   risk_tier: z.number().int().min(0).max(3).optional(),
   budget_usd_micro: z.number().int().nonnegative().optional(),
   /** A specialist's name, `person`, or null for the agent's choice. */
@@ -934,7 +936,7 @@ async function editWords(ctx: CommandContext, patch: EditPatch): Promise<string>
 export const taskUpdate: CommandDef<TaskUpdateParams> = {
   name: "task.update",
   description:
-    "Edit a task that is not running, done or cancelled: its title, outcome, acceptance criteria, priority, review level (0 checks only, 1 light, 2 full: needs Docker, 3 full and sign-off), budget or specialist ('person' for the person).",
+    "Edit a task that is not running, done or cancelled: its title, outcome, acceptance criteria, priority, review level (1 light review; 2 full review: needs Docker; 3 full review and sign-off), budget or specialist ('person' for the person).",
   params: updateParams,
   risk: "low",
   askFromChat: true,

@@ -34,7 +34,11 @@ describe("small-project mode (B.6)", () => {
     expect(flat).toHaveTextContent("light review");
     expect(flat).not.toHaveTextContent(/tier \d/);
     expect(screen.getByTestId("small-project-notice")).toHaveTextContent(/one milestone/i);
-    expect(screen.getByTestId("small-project-notice")).toHaveTextContent(/automatic checks only/);
+    // ADR 0104: no task closes on automatic checks alone; the mode's tier is the light review.
+    expect(screen.getByTestId("small-project-notice")).toHaveTextContent(
+      /A new task gets the light review/,
+    );
+    expect(screen.getByTestId("small-project-notice")).not.toHaveTextContent(/checks only/i);
     expect(screen.getByTestId("small-project-notice")).not.toHaveTextContent(/tier/);
     const milestone = screen.getByTestId("small-project-milestone");
     expect(milestone).toHaveTextContent("Search works");
@@ -139,7 +143,8 @@ describe("small-project mode (B.6)", () => {
     const tier = within(dialog).getByTestId("task-risk-tier");
     expect(tier).toHaveValue("");
     expect(
-      within(dialog).getByRole("option", { name: "The project's default (Checks only)" }),
+      // ADR 0104: the mode's tier 0 is reviewed as the light review, and says so.
+      within(dialog).getByRole("option", { name: "The project's default (Light review)" }),
     ).toBeInTheDocument();
     await user.type(within(dialog).getByTestId("task-title"), "Fix the typo on the home page");
     await user.type(within(dialog).getByTestId("task-outcome"), "The home page reads right");
@@ -151,12 +156,13 @@ describe("small-project mode (B.6)", () => {
     >;
     expect(body).not.toHaveProperty("riskTier");
     expect(body).toMatchObject({ title: "Fix the typo on the home page", status: "ready" });
-    // The fake daemon applies the project's default like the real one: checks only, in words.
+    // The fake daemon applies the project's default like the real one: the light review, in words.
     await waitFor(() => expect(screen.getAllByTestId("task-row")).toHaveLength(4));
     const created = screen
       .getAllByTestId("task-row")
       .find((row) => row.textContent?.includes("Fix the typo on the home page"));
-    expect(created).toHaveTextContent("Checks only");
+    expect(created).toHaveTextContent("Light review");
+    expect(created).not.toHaveTextContent(/checks only/i);
 
     await user.click(screen.getByTestId("new-task"));
     const second = await screen.findByTestId("new-task-dialog");

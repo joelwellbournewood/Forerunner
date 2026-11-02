@@ -9,7 +9,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { BILLING_REST_AUDIT_TOOL } from "../src/wiring/billing-pick.ts";
-import { ScriptedProvider } from "./helpers.ts";
+import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
 
 /**
  * U-078 (ADR 0100): a task run on the Claude subscription that meets the plan's usage limit is
@@ -63,7 +63,8 @@ describe("a task run that meets the subscription's usage limit (U-078)", () => {
         [SECRET_NAMES.anthropicOauth]: OAUTH,
         [SECRET_NAMES.anthropic]: API_KEY,
       }),
-      provider,
+      // The critic reviews every task (ADR 0104): it accepts here; `provider` sees the rest.
+      provider: new AcceptingCriticProvider(provider),
       sdkQuery,
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },

@@ -97,8 +97,18 @@ export function criteriaPresent(criteria: readonly string[]): boolean {
 }
 
 /**
+ * What a failed check asks of the next attempt when the failure is not the task's (ADR 0104):
+ * the code cannot tell from a test's output whose change broke it, so the specialist, who knows
+ * what it changed, says so and the person decides (a "Questions for the person:" list waits for
+ * them, U-022) instead of a ladder of reruns that cannot fix it.
+ */
+export const NOT_YOUR_FAILURE =
+  'if it failed before this task, say so and why under "Questions for the person:"';
+
+/**
  * The finding a failed check produces at every tier (B.4: a task cannot close with failed
- * required checks). A required check is high (blocks accept); an optional one is low.
+ * required checks). A required check is high (blocks accept); an optional one is low. It is
+ * resolved only by a re-run that passes (`measured.ts`).
  */
 export function findingForFailedCheck(r: CheckResultEvidence): ReviewFinding {
   const required = r.required ?? true;
@@ -106,7 +116,7 @@ export function findingForFailedCheck(r: CheckResultEvidence): ReviewFinding {
   return {
     severity: required ? "high" : "low",
     description,
-    requiredAction: `Make the check "${r.name}" pass${required ? "" : " or mark it optional in the task"}`,
+    requiredAction: `Make the check "${r.name}" pass${required ? "" : " or mark it optional in the task"}; ${NOT_YOUR_FAILURE}`,
     fingerprint: fingerprintOf(description),
     where: firstLine(r.output),
   };

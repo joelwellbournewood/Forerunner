@@ -160,7 +160,7 @@ describe("CriticService: independence (H.1)", () => {
   });
 });
 
-describe("CriticService: checks run at tier 2+ (H.2)", () => {
+describe("CriticService: checks run before the model reads (H.2, ADR 0104)", () => {
   const unit: CheckCommand = { name: "unit", argv: ["pnpm", "test"] };
 
   it("tier 2 runs the task's check commands in the worktree before the model reads; a failed check is a finding", async () => {
@@ -196,10 +196,12 @@ describe("CriticService: checks run at tier 2+ (H.2)", () => {
     }
   });
 
-  it("tier 1 is a light read: commands are not run and the evidence says so", async () => {
+  it("tier 1 runs the task's checks too (ADR 0104: the project's build, lint and tests always run for code, never a level)", async () => {
+    const seen: string[] = [];
     const checkRunner: CheckRunner = {
-      async run() {
-        throw new Error("tier 1 must not run commands");
+      async run(cmd) {
+        seen.push(cmd.name);
+        return { name: cmd.name, passed: true, output: "pnpm test -> exit 0 in 12 ms\n4 passing" };
       },
     };
     const w = await world({
@@ -211,10 +213,107 @@ describe("CriticService: checks run at tier 2+ (H.2)", () => {
         taskInput(w.ids.task, 1),
         w.ctx({ checks: [unit], cwd: "/work/tree" }),
       );
+      expect(seen).toEqual(["unit"]);
       expect(out.verdict).toBe("accept");
-      expect(out.evidence).toContain(
-        "checks: 1 command was not run (a light review reads the work; a full review runs them)",
+      expect(out.evidence).toContain("ran: unit -> pass (pnpm test -> exit 0 in 12 ms)");
+      // What the person can open: the check and its output, kept on the review.
+      expect(out.verification?.checks).toContainEqual({
+        name: "unit",
+        passed: true,
+        required: true,
+        output: "pnpm test -> exit 0 in 12 ms\n4 passing",
+      });
+      const user = w.provider.calls[0]?.request.messages[0]?.content as string;
+      expect(user).toContain("4 passing");
+      expect(user).not.toContain("Checks not run at this tier");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a failed check or a page that threw is resolved only by a passing re-run, never by an accept or the model's own list (review of 2026-11-02)", async () => {
+    // Bench walk C: the accept of a retry that ran no check resolved "Check failed: test", and
+    // the task was Done with its test still failing.
+    let ran = 0;
+    const checkRunner: CheckRunner = {
+      async run(cmd) {
+        const passed = ran++ > 0;
+        return { name: cmd.name, passed, output: passed ? "1 passing" : "1 failing" };
+      },
+    };
+    const acceptSaysFixed = {
+      grade: 93,
+      confidence: "high",
+      verdict: "accept",
+      summary: "The rework fixed both.",
+      findings: [],
+      criteria: [],
+      checks_run: [],
+      resolved: [] as string[],
+    };
+    const w = await world({
+      replies: [
+        submitReply({ grade: 90 }),
+        closingReply(),
+        toolReply(SUBMIT_REVIEW_TOOL, acceptSaysFixed, "Reviewing the evidence."),
+        submitReply({
+          verdict: "revise",
+          grade: 60,
+          findings: [{ severity: "major", what: "The README does not say how to run it" }],
+        }),
+      ],
+      deps: { checkRunner },
+    });
+    try {
+      const threw = {
+        what: "opened index.html in a browser",
+        target: "index.html",
+        ok: false,
+        blocking: true,
+        output: "opened index.html\nproblem: error on the page: q is null",
+      };
+      const first = await w.critic.review(
+        taskInput(w.ids.task, 1, baseEvidence({ checkResults: [], tried: [threw] })),
+        w.ctx({ checks: [unit], cwd: "/work/tree" }),
       );
+      expect(first.verdict).toBe("revise");
+      const open = await w.store.finding.openFor(w.ids.task);
+      expect(open.map((f) => f.description).sort()).toEqual([
+        "Check failed: unit",
+        "Tried index.html: error on the page: q is null",
+      ]);
+      // A failure the task did not cause is the specialist's to say, and the person's to decide.
+      expect(open.find((f) => f.description === "Check failed: unit")?.required_action).toBe(
+        'Make the check "unit" pass; if it failed before this task, say so and why under "Questions for the person:"',
+      );
+      const ids = open.map((f) => f.id).sort();
+      acceptSaysFixed.resolved = ids;
+      // Nothing ran again (no check, no try): the model's accept and its list resolve neither.
+      const second = await w.critic.review(
+        taskInput(w.ids.task, 1, baseEvidence({ checkResults: [] })),
+        w.ctx(),
+      );
+      expect(second.verdict).toBe("accept");
+      expect(second.resolvedFindingIds).toEqual([]);
+      expect((await w.store.finding.openFor(w.ids.task)).map((f) => f.id).sort()).toEqual(ids);
+      // The check passes and the page opens: the re-run resolves both, although the model sent
+      // the work back for something else.
+      const third = await w.critic.review(
+        taskInput(
+          w.ids.task,
+          1,
+          baseEvidence({
+            checkResults: [],
+            tried: [{ ...threw, ok: true, blocking: false, output: "opened index.html" }],
+          }),
+        ),
+        w.ctx({ checks: [unit], cwd: "/work/tree" }),
+      );
+      expect(third.verdict).toBe("revise");
+      expect([...(third.resolvedFindingIds ?? [])].sort()).toEqual(ids);
+      expect((await w.store.finding.openFor(w.ids.task)).map((f) => f.description)).toEqual([
+        "The README does not say how to run it",
+      ]);
     } finally {
       await w.close();
     }

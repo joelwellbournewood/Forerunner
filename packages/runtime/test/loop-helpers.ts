@@ -288,6 +288,9 @@ export function doneExecutor(
     finalReport?: string;
     costPerTask?: number;
     checksPassed?: boolean;
+    /** The task's folder the run worked in (the critic reads it, runs its checks, tries its pages). */
+    worktree?: string;
+    changedFiles?: string[];
   } = {},
 ): TaskExecutor & { executed: string[] } {
   const executed: string[] = [];
@@ -354,7 +357,8 @@ export function doneExecutor(
         checksPassed: opts.checksPassed ?? outcome === "done",
         runId,
         finalReport: opts.finalReport ?? `Done: ${task.title}. Tests pass.`,
-        changedFiles: ["src/x.ts"],
+        changedFiles: opts.changedFiles ?? ["src/x.ts"],
+        ...(opts.worktree ? { worktree: opts.worktree } : {}),
       };
     },
   };

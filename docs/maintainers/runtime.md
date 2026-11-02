@@ -1889,16 +1889,66 @@ with fakes of the ports (`test/loop-memory.test.ts`) and with the real implement
 fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/loop-routes.test.ts`,
 `test/loop-commands.test.ts`, `test/signoff-answer.test.ts`, `test/approvals-poll.test.ts`).
 
-**Critic (`CriticLoop`, spec H, B.4, D.2, D.3).** After `TaskExecutor.execute` returns
-`done` or `in_review` for a task above tier 0, the runner moves it to `in_review` and calls
-`reviewTask` with the task, the session token and budget, the plan item and the result. The
-loop assembles the evidence (the diff from the task's worktree through `GitDiffPort`, or the
-executor's `changedFiles`; the project's `settings.checks` as argv commands the critic runs at
-tiers 2 and 3; the standard-doc drift at tier 2+ as a non-required check, `docs/status.md`
-left out when `statusDocManaged` says the PM writes it at session end (G.5); the final report
-as claims; the attempt and the specialist as artifacts), runs `CriticService.review` at
-`task.risk_tier` with the project's `critic_ceiling` and `speed_quality_offset` (read from the
-project row), and applies the verdict with `applyVerdict`:
+**Critic (`CriticLoop`, spec H, B.4, D.2, D.3, ADR 0104).** After `TaskExecutor.execute`
+returns `done` or `in_review` for any task (tier 0 included, ADR 0104), the runner moves it to
+`in_review` and calls `reviewTask` with the task, the session token and budget, the plan item
+and the result. The loop assembles the evidence (the diff from the task's worktree through
+`GitDiffPort`, or the executor's `changedFiles`; the project's checks; the standard-doc drift at
+tier 2+ as a non-required check, `docs/status.md` left out when `statusDocManaged` says the PM
+writes it at session end (G.5); the final report as claims and its "Questions for the person:"
+list; the attempt and the specialist as artifacts), runs `CriticService.review` at the review
+tier with the project's `critic_ceiling` and `speed_quality_offset` (read from the project row),
+and applies the verdict with `applyVerdict`.
+
+Proportional verification (ADR 0104, `src/loop/verification.ts`, `project-checks.ts`,
+`try-it.ts`):
+- **Review tier** `reviewTierOf(task.risk_tier, reviewFloorOf(specialist, specialistFloor))`:
+  never below 1, never below the specialist's registry `risk_tier_floor` (2 for `ops-deploy`,
+  `migration-specialist`, `science-evaluator`). For `ops-deploy` and `migration-specialist`
+  the evidence carries `signoffRequired` (`signoffReasonOf`): an accept becomes the person's
+  sign-off, a revise goes through the retry ladder.
+- **The task's files** (ADR 0104 point 9). What the review checks and tries is decided on the
+  files the task changed over all its attempts (`filesOfTask`: this run's, then the
+  `task.files` events of the sessions of the task's runs), not on the last run's diff: on the
+  workspace path each run is committed, so a retry that changed nothing had no files, ran no
+  check and was accepted with its test still failing (bench walk C). Such a run gets the line
+  "attempt N changed no file; …" in the evidence. An open "Check failed" finding makes the
+  project's checks run whatever changed, and the pages open "Tried" findings name are tried again
+  first (`measuredFindingOf`). Those findings are resolved only by a re-run that passed, in the
+  critic package (`resolvedByRerun`).
+- **Checks.** For a code change (`isCodeChange`: anything but docs and notes) the project's
+  `settings.checks` plus the `build`, `lint`, `typecheck` and `test` scripts of the folder's
+  `package.json` (`projectChecks`: `npm run --silent <name>`; npm's "no test specified" and
+  empty scripts are skipped; nothing when the scripts need dependencies that are not installed)
+  run at every tier, in a lease of the composition's `sandbox` port (`sandboxCheckRunner`),
+  destroyed after the review. npm is looked for where they run: `npm --version` in the lease
+  (`startsIn`; the lease's environment is not the daemon's), or `hasCommand("npm")` when a test
+  injects it, or the daemon's PATH without a sandbox port; without it the npm scripts are not
+  run and `evidence.notChecked` says so. A command that cannot start in the lease is a failed
+  check with "could not start: <reason>" as its output, never a failed review. A lease the port
+  refuses means the checks are not run (`evidence.notChecked` says why); without a sandbox port
+  (an engine test world) they run as processes in the folder.
+- **Read access.** `readTools` (default: the runtime's `read_file` and `list_dir`) and the
+  folder's file list (`projectFileList`, at most 200) go to the review; the critic's token
+  confines them to the task's folder.
+- **Try it.** `tryIt.tryPages` opens the pages the change made or styled (`pagesToTry`: at most
+  three HTML pages, else `index.html` when a stylesheet or script changed) and the result is
+  `evidence.tried`; "unavailable" (no Chromium) is a `notChecked` line. `attributeTry` decides
+  whose an error on the page is: a page that opened and threw is the task's blocker only when
+  the task changed one of the files that run on it (the try's `pageFiles` without stylesheets,
+  images and fonts); otherwise it is marked `causedByTask: false`, not blocking, and its output
+  ends "not caused by this task: it changed none of the files that run on this page (…)". The
+  daemon's port is
+  `@forerunner/capabilities` `browser.tryPages` with screenshots under
+  `<data>/evidence/<task>/<review key>/` (`evidenceRootOf`), served back by
+  `GET /tasks/:id/evidence?file=` (`evidenceFileOf` refuses anything outside the task's folder).
+- **Questions for the person.** A report with a "Questions for the person:" list is never
+  accepted (the critic package's `ASKS_PERSON_RULE`); the loop files the report's questions as
+  one card (`askPersonInstead`), quoting the specialist's own words (`quotedWords`), and the
+  task waits in `needs_human`.
+- **The brief** says how the work is checked (`HOW_WORK_IS_CHECKED`) and asks for a test with
+  new behaviour (`TESTS_FOR_BEHAVIOUR`); a task with no criteria is held to its outcome
+  (`outcomeCriterion`), in the brief and in the review.
 
 | Verdict | What the runner sees | Task |
 | --- | --- | --- |
@@ -1919,9 +1969,10 @@ the run to `alternateSpecialist` (`src/registry/alternates.ts`, below), patches 
 stand-in the task returns `needs_human` ("none can do what the coder does ... split the task
 or cancel it") and nothing runs. A specialist the person gave the task to after the failures
 (no run of it yet) keeps it. Before U-044 the same specialist ran the same brief again.
-Tier 0 tasks keep the mechanical path (checks only, no
-critic); the store still refuses to close one with an open finding and the runner surfaces
-it. Both blocked paths end with the human (`src/session/findings.ts`): the runner files one
+Only a runner composed without a critic (an engine test world) closes a tier 0 task on its
+run ("tier 0: automated checks only"); the daemon always composes one, so every task is
+reviewed (ADR 0104). The store still refuses to close a task with an open finding and the
+runner surfaces it. Both blocked paths end with the human (`src/session/findings.ts`): the runner files one
 blocking request per task (`change_card.key = "findings:blocked"`, options `rework` /
 `accept` / `cancel`, reused while open) and `syncBlockedByFindings`, run from
 `RuntimeApp.syncApprovals()` after every inbox answer, applies it: `rework` goes

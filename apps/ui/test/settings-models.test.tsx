@@ -60,7 +60,11 @@ describe("Settings: models per agent and specialist", () => {
     // The critic is shown but not editable here (spec H sets its model).
     const critic = await rowOf("agent", "Critic", "critic_t1");
     expect(within(critic).queryAllByTestId("model-setting-change")).toHaveLength(0);
-    expect(within(critic).getByTestId("model-settings-note")).toHaveTextContent(/review tiers/);
+    // The review levels in words (ADR 0104): no tier number on a person's screen.
+    expect(within(critic).getByTestId("model-settings-note")).toHaveTextContent(
+      "The critic's model and effort follow the review: one for the light review, one for the full review.",
+    );
+    expect(within(critic).getByTestId("model-settings-note")).not.toHaveTextContent(/tier/i);
   });
 
   it("hides temperature for a provider that does not accept one", async () => {
@@ -180,7 +184,7 @@ describe("Settings: models per agent and specialist", () => {
     expect(rowsOf(MODEL_SETTINGS).map((r) => r.label)).toEqual([
       "Alice · planning",
       "Alice · chat",
-      "Critic · review tier 1",
+      "Critic · light review",
       "coder",
       "researcher",
     ]);

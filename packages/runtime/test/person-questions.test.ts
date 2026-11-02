@@ -246,11 +246,37 @@ describe("the critic path: a run that needs the person's answers (U-022)", () =>
     });
   }
 
-  it("an accepted run is left alone even if it mentions the person", async () => {
+  it("an accept does not close a run whose report lists questions for the person: they become its card (ADR 0104)", async () => {
+    // Before ADR 0104 an accepted run was left alone whatever its report asked; live
+    // ("Members chart", 2026-11-01) that left work that waits for the person marked Done.
     const w = await loopWorld({ replies: [submitReply(), closingReply()] });
     try {
       const task = await w.addTask("Write the hosting notes");
       const result = await w.start(w.runner(doneExecutor(w, { finalReport: report })));
+      expect(result.completed).toEqual([]);
+      expect((await w.store.task.mustGet(task.id)).status).toBe("needs_human");
+      const open = await w.store.humanRequest.open({ humanId: w.human });
+      const cards = open.filter((r) => personQuestionsCardOf(r) !== null);
+      expect(cards.map((r) => r.steps)).toEqual([
+        ["Which hosting provider should the site use?", "Which domain should it live on?"],
+      ]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("an accepted run whose report mentions the person only in passing is left alone", async () => {
+    const w = await loopWorld({ replies: [submitReply(), closingReply()] });
+    try {
+      const task = await w.addTask("Write the hosting notes");
+      const result = await w.start(
+        w.runner(
+          doneExecutor(w, {
+            finalReport:
+              "Wrote docs/hosting.md. The person's earlier answer (Netlify) is used throughout.",
+          }),
+        ),
+      );
       expect(result.completed).toEqual([task.id]);
       const open = await w.store.humanRequest.open({ humanId: w.human });
       expect(open.filter((r) => personQuestionsCardOf(r) !== null)).toEqual([]);

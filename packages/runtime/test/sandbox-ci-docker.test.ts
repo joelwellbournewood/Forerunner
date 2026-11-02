@@ -5,7 +5,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { describe, expect, it } from "vitest";
 import { composeRuntime } from "../src/daemon/compose.ts";
 import { FakeContainerEngine } from "../src/sandbox/fake-engine.ts";
-import { ScriptedProvider } from "./helpers.ts";
+import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
 
 /**
  * U-079, as CI found it (2026-10-31): on Linux CI Docker runs but has no
@@ -39,7 +39,10 @@ describe("a low-tier task on a machine whose Docker cannot run the sandbox (U-07
         clock,
         stateUrl: "sqlite::memory:",
         vault: new MemoryVault(),
-        provider: new ScriptedProvider([{ text: "Done. Nothing to report." }], clock),
+        // The critic reviews every task (ADR 0104), tier 0 too: it accepts here; the subject is elsewhere.
+        provider: new AcceptingCriticProvider(
+          new ScriptedProvider([{ text: "Done. Nothing to report." }], clock),
+        ),
         registryDir: REGISTRY,
         identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
         appVersion: "0.1.0-test",

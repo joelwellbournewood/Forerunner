@@ -506,6 +506,84 @@ describe("Tasks tab (design §3.5)", () => {
     );
   });
 
+  it("Edit keeps a deploy at the full review and says so when Save raises it; a level left as it is goes back as stored (ADR 0104)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ sandbox: { state: "not_running" } });
+    const coder = harness.daemon.state.modelSettings.specialists[0];
+    if (coder)
+      harness.daemon.state.modelSettings.specialists.push({ ...coder, name: "ops-deploy" });
+    // A deploy stored at the light review (as New task could make one) and a planner's tier 0.
+    addTask(harness, "task_deploy", "Deploy the site", {
+      status: "ready",
+      riskTier: 1,
+      specialist: "ops-deploy",
+    });
+    addTask(harness, "task_zero", "Write the changelog", {
+      status: "ready",
+      riskTier: 0,
+      specialist: "coder",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const openEdit = async (id: string) => {
+      await user.click(within(await rowOf(id)).getByTestId("task-title"));
+      const drawer = await screen.findByTestId("task-drawer");
+      await user.click(await within(drawer).findByTestId("drawer-action-edit"));
+      return { drawer, form: await within(drawer).findByTestId("edit-task-form") };
+    };
+
+    // The deploy: only the full review levels, the full review shown, and what Save does said.
+    let { drawer, form } = await openEdit("task_deploy");
+    let level = within(form).getByTestId("edit-risk-tier") as HTMLSelectElement;
+    expect([...level.options].map((o) => o.textContent)).toEqual([
+      "Full review: needs Docker, not running on this computer",
+      "Full review and your sign-off: needs Docker, not running on this computer",
+    ]);
+    expect(level.value).toBe("2");
+    expect(within(form).getByTestId("edit-full-review-note")).toHaveTextContent(
+      "A deploy keeps the full review and your sign-off: saving moves this task to the full review.",
+    );
+    await user.click(within(form).getByTestId("save-task"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_deploy")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/task_deploy")[0]?.body).toMatchObject({
+      riskTier: 2,
+      specialist: "ops-deploy",
+    });
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    // A planner's tier 0 reads as the light review; a new title alone sends the level as stored.
+    ({ drawer, form } = await openEdit("task_zero"));
+    level = within(form).getByTestId("edit-risk-tier") as HTMLSelectElement;
+    expect(level.value).toBe("1");
+    expect(level.selectedOptions[0]?.textContent).toBe(
+      "Light review: the critic reads the work, nothing runs in isolation",
+    );
+    expect(within(form).queryByTestId("edit-full-review-note")).toBeNull();
+    const title = within(form).getByTestId("edit-title");
+    await user.clear(title);
+    await user.type(title, "Write the changelog for 2.0");
+    await user.click(within(form).getByTestId("save-task"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_zero")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/task_zero")[0]?.body).toMatchObject({
+      title: "Write the changelog for 2.0",
+      riskTier: 0,
+    });
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    // Handing a light-review task to the deploy specialist: the levels follow, and Save sends
+    // the full review the select shows.
+    ({ form } = await openEdit("task_zero"));
+    await user.selectOptions(within(form).getByTestId("edit-who"), "ops-deploy");
+    level = within(form).getByTestId("edit-risk-tier") as HTMLSelectElement;
+    expect(level.value).toBe("2");
+    expect(within(form).getByTestId("edit-full-review-note")).toBeInTheDocument();
+    await user.click(within(form).getByTestId("save-task"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_zero")).toHaveLength(2));
+    expect(postedCalls(harness, "/tasks/task_zero")[1]?.body).toMatchObject({
+      riskTier: 2,
+      specialist: "ops-deploy",
+    });
+  });
+
   it("New task says that Full review needs Docker, offers Who does it, and takes a decimal comma", async () => {
     const user = userEvent.setup();
     const harness = createHarness({ sandbox: { state: "not_running" } });
@@ -759,6 +837,90 @@ describe("Tasks tab (design §3.5)", () => {
     const title = await screen.findByText("Write the deploy runbook");
     const row = title.closest("[data-testid=task-row]") as HTMLElement;
     expect(within(row).getByTestId("task-cap")).toHaveTextContent("of CHF 4.00 budget");
+  });
+
+  it("a done task says how it was checked, and its drawer opens the evidence: the checks, the page tried and its screenshot (ADR 0104)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const tried = {
+      checks: [
+        {
+          name: "test",
+          passed: true,
+          output: "npm run --silent test -> exit 0 in 812 ms\n4 passing",
+        },
+      ],
+      tried: [
+        {
+          what: "opened index.html in a browser, 1280 and 390 pixels wide",
+          target: "index.html",
+          ok: true,
+          output:
+            "opened index.html at 1280 and 390 pixels wide, the network off\ntitle: Atlas docs\ntext seen: Search the docs",
+          screenshots: [{ label: "1280 pixels wide (a computer)", file: "run_1/index-1280.png" }],
+        },
+      ],
+      notChecked: [
+        "about.html was not tried: no Chromium, Edge or Chrome was found on this computer",
+      ],
+    };
+    harness.daemon.state.evidenceFiles.set("task_1/run_1/index-1280.png", "iVBORw0KGgo=");
+    renderApp("/projects/proj_atlas/tasks", harness);
+    // Reviewed without a try: the row and the drawer say "Reviewed".
+    const row = await rowOf("task_1");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent("Done");
+    expect(await within(row).findByTestId("task-check")).toHaveTextContent(/^Reviewed$/);
+    expect(row).not.toHaveTextContent(/checks only|tier/i);
+    await user.click(within(row).getByTestId("task-title"));
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(await within(drawer).findByTestId("drawer-check")).toHaveTextContent(
+      "Reviewed The critic read the work against each point above.",
+    );
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    // Reviewed and tried: the row says so, and the drawer opens what was run and tried.
+    harness.daemon.state.reviewEvidence.set("task_1", tried);
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(async () =>
+      expect(within(await rowOf("task_1")).getByTestId("task-check")).toHaveTextContent(
+        "Reviewed and tried",
+      ),
+    );
+    await user.click(within(await rowOf("task_1")).getByTestId("task-title"));
+    const again = await screen.findByTestId("task-drawer");
+    expect(await within(again).findByTestId("drawer-check")).toHaveTextContent(
+      "Reviewed and tried",
+    );
+    // One click away: the evidence, closed until asked for; the screenshot is read when opened.
+    const evidence = within(again).getByTestId("review-evidence");
+    expect(within(evidence).queryByTestId("evidence-screenshot")).not.toBeInTheDocument();
+    await user.click(within(evidence).getByText("See what was checked"));
+    expect(within(evidence).getByTestId("evidence-checks")).toHaveTextContent("test: passed");
+    expect(within(evidence).getByTestId("evidence-checks")).toHaveTextContent("4 passing");
+    expect(within(evidence).getByTestId("evidence-tried")).toHaveTextContent("index.html: worked");
+    expect(within(evidence).getByTestId("evidence-tried")).toHaveTextContent(
+      "text seen: Search the docs",
+    );
+    expect(within(evidence).getByTestId("evidence-not-checked")).toHaveTextContent(
+      "about.html was not tried: no Chromium",
+    );
+    const shot = await within(evidence).findByTestId("evidence-screenshot");
+    expect(shot.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(shot.getAttribute("alt")).toBe("The page, 1280 pixels wide (a computer)");
+  });
+
+  it("New task offers no Checks only (ADR 0104): the light review is the least a task gets", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const level = within(dialog).getByTestId("task-risk-tier") as HTMLSelectElement;
+    const labels = [...level.options].map((o) => o.textContent ?? "");
+    expect(labels.join(" / ")).not.toMatch(/checks only|automatic checks|tier/i);
+    expect(labels).toContain("Light review: the critic reads the work, nothing runs in isolation");
+    expect([...level.options].map((o) => o.value)).not.toContain("0");
   });
 
   it("the fake daemon words a sandbox that is not running as the daemon does", () => {

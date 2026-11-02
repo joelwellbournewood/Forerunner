@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { describeSetting } from "../src/pages/SettingsFields.tsx";
 import { commandForSetting, groupByScope } from "../src/pages/SettingsPage.tsx";
 import { ME, SETTINGS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
@@ -130,6 +131,29 @@ describe("Settings", () => {
         fields({ enabled: "true", day: "1", time: "6 am", budget_usd: "10", tier: "1" }),
       ),
     ).toBeNull();
+    // Review levels in words, never a tier number (ADR 0104); no level below the light review.
+    const levels = ["Light review", "Full review", "Full review and your sign-off"];
+    const graded = calibration?.fields?.find((f) => f.name === "tier");
+    expect(graded?.label).toBe("Review graded");
+    expect(graded?.options?.map((o) => o.label)).toEqual(levels);
+    const seedLevel = handover?.fields?.find((f) => f.name === "riskTier");
+    expect(seedLevel?.label).toBe("Review level");
+    expect(seedLevel?.options?.map((o) => [o.value, o.label])).toEqual([
+      ["1", "Light review"],
+      ["2", "Full review"],
+      ["3", "Full review and your sign-off"],
+    ]);
+    expect(describeSetting({ key: "human.calibration", value: { tier: 2 } })).toBe(
+      "on, day 1 at 06:00, up to USD 10, grades the full review",
+    );
+    expect(
+      JSON.stringify(
+        [...(calibration?.fields ?? []), ...(handover?.fields ?? [])].map((f) => [
+          f.label,
+          f.options?.map((o) => o.label),
+        ]),
+      ),
+    ).not.toMatch(/tier/i);
     // Stored but read by nothing yet: shown as information, without a control (rule 7).
     expect(
       commandForSetting({

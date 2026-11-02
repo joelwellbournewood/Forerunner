@@ -38,7 +38,7 @@ In short:
   or `.deb`.
 - **GitHub:** a live run on 1.0.0 cloned this repository, pushed and opened a real pull
   request.
-- **Docker:** tasks that get a full review (risk tier 2 and above) run only in the Docker
+- **Docker:** tasks that get a full review run only in the Docker
   sandbox. On a PC without it they wait instead of failing; Settings → **Sandbox (Docker)** says
   what to do (below, under Sessions). The switch to Linux containers and the sandbox download
   on a real Windows PC with Docker Desktop were not tested by CI.
@@ -125,7 +125,18 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   (Alice, 2 min)**, **Being reviewed**, **Needs your answer** (its card is in the Inbox),
   **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
   and the row offers **Answer**, **Try again** and **Cancel**), **Paused by you**, **Failed:
-  why**, **Done** (or **Done: accepted without review**), **Cancelled**. The rows follow a running session
+  why**, **Done** (or **Done: accepted without review**), **Cancelled**. A task is **Done** only
+  after the critic reviewed it; the row then says how it was checked: **Reviewed** (the critic
+  read the work and the project's files against each point, and the project's own build and
+  tests ran when it has them) or **Reviewed and tried** (a page it made was also opened in a
+  browser, as you would open it). Work whose report still asks you something (for example a
+  chart whose data file is missing) is never Done: it waits for your answer with a card in the
+  Inbox. A project test that failed or a page that threw an error keeps the task from Done until
+  a new run of that test passes or the page opens without the error, whatever the next attempt
+  changed; the critic's word alone never clears it. An error on a page that the task's files do
+  not run (it only styled the page, say) is not held against the task: **See what was checked**
+  shows it as "not caused by this task". When a test failed before the task's change, the
+  specialist says so and the task asks you in the Inbox. The rows follow a running session
   by themselves. Each task offers what fits its status, each with a line saying what it does:
   **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
   and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
@@ -137,10 +148,15 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it
   waits for and what waits on it, its runs (who ran each one, with that run's report and the
-  files it changed; the critic's run is marked as the review), the critic's review in words,
+  files it changed; the critic's run is marked as the review), the critic's review in words
+  with **See what was checked** (the project's checks with their output, each page tried with
+  what it showed and its screenshots, and anything that could not be run or tried, and why),
   its pull request, and **Edit**
   (the wording, priority, budget, review level and who does it; for example a full-review task
-  waiting for Docker can go to a light review) and **Change what it waits for** (the project's
+  waiting for Docker can go to a light review, except a deploy or a data migration, which keeps
+  the full review and your sign-off: Edit offers it only the full review levels, and when such
+  a task was set below the full review, the form says that saving moves it to the full review;
+  a level you leave as it is is saved as it was) and **Change what it waits for** (the project's
   tasks by title; a failed one is flagged; a task cannot wait on itself, a cancelled task or a
   task that already waits on it). **New task** asks the title, what done looks like, what it
   waits for, the review level ("Light review: the critic reads the work, nothing runs in
@@ -279,7 +295,7 @@ tasks: ...), then how it ended and what is next ("Nothing left.", "Left for next
 "2 tasks wait on it.") with the cost in CHF. The Inbox gets one line per session naming the
 project; the full result is on the project.
 
-**Full-review tasks wait for Docker.** A task at risk tier 2 or 3 runs its tests and builds in
+**Full-review tasks wait for Docker.** A task with a full review runs its tests and builds in
 the Docker sandbox, isolated from your computer, so the critic sees real results. While the
 sandbox is not ready (Docker not installed or not started, Docker Desktop on Windows
 containers, or the sandbox not downloaded yet), such a task waits: the session runs your other
@@ -290,8 +306,8 @@ to Linux containers, **Download the sandbox** with its size and progress), and *
 after each one. The task runs in the next session once the card says Ready. A task that an
 earlier version marked failed for want of a sandbox goes back to ready by itself then.
 
-A session where nothing was done because its tasks failed or were sent back gets a lower grade
-from the critic's session review.
+A session where nothing was done because its tasks failed, were sent back or wait for you gets a
+lower grade from the critic's session review.
 
 **Stopping and crashes.** A session's page has two stops. **Stop after this task** (the usual
 one) lets the task in flight finish, starts no other, and ends the session ("Stopped after the
@@ -383,9 +399,12 @@ from the phone; one text then answers all the questions.
 ## Autonomy and budgets
 
 Money is shown in CHF everywhere you read it: cards, the session log, summaries, notifications
-and the Inbox. The **review level** of a task (its risk tier) says how carefully the critic
-checks the work: checks only (0), a light review (1), a full review (2), a full review and your
-sign-off (3).
+and the Inbox. The **review level** of a task says how carefully the critic
+checks the work: a **Light review**, a **Full review** (the work runs in the Docker sandbox), or a
+**Full review and your sign-off**. Every task gets at least the light review, and the project's
+own build and tests run for every code task whatever its level. Settings use the same words:
+**Settings → Models** names the critic's rows "light review" and "full review", and the monthly
+critic calibration and the handover test (Settings → Advanced) choose a review level by name.
 
 Each project has an autonomy level from 0 (advisor: plans only) to 4 (autopilot: everything
 except destructive, financial and credential actions). The default is 2: routine reversible

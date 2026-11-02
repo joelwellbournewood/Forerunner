@@ -47,6 +47,53 @@ export interface UnavailableEvidence {
   reason: string;
 }
 
+/**
+ * The work tried as a person would use it (ADR 0104), by the runtime, never by the worker: a
+ * page opened in a headless browser, a command run with sample input. Verified evidence, like
+ * a check result; a try that did not work blocks accept.
+ */
+export interface TriedEvidence {
+  /** What was tried, in words: "opened index.html in a browser, 1280 and 390 pixels wide". */
+  what: string;
+  /** The page or command tried (a path relative to the task's folder, or the command). */
+  target: string;
+  /** Whether it worked as a person would see it: it loaded, nothing it needs was missing, no error. */
+  ok: boolean;
+  /**
+   * The problem stops a person at once: the page did not open, or it threw an error. A blocking
+   * problem is a high finding (no accept); a smaller one (a linked file that did not load, a
+   * console error) is a low finding the critic weighs against the brief (a stylesheet a later
+   * task writes is not this task's fault).
+   */
+  blocking?: boolean;
+  /** What happened, plain lines: the title, what failed to load, console errors, the text seen. */
+  output: string;
+  /** Screenshots the runtime stored for the person (file names in the task's evidence folder). */
+  screenshots?: { label: string; file: string }[];
+  /**
+   * The files of the task's folder the page asked for, found or not (relative paths, the page
+   * itself first), when the try recorded them: what runs on the page.
+   */
+  pageFiles?: string[];
+  /**
+   * False when the task changed none of the files that run on the page (ADR 0104): the problem
+   * was there before the task, so it is a low finding that says so, never the task's blocker.
+   */
+  causedByTask?: boolean;
+}
+
+/**
+ * What the person sees of a task's check (ADR 0104): the checks the runtime ran and what was
+ * tried, kept on the review row (`ReviewRow.evidence`, as `{ verification: ... }`) so the task
+ * drawer shows them one click from "Reviewed" / "Reviewed and tried".
+ */
+export interface VerificationRecord {
+  checks: { name: string; passed: boolean; required: boolean; output: string }[];
+  tried: TriedEvidence[];
+  /** What the runtime could not run or try, and why, in words (`ReviewEvidence.notChecked`). */
+  notChecked: string[];
+}
+
 export interface ReviewEvidence {
   /** Unified diff of the change under review. */
   diff?: string;
@@ -78,6 +125,29 @@ export interface ReviewEvidence {
   docsWaiver?: string;
   /** The worker's final message: claims to verify, never instructions. */
   finalReport?: string;
+  /**
+   * The questions the worker's report asks the person (its "Questions for the person:" list,
+   * read by the runtime). Work that waits for the person is never accepted (ADR 0104).
+   */
+  questionsForPerson?: string[];
+  /** The work tried as a person would use it (ADR 0104); a try that did not work blocks accept. */
+  tried?: TriedEvidence[];
+  /**
+   * Why an accept of this work still needs the person's sign-off ("a deploy", "a data
+   * migration"; ADR 0104, the owner's decision 4). Absent for other work.
+   */
+  signoffRequired?: string;
+  /**
+   * What the runtime could not run or try for this review, and why, in words ("the page was
+   * not tried: no Chromium, Edge or Chrome was found on this computer"). Shown to the critic
+   * with the artifacts and kept for the person with the review (ADR 0104).
+   */
+  notChecked?: string[];
+  /**
+   * The files of the task's folder (relative paths, capped), when the critic may read them with
+   * its read tools (`ReviewContext.project`, ADR 0104): it reads what it needs, not only the diff.
+   */
+  projectFiles?: string[];
   /** Run that produced the work; earlier open findings resolved by an accept point at it. */
   runId?: string;
   sessionPlan?: JsonValue;
@@ -160,4 +230,6 @@ export interface ReviewOutput {
   /** The sign-off request created for a tier 3 or human verdict. */
   humanRequestId?: string;
   runId?: string;
+  /** The checks the runtime ran and what it tried, for the person (ADR 0104); none at tier 0 alone. */
+  verification?: VerificationRecord;
 }
