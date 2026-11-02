@@ -11,6 +11,7 @@ import type {
   ModelSettingsView,
   PairingStartView,
   PerformanceView,
+  ProjectPullRequestView,
   ReviewView,
   SourceCandidateView,
   SourceView,
@@ -134,6 +135,29 @@ export const PROJECTS: ProjectCard[] = [
     repos: [],
   },
 ];
+
+/**
+ * The pull requests that wait for the person, by project (`GET /projects/:id/pull-requests`,
+ * ADR 0104): a done task's PR, the way the daemon reads them from the git host.
+ */
+export const PROJECT_PULL_REQUESTS: Record<
+  string,
+  { waiting: ProjectPullRequestView[]; error: string | null }
+> = {
+  proj_atlas: {
+    waiting: [
+      {
+        kind: "task",
+        taskId: "task_1",
+        title: "Index the documentation pages",
+        number: 11,
+        url: "https://example.test/org/atlas/pull/11",
+        branch: "fr/task_1",
+      },
+    ],
+    error: null,
+  },
+};
 
 /** Where each project's files are (the card's `folder`, design §3.10). */
 export const PROJECT_FOLDERS: Record<string, string> = {

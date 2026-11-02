@@ -129,6 +129,8 @@ export interface ProjectCardFacts {
   sandboxReady: boolean | null;
   plan?: (projectId: string) => Promise<{ state: PlanState; error: string | null }>;
   folder?: (project: ProjectRow) => string | null;
+  /** The repository the project is linked to, with its page (`projectRepository`). */
+  repository?: (project: ProjectRow) => { fullName: string; url: string } | null;
   /** Whether a Claude credential is in force (a failed plan's button: Try again or Connect). */
   hasModel?: boolean | null;
 }
@@ -167,7 +169,10 @@ export async function projectCard(
     { orderBy: [{ column: "created_at" }, { column: "id" }], limit: 1000 },
   );
   const plan = facts?.plan ? await facts.plan(p.id) : { state: null, error: null };
-  const folder = facts?.folder ? facts.folder(p) : null;
+  // A repository project's work is on the repository and in its pull requests (ADR 0104): this
+  // install's docs clone holds the default branch only, so it is not "your files".
+  const repository = facts?.repository ? facts.repository(p) : null;
+  const folder = !repository && facts?.folder ? facts.folder(p) : null;
   const working = await workingOn(store, p.id);
   const statusLine = projectStatusLine({
     projectId: p.id,
@@ -209,6 +214,7 @@ export async function projectCard(
     progress: progressOf(tasks),
     working,
     folder,
+    repository,
   };
 }
 

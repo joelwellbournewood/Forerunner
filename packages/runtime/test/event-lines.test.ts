@@ -4,6 +4,21 @@ import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpe
 
 /** Session log lines for the events added with U-013 and U-017. */
 describe("session log lines", () => {
+  it("a task's changed files name the pull request they went to (GitHub walk, 2026-11-02)", () => {
+    // Before: "Changed 1 file: index.html." with no word of the PR or its branch.
+    expect(
+      describeEvent("task.files", {
+        taskId: "t1",
+        files: ["index.html"],
+        prUrl: "https://github.com/o/sample/pull/2",
+        branch: "fr/01a1-create-index",
+      }),
+    ).toBe("Changed index.html, in pull request #2.");
+    expect(describeEvent("task.files", { taskId: "t1", files: ["index.html"] })).toBe(
+      "Changed index.html.",
+    );
+  });
+
   it("says when a session put claimed tasks back to ready (U-013)", () => {
     expect(describeEvent("task.claims_released", { count: 2 })).toBe(
       "Put 2 tasks back to ready: their claim had lapsed or no agent held it.",

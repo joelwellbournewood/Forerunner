@@ -1169,3 +1169,49 @@ describe("a reply cut off at max_tokens", () => {
     await w.store.close();
   });
 });
+
+describe("chat context: where the files are (live, 2026-11-01; ADR 0104)", () => {
+  it("a repository project: the repository and each done task's pull request, not a folder that holds none of the work", async () => {
+    // Live, the chat answered "where are my files?" with "the files are in the project folder
+    // you already set up", naming no folder. For a project linked to a repository the work
+    // waits in pull requests until the person merges them.
+    const w = await setup([textReply("In pull request #2 on o/game.")], { docs: true });
+    await w.store.project.patch(w.game, { repos: ["o/game"] });
+    await w.store.task.insert({
+      project_id: w.game,
+      title: "Create the page skeleton in index.html",
+      outcome: "index.html exists",
+      acceptance_criteria: ["it opens"],
+      risk_tier: 1,
+      status: "done",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "critic accepted",
+      branch: "fr/aaaa-create",
+      pr_url: "https://github.com/o/game/pull/2",
+    });
+    await w.chat("where are my files?");
+    const facts = w.firstUser();
+    expect(facts).toContain("# Your files");
+    expect(facts).toContain(
+      "The repository: o/game. Each task's work is a pull request there; the person merges it on GitHub, and until then the work is not on the default branch.",
+    );
+    expect(facts).toContain(
+      'Pull requests of finished tasks: "Create the page skeleton in index.html" https://github.com/o/game/pull/2',
+    );
+    expect(facts).toContain("This computer's copy of the default branch:");
+    await w.store.close();
+  });
+
+  it("a project's folder: the folder itself", async () => {
+    const w = await setup([textReply("In your folder.")], { docs: true });
+    await w.chat("where are my files?");
+    expect(w.firstUser()).toMatch(/# Your files\nThe project's folder: \S+/);
+    expect(w.firstUser()).not.toContain("The repository:");
+    await w.store.close();
+  });
+});

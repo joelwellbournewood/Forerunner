@@ -1452,7 +1452,14 @@ export class SessionRunner {
           task = await store.task.mustGet(task.id);
           if (result.changedFiles?.length) {
             filesByTask.set(task.id, result.changedFiles);
-            await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
+            // The pull request and branch the files went to, for the session page and the log
+            // (GitHub walk, 2026-11-02: neither named the PR or the branch).
+            await emit(TASK_FILES_EVENT, {
+              taskId: task.id,
+              files: result.changedFiles,
+              ...(result.prUrl ? { prUrl: result.prUrl } : {}),
+              ...(result.prUrl && result.branch ? { branch: result.branch } : {}),
+            });
           }
           // What the session log needs to tell the run once (design §3.7, `eventAudience`):
           // whether the critic reviews it next (the branches below), and the words of a run

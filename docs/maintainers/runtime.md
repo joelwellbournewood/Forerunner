@@ -1405,7 +1405,8 @@ for a duplicate key), an empty text "left … empty", a number "out of range", a
 record to open with a "Decision: " line in one or two sentences (the plan card shows it), asks for
 an estimate for every task a specialist does (`firstSession.items`, in run order: the card has a
 cost per task), never asks a specialist to commit, push or open a pull request (the executor
-records the changes), and says what a small plan is (`SMALL_PLAN_RULES`: one milestone of one to
+records the changes), says Forerunner decides where the files live and keeps them in git so
+the person is never asked either (live2 #14), and says what a small plan is (`SMALL_PLAN_RULES`: one milestone of one to
 three tasks, no reviewer, deploy, marketing or research task unless asked, no person task unless
 the work cannot start, riskTier left out, only README.md and the decision record). (6) **Plan
 size (ADR 0103).** `intakePlanSize` asks for "Plan size: small (a short brief: see Size in your
@@ -2395,6 +2396,23 @@ in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, t
 the session ends as it would have. The critic's tier 2+ drift check runs before this write
 and is told so (`CriticLoopDeps.statusDocManaged`, set by the daemon): it neither expects
 the specialist's change to touch `docs/status.md` nor reports it missing.
+**Where a repository project's work is** (`daemon/pull-requests.ts`, ADR 0104): the project card
+carries `repository` (`projectRepository`: `repos[0]` as `owner/name`, not a local folder, with
+its page from the GitHub API base: `api.github.com` is github.com, GitHub Enterprise and the fake
+git host serve pages at the API's origin) and then no `folder`, since this install's docs clone
+holds only the default branch. `GET /projects/:id/pull-requests` (`projectPullRequests`, served
+by `docs-routes.ts`) reads the host's open PRs when asked and lists those that wait for the
+person: each done task's (the critic accepted it and nothing merged it: below level 3 the merge is
+the person's) and Forerunner's docs PRs ("Project status (docs/status.md)", "The project's
+standard docs", "The project's docs from the plan"), sorted by number; a PR of a task still
+running or in review, or of someone else's, is not listed; a host that does not answer is
+`error` in words. `GET /projects/:id/docs` reads `docsInPullRequests` and marks a doc missing on
+the default branch that waits in such a PR (`pullRequest` and the note "waiting in pull request
+#N: merge it to add it"). The runner's `task.files` event carries the task's `prUrl` and `branch`,
+and its line reads "Changed index.html, in pull request #2." (`prNumberWords`). The chat's
+`# Your files` for a repository project (`repositoryFacts`, `filesBlock`) names the repository,
+says the work waits in pull requests until the person merges it, lists the done tasks' PR links
+and this computer's copy of the default branch; a folder project's names the folder.
 `docsDirsFor(project)` lists where the chat's docs search reads the set (spec J.1, ADR 0061),
 in order and without cloning or fetching: a local folder the project is linked to (an absolute
 `repos[0]`, spec A.4), this install's docs clone `<worktreeRoot>/<project id>` (made by the

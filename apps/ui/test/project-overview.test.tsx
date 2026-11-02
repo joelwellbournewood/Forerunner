@@ -17,6 +17,11 @@ describe("Files (design §3.10)", () => {
     expect(within(tab).getByTestId("folder-path")).toHaveTextContent(
       "/home/alice/.local/share/forerunner/worktrees/proj_atlas",
     );
+    // Atlas is linked to org/atlas: the folder is this computer's copy of what is merged, and
+    // the page says where the work in pull requests is (ADR 0104).
+    expect(await within(tab).findByTestId("files-repository")).toHaveTextContent(
+      "This computer's copy of org/atlas as merged. Work waiting in a pull request is on the Overview.",
+    );
     // In a browser the path is to copy; Open folder is the desktop app's.
     expect(within(tab).getByTestId("folder-copy")).toHaveTextContent("Copy path");
     expect(within(tab).queryByTestId("folder-open")).toBeNull();
@@ -46,13 +51,65 @@ describe("Files (design §3.10)", () => {
     expect(await screen.findByTestId("files-empty")).toHaveTextContent("Nothing written yet.");
   });
 
-  it("the Overview's Your files names the folder and links to Files", async () => {
+  it("the Overview's Your files names the folder and links to Files (a project's folder)", async () => {
     const user = userEvent.setup();
-    renderApp("/projects/proj_atlas/summary");
+    const harness = createHarness();
+    // Atlas without its repository: a project whose work is in its folder on this computer.
+    (harness.daemon.state.projects[0] as { repos: string[] }).repos = [];
+    renderApp("/projects/proj_atlas/summary", harness);
     const files = await screen.findByTestId("your-files");
     expect(within(files).getByTestId("folder-path")).toHaveTextContent("proj_atlas");
+    expect(within(files).queryByTestId("repository")).toBeNull();
     await user.click(within(files).getByText("See every file"));
     expect(await screen.findByTestId("files-tab")).toBeInTheDocument();
+  });
+});
+
+describe("a project linked to a repository: its pull requests on the Overview (ADR 0104)", () => {
+  // GitHub walk (2026-11-02): "5 reviewed pull requests wait for you to merge" on the session
+  // page and the Overview led nowhere; the only links were the small "PR" on a Tasks row and
+  // the drawer's; the repository was named nowhere on the project page.
+  it("Your files names the repository with its link and lists each PR waiting for a merge with its link", async () => {
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    expect(within(files).getByTestId("repository-link")).toHaveAttribute(
+      "href",
+      "https://github.com/org/atlas",
+    );
+    const rows = await within(files).findAllByTestId("pr-waiting");
+    expect(rows.map((r) => r.textContent)).toEqual([
+      '"Index the documentation pages" · pull request #11Open',
+    ]);
+    expect(within(rows[0] as HTMLElement).getByTestId("pr-waiting-link")).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/11",
+    );
+    expect(within(files).getByTestId("prs-waiting")).toHaveTextContent(
+      "Reviewed by the critic. Merging on GitHub puts the work into the default branch.",
+    );
+    // No folder of this computer is offered as the project's files.
+    expect(within(files).queryByTestId("folder-path")).toBeNull();
+  });
+
+  it("no PR waiting says so; a git host that does not answer says that in words", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = { waiting: [], error: null };
+    const first = renderApp("/projects/proj_atlas", harness);
+    expect(await screen.findByTestId("prs-none")).toHaveTextContent(
+      "No pull request waits for you.",
+    );
+    first.unmount();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [],
+      error:
+        "GitHub did not answer, so the pull requests are not listed (fetch failed). Try again later.",
+    };
+    renderApp("/projects/proj_atlas", harness);
+    expect(await screen.findByTestId("prs-error")).toHaveTextContent(
+      "GitHub did not answer, so the pull requests are not listed",
+    );
+    expect(screen.queryByTestId("prs-none")).toBeNull();
   });
 });
 

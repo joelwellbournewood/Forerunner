@@ -1675,6 +1675,12 @@ export class IntakeService {
       "task's changes itself (and opens the pull request when the project has a repository). An",
       "outcome or a criterion never asks a specialist to commit, push or open a pull request:",
       "say what the files must contain and which check must pass.",
+      // Live (2026-11-01, live2 #14) the plan asked the person "Where should the site files
+      // live on your computer, and do you want them under version control (git)?": the app
+      // decides both.
+      "Forerunner decides where the files live (the project's folder on this computer, or the",
+      "linked repository) and keeps their history in git: never ask the person where files go or",
+      "whether to use version control, and plan no task for it.",
       ...(this.deps.webSpecialists?.() === false ? [NO_WEB_RULE] : []),
       "",
       ...SMALL_PLAN_RULES,

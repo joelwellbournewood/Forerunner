@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { describeError, type EventView, type SessionView } from "../api/client.ts";
 import { type StreamMode, subscribeSessionEvents } from "../api/sse.ts";
+import { ExternalLink } from "../components/ExternalLink.tsx";
 import { ReadAloud } from "../components/ReadAloud.tsx";
 import { EventText } from "../components/RichText.tsx";
 import {
@@ -36,6 +37,39 @@ export function startedAtWords(iso: string | null | undefined): string | null {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+/** A pull request a task of this session opened or updated, with its branch. */
+export interface SessionPullRequest {
+  taskTitle: string;
+  url: string;
+  number: number | null;
+  branch: string | null;
+}
+
+/**
+ * The pull requests the session's tasks went to, from the log (`task.files` carries the PR and
+ * its branch, ADR 0104), each once, the last word on a task winning. Before (GitHub walk,
+ * 2026-11-02) the session page named neither the PR nor the branch.
+ */
+export function pullRequestsFromLog(events: readonly EventView[]): SessionPullRequest[] {
+  const titles = new Map<string, string>();
+  const byUrl = new Map<string, SessionPullRequest>();
+  for (const e of events) {
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    const taskId = typeof p.taskId === "string" ? p.taskId : null;
+    if (e.type === "task.started" && taskId && typeof p.title === "string")
+      titles.set(taskId, p.title);
+    if (e.type !== "task.files" || typeof p.prUrl !== "string" || !p.prUrl) continue;
+    const n = /\/pulls?\/(\d+)\/?$/.exec(p.prUrl)?.[1];
+    byUrl.set(p.prUrl, {
+      taskTitle: (taskId && titles.get(taskId)) || "a task",
+      url: p.prUrl,
+      number: n ? Number(n) : null,
+      branch: typeof p.branch === "string" && p.branch ? p.branch : null,
+    });
+  }
+  return [...byUrl.values()];
 }
 
 /** A task step line of the log (`task.step`: "read index.html", "ran node --check: ok"). */
@@ -253,6 +287,7 @@ export function SessionPage() {
   // Design §3.7: "Quote page · session at 14:05", never the session's id.
   const title = `${projectName ?? "Session"}${at ? `${projectName ? " · session" : ""} at ${at}` : ""}`;
   const live = ended ? null : currentFromLog(events);
+  const pullRequests = pullRequestsFromLog(events);
   const current =
     live ??
     (session.currentTask && !ended
@@ -382,6 +417,24 @@ export function SessionPage() {
             />
           </div>
         </div>
+        {pullRequests.length > 0 ? (
+          <div className="text-sm" data-testid="session-prs">
+            <div className="text-xs text-neutral-500">Pull requests</div>
+            <ul className="space-y-0.5">
+              {pullRequests.map((pr) => (
+                <li key={pr.url} data-testid="session-pr" className="flex flex-wrap gap-2">
+                  <span>
+                    "{pr.taskTitle}" · {pr.number ? `pull request #${pr.number}` : "pull request"}
+                    {pr.branch ? ` · branch ${pr.branch}` : ""}
+                  </span>
+                  <ExternalLink href={pr.url} variant="inline" testId="session-pr-link">
+                    Open
+                  </ExternalLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {session.summary && session.summary !== "conversation" ? (
           <div className="flex flex-wrap items-start gap-2">
             <p

@@ -210,11 +210,13 @@ export const ProjectCard = z.object({
     .nullable()
     .optional(),
   /**
-   * The folder the project's files are in on this computer (design §3.10): its workspace, the
-   * linked local folder, or this install's checkout of its repository; null before anything
-   * was written.
+   * The folder the project's files are in on this computer (design §3.10): its workspace or the
+   * linked local folder; null before anything was written, and for a project linked to a
+   * repository, whose work is on the repository (`repository`) and in its pull requests.
    */
   folder: z.string().nullable().optional(),
+  /** The repository the project is linked to, with its page; null without one (ADR 0104). */
+  repository: z.object({ fullName: z.string(), url: z.string() }).nullable().optional(),
 });
 export type ProjectCard = z.infer<typeof ProjectCard>;
 
@@ -871,8 +873,47 @@ export const DocView = z.object({
   drift: z.boolean(),
   /** The finding when it drifted, else where the doc was read or why it is missing. */
   note: z.string(),
+  /**
+   * A doc not on the repository's default branch yet that waits in one of Forerunner's docs
+   * pull requests (the scaffold, the plan's docs, the status): the PR's number and link. The
+   * note then says "waiting in pull request #1" (ADR 0104).
+   */
+  pullRequest: z.object({ number: z.number().int(), url: z.string() }).nullable().optional(),
 });
 export type DocView = z.infer<typeof DocView>;
+
+/** The repository a project is linked to, with its page (design §3.4 "Your files"). */
+export const ProjectRepositoryView = z.object({
+  /** `owner/name`. */
+  fullName: z.string(),
+  url: z.string(),
+});
+export type ProjectRepositoryView = z.infer<typeof ProjectRepositoryView>;
+
+/** One pull request that waits for the person to merge it. */
+export const ProjectPullRequestView = z.object({
+  /** A done task's work, or one of Forerunner's docs PRs (scaffold, plan's docs, status). */
+  kind: z.enum(["task", "docs"]),
+  taskId: z.string().nullable(),
+  /** The task's title, or what the docs PR holds in words. */
+  title: z.string(),
+  number: z.number().int(),
+  url: z.string(),
+  branch: z.string(),
+});
+export type ProjectPullRequestView = z.infer<typeof ProjectPullRequestView>;
+
+/**
+ * `GET /projects/:id/pull-requests`: the repository and the open pull requests that wait for the
+ * person (each done task's, Forerunner's docs PRs), read from the host when asked; `error` in
+ * words when the host did not answer. A project without a repository answers `repository: null`.
+ */
+export const ProjectPullRequestsView = z.object({
+  repository: ProjectRepositoryView.nullable(),
+  waiting: z.array(ProjectPullRequestView),
+  error: z.string().nullable(),
+});
+export type ProjectPullRequestsView = z.infer<typeof ProjectPullRequestsView>;
 
 export const DocContentView = z.object({
   path: z.string(),
@@ -2571,6 +2612,8 @@ export const DAEMON_ROUTES = {
   doc: "GET /projects/:id/docs/:path (DocContentView: one doc of the set or a decision record docs/decisions/<name>.md, the path URL-encoded; 404 for a path outside them or a doc not written yet)",
   projectFiles:
     "GET /projects/:id/files (ProjectFilesView: the project's folder on this computer and its files and folders, read-only, without .git and node_modules; folder null before anything was written; design §3.10)",
+  projectPullRequests:
+    "GET /projects/:id/pull-requests (ProjectPullRequestsView: the linked repository with its page and the open pull requests that wait for the person: each done task's and Forerunner's docs PRs, read from the git host when asked; error in words when the host does not answer; repository null without one; ADR 0104)",
   projectFile:
     "GET /projects/:id/files/:path (ProjectFileContentView: one file's text under the folder, the path URL-encoded; content null for a file that is not text; 404 for a path that leaves the folder or does not exist)",
   milestones:

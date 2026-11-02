@@ -47,6 +47,7 @@ import {
   type PlanState,
   planBlock,
   replyNames,
+  repositoryFacts,
   tasksBlock,
   workingNowBlock,
 } from "./project-facts.ts";
@@ -1264,7 +1265,10 @@ export class ConversationAgent {
     );
     if (working) blocks.push(working);
     if (project) {
-      const files = filesBlock(await this.folderOf(project.id));
+      const files = filesBlock(
+        await this.folderOf(project.id),
+        await repositoryFacts(store, project).catch(() => null),
+      );
       if (files) blocks.push(files);
     }
     void conversationProject;

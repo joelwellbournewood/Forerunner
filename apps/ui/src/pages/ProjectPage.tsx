@@ -181,7 +181,7 @@ export function ProjectPage() {
         {tab === "tasks" ? (
           <TasksTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />
         ) : null}
-        {tab === "files" ? <FilesTab projectId={id} /> : null}
+        {tab === "files" ? <FilesTab projectId={id} repository={view?.repository ?? null} /> : null}
         {tab === "docs" ? <DocsTab projectId={id} /> : null}
         {tab === "reviews" ? <ReviewsTab projectId={id} /> : null}
         {tab === "costs" ? <CostsTab projectId={id} /> : null}

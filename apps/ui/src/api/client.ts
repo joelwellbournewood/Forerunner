@@ -107,6 +107,9 @@ import {
   type ProjectFileEntryView,
   type ProjectFilesView,
   ProjectFilesView as ProjectFilesViewSchema,
+  type ProjectPullRequestsView,
+  ProjectPullRequestsView as ProjectPullRequestsViewSchema,
+  type ProjectPullRequestView,
   type ProjectSummary,
   ProjectSummary as ProjectSummarySchema,
   type RemoveSourceView,
@@ -311,6 +314,8 @@ export type {
   ProjectFileContentView,
   ProjectFileEntryView,
   ProjectFilesView,
+  ProjectPullRequestsView,
+  ProjectPullRequestView,
   ProjectSettingsView,
   ProjectSummary,
   QueueItemView,
@@ -780,6 +785,11 @@ export interface DaemonClient {
   doc(projectId: string, path: string, signal?: AbortSignal): Promise<DocContentView>;
   /** The Files tab (design §3.10): the project's folder and what is in it, read-only. */
   projectFiles(projectId: string, signal?: AbortSignal): Promise<ProjectFilesView>;
+  /**
+   * A repository project's pull requests that wait for the person, with the repository's page
+   * (design §3.4 "Your files", ADR 0104); read from the git host when asked.
+   */
+  projectPullRequests(projectId: string, signal?: AbortSignal): Promise<ProjectPullRequestsView>;
   /** One file of the project's folder, its text inline (null when it is not text). */
   projectFile(
     projectId: string,
@@ -1240,6 +1250,13 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("doc", { id: projectId, path }), DocContentViewSchema, undefined, signal),
     projectFiles: (projectId, signal) =>
       get(routePath("projectFiles", { id: projectId }), ProjectFilesViewSchema, undefined, signal),
+    projectPullRequests: (projectId, signal) =>
+      get(
+        routePath("projectPullRequests", { id: projectId }),
+        ProjectPullRequestsViewSchema,
+        undefined,
+        signal,
+      ),
     projectFile: (projectId, path, signal) =>
       get(
         routePath("projectFile", { id: projectId, path }),

@@ -175,7 +175,10 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       }.`;
     case "task.files": {
       const files = list(p, "files").map(String);
-      return files.length ? `Changed ${namedList(files)}.` : "Changed no file.";
+      const pr = prNumberWords(s("prUrl"));
+      return files.length
+        ? `Changed ${namedList(files)}${pr ? `, in ${pr}` : ""}.`
+        : "Changed no file.";
     }
     case "task.finished": {
       const outcome = s("outcome");
@@ -376,6 +379,12 @@ function typeWords(type: string): string {
   return words ? words[0]?.toUpperCase() + words.slice(1) : "Event";
 }
 
+/** "pull request #2" for a pull request's URL (`…/pull/2`), "" for none. */
+export function prNumberWords(url: string): string {
+  const n = /\/pulls?\/(\d+)\/?(?:[?#].*)?$/.exec(url.trim())?.[1];
+  return n ? `pull request #${n}` : url ? "a pull request" : "";
+}
+
 /**
  * The sentence for the event types `describeEvent` leaves to this file; null for a type it
  * does not know, which `fallbackLine` words.
@@ -449,7 +458,9 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
       return `Gave this task ${plural(list(p, "ids").length, "line")} you said.`;
     case "task.files": {
       const files = list(p, "files").map(String);
-      return `Changed ${plural(files.length, "file")}${files.length ? `: ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", …" : ""}` : ""}.`;
+      const pr = prNumberWords(s("prUrl"));
+      const branch = s("branch");
+      return `Changed ${plural(files.length, "file")}${files.length ? `: ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", …" : ""}` : ""}${pr ? `; ${pr}${branch ? ` on the branch ${branch}` : ""}` : ""}.`;
     }
     case "pr.merged":
       return `Merged the reviewed pull request ${s("prUrl")}.`;

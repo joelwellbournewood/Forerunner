@@ -2,7 +2,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { appDirs, join, SimulatedClock, SystemClock } from "@forerunner/platform";
+import { appDirs, join, run, SimulatedClock, SystemClock } from "@forerunner/platform";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
@@ -11,6 +11,8 @@ import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
+import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
 import { ScriptedProvider } from "../../../packages/runtime/test/helpers.ts";
 import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
 import {
@@ -151,6 +153,7 @@ describe("the UI client against the real daemon", () => {
       ["milestones", () => client.milestones(projectId)],
       ["dataAssets", () => client.dataAssets(projectId)],
       ["docs", () => client.docs(projectId)],
+      ["projectPullRequests", () => client.projectPullRequests(projectId)],
       ["performance", () => client.performance({ projectId })],
       ["sources", () => client.sources()],
       ["devices", () => client.devices()],
@@ -3778,4 +3781,176 @@ describe("a project name another project has (wave 1 handoff)", () => {
     expect((await client.projects()).map((p) => p.name)).toEqual(["Quote page"]);
     await rt.close();
   }, 120_000);
+});
+
+describe("the UI client against the real daemon: a project linked to a repository (ADR 0104)", () => {
+  // The GitHub walk (2026-11-01/02): an empty repository failed every task and the doc
+  // scaffold; "N reviewed pull requests wait for you to merge" linked none of them; the
+  // repository was shown nowhere; the Docs tab said "missing" for docs waiting in a PR.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let emptyBare = "";
+  const host = new MemoryGitHost("alice");
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-repo-"));
+    emptyBare = join(home, "empty.git");
+    await run(["git", "init", "--bare", "-b", "main", emptyBare]);
+    await host.createRepo({ owner: "o", name: "empty", private: true, cloneUrl: emptyBare });
+    const seededBare = join(home, "seeded.git");
+    await run(["git", "init", "--bare", "-b", "main", seededBare]);
+    const seed = new GitOps({
+      cwd: join(home, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(seededBare);
+    writeFileSync(join(home, "seed", "README.md"), "# seeded\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "seeded", private: true, cloneUrl: seededBare });
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "ok" }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      gitHost: host,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("an empty repository gets the doc set as its first commit; the card names the repository, not a folder", async () => {
+    const project = await client.createProject({
+      name: "Fresh",
+      goal: "A page in a new repository",
+      repos: ["o/empty"],
+    });
+    const log = await run(["git", "--git-dir", emptyBare, "log", "--format=%s", "main"]);
+    expect(log.stdout.trim()).toBe("docs: start the repository with the standard doc set");
+    const card = await client.project(project.id);
+    expect(card.repository).toEqual({ fullName: "o/empty", url: "https://github.com/o/empty" });
+    expect(card.folder).toBeNull();
+    const prs = await client.projectPullRequests(project.id);
+    expect(prs).toEqual({
+      repository: { fullName: "o/empty", url: "https://github.com/o/empty" },
+      waiting: [],
+      error: null,
+    });
+    // The docs are on main: the Docs tab reads them as present.
+    const docs = await client.docs(project.id);
+    expect(docs.find((d) => d.path === "docs/overview.md")).toMatchObject({ exists: true });
+  }, 60_000);
+
+  it("the PRs that wait for the person: the done task's and the docs scaffold's, each with its link; the Docs tab names the PR a doc waits in", async () => {
+    const project = await client.createProject({
+      name: "Seeded",
+      goal: "A page in a repository with a README",
+      repos: ["o/seeded"],
+    });
+    // The creation-time scaffold opened PR #1 (the seeded README stays as it is).
+    const docs = await client.docs(project.id);
+    const overview = docs.find((d) => d.path === "docs/overview.md");
+    expect(overview).toMatchObject({
+      exists: false,
+      note: "waiting in pull request #1: merge it to add it",
+      pullRequest: { number: 1, url: "memory://o/seeded/pull/1" },
+    });
+    expect(docs.find((d) => d.path === "README.md")).toMatchObject({ exists: true });
+    // A task the critic accepted, whose PR waits for the person's merge (level 2 never merges),
+    // and one still in review, whose PR is not waiting for a merge yet.
+    const done = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Create the page skeleton in index.html",
+      outcome: "index.html exists",
+      acceptance_criteria: ["it opens"],
+      risk_tier: 1,
+      status: "done",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "critic accepted",
+      branch: "fr/aaaa-create-the-page",
+    });
+    const reviewing = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Style the page",
+      outcome: "styles.css exists",
+      acceptance_criteria: ["it is styled"],
+      risk_tier: 1,
+      status: "in_review",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+      branch: "fr/bbbb-style-the-page",
+    });
+    const repo = { owner: "o", name: "seeded" };
+    const pr = await host.createPullRequest(repo, {
+      title: done.title,
+      body: "work",
+      head: "fr/aaaa-create-the-page",
+      base: "main",
+    });
+    await rt.store.task.patch(done.id, { pr_url: pr.htmlUrl });
+    await host.createPullRequest(repo, {
+      title: reviewing.title,
+      body: "work",
+      head: "fr/bbbb-style-the-page",
+      base: "main",
+    });
+    const view = await client.projectPullRequests(project.id);
+    expect(view.error).toBeNull();
+    expect(view.repository?.fullName).toBe("o/seeded");
+    expect(view.waiting).toEqual([
+      {
+        kind: "docs",
+        taskId: null,
+        title: "The project's standard docs",
+        number: 1,
+        url: "memory://o/seeded/pull/1",
+        branch: "fr/docs-scaffold",
+      },
+      {
+        kind: "task",
+        taskId: done.id,
+        title: "Create the page skeleton in index.html",
+        number: pr.number,
+        url: pr.htmlUrl,
+        branch: "fr/aaaa-create-the-page",
+      },
+    ]);
+    // Merged on GitHub: gone at once, since the list is read from the host when asked.
+    await host.mergePullRequest(repo, pr.number);
+    expect((await client.projectPullRequests(project.id)).waiting.map((w) => w.kind)).toEqual([
+      "docs",
+    ]);
+  }, 60_000);
 });

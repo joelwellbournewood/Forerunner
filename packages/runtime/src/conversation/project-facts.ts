@@ -1,4 +1,5 @@
 import { formatChf, usdToChfMicro } from "@forerunner/billing";
+import { isAbsolute } from "@forerunner/platform";
 import type {
   HumanRequestRow,
   ProjectRow,
@@ -13,6 +14,7 @@ import {
   runOrder,
   taskDisplay,
 } from "../daemon/task-display.ts";
+import { parseRepoRef } from "../loop/docs.ts";
 import type { IntakeState } from "../session/intake.ts";
 import type { LastSessionOutcome } from "../session/result.ts";
 
@@ -329,7 +331,51 @@ export function emptyTasksLine(plan: PlanState | null): string {
   }
 }
 
-/** `# Your files`: where the project's files are (its folder or checkout). */
-export function filesBlock(folder: string | null): string {
-  return folder ? `# Your files\nThe project's folder: ${folder}` : "";
+/** A repository project's name and its done tasks' pull requests, for `filesBlock`. */
+export async function repositoryFacts(
+  store: Pick<StateStore, "task">,
+  project: Pick<ProjectRow, "id" | "repos">,
+): Promise<{ fullName: string; pullRequests: { title: string; url: string }[] } | null> {
+  const first = project.repos[0]?.trim() ?? "";
+  // A local folder (spec A.4) is an absolute path, not a repository on a host.
+  if (!first || isAbsolute(first)) return null;
+  const ref = parseRepoRef(first);
+  if (!ref) return null;
+  const tasks = await store.task.list({ project_id: project.id } as never, { limit: 2000 });
+  return {
+    fullName: `${ref.owner}/${ref.name}`,
+    pullRequests: runOrder(tasks)
+      .filter((t) => t.status === "done" && !!t.pr_url)
+      .map((t) => ({ title: t.title, url: t.pr_url ?? "" })),
+  };
+}
+
+/**
+ * `# Your files`: where the project's files are. A folder project: its folder. A repository
+ * project (ADR 0104): the repository and each done task's pull request, since the work waits
+ * there until the person merges it, and this computer's copy of the default branch. Before
+ * (live, 2026-11-01) the chat said "the files are in the project folder you already set up"
+ * with no folder named; on a repository project it would have named the docs clone, which
+ * holds none of the unmerged work.
+ */
+export function filesBlock(
+  folder: string | null,
+  repository?: { fullName: string; pullRequests: { title: string; url: string }[] } | null,
+): string {
+  if (!repository) return folder ? `# Your files\nThe project's folder: ${folder}` : "";
+  const lines = [
+    "# Your files",
+    `The repository: ${repository.fullName}. Each task's work is a pull request there; the person merges it on GitHub, and until then the work is not on the default branch.`,
+  ];
+  if (repository.pullRequests.length)
+    lines.push(
+      `Pull requests of finished tasks: ${repository.pullRequests
+        .slice(0, 10)
+        .map((p) => `"${p.title}" ${p.url}`)
+        .join(
+          "; ",
+        )}${repository.pullRequests.length > 10 ? ` and ${repository.pullRequests.length - 10} more` : ""}`,
+    );
+  if (folder) lines.push(`This computer's copy of the default branch: ${folder}`);
+  return lines.join("\n");
 }

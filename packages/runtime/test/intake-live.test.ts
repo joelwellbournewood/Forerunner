@@ -532,6 +532,11 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
     // The planner never asks a specialist to commit: Forerunner does (live: the coder could not).
     expect(system).toContain("Forerunner commits each");
     expect(system).toContain("never asks a specialist to commit, push or open a pull request");
+    // Live (live2 #14) the plan asked the person where the files live and whether to use git:
+    // Forerunner decides both, and the planner is told so.
+    expect(system).toContain(
+      "Forerunner decides where the files live (the project's folder on this computer, or the\nlinked repository) and keeps their history in git: never ask the person where files go or\nwhether to use version control, and plan no task for it.",
+    );
     // Approved, the build task is written at tier 1 (light review): the critic reviews it.
     const [row] = await rt.store.humanRequest.open({ humanId: rt.human.id, projectId: short.id });
     if (!row) throw new Error("no plan card");

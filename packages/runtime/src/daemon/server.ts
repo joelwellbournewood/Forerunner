@@ -149,6 +149,7 @@ import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
+import { projectPullRequests, projectRepository } from "./pull-requests.ts";
 import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
@@ -664,6 +665,12 @@ export function createDaemonApp(
     createDocsRoutes({
       store: rt.store,
       docsDirsFor: (project) => rt.docs.docsDirsFor(project),
+      docsInPullRequests: (project) => rt.docs.docsInPullRequests(project),
+      pullRequests: (project) =>
+        projectPullRequests(
+          { store: rt.store, host: rt.gitHost, apiBase: rt.config?.githubApiBase },
+          project,
+        ),
       who: daemonWho,
     }),
   );
@@ -842,6 +849,7 @@ export function createDaemonApp(
         }
       },
       folder: (project) => rt.docs.docsDirsFor(project)[0] ?? null,
+      repository: (project) => projectRepository(project, rt.config?.githubApiBase),
       // A failed plan's button: Try again while Claude is connected, else Connect Claude.
       hasModel: !!rt.provider,
     });

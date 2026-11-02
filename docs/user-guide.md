@@ -106,14 +106,18 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   **Open**); **Last result** (the last session's result in at most three lines, with **Open the
   session** and "Read aloud"); **Next** (the open tasks in the order a session runs them, each
   with its status, worked out when you look); **Your files** (the project's folder with **Open
-  folder** in the desktop app and **Copy path**, and the files the last session changed);
+  folder** in the desktop app and **Copy path**, and the files the last session changed; for a
+  project linked to a GitHub repository instead: the repository with its link, and **Waiting for
+  you to merge**, each pull request the critic reviewed with **Open**, since merging on GitHub is
+  what puts the work into the repository's default branch);
   **Decisions** (each question you answered with your answer, your name and the day: "Where
   should the page be published? Only as a local file for now. (Robin, 1 Nov)", the plan you
   approved, and the decision records in the project's folder, which open in Docs); and **Note
   for the next session** (one box; see below). Peers appear only when another agent works on the
   project.
 - **Files**: the project's folder on this computer (its own folder, the folder you linked, or
-  this computer's copy of its repository) as a list with sizes and when each file changed.
+  this computer's copy of its repository as merged: work still in a pull request is on the
+  Overview) as a list with sizes and when each file changed.
   Click a file to read it here (text files; nothing can be changed from this tab). **Open
   folder** (desktop app) opens it in your file manager; **Copy path** copies where it is. Until
   the work writes something it says "Nothing written yet".
@@ -191,8 +195,21 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   commands that need no model; anything else is answered with where to add the key: Settings →
   Accounts and keys → Open the setup assistant.
 
+**A project linked to a GitHub repository**: each task works on a branch of its own and opens a
+pull request when it is done; Forerunner makes the commits, pushes and opens the pull request
+(the agents are told so), and the session page lists each pull request with its branch. A
+repository just created on GitHub, with nothing in it, gets a first commit from Forerunner on its
+default branch (the project's docs, or a README), so its tasks have something to start from; if
+that cannot be done, the task says so ("… is empty and Forerunner could not make its first commit
+…") and what to do. The project's status file (`docs/status.md`) goes in a pull request of its
+own, "docs: project status", which each session adds to; it never goes into a task's reviewed
+pull request. Docs that wait in a pull request say so on the Docs tab, with the link.
+
 **A project without a repository** works in its own folder on this computer (where its docs
-are): the agents read and write there, and the critic reviews what each task changed. To give
+are): the agents read and write there, and the critic reviews what each task changed. At the
+end of each session the folder's history records what the session did (one commit), so the
+folder is never left with uncommitted work; a `.gitignore` keeps caches such as `__pycache__`
+and `node_modules` out of it. To give
 it a GitHub repository, click **Create a repository** on the project page: it shows the name
 (from the project's), your GitHub account (or an organization you name) and private, and **Yes**
 creates it with your GitHub token, puts the project's folder in it as the first commit and links
