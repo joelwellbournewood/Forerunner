@@ -2479,8 +2479,15 @@ how the scheduler's `startSession` reads the cap the registry wrote (a temporary
 while its window is open, else `session_cap_usd_micro`), so a session started by the
 scheduler honours "give it 20 francs tonight" (spec Q.12). `sessionCommandPorts` builds the
 registry's `startSession` and `kill` ports over the scheduler, the kill switch and the
-store's sessions: `session.start` answers `{ outcome: started | queued | deferred, startId }`
-(the session id is never known synchronously; `startId` is the scheduler entry's id, one id
+store's sessions: `session.start` answers `{ outcome: started | queued | deferred, startId,
+sessionId }`. With `wait` (compose passes the daemon's `events` and clock; phase E) a started
+run is waited for as `POST /sessions` waits: its `session.started`, its end
+(`Scheduler.runOutcome`: a run that fails before its session begins throws that error, so the
+chat says the failure, never "Started"), or `START_WAIT_MS` (15 s); then `sessionId` is the
+row that start began (`sessionOfStart`), kept in the change log's `after.session_id`, and the
+conversation view's action carries it as `sessionId`, which the turn links ("Open the
+session"). Without `wait` (a one-shot) the session id is not known synchronously (`startId` is
+the scheduler entry's id, one id
 from the queue to the run, `Scheduler.requestStart`), which the registry keeps in the change
 log row (`after.start_id`) and names in the undo's kill scope (`KillScope.startId`,
 `@forerunner/commands`). The undo (a kill of the agent's scope naming the start, with

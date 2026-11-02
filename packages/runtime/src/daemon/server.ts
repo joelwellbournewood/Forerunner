@@ -1892,10 +1892,21 @@ export function createDaemonApp(
       cardStates.set(id, cardFate(row, !!live && id === lastAsked).state);
     }
     const undoable = new Map<string, boolean>();
+    // The session a chat start began (phase E: its change log's `after.session_id`, known
+    // once the start waited for its run), so the turn links it.
+    const startedSession = new Map<string, string>();
     for (const t of turns)
       for (const a of t.reply?.actions ?? [])
-        if (a.id && !undoable.has(a.id))
-          undoable.set(a.id, (await rt.store.changeLog.get(a.id))?.undo_state === "undoable");
+        if (a.id && !undoable.has(a.id)) {
+          const row = await rt.store.changeLog.get(a.id);
+          undoable.set(a.id, row?.undo_state === "undoable");
+          const after = row?.after;
+          const session =
+            after && typeof after === "object" && !Array.isArray(after)
+              ? (after as { session_id?: unknown }).session_id
+              : undefined;
+          if (typeof session === "string" && session) startedSession.set(a.id, session);
+        }
     return {
       projectId,
       turns: turns.map((t) => {
@@ -1918,6 +1929,7 @@ export function createDaemonApp(
                   sentence: a.summary,
                   changeId: a.id ?? null,
                   canUndo: !!a.id && a.kind !== "undo" && undoable.get(a.id) === true,
+                  sessionId: (a.id ? startedSession.get(a.id) : undefined) ?? null,
                 })),
                 question: r.question,
                 notice: r.notice,

@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { streamChat } from "../api/chat-stream.ts";
 import { type ConversationTurnView, describeError } from "../api/client.ts";
 import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
@@ -339,6 +340,15 @@ function Turn({
             >
               {a.sentence ? (
                 <span className="whitespace-pre-wrap">{withoutUndoWord(a.sentence).text}</span>
+              ) : null}
+              {a.sessionId ? (
+                <Link
+                  to={`/sessions/${encodeURIComponent(a.sessionId)}`}
+                  className="text-xs underline"
+                  data-testid={`${testIds}-session-link`}
+                >
+                  Open the session
+                </Link>
               ) : null}
               {a.canUndo && a.changeId && !undoNotes[a.changeId] ? (
                 <Button

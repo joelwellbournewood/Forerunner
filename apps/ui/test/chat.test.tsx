@@ -137,6 +137,42 @@ describe("Quick chat", () => {
     expect(screen.getByTestId("readback-closed")).toHaveTextContent("(you said yes)");
   });
 
+  it("a start the chat made links the session it started (phase E)", async () => {
+    const harness = createHarness();
+    harness.daemon.state.conversations.set("proj_atlas", [
+      {
+        id: "turn_start",
+        at: "2026-03-05T08:00:00.000Z",
+        said: "yes",
+        source: "text",
+        reply: {
+          text: "",
+          actions: [
+            {
+              kind: "session.start",
+              sentence: "Started a session on Atlas (up to CHF 5.00).",
+              changeId: "chg_start",
+              canUndo: true,
+              sessionId: "sess_started",
+            },
+          ],
+          question: null,
+          notice: false,
+          readback: null,
+          waiting: false,
+          card: null,
+        },
+      },
+    ]);
+    renderApp("/projects/proj_atlas/chat", harness);
+    const link = await screen.findByTestId("chat-session-link");
+    expect(link).toHaveTextContent("Open the session");
+    expect(link).toHaveAttribute("href", "/sessions/sess_started");
+    expect(screen.getByTestId("chat-action")).toHaveTextContent(
+      "Started a session on Atlas (up to CHF 5.00).",
+    );
+  });
+
   it("a question typed while a card waits does not drop the card (design §3.9)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

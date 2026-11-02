@@ -203,7 +203,7 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   and review. Ask "what is going on?", "what failed and why?", "what is left?". Tell it what to
   change: "add a task: …" (a ready task, with **Undo**), "make the FAQ task depend on the README
   task", "skip the LICENSE task" (a pause), "resume …", "cancel …", "try … again", "start working
-  now", "stop" (stops the running session now; its task is ready again), "stop after this task",
+  now" (the reply links the session it started), "stop" (stops the running session now; its task is ready again), "stop after this task",
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
   session, "summary". A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other

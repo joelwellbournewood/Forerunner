@@ -795,6 +795,12 @@ export const ConversationTurnView = z.object({
           sentence: z.string(),
           changeId: z.string().nullable(),
           canUndo: z.boolean(),
+          /**
+           * The session a start began (phase E: the chat's start waits for its run, as the
+           * Start dialog does), which the turn links; null for any other change. Optional for
+           * a daemon from before.
+           */
+          sessionId: z.string().nullable().optional(),
         }),
       ),
       question: z.object({ text: z.string(), options: z.array(z.string()) }).nullable(),

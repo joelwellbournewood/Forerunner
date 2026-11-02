@@ -1707,7 +1707,7 @@ describe("the UI client against the real daemon", () => {
       source: "text",
     });
     expect(reply.actions.map((a) => a.kind)).toEqual(["task.create"]);
-    expect((await client.tasks(tab.id)).map((t) => t.title)).toContain("write the tab README");
+    expect((await client.tasks(tab.id)).map((t) => t.title)).toContain("Write the tab README");
     expect(reply.activeProjectId).toBe(projectId);
     expect((await client.me()).activeProjectId).toBe(projectId);
   });
@@ -3796,7 +3796,7 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
     const added = await line("add a task: write the README");
     expect(added.reply).not.toMatch(/fr setup/);
     expect((await client.tasks(project.id)).map((t) => [t.title, t.status])).toContainEqual([
-      "write the README",
+      "Write the README",
       "ready",
     ]);
     const told = await line("What should we do first?");
@@ -5159,4 +5159,48 @@ describe("the UI client against the real daemon: answers do what the person said
     for (const t of rows.filter((r) => r.specialist === "ops-deploy"))
       expect(t.riskTier, t.title).toBe(2);
   }, 60_000);
+
+  it("'start a session' in the chat waits for the run and links the session it started", async () => {
+    const project = await client.createProject({ name: "Quote chat", goal: "A quote page" });
+    await client.createTask(project.id, {
+      title: "Write the quote page in index.html",
+      outcome: "index.html shows a quote",
+      specialist: "coder",
+    });
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    // Nothing of the cases before may still run: this start must begin at once.
+    await eventually(
+      async () => (await client.sessions({})).every((s) => s.status !== "running"),
+      "the sessions of the cases before to end",
+      async () => (await client.sessions({})).map((s) => s.status).join(", "),
+      30_000,
+    );
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    const asked = await say("start a session");
+    expect(asked.pendingConfirmation?.readback).toMatch(/^Start a session on Quote chat/);
+    const yes = await say("yes");
+    expect(yes.reply).toMatch(/^Started a session on Quote chat/);
+    const started = (await client.sessions({ projectId: project.id }))[0];
+    expect(started).toBeDefined();
+    // The turn links the session it started.
+    const seen = await client.conversation(project.id);
+    const action = seen.turns.at(-1)?.reply?.actions[0];
+    expect(action?.kind).toBe("session.start");
+    expect(action?.sessionId).toBe(started?.id);
+    await eventually(
+      async () => (await client.session(started?.id ?? "")).status !== "running",
+      "the started session to end",
+      async () => (await client.session(started?.id ?? "")).status,
+      30_000,
+    );
+  }, 90_000);
 });

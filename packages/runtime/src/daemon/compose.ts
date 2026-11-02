@@ -2959,7 +2959,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // session.start reports the scheduler's outcome; the undo of a start that only queued drops
   // the waiting request (ADR 0036), of a start still running stops that session only, and of
   // a start whose session ended is a no-op the loop refuses with the reason (RT-P5-2).
-  const { startUndoState, ...sessionPorts } = sessionCommandPorts({ scheduler, kill, store });
+  // Phase E: a start from chat waits for its run as POST /sessions does (`START_WAIT_MS`).
+  const { startUndoState, ...sessionPorts } = sessionCommandPorts({
+    scheduler,
+    kill,
+    store,
+    wait: { events, clock },
+  });
   const commands = new CommandLoop({
     store,
     clock,
