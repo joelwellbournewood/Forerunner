@@ -4095,9 +4095,14 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     const after = await row();
     expect(after?.status).toBe("ready");
     expect(after?.display?.label).toBe("Ready");
-    // Stop now keeps what it wrote (ADR 0102); no review was recorded, no card waits.
+    // Stop now keeps what it wrote (ADR 0102); no review was recorded (the critic's run, when
+    // it had begun, reads Stopped), no card waits.
     expect(await files()).toContain("contact.html");
-    expect((await client.task(created.id)).runs.filter((r) => r.kind !== "work")).toEqual([]);
+    const stopped = await client.task(created.id);
+    expect(stopped.review).toBeNull();
+    expect(
+      stopped.runs.filter((r) => r.kind !== "work").every((r) => r.outcome === "Stopped"),
+    ).toBe(true);
     const me = await client.me();
     expect(
       (await client.inbox(me.id)).requests.filter(
@@ -4113,7 +4118,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     // The next Start runs it again, and the critic reviews it this time.
     await runSession(project.id);
     expect((await row())?.status).toBe("done");
-    expect((await client.task(created.id)).runs.some((r) => r.kind !== "work")).toBe(true);
+    expect((await client.task(created.id)).review?.verdict).toBeTruthy();
   });
 
   it("a task in review whose card waits reads Needs your decision, and Cancel says only that it is cancelled (phase C review)", async () => {
