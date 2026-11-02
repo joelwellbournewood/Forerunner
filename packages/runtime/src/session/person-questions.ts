@@ -118,7 +118,21 @@ export function isPersonTask(
   );
 }
 
-const clean = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, MAX_QUESTION_CHARS);
+/**
+ * A question or an item as the card shows it: one line of at most `MAX_QUESTION_CHARS`. A longer
+ * one is cut at the last word that fits, with "…", and keeps its "?" (ADR 0103): cut hard, it
+ * lost the question mark mid-word and was no longer asked at all.
+ */
+const clean = (s: string) => {
+  const t = s.replace(/\s+/g, " ").trim();
+  if (t.length <= MAX_QUESTION_CHARS) return t;
+  const asked = t.endsWith("?");
+  const room = MAX_QUESTION_CHARS - (asked ? 2 : 1);
+  const head = t.slice(0, room + 1);
+  const space = head.lastIndexOf(" ");
+  const words = space >= room / 2 ? head.slice(0, space) : t.slice(0, room);
+  return `${words.replace(/[\s,;:(–—-]+$/, "")}…${asked ? "?" : ""}`;
+};
 const capital = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 /** "Confirm stack, hosting and repository with the human" -> stack, hosting, repository. */

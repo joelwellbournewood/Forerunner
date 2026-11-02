@@ -1464,7 +1464,10 @@ a sign-off without the questions. One card, three ways in:
   them the same way for one that reaches a session anyway and returns `needs_human` at once
   with no Run row and no spend. The questions (`questionsForTask`): the acceptance criteria that
   end in "?", else one per thing the title names ("Stack: what do you choose?"), else the
-  criteria, else the title.
+  criteria, else the title. A question over `MAX_QUESTION_CHARS` (500) is cut at the last word
+  that fits with "…" and keeps its "?" (`clean`, ADR 0103): cut hard mid-word it lost the
+  question mark and was dropped from the card. At most `MAX_PERSON_QUESTIONS` (10) per task are
+  asked; the intake prompt states both limits.
 - **Asked by a specialist.** `askPersonTool` (`ask_person`, action class `read`: asking is free
   at every level) is registered by the daemon beside the file tools; the executor adds it to
   every loop-driver run's allowlist (the session grant carries every registered tool, so the
