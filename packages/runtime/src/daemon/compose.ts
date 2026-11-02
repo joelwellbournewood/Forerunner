@@ -3313,6 +3313,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const project = await store.project.get(projectId);
       return project ? docs.docsDirsFor(project) : [];
     },
+    // L-17: which done tasks' pull requests are still open, read from the host per turn, so the
+    // chat never calls a merged one waiting.
+    openPullRequests: async (projectId) => {
+      const project = await store.project.get(projectId);
+      const first = project?.repos[0]?.trim() ?? "";
+      const ref = first && !isAbsolute(first) ? parseRepoRef(first) : null;
+      if (!ref) return null;
+      try {
+        return (await gitHost.listPullRequests(ref, { state: "open" })).map((p) => p.htmlUrl);
+      } catch {
+        return null;
+      }
+    },
     // Design §3.9: the chat sees each task's status in the person's words ("Waiting for
     // Docker" needs the sandbox's state) and the money in CHF at the day's rate.
     sandboxReady: () => {

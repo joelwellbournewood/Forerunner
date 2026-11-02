@@ -2629,7 +2629,13 @@ refusal in the setting's name) and `pr.merged` "Merged pull request #5."; before
 URL and "autonomy level 2 does not merge (level 3 Trusted does)". The chat's
 `# Your files` for a repository project (`repositoryFacts`, `filesBlock`) names the repository,
 says the work waits in pull requests until the person merges it, lists the done tasks' PR links
-and this computer's copy of the default branch; a folder project's names the folder.
+and this computer's copy of the default branch; a folder project's names the folder. With the
+host's open pull requests (`ConversationDeps.openPullRequests`, composed over
+`gitHost.listPullRequests(state: open)` each turn; L-17) the links are split into "Pull requests
+that wait for the person to merge" and "Already merged or closed on GitHub"; when the host does
+not answer they are listed as before ("Pull requests of finished tasks"). Before, the chat said
+a PR merged five minutes earlier still waited (live, 2026-11-02). Test: `conversation.test.ts`
+("a pull request the person merged is said to be merged").
 `docsDirsFor(project)` lists where the chat's docs search reads the set (spec J.1, ADR 0061),
 in order and without cloning or fetching: a local folder the project is linked to (an absolute
 `repos[0]`, spec A.4), this install's docs clone `<worktreeRoot>/<project id>` (made by the

@@ -331,23 +331,52 @@ export function emptyTasksLine(plan: PlanState | null): string {
   }
 }
 
-/** A repository project's name and its done tasks' pull requests, for `filesBlock`. */
+/** What `filesBlock` says about a repository project (`repositoryFacts`). */
+export interface RepositoryFacts {
+  fullName: string;
+  /** The done tasks' pull requests (all of them when `merged` is null). */
+  pullRequests: { title: string; url: string }[];
+  /**
+   * The done tasks' pull requests no longer open on the host (merged or closed, L-17); null when
+   * the host's open pull requests are not known.
+   */
+  merged?: { title: string; url: string }[] | null;
+}
+
+/**
+ * A repository project's name and its done tasks' pull requests, for `filesBlock`. With the
+ * host's open pull requests (`open`, L-17) they are split into those that wait for the person
+ * and those already merged or closed.
+ */
 export async function repositoryFacts(
   store: Pick<StateStore, "task">,
   project: Pick<ProjectRow, "id" | "repos">,
-): Promise<{ fullName: string; pullRequests: { title: string; url: string }[] } | null> {
+  open: readonly string[] | null = null,
+): Promise<RepositoryFacts | null> {
   const first = project.repos[0]?.trim() ?? "";
   // A local folder (spec A.4) is an absolute path, not a repository on a host.
   if (!first || isAbsolute(first)) return null;
   const ref = parseRepoRef(first);
   if (!ref) return null;
   const tasks = await store.task.list({ project_id: project.id } as never, { limit: 2000 });
+  const done = runOrder(tasks)
+    .filter((t) => t.status === "done" && !!t.pr_url)
+    .map((t) => ({ title: t.title, url: t.pr_url ?? "" }));
+  if (open === null)
+    return { fullName: `${ref.owner}/${ref.name}`, pullRequests: done, merged: null };
   return {
     fullName: `${ref.owner}/${ref.name}`,
-    pullRequests: runOrder(tasks)
-      .filter((t) => t.status === "done" && !!t.pr_url)
-      .map((t) => ({ title: t.title, url: t.pr_url ?? "" })),
+    pullRequests: done.filter((p) => open.includes(p.url)),
+    merged: done.filter((p) => !open.includes(p.url)),
   };
+}
+
+/** Up to ten '"Title" url' items, then "and N more" (design §5 rule 5). */
+function prList(prs: readonly { title: string; url: string }[]): string {
+  return `${prs
+    .slice(0, 10)
+    .map((p) => `"${p.title}" ${p.url}`)
+    .join("; ")}${prs.length > 10 ? ` and ${prs.length - 10} more` : ""}`;
 }
 
 /**
@@ -358,24 +387,22 @@ export async function repositoryFacts(
  * with no folder named; on a repository project it would have named the docs clone, which
  * holds none of the unmerged work.
  */
-export function filesBlock(
-  folder: string | null,
-  repository?: { fullName: string; pullRequests: { title: string; url: string }[] } | null,
-): string {
+export function filesBlock(folder: string | null, repository?: RepositoryFacts | null): string {
   if (!repository) return folder ? `# Your files\nThe project's folder: ${folder}` : "";
   const lines = [
     "# Your files",
     `The repository: ${repository.fullName}. Each task's work is a pull request there; the person merges it on GitHub, and until then the work is not on the default branch.`,
   ];
-  if (repository.pullRequests.length)
-    lines.push(
-      `Pull requests of finished tasks: ${repository.pullRequests
-        .slice(0, 10)
-        .map((p) => `"${p.title}" ${p.url}`)
-        .join(
-          "; ",
-        )}${repository.pullRequests.length > 10 ? ` and ${repository.pullRequests.length - 10} more` : ""}`,
-    );
+  // L-17: with the host's open pull requests known, which wait and which are merged already.
+  if (repository.merged) {
+    if (repository.pullRequests.length)
+      lines.push(
+        `Pull requests that wait for the person to merge: ${prList(repository.pullRequests)}`,
+      );
+    if (repository.merged.length)
+      lines.push(`Already merged or closed on GitHub: ${prList(repository.merged)}`);
+  } else if (repository.pullRequests.length)
+    lines.push(`Pull requests of finished tasks: ${prList(repository.pullRequests)}`);
   if (folder) lines.push(`This computer's copy of the default branch: ${folder}`);
   return lines.join("\n");
 }
