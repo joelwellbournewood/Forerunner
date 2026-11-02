@@ -883,7 +883,10 @@ abort reason (`KillSwitchStop.stopBy`, read with `stopByOf`; `personStopOf` is t
 the palette) is `stop_all` whatever `reason` it carries; `POST /shutdown` (Quit) is `quit`; the
 kill file (`fr kill`, a Stop all that survives a restart) is `stop_all`; the registry's
 `session.stop` (`sessionCommandPorts.kill`: the chat, voice) is `stop_all` for everything or
-the agent (both freeze) and `you` for one session (with `freeze: false`, as Stop now) or the
+the agent (both freeze, and compose writes the kill file for them as `POST /kill` does, so a
+"stop everything" said in chat holds across a restart until the person resumes; phase E:
+before, it held in the process only; test `chat-resume-restart.test.ts`) and `you` for one
+session (with `freeze: false`, as Stop now) or the
 undo of the person's own start; a chat "stop" names the running session, never the agent's
 scope (design §3.9: before, it froze the agent until Allow sessions again); the
 phone's `kill` is `stop_all` and its `stop` is `you` (`remote/watcher.ts`, and the cloud runner's

@@ -88,7 +88,7 @@ import { registerDataTools } from "../data/tools.ts";
 import type { DataLimits } from "../data/types.ts";
 import { DeviceManager } from "../devices/index.ts";
 import type { EnforcementHooks, HookDeps, RunBilling, RunContext } from "../enforcement/hooks.ts";
-import { clearKillRequest, KillFileWatcher } from "../enforcement/killfile.ts";
+import { clearKillRequest, KillFileWatcher, writeKillRequest } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
 import type { CapDecision, CapScope, CapsBilling, CapsPort } from "../enforcement/ports.ts";
 import { TokenIssuer } from "../enforcement/token.ts";
@@ -2962,7 +2962,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Phase E: a start from chat waits for its run as POST /sessions does (`START_WAIT_MS`).
   const { startUndoState, ...sessionPorts } = sessionCommandPorts({
     scheduler,
-    kill,
+    // A Stop all said in chat or voice ("stop everything") freezes as the header's does: it
+    // is written to the runtime's kill file, so the next start applies it again until the
+    // person resumes (U-019; phase E: before, it held in this process only, and a restart
+    // let sessions run again). Resume clears the file (the kill switch's `onResume`).
+    kill: {
+      stop: async (scope, reason, opts) => {
+        const report = await kill.stop(scope, reason, opts);
+        if (opts?.by === "stop_all")
+          writeKillRequest(
+            { scope, reason, requestedAt: clock.nowIso(), requestedBy: "daemon" },
+            dirs.runtime,
+          );
+        return report;
+      },
+    },
     store,
     wait: { events, clock },
   });
