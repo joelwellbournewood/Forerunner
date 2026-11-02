@@ -2988,15 +2988,25 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // A Stop all said in chat or voice ("stop everything") freezes as the header's does: it
     // is written to the runtime's kill file, so the next start applies it again until the
     // person resumes (U-019; phase E: before, it held in this process only, and a restart
-    // let sessions run again). Resume clears the file (the kill switch's `onResume`).
+    // let sessions run again). Resume clears the file (the kill switch's `onResume`). As in
+    // POST /kill, the file keeps the sessions it ended, so Continue where it stopped starts
+    // them again after a restart too (later #60).
     kill: {
       stop: async (scope, reason, opts) => {
         const report = await kill.stop(scope, reason, opts);
-        if (opts?.by === "stop_all")
+        if (opts?.by === "stop_all") {
+          const sessions = kill.stoppedSessions();
           writeKillRequest(
-            { scope, reason, requestedAt: clock.nowIso(), requestedBy: "daemon" },
+            {
+              scope,
+              reason,
+              requestedAt: clock.nowIso(),
+              requestedBy: "daemon",
+              ...(sessions.length ? { sessions } : {}),
+            },
             dirs.runtime,
           );
+        }
         return report;
       },
     },

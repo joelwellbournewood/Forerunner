@@ -885,7 +885,10 @@ kill file (`fr kill`, a Stop all that survives a restart) is `stop_all`; the reg
 `session.stop` (`sessionCommandPorts.kill`: the chat, voice) is `stop_all` for everything or
 the agent (both freeze, and compose writes the kill file for them as `POST /kill` does, so a
 "stop everything" said in chat holds across a restart until the person resumes; phase E:
-before, it held in the process only; test `chat-resume-restart.test.ts`) and `you` for one
+before, it held in the process only; test `chat-resume-restart.test.ts`; the file carries the
+sessions it ended, `KillRequest.sessions`, as `POST /kill`'s does, so Continue where it stopped
+starts them after a restart: real-daemon case "a Stop all said in the chat is remembered as the
+header's") and `you` for one
 session (with `freeze: false`, as Stop now) or the
 undo of the person's own start; a chat "stop" names the running session, never the agent's
 scope (design §3.9: before, it froze the agent until Allow sessions again); the

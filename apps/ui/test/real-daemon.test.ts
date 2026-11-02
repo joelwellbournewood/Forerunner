@@ -6044,6 +6044,45 @@ describe("the UI client against the real daemon: Continue where it stopped start
     }
   }, 60_000);
 
+  it("a Stop all said in the chat is remembered as the header's: after a restart, POST /kill/resume names the project it stopped (answers + screens, later #60)", async () => {
+    // 'answers' made the chat's "stop everything" write kill.json as POST /kill does, so the
+    // freeze survives a restart; 'screens' made POST /kill keep the sessions it ended in that
+    // file, so Continue where it stopped starts them after a restart. The chat's file must
+    // carry them too, or a restart forgets what the chat's Stop all stopped.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-continue-chat-"));
+    const first = await compose(home);
+    let a = "";
+    try {
+      const one = await twoProjectsOneRunning(first.client, first.provider, "Chat");
+      const me = await first.client.me();
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const said = await first.client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: one.a.id,
+        projectTab: true,
+        text: "stop everything",
+        source: "text",
+      });
+      expect(said.actions.map((x) => x.kind)).toEqual(["session.stop"]);
+      await eventually(
+        async () => (await first.client.session(one.sessionId)).stopReason === "stop_all",
+        "the session to end by the chat's Stop all",
+        async () => JSON.stringify(await first.client.session(one.sessionId)),
+        15_000,
+      );
+      a = one.a.id;
+    } finally {
+      await first.rt.close();
+    }
+    const second = await compose(home);
+    try {
+      expect((await second.client.resume()).stoppedProjects).toEqual([a]);
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
+
   it("a session the person undid is not started again: POST /kill/resume names only what Stop all stopped (review of later #60)", async () => {
     // Before: the undo of the chat's start stops its session with the freeze on, so the kill
     // switch counted it as stopped by Stop all; the next Stop all and Continue where it stopped

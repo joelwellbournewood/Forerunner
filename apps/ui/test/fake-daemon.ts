@@ -2256,6 +2256,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/kill", async (c) => {
     const parsed = KillBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    return c.json({ killActive: true, stoppedSessions: stopAll() });
+  });
+  /**
+   * Stop all, as the daemon's kill switch with `by: "stop_all"`: the header's POST /kill and
+   * the chat's "stop everything" (its session.stop for everything) alike; the projects it
+   * stopped are what Continue where it stopped starts again (later #60).
+   */
+  function stopAll(): number {
     state.killActive = true;
     let stopped = 0;
     for (const s of state.sessions) {
@@ -2274,8 +2282,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         emit("session.changed", clone(s));
       }
     }
-    return c.json({ killActive: true, stoppedSessions: stopped });
-  });
+    return stopped;
+  }
   app.post("/kill/resume", (c) => {
     state.killActive = false;
     const stoppedProjects = stoppedByKill.splice(0);
@@ -2711,7 +2719,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // "stop everything" is Stop all and "resume" lifts it, as the daemon's session.stop (scope
     // all) and session.resume, with their sentences.
     if (lower === "stop everything") {
-      state.killActive = true;
+      stopAll();
       const sentence =
         'Stopped every running session. No session starts until you say "resume" or press Allow sessions again.';
       return {
