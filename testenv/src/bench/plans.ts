@@ -407,7 +407,7 @@ export function intakeProposal(input: IntakeInput, opts: PlanOptions): Record<st
 // ---------------------------------------------------------------------------------------
 
 const FILE_RE =
-  /(?:^|[\s(`'"])((?:[\w-]+\/)*[\w-]+\.(?:html|css|js|mjs|ts|md|json|txt|py|yml|yaml))\b/gi;
+  /(?:^|[\s(`'"])((?:[\w-]+\/)*[\w-]+\.(?:html|css|js|mjs|ts|md|json|txt|py|yml|yaml|csv|svg))\b/gi;
 
 /** Files a brief names (title, outcome, criteria), in order, at most six. */
 export function filesNamed(text: string): string[] {
@@ -446,11 +446,19 @@ export function contentFor(
   file: string,
   task: { title: string; outcome: string; criteria: string[] },
   seen = "",
+  /**
+   * The files a page may link: those in the folder or written in the same run. A page links
+   * styles.css and script.js only when they are among them (ADR 0104: the page is tried as a
+   * person would open it, and a link to a missing file is a problem the critic sees). Absent:
+   * both are linked, as before.
+   */
+  present?: readonly string[],
 ): string {
   const lower = file.toLowerCase();
   const about = `${task.title}\n${task.outcome}\n${task.criteria.join("\n")}\n${seen}`;
   const quotes = /\bquotes?\b/i.test(about);
   if (lower.endsWith(".html")) {
+    const has = (f: string) => !present || present.includes(f);
     return [
       "<!doctype html>",
       '<html lang="en">',
@@ -458,8 +466,8 @@ export function contentFor(
       '    <meta charset="utf-8" />',
       '    <meta name="viewport" content="width=device-width, initial-scale=1" />',
       `    <title>${quotes ? "A random quote" : "Page"}</title>`,
-      '    <link rel="stylesheet" href="styles.css" />',
-      '    <script src="script.js" defer></script>',
+      ...(has("styles.css") ? ['    <link rel="stylesheet" href="styles.css" />'] : []),
+      ...(has("script.js") ? ['    <script src="script.js" defer></script>'] : []),
       "  </head>",
       "  <body>",
       "    <main>",
