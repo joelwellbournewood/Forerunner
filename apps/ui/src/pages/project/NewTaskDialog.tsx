@@ -1,3 +1,4 @@
+import { SEARCH_ONLY_LIMITATION } from "@forerunner/runtime/daemon/api-types";
 import {
   DEFAULT_TASK_PRIORITY,
   PRIORITY_LABELS,
@@ -321,7 +322,9 @@ export function NewTaskDialog({
         ) : null}
         {whoLimitation ? (
           <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="task-who-note">
-            {whoLimitation}: the {who} works only from the project's files.
+            {whoLimitation === SEARCH_ONLY_LIMITATION
+              ? `${whoLimitation}. Save an API key to let it read pages.`
+              : `${whoLimitation}: the ${who} works only from the project's files.`}
           </p>
         ) : null}
         {who === WHO_PERSON ? (

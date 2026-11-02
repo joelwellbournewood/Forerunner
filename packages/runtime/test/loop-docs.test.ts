@@ -103,7 +103,11 @@ function prExecutor(
 describe("project docs at session end (spec G.5)", () => {
   it("the status update goes on Forerunner's status branch and pull request, never on the task's reviewed one: scaffolded first, with the task done, the session id and the date; main untouched (GitHub walk, 2026-11-02)", async () => {
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
-    await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    await w.store.project.patch(w.project, {
+      repos: ["o/sample"],
+      // C-57: the status pull request is off unless the person turns it on.
+      settings: { status_pull_request: true },
+    });
     const { root, bare } = await bareRepo();
     const { host, docs } = await docsFor(w, root, bare);
     const task = await w.addTask("Add clamp", { risk_tier: 1 });
@@ -146,7 +150,10 @@ describe("project docs at session end (spec G.5)", () => {
 
   it("a session that opened no pull request files the status PR, listing blocked work and the project's open tasks; the next session adds to the same PR", async () => {
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
-    await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    await w.store.project.patch(w.project, {
+      repos: ["o/sample"],
+      settings: { status_pull_request: true },
+    });
     const { root, bare } = await bareRepo();
     const { host, docs } = await docsFor(w, root, bare);
     const task = await w.addTask("Deploy to staging", { risk_tier: 1 });
@@ -187,6 +194,72 @@ describe("project docs at session end (spec G.5)", () => {
     expect(
       (await host.listPullRequestComments(REPO, prs[0]?.number ?? 0)).map((c) => c.body).join("\n"),
     ).toContain(again.sessionId);
+    await w.close();
+  });
+
+  it("by default a repository project's status stays in the app: no status pull request, the Docs tab reads it (C-57)", async () => {
+    // Before: every session of a repository project left a status PR for the person to merge,
+    // even for a one-task project.
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const { root, bare } = await bareRepo();
+    const { host, docs } = await docsFor(w, root, bare);
+    await w.addTask("Add clamp", { risk_tier: 1 });
+    const result = await w.start(
+      w.runner(prExecutor(w, root, bare, host, "fr/add-clamp"), { docs }),
+    );
+    expect(result.completed).toHaveLength(1);
+    expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
+      "fr/add-clamp",
+    ]);
+    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toBeNull();
+    const dir = docs.statusDocRoot(await w.store.project.mustGet(w.project));
+    expect(dir).toBe(docs.statusInAppDir(project.id));
+    const text = await readFile(join(dir ?? "", fromPosix(STATUS_DOC)), "utf8");
+    expect(text).toContain(`### 2026-10-20 session ${result.sessionId}`);
+    expect(text).toContain("- Done: Add clamp");
+    expect(w.events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
+      location: "app",
+      path: STATUS_DOC,
+    });
+    // Turned on, the next session opens the status pull request.
+    await w.store.project.patch(w.project, { settings: { status_pull_request: true } });
+    expect(docs.statusDocRoot(await w.store.project.mustGet(w.project))).toBeNull();
+    await w.addTask("Add retries", { risk_tier: 0 });
+    await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
+    expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
+      "fr/add-clamp",
+      STATUS_BRANCH,
+    ]);
+    await w.close();
+  });
+
+  it("with the status in the app, the session's end still clones and refreshes this computer's copy of the repository (C-57 review)", async () => {
+    // Review of fix/decisions: the in-app path returned before the docs clone was made or
+    // fetched, so the Docs and Files tabs and the chat's docs search read nothing (no clone)
+    // or the main of the last scaffold (a merge on the host never showed).
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    const project = await w.store.project.mustGet(w.project);
+    expect(docs.docsDirsFor(project)).toEqual([]);
+    await w.addTask("Add clamp", { risk_tier: 0 });
+    await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
+    const clone = join(root, "worktrees", w.project);
+    expect(docs.docsDirsFor(project)).toEqual([clone]);
+    expect(await readFile(join(clone, "README.md"), "utf8")).toBe("# sample\n");
+    // The person merges something on the host; the next session's end brings it in, on main.
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    writeFileSync(join(root, "seed", "notes.md"), "# notes\n");
+    await seed.commitAll("notes");
+    await seed.push("main");
+    await w.addTask("Add retries", { risk_tier: 0 });
+    await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
+    expect(await readFile(join(clone, "notes.md"), "utf8")).toBe("# notes\n");
+    expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe("main");
+    // Nothing went to the host: no status branch.
+    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toBeNull();
     await w.close();
   });
 
@@ -287,7 +360,10 @@ describe("project docs at session end (spec G.5)", () => {
     const bare = join(root, "sample.git");
     await run(["git", "init", "--bare", "-b", "main", bare]);
     const { host, docs } = await docsFor(w, root, bare);
-    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const project = await w.store.project.patch(w.project, {
+      repos: ["o/sample"],
+      settings: { status_pull_request: true },
+    });
     const out = await docs.scaffoldProject(project);
     expect(out).toMatchObject({ location: "repo", branch: "main", prUrl: null, firstCommit: true });
     expect(out.created).toContain("README.md");

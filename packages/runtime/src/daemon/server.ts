@@ -669,6 +669,8 @@ export function createDaemonApp(
       store: rt.store,
       docsDirsFor: (project) => rt.docs.docsDirsFor(project),
       docsInPullRequests: (project) => rt.docs.docsInPullRequests(project),
+      // C-57: a repository project's status kept in the app is the Status the tab shows.
+      statusDocRoot: (project) => rt.docs.statusDocRoot(project),
       pullRequests: (project) =>
         projectPullRequests(
           { store: rt.store, host: rt.gitHost, apiBase: rt.config?.githubApiBase },
@@ -2389,6 +2391,7 @@ export function createDaemonApp(
         others: [{ id: rt.criticAgent.id, name: rt.criticAgent.name, kind: "critic" }],
         specialists: rt.registry.runnableSpecialists(),
         webAccess: rt.webAccess(),
+        webSearchOnly: rt.webSearchOnly(),
       }),
     );
   });

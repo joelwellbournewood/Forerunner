@@ -1,4 +1,5 @@
 import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
+import { SESSION_CAP_CHF_KEY, SESSION_CAP_KEY } from "@forerunner/commands";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type {
   HumanRequestRow,
@@ -31,6 +32,19 @@ import type { BudgetStop } from "./runner.ts";
 export const BUDGET_STOP_KEY = ANSWER_CARD_KEYS.budgetStop;
 /** The card's options as its buttons say them; `budgetStopAnswer` reads them. */
 export const BUDGET_STOP_OPTIONS = ["Raise the budget", "Cancel task"] as const;
+/**
+ * The options of the card a task gets when a session's own budget stopped it twice (C-36):
+ * raise this project's budget per session, give the task one bigger session, or cancel it.
+ */
+export const SESSION_BUDGET_STOP_OPTIONS = [
+  "Raise session budget",
+  "Raise its budget",
+  "Cancel task",
+] as const;
+/** `change_card.source` of the card a session's budget filed (C-36). */
+export const SESSION_BUDGET_SOURCE = "session_budget";
+/** How many stops by a session's budget, since its last such card, file the card (C-36). */
+export const SESSION_BUDGET_STOPS_BEFORE_CARD = 2;
 /** The least a raise adds on top of what the task spent: USD 0.50, the planner's default. */
 const MIN_RAISE_USD_MICRO = 500_000;
 /** Raised budgets are whole steps of USD 0.05, so the CHF amount reads round enough. */
@@ -132,6 +146,121 @@ export async function fileBudgetStopCard(
   return { request, reused: false };
 }
 
+/**
+ * How many times a session's own budget stopped this task's work since its last card about it
+ * (C-36): its work runs that ended `budget_exceeded`, less the ones a budget card already
+ * accounts for (a stop at the task's own cap has its card's `run_id`; a session-budget card
+ * keeps the `run_ids` it was filed for). `current` is this stop's run (null when the run threw
+ * before its row was written): it counts once, row or not.
+ */
+export async function sessionBudgetStops(
+  store: StateStore,
+  taskId: string,
+  current: string | null,
+): Promise<{ count: number; runIds: string[] }> {
+  const cards = (
+    await store.humanRequest.list({ task_id: taskId } as never, { limit: 500 })
+  ).filter((r) => keyOf(r) === BUDGET_STOP_KEY);
+  const accounted = new Set<string>();
+  for (const c of cards) {
+    const card = (c.change_card ?? {}) as JsonObject;
+    if (typeof card.run_id === "string") accounted.add(card.run_id);
+    if (Array.isArray(card.run_ids))
+      for (const id of card.run_ids) if (typeof id === "string") accounted.add(id);
+  }
+  const runIds = (await store.run.forTask(taskId, { limit: 1000 }))
+    .filter((r) => r.specialist !== "critic" && r.outcome === "budget_exceeded")
+    .map((r) => r.id)
+    .filter((id) => !accounted.has(id));
+  if (current && !runIds.includes(current) && !accounted.has(current)) runIds.push(current);
+  return { count: runIds.length + (current ? 0 : 1), runIds };
+}
+
+/**
+ * What the session-budget card offers (C-36): twice the budget of the session that stopped the
+ * task, at least USD 0.50, in steps of USD 0.05, for the project's budget per session or for
+ * one session of the task.
+ */
+export function raisedSessionBudgetUsdMicro(stoppedAtUsdMicro: number): number {
+  const room = Math.max(2 * Math.max(0, stoppedAtUsdMicro), MIN_RAISE_USD_MICRO);
+  return Math.ceil(room / RAISE_STEP_USD_MICRO) * RAISE_STEP_USD_MICRO;
+}
+
+/** A project's budget per session as its settings hold it (the budget command's key), else `fallback`. */
+export function budgetPerSessionOf(
+  settings: JsonObject | null | undefined,
+  fallback: number,
+): number {
+  const set = settings?.[SESSION_CAP_KEY];
+  return typeof set === "number" && Number.isInteger(set) && set > 0 ? set : fallback;
+}
+
+/** '"X" needs more than a session's budget' (the card's title and the task's reason). */
+export function sessionBudgetTitle(task: Pick<TaskRow, "title">): string {
+  return `"${task.title.replace(/\s+/g, " ").trim()}" needs more than a session's budget`;
+}
+
+export interface SessionBudgetCardInput {
+  store: StateStore;
+  /** The task, now `needs_human`. */
+  task: TaskRow;
+  /** The session whose budget stopped it (its cap is what the card raises from). */
+  session: Pick<SessionRow, "id" | "budget_cap_usd_micro">;
+  humanId: string;
+  agentId: string;
+  /** The stops the card is filed for (`sessionBudgetStops`). */
+  runIds: string[];
+  /** The project's budget per session now, for the words of "Raise its budget". */
+  projectCapUsdMicro: number;
+  chfPerUsd?: number;
+}
+
+/**
+ * Files (or reuses) the one card of a task a session's budget stopped twice (C-36). Before, such
+ * a task went back to Ready after every stop and every session ran it again until the person
+ * noticed, each run bounded only by the session's budget and the monthly cap.
+ */
+export async function fileSessionBudgetCard(
+  input: SessionBudgetCardInput,
+): Promise<{ request: HumanRequestRow; reused: boolean }> {
+  const { store, task, session } = input;
+  const open = (
+    await store.humanRequest.list({ task_id: task.id, status: "open" } as never, { limit: 50 })
+  ).find((r) => keyOf(r) === BUDGET_STOP_KEY);
+  if (open) return { request: open, reused: true };
+  const rate = input.chfPerUsd ?? DEFAULT_CHF_PER_USD;
+  const raiseTo = raisedSessionBudgetUsdMicro(session.budget_cap_usd_micro);
+  const title = sessionBudgetTitle(task);
+  const request = await store.humanRequest.insert({
+    human_id: input.humanId,
+    project_id: task.project_id,
+    task_id: task.id,
+    session_id: session.id,
+    kind: "approval",
+    why: `${title}. Two sessions of ${chfText(session.budget_cap_usd_micro, rate)} stopped while it ran.`,
+    steps: [],
+    options: [...SESSION_BUDGET_STOP_OPTIONS],
+    blocking: true,
+    risk: "medium",
+    change_card: {
+      key: BUDGET_STOP_KEY,
+      source: SESSION_BUDGET_SOURCE,
+      task_id: task.id,
+      task_title: task.title,
+      title,
+      run_ids: input.runIds,
+      session_cap_usd_micro: session.budget_cap_usd_micro,
+      project_cap_usd_micro: input.projectCapUsdMicro,
+      spent_usd_micro: task.actual_cost_usd_micro,
+      raise_to_usd_micro: raiseTo,
+      chf_per_usd: rate,
+      applied_at: null,
+    },
+    author_agent: input.agentId,
+  });
+  return { request, reused: false };
+}
+
 export interface BudgetStopSyncResult {
   raised: number;
   cancelled: number;
@@ -170,8 +299,65 @@ export async function syncBudgetStopAnswers(deps: {
       continue;
     }
     const actor = { agentId: deps.agentId, humanId: deps.humanId };
+    const sessionCard = card.source === SESSION_BUDGET_SOURCE;
     try {
-      if (answer === "raise") {
+      if (sessionCard && answer !== "cancel") {
+        // C-36: "Raise session budget" sets the project's budget per session to the amount the
+        // button named (never lower than it is) and every later session gets it; "Raise its
+        // budget" gives the task room for one session of that amount (its own budget covers
+        // what it spent and that session) and starts that one session, later ones keep theirs.
+        const promised = typeof card.raise_to_usd_micro === "number" ? card.raise_to_usd_micro : 0;
+        const rate = typeof card.chf_per_usd === "number" ? card.chf_per_usd : DEFAULT_CHF_PER_USD;
+        const project = await store.project.get(task.project_id);
+        if (!project) throw new Error("the task's project is gone");
+        const now = project.settings?.[SESSION_CAP_KEY];
+        const current = typeof now === "number" && now > 0 ? now : 0;
+        const raisesProject = answer === "raise_session";
+        const amount = raisesProject ? Math.max(current, promised) : promised;
+        const taskBudget = raisesProject
+          ? task.budget_usd_micro
+          : Math.max(task.budget_usd_micro, task.actual_cost_usd_micro + promised);
+        await store.transaction(async (tx) => {
+          if (raisesProject) {
+            const fresh = await tx.project.mustGet(project.id);
+            await tx.project.patch(project.id, {
+              settings: {
+                ...(fresh.settings ?? {}),
+                [SESSION_CAP_KEY]: amount,
+                [SESSION_CAP_CHF_KEY]: usdToChfMicro(amount, rate),
+              },
+            });
+          } else await tx.task.patch(task.id, { budget_usd_micro: taskBudget });
+          const fresh = await tx.task.mustGet(task.id);
+          await tx.task.transition(
+            fresh.id,
+            fresh.version,
+            "ready",
+            raisesProject
+              ? `you raised the budget per session to ${chfText(amount, rate)} in the Inbox`
+              : `you gave it one session of ${chfText(amount, rate)} in the Inbox`,
+            actor,
+          );
+        });
+        await finish(raisesProject ? "raise_session" : "raise", {
+          ...(raisesProject ? { session_cap_usd_micro_set: amount } : {}),
+          budget_usd_micro: raisesProject ? amount : taskBudget,
+        });
+        out.raised++;
+        await recordStart(
+          store,
+          row.id,
+          await resumeWork(store, deps.start, {
+            agentId: deps.agentId,
+            projectId: task.project_id,
+            reason: raisesProject
+              ? `you raised the budget per session for "${task.title}"`
+              : `you gave "${task.title}" a bigger session`,
+            // The session it starts has the amount the button named, either way.
+            budgetUsdMicro: amount,
+          }),
+        );
+      } else if (answer === "raise" || answer === "raise_session") {
         const promised = typeof card.raise_to_usd_micro === "number" ? card.raise_to_usd_micro : 0;
         const budget = Math.max(task.budget_usd_micro, promised);
         const rate = typeof card.chf_per_usd === "number" ? card.chf_per_usd : DEFAULT_CHF_PER_USD;
@@ -202,7 +388,9 @@ export async function syncBudgetStopAnswers(deps: {
           task.id,
           task.version,
           "cancelled",
-          `you cancelled it in the Inbox when it stopped at its budget (request ${row.id})`,
+          sessionCard
+            ? `you cancelled it in the Inbox when it needed more than a session's budget (request ${row.id})`
+            : `you cancelled it in the Inbox when it stopped at its budget (request ${row.id})`,
           actor,
         );
         await finish("cancel");

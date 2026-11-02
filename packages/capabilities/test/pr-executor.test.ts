@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, run, SimulatedClock } from "@forerunner/platform";
 import { KillSwitch, SessionBudget, type TaskExecutor, TokenIssuer } from "@forerunner/runtime";
@@ -6,7 +6,7 @@ import { openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { GitOps } from "../src/githost/git.ts";
 import { MemoryGitHost } from "../src/githost/memory.ts";
-import { PrTaskExecutor } from "../src/githost/pr-executor.ts";
+import { DEPS_BASE_REF, PrTaskExecutor } from "../src/githost/pr-executor.ts";
 
 const identity = { name: "Forerunner", email: "agent@example.test" };
 
@@ -594,6 +594,248 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
       identity,
     }).execute(ctx);
     expect(noRepo.summary).toBe("no worktree");
+    await w.store.close();
+  });
+});
+
+/**
+ * C-49 / L-14 (the session lead's default, ADR 0106): in a repository project every task
+ * branched from `origin/<default>`, so a task that waits for a done task whose pull request is
+ * not merged yet did not see that work. Live (2026-11-02, forerunner-sandbox): "Check the page
+ * and README section" failed with "The worktree has neither `index.html` nor a "Hello page"
+ * section", because PR #4 was open and the tester branched from main. Now the dependencies'
+ * unmerged branches are merged into the task's branch before it runs; its PR still targets the
+ * default branch and names the PRs whose work it includes; its changed files (and the critic's
+ * diff, `DEPS_BASE_REF`) are its own work only.
+ */
+describe("a task that waits for unmerged work builds on it (C-49)", { timeout: 120_000 }, () => {
+  const repo = { owner: "o", name: "sample" };
+  type W = Awaited<ReturnType<typeof world>>;
+
+  async function taskOf(w: W, title: string, dependsOn: string[] = []) {
+    return w.store.task.insert({
+      project_id: w.project,
+      title,
+      outcome: `${title} is done`,
+      acceptance_criteria: [],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: dependsOn,
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+  }
+
+  /** Run a task through the executor as the session does, then close it as the critic does. */
+  async function runTask(
+    w: W,
+    taskId: string,
+    inner: TaskExecutor & { withWorktree: (dir: string) => TaskExecutor },
+    opts: { done?: boolean } = {},
+  ) {
+    const task = await w.store.task.mustGet(taskId);
+    const res = await new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner,
+      repoFor: async () => ({ clone: w.bare, repo, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    }).execute({
+      task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    if (res.prUrl || res.branch)
+      await w.store.task.patch(taskId, {
+        ...(res.prUrl ? { pr_url: res.prUrl } : {}),
+        ...(res.branch ? { branch: res.branch } : {}),
+      });
+    if (opts.done !== false && res.outcome === "in_review") {
+      let t = await w.store.task.mustGet(taskId);
+      t = await w.store.task.transition(t.id, t.version, "in_review", "review", { agentId: "a" });
+      await w.store.task.transition(t.id, t.version, "done", "critic accepted", { agentId: "a" });
+    }
+    return res;
+  }
+
+  /** An inner executor that records the files its worktree has, then writes its own. */
+  function seeing(files: Record<string, string>) {
+    const saw: string[][] = [];
+    const inner: TaskExecutor & { withWorktree: (dir: string) => TaskExecutor } = {
+      async execute() {
+        return { outcome: "failed", summary: "no worktree", costUsdMicro: 0 };
+      },
+      withWorktree(dir) {
+        return {
+          async execute() {
+            saw.push(
+              readdirSync(dir)
+                .filter((f) => f !== ".git")
+                .sort(),
+            );
+            for (const [p, c] of Object.entries(files)) writeFileSync(join(dir, p), c);
+            return {
+              outcome: "done",
+              summary: "**Summary**\nWrote the files.\nLesson: check the folder first.",
+              costUsdMicro: 1000,
+            };
+          },
+        };
+      },
+    };
+    return { inner, saw };
+  }
+
+  async function filesOn(w: W, branch: string) {
+    const r = await run(["git", "--git-dir", w.bare, "ls-tree", "-r", "--name-only", branch]);
+    return r.stdout.split(/\r?\n/).filter(Boolean).sort();
+  }
+
+  async function prOf(w: W, branch: string | undefined) {
+    return (await w.host.listPullRequests(repo, { state: "open" })).find(
+      (p) => p.head.ref === branch,
+    );
+  }
+
+  it("B sees A's unmerged file; B's PR targets main and names A's PR; B's changed files and diff base are its own", async () => {
+    const w = await world();
+    const a = await taskOf(w, "Add index.html");
+    const ra = await runTask(w, a.id, seeing({ "index.html": "<h1>hello</h1>\n" }).inner);
+    expect(ra.outcome).toBe("in_review");
+    const b = await taskOf(w, "Check the page", [a.id]);
+    const sb = seeing({ "check.sh": "test -f index.html\n" });
+    const rb = await runTask(w, b.id, sb.inner);
+    expect(rb.outcome).toBe("in_review");
+    // The check ran in a folder that has the page it checks.
+    expect(sb.saw[0]).toContain("index.html");
+    expect(await filesOn(w, rb.branch ?? "")).toEqual(["README.md", "check.sh", "index.html"]);
+    // B's PR targets the default branch and says it carries A's unmerged work.
+    const prB = await prOf(w, rb.branch);
+    expect(prB?.base.ref).toBe("main");
+    expect(prB?.body).toContain('Builds on #1 ("Add index.html"), not merged yet');
+    // Only B's own work is B's: the session's files and the critic's diff base.
+    expect(rb.changedFiles).toEqual(["check.sh"]);
+    const wt = new GitOps({ cwd: join(w.root, "wt", b.id), identity });
+    expect(await wt.hasRef(DEPS_BASE_REF)).toBe(true);
+    expect(await wt.filesBetween(DEPS_BASE_REF)).toEqual(["check.sh"]);
+    // A task with nothing unmerged before it keeps no such base (the critic diffs the branch).
+    const wa = new GitOps({ cwd: join(w.root, "wt", a.id), identity });
+    expect(await wa.hasRef(DEPS_BASE_REF)).toBe(false);
+    await w.store.close();
+  });
+
+  it("a chain: C waits for B, which waits for A, and gets both; a dependency merged meanwhile is not named", async () => {
+    const w = await world();
+    const a = await taskOf(w, "Add index.html");
+    await runTask(w, a.id, seeing({ "index.html": "<h1>hello</h1>\n" }).inner);
+    const b = await taskOf(w, "Add styles.css", [a.id]);
+    const rb = await runTask(w, b.id, seeing({ "styles.css": "h1 { color: red }\n" }).inner);
+    const c = await taskOf(w, "Write the notes", [b.id]);
+    const sc = seeing({ "NOTES.md": "notes\n" });
+    const rc = await runTask(w, c.id, sc.inner);
+    expect(sc.saw[0]).toEqual(["README.md", "index.html", "styles.css"]);
+    expect((await prOf(w, rc.branch))?.body).toContain(
+      'Builds on #1 ("Add index.html") and #2 ("Add styles.css"), not merged yet',
+    );
+    expect(rc.changedFiles).toEqual(["NOTES.md"]);
+    expect(rb.changedFiles).toEqual(["styles.css"]);
+
+    // A's PR is merged on the host (the person merged it): a fourth task names only B's.
+    const merger = new GitOps({ cwd: join(w.root, "merger"), identity });
+    await merger.clone(w.bare);
+    const aBranch = (await w.store.task.mustGet(a.id)).branch ?? "";
+    expect((await merger.mergeFrom(`origin/${aBranch}`, "Merge A")).ok).toBe(true);
+    await merger.push("main");
+    await w.host.mergePullRequest(repo, 1);
+    const d = await taskOf(w, "Add a footer", [a.id, b.id]);
+    const rd = await runTask(w, d.id, seeing({ "footer.html": "<footer></footer>\n" }).inner);
+    const prD = await prOf(w, rd.branch);
+    expect(prD?.body).toContain('Builds on #2 ("Add styles.css"), not merged yet');
+    expect(prD?.body).not.toContain("#1");
+    expect(rd.changedFiles).toEqual(["footer.html"]);
+    await w.store.close();
+  });
+
+  it("B's next attempt (sent back) keeps the base it started from: its files stay its own, its PR gets a comment, no new merge", async () => {
+    const w = await world();
+    const a = await taskOf(w, "Add index.html");
+    await runTask(w, a.id, seeing({ "index.html": "<h1>hello</h1>\n" }).inner);
+    const b = await taskOf(w, "Check the page", [a.id]);
+    const first = await runTask(w, b.id, seeing({ "check.sh": "true\n" }).inner, { done: false });
+    const wt = new GitOps({ cwd: join(w.root, "wt", b.id), identity });
+    const merges = async () =>
+      (
+        await run([
+          "git",
+          "-C",
+          join(w.root, "wt", b.id),
+          "rev-list",
+          "--merges",
+          "--count",
+          "HEAD",
+        ])
+      ).stdout.trim();
+    const before = await merges();
+    // A second run in a later session (the worktree is reused, as after a restart).
+    const second = await runTask(w, b.id, seeing({ "check.sh": "test -f index.html\n" }).inner);
+    expect(second.outcome).toBe("in_review");
+    expect(second.prUrl).toBe(first.prUrl);
+    expect(second.changedFiles).toEqual(["check.sh"]);
+    expect(await merges()).toBe(before);
+    expect(await wt.filesBetween(DEPS_BASE_REF)).toEqual(["check.sh"]);
+    const comments = await w.host.listPullRequestComments(repo, 2);
+    expect(comments.at(-1)?.body).toContain('Builds on #1 ("Add index.html"), not merged yet');
+    expect(comments.at(-1)?.body).not.toMatch(/Lesson:/);
+    await w.store.close();
+  });
+
+  it("two dependencies whose work conflicts: the task waits for the person with the reason in words; nothing runs", async () => {
+    const w = await world();
+    const a = await taskOf(w, "Write the page");
+    await runTask(w, a.id, seeing({ "index.html": "<h1>one</h1>\n" }).inner);
+    const b = await taskOf(w, "Write the other page");
+    await runTask(w, b.id, seeing({ "index.html": "<h1>two</h1>\n" }).inner);
+    const c = await taskOf(w, "Check both pages", [a.id, b.id]);
+    const sc = seeing({ "check.sh": "true\n" });
+    const rc = await runTask(w, c.id, sc.inner, { done: false });
+    expect(sc.saw).toEqual([]);
+    expect(rc.outcome).toBe("needs_human");
+    expect(rc.costUsdMicro).toBe(0);
+    expect(rc.summary).toBe(
+      'The work it builds on conflicts: "Write the other page" (pull request #2) and "Write the page" (pull request #1) both change index.html. Merge them on GitHub, resolving the conflict, then press Try again.',
+    );
+    await w.store.close();
+  });
+
+  it("PR texts carry no model leftovers: no empty criteria heading, no Lesson lines, a plain commit message (L-19)", async () => {
+    const w = await world();
+    const a = await taskOf(w, "Add index.html");
+    const ra = await runTask(w, a.id, seeing({ "index.html": "<h1>hello</h1>\n" }).inner);
+    const body = (await prOf(w, ra.branch))?.body ?? "";
+    expect(body).not.toContain("Acceptance criteria:");
+    expect(body).not.toMatch(/Lesson:/);
+    expect(body).toContain("Wrote the files.");
+    const log = await run([
+      "git",
+      "--git-dir",
+      w.bare,
+      "log",
+      "-1",
+      "--format=%B",
+      ra.branch ?? "",
+    ]);
+    expect(log.stdout).not.toContain("**");
+    expect(log.stdout).not.toMatch(/Lesson:/);
+    expect(log.stdout).toContain("Wrote the files.");
     await w.store.close();
   });
 });

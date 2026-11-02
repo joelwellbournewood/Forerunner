@@ -50,6 +50,38 @@ commit of a repository it created for a project.
    task's files stayed uncommitted before), and a `.gitignore` keeps caches such as
    `__pycache__/` and `node_modules/` out of it.
 
+   **Since 2026-11-02 (phase E, C-57; the session lead's default, pending the owner's
+   confirmation) the status pull request is off by default**: a repository project keeps
+   `docs/status.md` in the app (`<data>/projects/<id>/app-status/docs/status.md`, no commit, no
+   pull request), the Docs tab reads its Status from there first ("kept in the app: no status
+   pull request (Settings turns it on)") and the session log says "kept in the app". The
+   session's end still clones or fetches this computer's copy of the repository and puts it on
+   the default branch, as the status write did, so the Docs and Files tabs and the chat read
+   what is merged (nothing is pushed). One pull
+   request to merge after every session was noise, even for a one-task project. The project
+   setting **Status pull request** (Settings, Other settings; `settings.set status_pull_request`)
+   turns the behaviour above back on for that project. Only this project's docs pull requests are
+   listed on its Overview and Docs tab (L-16): the status PR while its setting is on, the intake's
+   set on the branch named for the project, a scaffold PR that names the project in its body
+   ("Forerunner project <id>.") or that the project's scaffold wrote its docs onto; an open
+   scaffold PR of another project on the same repository is no longer recorded or shown as this
+   one's. Alternative the owner may still choose: the status PR on by default (as before).
+6. **A task that waits for unmerged work builds on it** (added 2026-11-02, phase E; the session
+   lead's default, pending the owner's confirmation at hand-over). Every task used to branch from
+   the default branch, so a task that waits for a done task whose pull request was not merged
+   yet did not see that work: live on forerunner-sandbox the tester of a two-task plan found
+   neither the page nor the README section it had to check and failed, and passed only after the
+   owner merged the coder's PR by hand and pressed Try again (L-14, C-49). Now the branches of
+   the done tasks it waits for (and those they wait for) whose pull requests are still open are
+   merged into the task's branch before it runs (`PrTaskExecutor`, `DEPS_BASE_REF`). Its pull
+   request still targets the default branch and says which pull requests it includes ('Builds on
+   #4 ("Add index.html"), not merged yet: this pull request includes its changes, so merging it
+   merges them too. Merge in any order.'). The critic's diff and the task's changed files are
+   the task's own commits, measured from the default branch with the dependencies merged in. Work
+   of two dependencies that conflicts stops the task before it runs, with one card in words
+   ("The work it builds on conflicts: ... Merge them on GitHub, resolving the conflict, then
+   press Try again."), never a silent drop.
+
 ## Consequences
 
 - Linking a repository just created on GitHub works without the person pushing a README first.
@@ -59,7 +91,18 @@ commit of a repository it created for a project.
   the reason and the fix, not git's output.
 - `ProjectDocsPort.writeSessionStatus` no longer takes `prBranch`; `statusBranchFor` is gone.
 
+- A dependent task's pull request carries its dependencies' commits until they are merged: on
+  GitHub its "Files changed" shows their files too (the PR's body names them); merging it first
+  merges them too, and GitHub then marks their pull requests merged.
+
 ## Alternatives considered
+
+- For a task that waits for unmerged work (point 6): **stacked pull requests** (the task's
+  branch and PR based on its dependency's branch) show only the task's change on GitHub, but
+  the person must merge them in order and retarget each after a merge; **hold the task until
+  its dependency's PR is merged** keeps every PR clean but stops a plan after its first task
+  until the person merges by hand, which is what the owner met live. The owner may still choose
+  either.
 
 - Ask the person to add a README: it blocks a newcomer on a step the app can do, and the owner
   hit it on the first live walk.

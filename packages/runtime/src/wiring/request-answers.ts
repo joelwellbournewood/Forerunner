@@ -147,10 +147,19 @@ export function signoffAnswer(answer: JsonValue | null): SignoffAnswer | null {
  * The answer of a budget card (`session/budget-card.ts`) as one of its options, or null: "Raise
  * the budget" (or "raise", "try again") raises it and tries again; "Cancel task" cancels it.
  */
-export function budgetStopAnswer(answer: JsonValue | null): "raise" | "cancel" | null {
+export function budgetStopAnswer(
+  answer: JsonValue | null,
+): "raise" | "raise_session" | "cancel" | null {
   const v = answerWord(answer);
   if (v === null) return null;
-  if (/^(raise the budget|raise budget|raise|raise the budget and try again|try again)$/.test(v))
+  // The card of a task a session's budget stopped twice (C-36): "Raise session budget" raises
+  // the project's budget per session; "Raise its budget" is the task's, as "Raise the budget".
+  if (/^raise (?:the )?session(?:'s)? budget$/.test(v)) return "raise_session";
+  if (
+    /^(raise the budget|raise budget|raise its budget|raise|raise the budget and try again|try again)$/.test(
+      v,
+    )
+  )
     return "raise";
   if (/^(cancel|cancelled|canceled|drop|cancel task|cancel the task)$/.test(v)) return "cancel";
   return null;

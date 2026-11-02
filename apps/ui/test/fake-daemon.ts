@@ -83,7 +83,10 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
-import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
+import {
+  NO_WEB_LIMITATION,
+  SEARCH_ONLY_LIMITATION,
+} from "@forerunner/runtime/daemon/model-settings-view";
 import {
   blockedTaskIds,
   overviewNext,
@@ -245,6 +248,12 @@ export interface FakeDaemonOptions {
    * entry that works from the web. Default: the install reads the web, no limitation.
    */
   noWebAccess?: boolean;
+  /**
+   * Research here only searches (C-64: a Claude subscription and no API key): `GET
+   * /settings/models` names `SEARCH_ONLY_LIMITATION` for the researcher and the
+   * science-evaluator, as the daemon does for every entry that reads pages.
+   */
+  webSearchOnly?: boolean;
   /**
    * Cloud runner vault keys the fake's "OS keyring" holds, runner id -> base64 of 32 bytes
    * (spec S.12, ADR 0068). `/runner-unlock/wrap` wraps them as the daemon does.
@@ -837,9 +846,19 @@ function initialVoiceStatus(options: FakeDaemonOptions): VoiceStatusView {
 const WEB_SPECIALISTS = new Set(["researcher", "science-evaluator"]);
 
 /** `GET /settings/models` as the daemon answers it with or without web access (ADR 0107). */
-function withWebAccess(view: ModelSettingsView, web: boolean): ModelSettingsView {
+function withWebAccess(
+  view: ModelSettingsView,
+  web: boolean,
+  searchOnly = false,
+): ModelSettingsView {
   for (const s of view.specialists)
-    s.limitation = !web && WEB_SPECIALISTS.has(s.name) ? NO_WEB_LIMITATION : null;
+    s.limitation = !WEB_SPECIALISTS.has(s.name)
+      ? null
+      : !web
+        ? NO_WEB_LIMITATION
+        : searchOnly
+          ? SEARCH_ONLY_LIMITATION
+          : null;
   return view;
 }
 
@@ -910,7 +929,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     speedQuality: {},
     settingValues: {},
     desktopAllowlist: [{ app: "code" }],
-    modelSettings: withWebAccess(clone(MODEL_SETTINGS), !options.noWebAccess),
+    modelSettings: withWebAccess(
+      clone(MODEL_SETTINGS),
+      !options.noWebAccess,
+      options.webSearchOnly ?? false,
+    ),
     acceptsTemperature: options.acceptsTemperature ?? true,
     voiceSessions: new Map(),
     nextVoiceLine: null,
@@ -2481,13 +2504,38 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon's `syncBudgetStopAnswers` (live walk 2, B2): Raise the budget sets the
     // budget the card named (never lower than the task's own) and a session tries again;
     // Cancel task cancels it.
-    const budgetCard = r.changeCard as { key?: unknown; raise_to_usd_micro?: unknown } | null;
+    const budgetCard = r.changeCard as {
+      key?: unknown;
+      raise_to_usd_micro?: unknown;
+      source?: unknown;
+    } | null;
     if (budgetCard?.key === "task:budget_stop") {
       const task = state.tasks.find((t) => t.id === r.taskId);
       const read = budgetStopAnswer(parsed.data.answer as never);
       const moved = !task || task.status !== "needs_human";
       let budget: number | null = null;
-      if (task && !moved && read === "raise") {
+      // C-36: the card of a task a session's budget stopped twice. Raise session budget sets
+      // the project's budget per session (the fake keeps no such setting: the card records the
+      // amount, as the daemon's does) and a session tries again.
+      let sessionCap: number | null = null;
+      if (budgetCard.source === "session_budget" && task && !moved && read === "raise_session") {
+        sessionCap = Number(budgetCard.raise_to_usd_micro) || 0;
+        budget = task.budget.usdMicro;
+        task.status = "ready";
+        task.reason = `you raised the budget per session to CHF ${(money(sessionCap).chfMicro / 1e6).toFixed(2)} in the Inbox`;
+        touch(task);
+      } else if (budgetCard.source === "session_budget" && task && !moved && read === "raise") {
+        // As the daemon (budget-card.ts): one session of the named amount, so the task's own
+        // budget covers what it spent and that session; later sessions keep their budget.
+        const promised = Number(budgetCard.raise_to_usd_micro) || 0;
+        budget = Math.max(task.budget.usdMicro, task.actual.usdMicro + promised);
+        task.budget = money(budget);
+        task.cap = money(budget);
+        task.capSource = "task_budget";
+        task.status = "ready";
+        task.reason = `you gave it one session of CHF ${(money(promised).chfMicro / 1e6).toFixed(2)} in the Inbox`;
+        touch(task);
+      } else if (task && !moved && (read === "raise" || read === "raise_session")) {
         budget = Math.max(task.budget.usdMicro, Number(budgetCard.raise_to_usd_micro) || 0);
         task.budget = money(budget);
         task.cap = money(budget);
@@ -2505,6 +2553,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         applied_at: new Date().toISOString(),
         outcome: moved ? "task_moved_on" : read,
         ...(budget !== null ? { budget_usd_micro: budget, start: "started" } : {}),
+        ...(sessionCap !== null ? { session_cap_usd_micro_set: sessionCap } : {}),
       };
     }
     // As the daemon's `syncCannotRunAnswers` (live walk 4): Try again puts the task back to
@@ -3211,6 +3260,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const slot = settingSlot(leaf, s.scope === "project" ? s.scopeId : null);
       return slot in state.settingValues ? { ...s, value: state.settingValues[slot] } : s;
     });
+    // Like the daemon (settings-view.ts, C-57): a Status pull request row for each project on a
+    // host repository (not a folder on this computer), off unless the person turned it on.
+    for (const p of state.projects) {
+      const first = p.repos?.[0]?.trim() ?? "";
+      if (!/^[\w.-]+\/[\w.-]+$/.test(first)) continue;
+      rows.push({
+        key: "project.status_pull_request",
+        label: "Status pull request",
+        scope: "project",
+        scopeId: p.id,
+        value: state.settingValues[settingSlot("status_pull_request", p.id)] === true,
+        description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
+        risk: "low",
+      });
+    }
     // Like the daemon: one fast-mode row per project, the effect and surcharge both ways.
     for (const [projectId, on] of Object.entries(state.fastMode)) {
       rows.push({
@@ -4296,6 +4360,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     speed_quality_offset: "low",
     small_project_mode: "low",
     fast_mode: "medium",
+    status_pull_request: "low",
     critic_ceiling: "medium",
     session_reserve_share: "medium",
     quiet_hours: "low",
@@ -4313,6 +4378,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     projectId ? `${key}:${projectId}` : key;
   const PROJECT_KEYS = new Set([
     "small_project_mode",
+    "status_pull_request",
     "critic_ceiling",
     "session_reserve_share",
     "handover",
@@ -4661,6 +4727,46 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           apply: () => {
             state.fastMode[project.id] = value;
             return { before: { fast_mode: before }, after: { fast_mode: value } };
+          },
+        };
+      }
+      if (key === "status_pull_request" && project && typeof params.value === "boolean") {
+        // The daemon's card for this key (`SETTING_SPECS.status_pull_request`, C-57): on/off,
+        // and what the new value does, in the card and the sentence; the same value is refused.
+        const value = params.value;
+        const slot = settingSlot(key, project.id);
+        const before = state.settingValues[slot] === true;
+        const onOff = (v: boolean) => (v ? "on" : "off");
+        const what = `the status pull request for ${project.name}`;
+        if (before === value)
+          return refuse(`The status pull request for ${project.name} is already ${onOff(before)}.`);
+        const effect = value
+          ? "each session's status goes to the repository as one pull request, docs: project status, which you merge when you like"
+          : "each session's status stays in the app (Docs, Status); no status pull request is opened";
+        return {
+          name,
+          params,
+          risk,
+          card: card(
+            {
+              command: name,
+              what,
+              oldValue: onOff(before),
+              newValue: `${onOff(value)} (${effect})`,
+              scope: "project",
+              sentence: `Set ${what} from ${onOff(before)} to ${onOff(value)}: ${effect}. Undo.`,
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            risk,
+          ),
+          apply: () => {
+            state.settingValues[slot] = value;
+            return {
+              before: { key, project_id: project.id, value: before },
+              after: { key, project_id: project.id, value },
+            };
           },
         };
       }

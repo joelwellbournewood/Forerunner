@@ -330,7 +330,29 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(lessons.map((l) => l.text)).toEqual(["the mount drifts while the dome heater is on"]);
   });
 
-  it("a session through the composed runner writes its status update on a pull request of the project's repository", async () => {
+  it("a session through the composed runner writes its status update on a pull request of the project's repository, once the person turned the status pull request on", async () => {
+    // C-57: off by default (the status stays in the app); Settings turns it on with the same
+    // command the Other settings row sends.
+    const on = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "status_pull_request", value: true, project: gammaId },
+          },
+        ],
+        wordsUsed: "Settings: project.status_pull_request to true",
+        source: "ui",
+        projectId: gammaId,
+      }),
+    });
+    const onBody = (await on.json()) as { status: string; sentence: string };
+    expect(onBody.status).toBe("done");
+    expect(onBody.sentence).toContain(
+      "each session's status goes to the repository as one pull request",
+    );
+    expect((await rt.store.project.mustGet(gammaId)).settings.status_pull_request).toBe(true);
     const task = await rt.store.task.insert({
       project_id: gammaId,
       title: "Add a clamp",

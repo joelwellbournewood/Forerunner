@@ -24,7 +24,12 @@ import {
 import { DEFAULT_PROVIDER_CAPABILITIES, type ProviderCapabilities } from "../provider/types.ts";
 import { needsWeb } from "../registry/alternates.ts";
 import type { SpecialistDef } from "../registry/types.ts";
-import type { ModelSettingsView, ModelSettingValueView, RunSettingsView } from "./api-types.ts";
+import {
+  type ModelSettingsView,
+  type ModelSettingValueView,
+  type RunSettingsView,
+  SEARCH_ONLY_LIMITATION,
+} from "./api-types.ts";
 
 export interface ModelSettingsViewInput {
   provider: { name: string; capabilities: ProviderCapabilities } | null;
@@ -52,7 +57,15 @@ export interface ModelSettingsViewInput {
    * False: an entry that works from the web carries `NO_WEB_LIMITATION`. Absent: no limitation.
    */
   webAccess?: boolean;
+  /**
+   * Research here only searches (`RuntimeApp.webSearchOnly`, C-64): an entry that reads pages
+   * (`cc:WebFetch`) carries `SEARCH_ONLY_LIMITATION`.
+   */
+  webSearchOnly?: boolean;
 }
+
+/** C-64: a specialist that reads pages searches only on a subscription (`api-types.ts`). */
+export { SEARCH_ONLY_LIMITATION };
 
 /**
  * What a specialist that works from the web (its entry names `cc:WebFetch` or `cc:WebSearch`)
@@ -176,7 +189,9 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
       limitation:
         input.webAccess === false && needsWeb({ registryTools: d.allowed_tools ?? [] })
           ? NO_WEB_LIMITATION
-          : null,
+          : input.webSearchOnly && (d.allowed_tools ?? []).includes("cc:WebFetch")
+            ? SEARCH_ONLY_LIMITATION
+            : null,
       settings: settingsView(
         resolveRunSettings({
           mode: specialistMode(d.name),

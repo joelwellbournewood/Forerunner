@@ -66,6 +66,7 @@ export const SETTING_LABELS: Record<string, string> = {
   session_reserve_share: "Review reserve",
   handover: "Monthly handover test",
   fast_mode: "Opus fast mode",
+  status_pull_request: "Status pull request",
   speed_quality_offset: "Speed or quality",
 };
 
@@ -144,6 +145,7 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
     case "voice_alerts":
     case "small_project_mode":
     case "fast_mode":
+    case "status_pull_request":
       return v === true ? "on" : "off";
     case "notify_channel":
       return option(NOTIFY_CHANNELS);
@@ -283,6 +285,7 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
       return select(leaf, ON_OFF, asBool, boolInitial, {});
     case "small_project_mode":
     case "fast_mode":
+    case "status_pull_request":
       return select(leaf, ON_OFF, asBool, boolInitial, projectParam);
     case "critic_ceiling":
       return select(

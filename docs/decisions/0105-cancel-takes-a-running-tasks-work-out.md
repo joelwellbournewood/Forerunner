@@ -60,6 +60,20 @@ review records nothing), and the next session runs it again; the start after a c
 same for a task whose review was going, unless a card waits on the person for it. Before the
 review of the fix such a task stayed "Being reviewed" for good.
 
+8. **A task a session's own budget stops twice asks the person once** (added 2026-11-02, phase E,
+   C-36; the session lead's default, pending the owner's confirmation at hand-over). Phase C made
+   a stop at the session's budget release the task to Ready (no card, no attempt counted), so a
+   task that alone always needs more than a session's budget ran again in every session until
+   the person noticed, each run bounded only by the session's budget and the monthly cap. Now the
+   first such stop releases it as before; the second since its last card moves it to "Needs your
+   decision" with one Inbox card, '"Long report" needs more than a session's budget' ("Two
+   sessions of CHF 2.00 stopped while it ran; it spent CHF 4.40 so far."), and three buttons:
+   **Raise session budget** (this project's budget per session becomes the amount named, twice
+   the session's, and a session tries again), **Raise its budget** (one session of that amount
+   for this task, which starts now; later sessions keep their budget) and **Cancel task**.
+   Alternatives the owner may still choose: keep re-running it every session (the phase C
+   behaviour), or ask at the first stop.
+
 ## Consequences
 
 - No later task, review or summary sees the cancelled task's files, and the session's result

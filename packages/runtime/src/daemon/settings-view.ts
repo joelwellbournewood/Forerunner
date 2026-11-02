@@ -11,8 +11,10 @@ import {
   DEFAULT_SESSION_CAP_CHF,
   type PricingTable,
 } from "@forerunner/billing";
+import { isAbsolute } from "@forerunner/platform";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import type { z } from "zod";
+import { parseRepoRef } from "../loop/docs.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
 import type { Money, SettingView } from "./api-types.ts";
@@ -28,6 +30,12 @@ export interface SettingsViewInput {
   providerName: string | null;
   registryDir: string;
   pricing: PricingTable;
+}
+
+/** Whether the project's first repository is one on a git host (not a folder on this PC). */
+function onHostRepository(p: ProjectRow): boolean {
+  const first = p.repos[0]?.trim() ?? "";
+  return !isAbsolute(first) && parseRepoRef(first) !== null;
 }
 
 /** The notification channels `settings.set notify_channel` accepts, desktop when unset. */
@@ -223,6 +231,20 @@ export function settingsView(input: SettingsViewInput): Row[] {
           description: fastModeDescription(input.pricing),
           risk: "medium",
         }),
+        // C-57: a repository project's status as a pull request, off unless turned on.
+        // Only a project on a host repository: a linked folder on this computer opens no pull
+        // request, so the switch would change nothing there (C-57 review).
+        ...(onHostRepository(p)
+          ? [
+              project({
+                key: "project.status_pull_request",
+                label: "Status pull request",
+                value: p.settings.status_pull_request === true,
+                description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
+                risk: "low",
+              }),
+            ]
+          : []),
         // The slider (spec D.16): -1 speed, 0 balanced, +1 quality, as every mode reads it.
         project({
           key: "project.speed_quality_offset",

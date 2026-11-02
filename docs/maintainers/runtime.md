@@ -1810,6 +1810,32 @@ reader is `budgetStopAnswer` (`wiring/request-answers.ts`), the words `budgetCar
 the card across a restart, Raise the budget runs the task to done), `task-budget-cap.test.ts`,
 the phase 1 gate, `inbox.test.tsx` and `real-daemon.test.ts` ("continuity") in `apps/ui`.
 
+**A task a session's own budget stopped twice asks the person (C-36, ADR 0105, the session
+lead's default).** A stop at the session's budget (`budget_exceeded`) releases the task to ready
+with its attempt count unchanged, as before; but the runner first counts the task's stops by a
+session's budget since its last card (`sessionBudgetStops`: its work runs that ended
+`budget_exceeded`, less the run a task-cap card names in `run_id` and the runs a session-budget
+card lists in `run_ids`; the current run once, row or not). At `SESSION_BUDGET_STOPS_BEFORE_CARD`
+(2) the task moves to `needs_human` ('"Long report" needs more than a session\'s budget.') and
+`fileSessionBudgetCard` files one card under the same key (`task:budget_stop`, `source:
+session_budget`, `run_ids`, the session's cap, the project's budget per session,
+`raise_to_usd_micro` = `raisedSessionBudgetUsdMicro`: twice the session's cap, at least USD 0.50,
+steps of USD 0.05) with **Raise session budget** ("Sets this project's budget per session to CHF
+4.00 and starts a session that tries again."), **Raise its budget** ("Starts one session of CHF
+4.00 for it now; later sessions keep CHF 2.00.") and **Cancel task**; the session's result names
+it among the tasks that need the person. `budgetStopAnswer` reads `raise_session` besides
+`raise` and `cancel`; `syncBudgetStopAnswers` applies a session card's answer: Raise session
+budget writes the project's `session_cap_usd_micro` (and `session_cap_chf_micro` at the card's
+rate, the keys of the budget command) and starts a session; Raise its budget sets the task's
+budget to what it spent plus that amount and starts one session of that amount
+(`resumeWork(..., { budgetUsdMicro })`, `StartRequest.budgetUsdMicro`), later sessions keeping
+the project's. The Tasks tab reads "Needs your decision: a session's budget is too small".
+Before, such a task went back to Ready after every stop and every session ran it again until the
+person noticed. Tests: `session-budget-card.test.ts` (the first stop releases, the second files
+one card, the words in CHF, across a restart, Raise its budget runs it to done with a session of
+the named amount, Raise session budget sets the project's budget per session, Cancel task),
+`inbox.test.tsx` in `apps/ui`.
+
 **Cancelling a task that runs or is reviewed (phase C, live walk 2 C1, ADR 0105).** Before, the
 run was stopped (U-039) but its files stayed in the project's folder, the next task built on
 them, and a cancel during the review let the critic "accept" the cancelled task. Now the Tasks
@@ -2147,7 +2173,10 @@ fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/lo
 returns `done` or `in_review` for any task (tier 0 included, ADR 0104), the runner moves it to
 `in_review` and calls `reviewTask` with the task, the session token and budget, the plan item
 and the result. The loop assembles the evidence (the diff from the task's worktree through
-`GitDiffPort`, or the executor's `changedFiles`; the project's checks; the standard-doc drift at
+`GitDiffPort`: the branch against `origin/HEAD` from where they part, or, for a task that builds
+on unmerged work, against `DEPS_BASE_REF` (C-49, ADR 0106: the default branch with its
+dependencies' branches merged in), so the dependencies' files are never reviewed as the task's
+(`test/dependent-branches.test.ts`); or the executor's `changedFiles`; the project's checks; the standard-doc drift at
 tier 2+ as a non-required check, `docs/status.md` left out when `statusDocManaged` says the PM
 writes it at session end (G.5); the final report as claims and its "Questions for the person:"
 list; the attempt and the specialist as artifacts), runs `CriticService.review` at the review
@@ -2750,8 +2779,22 @@ session's completed, in-review plus sent-back, blocked (needs human, failed, blo
 findings) and skipped task titles with the session id, the end instant from the Clock and
 a note (`stop reason <x>; spent $<n>`), and the four top sections come from the project's
 state in the store (the latest 15 done tasks, every task claimed, in progress or in review,
-every needs-human or failed one, the ready and draft ones highest priority first). With a
-repository it is committed as `docs: status after session <id>` on Forerunner's own status
+every needs-human or failed one, the ready and draft ones highest priority first). **With a
+repository and the project setting `status_pull_request` off (the default since C-57, ADR 0106,
+`statusPullRequestOn`)** the update is written to the app's own folder
+`<projectsRoot>/<id>/app-status/docs/status.md` (`statusInAppDir`, no git, outcome `location:
+"app"`, the log line "…, kept in the app"), and this computer's copy of the repository
+(`<worktreeRoot>/<id>`, what `docsDirsFor` reads for the Docs and Files tabs and the chat's docs
+search) is cloned when missing, fetched and put on the default branch as the host has it
+(`refreshCopy`, nothing pushed; a failure is a warning, the status is written either way). The
+status pull request's write did that on its way; without it a project made from a brief had no
+copy at all and a merge on the host never reached the tabs (review of fix/decisions, 2026-11-02).
+`statusDocRoot(project)` names that folder once it
+holds the file, and the docs routes read `docs/status.md` from it first (`DocsRoutesDeps.statusDocRoot`,
+the note "kept in the app: no status pull request (Settings turns it on)"). `settings.set
+status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in
+`GET /settings` only for a project on a host repository, `parseRepoRef` of `repos[0]` and not an absolute path, since a linked local folder opens no pull request) turns the following on. With a
+repository and the setting on it is committed as `docs: status after session <id>` on Forerunner's own status
 branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status"):
 a later session adds its commit to the open PR and comments the entry on it; once the PR is
 merged or closed the branch starts again from the default branch (pushed with a lease) and a
@@ -2768,7 +2811,13 @@ answers `firstCommit: true`, `branch` the default branch, no PR; `summary_cache.
 After each write the docs clone is back on the default branch (`backToBase`), so what reads it
 sees what is merged; `docsInPullRequests(project)` fetches the clone and lists the docs that wait
 in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, the intake's
-`fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab. The result is the
+`fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab; only this
+project's (`isProjectDocsPr`, L-16: the status PR while its setting is on, the intake branch named
+for the project, a scaffold PR whose body ends "Forerunner project <id>." or that the project's
+scaffold wrote onto, `summary_cache.docs.pr_url`; an older body naming the project by name), the
+same filter `projectPullRequests` (`daemon/pull-requests.ts`) applies to the Overview's docs
+group, and the scaffold records another project's open scaffold PR it added nothing to as no PR
+of its own. The result is the
 `docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`, `commit`) and
 `handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
 the session ends as it would have. The critic's tier 2+ drift check runs before this write
@@ -2800,7 +2849,13 @@ refusal in the setting's name) and `pr.merged` "Merged pull request #5."; before
 URL and "autonomy level 2 does not merge (level 3 Trusted does)". The chat's
 `# Your files` for a repository project (`repositoryFacts`, `filesBlock`) names the repository,
 says the work waits in pull requests until the person merges it, lists the done tasks' PR links
-and this computer's copy of the default branch; a folder project's names the folder.
+and this computer's copy of the default branch; a folder project's names the folder. With the
+host's open pull requests (`ConversationDeps.openPullRequests`, composed over
+`gitHost.listPullRequests(state: open)` each turn; L-17) the links are split into "Pull requests
+that wait for the person to merge" and "Already merged or closed on GitHub"; when the host does
+not answer they are listed as before ("Pull requests of finished tasks"). Before, the chat said
+a PR merged five minutes earlier still waited (live, 2026-11-02). Test: `conversation.test.ts`
+("a pull request the person merged is said to be merged").
 `docsDirsFor(project)` lists where the chat's docs search reads the set (spec J.1, ADR 0061),
 in order and without cloning or fetching: a local folder the project is linked to (an absolute
 `repos[0]`, spec A.4), this install's docs clone `<worktreeRoot>/<project id>` (made by the
@@ -4532,7 +4587,18 @@ in the report") and the session log a warning. It never returns `needs_human` fo
 tool: the work may need no web at all (a data-only science check, sources the brief gives),
 and before, such a task waited for the person with no card (live, 2026-11-02). A researcher on
 the loop driver whose entry names `cc:WebSearch` gets `NO_WEB_SEARCH_LINE` in its brief (pages
-by address, cite each). The intake (the plan writer) is told to plan no web work only when the
+by address, cite each). **Research goes to the API key first (C-64, ADR 0107 point 7):** when
+the loop form of the specialist both needs and has the web (the page reader is on), the executor's
+billing pick passes `firstKinds: ["api_key"]` with `firstWhy` ("research reads web pages on the
+API key first"); `RouterTaskBilling.pick` puts those kinds ahead of the person's order (or the
+caller's fallback) when such a source is a candidate, and the router's next one is used when it
+is not usable; an order made only of first kinds is not called "your order" in the reason. With
+only a subscription, a web entry runs on the SDK path search-only: its `cc:WebFetch` stays refused
+by the token's domain check, and its brief carries `SEARCH_ONLY_LINE` ("Web pages cannot be
+opened on this run (a Claude subscription): use web search, ..."). Tests: two cases in
+`subscription-path.test.ts` (a researcher's task with both credentials runs on the API key with
+`web_fetch` and the no-search line, a coder's still on the subscription; a subscription alone
+gives the researcher the search-only line). The intake (the plan writer) is told to plan no web work only when the
 install has neither a subscription nor the page reader (`IntakeDeps.webSpecialists`, composed
 as `hasOauth || webFetchOn`; `NO_WEB_RULE`). Tests: `specialist-handover.test.ts`,
 `research-web.test.ts`, the U-044 case in `intake.test.ts`.
@@ -4738,7 +4804,10 @@ Each specialist also carries `limitation` (ADR 0107): what it cannot do on this 
 words, or null. The route passes `RuntimeApp.webAccess()` (a subscription or the web page
 reader); without either, an entry that names a web tool gets `NO_WEB_LIMITATION` ("Cannot read
 the web on this computer"), which the plan card shows beside its tasks and New task beside the
-choice. The command's ports
+choice; with `RuntimeApp.webSearchOnly()` (a subscription and no API key whose page reader could
+take research, C-64) an entry that names `cc:WebFetch` gets `SEARCH_ONLY_LIMITATION` ("Searches
+the web but opens no page on a Claude subscription", defined in `api-types.ts` for the UI, whose
+New task adds "Save an API key to let it read pages."). The command's ports
 (`CommandPorts.modelSettings`) are the runnable specialists' names and the provider's flags.
 
 ### Briefs (`src/brief.ts`)

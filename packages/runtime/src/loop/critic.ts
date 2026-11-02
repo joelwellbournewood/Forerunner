@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { DEPS_BASE_REF } from "@forerunner/capabilities";
 import {
   applyVerdict,
   type CheckCommand,
@@ -225,7 +226,8 @@ export function checksFromSettings(settings: JsonObject | null | undefined): {
 
 /**
  * The diff of a task's work from git: the branch against the clone's default branch
- * (`origin/HEAD...HEAD`, the merge base) plus what is still uncommitted in the worktree. A
+ * (`origin/HEAD...HEAD`, the merge base), or against the base a task that builds on unmerged
+ * work started from (`DEPS_BASE_REF`, C-49), plus what is still uncommitted in the worktree. A
  * worktree without git, or one where git fails, yields null and the review goes on without
  * a diff (the critic records that in its evidence).
  */
@@ -245,13 +247,20 @@ export class GitDiffPort implements DiffPort {
     try {
       const inside = await git(["rev-parse", "--is-inside-work-tree"]);
       if (inside.code !== 0) return null;
+      // A task that builds on unmerged work (C-49, ADR 0106) started from the default branch
+      // with its dependencies' branches merged in (`DEPS_BASE_REF`): its own change is what it
+      // added on top of that, never the dependencies' files. Any other task: its branch
+      // against the default branch, from where they part.
+      const depsBase =
+        (await git(["rev-parse", "--verify", "--quiet", `${DEPS_BASE_REF}^{commit}`])).code === 0;
       const hasOrigin = (await git(["rev-parse", "--verify", "--quiet", "origin/HEAD"])).code === 0;
+      const range = depsBase ? [DEPS_BASE_REF, "HEAD"] : hasOrigin ? ["origin/HEAD...HEAD"] : null;
       const parts: string[] = [];
       const files = new Set<string>();
-      if (hasOrigin) {
-        const committed = await git(["diff", "origin/HEAD...HEAD"]);
+      if (range) {
+        const committed = await git(["diff", ...range]);
         if (committed.code === 0 && committed.stdout.trim()) parts.push(committed.stdout);
-        const names = await git(["diff", "--name-only", "origin/HEAD...HEAD"]);
+        const names = await git(["diff", "--name-only", ...range]);
         for (const f of names.stdout.split(/\r?\n/)) if (f.trim()) files.add(f.trim());
       }
       const pending = await git(["diff", "HEAD"]);

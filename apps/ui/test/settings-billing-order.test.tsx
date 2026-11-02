@@ -43,8 +43,12 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
       within(section).getByRole("heading", { name: "Claude: which to use first" }),
     ).toBeInTheDocument();
     expect(section).toHaveTextContent("When one cannot be used, the next one is.");
+    // C-64: research goes to the API key first whatever the order, and the screen says so.
+    expect(section).toHaveTextContent(
+      "a research task uses the API key first when one is saved, since only there can it read web pages.",
+    );
     expect(await within(section).findByTestId("billing-order-default")).toHaveTextContent(
-      "You have not chosen an order yet: tasks use the subscription first, and Chat, project setup and reviews use the API key first.",
+      "You have not chosen an order yet: tasks use the subscription first (research tasks the API key), and Chat, project setup and reviews use the API key first. Moving one sets this order for everything but research tasks.",
     );
     const sub = within(section).getByTestId("billing-order-row-subscription");
     expect(sub).toHaveTextContent("1. Claude subscription");

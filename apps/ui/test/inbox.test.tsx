@@ -365,8 +365,17 @@ describe("Inbox", () => {
         'Build the docs site · coder · about CHF 0.40 · after "Compare two static site generators"',
       ]),
     );
-    // The usual install reads the web (ADR 0107): nothing is said.
+    // C-64: a Claude subscription and no API key: the researcher searches but opens no page.
     view.unmount();
+    const searchOnly = renderApp("/inbox", withPlan(createHarness({ webSearchOnly: true })));
+    card = await screen.findByTestId("intake-card");
+    await waitFor(() =>
+      expect(within(card).getAllByTestId("intake-task")[0]?.textContent).toBe(
+        "Compare two static site generators · researcher · about CHF 0.40 · Searches the web but opens no page on a Claude subscription",
+      ),
+    );
+    // The usual install reads the web (ADR 0107): nothing is said.
+    searchOnly.unmount();
     renderApp("/inbox", withPlan(createHarness()));
     card = await screen.findByTestId("intake-card");
     await waitFor(() =>
@@ -1126,6 +1135,132 @@ describe("Inbox", () => {
       expect(within(drawer).getByTestId("drawer-action-edit")).toBeInTheDocument();
       expect(within(drawer).queryByTestId("drawer-action-resume")).toBeNull();
       expect(drawer).not.toHaveTextContent(/\$|USD|Paused|Press Resume/);
+    });
+  });
+
+  describe("a task a session's budget stopped twice (C-36)", () => {
+    /** The card the runner files after the second stop, as `/inbox` serves it. */
+    const sessionCard = () => ({
+      id: "req_session_budget",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_3",
+      taskTitle: "Decide the versioning scheme",
+      sessionId: "sess_1",
+      kind: "approval",
+      why: '"Decide the versioning scheme" needs more than a session\'s budget. Two sessions of CHF 4.00 stopped while it ran.',
+      steps: [],
+      options: ["Raise session budget", "Raise its budget", "Cancel task"],
+      blocking: true,
+      risk: "medium" as const,
+      changeCard: {
+        key: "task:budget_stop",
+        source: "session_budget",
+        task_id: "task_3",
+        task_title: "Decide the versioning scheme",
+        title: '"Decide the versioning scheme" needs more than a session\'s budget',
+        run_ids: ["run_1", "run_2"],
+        session_cap_usd_micro: 5_000_000,
+        project_cap_usd_micro: 5_000_000,
+        spent_usd_micro: 9_000_000,
+        raise_to_usd_micro: 10_000_000,
+        chf_per_usd: 0.8,
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-02T09:00:00.000Z",
+      version: 1,
+    });
+    const setUp = () => {
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(sessionCard());
+      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+      if (t3) {
+        t3.status = "needs_human";
+        t3.reason = '"Decide the versioning scheme" needs more than a session\'s budget.';
+      }
+      return harness;
+    };
+    const cardOf = async () =>
+      (await screen.findAllByTestId("request")).find(
+        (r) => r.getAttribute("data-request-id") === "req_session_budget",
+      ) as HTMLElement;
+
+    it("says what stopped it in CHF, with three buttons and what each does", async () => {
+      renderApp("/inbox", setUp());
+      const card = await cardOf();
+      expect(within(card).getByTestId("request-title")).toHaveTextContent(
+        '"Decide the versioning scheme" needs more than a session\'s budget',
+      );
+      expect(within(card).getByTestId("request-body")).toHaveTextContent(
+        "Two sessions of CHF 4.00 stopped while it ran; it spent CHF 7.20 so far.",
+      );
+      expect(card).not.toHaveTextContent(/\$|USD/);
+      expect(
+        within(card)
+          .getAllByTestId("option")
+          .map((b) => b.textContent),
+      ).toEqual(["Raise session budget", "Raise its budget", "Cancel task"]);
+      expect(
+        within(card)
+          .getAllByTestId("option-explain")
+          .map((e) => e.textContent),
+      ).toEqual([
+        "Sets this project's budget per session to CHF 8.00 and starts a session that tries again.",
+        "Starts one session of CHF 8.00 for it now; later sessions keep CHF 4.00.",
+        "Drops it. Nothing waits on it.",
+      ]);
+    });
+
+    it("Raise session budget sends the option; the Done line says the new budget per session", async () => {
+      const user = userEvent.setup();
+      const harness = setUp();
+      renderApp("/inbox", harness);
+      const card = await cardOf();
+      await user.click(within(card).getByRole("button", { name: "Raise session budget" }));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_session_budget/answer")[0]?.body).toEqual({
+          version: 1,
+          answer: "Raise session budget",
+        }),
+      );
+      expect(await screen.findByTestId("done-line")).toHaveTextContent(
+        "Done: Raised this project's budget per session to CHF 8.00: a session started.",
+      );
+      expect(harness.daemon.state.tasks.find((t) => t.id === "task_3")?.status).toBe("ready");
+    });
+
+    it("Raise its budget gives the task one session of the named amount on top of what it spent", async () => {
+      const user = userEvent.setup();
+      const harness = setUp();
+      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+      const spent = t3?.actual.usdMicro ?? 0;
+      renderApp("/inbox", harness);
+      const card = await cardOf();
+      await user.click(within(card).getByRole("button", { name: "Raise its budget" }));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_session_budget/answer")[0]?.body).toEqual({
+          version: 1,
+          answer: "Raise its budget",
+        }),
+      );
+      await screen.findByTestId("done-line");
+      const after = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+      expect(after?.status).toBe("ready");
+      // As the daemon: what it spent plus one session of USD 10 (CHF 8.00), not USD 10 alone.
+      expect(after?.budget.usdMicro).toBe(Math.max(t3?.budget.usdMicro ?? 0, spent + 10_000_000));
+      expect(after?.reason).toBe("you gave it one session of CHF 8.00 in the Inbox");
+    });
+
+    it("on the Tasks tab it reads Needs your decision: a session's budget is too small", async () => {
+      const harness = setUp();
+      const view = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
+      expect(view?.display).toMatchObject({
+        key: "answer",
+        label: "Needs your decision: a session's budget is too small",
+        blocker: { kind: "card", requestId: "req_session_budget", cardKind: "budget" },
+      });
     });
   });
 

@@ -235,6 +235,23 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     // Priced from the table in force, so the card quotes the surcharge runs are charged.
     effect: (value, ctx) => fastModeEffect(value === true, ctx.pricing),
   },
+  // C-57 (ADR 0106, the session lead's default): off, a repository project's docs/status.md
+  // stays in the app; on, each session's status goes to the repository as one pull request.
+  status_pull_request: {
+    key: "status_pull_request",
+    label: "the status pull request",
+    scope: "project",
+    risk: "low",
+    schema: z.boolean(),
+    narrows: (to) => to !== true,
+    description:
+      "A repository project's status (docs/status.md) as one pull request on GitHub, which each session adds to; off, it stays in the app.",
+    effect: (value) =>
+      value === true
+        ? "each session's status goes to the repository as one pull request, docs: project status, which you merge when you like"
+        : "each session's status stays in the app (Docs, Status); no status pull request is opened",
+    display: (value) => (value === true ? "on" : "off"),
+  },
   shared_with: {
     key: "shared_with",
     label: "who the project is shared with",

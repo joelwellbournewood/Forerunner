@@ -6856,3 +6856,347 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
     }
   }, 120_000);
 });
+
+describe("the UI client against the real daemon: research on a Claude subscription alone searches, and the screens say so (C-64)", () => {
+  // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
+  const oauth = ["sk-ant-oat01-", "subscription", "0".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "apikey", "0".repeat(40)].join(""); // not-a-secret
+
+  it("a subscription and no API key: the researcher and the science-evaluator search but open no page", async () => {
+    const sub = await composeWithRolePlayer(
+      {},
+      { vault: new MemoryVault({ anthropic_subscription_token: oauth }) },
+    );
+    try {
+      const models = await sub.client.modelSettings();
+      const limits = Object.fromEntries(models.specialists.map((x) => [x.name, x.limitation]));
+      expect(limits.researcher).toBe("Searches the web but opens no page on a Claude subscription");
+      expect(limits["science-evaluator"]).toBe(
+        "Searches the web but opens no page on a Claude subscription",
+      );
+      expect(limits.coder).toBeNull();
+    } finally {
+      await sub.rt.close();
+    }
+  }, 120_000);
+
+  it("with an API key saved beside it, research reads pages there: nothing is said", async () => {
+    const both = await composeWithRolePlayer(
+      {},
+      {
+        vault: new MemoryVault({
+          anthropic_subscription_token: oauth,
+          anthropic_api_key: apiKey,
+        }),
+      },
+    );
+    try {
+      const models = await both.client.modelSettings();
+      expect(models.specialists.find((x) => x.name === "researcher")?.limitation).toBeNull();
+    } finally {
+      await both.rt.close();
+    }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: a task that waits for unmerged work builds on it (C-49, ADR 0106)", () => {
+  // Live (2026-11-02, forerunner-sandbox): the tester of a two-task plan branched from main
+  // while the coder's pull request was still open, found nothing to check and failed. Here a
+  // session on the stand-in model runs both tasks of a repository project on a local host.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let criticCalls: ModelRequest[] = [];
+  let bare = "";
+  const host = new MemoryGitHost("alice");
+  const repo = { owner: "o", name: "chain" };
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-chain-"));
+    bare = join(home, "chain.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(home, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(home, "seed", "README.md"), "# chain\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ ...repo, private: true, cloneUrl: bare });
+    ({ rt, client, criticCalls } = await composeWithRolePlayer(
+      {},
+      { gitHost: host, tryIt: false },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("B starts from A's open pull request; B's PR targets main and names A's; B's files and review are its own", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({
+      name: "Chain",
+      goal: "Notes and their summary",
+      repos: ["o/chain"],
+    });
+    const a = await client.createTask(project.id, {
+      title: "Write the notes in notes.md",
+      outcome: "notes.md holds the meeting notes",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const b = await client.createTask(project.id, {
+      title: "Write the summary in summary.md",
+      outcome: "summary.md sums up the meeting in three lines",
+      riskTier: 1,
+      specialist: "coder",
+      dependsOn: [a.id],
+    });
+    const statuses = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, await statuses()).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      statuses,
+      60_000,
+    );
+    expect(await statuses()).toBe(
+      "Write the notes in notes.md=done, Write the summary in summary.md=done",
+    );
+    const taskA = await rt.store.task.mustGet(a.id);
+    const taskB = await rt.store.task.mustGet(b.id);
+    // B's branch holds A's file, which is not on main yet (level 2 merges nothing).
+    const onBranch = await run([
+      "git",
+      "--git-dir",
+      bare,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      taskB.branch ?? "",
+    ]);
+    expect(onBranch.stdout.split(/\r?\n/)).toEqual(
+      expect.arrayContaining(["notes.md", "summary.md"]),
+    );
+    const onMain = await run(["git", "--git-dir", bare, "ls-tree", "-r", "--name-only", "main"]);
+    expect(onMain.stdout).not.toContain("notes.md");
+    // B's pull request targets main and says it carries A's unmerged work.
+    const open = await host.listPullRequests(repo, { state: "open" });
+    const prA = open.find((p) => p.head.ref === taskA.branch);
+    const prB = open.find((p) => p.head.ref === taskB.branch);
+    expect(prB?.base.ref).toBe("main");
+    expect(prB?.body).toContain(
+      `Builds on #${prA?.number} ("Write the notes in notes.md"), not merged yet`,
+    );
+    // The Overview lists both as waiting for the person.
+    const waiting = await client.projectPullRequests(project.id);
+    expect(waiting.waiting.filter((w) => w.kind === "task").map((w) => w.number)).toEqual([
+      prA?.number,
+      prB?.number,
+    ]);
+    // The drawer's files for B are B's alone, and so is the diff the critic reviewed.
+    const drawer = await client.task(b.id);
+    expect(drawer.runs.filter((r) => r.kind === "work").flatMap((r) => r.files)).toEqual([
+      "summary.md",
+    ]);
+    const reviewOfB = criticCalls
+      .map((c) => JSON.stringify(c.messages))
+      .filter((m) => m.includes("Write the summary in summary.md"));
+    expect(reviewOfB.length).toBeGreaterThan(0);
+    for (const m of reviewOfB) {
+      expect(m).toContain("diff --git a/summary.md");
+      expect(m).not.toContain("diff --git a/notes.md");
+    }
+
+    // C-57: no status pull request by default; the session's status is in the app, where the
+    // Docs tab reads it, and Settings lists the switch for this repository project.
+    expect(open.some((p) => p.head.ref === "fr/status")).toBe(false);
+    expect(waiting.waiting.some((w) => w.branch === "fr/status")).toBe(false);
+    const status = (await client.docs(project.id)).find((d) => d.path === "docs/status.md");
+    expect(status).toMatchObject({
+      exists: true,
+      note: "kept in the app: no status pull request (Settings turns it on)",
+    });
+    expect((await client.doc(project.id, "docs/status.md")).content).toContain(
+      `session ${sessionId}`,
+    );
+    const row = (await client.settings()).find(
+      (s) => s.key === "project.status_pull_request" && s.scopeId === project.id,
+    );
+    expect(row).toMatchObject({ label: "Status pull request", value: false });
+    const turnedOn = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "status_pull_request", value: true, project: project.id },
+        },
+      ],
+      source: "ui",
+    });
+    expect(turnedOn.status).toBe("done");
+    expect(
+      (await client.settings()).find(
+        (s) => s.key === "project.status_pull_request" && s.scopeId === project.id,
+      )?.value,
+    ).toBe(true);
+  }, 120_000);
+
+  it("a project made from a brief: after its session the Docs and Files tabs read the repository as merged, and a merge on the host shows after the next session (C-57)", async () => {
+    // Review of fix/decisions (2026-11-02): with the status kept in the app, nothing made or
+    // refreshed this computer's copy of the repository any more. A project made from a brief
+    // (no scaffold, so no copy) read every doc but Status as "missing · not written yet",
+    // although README.md was on main and the rest waited in the intake's PR, and Files said
+    // "Nothing written yet"; after a merge on the host, the tabs still showed the old main.
+    const briefRepo = { owner: "o", name: "brief" };
+    const briefBare = join(bare, "..", "brief.git");
+    await run(["git", "init", "--bare", "-b", "main", briefBare]);
+    const seedDir = join(bare, "..", "brief-seed");
+    const seed = new GitOps({
+      cwd: seedDir,
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(briefBare);
+    writeFileSync(join(seedDir, "README.md"), "# brief\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ ...briefRepo, private: true, cloneUrl: briefBare });
+    const brief = "A page that shows a random quote";
+    const project = await client.createProject({
+      name: "Brief page",
+      goal: goalFromBrief(brief),
+      brief,
+      intake: true,
+      repos: ["o/brief"],
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.projectId === project.id && r.status === "open",
+    );
+    expect(card?.title).toMatch(/^Plan for "Brief page"/);
+    const planned = (await client.sessions({ projectId: project.id })).length;
+    await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Approve and start",
+    });
+    const statuses = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const sessionsEnded = async (count: number) => {
+      const all = await client.sessions({ projectId: project.id });
+      return all.length >= count && all.every((s) => s.status !== "running");
+    };
+    await eventually(
+      () => sessionsEnded(planned + 1),
+      "the session the approval started to end",
+      statuses,
+      60_000,
+    );
+    const intakePr = (await host.listPullRequests(briefRepo, { state: "open" })).find((p) =>
+      /^fr\/intake-.+-docs$/.test(p.head.ref),
+    );
+    expect(intakePr, "the intake's docs pull request").toBeDefined();
+    // README.md is on main; the intake's docs wait in its pull request; Status is in the app.
+    const docs = await client.docs(project.id);
+    expect(docs.find((d) => d.path === "README.md")).toMatchObject({
+      exists: true,
+      note: "from this PC's copy of the repository",
+    });
+    expect(docs.find((d) => d.path === "docs/overview.md")).toMatchObject({
+      exists: false,
+      note: `waiting in pull request #${intakePr?.number}: merge it to add it`,
+    });
+    expect(docs.find((d) => d.path === "docs/status.md")).toMatchObject({
+      exists: true,
+      note: "kept in the app: no status pull request (Settings turns it on)",
+    });
+    const files = await client.projectFiles(project.id);
+    expect(files.folder).not.toBeNull();
+    expect(files.entries.map((e) => e.path)).toContain("README.md");
+    expect(files.entries.map((e) => e.path)).not.toContain("docs/overview.md");
+
+    // The person merges the intake's pull request on the host; the next session's end brings
+    // this computer's copy up to date, so the tabs read the merged docs.
+    await seed.fetch();
+    await run([
+      "git",
+      "-C",
+      seedDir,
+      "merge",
+      "--no-ff",
+      "-m",
+      "Merge the doc set",
+      `origin/${intakePr?.head.ref}`,
+    ]);
+    await seed.push("main");
+    await host.mergePullRequest(briefRepo, intakePr?.number ?? 0);
+    const agentId = (await client.agents())[0]?.id ?? "";
+    await client.createTask(project.id, {
+      title: "Write the credits in credits.md",
+      outcome: "credits.md names where the quotes come from",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const before = (await client.sessions({ projectId: project.id })).length;
+    const started = await client.startSession({ agentId, projectId: project.id });
+    expect(started.session?.id, await statuses()).toBeDefined();
+    await eventually(
+      () => sessionsEnded(before + 1),
+      "the second session to end",
+      statuses,
+      60_000,
+    );
+    const after = await client.docs(project.id);
+    expect(after.find((d) => d.path === "docs/overview.md")).toMatchObject({
+      exists: true,
+      note: "from this PC's copy of the repository",
+    });
+    expect((await client.doc(project.id, "docs/overview.md")).content.length).toBeGreaterThan(0);
+    expect((await client.projectFiles(project.id)).entries.map((e) => e.path)).toEqual(
+      expect.arrayContaining(["README.md", "docs/overview.md"]),
+    );
+    // Still no status pull request: the copy was refreshed without one.
+    expect(
+      (await host.listPullRequests(briefRepo, { state: "open" })).some(
+        (p) => p.head.ref === "fr/status",
+      ),
+    ).toBe(false);
+  }, 180_000);
+
+  it("a second project on the same repository lists only its own docs pull requests, never the first one's scaffold (L-16)", async () => {
+    // Live (2026-11-02): "The project's standard docs · pull request #1" on the Overview was a
+    // scaffold PR an earlier project had left on forerunner-sandbox.
+    const sharedBare = join(bare, "..", "shared.git");
+    await run(["git", "init", "--bare", "-b", "main", sharedBare]);
+    const seed = new GitOps({
+      cwd: join(bare, "..", "shared-seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(sharedBare);
+    writeFileSync(join(bare, "..", "shared-seed", "README.md"), "# shared\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "shared", private: true, cloneUrl: sharedBare });
+    const first = await client.createProject({
+      name: "Shared one",
+      goal: "A page in a shared repository",
+      repos: ["o/shared"],
+    });
+    const firstDocs = (await client.projectPullRequests(first.id)).waiting.filter(
+      (w) => w.kind === "docs",
+    );
+    expect(firstDocs.map((w) => w.branch)).toEqual(["fr/docs-scaffold"]);
+    const second = await client.createProject({
+      name: "Shared two",
+      goal: "More notes in the same repository",
+      repos: ["o/shared"],
+    });
+    const listed = await client.projectPullRequests(second.id);
+    expect(listed.waiting.filter((w) => w.kind === "docs")).toEqual([]);
+    // Its Docs tab does not say its docs wait in the first project's pull request.
+    for (const d of await client.docs(second.id))
+      expect(d.note ?? "", d.path).not.toMatch(/waiting in pull request/);
+  }, 120_000);
+});

@@ -271,16 +271,24 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
     case "needs_human": {
       if (card && cardKindOf(card) === "budget")
         // Live walk 2 (B2): it read "Paused" with no card; the card asks to raise the budget.
-        return display("answer", "Needs your decision: its budget is used", "warn", {
-          detail: "Its card is in the Inbox: raise its budget, or cancel it.",
-          blocker: {
-            kind: "card",
-            taskId: null,
-            requestId: card.id,
-            title: null,
-            cardKind: "budget",
+        // C-36: a session's budget that stopped it twice says so.
+        return display(
+          "answer",
+          (card.change_card as { source?: unknown } | null)?.source === "session_budget"
+            ? "Needs your decision: a session's budget is too small"
+            : "Needs your decision: its budget is used",
+          "warn",
+          {
+            detail: "Its card is in the Inbox: raise its budget, or cancel it.",
+            blocker: {
+              kind: "card",
+              taskId: null,
+              requestId: card.id,
+              title: null,
+              cardKind: "budget",
+            },
           },
-        });
+        );
       if (card && cardKindOf(card) === "cannot_run")
         // Live walk 4: it read "Paused" with "Press Resume", and Resume only started the same
         // refusal again; its card says why and offers Try again once that is fixed.

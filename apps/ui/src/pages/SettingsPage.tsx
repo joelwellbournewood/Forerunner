@@ -90,6 +90,7 @@ export const SETTING_KEYS = [
   "session_reserve_share",
   "small_project_mode",
   "fast_mode",
+  "status_pull_request",
   "shared_with",
   "quiet_hours",
   "notify_channel",

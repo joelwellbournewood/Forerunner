@@ -347,7 +347,13 @@ export class RouterTaskBilling implements TaskBillingPort {
     });
     // The person's order (U-078, ADR 0100), read at every pick so a change in Settings applies
     // to the next call; without one, the caller's fallback order, else the purpose's own.
-    const order = (await personOrderOf(this.opts.store, this.opts.humanId)) ?? req.fallbackOrder;
+    const chosen = (await personOrderOf(this.opts.store, this.opts.humanId)) ?? req.fallbackOrder;
+    // C-64: kinds the task needs first (web work on the API key) go ahead of the order; the
+    // order still decides the rest, and the next one is used when the first cannot be.
+    const first = (req.firstKinds ?? []).filter((k) => candidates.some((s) => s.kind === k));
+    const order = first.length
+      ? [...first, ...(chosen ?? []).filter((k) => !first.includes(k))]
+      : chosen;
     const decision = await router.pick({
       humanId: this.opts.humanId,
       agentId: req.agentId,
@@ -358,6 +364,9 @@ export class RouterTaskBilling implements TaskBillingPort {
     });
     const skipped = [...withheld, ...decision.skipped];
     let reason = decision.reason;
+    // An order made only of the task's first kinds is no order of the person's: not said as one.
+    if (first.length && !chosen) reason = reason.replace(/ \(your order: [^)]*\)/, "");
+    if (first.includes(decision.source.kind) && req.firstWhy) reason += `; ${req.firstWhy}`;
     if (withheld.length) {
       reason += `; withheld ${withheld.map((s) => `${s.kind} ${s.sourceId}: ${s.reason}`).join(", ")}`;
     }

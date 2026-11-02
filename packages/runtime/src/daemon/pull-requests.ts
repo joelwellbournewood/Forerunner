@@ -2,7 +2,13 @@ import type { GitHost, PullRequestInfo, RepoRef } from "@forerunner/capabilities
 import { ACCEPTED_WITHOUT_REVIEW } from "@forerunner/critic";
 import { errorMessage, isAbsolute, redact } from "@forerunner/platform";
 import type { ProjectRow, StateStore, TaskRow } from "@forerunner/state";
-import { DOCS_SCAFFOLD_BRANCH, isDocsBranch, parseRepoRef, STATUS_BRANCH } from "../loop/docs.ts";
+import {
+  DOCS_SCAFFOLD_BRANCH,
+  isDocsBranch,
+  isProjectDocsPr,
+  parseRepoRef,
+  STATUS_BRANCH,
+} from "../loop/docs.ts";
 import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
 import type {
   ProjectPullRequestsView,
@@ -110,7 +116,9 @@ export async function projectPullRequests(
         branch: pr.head.ref,
         review: await reviewOf(deps.store, task),
       });
-    } else if (isDocsBranch(pr.head.ref)) {
+    } else if (isDocsBranch(pr.head.ref) && isProjectDocsPr(project, pr)) {
+      // Only this project's docs PRs (L-16): live, another project's stale scaffold PR on the
+      // same repository was listed as "The project's standard docs".
       waiting.push({
         kind: "docs",
         taskId: null,

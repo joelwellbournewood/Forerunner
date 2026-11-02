@@ -147,6 +147,17 @@ export const NO_WEB_ACCESS_LINE =
 export const LESSONS_CONSTRAINT =
   "Lessons go only in your final message, never in a file: end that message with one line per lesson worth keeping, as 'Lesson: ...'. Leave no scratch notes in the project: every file you leave there is part of the work.";
 
+/** The registry's page reader on the Agent SDK path (C-64). */
+const WEB_FETCH_CC = `${CLAUDE_CODE_PREFIX}WebFetch`;
+
+/**
+ * The brief's line for a specialist that reads the web on a Claude subscription with no API key
+ * (C-64, ADR 0107): its page reading is refused there, so it searches and says what it could not
+ * check on a page itself.
+ */
+export const SEARCH_ONLY_LINE =
+  "Web pages cannot be opened on this run (a Claude subscription): use web search, cite each result you use by its address, and say in the report what you could not check on the page itself.";
+
 /** The brief's line for a researcher on an API key: pages by address, no search (ADR 0107). */
 export const NO_WEB_SEARCH_LINE =
   "Web search is not available on this run: read web pages by their address with web_fetch (the sources the brief names, the official site or documentation of what you research, pages those link to), and cite each page you use by its address.";
@@ -794,7 +805,12 @@ export class LoopTaskExecutor implements TaskExecutor {
     // Billing (ADR 0044): the source for this task, then the driver that goes with it. The
     // specialist's tools are re-read in that driver's form (the registry's `cc:` names as
     // written for the SDK, the built-in equivalents for the loop).
-    const choice = await this.pickBilling(ctx, tier, runId);
+    // C-64 (ADR 0107): a specialist that reads the web goes to the API key whenever one is saved,
+    // whatever the order, when this runtime's page reader serves the loop driver: a subscription
+    // run's page reading is refused (its domain list is empty), so there it could only search.
+    const loopProfile = profileOf(defaultSpec);
+    const webFirst = needsWeb(loopProfile) && hasWeb(loopProfile);
+    const choice = await this.pickBilling(ctx, tier, runId, webFirst);
     const spec =
       choice.driver === "sdk"
         ? (this.deps.specialists(item.specialist, "sdk") ?? defaultSpec)
@@ -835,6 +851,14 @@ export class LoopTaskExecutor implements TaskExecutor {
     ) {
       // `cc:WebSearch` has no equivalent on an API key (ADR 0107): the page reader only.
       webLines.push(NO_WEB_SEARCH_LINE);
+    } else if (
+      choice.driver === "sdk" &&
+      profile.registryTools.includes(WEB_FETCH_CC) &&
+      (spec.allowedDomains ?? []).length === 0
+    ) {
+      // C-64: on a subscription the hooks refuse every page of an entry with no domains (ADR
+      // 0044, the token's domain check); only search works, and the brief says so up front.
+      webLines.push(SEARCH_ONLY_LINE);
     }
     // A run with no worktree on the SDK path still needs a working directory: its own,
     // under the executor's work root, and that is the only path the token allows.
@@ -1357,6 +1381,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     ctx: Parameters<TaskExecutor["execute"]>[0],
     tier: ModelTier,
     runId: string,
+    webFirst = false,
   ): Promise<RunBillingChoice> {
     if (!this.deps.billing) {
       return {
@@ -1374,6 +1399,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       runner: session.runner === "cloud" ? "cloud" : "pc",
       modelTier: tier,
       purpose: "session",
+      ...(webFirst
+        ? {
+            firstKinds: ["api_key"] as const,
+            firstWhy: "research reads web pages on the API key first",
+          }
+        : {}),
     });
     if (pick.driver === "sdk") this.sdkDeps();
     const plan = pick.plan;

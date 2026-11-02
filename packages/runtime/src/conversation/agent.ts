@@ -161,6 +161,12 @@ export interface ConversationDeps {
    */
   docsDirs?: (projectId: string) => Promise<readonly string[]>;
   /**
+   * The addresses of a repository project's pull requests that are open on the host now (L-17),
+   * so `# Your files` says which done tasks' PRs wait and which are merged; null when the host
+   * did not answer (the block then says their state is not known). Absent: as null.
+   */
+  openPullRequests?: (projectId: string) => Promise<readonly string[] | null>;
+  /**
    * Token budgets of the retrieved context per model turn, each measured with the provider's
    * `countTokens` on the exact text sent (ADR 0061). Defaults `DEFAULT_CHAT_DOCS_TOKENS` and
    * `DEFAULT_CHAT_LESSONS_TOKENS`; 0 turns a part off.
@@ -1292,9 +1298,12 @@ export class ConversationAgent {
     );
     if (working) blocks.push(working);
     if (project) {
+      const open = await (this.deps.openPullRequests?.(project.id) ?? Promise.resolve(null)).catch(
+        () => null,
+      );
       const files = filesBlock(
         await this.folderOf(project.id),
-        await repositoryFacts(store, project).catch(() => null),
+        await repositoryFacts(store, project, open).catch(() => null),
       );
       if (files) blocks.push(files);
     }

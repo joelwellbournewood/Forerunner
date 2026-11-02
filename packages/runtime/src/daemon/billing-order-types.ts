@@ -48,7 +48,8 @@ export const BillingOrderView = z.object({
   /**
    * The order the rows are in: the person's, else the order task runs use by default
    * (subscription first). Without a chosen order, Chat, planning and reviews use the API key
-   * first (ADR 0098), which the screen says.
+   * first (ADR 0098), which the screen says. Whatever the order, a research task (a specialist
+   * that reads web pages) uses the API key first when one is saved (C-64, ADR 0107).
    */
   order: z.array(BillingOrderKind),
   sources: z.array(BillingOrderSourceView),

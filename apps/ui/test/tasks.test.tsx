@@ -785,6 +785,24 @@ describe("Tasks tab (design §3.5)", () => {
     });
   });
 
+  it("New task on a subscription without an API key says the researcher searches but opens no page (C-64)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ webSearchOnly: true });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const who = within(dialog).getByTestId("task-who") as HTMLSelectElement;
+    await waitFor(() =>
+      expect([...who.options].map((o) => o.value)).toEqual(expect.arrayContaining(["researcher"])),
+    );
+    await user.selectOptions(who, "researcher");
+    // Before, the note ended "works only from the project's files", which is not true there.
+    expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
+      "Searches the web but opens no page on a Claude subscription. Save an API key to let it read pages.",
+    );
+  });
+
   it("rows follow the work without Refresh: a session's project.changed reloads them (design §3.5)", async () => {
     const harness = createHarness();
     render(

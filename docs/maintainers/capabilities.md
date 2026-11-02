@@ -156,15 +156,39 @@ with their milestone.
   development container's global config; `push-words.test.ts` feeds both shapes, and Windows'
   CRLF, through `GitOps.push` with a stub runner, so it does not depend on the machine's git.
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
-  head)` takes a head other than HEAD.
+  head)` takes a head other than HEAD; `filesBetween(from, to)` compares two trees;
+  `hasMergesSince(base, head)`, `setRef(ref, rev | null)` and `mergeFrom(ref, message?)` serve
+  the dependent branches below.
 - `PrTaskExecutor` (`pr-executor.ts`) forwards `chooseSpecialist` to its inner executor (the
   specialist the next attempt runs with, which the runner names on `task.started`; ADR 0108) and
   wraps any task executor in the branch-and-PR flow: clone
   or fetch into a per-task worktree (`ensureBaseBranch` for an empty repository), branch from
   the base (or the existing PR branch), run the
   inner executor inside the worktree, commit, rebase onto the base, push and open a pull
-  request whose body carries the outcome and acceptance criteria; a second run on the same
-  task updates the PR. A rebase conflict pushes the branch as it is (so the person can fetch
+  request whose body carries the outcome, the acceptance criteria (no heading when there are
+  none) and the report without its "Lesson:" lines (`withoutLessons`; the commit message is the
+  report as plain text, `plainReport`, L-19); a second run on the same task updates the PR.
+  **A task that waits for unmerged work builds on it** (C-49, ADR 0106, the session lead's
+  default): `unmergedDependencies` walks `depends_on` (deepest first) for done tasks of the
+  project whose branch still has an open pull request on the host; `dependencyBase` merges
+  their branches, in order, into the base on a detached HEAD (a fast-forward when it can) and
+  keeps the commit under `DEPS_BASE_REF` (`refs/forerunner/deps-base`) in the task's worktree;
+  the task's branch starts there, so its specialist sees the work. Its PR still targets the
+  default branch and says `buildsOnText` ('Builds on #1 ("A"), not merged yet: this pull
+  request includes its changes, ...'), so the person can merge in any order. Its
+  `changedFiles` are `GitOps.filesBetween(DEPS_BASE_REF)` (its own work only), and the critic's
+  `GitDiffPort` diffs from that ref too (`runtime.md`). Such a branch is kept up to date by a
+  merge, not a rebase (`mergeMoved` after the run, only when the base or a dependency moved;
+  a later run reuses the base while nothing under it moved, `baseStillHolds`); a branch that
+  holds merge commits since the base (its dependencies were merged meanwhile) is merged the
+  same way. Dependencies whose work conflicts with the base or with each other end the run as
+  `needs_human` before the inner executor runs, with `dependencyConflictWords` ("The work it
+  builds on conflicts: "B" (pull request #2) and "A" (pull request #1) both change index.html.
+  Merge them on GitHub, resolving the conflict, then press Try again."), which the runner's
+  "could not run" card carries; nothing is dropped silently (a merge git refuses with no
+  conflicting file, such as local changes in the way, fails the run with git's words). A task
+  with nothing unmerged
+  before it has no `DEPS_BASE_REF` (an old one is removed) and works as before. A rebase conflict pushes the branch as it is (so the person can fetch
   and resolve it; the steps name the worktree when the push fails) and becomes a blocking
   `decision` request (`change_card.key` `REBASE_CONFLICT_KEY`, the branch, base, files and
   whether it was pushed) with the task outcome `needs_human`. Its options each lead somewhere
@@ -519,7 +543,13 @@ other refusals have their own words; before, the reason was git's output), an em
 branch the remote lacks failing in words, an empty repository whose host refuses the first
 commit (a pre-receive hook) failing with `firstPushFailedWords`' exact sentence and the inner
 executor never run, a first commit refused for another reason naming the host's one line, a rebase conflict as a blocking human request with no
-PR, and no changes as a failure. What each of the conflict request's options does, answered
+PR, and no changes as a failure. "a task that waits for unmerged work builds on it (C-49)": B
+sees A's unmerged file, B's PR targets main and names A's PR, B's changed files and
+`DEPS_BASE_REF` are its own; a chain C after B after A gets both, and a dependency merged on the
+host meanwhile is no longer named; B's next attempt keeps its base (no new merge, its files its
+own, the PR's comment names A's PR); two dependencies that conflict end `needs_human` with the
+exact sentence and the inner executor never run; the PR body has no empty criteria heading and
+no "Lesson:" line, and the commit message no markdown (L-19). What each of the conflict request's options does, answered
 through the daemon's route with the strings the Inbox shows and followed by the task's next
 run, is `packages/runtime/test/pr-answers.test.ts` (U-028). Like `git.test.ts` it spawns dozens of git processes, so both
 suites carry a 120 s timeout rather than the unit default of 20 s: loaded Windows runners have

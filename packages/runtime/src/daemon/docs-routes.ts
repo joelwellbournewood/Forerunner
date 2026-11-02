@@ -40,6 +40,11 @@ export interface DocsRoutesDeps {
   docsDirsFor: (project: ProjectRow) => string[];
   /** The docs that wait in a docs pull request (`ProjectDocs.docsInPullRequests`). */
   docsInPullRequests?: (project: ProjectRow) => Promise<DocInPullRequest[]>;
+  /**
+   * Where `docs/status.md` is read first (`ProjectDocs.statusDocRoot`, C-57): a repository
+   * project's status kept in the app while its status pull request is off; null otherwise.
+   */
+  statusDocRoot?: (project: ProjectRow) => string | null;
   /** A repository project's pull requests that wait for the person (`projectPullRequests`). */
   pullRequests?: (project: ProjectRow) => Promise<ProjectPullRequestsView>;
   who: () => Who;
@@ -195,10 +200,17 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     return ownsProject(project, deps.who()) ? project : null;
   };
 
+  /** The roots one doc is read from: the app's status first for `docs/status.md` (C-57). */
+  const rootsFor = (project: ProjectRow, rel: string): string[] => {
+    const roots = deps.docsDirsFor(project);
+    const status = rel === "docs/status.md" ? (deps.statusDocRoot?.(project) ?? null) : null;
+    return status ? [status, ...roots] : roots;
+  };
+
   app.get("/projects/:id/docs", async (c) => {
     const project = await owned(c.req.param("id"));
     if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
-    const roots = deps.docsDirsFor(project);
+    const statusRoot = deps.statusDocRoot?.(project) ?? null;
     const reviews = await reviewsView(deps.store, { projectId: project.id, limit: 50 });
     // Before (GitHub walk, 2026-11-02) the docs read "missing · not written yet" while they
     // waited in the scaffold's pull request #1, which nothing showed.
@@ -216,7 +228,7 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
       .filter((f) => f.status === "open" && /^doc drift/i.test(f.description));
     const out: DocView[] = STANDARD_DOCS.map((doc) => {
       const rel = docFile(doc);
-      const found = locate(roots, rel);
+      const found = locate(rootsFor(project, rel), rel);
       const finding = drift.find((f) => f.description.includes(doc) || f.description.includes(rel));
       const pr = found
         ? undefined
@@ -242,7 +254,9 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
         note: finding
           ? finding.description
           : found
-            ? rootLabel(project, found.root)
+            ? found.root === statusRoot
+              ? "kept in the app: no status pull request (Settings turns it on)"
+              : rootLabel(project, found.root)
             : "not written yet",
       };
     });
@@ -258,8 +272,7 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     if (!STANDARD_DOCS.some((doc) => docFile(doc) === rel) && !DECISION_RECORD.test(rel)) {
       throw new ForerunnerError("not_found", `${rel} is not one of the project's standard docs`);
     }
-    const roots = deps.docsDirsFor(project);
-    const found = locate(roots, rel);
+    const found = locate(rootsFor(project, rel), rel);
     if (!found) throw new ForerunnerError("not_found", `${rel} is not written yet`);
     const bytes = readFileSync(found.file);
     let content = bytes.subarray(0, DOC_CONTENT_MAX_BYTES).toString("utf8");

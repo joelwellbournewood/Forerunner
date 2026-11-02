@@ -690,6 +690,12 @@ export interface RuntimeApp {
    * card say which specialists cannot do their work here.
    */
   webAccess: () => boolean;
+  /**
+   * Whether research here only searches (C-64, ADR 0107): a Claude subscription and no API key
+   * whose page reader could take research (no key, or `FORERUNNER_WEB_FETCH=off`). The plan card
+   * and New task then say the researcher searches but opens no page.
+   */
+  webSearchOnly: () => boolean;
   tools: ToolRegistry;
   executor: TaskExecutor;
   runner: SessionRunner;
@@ -3376,6 +3382,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const project = await store.project.get(projectId);
       return project ? docs.docsDirsFor(project) : [];
     },
+    // L-17: which done tasks' pull requests are still open, read from the host per turn, so the
+    // chat never calls a merged one waiting.
+    openPullRequests: async (projectId) => {
+      const project = await store.project.get(projectId);
+      const first = project?.repos[0]?.trim() ?? "";
+      const ref = first && !isAbsolute(first) ? parseRepoRef(first) : null;
+      if (!ref) return null;
+      try {
+        return (await gitHost.listPullRequests(ref, { state: "open" })).map((p) => p.htmlUrl);
+      } catch {
+        return null;
+      }
+    },
     // Design §3.9: the chat sees each task's status in the person's words ("Waiting for
     // Docker" needs the sandbox's state) and the money in CHF at the day's rate.
     sandboxReady: () => {
@@ -3842,6 +3861,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     specialistDriver,
     specialists,
     webAccess: () => hasOauth || webFetchOn,
+    webSearchOnly: () => hasOauth && !(hasKey && webFetchOn),
     tools,
     executor,
     runner,

@@ -1600,6 +1600,13 @@ export const RunSettingsView = z.object({
 });
 export type RunSettingsView = z.infer<typeof RunSettingsView>;
 
+/**
+ * What a specialist that reads web pages cannot do on a Claude subscription without an API key
+ * (C-64, ADR 0107): the hooks refuse its pages there, so it searches only. The plan card shows
+ * it beside such a task; New task adds what lifts it.
+ */
+export const SEARCH_ONLY_LIMITATION = "Searches the web but opens no page on a Claude subscription";
+
 export const ModelSettingsView = z.object({
   provider: z.object({
     name: z.string().nullable(),
@@ -1638,7 +1645,8 @@ export const ModelSettingsView = z.object({
       overridesAgentId: z.string(),
       /**
        * What this specialist cannot do on this install, in words (ADR 0107: "Cannot read the web
-       * on this computer" when it works from the web and the install has no web access); null
+       * on this computer" when it works from the web and the install has no web access;
+       * `SEARCH_ONLY_LIMITATION` on a Claude subscription without an API key, C-64); null
        * when nothing is missing. The plan card and New task show it.
        */
       limitation: z.string().nullable().default(null),

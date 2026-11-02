@@ -260,9 +260,24 @@ pull request when it is done; Forerunner makes the commits, pushes and opens the
 repository just created on GitHub, with nothing in it, gets a first commit from Forerunner on its
 default branch (the project's docs, or a README), so its tasks have something to start from; if
 that cannot be done, the task says so ("… is empty and Forerunner could not make its first commit
-…") and what to do. The project's status file (`docs/status.md`) goes in a pull request of its
-own, "docs: project status", which each session adds to; it never goes into a task's reviewed
-pull request. Docs that wait in a pull request say so on the Docs tab, with the link.
+…") and what to do. The project's status file (`docs/status.md`) stays in the app: each
+session's update is under **Docs**, Status ("kept in the app"), and no pull request is opened
+for it. At the end of each session Forerunner also brings this computer's copy of the
+repository up to date, so **Docs** and **Files** show what is merged on GitHub, including what
+you merged since the last session. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
+Advanced, Other settings): each session then adds its update to one pull request of its own,
+"docs: project status", which you merge when you like; it never goes into a task's reviewed
+pull request. Docs that wait in a pull request say so on the Docs tab, with the link; only this
+project's docs pull requests are listed, never one another project left on the same
+repository.
+A task that waits for another whose pull request you have not merged yet starts from that work:
+its branch includes it, so a check finds the page it checks. Its own pull request still goes to
+the default branch and says so in its first lines ("Builds on #4 ("Add index.html"), not merged
+yet: this pull request includes its changes, so merging it merges them too. Merge in any
+order."). The critic reviews only what the task itself changed, and its files in the task
+drawer are its own. If the work it builds on conflicts (two pull requests change the same
+lines), it does not start: its card says which pull requests and files, and you merge them on
+GitHub, resolving the conflict, then press **Try again**.
 
 **A project without a repository** works in its own folder on this computer (where its docs
 are): the agents read and write there, and the critic reviews what each task changed. At the
@@ -348,7 +363,11 @@ the critic sent back (the next attempt runs in the same session, up to the retry
 the last one you get one card), and tasks you made ready meanwhile. So a chain of seven tasks
 is one Start. It stops when nothing more can run, the session's budget is used (a fifth is kept
 for reviews; a task whose run the session's budget stopped is ready again and the next session
-continues it), you stop it, or its time runs out. A run that fails because Claude did not answer
+continues it; if a session's budget stops the same task a second time, it waits for you with one
+card, '"Long report" needs more than a session's budget', and three buttons: **Raise session
+budget** (sets this project's budget per session to the amount it names and starts a session),
+**Raise its budget** (starts one session of that amount for this task; later sessions keep the
+budget they had) and **Cancel task**), you stop it, or its time runs out. A run that fails because Claude did not answer
 (the network, a rate limit) is tried again once at once; if it fails again the task reads
 "Failed:" with what went wrong, never the model's first sentence.
 
@@ -526,8 +545,8 @@ what your plan covers, or a Max plan's work stops early.
 ### Which Claude credential is used first
 
 With both a Claude subscription and an API key saved, Settings → **Claude: which to use first**
-lists them in the order Forerunner uses them, for everything: tasks, Chat, project setup,
-reviews and the model watch. **Move up** and **Move down** change the order; the change is in
+lists them in the order Forerunner uses them for tasks, Chat, project setup, reviews and the
+model watch (research tasks excepted: they use the API key first, see below). **Move up** and **Move down** change the order; the change is in
 Changes, where you can undo it. Each row says:
 
 - how it is used: the subscription always runs **through Claude Code**; an API key always goes
@@ -542,7 +561,8 @@ limit is reached, the subscription rests until the time Claude gives (an hour wh
 none), the call is made again with the API key, and the session log says so; a task stopped
 that way goes back to ready and runs on the next credential, without counting as a failed
 attempt. Until you choose an order, tasks use the subscription first and Chat, project setup
-and reviews use the API key first.
+and reviews use the API key first. Whatever the order, a research task (the researcher, the
+science evaluator) uses the API key first when one is saved: only there can it open web pages.
 
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
@@ -571,9 +591,17 @@ task**. Nothing waits silently with only a "Resume" that would run into the same
 Research works with an API key too. The researcher and the science evaluator read web pages
 by their address: public pages only (never this computer or your local network), with a GET
 and no passwords or cookies, at most 2 MB per page, and nothing on the project's block list.
-There is no web search on an API key, so a research task does best when it names the sources
-or sites to read (on a Claude subscription the researcher uses Claude Code's own web tools
-instead). The session log
+There is no web search on an API key (none is set up this round: research reads the pages the
+brief or the plan names, the official sites of what it researches and the pages those link
+to), so a research task does best when it names the sources or sites to read. With an API key
+saved, research tasks always run on it, whatever order you chose for your credentials, because
+only there can they open pages. With only a Claude subscription, the researcher and the science
+evaluator can search the web through Claude Code but cannot open the pages themselves (Forerunner
+refuses their page reading there); the plan card and New task say "Searches the web but opens no
+page on a Claude subscription", and their brief tells them to cite the results they used and say
+what they could not check. There is no screen for a project's site list or block list yet; a
+project that must stay closed can only be closed for the whole install (page reading off, as
+said below). The session log
 names each page read ("read the web page gohugo.io/about/"), the research file cites each page
 by its address, and the critic checks the claims against the pages the researcher actually
 got. A page that cannot be read (refused, missing, not a text page) is said in words to the
@@ -586,7 +614,8 @@ default autonomy for new projects, the monthly spending cap, quiet hours (a time
 where notifications go, reading urgent notifications aloud, the monthly critic calibration, the
 model watch's evaluations; and per project the autonomy, the project budget, the budget per
 session, the highest model its runs may use, small-project mode, the monthly handover test,
-Opus fast mode and speed or quality. Every change shows the same change card as in chat and is
+Opus fast mode, speed or quality and, for a project on GitHub, the status pull request. Every
+change shows the same change card as in chat and is
 listed in Changes. The language is shown but cannot be changed yet: the app works in English.
 **Desktop control: allowed applications** lists the programs your agent may use when desktop
 control is on; any other program needs your yes in the Inbox each session.
