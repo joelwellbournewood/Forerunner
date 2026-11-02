@@ -5072,3 +5072,88 @@ describe("the UI client against the real daemon: what the bench walks (phase E, 
     });
   }, 120_000);
 });
+
+describe("the UI client against the real daemon: a session on a repository opens the pull request the Overview lists (phase E, bench, C-62)", () => {
+  // The repository block above puts the done task and its PR into the store by hand; here a
+  // session does the work on a git host (bare repositories behind the memory host, as the
+  // bench's --githost serves them) and the Overview's list is read after it.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  const host = new MemoryGitHost("alice");
+
+  beforeAll(async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-pr-"));
+    const bare = join(dir, "seeded.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(dir, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(dir, "seed", "README.md"), "# seeded\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "seeded", private: true, cloneUrl: bare });
+    ({ rt, client } = await composeWithRolePlayer({}, { gitHost: host }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("Start runs the task on a branch, the critic accepts it, and its pull request waits for the person with its link", async () => {
+    const project = await client.createProject({
+      name: "On a repository",
+      goal: "A page in a repository",
+      repos: ["o/seeded"],
+    });
+    const task = await client.createTask(project.id, {
+      title: "Create the page skeleton in index.html",
+      outcome: "index.html is a valid HTML5 page with a heading",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    const states = async () =>
+      (await client.tasks(project.id))
+        .map((t) => `${t.title}=${t.status} (${t.reason})`)
+        .join(", ");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      states,
+      90_000,
+    );
+    const done = await client.task(task.id);
+    expect(done.task.status, await states()).toBe("done");
+    expect(done.runs.map((r) => [r.kind, r.specialist])).toEqual([
+      ["review", "critic"],
+      ["work", "coder"],
+    ]);
+    // The work is on its own branch of the repository, in the pull request the session opened.
+    const prUrl = done.task.prUrl ?? "";
+    expect(prUrl).toMatch(/^memory:\/\/o\/seeded\/pull\/\d+$/);
+    const view = await client.projectPullRequests(project.id);
+    expect(view.error).toBeNull();
+    expect(view.repository).toEqual({
+      fullName: "o/seeded",
+      url: "https://github.com/o/seeded",
+    });
+    const waiting = view.waiting.find((w) => w.kind === "task");
+    expect(waiting).toMatchObject({
+      taskId: task.id,
+      title: "Create the page skeleton in index.html",
+      url: prUrl,
+      review: "critic",
+    });
+    expect(waiting?.branch).toMatch(/^fr\//);
+    expect(waiting?.number).toBe(Number(prUrl.split("/").at(-1)));
+    // Merged on the host: no longer waiting, read from the host when asked.
+    await host.mergePullRequest({ owner: "o", name: "seeded" }, waiting?.number ?? 0);
+    expect(
+      (await client.projectPullRequests(project.id)).waiting.filter((w) => w.kind === "task"),
+    ).toEqual([]);
+  }, 150_000);
+});

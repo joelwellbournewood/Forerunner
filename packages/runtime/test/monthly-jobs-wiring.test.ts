@@ -18,6 +18,26 @@ import type { NotificationRecord } from "../src/notifications/types.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 const REGISTRY = join(process.cwd(), "evals", "registry");
+
+/**
+ * Waits until `cond` holds, at most `ms` of real time (at least 10 s, so a slow machine is not a
+ * failure); a timeout says what it waited for and what it saw.
+ */
+async function until(
+  cond: () => boolean,
+  what: string,
+  seen: () => string,
+  ms = 120_000,
+): Promise<void> {
+  const end = Date.now() + Math.max(ms, 10_000);
+  while (!cond()) {
+    if (Date.now() > end)
+      throw new Error(
+        `timed out after ${Math.round(ms / 1000)} s waiting for ${what}; saw ${seen()}`,
+      );
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 const LESSON =
   "Before touching the clamp module always run the zebra checklist from the team wiki first.";
 const SEED = {
@@ -68,10 +88,13 @@ describe("monthly jobs in the composed daemon", () => {
     // 1 November: a session that runs git in the project's workspace. Closing the runtime does
     // not wait for a scheduled run, and on Windows a folder a running git works in cannot be
     // removed (Windows CI: EBUSY on every retry). Wait for that run to end first.
-    const started = Date.now();
-    while (handoverAgent && rt?.scheduler.isActive(handoverAgent) && Date.now() - started < 90_000)
-      await new Promise((r) => setTimeout(r, 50));
-    expect(rt?.scheduler.isActive(handoverAgent)).toBe(false);
+    if (handoverAgent && rt)
+      await until(
+        () => !rt.scheduler.isActive(handoverAgent),
+        "the monthly handover's run to end",
+        () => `the handover still runs: ${rt.scheduler.isActive(handoverAgent)}`,
+        90_000,
+      );
     await rt?.close();
     // A process that has just ended (git) can still hold the folder for a moment on Windows.
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
@@ -147,10 +170,12 @@ describe("monthly jobs in the composed daemon", () => {
     });
     const calibrationStarts = () =>
       rt.scheduler.log.filter((l) => l.req.agentId === CALIBRATION_AGENT_ID);
-    const settle = async () => {
-      for (let i = 0; i < 600 && rt.scheduler.isActive(CALIBRATION_AGENT_ID); i++)
-        await new Promise((r) => setTimeout(r, 50));
-    };
+    // Waits for the run's state, never for a guess of how long it takes (Windows CI is several
+    // times slower; this failed once at load 11-12 with nothing said of what it saw).
+    const seen = () =>
+      `calibration running: ${rt.scheduler.isActive(CALIBRATION_AGENT_ID)}; starts: ${JSON.stringify(calibrationStarts().map((l) => l.result))}; notifications: ${records.map((r) => r.notification.kind).join(", ") || "none"}`;
+    const settle = () =>
+      until(() => !rt.scheduler.isActive(CALIBRATION_AGENT_ID), "the calibration run to end", seen);
     // 23 October: first sight after the day, nothing runs this month.
     await rt.scheduler.tick();
     expect(rt.scheduler.list().find((s) => s.id === CALIBRATION_SCHEDULE_ID)).toMatchObject({
@@ -168,7 +193,13 @@ describe("monthly jobs in the composed daemon", () => {
     await clock.set("2026-11-01T05:01:00Z");
     await rt.scheduler.tick();
     expect(calibrationStarts().map((l) => l.result)).toEqual(["started"]);
-    await settle();
+    await until(
+      () =>
+        !rt.scheduler.isActive(CALIBRATION_AGENT_ID) &&
+        records.some((r) => r.notification.kind === "critic_calibration"),
+      "the calibration run to end and raise its notification",
+      seen,
+    );
     const rec = records.find((r) => r.notification.kind === "critic_calibration");
     expect(rec?.notification).toMatchObject({ humanId: rt.human.id });
     expect(rec?.notification.title).toMatch(/^Critic calibration 2026-11-01/);
@@ -177,5 +208,5 @@ describe("monthly jobs in the composed daemon", () => {
     await rt.scheduler.tick();
     await settle();
     expect(calibrationStarts()).toHaveLength(1);
-  }, 120_000);
+  }, 300_000);
 });

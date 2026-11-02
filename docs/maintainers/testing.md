@@ -2171,7 +2171,13 @@ of the file. What it assembles, and why this way:
   `holdPlan` does the same at the install's planner, after the plan is made from the ready
   tasks the runner read, so two sessions can plan the same task on purpose. Holds and event
   waits (`waitForEvent`) time out in real time (60 s by default) so a broken scenario fails
-  instead of hanging. `setEstimate(taskId, usdMicro)` overrides a plan item's estimate.
+  instead of hanging. `setEstimate(taskId, usdMicro)` overrides a plan item's estimate. A
+  scenario never reads a log once and hopes it is complete: the email scenario waits for both
+  replies in the sent log (a reply can reach the mailbox before its send is logged; it failed
+  once under load with `["ack"]`), and a timeout says what it saw. The unit tests do the same:
+  `monthly-jobs-wiring.test.ts` waits for the calibration's state and notification with a
+  message (before: a 30 s loop that said nothing), and the `repo-create.test.ts` cases that
+  push and clone through the fake git host have 120 s, not the 20 s default (phase E, C-8).
 - **The clock** is a `SimulatedClock`; `advanceTo(iso)` moves it in scheduler ticks (60 s by
   default), so a schedule added with `schedule(install, { time: "06:00" })` fires through the
   real `Scheduler` in the human's time zone, and claim renewals, the budget's wall clock and the
@@ -2500,7 +2506,10 @@ matches the brief", "1 earlier turn", "no command tool"). The real-daemon file's
 walks" block runs Change the plan through the stand-in and checks the fields only the fake
 covered before (rule 3): a project's `working` while a session runs (the stand-in's first
 specialist call held), `lastSession.changedFiles`, the session's `statusText` "Ended: 1 task
-needs you", and the decisions' `plan` and `record` entries.
+needs you", and the decisions' `plan` and `record` entries; another runs a session on a
+repository (a bare repository behind the memory git host, as `--githost` serves one) and reads
+the pull request it opened from `GET /projects/:id/pull-requests` (before, that case put the
+done task and its PR into the store by hand; C-62).
 `FORERUNNER_BENCH_DELAY_MS` waits before each reply but the critic's; `criticDelayMs`
 (`FORERUNNER_BENCH_CRITIC_DELAY_MS`, default 0) waits before each of the critic's, abortable
 like the other, so Stop now or Cancel during "Being reviewed" can be walked and tested
