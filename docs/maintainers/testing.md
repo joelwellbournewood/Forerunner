@@ -2529,19 +2529,40 @@ was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no hand
    it, so an installed app never runs the stand-in unless a test put it there;
 3. starts the installed exe with no arguments, as a person does, on a fresh data folder with a
    space and non-ASCII letters (`FORERUNNER_HOME`), with `FORERUNNER_DAEMON_PROVIDER=bench` (the
-   shell forwards it as `daemon --provider bench`; `apps.md`, "Desktop shell"),
-   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` (the window's DevTools;
-   with wry's own `--disable-features` list, since WebView2 may use the variable in place of the
-   app's arguments, plus `CalculateNativeWinOcclusion`, so the window still paints and answers
-   the driver's clicks once the system browser opens over it), the vault a file in that folder,
+   shell forwards it as `daemon --provider bench`; `apps.md`, "Desktop shell"), the window's
+   DevTools asked for two ways on two ports (below), the vault a file in that folder,
    `FORERUNNER_SANDBOX_ENGINE=podman` (Docker "not installed", so Settings shows its "Get Docker
-   Desktop" link) and no credential of the runner (`windowEnv`);
-4. waits for `daemon.json` and `/health`, then for the window's page on the DevTools endpoint (a
-   page target on `http://tauri.localhost`, not the splash), and drives it over raw CDP with the
-   Android emulator job's driver (`apps/mobile/e2e/cdp.mjs`, ADR 0054; the page's console is
-   forwarded as `webview:` lines): Set up later, New project with a one-line brief, the plan
-   card in the Inbox (by its title, with its task lines), Approve and start ("Plan approved: N
-   tasks written"), the session to its end, every task done and shown on the Tasks tab;
+   Desktop" link) and no credential of the runner (`windowEnv`). The two ways, each port first
+   checked free on 127.0.0.1 (`freePort`: a port another process holds, or one in a range
+   Windows reserves, is replaced by one the system hands out, and the result says so):
+   - the shell's own switch, `FORERUNNER_WEBVIEW_DEVTOOLS_PORT=9333` (`apps.md`, "The windows'
+     DevTools port"): the shell puts `--remote-debugging-port=9333` with wry's
+     `--disable-features` list and `CalculateNativeWinOcclusion` into the arguments it gives
+     WebView2 for every window, and logs `WebView2 DevTools on port 9333 for every window
+     (...)`, which the check requires (`parseShellDevtools`);
+   - WebView2's own variable, `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9334
+     --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion
+     --enable-logging` (read by the WebView2 loader; wry's list repeated in case WebView2 uses
+     the variable in place of the app's arguments; occlusion tracking off so the window still
+     paints and answers the driver's clicks once the system browser opens over it;
+     `--enable-logging` so the browser writes `chrome_debug.log` in its data folder);
+4. waits for `daemon.json` and `/health`, then up to 180 s for the window's page on either port
+   (a page target on `http://tauri.localhost`, `https://tauri.localhost` or `tauri://localhost`;
+   the splash is `http://frshell.localhost/splash` and never matches). The port that answers
+   says which way worked. Then, on Windows, `diagnoseWebview` (below) reads msedgewebview2.exe's
+   command line once attached for which of the two switches are on it (a note in the summary, "which way
+   the DevTools switch reached WebView2"). If neither port answers, before the check fails:
+   a plain TCP connection to each port (`tcpProbe`: refused, accepted or no answer, where fetch
+   only says "fetch failed"), the Windows diagnostics, and one more try where they saw this
+   app's browser listen or its `DevToolsActivePort` points (DevTools that opened somewhere not
+   asked for); the failure's detail is the wait's own words, the verdict, the probes and what each
+   endpoint answered last (Node's WebSocket sends no Origin header, so WebView2's DevTools takes
+   the driver without `--remote-allow-origins`, which is never set). Then it
+   drives the page over raw CDP with the Android emulator job's driver (`apps/mobile/e2e/cdp.mjs`,
+   ADR 0054; the page's console is forwarded as `webview:` lines): Set up later, New project with
+   a one-line brief, the plan card in the Inbox (by its title, with its task lines), Approve and
+   start ("Plan approved: N tasks written"), the session to its end, every task done and shown on
+   the Tasks tab;
 5. asserts what the shell did, from its own log (`<home>\logs\desktop-shell.log`; the lines are
    `windows::handed_to_browser_line` and `folder::handed_to_file_manager_line`, each pinned by a
    cargo test and read by `parseHandoffs`):
@@ -2560,9 +2581,60 @@ was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no hand
    page where the journey stopped, when it stopped: also the whole screen then (Windows
    PowerShell, `desktopScreenshot`, `99-stopped-…-desktop.png`), for a stop before the window's
    page could be driven or a dialog outside it; both logs, the model-call log and `result.json`
-   (every check), then quits: `POST /shutdown`, then the app's process tree. The job's artifact
-   `desktop-window-check` holds them; the step summary lists every check. Exit 1 when a required
-   check failed.
+   (every check, and under `devtools` the ports, which answered, the probes and each diagnosis),
+   then quits: `POST /shutdown`, then the app's process tree. The job's artifact
+   `desktop-window-check` holds them, with `devtools-<attached|unreachable>.json` (the diagnosis,
+   its lines and verdict), PowerShell's own `devtools-*.raw.json` and the browser's log
+   (`webview-*-chrome_debug.log`, its last 2 MB) when there is one; the step summary lists every
+   check, then the diagnostics' lines. Exit 1 when a required check failed.
+
+**The WebView2 diagnostics** (`collectWebviewDiagnostics`, `diagnoseWebview`, Windows only). A
+fixed Windows PowerShell script (`WEBVIEW_DIAG_PS`, passed as `-EncodedCommand`; its only inputs
+are the two ports and its output file, in `FR_DEVTOOLS_PORTS` and `FR_DIAG_OUT`; 90 s at most,
+and a failure or a time-out is reported in words, never thrown, so the original failure always
+stands) collects: every msedgewebview2.exe process with its parent and command line
+(Win32_Process); the TCP ports they listen on (`Get-NetTCPConnection -State Listen
+-OwningProcess`) and what holds the two ports; the policy values under `HKLM`, `HKCU` and
+`HKLM\...\WOW6432Node` `SOFTWARE\Policies\Microsoft\Edge` whose names mention debugging,
+developer tools, arguments or WebView, and every value under its `WebView2` key (the WebView2
+loader's overrides: `AdditionalBrowserArguments`, `BrowserExecutableFolder`,
+`ReleaseChannelPreference`, `UserDataFolder`, ...); the WebView2 runtime's version (EdgeUpdate's
+`pv` and the exe's own); `netsh interface ipv4 show excludedportrange protocol=tcp`. Node then
+finds this app's browser process (no `--type=`; the app's child, or its `--user-data-dir` under
+`app.forerunner.desktop`, or its `--webview-exe-name`), reads which `--remote-debugging-port`
+values are on its command line (`switchMechanism`: both, the shell's only, the variable's only,
+another port, none; Chromium uses the last of two), the `DevToolsActivePort` file and the
+DevTools lines of `chrome_debug.log` in its data folder (`userDataClues`), and says it in one
+sentence (`devtoolsVerdict`).
+
+How to read the next run (the first, run 41423382129 on 6048d50, failed at "the window's page is
+reachable over DevTools" with "GET http://127.0.0.1:9333/json: fetch failed", while the window
+had painted and the daemon ran on the stand-in, so the app's environment had arrived):
+
+- **The journey runs.** "the window's page is reachable over DevTools" names the port that
+  answered: 9333 means the shell's switch, 9334 means `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`.
+  The note "which way the DevTools switch reached WebView2" says which switches were on
+  msedgewebview2.exe's command line: "both" (the variable is appended to the app's arguments,
+  as Microsoft documents, and Chromium used the later one), "the shell's switch only" (WebView2
+  did not use the variable for this app: the first run's cause), or "the variable only" (the
+  app's arguments were replaced or merged away). The checks after it are the journey's own.
+- **Neither port answers**, and the verdict says which of three it was:
+  - "the switch never reached msedgewebview2.exe": neither switch is on its command line (with
+    any policy that bears on it); the shell's log line says whether the shell turned the switch
+    on. The verdict goes on with the check's other arguments: "... did arrive, so the port
+    switch alone was removed" (`--enable-logging`, which only the variable carries, or
+    `CalculateNativeWinOcclusion`, which both carry and wry's default has not, is there: WebView2
+    strips the switch), or "... so they were dropped whole" (the arguments never got from the app
+    to the browser: a loader override, or a browser started earlier on the same data folder).
+  - "the switch reached msedgewebview2.exe (port N, by ...) but no DevTools server listens":
+    followed by what was found, a `DeveloperToolsAvailability` or `RemoteDebuggingAllowed`
+    policy, another program on the port, a port in an excluded range, the browser log's own
+    line (for example "Cannot start http server for devtools"), or "no policy, no other holder,
+    not an excluded port".
+  - "... but DevTools opened elsewhere: <address:port>" (another port, or `::1` only): the check
+    tries there once more and, if the window's page answers, goes on, with the endpoint named.
+  - "no msedgewebview2.exe browser process ..." or "no WebView2 diagnostics: <PowerShell's
+    words>": the diagnostics' own failure, with the original failure still standing.
 
 A dry run of the journey without the shell, against a bench in Chromium (the hand-off checks
 are reported as skipped; in a browser a link opens a tab):
@@ -2575,16 +2647,32 @@ node scripts/desktop-window-check.mjs --attach http://127.0.0.1:9341 --app-origi
 node scripts/bench/stop.mjs --name win
 ```
 
-Tests: `scripts/desktop-window-check.test.ts` (the options; the app's environment and that the
-variable and provider name are the ones `supervisor.rs` forwards; the stand-in lands where
+Tests: `scripts/desktop-window-check.test.ts` (the options, `--cdp-port` within what the shell
+accepts; the app's environment with both DevTools switches on two ports, and that the variables,
+the provider name, the shell's feature lists and its log line are the ones `supervisor.rs` and
+`devtools.rs` use; a port that cannot be bound replaced and the other switch's never handed out
+twice; a TCP probe accepted and refused; the endpoints' answers in words; the WebView2
+diagnostics on command lines and PowerShell output shaped as on the runner: switches with quoted
+values, which way the switch came, the netsh ranges, lists in every form Windows PowerShell's
+ConvertTo-Json writes, this app's browser found by parent, data folder or exe name and no other
+program's, each verdict (never reached, the arguments dropped whole or the port switch alone
+removed; reached with a policy, a held and an excluded port and
+the browser's log line; listening; opened elsewhere, with the endpoints to try), the
+`DevToolsActivePort` file and the log lines; the PowerShell script fixed, given only the ports
+and the output file in variables and passed encoded, its failures and time-out in words, nothing
+run off Windows; the time limit of the program runner; the stand-in lands where
 `BENCH_ENTRY` resolves from an installed CLI; the shell's log lines as tauri-plugin-log writes
 them, with the words read from `windows.rs` and `folder.rs`; folders compared as Windows does;
 `seedPrUrl` on a real SQLite file and the column the Tasks tab reads; the page server; the whole
 screen at a stop (`desktopScreenshot`: Windows PowerShell with the file's path only in `FR_SHOT`,
-nothing off Windows, a failure in PowerShell's words); the step summary; the job's shape in
-`desktop.yml`). Not covered: notifications (a toast is not in the
+nothing off Windows, a failure in PowerShell's words); the step summary, with the diagnostics'
+lines after the checks; the job's shape in `desktop.yml`). The shell's side is
+`devtools.rs`'s cargo tests (`apps.md`). Not covered: notifications (a toast is not in the
 page), the tray and Quit from it, a second window, a deep link; a standard (non-administrator)
-user (U-012).
+user (U-012). Not run anywhere but a Windows runner: the PowerShell script itself (no PowerShell
+where it was written; a syntax or runtime error shows as "no WebView2 diagnostics: PowerShell
+exit 1: <its words>" and leaves the original failure standing) and WebView2's handling of
+either switch.
 
 ### The Docker sandbox check (Linux)
 

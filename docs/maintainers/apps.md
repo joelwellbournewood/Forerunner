@@ -1190,7 +1190,10 @@ apps/desktop/src-tauri/
                       watch_external_restart() for a daemon the shell did not start
     events.rs         the Rust /events subscription and the 10 s /health monitor
     tray.rs           tray icon, menu items, refresh() from tray_view, menu dispatch
-    windows.rs        main window (build/rebuild with the injection), splash, deep-link navigation
+    windows.rs        main window (build/rebuild with the injection), splash, deep-link navigation;
+                      new_window(): every window, with the same WebView2 arguments
+    devtools.rs       FORERUNNER_WEBVIEW_DEVTOOLS_PORT (development and CI only): the windows'
+                      WebView2 arguments, read once at start (pure, unit-tested)
     hotkey.rs         the chord grammar, HotkeyState (registration state machine), <config>/hotkey.json,
                       startup_chord(), the event and status payloads (pure, unit-tested)
     hotkey_shell.rs   tauri-plugin-global-shortcut with one handler, install() at start, the
@@ -1502,6 +1505,37 @@ and `bench-live` load the repository's `testenv/` and refuse to start without it
 install they run only where a test copied it in (the window check does); a person never sets the
 variable. The self-test forwards it too.
 
+**The windows' DevTools port (`FORERUNNER_WEBVIEW_DEVTOOLS_PORT`, development and CI only;
+`devtools.rs`).** Read once at start, from the process environment only, before any window
+exists (`devtools::resolve` in `lib.rs`'s setup, kept as the managed `WebviewArgs`). Only a
+decimal port from 1024 to 65535 is accepted (surrounding spaces ignored; no sign, no leading
+zero, nothing after it); anything else is refused with a warning naming the value (escaped, cut
+at 32 characters) and never reaches WebView2. Accepted on Windows, every window gets the WebView2
+arguments `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion
+--remote-debugging-port=<port>`: wry's own default list (naming arguments replaces wry's default,
+so it is repeated, `WRY_DISABLED_FEATURES`), occlusion tracking off so a window driven over
+DevTools keeps painting while the system browser covers it, and the port. The shell log says so
+in a warning: `WebView2 DevTools on port <port> for every window
+(FORERUNNER_WEBVIEW_DEVTOOLS_PORT, development and CI only): <arguments>`. Off Windows nothing
+changes (WebKitGTK has no such port) and the log says the variable was ignored; unset or empty,
+the windows get wry's default and nothing is logged. Every window (the main window and the
+splash) is built by `windows::new_window`, which gives each the same arguments: WebView2 refuses
+a second environment on one data folder with other options, and a test
+(`every_window_is_built_in_one_place`) fails if a window is built anywhere else. The CI window
+check sets it (`scripts/desktop-window-check.mjs`, `testing.md`): on the first Windows run,
+WebView2's own `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` opened no DevTools port, so the check asks
+both ways, on two ports, and reads which answered.
+
+Why it is safe to ship: a DevTools port lets any local process drive the window, and the window
+holds the daemon token (`inject.rs`). The variable gives nothing that a process able to set the
+app's environment does not already have: such a process can set
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<n>`, which the WebView2 loader is
+documented to honour for every WebView2 app, or start the app under a debugger. It is never set by the
+installer, the shell, the daemon or the UI; a person never sets it. Chromium binds the port on
+127.0.0.1 only and, without `--remote-allow-origins` (never added), refuses DevTools WebSocket
+connections that carry a web page's Origin, so a page in the system browser cannot drive the
+window through it. Development and CI only, like `FORERUNNER_DAEMON_PROVIDER`.
+
 **Logs and secrets.** The shell logs through `tauri-plugin-log` to `<logs>/desktop-shell.log`
 (stdout as well in debug builds). The token is a `Secret` (`Debug`/`Display` print
 `[redacted]`), every error string from the HTTP client passes through `redact()`, and the
@@ -1577,7 +1611,10 @@ without them, malformed refused, control characters and the cap, the status view
 safe routes, navigate script, navigation policy); `window_state` (monitor check, minimum size,
 file round trip, a minimised window never remembered, U-077); `windows` (the first-close notice
 marked only once shown, U-077; the hand-off line names how a link left and where, never a
-query, a fragment or credentials); `folder` (the hand-off line names the folder); `actions` (Quit asks from the count `/health` gives when it is
+query, a fragment or credentials); `devtools` (FORERUNNER_WEBVIEW_DEVTOOLS_PORT accepts only a
+decimal port from 1024 to 65535 and refuses the rest in an escaped, shortened warning; the
+arguments keep wry's features and add the port, on Windows only; every window is built by
+`windows::new_window`); `folder` (the hand-off line names the folder); `actions` (Quit asks from the count `/health` gives when it is
 chosen, U-077); `state` (tray view for unreachable, kill/resume, email availability and
 toggle, busy, desktop control on (title, tooltip first line, item, stop enabled) and cleared
 on off, "the desktop" without an app and a new `on` replacing the names, the last report kept
