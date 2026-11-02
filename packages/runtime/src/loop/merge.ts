@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import {
+  type BranchRules,
   type CheckRunInfo,
   type CommitStatusInfo,
   type GitHost,
@@ -7,6 +8,8 @@ import {
   GitOps,
   type GitTokenSource,
   gitAuthFor,
+  type MergeMethod,
+  ownChangeId,
   type RepoRef,
   resolveGitToken,
 } from "@forerunner/capabilities";
@@ -19,40 +22,63 @@ import {
   newId,
   safeSegment,
 } from "@forerunner/platform";
-import type { HumanRequestRow, StateStore, TaskRow } from "@forerunner/state";
+import type {
+  HumanRequestRow,
+  MergeRecordRow,
+  MergeRecordState,
+  ProjectRow,
+  StateStore,
+  TaskRow,
+} from "@forerunner/state";
 import { z } from "zod";
 import type { ToolExecutionContext, ToolResult, ToolSpec } from "../agent/tools.ts";
-import type { EnforcementHooks, RunContext } from "../enforcement/hooks.ts";
-import type { TokenIssuer } from "../enforcement/token.ts";
+import { SessionBudget } from "../enforcement/budget.ts";
+import { approvalKeyFor, type EnforcementHooks, type RunContext } from "../enforcement/hooks.ts";
+import type { AuditPort } from "../enforcement/ports.ts";
+import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
 import type { MergeOutcome, MergePort, MergeRequest, MergeStatus } from "./ports.ts";
 
 /**
- * Level 3 Trusted merges reviewed PRs (spec J.9, ADR 0062). After an accepting review the
- * session runner hands the task to `ReviewedPrMerge`, which makes one `merge_pr` tool call
- * through the enforcement hooks on a token derived from the session's (that tool only, the
- * task worktree only). The hooks decide by the autonomy table: `merge_pr` is free at level 3;
- * below it the unattended call is refused as `autonomy_insufficient` with its audit row and
- * the PR stays open for the human. The tool itself carries the checks rule, so it holds for
- * every caller:
+ * The merge of a reviewed pull request (spec J.9; ADR 0062, amended by ADR 0111). After an
+ * accepting review the session runner hands the task to `ReviewedPrMerge.mergeReviewed`, which
+ * first pins the reviewed commit in the task's merge record (`merge_record`: the task worktree's
+ * HEAD at the accept, the patch id of the task's own change), then goes through
+ * `mergeRecorded`, the one way anything merges a task's pull request: the session's accept, the
+ * git host watcher's retry (`retryWaiting`), the daemon's start (`resumeAtStart`), and the
+ * person's Merge in the app. `mergeRecorded` asks one gate first (`mayMerge`: today unattended
+ * only at autonomy level 3, the level read again at every call; otherwise the person's
+ * approval), then makes one `merge_pr` tool call through the enforcement hooks with its audit
+ * row: on a token derived from the session's in a session, on its own narrow token
+ * (`merge_pr` only, that worktree, budget 0, a short expiry) outside one. The tool carries the
+ * rules that hold for every caller:
  *
- *   - the PR head must be the reviewed commit (the task worktree's HEAD): a head pushed after
- *     the review is never merged;
- *   - a base that moved is rebased onto in the worktree (as the executor does before the PR)
- *     and the branch pushed with a lease; a conflict is never merged;
- *   - the host's check runs and commit statuses on the head decide: any failed one refuses,
- *     a running or pending one is waited for (bounded by the wait and the session's wall
- *     clock); none on the head while the base branch reports some is pending too (the host has
- *     CI that has not reported yet); none on either means the host has no CI and the merge
- *     goes on; after a rebase every check the reviewed head had must pass again on the new head;
- *   - the merge is pinned to the head that was checked (`sha`), so a push in between fails it.
+ *   - the PR head must be the record's reviewed commit: a head pushed after the review is never
+ *     merged (the record moves to a head only when the task's own change on it is unchanged);
+ *   - merge commits only (`merge_method: "merge"`, pinned to the head that was checked): a
+ *     repository or a branch rule that allows none is never merged by Forerunner;
+ *   - the branch's rules are read first and never gone around: an approving review, a code
+ *     owner's review or anything else Forerunner cannot give leaves the PR to the person with
+ *     one sentence; required checks are waited for as checks;
+ *   - the merge step never rebases and never force-pushes: a base that moved is merged as it
+ *     is (GitHub combines the two), unless an update is needed (a rule that the branch be up to
+ *     date, or the caller's mode); then the base is merged into the branch (a merge commit, a
+ *     normal push) when that merges cleanly, and every check the reviewed head had must pass
+ *     again on the new head;
+ *   - the host's check runs and commit statuses on the head decide: a failed one refuses, a
+ *     running one is waited for (bounded in a session, one look in a retry); none on the head
+ *     while the base reports some is pending.
  *
- * Every refusal other than the hooks' files one request for the human; the outcome is written
- * on the task row (`reason`) and reaches the session summary and handoff.
+ * A merge that waits keeps its record, so a sleep, a crash or the app closing loses nothing;
+ * a merge left to the person always carries one sentence on the record.
  */
 export const MERGE_PR_TOOL = "merge_pr";
-/** How long the merge waits for running checks before it leaves the PR to the human. */
+/** How long the merge in a session waits for running checks; the retry finishes it later. */
 export const DEFAULT_CHECKS_WAIT_MS = 10 * 60_000;
 export const DEFAULT_CHECKS_POLL_MS = 30_000;
+/** A retry's own token lives this long (one look at the PR, the merge, the audit row). */
+const RETRY_TOKEN_MS = 10 * 60_000;
+/** Retries of one record before its checks count as stuck (about a day at a minute's poll). */
+export const MAX_MERGE_ATTEMPTS = 1440;
 
 /** Conclusions that refuse a merge; success, neutral and skipped pass. */
 const FAILED_CONCLUSIONS: ReadonlySet<string> = new Set([
@@ -78,8 +104,9 @@ export interface ChecksVerdict {
 /**
  * The host's check runs on one commit (the latest run per name) and its commit statuses (the
  * latest per context: `failure` and `error` refuse, `pending` waits). `required` are names
- * that must be present and pass (the checks the reviewed head had, after a rebase); a missing
- * one is pending, since the host may not have started it yet.
+ * that must be present and pass (the branch rule's checks, and those the reviewed head had
+ * when the base was merged in since); a missing one is pending, since the host may not have
+ * started it yet.
  */
 export function judgeChecks(
   runs: readonly CheckRunInfo[],
@@ -134,11 +161,14 @@ async function ciOf(
 const MergePrInput = z.object({
   /** The pull request's web URL (its host must be in the run's domain allowlist). */
   pr_url: z.string().min(1).max(2000),
-  /** The reviewed commit; the PR head must be this one. */
+  /** The reviewed commit (the merge record's); the PR head must be this one. */
   head_sha: z.string().min(1).max(200),
-  /** The task worktree on the PR branch, for the rebase when the base moved. */
+  /** The task worktree on the PR branch, for bringing the base in when that is needed. */
   worktree: z.string().min(1).optional(),
-  method: z.enum(["merge", "squash", "rebase"]).optional(),
+  /** Bring a base that moved into the branch first, even without a rule that says so. */
+  update: z.boolean().optional(),
+  /** The patch id of the reviewed change: a head made by bringing the base in must keep it. */
+  own_change_id: z.string().min(1).max(200).optional(),
 });
 export type MergePrInput = z.infer<typeof MergePrInput>;
 
@@ -146,30 +176,43 @@ export type MergePrInput = z.infer<typeof MergePrInput>;
 export interface MergePrArtifacts {
   status: Exclude<MergeStatus, "not_allowed" | "unverified">;
   message: string;
+  /** One sentence for the person (the merge record's) when it did not merge. */
+  sentence?: string;
   headSha?: string;
   mergeSha?: string;
-  rebased: boolean;
+  method?: MergeMethod;
+  /** The PR was already merged on the host (by the person, or inside another merge). */
+  alreadyMerged?: boolean;
+  /** The base was merged into the branch before the merge (never a rebase). */
+  updated: boolean;
   failedChecks?: string[];
   pendingChecks?: string[];
   conflicts?: string[];
 }
 
+/** One call's answer: the tool's, or the hooks' refusal of the call. */
+type CallResult = Omit<MergePrArtifacts, "status"> & {
+  status: Exclude<MergeStatus, "unverified">;
+};
+
 export interface MergePrToolDeps {
   host: GitHost;
   clock: Clock;
-  /** Git over HTTPS for the rebase push (the PR executor's token, read when it runs; U-082). */
+  /** Git over HTTPS for the push of a merged-in base (the PR executor's token, read when it runs; U-082). */
   token?: GitTokenSource;
   identity?: GitIdentity;
   checksWaitMs?: number;
   checksPollMs?: number;
+  /** The branch got a new head (the base merged in, pushed): the record moves to it. */
+  onNewHead?: (sha: string) => Promise<void>;
 }
 
-/** The `merge_pr` tool: class `merge_pr` (free at autonomy 3), the checks rule in code. */
+/** The `merge_pr` tool: class `merge_pr`, the rules above in code. */
 export function mergePrTool(deps: MergePrToolDeps): ToolSpec<MergePrInput> {
   return {
     name: MERGE_PR_TOOL,
     description:
-      "Merge a reviewed pull request: only at the reviewed head, after a rebase when the base moved, never with a failed or running check or a conflict.",
+      "Merge a reviewed pull request with a merge commit: only at the reviewed head, only where the branch's rules allow it, never with a failed or running check or a conflict, never rebased or force-pushed.",
     schema: MergePrInput,
     actionClass: "merge_pr",
     risk: "medium",
@@ -188,6 +231,64 @@ export function mergePrTool(deps: MergePrToolDeps): ToolSpec<MergePrInput> {
   };
 }
 
+/** "#4" for the pull request in a sentence. */
+function prName(n: number): string {
+  return `#${n}`;
+}
+
+/**
+ * The rules Forerunner cannot meet, as the record's sentence (ADR 0111). Nothing here is ever
+ * gone around, on an unattended merge or on the person's click.
+ */
+export function rulesBlock(
+  rules: BranchRules,
+  n: number,
+  base: string,
+): { status: "blocked_by_rules" | "merge_commits_off"; message: string; sentence: string } | null {
+  const pr = prName(n);
+  if (rules.unreadable)
+    return {
+      status: "blocked_by_rules",
+      message: `the protection of ${base} could not be read and the token is an admin's`,
+      sentence: `Forerunner cannot read the rules of ${base}, and your token could go around them: merge ${pr} on GitHub.`,
+    };
+  if (rules.requiredApprovals > 0)
+    return {
+      status: "blocked_by_rules",
+      message: `${base} needs ${rules.requiredApprovals === 1 ? "an approving review" : `${rules.requiredApprovals} approving reviews`}`,
+      sentence:
+        "This repository needs an approving review before merging, and GitHub does not let you approve your own pull request: merge it on GitHub once someone else approved it.",
+    };
+  if (rules.codeOwnerReview)
+    return {
+      status: "blocked_by_rules",
+      message: `${base} needs a code owner's review`,
+      sentence:
+        "This repository needs a code owner's review before merging: merge it on GitHub once a code owner approved it.",
+    };
+  if (rules.allowedMethods && !rules.allowedMethods.includes("merge"))
+    return {
+      status: "merge_commits_off",
+      message: `the rules of ${base} allow no merge commit`,
+      sentence: `The rules of ${base} allow no merge commits, and Forerunner merges only with one: merge ${pr} on GitHub.`,
+    };
+  if (rules.blockers.length) {
+    const what = listWords(rules.blockers);
+    return {
+      status: "blocked_by_rules",
+      message: `the rules of ${base} need ${what}`,
+      sentence: `The rules of ${base} need ${what}, which Forerunner cannot give: merge ${pr} on GitHub.`,
+    };
+  }
+  return null;
+}
+
+function listWords(items: readonly string[]): string {
+  return items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 async function mergeChecked(
   deps: MergePrToolDeps,
   input: MergePrInput,
@@ -196,27 +297,56 @@ async function mergeChecked(
   const { host, clock } = deps;
   const ref = parsePullUrl(input.pr_url);
   if (!ref)
-    return { status: "failed", message: `not a pull request URL: ${input.pr_url}`, rebased: false };
+    return {
+      status: "failed",
+      message: `not a pull request URL: ${input.pr_url}`,
+      sentence: "Forerunner could not read which pull request to merge: merge it on GitHub.",
+      updated: false,
+    };
+  const name = prName(ref.number);
   let pr = await host.getPullRequest(ref.repo, ref.number);
-  if (pr.merged || pr.state !== "open")
+  if (pr.merged)
     return {
       status: "closed",
-      message: pr.merged ? "already merged" : "the pull request is closed",
-      rebased: false,
+      message: "already merged",
+      alreadyMerged: true,
+      ...(pr.mergeCommitSha ? { mergeSha: pr.mergeCommitSha } : {}),
+      updated: false,
     };
-  if (pr.head.sha !== input.head_sha)
+  if (pr.state !== "open")
     return {
-      status: "head_moved",
-      message: `the PR head ${short(pr.head.sha)} is not the reviewed commit ${short(input.head_sha)}`,
-      headSha: pr.head.sha,
-      rebased: false,
+      status: "closed",
+      message: "the pull request is closed",
+      sentence: `${name} was closed without merging.`,
+      updated: false,
     };
+  if (pr.head.sha !== input.head_sha) return headMoved(name, pr.head.sha, input.head_sha);
+  // Merge commits only: a repository that allows none is never merged by Forerunner.
+  if ((await host.getRepo(ref.repo)).allowMergeCommit === false)
+    return {
+      status: "merge_commits_off",
+      message: "the repository does not allow merge commits",
+      sentence: `This repository does not allow merge commits, and Forerunner merges only with one: merge ${name} on GitHub, or allow merge commits in its settings.`,
+      updated: false,
+    };
+  // The branch's rules, read before anything else: never gone around.
+  const rules = await host.getBranchRules(ref.repo, pr.base.ref);
+  const blocked = rulesBlock(rules, ref.number, pr.base.ref);
+  if (blocked) return { ...blocked, updated: false };
+
   let head = pr.head.sha;
-  let rebased = false;
-  let required: string[] = [];
-  if (input.worktree) {
-    // The token is scoped to the repository's clone origin: a worktree whose remote points at
-    // another host never receives it.
+  let updated = false;
+  let required = [...rules.requiredChecks];
+  if (rules.upToDate || input.update === true) {
+    // The branch must be up to date: the base is merged in (a merge commit and a normal push),
+    // never rebased onto, so work the branch merged in stays as it is.
+    if (!input.worktree)
+      return {
+        status: "failed",
+        message: "the branch must be brought up to date and the task folder is gone",
+        sentence: `${name} must be brought up to date with ${pr.base.ref} first, and its task folder is gone: update it on GitHub, then merge it.`,
+        updated: false,
+      };
     const token = await resolveGitToken(deps.token);
     const auth = token ? gitAuthFor(token, (await host.getRepo(ref.repo)).cloneUrl) : undefined;
     const git = new GitOps({
@@ -227,33 +357,43 @@ async function mergeChecked(
     const local = await git.headSha();
     if (local !== head)
       return {
-        status: "head_moved",
-        message: `the worktree is at ${short(local)}, the PR head at ${short(head)}`,
-        headSha: head,
-        rebased: false,
+        ...headMoved(name, head, input.head_sha),
+        message: `the task folder is at ${short(local)}, the PR head at ${short(head)}`,
       };
     await git.fetch();
     const base = `origin/${pr.base.ref}`;
     if (!(await git.isAncestor(base, "HEAD"))) {
-      // The base moved since the PR: rebase first (spec F, as the executor does before the
-      // PR). The checks of the reviewed head must then pass again on the rebased one.
       const beforeCi = await ciOf(host, ref.repo, head);
       const before = judgeChecks(beforeCi.runs, [], beforeCi.statuses);
-      if (before.state === "failed") return checksFailed(before, head, false);
-      const rb = await git.rebaseOnto(base);
-      if (!rb.ok)
+      if (before.state === "failed") return checksFailed(before, head, false, name);
+      const merged = await git.mergeFrom(base, `Merge ${pr.base.ref} into ${pr.head.ref}`);
+      if (!merged.ok)
         return {
           status: "conflict",
-          message: `rebasing ${pr.head.ref} onto ${pr.base.ref} conflicts in ${rb.conflicts.join(", ") || "the tree"}`,
-          conflicts: rb.conflicts,
+          message: `bringing ${pr.base.ref} into ${pr.head.ref} conflicts in ${merged.conflicts.join(", ") || "the tree"}`,
+          sentence: `${name} conflicts with ${pr.base.ref}${merged.conflicts.length ? ` in ${listWords(merged.conflicts.slice(0, 3))}` : ""}: resolve it on the branch, then merge it.`,
+          conflicts: merged.conflicts,
           headSha: head,
-          rebased: false,
+          updated: false,
         };
-      await git.push(pr.head.ref, { force: true, defaultBranch: pr.base.ref });
+      if (input.own_change_id && (await ownChangeId(git, base)) !== input.own_change_id) {
+        // Bringing the base in changed the reviewed change itself: back to the reviewed head.
+        await git.createBranch(pr.head.ref, head);
+        return {
+          status: "head_moved",
+          message: `bringing ${pr.base.ref} in changed the reviewed change`,
+          sentence: `${name} changed when ${pr.base.ref} was merged into it, so it waits for you: look at it, then merge it.`,
+          headSha: head,
+          updated: false,
+        };
+      }
+      await git.push(pr.head.ref, { defaultBranch: pr.base.ref });
       head = await git.headSha();
-      rebased = true;
+      updated = true;
+      await deps.onNewHead?.(head);
       required = [
         ...new Set([
+          ...required,
           ...beforeCi.runs.map((r) => r.name),
           ...beforeCi.statuses.map((st) => st.context),
         ]),
@@ -266,84 +406,152 @@ async function mergeChecked(
   for (;;) {
     pr = await host.getPullRequest(ref.repo, ref.number);
     if (pr.merged || pr.state !== "open")
-      return { status: "closed", message: "the pull request was closed meanwhile", rebased };
-    const stale = rebased && pr.head.sha === input.head_sha;
-    if (stale && clock.now() + pollMs <= deadline) {
-      // The host has not seen the rebase push yet: wait for it, as for a running check.
-      await clock.sleep(pollMs, ctx.signal);
-      continue;
-    }
-    if (pr.head.sha !== head)
       return {
-        status: "head_moved",
-        message: `the PR head moved to ${short(pr.head.sha)} while the merge waited`,
-        headSha: pr.head.sha,
-        rebased,
+        status: "closed",
+        message: pr.merged ? "merged meanwhile" : "the pull request was closed meanwhile",
+        ...(pr.merged
+          ? { alreadyMerged: true, ...(pr.mergeCommitSha ? { mergeSha: pr.mergeCommitSha } : {}) }
+          : { sentence: `${name} was closed without merging.` }),
+        updated,
       };
-    if (pr.mergeable === false)
+    // The host has not seen the push of the merged-in base yet: like a running check.
+    const stale = updated && pr.head.sha === input.head_sha;
+    if (!stale && pr.head.sha !== head) return { ...headMoved(name, pr.head.sha, head), updated };
+    if (!stale && pr.mergeable === false) {
+      // The files, when the task folder can tell (the host only says "not mergeable").
+      const files = input.worktree
+        ? await conflictsIn(deps, ref.repo, input.worktree, pr.base.ref)
+        : [];
       return {
         status: "conflict",
-        message: `the host reports ${pr.head.ref} conflicts with ${pr.base.ref}`,
+        message: `the host reports ${pr.head.ref} conflicts with ${pr.base.ref}${files.length ? ` in ${files.join(", ")}` : ""}`,
+        sentence: `${name} conflicts with ${pr.base.ref}${files.length ? ` in ${listWords(files.slice(0, 3))}` : ""}: resolve the conflict on GitHub, then merge it.`,
+        ...(files.length ? { conflicts: files } : {}),
         headSha: head,
-        rebased,
+        updated,
       };
-    const ci = await ciOf(host, ref.repo, head);
-    let verdict = judgeChecks(ci.runs, required, ci.statuses);
-    if (verdict.state === "none" && pr.base.sha) {
-      // Nothing on the head is only "no CI" when the base branch reports nothing either; a
-      // base with checks means the host has CI that has not reported on this head yet.
-      const baseCi = await ciOf(host, ref.repo, pr.base.sha);
-      if (baseCi.runs.length || baseCi.statuses.length)
-        verdict = {
-          state: "pending",
-          failed: [],
-          pending: [`a check on the head (${pr.base.ref} reports CI, the head none yet)`],
-        };
     }
-    if (verdict.state === "failed") return checksFailed(verdict, head, rebased);
+    let verdict: ChecksVerdict = {
+      state: "pending",
+      failed: [],
+      pending: ["the host to show the updated head"],
+    };
+    if (!stale) {
+      const ci = await ciOf(host, ref.repo, head);
+      verdict = judgeChecks(ci.runs, required, ci.statuses);
+      if (verdict.state === "none" && pr.base.sha) {
+        // Nothing on the head is only "no CI" when the base branch reports nothing either; a
+        // base with checks means the host has CI that has not reported on this head yet.
+        const baseCi = await ciOf(host, ref.repo, pr.base.sha);
+        if (baseCi.runs.length || baseCi.statuses.length)
+          verdict = {
+            state: "pending",
+            failed: [],
+            pending: [`a check on the head (${pr.base.ref} reports CI, the head none yet)`],
+          };
+      }
+    }
+    if (verdict.state === "failed") return checksFailed(verdict, head, updated, name);
     if (verdict.state !== "pending") break;
     if (clock.now() + pollMs > deadline)
       return {
         status: "checks_pending",
-        message: `check(s) still running after ${Math.round(waitMs / 1000)} s: ${verdict.pending.join(", ")}`,
+        message: `${verdict.pending.length === 1 ? "a check is" : "checks are"} still running${waitMs > 0 ? ` after ${Math.round(waitMs / 1000)} s` : ""}: ${verdict.pending.join(", ")}`,
+        sentence: `${name} merges when its checks pass.`,
         pendingChecks: verdict.pending,
         headSha: head,
-        rebased,
+        updated,
       };
     await clock.sleep(pollMs, ctx.signal);
   }
-  const merged = await host.mergePullRequest(ref.repo, ref.number, {
-    sha: head,
-    ...(input.method ? { method: input.method } : {}),
-  });
+  const merged = await host.mergePullRequest(ref.repo, ref.number, { sha: head, method: "merge" });
   if (merged.merged)
     return {
       status: "merged",
       message: merged.message || "merged",
       headSha: head,
+      method: "merge",
       ...(merged.sha ? { mergeSha: merged.sha } : {}),
-      rebased,
+      updated,
     };
-  const status: MergePrArtifacts["status"] = /not mergeable/i.test(merged.message)
-    ? "conflict"
-    : /modified|head/i.test(merged.message)
-      ? "head_moved"
-      : "failed";
+  return { ...hostRefused(name, merged.message), headSha: head, updated };
+}
+
+/** The files the task folder's head conflicts in with the base as the host has it now. */
+async function conflictsIn(
+  deps: MergePrToolDeps,
+  repo: RepoRef,
+  worktree: string,
+  base: string,
+): Promise<string[]> {
+  try {
+    const token = await resolveGitToken(deps.token);
+    const auth = token ? gitAuthFor(token, (await deps.host.getRepo(repo)).cloneUrl) : undefined;
+    const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+    await git.fetch();
+    return await git.conflictFiles("HEAD", `origin/${base}`);
+  } catch {
+    return [];
+  }
+}
+
+/** The host's own refusal of the merge, in the record's words. */
+function hostRefused(name: string, message: string): Omit<MergePrArtifacts, "updated"> {
+  const said = message.replace(/^PUT \S+ -> \d+:\s*/, "").trim();
+  if (/merge commits are not allowed/i.test(said))
+    return {
+      status: "merge_commits_off",
+      message: `the host refused the merge: ${said}`,
+      sentence: `This repository does not allow merge commits, and Forerunner merges only with one: merge ${name} on GitHub, or allow merge commits in its settings.`,
+    };
+  if (/approving review|code owner|protected branch|rule/i.test(said))
+    return {
+      status: "blocked_by_rules",
+      message: `the host refused the merge: ${said}`,
+      sentence: `GitHub's rules for this branch refused the merge of ${name}: merge it on GitHub once its rules are met.`,
+    };
+  if (/not mergeable/i.test(said))
+    return {
+      status: "conflict",
+      message: `the host refused the merge: ${said}`,
+      sentence: `${name} conflicts with its base: resolve the conflict on GitHub, then merge it.`,
+    };
+  if (/modified|head/i.test(said))
+    return {
+      status: "head_moved",
+      message: `the host refused the merge: ${said}`,
+      sentence: `${name} changed after the review: look at the new commits, then merge it yourself or send it back.`,
+    };
   return {
-    status,
-    message: `the host refused the merge: ${merged.message}`,
-    headSha: head,
-    rebased,
+    status: "failed",
+    message: `the host refused the merge: ${said}`,
+    sentence: `GitHub refused to merge ${name}: open it on GitHub and merge it yourself.`,
   };
 }
 
-function checksFailed(v: ChecksVerdict, head: string, rebased: boolean): MergePrArtifacts {
+function headMoved(name: string, now: string, reviewed: string): MergePrArtifacts {
+  return {
+    status: "head_moved",
+    message: `the PR head ${short(now)} is not the reviewed commit ${short(reviewed)}`,
+    sentence: `${name} changed after the review: look at the new commits, then merge it yourself or send it back.`,
+    headSha: now,
+    updated: false,
+  };
+}
+
+function checksFailed(
+  v: ChecksVerdict,
+  head: string,
+  updated: boolean,
+  name: string,
+): MergePrArtifacts {
   return {
     status: "checks_failed",
-    message: `check(s) failed on ${short(head)}: ${v.failed.join(", ")}`,
+    message: `${v.failed.length === 1 ? "a check" : "checks"} failed on ${short(head)}: ${v.failed.join(", ")}`,
+    sentence: `A check failed on ${name} (${listWords(v.failed.slice(0, 3))}): fix it, or merge it on GitHub.`,
     failedChecks: v.failed,
     headSha: head,
-    rebased,
+    updated,
   };
 }
 
@@ -351,179 +559,636 @@ function short(sha: string): string {
   return sha.length > 12 ? sha.slice(0, 12) : sha;
 }
 
+// ---------------------------------------------------------------------------------------
+// The one gated entry (ADR 0111)
+// ---------------------------------------------------------------------------------------
+
+/** Who asks for a merge: the session's accept, the watcher's retry, the daemon's start, a click. */
+export interface MergeAuthority {
+  kind: "session" | "retry" | "resume" | "person";
+  /** The person who pressed Merge (`kind: "person"`). */
+  humanId?: string;
+}
+
+export type MergeGate =
+  | {
+      allowed: true;
+      /** What approves it: the project's setting (`mode`) or the person's click. */
+      approval: "mode" | "person";
+      /** The setting that freed it, or the person's id: the record's `approved_by`. */
+      by: string;
+      /** Bring a base that moved into the branch first (the caller's mode needs its checks on the combined result). */
+      update?: boolean;
+    }
+  | {
+      allowed: false;
+      /** The audit row's code. */
+      code: "autonomy_insufficient";
+      /** The task row's reason (after "PR left open for you: "). */
+      reason: string;
+      /** The record's sentence for the person. */
+      sentence: string;
+    };
+
+/**
+ * The one gate every merge of a task's pull request asks (ADR 0111), with the project as it is
+ * now: its body is read at every call, so a retry, the resume at the daemon's start and a
+ * record made before a change all obey the setting of the moment. Today's body: the person's
+ * click approves; unattended, only autonomy level 3 Trusted (or above) merges. 'merge-in-app'
+ * replaces the body with the project's merge mode and keeps the signature.
+ */
+export async function mayMerge(
+  project: Pick<ProjectRow, "autonomy_level"> | null | undefined,
+  record: Pick<MergeRecordRow, "pr_number">,
+  authority: MergeAuthority,
+): Promise<MergeGate> {
+  if (authority.kind === "person")
+    return { allowed: true, approval: "person", by: authority.humanId ?? "the person" };
+  const level = project?.autonomy_level ?? 0;
+  if (level >= 3) return { allowed: true, approval: "mode", by: `autonomy level ${level}` };
+  return {
+    allowed: false,
+    code: "autonomy_insufficient",
+    reason: `autonomy level ${level} does not merge (level 3 Trusted does)`,
+    sentence: `${prName(record.pr_number)} waits for you to merge it: Forerunner merges by itself only at Trusted.`,
+  };
+}
+
+/** One merge this area made (or the watcher saw): what later areas subscribe to. */
+export interface MergedEvent {
+  task: TaskRow;
+  record: MergeRecordRow;
+  mergeSha: string | null;
+  method: MergeMethod | null;
+}
+
 export interface ReviewedPrMergeDeps extends MergePrToolDeps {
   store: StateStore;
   tokens: TokenIssuer;
   hooks: Pick<EnforcementHooks, "beforeToolCall" | "afterToolCall">;
+  /** The hooks' audit port: the gate's refusal is one row there, as the hooks' would be. */
+  audit: AuditPort;
   /** Where `PrTaskExecutor` keeps worktrees (`<worktreeRoot>/<task id>`): the reviewed commit. */
   worktreeRoot?: string;
+  /** The install's agents: their records are retried and resumed here, no other's. */
+  agentIds?: readonly string[];
+  /**
+   * The hosts a retry's own token may reach (the git host's): a PR URL on any other host gets a
+   * token with no domain, and the hooks refuse it.
+   */
+  allowedDomains?: readonly string[];
+  /** The gate (`mayMerge` by default; tests and 'merge-in-app' pass their own). */
+  gate?: typeof mayMerge;
+}
+
+/** What a merge in a session brings: its token, budget and stop. */
+interface SessionContext {
+  token: SignedToken;
+  budget: SessionBudget;
+  signal: AbortSignal;
+  sessionId: string;
 }
 
 export class ReviewedPrMerge implements MergePort {
   private readonly logger = log("merge");
   readonly tool: ToolSpec<MergePrInput>;
+  /** Tasks whose merge runs now in this process: a retry never starts a second one. */
+  private readonly inFlight = new Set<string>();
+  private readonly mergedListeners = new Set<(e: MergedEvent) => void | Promise<void>>();
 
   constructor(private readonly deps: ReviewedPrMergeDeps) {
     this.tool = mergePrTool(deps);
   }
 
+  /** Called for every merge of a task's PR (session, retry, resume, and what `merged` is told). */
+  onMerged(listener: (e: MergedEvent) => void | Promise<void>): () => void {
+    this.mergedListeners.add(listener);
+    return () => this.mergedListeners.delete(listener);
+  }
+
+  /** Tell the listeners a task's PR was merged ('dependent-branches' calls it for merges seen on GitHub). */
+  async merged(e: MergedEvent): Promise<void> {
+    for (const fn of this.mergedListeners) {
+      try {
+        await fn(e);
+      } catch (err) {
+        this.logger.warn("merged listener failed", { taskId: e.task.id, error: errorMessage(err) });
+      }
+    }
+  }
+
+  /**
+   * After an accepting review: pin the reviewed commit in the task's merge record (the
+   * worktree's HEAD now, before anything moves it, in every mode and at every level), then
+   * merge through `mergeRecorded`. Null without a PR.
+   */
   async mergeReviewed(req: MergeRequest): Promise<MergeOutcome | null> {
     const { task } = req;
     if (!task.pr_url) return null;
     const prUrl = task.pr_url;
-    const base = { taskId: task.id, prUrl };
-    const worktree = this.worktreeOf(task);
-    let reviewed: string | null = null;
-    if (worktree) {
-      try {
-        reviewed = await new GitOps({ cwd: worktree }).headSha();
-      } catch (e) {
-        this.logger.warn("worktree head unreadable", { taskId: task.id, error: errorMessage(e) });
+    const parsed = parsePullUrl(prUrl);
+    if (this.inFlight.has(task.id)) {
+      const current = await this.deps.store.mergeRecord.forTask(task.id);
+      return current ? this.outcomeOf(current, "checks_pending") : null;
+    }
+    this.inFlight.add(task.id);
+    try {
+      const worktree = this.worktreeOf(task);
+      let reviewed: string | null = null;
+      let reviewedBase: string | null = null;
+      let ownChange: string | null = null;
+      if (worktree) {
+        const git = new GitOps({ cwd: worktree });
+        try {
+          reviewed = await git.headSha();
+          const base = await this.baseRefOf(git, prUrl);
+          if (base) {
+            reviewedBase = await git.resolveRef(base);
+            ownChange = await ownChangeId(git, base).catch(() => null);
+          }
+        } catch (e) {
+          this.logger.warn("worktree head unreadable", { taskId: task.id, error: errorMessage(e) });
+        }
+      }
+      const record = await this.deps.store.mergeRecord.pin({
+        task_id: task.id,
+        project_id: task.project_id,
+        agent_id: req.agentId,
+        pr_number: parsed?.number ?? 0,
+        pr_url: prUrl,
+        reviewed_head_sha: reviewed ?? "",
+        reviewed_base_sha: reviewedBase,
+        own_change_id: ownChange,
+        author_agent: req.agentId,
+      });
+      return await this.run(
+        record,
+        { kind: "session" },
+        {
+          token: req.token,
+          budget: req.budget,
+          signal: req.signal,
+          sessionId: req.session.id,
+        },
+      );
+    } finally {
+      this.inFlight.delete(task.id);
+    }
+  }
+
+  /**
+   * The only way anything merges a task's pull request (ADR 0111): the gate first, then one
+   * `merge_pr` call through the hooks pinned to the record's reviewed commit. Outside a session
+   * (a retry, the resume, the person's click) the call runs on its own narrow token.
+   */
+  async mergeRecorded(record: MergeRecordRow, authority: MergeAuthority): Promise<MergeOutcome> {
+    if (this.inFlight.has(record.task_id)) return this.outcomeOf(record, "checks_pending");
+    this.inFlight.add(record.task_id);
+    try {
+      return await this.run(record, authority, null);
+    } finally {
+      this.inFlight.delete(record.task_id);
+    }
+  }
+
+  /**
+   * The watcher's retry pass (called from its poll): every record of this install's agents that
+   * waits (its checks were still running, or a crash left it queued) is tried once, without
+   * waiting: merged when its checks are green on the record's commit.
+   */
+  async retryWaiting(): Promise<MergeOutcome[]> {
+    const out: MergeOutcome[] = [];
+    for (const agentId of this.deps.agentIds ?? []) {
+      const waiting = await this.deps.store.mergeRecord.forAgent(agentId, [
+        "waiting_checks",
+        "queued",
+      ]);
+      for (const record of waiting) {
+        if (this.inFlight.has(record.task_id)) continue;
+        try {
+          out.push(await this.mergeRecorded(record, { kind: "retry" }));
+        } catch (e) {
+          this.logger.warn("merge retry failed", {
+            taskId: record.task_id,
+            error: errorMessage(e),
+          });
+        }
       }
     }
-    if (!worktree || !reviewed) {
-      return this.record(req, {
-        ...base,
-        status: "unverified",
-        reason: `PR left open for you: the reviewed commit is not known (no task worktree), so ${prUrl} is not merged automatically`,
-      });
+    return out;
+  }
+
+  /**
+   * At the daemon's start: a record a dead process left `merging` is settled by what the host
+   * says. Merged there: marked merged. Closed: left to the person. Open: back to waiting, and
+   * the retry pass merges it.
+   */
+  async resumeAtStart(): Promise<void> {
+    for (const agentId of this.deps.agentIds ?? []) {
+      for (const record of await this.deps.store.mergeRecord.forAgent(agentId, ["merging"])) {
+        try {
+          const ref = parsePullUrl(record.pr_url);
+          const pr = ref ? await this.deps.host.getPullRequest(ref.repo, ref.number) : null;
+          if (pr?.merged) {
+            const done = await this.deps.store.mergeRecord.move(record.id, "merged", {
+              merge_sha: pr.mergeCommitSha ?? null,
+              method: "merge",
+              sentence: "",
+              last_outcome: "merged",
+            });
+            this.logger.info("merge record resumed", { taskId: record.task_id, state: "merged" });
+            const task = await this.deps.store.task.get(record.task_id);
+            if (task)
+              await this.merged({ task, record: done, mergeSha: done.merge_sha, method: "merge" });
+          } else if (pr && pr.state !== "open") {
+            await this.deps.store.mergeRecord.move(record.id, "left_to_you", {
+              sentence: `${prName(record.pr_number)} was closed without merging.`,
+              last_outcome: "closed",
+            });
+            this.logger.info("merge record resumed", {
+              taskId: record.task_id,
+              state: "left_to_you",
+            });
+          } else {
+            await this.deps.store.mergeRecord.move(record.id, "waiting_checks", {
+              sentence: `${prName(record.pr_number)} merges when its checks pass.`,
+            });
+            this.logger.info("merge record resumed", {
+              taskId: record.task_id,
+              state: "waiting_checks",
+            });
+          }
+        } catch (e) {
+          this.logger.warn("merge record not resumed", {
+            taskId: record.task_id,
+            error: errorMessage(e),
+          });
+        }
+      }
+    }
+  }
+
+  private async run(
+    pinned: MergeRecordRow,
+    authority: MergeAuthority,
+    session: SessionContext | null,
+  ): Promise<MergeOutcome> {
+    const { store, clock, tokens } = this.deps;
+    let record = pinned;
+    const task = await store.task.mustGet(record.task_id);
+    if (record.state === "merged") return this.outcomeOf(record, "merged");
+    const prUrl = record.pr_url;
+    const base = { taskId: task.id, prUrl };
+    const project = record.project_id ? await store.project.get(record.project_id) : null;
+    const owner = await this.ownerOf(record.agent_id);
+
+    if (!record.reviewed_head_sha) {
+      // Nothing proves which version the review read: never merged unattended. The person's
+      // click merges the pull request as it is on GitHub now, and the outcome says so.
+      const ref = authority.kind === "person" ? parsePullUrl(prUrl) : null;
+      const head = ref ? (await this.deps.host.getPullRequest(ref.repo, ref.number)).head.sha : "";
+      if (!head)
+        return this.settle(record, task, session, owner, {
+          ...base,
+          status: "unverified",
+          reason: `PR left open for you: the reviewed commit is not known (no task worktree), so ${prUrl} is not merged automatically`,
+          sentence: `Forerunner does not know which version of ${prName(record.pr_number)} the review read, so it leaves the merge to you.`,
+        });
+      record = await store.mergeRecord.move(record.id, record.state, { reviewed_head_sha: head });
     }
 
-    const { clock, tokens, hooks } = this.deps;
-    const claims = tokens.verify(req.token, clock.now());
+    const worktree = this.worktreeOf(task);
     const runId = newId(clock.now());
-    const token = tokens.derive(req.token, {
-      runId,
-      taskId: task.id,
-      allowedTools: [MERGE_PR_TOOL],
-      allowedPaths: [worktree],
-      grantedSecrets: [],
-      budgetUsdMicro: 0,
-    });
-    // The checks wait ends inside the session's wall-clock cap (spec I), one poll before it,
-    // so the last look, the merge and its audit row still run on a live token: a session with
-    // two minutes left waits about a minute and a half, then the PR goes to the human.
+    const token = session
+      ? tokens.derive(session.token, {
+          runId,
+          taskId: task.id,
+          allowedTools: [MERGE_PR_TOOL],
+          allowedPaths: worktree ? [worktree] : [],
+          grantedSecrets: [],
+          budgetUsdMicro: 0,
+        })
+      : this.ownToken(record, owner, project, runId, worktree);
+    try {
+      const gate = await (this.deps.gate ?? mayMerge)(project, record, authority);
+      if (!gate.allowed) {
+        await this.deps.audit.append({
+          sessionId: token.claims.sessionId,
+          runId,
+          agentId: token.claims.agentId,
+          humanId: token.claims.ownerHumanId,
+          tool: MERGE_PR_TOOL,
+          inputSummary: JSON.stringify({ pr_url: prUrl, head_sha: record.reviewed_head_sha }),
+          resultSummary: "",
+          allowed: false,
+          deniedReason: `${gate.code}: ${gate.reason}`,
+          costUsdMicro: 0,
+          occurredAt: clock.nowIso(),
+          tokenId: token.claims.id,
+        });
+        return this.settle(record, task, session, owner, {
+          ...base,
+          status: "not_allowed",
+          reason: `PR left open for you: ${gate.reason}`,
+          sentence: gate.sentence,
+        });
+      }
+      const claimed = await store.mergeRecord.claim(record);
+      // Another process took it between the read and now: that one merges it.
+      if (!claimed)
+        return this.outcomeOf(await store.mergeRecord.mustGet(record.id), "checks_pending");
+      record = claimed;
+      const level = project?.autonomy_level ?? 0;
+      let a = await this.call(record, token, session, worktree, gate, level);
+      if (
+        a.status === "head_moved" &&
+        a.headSha &&
+        worktree &&
+        a.headSha !== record.reviewed_head_sha
+      ) {
+        // A head that keeps exactly the reviewed change (main merged in, by a crashed earlier
+        // attempt or GitHub's Update branch) moves the record; anything else waits for the person.
+        if (await this.keepsOwnChange(record, worktree, a.headSha)) {
+          record = await store.mergeRecord.move(record.id, "merging", {
+            reviewed_head_sha: a.headSha,
+          });
+          a = await this.call(record, token, session, worktree, gate, level);
+        }
+      }
+      return await this.finish(record, task, session, owner, gate, a);
+    } catch (e) {
+      // A stop is the session's, never the level's refusal: the record waits as it was, and the
+      // retry merges it once work may run again.
+      if (e instanceof ForerunnerError && e.code === "killed") {
+        const now = await store.mergeRecord.get(record.id);
+        if (now?.state === "merging")
+          await store.mergeRecord
+            .move(record.id, "waiting_checks", {
+              sentence: `${prName(record.pr_number)} merges when its checks pass.`,
+            })
+            .catch(() => undefined);
+      }
+      throw e;
+    } finally {
+      if (!session) tokens.revoke(token.claims.id);
+    }
+  }
+
+  /** One `merge_pr` call through the hooks. */
+  private async call(
+    record: MergeRecordRow,
+    token: SignedToken,
+    session: SessionContext | null,
+    worktree: string | null,
+    gate: Extract<MergeGate, { allowed: true }>,
+    level: number,
+  ): Promise<CallResult> {
+    const { clock, hooks, store } = this.deps;
     const pollMs = Math.max(1, this.deps.checksPollMs ?? DEFAULT_CHECKS_POLL_MS);
-    const sessionLeftMs = Math.max(0, req.budget.limits.deadlineMs - clock.now() - pollMs);
+    // In a session the checks wait ends inside the session's wall-clock cap (spec I), one poll
+    // before it, so the last look, the merge and its audit row still run on a live token. A
+    // retry never waits: it looks once, and the next poll looks again.
+    const waitMs = session
+      ? Math.min(
+          this.deps.checksWaitMs ?? DEFAULT_CHECKS_WAIT_MS,
+          Math.max(0, session.budget.limits.deadlineMs - clock.now() - pollMs),
+        )
+      : 0;
     const tool = mergePrTool({
       ...this.deps,
-      checksWaitMs: Math.min(this.deps.checksWaitMs ?? DEFAULT_CHECKS_WAIT_MS, sessionLeftMs),
+      checksWaitMs: waitMs,
+      onNewHead: async (sha) => {
+        await store.mergeRecord.move(record.id, "merging", { reviewed_head_sha: sha });
+      },
     });
+    const input: MergePrInput = {
+      pr_url: record.pr_url,
+      head_sha: record.reviewed_head_sha,
+      ...(worktree ? { worktree } : {}),
+      ...(gate.update ? { update: true } : {}),
+      ...(record.own_change_id ? { own_change_id: record.own_change_id } : {}),
+    };
+    const signal = session?.signal ?? new AbortController().signal;
+    const budget =
+      session?.budget ??
+      new SessionBudget({
+        sessionId: token.claims.sessionId,
+        budgetUsdMicro: 0,
+        stepCap: 10,
+        deadlineMs: clock.now() + RETRY_TOKEN_MS,
+        reserveShare: 0,
+      });
     const ctx: RunContext = {
       token,
-      budget: req.budget,
-      signal: req.signal,
+      budget,
+      signal,
       runDeadlineMs: Math.min(
         clock.now() + (tool.timeoutMs ?? DEFAULT_CHECKS_WAIT_MS),
-        req.budget.limits.deadlineMs,
+        budget.limits.deadlineMs,
       ),
       phase: "work",
       model: "none",
       provider: "none",
       billingSourceId: "",
-      cwd: worktree,
+      cwd: worktree ?? undefined,
       unattended: true,
+      // The person's click approves exactly this call; the hooks see the approval like any other.
+      ...(gate.approval === "person"
+        ? { approvals: new Set([approvalKeyFor(MERGE_PR_TOOL, input)]) }
+        : {}),
     };
-    const input: MergePrInput = { pr_url: prUrl, head_sha: reviewed, worktree };
     let admitted: Awaited<ReturnType<EnforcementHooks["beforeToolCall"]>>;
     try {
       admitted = await hooks.beforeToolCall(ctx, tool as ToolSpec, input);
     } catch (e) {
-      // A stop is the session's, never the level's refusal: it ends the session as killed.
       if (!(e instanceof ForerunnerError) || e.code === "killed") throw e;
-      return this.record(req, {
-        ...base,
+      return {
         status: "not_allowed",
-        reason:
+        message:
           e.code === "autonomy_insufficient"
-            ? `PR left open for you: autonomy level ${claims.autonomy} does not merge (level 3 Trusted does)`
-            : `PR left open for you: the merge was refused (${e.code}: ${e.message})`,
-      });
+            ? `autonomy level ${level} does not merge (level 3 Trusted does)`
+            : `the merge was refused (${e.code}: ${e.message})`,
+        sentence:
+          e.code === "autonomy_insufficient"
+            ? `${prName(record.pr_number)} waits for you to merge it: Forerunner merges by itself only at Trusted.`
+            : `Forerunner was not allowed to merge ${prName(record.pr_number)}: merge it on GitHub.`,
+        updated: false,
+      };
     }
-    if (!admitted.allowed) {
-      return this.record(req, {
-        ...base,
+    if (!admitted.allowed)
+      return {
         status: "not_allowed",
-        reason: `PR left open for you: ${admitted.reason}`,
-      });
-    }
+        message: admitted.reason,
+        sentence: `Forerunner was not allowed to merge ${prName(record.pr_number)}: merge it on GitHub.`,
+        updated: false,
+      };
     let result: ToolResult;
     try {
       result = await tool.execute(admitted.input as MergePrInput, {
-        runId,
-        sessionId: claims.sessionId,
-        agentId: claims.agentId,
-        humanId: claims.ownerHumanId,
-        ...(claims.projectId ? { projectId: claims.projectId } : {}),
-        taskId: task.id,
+        runId: token.claims.runId,
+        sessionId: token.claims.sessionId,
+        agentId: token.claims.agentId,
+        humanId: token.claims.ownerHumanId,
+        ...(token.claims.projectId ? { projectId: token.claims.projectId } : {}),
+        taskId: record.task_id,
         allowedPaths: admitted.claims.allowedPaths,
-        signal: req.signal,
-        cwd: worktree,
+        signal,
+        ...(worktree ? { cwd: worktree } : {}),
       });
     } catch (e) {
       if (e instanceof ForerunnerError && e.code === "killed") throw e;
-      if (req.signal.aborted)
+      if (signal.aborted)
         throw new ForerunnerError("killed", `session stopped during the merge: ${errorMessage(e)}`);
+      const unreachable = e instanceof ForerunnerError && (e.retryable || e.code === "timeout");
       result = {
         content: `not merged: ${errorMessage(e)}`,
         isError: true,
-        artifacts: { status: "failed", message: errorMessage(e), rebased: false },
+        artifacts: {
+          status: unreachable ? "unreachable" : "failed",
+          message: errorMessage(e),
+          sentence: unreachable
+            ? `GitHub did not answer about ${prName(record.pr_number)}: Forerunner tries the merge again.`
+            : `The merge of ${prName(record.pr_number)} failed: open it on GitHub and merge it yourself.`,
+          updated: false,
+        } satisfies MergePrArtifacts,
       };
     }
     await hooks.afterToolCall(ctx, tool as ToolSpec, admitted.input, {
       content: result.content,
       ...(result.isError ? { isError: true } : {}),
     });
-    const a = result.artifacts as unknown as MergePrArtifacts;
+    return result.artifacts as unknown as MergePrArtifacts;
+  }
+
+  /** Whether `head` (on the host) keeps exactly the record's reviewed change. */
+  private async keepsOwnChange(
+    record: MergeRecordRow,
+    worktree: string,
+    head: string,
+  ): Promise<boolean> {
+    if (!record.own_change_id) return false;
+    try {
+      const token = await resolveGitToken(this.deps.token);
+      const ref = parsePullUrl(record.pr_url);
+      const repo = ref ? await this.deps.host.getRepo(ref.repo) : null;
+      const auth = token && repo ? gitAuthFor(token, repo.cloneUrl) : undefined;
+      const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+      await git.fetch();
+      const pr = ref ? await this.deps.host.getPullRequest(ref.repo, ref.number) : null;
+      if (!pr || !(await git.hasRef(head))) return false;
+      return (await ownChangeId(git, `origin/${pr.base.ref}`, head)) === record.own_change_id;
+    } catch (e) {
+      this.logger.warn("own change not read", { taskId: record.task_id, error: errorMessage(e) });
+      return false;
+    }
+  }
+
+  /** The tool's answer on the record, the task row, a card where the person must act. */
+  private async finish(
+    record: MergeRecordRow,
+    task: TaskRow,
+    session: SessionContext | null,
+    owner: string,
+    gate: Extract<MergeGate, { allowed: true }>,
+    a: CallResult,
+  ): Promise<MergeOutcome> {
+    const { store } = this.deps;
+    const prUrl = record.pr_url;
     const detail = {
       ...(a.headSha ? { headSha: a.headSha } : {}),
-      rebased: a.rebased,
+      ...(a.updated ? { updated: true } : {}),
       ...(a.failedChecks ? { failedChecks: a.failedChecks } : {}),
       ...(a.pendingChecks ? { pendingChecks: a.pendingChecks } : {}),
       ...(a.conflicts ? { conflicts: a.conflicts } : {}),
     };
-    if (a.status === "merged") {
-      return this.record(req, {
-        ...base,
-        status: "merged",
-        ...(a.mergeSha ? { mergeSha: a.mergeSha } : {}),
-        ...detail,
-        reason: `merged ${prUrl}${a.mergeSha ? ` as ${short(a.mergeSha)}` : ""} after an accepting review (autonomy ${claims.autonomy})${a.rebased ? ", rebased onto the moved base first" : ""}`,
+    const current = await store.mergeRecord.mustGet(record.id);
+    if (a.status === "merged" || a.alreadyMerged) {
+      const mergeSha = a.mergeSha ?? null;
+      const method: MergeMethod | null = a.status === "merged" ? "merge" : null;
+      const done = await store.mergeRecord.move(record.id, "merged", {
+        merge_sha: mergeSha,
+        method,
+        approval: gate.approval,
+        approved_by: gate.by,
+        sentence: "",
+        last_outcome: "merged",
       });
+      const reason =
+        a.status === "merged"
+          ? `merged ${prUrl}${mergeSha ? ` as ${short(mergeSha)}` : ""} after an accepting review (${gate.by})${a.updated ? ", with its base merged in first" : ""}`
+          : `merged ${prUrl}: it was already merged on the host`;
+      await this.writeReason(task, record.agent_id, reason);
+      this.logger.info("merge record", { taskId: task.id, prUrl, state: "merged" });
+      await this.merged({ task, record: done, mergeSha, method });
+      return {
+        taskId: task.id,
+        prUrl,
+        status: "merged",
+        ...(mergeSha ? { mergeSha } : {}),
+        ...detail,
+        reason,
+      };
     }
-    return this.record(req, {
-      ...base,
+    return this.settle(current, task, session, owner, {
+      taskId: task.id,
+      prUrl,
       status: a.status,
       ...detail,
       reason: `PR left open for you: ${a.message}`,
+      ...(a.sentence ? { sentence: a.sentence } : {}),
     });
   }
 
-  private worktreeOf(task: TaskRow): string | null {
-    if (!this.deps.worktreeRoot) return null;
-    const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
-    return existsSync(join(dir, ".git")) ? dir : null;
-  }
-
-  /** The outcome on the task row, and a request for the human where the merge was refused. */
-  private async record(req: MergeRequest, outcome: MergeOutcome): Promise<MergeOutcome> {
+  /**
+   * A merge that did not happen: the record waits (checks running, the host silent) or is left
+   * to the person with its sentence; the task row says why; a card where the person must act.
+   */
+  private async settle(
+    record: MergeRecordRow,
+    task: TaskRow,
+    session: SessionContext | null,
+    owner: string,
+    outcome: MergeOutcome,
+  ): Promise<MergeOutcome> {
     const { store } = this.deps;
-    const { task, session } = req;
-    let out = outcome;
-    if (ASKS_HUMAN.has(outcome.status)) {
+    const waits = outcome.status === "checks_pending" || outcome.status === "unreachable";
+    const stuck = waits && record.attempts >= MAX_MERGE_ATTEMPTS;
+    const to: MergeRecordState = waits && !stuck ? "waiting_checks" : "left_to_you";
+    const sentence = stuck
+      ? `The checks of ${prName(record.pr_number)} have not finished in a day: look at them on GitHub, then merge it.`
+      : (outcome.sentence ?? "");
+    const wasLeft = record.state === "left_to_you";
+    let out: MergeOutcome = { ...outcome, sentence };
+    try {
+      await store.mergeRecord.move(record.id, to, { sentence, last_outcome: outcome.status });
+    } catch (e) {
+      this.logger.warn("merge record not moved", { taskId: task.id, error: errorMessage(e) });
+    }
+    if ((ASKS_HUMAN.has(outcome.status) || stuck) && !wasLeft) {
       const request = await fileLeftOpenRequest(store, {
         task,
-        sessionId: session.id,
-        humanId: req.token.claims.ownerHumanId,
-        agentId: req.agentId,
-        outcome,
+        sessionId: session?.sessionId ?? null,
+        humanId: owner,
+        agentId: record.agent_id,
+        outcome: out,
       });
-      out = { ...outcome, humanRequestId: request.id };
+      out = { ...out, humanRequestId: request.id };
     }
+    await this.writeReason(task, record.agent_id, outcome.reason);
+    this.logger.info("merge record", {
+      taskId: task.id,
+      prUrl: outcome.prUrl,
+      state: to,
+      status: outcome.status,
+    });
+    return out;
+  }
+
+  private async writeReason(task: TaskRow, agentId: string, reason: string): Promise<void> {
     try {
-      await store.task.patch(task.id, {
-        reason: outcome.reason.slice(0, 1000),
-        author_agent: req.agentId,
+      await this.deps.store.task.patch(task.id, {
+        reason: reason.slice(0, 1000),
+        author_agent: agentId,
       });
     } catch (e) {
       this.logger.warn("merge outcome not written on the task", {
@@ -531,12 +1196,93 @@ export class ReviewedPrMerge implements MergePort {
         error: errorMessage(e),
       });
     }
-    this.logger.info("reviewed PR", {
-      taskId: task.id,
-      prUrl: outcome.prUrl,
-      status: outcome.status,
+  }
+
+  /** The record as an outcome, for a caller that finds the merge already running or done. */
+  private outcomeOf(record: MergeRecordRow, fallback: MergeStatus): MergeOutcome {
+    return {
+      taskId: record.task_id,
+      prUrl: record.pr_url,
+      status: record.state === "merged" ? "merged" : fallback,
+      reason:
+        record.state === "merged"
+          ? `merged ${record.pr_url}${record.merge_sha ? ` as ${short(record.merge_sha)}` : ""}`
+          : `PR left open for you: ${record.sentence || "the merge is under way"}`,
+      ...(record.merge_sha ? { mergeSha: record.merge_sha } : {}),
+      ...(record.sentence ? { sentence: record.sentence } : {}),
+    };
+  }
+
+  /**
+   * A retry's own token: `merge_pr` only, that worktree only, no budget, the PR's host only if
+   * it is the git host's, a short expiry, the project's level as it is now. Never derived from
+   * a session token: there is none.
+   */
+  private ownToken(
+    record: MergeRecordRow,
+    owner: string,
+    project: ProjectRow | null | undefined,
+    runId: string,
+    worktree: string | null,
+  ): SignedToken {
+    const { clock, tokens } = this.deps;
+    const host = hostOf(record.pr_url);
+    const domains =
+      host && (this.deps.allowedDomains ?? []).some((d) => d.toLowerCase() === host) ? [host] : [];
+    const level = project?.autonomy_level ?? 0;
+    return tokens.issue({
+      runId,
+      sessionId: `merge-${record.id}`,
+      agentId: record.agent_id,
+      ownerHumanId: owner,
+      ...(record.project_id ? { projectId: record.project_id } : {}),
+      taskId: record.task_id,
+      allowedTools: [MERGE_PR_TOOL],
+      allowedPaths: worktree ? [worktree] : [],
+      allowedDomains: domains,
+      grantedSecrets: [],
+      budgetUsdMicro: 0,
+      depth: 0,
+      maxDepth: 0,
+      autonomy: (level >= 0 && level <= 4 ? level : 0) as 0 | 1 | 2 | 3 | 4,
+      planApproved: false,
+      expiresAt: new Date(clock.now() + RETRY_TOKEN_MS).toISOString(),
     });
-    return out;
+  }
+
+  /** The human an agent acts for (the record's owner). */
+  private async ownerOf(agentId: string): Promise<string> {
+    return (await this.deps.store.agent.get(agentId))?.owner_human_id ?? "";
+  }
+
+  /** `origin/<base>` of the PR's base branch, as the worktree's remote has it. */
+  private async baseRefOf(git: GitOps, prUrl: string): Promise<string | null> {
+    const ref = parsePullUrl(prUrl);
+    if (!ref) return null;
+    try {
+      const pr = await this.deps.host.getPullRequest(ref.repo, ref.number);
+      return `origin/${pr.base.ref}`;
+    } catch {
+      try {
+        return `origin/${await git.remoteDefaultBranch()}`;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  private worktreeOf(task: TaskRow): string | null {
+    if (!this.deps.worktreeRoot) return null;
+    const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
+    return existsSync(join(dir, ".git")) ? dir : null;
+  }
+}
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
   }
 }
 
@@ -586,22 +1332,32 @@ export async function fileLeftOpenRequest(
   });
 }
 
-/** Refusals the human hears about as a request; the hooks' refusal is the level's normal course. */
+/**
+ * Outcomes the person hears about as a request, once per record: what needs them to act. The
+ * level's refusal (`not_allowed`) is the level's normal course and says so on the record only;
+ * running checks wait on the record and the retry finishes them.
+ */
 const ASKS_HUMAN: ReadonlySet<MergeStatus> = new Set<MergeStatus>([
   "checks_failed",
-  "checks_pending",
   "conflict",
   "head_moved",
+  "blocked_by_rules",
+  "merge_commits_off",
   "failed",
 ]);
 
 const STEPS: Partial<Record<MergeStatus, string[]>> = {
   checks_failed: ["Open the failed check on the pull request", "Fix it or merge it yourself"],
-  checks_pending: ["Wait for the checks to finish", "Merge the pull request once they pass"],
+  checks_pending: ["Look at the checks on the pull request", "Merge it once they pass"],
   conflict: ["Resolve the conflict on the PR branch", "Merge the pull request"],
   head_moved: [
     "Look at the commits pushed after the review",
     "Merge it yourself or ask for a new review",
+  ],
+  blocked_by_rules: ["Open the pull request on GitHub", "Merge it once its rules are met"],
+  merge_commits_off: [
+    "Merge the pull request on GitHub",
+    "Or allow merge commits in the repository's settings",
   ],
   failed: ["Open the pull request", "Merge it yourself or leave it open"],
 };

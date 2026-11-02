@@ -44,6 +44,16 @@ schema and the snapshot disagree.
   reason and the actor, and so do `MilestoneRepo.insert` and a `SessionRepo.insert` that
   carries a plan; see data-model.md, Invariants). It is v5 because 0003 and 0004 shipped
   first on the release branch.
+- `src/migrations/0006-merge-records.ts` (ADR 0111): hand written and frozen, the
+  `merge_record` table (one row per task: the reviewed commit pinned at the accept, the patch
+  id of the task's own change, the state `queued | merging | waiting_checks | merged |
+  left_to_you`, the approval and who gave it, the merge commit and method, attempts, one
+  sentence for the person, the last outcome; `agent_id` names the install's agent that owns
+  it, since the store can be the shared Postgres) with a unique index on `task_id` and one on
+  `(agent_id, state)`. Its repository is `MergeRecordRepo` (`src/repos/merge-record.ts`: `pin`
+  at an accept, `move` by `MERGE_RECORD_TRANSITIONS`, `claim` (an optimistic take on the row's
+  version, so two daemons never merge one PR twice), `forAgent`, `forTask`). A task accepted
+  before v6 has no record and is never merged unattended.
 - `src/migrations/index.ts`: `MIGRATIONS` (ascending) and `migrate(db, { clock?, migrations? })`.
   `migrate` creates `schema_migrations (version PK, name, applied_at)` if missing, then applies
   every pending migration inside **one transaction** (both dialects have transactional DDL) and
@@ -73,7 +83,7 @@ schema and the snapshot disagree.
    column's one-line description; the doc is generated from it.
 2. Run `pnpm vitest run --project unit --dir packages/state`. The snapshot test now fails: that is
    the signal that a migration is needed. Do **not** regenerate `0001-initial.ts`.
-3. Create `packages/state/src/migrations/<next>-<name>.ts` (`0006-...` after v5) exporting
+3. Create `packages/state/src/migrations/<next>-<name>.ts` (`0007-...` after v6) exporting
    `MIGRATION_<next>` with the `up` statements for **both** dialects. Use the generator for whole tables
    (`createTableSql(ENTITIES.new_table, "sqlite")`, `createIndexSql`, `appendOnlySql`) and write
    `ALTER TABLE` by hand for columns. Mind the dialect differences:

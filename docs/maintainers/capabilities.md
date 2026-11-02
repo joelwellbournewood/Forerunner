@@ -39,7 +39,24 @@ with their milestone.
   reviewed commit, the one the checks ran on): GitHub and the fake host refuse with 409 ("Head
   branch was modified") when the head moved, `MemoryGitHost` answers the same message, so the
   runtime's merge step after an accepting review (`packages/runtime/src/loop/merge.ts`, spec
-  J.9, ADR 0062) never merges a commit nobody reviewed. `listCommitStatuses(repo, ref)` reads
+  J.9, ADR 0062) never merges a commit nobody reviewed. **Merge commits only** (ADR 0111): the
+  method defaults to `"merge"` (it was `"squash"`, which copied a dependent branch's dependency
+  commits into one new commit, so that pull request never merged); the in-memory host honours
+  the method (`MemoryGitHost.merges` lists each merge with its method) and the fake git host
+  makes a merge commit with two parents, a squash or a rebase as GitHub does.
+  `getRepo` reads `allow_merge_commit` (`RepoInfo.allowMergeCommit`; the fake host and the
+  in-memory host refuse a merge commit where it is off, "Merge commits are not allowed on this
+  repository."); a merged pull request carries `mergeCommitSha` (an open one's test merge is
+  never taken for it). `getBranchRules(repo, branch)` reads what a merge into the branch must
+  meet: the rulesets' rules (`GET /rules/branches/{branch}`, read access; a server without the
+  endpoint answers 404, read as none: approvals, code owners, `required_status_checks` with
+  `strict`, `required_linear_history` and `allowed_merge_methods` as `allowedMethods`, and
+  `blockers` in words for signed commits, a merge queue, required deployments, the `update`
+  restriction, code scanning, resolved conversations) and classic protection (the branch's
+  `protected` and visible required checks for anyone, the full `/protection` for an admin, the
+  only one GitHub lets go around it; a protected branch whose protection an admin token cannot
+  read is `unreadable`). The merge step reads it before every merge and never goes around it.
+  `listCommitStatuses(repo, ref)` reads
   the combined status (`GET /commits/<ref>/status`, the latest status per context: the status
   API Jenkins and many external CIs report through) beside `listCheckRuns`, so the merge step
   refuses a red status as it refuses a red check run; `MemoryGitHost.setCommitStatuses` sets
@@ -158,7 +175,17 @@ with their milestone.
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
   head)` takes a head other than HEAD; `filesBetween(from, to)` compares two trees;
   `hasMergesSince(base, head)`, `setRef(ref, rev | null)` and `mergeFrom(ref, message?)` serve
-  the dependent branches below.
+  the dependent branches below. For the merge step and its record (ADR 0111): `resolveRef`,
+  `mergeBase`, `mergeTree` (`git merge-tree --write-tree`, git 2.38 or later, null on a
+  conflict), `conflictFiles` (the files such a merge conflicts in), `patchId(from, to)` (the
+  patch id of a diff without context lines, "empty" for none) and `parentsOf`.
+  `branch-rules.ts` holds what a task branch holds: `holdsMergedWork(git, base)` (the
+  `DEPS_BASE_REF` marker, or a merge commit since `base`: such a branch is kept up to date by
+  merging, never rebased) and `ownChangeId(git, base, head?)` (the patch id of the task's own
+  change: from the marker, or from the marker merged with the base when the base was merged in
+  since, or from where the branch left the base; the same change made another way keeps it, a
+  commit on top changes it; null when it cannot be told). The merge step pins it at the accept;
+  'dependent-branches' uses both in the PR executor.
 - `PrTaskExecutor` (`pr-executor.ts`) forwards `chooseSpecialist` to its inner executor (the
   specialist the next attempt runs with, which the runner names on `task.started`; ADR 0108) and
   wraps any task executor in the branch-and-PR flow: clone
@@ -512,7 +539,14 @@ words; the address table. Test host names resolve to the loopback through `opts.
 
 `github.test.ts` reads commit statuses from the combined-status endpoint, sends the merge's
 `sha` pin to the stub and has `MemoryGitHost` refuse a merge
-pinned to a head the PR no longer has; `git.test.ts` has `isAncestor` false while the base has
+pinned to a head the PR no longer has; `merge-commits.test.ts` (the fake git host) merges with a
+merge commit by default (two parents, `mergeCommitSha`), reads `allow_merge_commit` and is
+refused where it is off, has a pull request whose commits reached main inside another marked
+merged, reads a ruleset's and classic protection's rules (an admin's merge goes around classic
+protection on the host, which is why the merge step reads them first; a collaborator who cannot
+read the protection is not `unreadable`), and has `holdsMergedWork` and `ownChangeId` on real
+git (main merged in keeps the id, a commit on top changes it, a branch built on a dependency is
+measured from the marker, also after main was merged in); `git.test.ts` has `isAncestor` false while the base has
 moved and true after the rebase. The runtime's merge step on the fake git host is
 `packages/runtime/test/loop-merge.test.ts`.
 

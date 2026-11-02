@@ -566,6 +566,15 @@ export class GitOps {
     return r.stdout.trim() !== "";
   }
 
+  /** The commit `ref` names in this checkout, or null when it names none. */
+  async resolveRef(ref: string): Promise<string | null> {
+    const r = await this.git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    if (r.code === 0) return r.stdout.trim() || null;
+    if (r.code === 1) return null;
+    this.must(r, `rev-parse --verify ${ref}`);
+    return null;
+  }
+
   /** The best common ancestor of `a` and `b`, or null when they share none. */
   async mergeBase(a: string, b = "HEAD"): Promise<string | null> {
     const r = await this.git(["merge-base", a, b]);
@@ -584,6 +593,21 @@ export class GitOps {
     const r = await this.git(["merge-tree", "--write-tree", "--no-messages", a, b]);
     if (r.code !== 0) return null;
     return r.stdout.split(/\r?\n/)[0]?.trim() || null;
+  }
+
+  /**
+   * The files a merge of `a` and `b` would conflict in, worked out without touching the
+   * worktree (`git merge-tree --write-tree --name-only`); empty when they merge cleanly or
+   * when this git cannot tell.
+   */
+  async conflictFiles(a: string, b: string): Promise<string[]> {
+    const r = await this.git(["merge-tree", "--write-tree", "--name-only", "--no-messages", a, b]);
+    if (r.code !== 1) return [];
+    return r.stdout
+      .split(/\r?\n/)
+      .slice(1)
+      .map((l) => l.trim())
+      .filter(Boolean);
   }
 
   /**

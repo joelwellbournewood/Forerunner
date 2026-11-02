@@ -701,6 +701,28 @@ describe("GitHostWatcher against the fake git host", () => {
     ).toEqual([]);
   });
 
+  it("runs the merge retry pass once per poll, after the PRs were read, and a failing pass never stops the poll (ADR 0111)", async () => {
+    const order: string[] = [];
+    let fail = false;
+    const w = await primed({
+      retryMerges: async () => {
+        order.push("retry");
+        if (fail) throw new Error("host down");
+      },
+    });
+    expect(order).toEqual(["retry"]);
+    await check("build", "failure");
+    fail = true;
+    const second = await w.pollOnce();
+    expect(order).toEqual(["retry", "retry"]);
+    // The check's event still fired: the retry's failure was logged, not thrown.
+    expect(second.fired.map((f) => f.trigger)).toEqual(["ci"]);
+    // A paused install runs no retry either.
+    const paused = watcher({ enabled: () => false, retryMerges: async () => order.push("x") });
+    await paused.pollOnce();
+    expect(order).toEqual(["retry", "retry"]);
+  });
+
   it("polls on the clock every pollMs and stops", async () => {
     const cursorStore = memoryCursorStore();
     const w = watcher({ cursorStore });

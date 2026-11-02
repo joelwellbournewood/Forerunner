@@ -381,7 +381,21 @@ PR author), `rebase` cherry-picks each head-only commit through `merge-tree --me
 keeps the original author and message. Nothing needs a worktree: commits are built through a
 temporary index file (`BareRepo.commitFiles`) and `commit-tree`; on git older than 2.40 the
 same operations run in a temporary clone (`mergeViaClone`). Merging emits `pull_request`
-`closed` with `merged: true` and the base branch's `push`.
+`closed` with `merged: true` and the base branch's `push`. As on GitHub (ADR 0111): an open PR
+whose head reached its base by another way (a PR that carried its commits was merged, a push)
+is marked merged with that base head as `merge_commit_sha`; the repository's merge settings
+(`allow_merge_commit`, `allow_squash_merge`, `allow_rebase_merge` in the repo JSON, set by
+`PATCH /repos/:o/:r` or `host.setMergeSettings(repo, { allowMergeCommit, ... })`) refuse a method
+that is off with GitHub's 405 ("Merge commits are not allowed on this repository."); the
+branch's rules apply to the merge: a ruleset's (`host.setBranchRules(repo, branch, rules)` in
+GitHub's shape, served by `GET /repos/:o/:r/rules/branches/:branch`, applied to everyone: the
+fake has no bypass actors) and classic protection (`host.setBranchProtection(repo, branch,
+protection | null)`, served by `GET /branches/:branch/protection` to an admin only, 404 to anyone
+else, with `protected` and the visible required checks on `GET /branches/:branch`, applied to
+everyone but an admin unless `enforce_admins.enabled`, as GitHub does): required approving
+reviews (one per reviewer other than the author, the latest review deciding; "At least 1
+approving review is required by reviewers with write access."), linear history and a ruleset's
+`allowed_merge_methods` refuse what they do not allow.
 
 **Webhooks** (`webhooks.ts`). `POST /hooks` with `config.url`, `config.secret`,
 `events` (default `["push"]`, `"*"` for all) registers a hook and sends a `ping`. Every

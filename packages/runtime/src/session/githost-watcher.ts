@@ -334,6 +334,12 @@ export interface GitHostWatcherDeps {
     origin: string,
     projectId: string | null,
   ) => void | Promise<void>;
+  /**
+   * The merge retry pass (ADR 0111, `ReviewedPrMerge.retryWaiting`): once per poll, after the
+   * PRs were read, every merge record of the install's agents that waits is tried once, with
+   * no session. Its failure is logged; the poll goes on.
+   */
+  retryMerges?: () => Promise<unknown>;
   pollMs?: number;
 }
 
@@ -433,6 +439,7 @@ export class GitHostWatcher {
     // Saved before anything fires: an event is asked for at most once, also across a restart.
     this.cursorStore.save(cursor);
     if (result.deferred) this.logger.info("quiet hours: PRs deferred", { count: result.deferred });
+    await this.retryWaitingMerges();
     if (!result.events.length) return result;
     for (const ev of result.events) {
       try {
@@ -443,6 +450,19 @@ export class GitHostWatcher {
     }
     for (const group of groupEvents(result.events)) result.fired.push(await this.fire(group));
     return result;
+  }
+
+  /**
+   * The merges that wait (ADR 0111): their checks were still running when the session's wait
+   * ended, the PC slept, the app closed. Tried once per poll; a merge waits for nothing here.
+   */
+  private async retryWaitingMerges(): Promise<void> {
+    if (!this.deps.retryMerges) return;
+    try {
+      await this.deps.retryMerges();
+    } catch (e) {
+      this.logger.warn("merge retry pass failed", { error: errorMessage(e) });
+    }
   }
 
   /** The agent's own login on the host (its comments never start a session); cached. */

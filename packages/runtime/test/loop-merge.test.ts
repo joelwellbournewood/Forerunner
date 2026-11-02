@@ -187,6 +187,7 @@ async function mergeWorld(opts: {
       },
       afterToolCall: (ctx, tool, input, result) => hooks.afterToolCall(ctx, tool, input, result),
     },
+    audit,
     host: github,
     worktreeRoot,
     token,
@@ -296,7 +297,15 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     expect(pr).toMatchObject({ merged: true, state: "closed" });
     expect(await m.github.getFile(REPO, "src/feature.ts", "main")).not.toBeNull();
     expect(result.merges).toHaveLength(1);
-    expect(result.merges[0]).toMatchObject({ taskId, status: "merged", rebased: false });
+    // ADR 0111: never rebased; merged as it is with a merge commit (two parents), and the
+    // task's merge record says so.
+    expect(result.merges[0]).toMatchObject({ taskId, status: "merged" });
+    expect(result.merges[0]?.rebased).toBeUndefined();
+    expect(await m.w.store.mergeRecord.forTask(taskId)).toMatchObject({
+      state: "merged",
+      method: "merge",
+      merge_sha: result.merges[0]?.mergeSha,
+    });
     expect(result.merges[0]?.mergeSha).toBeTruthy();
     // One allowed merge_pr row, on a token of its own (derived from the session's).
     const rows = mergeRows(m.audit);
@@ -361,7 +370,7 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     expect(mergeRows(m.audit).map((r) => r.allowed)).toEqual([true]);
   });
 
-  it("a check still running when the wait ends is never merged: the human is asked, the PR stays open", async () => {
+  it("a check still running when the wait ends is never merged: the merge record waits for the retry, no card, the PR stays open", async () => {
     const m = await mergeWorld({
       autonomy: 3,
       afterPr: (mw, pr) => mw.check(pr.headSha, "ci/test", "in_progress"),
@@ -372,10 +381,15 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
       status: "checks_pending",
       pendingChecks: ["ci/test"],
     });
-    expect((await requestsFor(m.w, taskId))[0]?.why).toContain("ci/test");
+    // ADR 0111: the watcher's retry merges it once the checks pass; nothing asks the person.
+    expect(await requestsFor(m.w, taskId)).toEqual([]);
+    expect(await m.w.store.mergeRecord.forTask(taskId)).toMatchObject({
+      state: "waiting_checks",
+      last_outcome: "checks_pending",
+    });
   });
 
-  it("a base that moved in the same file conflicts on the rebase: the human gets a request naming the file, the PR stays open", async () => {
+  it("a base that moved in the same file conflicts: the human gets a request naming the file, the PR stays open", async () => {
     const m = await mergeWorld({
       autonomy: 3,
       afterPr: async (mw) => {
@@ -394,7 +408,7 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     expect(request?.why).toContain("src/feature.ts");
   });
 
-  it("a base that moved elsewhere is rebased onto first: the rebased head is pushed and merged", async () => {
+  it("a base that moved elsewhere is merged as it is: no rebase, no force-push, a merge commit at the reviewed head", async () => {
     let reviewedHead = "";
     const m = await mergeWorld({
       autonomy: 3,
@@ -406,8 +420,29 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     const { result } = await m.run();
     const pr = await m.pr();
     expect(pr.merged).toBe(true);
-    expect(result.merges[0]).toMatchObject({ status: "merged", rebased: true });
-    expect(result.merges[0]?.headSha).not.toBe(reviewedHead);
+    // ADR 0111: before, the branch was rebased and force-pushed, which copied any work it had
+    // merged in; GitHub combines the two in the merge commit instead.
+    expect(result.merges[0]).toMatchObject({ status: "merged", headSha: reviewedHead });
+    expect(result.merges[0]?.rebased).toBeUndefined();
+    const forced = m.host.events().filter((e) => e.event === "push" && e.payload.forced === true);
+    expect(forced).toEqual([]);
+    const parents = (
+      await run([
+        "git",
+        "--git-dir",
+        m.host.repo(FULL)?.dir ?? "",
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        result.merges[0]?.mergeSha ?? "",
+      ])
+    ).stdout
+      .trim()
+      .split(" ")
+      .slice(1);
+    expect(parents).toHaveLength(2);
+    expect(parents[1]).toBe(reviewedHead);
     expect(await m.github.getFile(REPO, "src/feature.ts", "main")).not.toBeNull();
     expect(await m.github.getFile(REPO, "docs/notes.md", "main")).not.toBeNull();
   });
@@ -478,7 +513,9 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     const { taskId, result } = await m.run();
     expect((await m.pr()).merged).toBe(false);
     expect(result.merges[0]).toMatchObject({ status: "checks_pending" });
-    expect((await requestsFor(m.w, taskId)).length).toBe(1);
+    // ADR 0111: it waits on the record for the retry, without a card.
+    expect(await requestsFor(m.w, taskId)).toEqual([]);
+    expect((await m.w.store.mergeRecord.forTask(taskId))?.state).toBe("waiting_checks");
   });
 
   it("the checks wait ends with the session's wall-clock cap, not after the full wait", async () => {
@@ -684,7 +721,7 @@ describe("the merge_pr tool's checks rule (ADR 0062)", () => {
     expect((await host.getPullRequest(PR_REPO, pr.number)).merged).toBe(false);
   });
 
-  it("after the rebase push a host that still shows the old head is waited for, not taken for a moved head", {
+  it("after the push of a merged-in base a host that still shows the old head is waited for, not taken for a moved head", {
     timeout: 60_000,
   }, async () => {
     const clock = new SimulatedClock("2026-10-23T09:00:00Z");
@@ -709,7 +746,7 @@ describe("the merge_pr tool's checks rule (ADR 0062)", () => {
     await seed.commitAll("main moved");
     await seed.push("main");
     // A host whose PR head is the branch in the bare repo, except that the first look after
-    // the rebase push still shows the reviewed head (GitHub's lag after a push).
+    // the push of the merged-in base still shows the reviewed head (GitHub's lag after a push).
     const branchSha = async () =>
       (await run(["git", "--git-dir", bare, "rev-parse", "refs/heads/feat"])).stdout.trim();
     let staleOnce = true;
@@ -740,23 +777,47 @@ describe("the merge_pr tool's checks rule (ADR 0062)", () => {
       async listCommitStatuses() {
         return [];
       },
+      async getRepo() {
+        return { cloneUrl: bare, allowMergeCommit: true };
+      },
+      async getBranchRules() {
+        return {
+          requiredApprovals: 0,
+          codeOwnerReview: false,
+          upToDate: false,
+          requiredChecks: [],
+          allowedMethods: null,
+          blockers: [],
+          unreadable: false,
+        };
+      },
       async mergePullRequest(_repo: unknown, _n: number, opts: { sha?: string } = {}) {
         merged = opts.sha ?? null;
         return { merged: true, sha: "merge-1", message: "merged" };
       },
     } as unknown as MemoryGitHost;
     const tool = mergePrTool({ host, clock, identity, checksWaitMs: 60_000, checksPollMs: 10_000 });
+    // The caller asks for the branch to be brought up to date (ADR 0111: main merged in, a
+    // normal push, never a rebase).
     const pending = tool.execute(
-      { pr_url: "https://git.example/o/r/pull/1", head_sha: reviewed, worktree: wt },
+      { pr_url: "https://git.example/o/r/pull/1", head_sha: reviewed, worktree: wt, update: true },
       ctx(),
     );
-    // Let the rebase and push run, then move the clock past one poll.
+    // Let the merge of main and the push run, then move the clock past one poll.
     for (let i = 0; i < 200 && staleOnce; i++) await new Promise((r) => setTimeout(r, 20));
     await clock.advance(10_000);
     const res = await pending;
-    expect(res.artifacts).toMatchObject({ status: "merged", rebased: true });
+    expect(res.artifacts).toMatchObject({ status: "merged", updated: true, method: "merge" });
     expect(merged).toBe(await branchSha());
     expect(merged).not.toBe(reviewed);
+    // The new head is a merge commit of the reviewed head and main: nothing was rewritten.
+    const parents = (
+      await run(["git", "--git-dir", bare, "rev-list", "--parents", "-n", "1", "feat"])
+    ).stdout
+      .trim()
+      .split(" ")
+      .slice(1);
+    expect(parents[0]).toBe(reviewed);
   });
 });
 

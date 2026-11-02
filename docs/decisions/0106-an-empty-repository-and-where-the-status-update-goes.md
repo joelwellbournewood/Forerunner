@@ -1,7 +1,7 @@
 # 0106 — An empty linked repository gets Forerunner's first commit; the status update never rides on a task's pull request
 
 Date: 2026-11-02
-Status: accepted
+Status: accepted (point 6 amended by 0111: merges are merge commits, so "Merge in any order" holds for Forerunner's own merges)
 
 ## Context
 
