@@ -2506,3 +2506,74 @@ assistant and Settings still say no Claude key is connected; the daemon gets a n
 every start, so a page open across `restart-daemon.mjs` needs `reconnect(page, name)` (what the
 desktop shell does after its own daemon restarts is not covered); injection counters live in
 the daemon process and start again with it.
+
+## CI checks no local test can make (phase F2)
+
+Jobs that close gaps the bench cannot: every walk drives the UI in Chromium. They run the real daemon on the bench's stand-in model (`--provider bench`,
+above), so they prove mechanics, never model quality. Their drivers are Node scripts with no
+dependency outside Node and the repository; their pure parts have unit tests.
+
+### The desktop window check (Windows)
+
+`scripts/desktop-window-check.mjs`, job `window` of `.github/workflows/desktop.yml` (after
+`build`, on `windows-latest`, every run of that workflow; about 6 to 10 minutes). The desktop
+shell opens links, files and windows its own way, and the owner's "Clicking PR does nothing"
+was a bug only the shell had (`windows.rs`: a `target="_blank"` link had no handler). The job:
+
+1. downloads the MSI the build job uploaded (`desktop-windows-latest`) and installs it into
+   Program Files;
+2. copies the stand-in model (`testenv/package.json`, `testenv/src/bench`, `testenv/src/provider`)
+   into `<install>\runtime\testenv\` (`installStandIn`): `fr daemon --provider bench` loads it
+   from there (`BENCH_ENTRY` in `packages/runtime/src/cli/main.ts`) and refuses to start without
+   it, so an installed app never runs the stand-in unless a test put it there;
+3. starts the installed exe with no arguments, as a person does, on a fresh data folder with a
+   space and non-ASCII letters (`FORERUNNER_HOME`), with `FORERUNNER_DAEMON_PROVIDER=bench` (the
+   shell forwards it as `daemon --provider bench`; `apps.md`, "Desktop shell"),
+   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` (the window's DevTools),
+   the vault a file in that folder, `FORERUNNER_SANDBOX_ENGINE=podman` (Docker "not installed",
+   so Settings shows its "Get Docker Desktop" link) and no credential of the runner
+   (`windowEnv`);
+4. waits for `daemon.json` and `/health`, then for the window's page on the DevTools endpoint (a
+   page target on `http://tauri.localhost`, not the splash), and drives it over raw CDP with the
+   Android emulator job's driver (`apps/mobile/e2e/cdp.mjs`, ADR 0054; the page's console is
+   forwarded as `webview:` lines): Set up later, New project with a one-line brief, the plan
+   card in the Inbox (by its title, with its task lines), Approve and start ("Plan approved: N
+   tasks written"), the session to its end, every task done and shown on the Tasks tab;
+5. asserts what the shell did, from its own log (`<home>\logs\desktop-shell.log`; the lines are
+   `windows::handed_to_browser_line` and `folder::handed_to_file_manager_line`, each pinned by a
+   cargo test and read by `parseHandoffs`):
+   - the Tasks tab's PR link: the task's `pr_url` is written into the store first (`seedPrUrl`,
+     `<home>\data\state.sqlite`; no daemon route sets it, the PR executor does), pointing at a page
+     the script serves on 127.0.0.1; the click must give "handed to the system browser (link):
+     <that URL>", and whether the browser then fetched the page is reported as a note (a
+     browser's first run may not load it);
+   - Settings → Sandbox, "Get Docker Desktop": the same line with the docker.com page;
+   - a `target="_blank"` link added to the page: "handed to the system browser (new window)";
+   - a `file:` link added to the page: no hand-off of any kind;
+   - Open folder on the Overview: "handed to the file manager: <folder>", the folder the
+     Overview shows, and no error under the button;
+   - after each, the window still shows the same app page (the shell must not navigate away);
+6. saves a screenshot (`Page.captureScreenshot`) and the visible text of every step, both logs,
+   the model-call log and `result.json` (every check), then quits: `POST /shutdown`, then the
+   app's process tree. The job's artifact `desktop-window-check` holds them; the step summary
+   lists every check. Exit 1 when a required check failed.
+
+A dry run of the journey without the shell, against a bench in Chromium (the hand-off checks
+are reported as skipped; in a browser a link opens a tab):
+
+```
+node scripts/bench/start.mjs --name win --daemon-port 48731 --ui-port 1871 --fresh
+chromium --headless=new --remote-debugging-port=9341 --user-data-dir=<tmp> http://127.0.0.1:1871/
+node scripts/desktop-window-check.mjs --attach http://127.0.0.1:9341 --app-origin http://127.0.0.1:1871 \
+  --home /tmp/frbench/win/home --out /tmp/frbench/win/window
+node scripts/bench/stop.mjs --name win
+```
+
+Tests: `scripts/desktop-window-check.test.ts` (the options; the app's environment and that the
+variable and provider name are the ones `supervisor.rs` forwards; the stand-in lands where
+`BENCH_ENTRY` resolves from an installed CLI; the shell's log lines as tauri-plugin-log writes
+them, with the words read from `windows.rs` and `folder.rs`; folders compared as Windows does;
+`seedPrUrl` on a real SQLite file and the column the Tasks tab reads; the page server; the step
+summary; the job's shape in `desktop.yml`). Not covered: notifications (a toast is not in the
+page), the tray and Quit from it, a second window, a deep link; a standard (non-administrator)
+user (U-012).

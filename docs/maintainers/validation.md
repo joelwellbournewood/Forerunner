@@ -151,8 +151,12 @@ push to a development branch.
 These checks do not exist yet. Until they do, the owner's run-through covers them, and each
 is a candidate for the next work:
 
-- No automated journey on the **installed** app: install the MSI as a standard user, finish
-  setup with the fake provider, create a project, run a session, answer the Inbox, Quit,
-  check that no process is left, upgrade, uninstall. CI only runs `--self-test`.
+- The automated journey on the **installed** app is partial. Since 2026-11-02 the Desktop app
+  workflow's `window` job (`scripts/desktop-window-check.mjs`, `testing.md`) installs the MSI,
+  starts it as a person does on the stand-in model and drives its own window: New project from
+  a brief, the plan card, Approve and start, the session, the Tasks tab, and what the shell does
+  with the PR link, a web link, a new-window link, a `file:` link and Open folder. Still missing:
+  a standard user, an Inbox question answered, Quit from the tray with nothing left running,
+  upgrade and uninstall after a journey (`installed-check.ps1` does those around `--self-test`).
 - The Windows installed-app check still runs as administrator (U-012).
 - No check that the planner only plans work the assigned specialist can do (U-022).

@@ -2,13 +2,13 @@ name: Desktop app
 
 on:
   pull_request:
-    paths: ["apps/**", "packages/**", "scripts/*runtime-payload*", "scripts/installed-check.*", "evals/registry/**", ".github/workflows/desktop.yml"]
+    paths: ["apps/**", "packages/**", "testenv/src/bench/**", "testenv/src/provider/**", "scripts/*runtime-payload*", "scripts/installed-check.*", "scripts/desktop-window-check.*", "evals/registry/**", ".github/workflows/desktop.yml"]
   # Development branches too: the Playwright UI tests and the installed-app check run before a
   # release, and every push leaves installers the owner can try (docs/setup-guide.md, "Trying a
   # build before it is released"). The concurrency group cancels an older run of the same branch.
   push:
     branches: [main, "claude/**"]
-    paths: ["apps/**", "packages/**", "scripts/*runtime-payload*", "scripts/installed-check.*", "evals/registry/**", ".github/workflows/desktop.yml"]
+    paths: ["apps/**", "packages/**", "testenv/src/bench/**", "testenv/src/provider/**", "scripts/*runtime-payload*", "scripts/installed-check.*", "scripts/desktop-window-check.*", "evals/registry/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -91,4 +91,54 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
             apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
             apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: warn
+
+  # The installed app's own window (phase F2; docs/maintainers/testing.md, "The desktop window
+  # check"). Every walk drove the UI in Chromium, but the shell opens links, files and windows its
+  # own way (the owner's "Clicking PR does nothing" was a shell-only bug). This installs the MSI the
+  # build job made, starts it as a person does with WebView2's DevTools on and its daemon on the
+  # stand-in model, drives the window over CDP through the core journey (Set up later, New project
+  # with a one-line brief, the plan card, Approve and start, the session, the Tasks tab), then reads
+  # from the shell's own log what it did with the PR link, Settings' "Get Docker Desktop" link, a
+  # target="_blank" link, a file: link and Open folder. Every run of this workflow runs it (about
+  # 6 to 10 minutes after the build); the screenshots and logs are the job's artifact.
+  window:
+    name: desktop window check (windows-latest)
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows-latest
+          path: ${{ runner.temp }}/installer
+      - name: Install the MSI where a person does (Program Files)
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'installer') -Recurse -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "no .msi in the build job's artifact" }
+          $log = Join-Path $env:RUNNER_TEMP 'window-install.log'
+          $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', "`"$log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content -LiteralPath $log -Tail 40; throw "msiexec exit $($p.ExitCode)" }
+          $dir = Join-Path $env:ProgramFiles 'Forerunner'
+          $exe = Get-ChildItem -LiteralPath $dir -Filter *.exe -File | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          if (-not $exe) { throw "no .exe in $dir" }
+          "FR_APP_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      # A data folder with a space and non-ASCII letters: the project folder Open folder hands to
+      # Explorer has both.
+      - name: Drive the installed app's window (scripts/desktop-window-check.mjs)
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP ('fr window\Z' + [char]0x00FC + 'rich home')
+          node scripts/desktop-window-check.mjs --exe "$env:FR_APP_EXE" --home "$data" --out (Join-Path $env:RUNNER_TEMP 'window-check')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-window-check
+          path: ${{ runner.temp }}/window-check
           if-no-files-found: warn
