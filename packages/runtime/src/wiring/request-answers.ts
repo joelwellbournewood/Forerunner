@@ -96,6 +96,23 @@ export const ANSWER_CARD_KEYS = {
   optionOnly: ["githost:rebase_conflict", "merge:left_open", "critic:session_review"],
 } as const;
 
+/**
+ * Whether a request is the chat's read-back of an answer to another card (`change_card.chat_only`,
+ * the commands executor's pending `request.answer` from chat or voice; design §3.8, §3.9): the
+ * conversation shows it with Yes and No, and the card it answers stays the one card in the
+ * Inbox. The Inbox, its counts and the chat's list of open cards leave it out (phase E: before,
+ * a medium-risk card answered in chat got a second yes/no card about it).
+ */
+export function isChatOnlyCard(row: { change_card: unknown }): boolean {
+  const card = row.change_card;
+  return (
+    !!card &&
+    typeof card === "object" &&
+    !Array.isArray(card) &&
+    (card as { chat_only?: unknown }).chat_only === true
+  );
+}
+
 /** The word of an inbox answer: the string itself, or the `choice` / `answer` of an object. */
 export function answerWord(answer: JsonValue | null): string | null {
   const raw =
@@ -212,6 +229,26 @@ export interface PersonAnswerItem {
  */
 export const GO_AHEAD_WITHOUT_OPTION = "Go ahead without";
 
+/**
+ * Whether a person's questions card offers "Go ahead without" (design §3.8: "the specialist
+ * decides and says what it assumed"): the questions of a specialist at work (`ask_person`) or
+ * of a run the critic stopped do. A task planned for the person (`source` "planned", or a card
+ * from before the field) has no specialist to decide in the person's place: its card offers
+ * the form and Cancel task only, so "go ahead" is no answer to it (phase E: before, a typed
+ * "go ahead" from the phone, the web approvals or the chat closed the task with no answers,
+ * and what waited on it started on nothing).
+ */
+export function offersGoAheadWithout(card: unknown): boolean {
+  const source =
+    card && typeof card === "object" && !Array.isArray(card)
+      ? (card as { source?: unknown }).source
+      : undefined;
+  return source === "specialist" || source === "critic";
+}
+
+/** The refusal of "go ahead" on a card that offers no Go ahead without (`offersGoAheadWithout`). */
+export const NEEDS_YOUR_ANSWERS = "This card needs your answers: type them, or Cancel task.";
+
 /** What a person's questions card (U-022) was answered with. */
 export type PersonQuestionsAnswer =
   | { kind: "cancel" }
@@ -266,6 +303,20 @@ export function personQuestionsAnswer(answer: JsonValue | null): PersonQuestions
     return typeof word === "string" ? personQuestionsAnswer(word) : null;
   }
   return null;
+}
+
+/**
+ * `personQuestionsAnswer` read against the card it answers: "go ahead" (Go ahead without) is
+ * an answer only where the card offers it (`offersGoAheadWithout`); on the person's own card
+ * it reads as nothing, so the answer routes refuse it and the sync never acts on it.
+ */
+export function personQuestionsAnswerFor(
+  card: unknown,
+  answer: JsonValue | null,
+): PersonQuestionsAnswer | null {
+  const read = personQuestionsAnswer(answer);
+  if (read?.kind === "without" && !offersGoAheadWithout(card)) return null;
+  return read;
 }
 
 /** The `option`, `choice` or `answer` of an answer, trimmed and lower case. */
@@ -403,7 +454,10 @@ export interface AnswerTarget {
  */
 const READERS: ReadonlyArray<{
   matches: (key: string) => boolean;
-  read: (answer: JsonValue) => unknown;
+  /** `card`: the request's `change_card`, for a reader whose words depend on the card. */
+  read: (answer: JsonValue, card: unknown) => unknown;
+  /** The refusal's words when the generic "Choose one of" would not say what to do. */
+  refusal?: (answer: JsonValue, card: unknown) => string | null;
 }> = [
   { matches: (k) => k === ANSWER_CARD_KEYS.signoff, read: signoffAnswer },
   { matches: (k) => k === ANSWER_CARD_KEYS.blockedFindings, read: blockedFindingsAnswer },
@@ -417,7 +471,11 @@ const READERS: ReadonlyArray<{
   { matches: (k) => k.startsWith(ANSWER_CARD_KEYS.repoCreatePrefix), read: repoProposalAnswer },
   {
     matches: (k) => k.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix),
-    read: personQuestionsAnswer,
+    read: (answer, card) => personQuestionsAnswerFor(card, answer),
+    refusal: (answer, card) =>
+      personQuestionsAnswer(answer)?.kind === "without" && !offersGoAheadWithout(card)
+        ? NEEDS_YOUR_ANSWERS
+        : null,
   },
 ];
 
@@ -479,8 +537,10 @@ export function acceptsAnswer(
       : undefined;
   const reader = typeof key === "string" ? READERS.find((r) => r.matches(key)) : undefined;
   if (reader) {
-    const read = answer === undefined ? null : reader.read(answer as JsonValue);
-    return read === null || read === undefined ? refuse() : { ok: true };
+    const read = answer === undefined ? null : reader.read(answer as JsonValue, card);
+    if (read !== null && read !== undefined) return { ok: true };
+    const words = answer === undefined ? null : reader.refusal?.(answer as JsonValue, card);
+    return words ? { ok: false, options: labels, message: words } : refuse();
   }
   // An approval asks for one of its options, and so does a decision whose reader reads only
   // its options; any other decision, info or credential takes the answer as given.

@@ -34,6 +34,7 @@ import {
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
+import { reviewLevelName, reviewLevelValue } from "../src/lib/task-actions.ts";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
 /**
@@ -1707,7 +1708,7 @@ describe("the UI client against the real daemon", () => {
       source: "text",
     });
     expect(reply.actions.map((a) => a.kind)).toEqual(["task.create"]);
-    expect((await client.tasks(tab.id)).map((t) => t.title)).toContain("write the tab README");
+    expect((await client.tasks(tab.id)).map((t) => t.title)).toContain("Write the tab README");
     expect(reply.activeProjectId).toBe(projectId);
     expect((await client.me()).activeProjectId).toBe(projectId);
   });
@@ -1784,7 +1785,8 @@ describe("the UI client against the real daemon", () => {
       source: "text",
     });
     const changeId = created.actions[0]?.id ?? "";
-    const made = (await client.tasks(projectId)).find((t) => t.title === "finish me");
+    // Its title as a title (phase E: capitalised), the words as said its outcome.
+    const made = (await client.tasks(projectId)).find((t) => t.title === "Finish me");
     for (const to of ["claimed", "in_progress", "in_review", "done"] as const) {
       const t = await rt.store.task.mustGet(made?.id ?? "");
       await rt.store.task.transition(t.id, t.version, to, "work", { agentId });
@@ -3796,7 +3798,7 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
     const added = await line("add a task: write the README");
     expect(added.reply).not.toMatch(/fr setup/);
     expect((await client.tasks(project.id)).map((t) => [t.title, t.status])).toContainEqual([
-      "write the README",
+      "Write the README",
       "ready",
     ]);
     const told = await line("What should we do first?");
@@ -4925,4 +4927,516 @@ describe("the UI client against the real daemon: research on an API key reads th
       await off.rt.close();
     }
   }, 120_000);
+});
+
+describe("the UI client against the real daemon: answers do what the person said (phase E, answers)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let chatCalls: ModelRequest[];
+  let bench: BenchOptions;
+
+  beforeAll(async () => {
+    ({ rt, client, chatCalls, bench } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_PERSON: "1",
+    }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  /**
+   * The reference the chat's model has for a card, from what its last call was given (the
+   * `open_requests` line: "<reference>: [<project>] <the card in words>").
+   */
+  const referenceIn = (projectName: string): string => {
+    const told = JSON.stringify(chatCalls.at(-1)?.messages ?? []);
+    const found = new RegExp(`([0-9a-f-]{8,36}): \\[${projectName}[\\],]`).exec(told);
+    if (!found?.[1])
+      throw new Error(
+        `no reference for ${projectName} in the chat's context: ${told.slice(0, 1500)}`,
+      );
+    return found[1];
+  };
+
+  /** A project planned from a brief, its plan card open in the Inbox. */
+  const planned = async (name: string) => {
+    const project = await client.createProject({
+      name,
+      goal: "A page for the bakery",
+      brief: "A one-page website for a small bakery with its opening hours.",
+      intake: true,
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const open = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    const [card] = await open();
+    if (!card) throw new Error("no plan card");
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    return { project, card, me, open, say };
+  };
+
+  it('"go ahead" on the person\'s own card is refused in words, typed or from the chat; the card and the task wait', async () => {
+    const { project, card, open, say } = await planned("Bakery hours");
+    await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+    let asked: Awaited<ReturnType<typeof open>>[number] | undefined;
+    await eventually(
+      async () => {
+        asked = (await open()).find((r) => r.reply === "form" && !!r.taskId);
+        return !!asked;
+      },
+      "the person task's card",
+      async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
+      30_000,
+    );
+    if (!asked) throw new Error("no person card");
+    // What the Inbox offers on it: the form and Cancel task.
+    expect(asked.choices?.map((c) => c.label)).toEqual(["Cancel task"]);
+    // The phone and the web approvals send the person's typed words as the answer.
+    const refused = await client
+      .answerRequest(asked.id, { version: asked.version, answer: "go ahead" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(400);
+    expect((refused as ApiError).message).toBe(
+      "This card needs your answers: type them, or Cancel task.",
+    );
+    // The chat's request_answer gets the same refusal, and says it.
+    const reply = await say(
+      `tool: request_answer {"request": "${asked.id}", "answer": "go ahead"}`,
+    );
+    expect(reply.reply).toContain("This card needs your answers: type them, or Cancel task.");
+    expect(reply.pendingConfirmation ?? null).toBeNull();
+    const still = (await open()).find((r) => r.id === asked?.id);
+    expect(still?.status).toBe("open");
+    const task = (await client.tasks(project.id)).find((t) => t.id === asked?.taskId);
+    expect(task?.status).toBe("needs_human");
+    expect(task?.display?.label).toMatch(/^Needs your answer/);
+  }, 60_000);
+
+  it("the plan card answered from the chat: its read-back is the chat's, the Inbox keeps one card, and Yes approves the plan from that card", async () => {
+    const { project, card, me, open, say } = await planned("Bakery chat");
+    const before = (await client.inbox(me.id)).needsYouCount;
+    // The chat's reference to the card, as its model has it: unique among the open cards,
+    // although the person card of the case before was filed within the same minute.
+    await say("what is waiting for me?");
+    const ref = referenceIn("Bakery chat");
+    expect(card.id.startsWith(ref)).toBe(true);
+    const header = async () => {
+      const shown = await client.project(project.id);
+      return { statusLine: shown.statusLine, waitingOnYou: shown.waitingOnYou };
+    };
+    const headerBefore = await header();
+    const asked = await say(
+      `tool: request_answer {"request": "${ref}", "answer": "Approve and start"}`,
+    );
+    const written = card.choices?.[0]?.explain ?? "";
+    expect(asked.pendingConfirmation?.readback).toBe(
+      `Approve and start (${card.title})? ${written}`,
+    );
+    // The model is told the same words, with no id it could repeat to the person.
+    const told = JSON.stringify(chatCalls.at(-1)?.messages ?? []);
+    expect(told).toContain("Needs confirmation. The person is asked: Approve and start (");
+    expect(told).not.toContain(asked.pendingConfirmation?.id ?? "no id");
+    // One card about the plan: the read-back is not filed as a second card beside it.
+    expect((await open()).map((r) => r.id)).toEqual([card.id]);
+    expect((await client.inbox(me.id)).needsYouCount).toBe(before);
+    // The header's sentence and count are the Inbox's: still the one plan card.
+    expect(await header()).toEqual(headerBefore);
+    const yes = await say("yes");
+    const tasks = await client.tasks(project.id);
+    expect(tasks.length).toBeGreaterThan(0);
+    // The card's Done line (a session of the case before still runs, so the start waits for it).
+    expect(yes.reply).toMatch(new RegExp(`^Plan approved: ${tasks.length} tasks written; `));
+    const inbox = await client.inbox(me.id);
+    const answered = inbox.requests.filter(
+      (r) => r.projectId === project.id && r.status !== "open",
+    );
+    // The Answered list holds the plan card with its Done line, and nothing about the read-back.
+    expect(answered.map((r) => r.id)).toEqual([card.id]);
+    expect(answered[0]?.outcome).toBe(yes.reply);
+  }, 60_000);
+
+  it("a failed task's card answered Try again from the chat: one card, and Yes tries the task again", async () => {
+    const project = await client.createProject({ name: "Review club", goal: "A contact page" });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write the Contact page in contact.html",
+      outcome: "contact.html says how to reach the club",
+      acceptance_criteria: ["contact.html exists"],
+      risk_tier: 1,
+      status: "in_review",
+      priority: 5,
+      specialist: "coder",
+      reason: "Wrote contact.html.",
+    } as never);
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    await fileReviewFailedRequest({
+      store: rt.store,
+      task,
+      session: null,
+      humanId: me.id,
+      agentId,
+      runId: null,
+      error: "the critic's model did not answer",
+    });
+    const open = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    const [card] = await open();
+    if (!card) throw new Error("no card");
+    const option = card.choices?.find((c) => c.label === "Try again");
+    expect(option).toBeDefined();
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    await say("what is waiting for me?");
+    // What Home and the project's header say before the chat answers the card.
+    const shown = async () => {
+      const card = await client.project(project.id);
+      const onHome = (await client.projects()).find((p) => p.id === project.id);
+      return {
+        statusLine: card.statusLine,
+        waitingOnYou: card.waitingOnYou,
+        health: card.health,
+        needsYou: card.needsYou ?? null,
+        home: onHome
+          ? {
+              statusLine: onHome.statusLine,
+              waitingOnYou: onHome.waitingOnYou,
+              health: onHome.health,
+            }
+          : null,
+      };
+    };
+    const before = await shown();
+    expect(before.statusLine?.text).toBe(`Waiting for you: "${task.title}"`);
+    expect(before.waitingOnYou).toBe(1);
+    const told: { kind: string; title: string }[] = [];
+    const onNotification = (n: { kind: string; title: string }) => told.push(n);
+    rt.events.on("notification", onNotification);
+    const asked = await say(
+      `tool: request_answer {"request": "${referenceIn("Review club")}", "answer": "Try again"}`,
+    );
+    expect(asked.pendingConfirmation?.readback).toBe(
+      `Try again (${card.title})? ${option?.explain ?? ""}`.trim(),
+    );
+    expect((await open()).map((r) => r.id)).toEqual([card.id]);
+    // The read-back is the chat's: Home and the header still say the one card, not "2
+    // questions", and no notification points to an Inbox card the Inbox does not show.
+    expect(await shown()).toEqual(before);
+    await new Promise((r) => setTimeout(r, 50));
+    rt.events.off("notification", onNotification);
+    expect(told.filter((n) => n.kind === "request_opened")).toEqual([]);
+    await say("yes");
+    expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("answered");
+    expect((await open()).map((r) => r.id)).toEqual([]);
+    expect(["ready", "claimed", "in_progress", "in_review", "done"]).toContain(
+      (await rt.store.task.mustGet(task.id)).status,
+    );
+  }, 60_000);
+
+  it("a deploy or a migration is stored at the full review however it is made: New task, chat, an edit (phase C leftover C-2)", async () => {
+    const project = await client.createProject({ name: "Shop deploy", goal: "The shop online" });
+    // New task as the dialog sends it: no level picked, so the daemon applies the project's.
+    const deploy = await client.createTask(project.id, {
+      title: "Deploy the shop to the host",
+      outcome: "The shop answers on its domain",
+      specialist: "ops-deploy",
+    });
+    expect(deploy.riskTier).toBe(2);
+    // A light review asked for explicitly is raised too: the owner's decision 4.
+    const migrate = await client.createTask(project.id, {
+      title: "Move the orders to the new schema",
+      outcome: "Every order is in the new table",
+      specialist: "migration-specialist",
+      riskTier: 1,
+    });
+    expect(migrate.riskTier).toBe(2);
+    // An edit that hands a light task to the deploy specialist raises it.
+    const plain = await client.createTask(project.id, {
+      title: "Write the deploy notes",
+      outcome: "docs/deploy.md",
+      specialist: "writer-marketing",
+    });
+    expect(plain.riskTier).toBe(1);
+    const edited = await client.updateTask(plain.id, {
+      version: plain.version,
+      specialist: "ops-deploy",
+    });
+    expect((await rt.store.task.mustGet(plain.id)).risk_tier).toBe(2);
+    expect(edited.riskTier).toBe(2);
+    // The chat's task.create: the same floor.
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    await client.chat({
+      humanId: me.id,
+      agentId,
+      projectId: project.id,
+      projectTab: true,
+      text: 'tool: task_create {"title": "Deploy the docs site", "outcome": "docs online", "specialist": "ops-deploy"}',
+      source: "text",
+    });
+    const rows = await client.tasks(project.id);
+    const viaChat = rows.find((t) => t.title === "Deploy the docs site");
+    expect(viaChat?.riskTier).toBe(2);
+    for (const t of rows.filter((r) => r.specialist === "ops-deploy"))
+      expect(t.riskTier, t.title).toBe(2);
+  }, 60_000);
+
+  it("a coder's task the retry ladder retries stays the coder's at the level it is stored and run at: never a migration's full review and sign-off on the host (phase E review, C-2)", async () => {
+    const project = await client.createProject({ name: "Notes ladder", goal: "A notes CLI" });
+    const task = await client.createTask(project.id, {
+      title: "Build the notes CLI in src/notes.js",
+      outcome: "node src/notes.js add and list notes",
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    // Nothing of the cases before may still run: this start must begin at once.
+    await eventually(
+      async () => (await client.sessions({})).every((s) => s.status !== "running"),
+      "the sessions of the cases before to end",
+      async () => (await client.sessions({})).map((s) => s.status).join(", "),
+      30_000,
+    );
+    bench.fail = ["Build the notes CLI"];
+    try {
+      const started = await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () =>
+          (await client.session(started.session?.id ?? "")).status !== "running" &&
+          (await client.task(task.id)).task.status !== "in_progress",
+        "the session to run the task's attempts and end",
+        async () => `${(await client.task(task.id)).task.status}`,
+        60_000,
+      );
+    } finally {
+      bench.fail = [];
+    }
+    const detail = await client.task(task.id);
+    const work = detail.runs.filter((r) => r.kind === "work");
+    // Every attempt (the ladder ran past its second rung) was the coder's.
+    expect(work.length, JSON.stringify(work)).toBeGreaterThanOrEqual(3);
+    expect(new Set(work.map((r) => r.specialist))).toEqual(new Set(["coder"]));
+    // At the store and on the row: the coder's task at the light review it was created at.
+    const stored = await rt.store.task.mustGet(task.id);
+    expect(stored.specialist).toBe("coder");
+    expect(stored.risk_tier).toBe(1);
+    const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
+    expect(row?.specialist).toBe("coder");
+    expect(reviewLevelName(reviewLevelValue(row?.riskTier ?? 0, row?.specialist))).toBe(
+      "Light review",
+    );
+    // One card after the retries, about the task (me: the Inbox's own list).
+    const openCards = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    const cards = await openCards();
+    expect(cards.map((c) => c.taskId)).toEqual([task.id]);
+    const card = cards[0];
+    if (!card) throw new Error("no card");
+    const before = (await client.inbox(me.id)).needsYouCount;
+    // "Try X again" in the chat about that task is an answer to its card, not a second card
+    // beside it (phase E review: it read back 'Resume "…"?' and filed a Resume card).
+    const said = await client.chat({
+      humanId: me.id,
+      agentId,
+      projectId: project.id,
+      projectTab: true,
+      text: 'try the task "Build the notes CLI in src/notes.js" again',
+      source: "text",
+    });
+    expect((await openCards()).map((c) => c.id)).toEqual([card.id]);
+    expect((await client.inbox(me.id)).needsYouCount).toBe(before);
+    // The card after the ladder's last rung carries the critic's high findings: it needs this
+    // computer's OK, so the reply points to it, and nothing else is filed.
+    expect((await rt.store.humanRequest.mustGet(card.id)).risk).toBe("high");
+    expect(said.pendingConfirmation ?? null).toBeNull();
+    expect(said.reply).toBe(
+      `Answer it on its card in the Inbox: ${card.title}. Nothing else was filed.`,
+    );
+    expect(card.title).toBe('"Build the notes CLI in src/notes.js" failed 4 times');
+    expect((await rt.store.humanRequest.mustGet(card.id)).status).toBe("open");
+    expect((await rt.store.task.mustGet(task.id)).status).toBe("needs_human");
+  }, 90_000);
+
+  it('"try X again" in the chat on a task whose failed card is open answers that card, read back in its words; Yes is its Try again (phase E review)', async () => {
+    const project = await client.createProject({ name: "Quote retry", goal: "A quote page" });
+    const task = await client.createTask(project.id, {
+      title: "Write the quote page in quote.html",
+      outcome: "quote.html shows a quote",
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    await eventually(
+      async () => (await client.sessions({})).every((s) => s.status !== "running"),
+      "the sessions of the cases before to end",
+      async () => (await client.sessions({})).map((s) => s.status).join(", "),
+      30_000,
+    );
+    // The run errors (the model call fails): the session files the failed-task card.
+    bench.fail = ["Write the quote page"];
+    bench.failMode = "error";
+    const openCards = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    try {
+      await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () => (await openCards()).length > 0,
+        "the failed task's card",
+        async () => `${(await client.task(task.id)).task.status}`,
+        60_000,
+      );
+      await eventually(
+        async () => (await client.sessions({})).every((s) => s.status !== "running"),
+        "the session to end",
+        async () => (await client.sessions({})).map((s) => s.status).join(", "),
+        30_000,
+      );
+    } finally {
+      bench.fail = [];
+      bench.failMode = "report";
+    }
+    const cards = await openCards();
+    expect(cards.map((c) => c.taskId)).toEqual([task.id]);
+    const card = cards[0];
+    if (!card) throw new Error("no card");
+    expect((await rt.store.humanRequest.mustGet(card.id)).risk).toBe("medium");
+    const tryAgain = card.choices?.find((c) => c.label === "Try again");
+    expect(tryAgain).toBeDefined();
+    const before = await client.project(project.id);
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    const asked = await say('try the task "Write the quote page in quote.html" again');
+    expect(asked.pendingConfirmation?.readback).toBe(
+      `Try again (${card.title})? ${tryAgain?.explain ?? ""}`.trim(),
+    );
+    // One card about the task; Home and the header say the same as before.
+    expect((await openCards()).map((c) => c.id)).toEqual([card.id]);
+    const after = await client.project(project.id);
+    expect({ statusLine: after.statusLine, waitingOnYou: after.waitingOnYou }).toEqual({
+      statusLine: before.statusLine,
+      waitingOnYou: before.waitingOnYou,
+    });
+    const yes = await say("yes");
+    // The card's own Try again: its Done line, and the card is answered with its option.
+    expect(yes.reply).toMatch(
+      /^Trying "Write the quote page in quote\.html" again: (a session started|it runs after the current session)\.$/,
+    );
+    const answered = await rt.store.humanRequest.mustGet(card.id);
+    expect(answered.status).toBe("answered");
+    expect(answered.answer).toBe("Try again");
+    expect((await openCards()).map((c) => c.id)).toEqual([]);
+    await eventually(
+      async () => (await client.sessions({})).every((s) => s.status !== "running"),
+      "the session the answer started to end",
+      async () => (await client.sessions({})).map((s) => s.status).join(", "),
+      30_000,
+    );
+  }, 120_000);
+
+  it("'start a session' in the chat waits for the run and links the session it started", async () => {
+    const project = await client.createProject({ name: "Quote chat", goal: "A quote page" });
+    await client.createTask(project.id, {
+      title: "Write the quote page in index.html",
+      outcome: "index.html shows a quote",
+      specialist: "coder",
+    });
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    // Nothing of the cases before may still run: this start must begin at once.
+    await eventually(
+      async () => (await client.sessions({})).every((s) => s.status !== "running"),
+      "the sessions of the cases before to end",
+      async () => (await client.sessions({})).map((s) => s.status).join(", "),
+      30_000,
+    );
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    const asked = await say("start a session");
+    expect(asked.pendingConfirmation?.readback).toMatch(/^Start a session on Quote chat/);
+    const yes = await say("yes");
+    expect(yes.reply).toMatch(/^Started a session on Quote chat/);
+    const started = (await client.sessions({ projectId: project.id }))[0];
+    expect(started).toBeDefined();
+    // The turn links the session it started.
+    const seen = await client.conversation(project.id);
+    const action = seen.turns.at(-1)?.reply?.actions[0];
+    expect(action?.kind).toBe("session.start");
+    expect(action?.sessionId).toBe(started?.id);
+    await eventually(
+      async () => (await client.session(started?.id ?? "")).status !== "running",
+      "the started session to end",
+      async () => (await client.session(started?.id ?? "")).status,
+      30_000,
+    );
+  }, 90_000);
+
+  it("a Settings confirmation says in the Answered list what came of it: the change made, or nothing changed (phase C leftover C-29)", async () => {
+    const me = await client.me();
+    // As Settings sends a raise of the monthly cap: it waits for this computer's OK.
+    const raise = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 900 } }],
+      source: "ui",
+    });
+    expect(raise.status).toBe("pending");
+    const lower = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 950 } }],
+      source: "ui",
+    });
+    expect(lower.status).toBe("pending");
+    const confirmed = await client.confirmCommand(raise.pendingId ?? "", { answer: "device" });
+    expect(confirmed.status).toBe("done");
+    await client.cancelCommand(lower.pendingId ?? "");
+    const answered = (await client.inbox(me.id)).requests.filter(
+      (r) => r.id === raise.pendingId || r.id === lower.pendingId,
+    );
+    const byId = new Map(answered.map((r) => [r.id, r.outcome]));
+    expect(byId.get(raise.pendingId ?? "")).toBe(confirmed.sentence);
+    expect(byId.get(raise.pendingId ?? "")).toMatch(/monthly cap .*CHF 900/);
+    expect(byId.get(lower.pendingId ?? "")).toBe("You said no; nothing changed.");
+  }, 60_000);
 });

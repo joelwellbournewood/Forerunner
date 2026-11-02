@@ -277,6 +277,18 @@ export interface CommandPorts {
    */
   checkAnswer?(request: HumanRequestRow, answer: string): void;
   /**
+   * A card as the Inbox shows it (the runtime's request words): its title, its options with
+   * the one-line consequence of each, and, once answered, its Done line. `request.answer`
+   * reads its card back in these words ("Approve and start (Plan for "X": 3 tasks)? Writes
+   * these 3 tasks ...") and says the Done line when it is answered; absent, the request's own
+   * `why` is quoted.
+   */
+  cardWords?(request: HumanRequestRow): Promise<{
+    title: string;
+    choices: { label: string; explain: string | null }[];
+    outcome: string | null;
+  } | null>;
+  /**
    * Called after `project.create` inserted the row (spec G.5, ADR 0058): the daemon scaffolds
    * the project's standard doc set, as its create route does. The command awaits the hook and
    * logs one that throws; the creation never fails on it.
@@ -405,6 +417,14 @@ export interface CommandDef<P = unknown> {
   actionClass?: ActionClass;
   /** The command changes a limit (budget, autonomy, capability, permissions). */
   limit?: boolean;
+  /**
+   * The call this one is said as instead, or null (the executor asks before it plans): a move
+   * said in chat or voice on a task whose Inbox card offers the same thing is that card's
+   * answer (`request.answer` with the option as its button says it), so the card stays the one
+   * card about it (design §3.8, §3.9; phase E review: "try X again" filed a Resume card beside
+   * the failed task's card). A redirected call is never redirected again.
+   */
+  redirect?(params: P, ctx: CommandContext): Promise<CommandCall | null>;
   /** Preview without acting. */
   plan?(params: P, ctx: CommandContext): Promise<ChangeCard>;
   run(params: P, ctx: CommandContext): Promise<CommandOutcome>;

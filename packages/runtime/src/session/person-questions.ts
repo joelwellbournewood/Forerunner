@@ -17,6 +17,7 @@ import {
   CANCEL_TASK_OPTION,
   type PersonAnswerItem,
   personQuestionsAnswer,
+  personQuestionsAnswerFor,
 } from "../wiring/request-answers.ts";
 import { answerApplied, markAnswer } from "./answer-mark.ts";
 import { noteAboutTask, recordStart, resumeWork } from "./resume-work.ts";
@@ -744,7 +745,10 @@ async function applyAnswers(
         cost_usd_micro: 0,
         occurred_at: clock.nowIso(),
       });
-    const answer = personQuestionsAnswer(row.answer);
+    // Read against the card: "go ahead" on the person's own card is no answer (phase E). The
+    // routes refuse it; one stored anyway (an older daemon) is recorded unrecognized, and the
+    // task, still waiting, gets its questions filed again by the next sync.
+    const answer = personQuestionsAnswerFor(row.change_card, row.answer);
     const task = card ? await store.task.get(card.task_id) : undefined;
     if (!card || !answer) {
       if (await markAnswer(store, clock, row, "unrecognized_answer")) out.skipped++;
@@ -762,14 +766,9 @@ async function applyAnswers(
           let status: string | null = current?.status ?? null;
           const actor = { agentId: deps.agentId, humanId: deps.humanId };
           const reason = "you chose to go ahead without answering its questions";
-          if (current && card.on_answer === "done" && current.status === "needs_human") {
-            let t = current;
-            for (const to of CLOSE_PATH)
-              t = await tx.task.transition(t.id, t.version, to, reason, actor);
-            status = t.status;
-            // Closed: what waits on it may run now (resumeWork starts only when a task can).
-            follow = true;
-          } else if (current && current.status === "needs_human") {
+          // Only a specialist's card offers it (`personQuestionsAnswerFor`): the task goes back
+          // to its specialist, never closed on no answers.
+          if (current && current.status === "needs_human") {
             const t = await tx.task.transition(current.id, current.version, "ready", reason, actor);
             await tx.queue.enqueue({
               project_id: t.project_id,

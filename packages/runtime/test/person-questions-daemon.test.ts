@@ -246,6 +246,67 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
     expect((await cardFor(t.id))?.status).toBe("open");
   });
 
+  it('a typed "go ahead" on the person\'s own card is refused in words, from the Inbox route and from chat; the task waits (phase E)', async () => {
+    // Before, every questions card read "go ahead" as Go ahead without, so a typed answer from
+    // the phone, the web approvals or the chat's request_answer closed a planned person task
+    // with no answers although its card offers only the form and Cancel task, and what waited
+    // on it started on nothing (live walk 2 #3 by another road).
+    const t = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Owner supplies the bakery's opening hours",
+      outcome: "The hours are known.",
+      acceptance_criteria: ["What are the opening hours?"],
+      specialist: "person",
+      status: "ready",
+      reason: "planned by the intake",
+      author_agent: rt.agent.id,
+    } as never);
+    const next = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Put the hours on the page",
+      outcome: "index.html shows the hours",
+      specialist: "coder",
+      status: "ready",
+      depends_on: [t.id],
+      reason: "planned by the intake",
+      author_agent: rt.agent.id,
+    } as never);
+    await rt.syncApprovals();
+    const card = (await cardFor(t.id)) as Json;
+    // What the Inbox offers on it: the form and Cancel task, no Go ahead without.
+    expect((card.choices as { label: string }[]).map((c) => c.label)).toEqual(["Cancel task"]);
+    expect(card.reply).toBe("form");
+    for (const word of ["go ahead", "Go ahead without", { choice: "Go ahead without" }]) {
+      const refused = await req(`/requests/${card.id}/answer`, {
+        method: "POST",
+        body: JSON.stringify({ version: card.version, answer: word }),
+      });
+      expect(refused.status).toBe(400);
+      expect(((await refused.json()) as Json).message).toBe(
+        "This card needs your answers: type them, or Cancel task.",
+      );
+    }
+    if (!rt.conversation) throw new Error("no conversation agent");
+    const said = await rt.commands.execute(
+      { name: "request.answer", params: { request: String(card.id), answer: "go ahead" } },
+      {
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        activeProjectId: projectId,
+        sessionId: await rt.conversation.conversationSessionId(rt.agent.id, null),
+        source: "text",
+        wordsUsed: "go ahead on the hours card",
+      },
+    );
+    expect(said).toMatchObject({ status: "refused", code: "validation" });
+    expect(said.reason).toContain("This card needs your answers: type them, or Cancel task.");
+    await rt.syncApprovals();
+    expect((await cardFor(t.id))?.status).toBe("open");
+    expect((await rt.store.task.mustGet(t.id)).status).toBe("needs_human");
+    expect((await rt.store.task.mustGet(next.id)).status).toBe("ready");
+    expect(await rt.store.run.forTask(next.id)).toEqual([]);
+  });
+
   it("a specialist that needs the person asks them: the run ends, and the next run gets the answers", async () => {
     const task = await rt.store.task.insert({
       project_id: projectId,

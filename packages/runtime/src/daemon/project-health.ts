@@ -1,4 +1,5 @@
 import type { StateStore, TaskRow } from "@forerunner/state";
+import { isChatOnlyCard } from "../wiring/request-answers.ts";
 import type { ProjectCard } from "./api-types.ts";
 
 /**
@@ -17,10 +18,13 @@ export async function projectHealth(
   tasks: readonly Pick<TaskRow, "id" | "title" | "status">[],
   failed: number,
 ): Promise<{ health: ProjectCard["health"]; needsYou: ProjectCard["needsYou"] }> {
-  const open = await store.humanRequest.list(
-    { status: "open", project_id: projectId, human_id: humanId } as never,
-    { orderBy: [{ column: "created_at" }, { column: "id" }], limit: 1000 },
-  );
+  // The chat's read-back of an answer to a card is the conversation's, no card of its own.
+  const open = (
+    await store.humanRequest.list(
+      { status: "open", project_id: projectId, human_id: humanId } as never,
+      { orderBy: [{ column: "created_at" }, { column: "id" }], limit: 1000 },
+    )
+  ).filter((r) => !isChatOnlyCard(r));
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const carded = open
     .map((r) => (r.task_id ? byId.get(r.task_id) : undefined))

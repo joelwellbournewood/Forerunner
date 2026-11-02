@@ -361,6 +361,11 @@ vectors of ADR 0027 rank short lessons, not sections of hundreds of words.
 `loadDocChunks(roots, { maxFiles?, maxFileBytes = 256 KiB, chunkTokens?, countTokens? })` reads
 and chunks one root or several in order (a repo-relative path already read from an earlier root
 is skipped, so the first root wins; `maxFiles` counts across roots) and does all the file I/O;
+it leaves out a section whose body is only the scaffold's placeholder (`isScaffoldPlaceholder`
+in `docs.ts`, beside the templates that write them: "To be written." and "To be written: …",
+"Goal: to be written.", "- nothing yet", "- nothing", "- first task", a table with its header
+and no row; phase E: before, "## Next\n\n- first task" and "To be written." reached the chat's
+context and the briefs as facts about the project); a section with any real line is kept whole;
 `selectDocHits(loaded, query, { maxTokens = 1200, maxChunks = 8, countTokens? })` selects from
 those chunks with no I/O, so a caller that must shrink its budget selects again without reading
 (the chat does, after measuring its envelope). `searchDocs(roots, query, opts)` is the two in a

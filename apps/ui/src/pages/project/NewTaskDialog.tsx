@@ -12,6 +12,8 @@ import { Dialog } from "../../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS } from "../../components/ui.tsx";
 import { chfMicroToUsdMicro, chfToMicro, type MoneyLike } from "../../lib/money.ts";
 import {
+  FULL_REVIEW_SPECIALISTS,
+  FULL_REVIEW_TIER,
   reviewLevelChoices,
   reviewLevelName,
   WHO_AGENT,
@@ -162,8 +164,13 @@ export function NewTaskDialog({
         .split(/\r?\n/)
         .map((l) => l.trim())
         .filter(Boolean),
-      // Only a level the person picked is sent; otherwise the daemon applies the project's.
-      ...(riskTier === PROJECT_DEFAULT_TIER ? {} : { riskTier: Number(riskTier) }),
+      // Only a level the person picked is sent; otherwise the daemon applies the project's. A
+      // deploy or a migration sends the full review it keeps (the daemon raises it too).
+      ...(keepsFull
+        ? { riskTier: tier }
+        : riskTier === PROJECT_DEFAULT_TIER
+          ? {}
+          : { riskTier: Number(riskTier) }),
       priority,
       status: seed?.status ?? "ready",
       dependsOn,
@@ -181,7 +188,11 @@ export function NewTaskDialog({
     }
   };
 
-  const tier = riskTier === PROJECT_DEFAULT_TIER ? (defaultRiskTier ?? 1) : Number(riskTier);
+  // A deploy or a migration keeps the full review and the person's sign-off (ADR 0104, the
+  // owner's decision 4; phase C leftover C-2): no light review is offered for it, as in Edit.
+  const keepsFull = FULL_REVIEW_SPECIALISTS.has(who);
+  const chosen = riskTier === PROJECT_DEFAULT_TIER ? (defaultRiskTier ?? 1) : Number(riskTier);
+  const tier = keepsFull ? Math.max(chosen, FULL_REVIEW_TIER) : chosen;
   const fullWithoutDocker = tier >= 2 && docker === false;
   return (
     <Dialog open={open} onClose={onClose} title="New task" testId="new-task-dialog" wide>
@@ -233,20 +244,24 @@ export function NewTaskDialog({
           <Field label="Review level">
             <select
               className={INPUT_CLASS}
-              value={riskTier}
+              value={keepsFull ? String(tier) : riskTier}
               onChange={(e) => setRiskTier(e.target.value)}
               name="riskTier"
               data-testid="task-risk-tier"
             >
-              <option value={PROJECT_DEFAULT_TIER}>
-                The project's default
-                {defaultRiskTier === undefined ? "" : ` (${reviewLevelName(defaultRiskTier)})`}
-              </option>
-              {reviewLevelChoices(docker).map((c) => (
-                <option key={c.tier} value={String(c.tier)}>
-                  {c.label}
+              {keepsFull ? null : (
+                <option value={PROJECT_DEFAULT_TIER}>
+                  The project's default
+                  {defaultRiskTier === undefined ? "" : ` (${reviewLevelName(defaultRiskTier)})`}
                 </option>
-              ))}
+              )}
+              {reviewLevelChoices(docker)
+                .filter((c) => !keepsFull || c.tier >= FULL_REVIEW_TIER)
+                .map((c) => (
+                  <option key={c.tier} value={String(c.tier)}>
+                    {c.label}
+                  </option>
+                ))}
             </select>
           </Field>
           <Field label="Who does it">
@@ -293,6 +308,11 @@ export function NewTaskDialog({
             />
           </Field>
         </div>
+        {keepsFull ? (
+          <p className="text-sm" data-testid="task-full-review-note">
+            {FULL_REVIEW_SPECIALISTS.get(who)} keeps the full review and your sign-off.
+          </p>
+        ) : null}
         {fullWithoutDocker ? (
           <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="task-docker-note">
             Full review needs Docker, which is not running on this computer: the task waits until it

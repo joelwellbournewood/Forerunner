@@ -81,6 +81,36 @@ const TEMPLATES: Record<StandardDoc, DocTemplate> = {
   },
 };
 
+/**
+ * The lines the templates above write where the project's own words go (phase E): "To be
+ * written." and its "To be written: <what>" forms, "<Part>: to be written." (one or more),
+ * the status lists' "- nothing yet", "- nothing" and "- first task". Kept beside the templates
+ * so a new placeholder is added in both places; `isScaffoldPlaceholder` reads them.
+ */
+const PLACEHOLDER_LINES: readonly RegExp[] = [
+  /^to be written\b.*$/i,
+  /^(?:[^.:]{1,60}:\s*to be written\.?\s*)+$/i,
+  /^- (?:nothing yet|nothing|first task)$/i,
+];
+
+/**
+ * Whether a doc section's body is only the scaffold's placeholder (phase E): every line one of
+ * `PLACEHOLDER_LINES`, or a table with its header and no row (the runbook's "Common failures").
+ * Doc search leaves such a section out: before, "## Next\n\n- first task" and "To be written."
+ * reached the chat's context and the specialists' briefs as facts about the project. A section
+ * with any line of real words is kept whole.
+ */
+export function isScaffoldPlaceholder(body: string): boolean {
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return false;
+  if (lines.every((l) => l.startsWith("|")))
+    return lines.length === 2 && /^\|[\s|:-]+\|$/.test(lines[1] ?? "");
+  return lines.every((l) => PLACEHOLDER_LINES.some((re) => re.test(l)));
+}
+
 /** A "## Repositories" section listing the project's repos, or nothing without any. */
 function reposSection(p: ProjectInfo): string {
   const repos = (p.repos ?? []).map((r) => r.trim()).filter(Boolean);

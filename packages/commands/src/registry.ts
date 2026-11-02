@@ -138,6 +138,8 @@ export interface ToolOutcome {
   reason?: string;
   card?: { sentence: string } & Parameters<typeof renderChangeCard>[0];
   pendingId?: string;
+  /** The card's one-line read-back, for a pending change: what the person is asked. */
+  readback?: string;
 }
 
 /**
@@ -161,9 +163,12 @@ export function toToolSpecs(registry: CommandRegistry, binding: ToolBinding): To
           case "partial":
             return { content: out.sentence ?? "done" };
           case "pending":
+            // What the person is asked, in their words (the card's one-line read-back), never
+            // the pending card's id: the model repeated ids to the person (live walk 2 #10,
+            // "request 01a19958"; phase E). The runtime tracks the card itself.
             return {
-              content: `Needs confirmation (${out.pendingId ?? "pending"}). ${
-                out.card ? renderChangeCard(out.card, { voice: true }) : ""
+              content: `Needs confirmation. The person is asked: ${
+                out.readback ?? (out.card ? renderChangeCard(out.card, { voice: true }) : "")
               }`.trim(),
             };
           case "cancelled":

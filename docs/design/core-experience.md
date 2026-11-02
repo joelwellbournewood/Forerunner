@@ -239,6 +239,9 @@ one-line explanation shown with the button) and its states.
 - **What it can do:** add a task (ready), change what a task waits for, pause, resume, cancel,
   reopen, try again, start, stop, answer a card, leave a note for the next session. Changes are
   read back once in one line: "Make "Write the FAQ" wait for "Write the README"? [Yes] [No]".
+  A stop is the one exception: "stop", "stop after this task" and "stop everything" act at once,
+  with no read-back (stopping is immediate, the safe direction); the header's Stop all button,
+  which a click can hit by mistake, asks once (§3.1).
 - **During a session** a question is answered from the live state; an instruction ("skip the
   README") becomes a change with a read-back. Nothing is silently forwarded to whatever
   specialist runs next.

@@ -1,3 +1,4 @@
+import { signoffReasonOf } from "../loop/verification.ts";
 import { WEB_FETCH_TOOL } from "./tools.ts";
 import { CLAUDE_CODE_PREFIX } from "./types.ts";
 
@@ -18,10 +19,12 @@ import { CLAUDE_CODE_PREFIX } from "./types.ts";
  * cover the other's, and so do its tools on the driver the run uses (a registry entry may name
  * a tool the driver drops). Among those, the closest comes first: the words its description
  * shares with the replaced one's (the kind of work) less the tools it has on top (a wider grant
- * than the work had), then the fewest extra tools, then the name. With the registry as shipped: coder and
- * migration-specialist stand in for each other, tester goes to coder, designer and
- * writer-marketing to each other, data-analyst to science-evaluator; the researcher and the
- * science-evaluator have no stand-in. No fit: null, and the task goes to the person.
+ * than the work had), then the fewest extra tools, then the name. A stand-in never crosses the
+ * sign-off line (`keepsSignoff`). With the registry as shipped: tester goes to coder, designer
+ * and writer-marketing to each other, data-analyst to science-evaluator; the coder, ops-deploy,
+ * the migration-specialist, the researcher and the science-evaluator have no stand-in. No fit:
+ * null, and the task goes to the person, except where only a specialist of the other kind fits
+ * (the coder and the migration-specialist): then it stays with its own (the executor).
  */
 export interface SpecialistProfile {
   name: string;
@@ -112,14 +115,33 @@ function covers(have: readonly string[], need: readonly string[]): boolean {
 }
 
 /**
+ * Whether `to` may take work over from `from` as far as the person's sign-off goes (the owner's
+ * decision 4, ADR 0104): a deploy and a data migration keep the full review and the person's
+ * sign-off, and both are decided by who does the work (`signoffReasonOf`: the critic's floor,
+ * the sign-off, the stored level, `riskTierFor`). So a stand-in is of the same kind: an
+ * ordinary task never goes to the deploy or the migration specialist (before, a coder's task
+ * handed to the migration-specialist got the full review and a sign-off while it ran on the
+ * host at the light review), and a deploy or a migration never goes to an ordinary specialist
+ * (it lost its sign-off). With the registry as shipped this leaves the coder, ops-deploy and
+ * the migration-specialist with no stand-in; the executor keeps the specialist then.
+ */
+export function keepsSignoff(
+  from: Pick<SpecialistProfile, "name">,
+  to: Pick<SpecialistProfile, "name">,
+): boolean {
+  return signoffReasonOf(from.name) === signoffReasonOf(to.name);
+}
+
+/**
  * The specialist that takes the task over from `from`, or null when none fits. `exclude` names
  * the specialists that must not get it (those that already ran it); `requireWeb` asks for one
- * that reaches the web on the driver in use.
+ * that reaches the web on the driver in use; `acrossSignoff` also takes one of the other kind
+ * (`keepsSignoff`), which only the executor asks for, to say why the specialist stays.
  */
 export function alternateSpecialist(
   from: SpecialistProfile,
   candidates: readonly SpecialistProfile[],
-  opts: { exclude?: ReadonlySet<string>; requireWeb?: boolean } = {},
+  opts: { exclude?: ReadonlySet<string>; requireWeb?: boolean; acrossSignoff?: boolean } = {},
 ): SpecialistProfile | null {
   const own = words(from.description);
   const ranked = candidates
@@ -127,6 +149,7 @@ export function alternateSpecialist(
       (c) =>
         c.name !== from.name &&
         !opts.exclude?.has(c.name) &&
+        (opts.acrossSignoff === true || keepsSignoff(from, c)) &&
         covers(
           c.registryTools,
           from.registryTools.filter((t) => !opts.requireWeb || !WEB_TOOLS.includes(t)),

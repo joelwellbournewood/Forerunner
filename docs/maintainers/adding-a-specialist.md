@@ -26,9 +26,10 @@ evals/registry/                      (forerunner-registry has the same layout at
   proposed/<name>/specialist.md      proposals written by proposeSpecialist (status: proposed)
   proposed/<name>/proposal.json      who proposed it, when, why; approval and eval result slots
   principals/project-manager.md      the principal agent (PM) prompt
-  principals/conversation-agent.md   the chat/voice front prompt (1.1.0, design §3.9: says what
+  principals/conversation-agent.md   the chat/voice front prompt (1.1.1, design §3.9: says what
                                      each turn carries: the conversation, the tasks, the last
-                                     session, the open cards; and the read-only tools)
+                                     session, the open cards; and the read-only tools; phase E:
+                                     a card's reference is for request_answer only, never said)
   critic/critic.md                   the independent reviewer prompt
   evals/<name>/NNN-<slug>.json       golden tasks (20 each for coder and researcher today)
   evals/README.md                    task format and how to add a task
@@ -185,7 +186,10 @@ with neither a subscription nor the page reader.
 needs one that reaches the web, `alternateSpecialist` picks a runnable entry whose registry tools
 cover the replaced one's and whose driver tools cover its driver tools, closest by the words the
 descriptions share less the extra tools; none, and at the second rung the task goes to the
-person (web work runs without the web instead, above). A new entry
+person (web work runs without the web instead, above). A stand-in never crosses the sign-off
+line (`keepsSignoff`): a deploy or migration specialist (`SIGNOFF_SPECIALISTS` in
+`loop/verification.ts`) takes over only work of its own kind, and its work goes to no ordinary
+specialist; where only one of the other kind fits, the specialist keeps the task. A new entry
 with the same tools as an existing one becomes that one's stand-in candidate, so its
 `description` decides between them.
 

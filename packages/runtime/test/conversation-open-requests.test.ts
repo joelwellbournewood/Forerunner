@@ -6,6 +6,7 @@ import {
   CHAT_OPEN_REQUEST_RULES,
   CONVERSATION_IDLE_MS,
   ConversationAgent,
+  cardReference,
 } from "../src/conversation/agent.ts";
 import { flatPricing, harness } from "./helpers.ts";
 
@@ -150,11 +151,16 @@ describe("conversation agent: open requests are not brought up in every reply", 
 
   it("a request opened mid-conversation is listed once beside the count of those already mentioned", async () => {
     const w = await setup();
-    await modelWatchRequest(w);
+    const first = await modelWatchRequest(w);
     await w.chat("hello");
     const db = await modelWatchRequest(w, { why: "Pick a database" });
     await w.chat("what next?");
-    expect(w.user(1)).toContain(`${db.id.slice(0, 8)}: Pick a database`);
+    // Its reference: the shortest start of its id no other open card shares (phase E: both cards
+    // were filed within the same minute, so their first 8 characters name both).
+    const ref = cardReference(db.id, [first.id, db.id]);
+    expect(db.id.startsWith(ref) && !first.id.startsWith(ref)).toBe(true);
+    expect(ref.length).toBeGreaterThan(8);
+    expect(w.user(1)).toContain(`${ref}: Pick a database`);
     expect(w.user(1)).not.toContain("Model watch");
     expect(w.user(1)).toContain("+1 already mentioned in this conversation");
     await w.chat("fine");

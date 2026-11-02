@@ -645,6 +645,45 @@ describe("Tasks tab (design §3.5)", () => {
     });
   });
 
+  it("New task offers a deploy no light review and says why; the row of a deploy reads the full review it gets (phase C leftover C-2)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ sandbox: { state: "not_running" } });
+    const coder = harness.daemon.state.modelSettings.specialists[0];
+    if (coder)
+      harness.daemon.state.modelSettings.specialists.push({ ...coder, name: "ops-deploy" });
+    // A deploy stored at the light review by a daemon from before.
+    addTask(harness, "task_old_deploy", "Deploy the old site", {
+      status: "ready",
+      riskTier: 1,
+      specialist: "ops-deploy",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    expect(within(await rowOf("task_old_deploy")).getByText(/Full review ·/)).toBeInTheDocument();
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const who = within(dialog).getByTestId("task-who") as HTMLSelectElement;
+    await waitFor(() => expect([...who.options].map((o) => o.value)).toContain("ops-deploy"));
+    await user.selectOptions(who, "ops-deploy");
+    const level = within(dialog).getByTestId("task-risk-tier") as HTMLSelectElement;
+    expect([...level.options].map((o) => o.textContent)).toEqual([
+      "Full review: needs Docker, not running on this computer",
+      "Full review and your sign-off: needs Docker, not running on this computer",
+    ]);
+    expect(level.value).toBe("2");
+    expect(within(dialog).getByTestId("task-full-review-note")).toHaveTextContent(
+      "A deploy keeps the full review and your sign-off.",
+    );
+    await user.type(within(dialog).getByTestId("task-title"), "Deploy the site");
+    await user.type(within(dialog).getByTestId("task-outcome"), "The site is online");
+    await user.click(within(dialog).getByTestId("create-task"));
+    await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(1));
+    expect(postedCalls(harness, "/projects/proj_atlas/tasks")[0]?.body).toMatchObject({
+      title: "Deploy the site",
+      riskTier: 2,
+      specialist: "ops-deploy",
+    });
+  });
+
   it("New task says that Full review needs Docker, offers Who does it, and takes a decimal comma", async () => {
     const user = userEvent.setup();
     const harness = createHarness({ sandbox: { state: "not_running" } });

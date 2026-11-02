@@ -68,7 +68,8 @@ describe("Chat without a Claude key (U-047)", () => {
     expect(r.status).toBe(200);
     expect(String(r.body.reply)).not.toMatch(/fr setup/);
     const tasks = await rt.store.task.forProject(projectId);
-    expect(tasks.map((t) => [t.title, t.status])).toContainEqual(["write the README", "ready"]);
+    // Its title as a title (phase E: capitalised), the words as said its outcome.
+    expect(tasks.map((t) => [t.title, t.status])).toContainEqual(["Write the README", "ready"]);
   });
 
   it("a line that needs the model says a Claude key is missing and where to add it", async () => {
@@ -115,7 +116,7 @@ describe("Chat without a Claude key (U-047)", () => {
     expect(text).toContain("event: reply");
     expect(text).not.toContain("event: error");
     const tasks = await rt.store.task.forProject(projectId);
-    expect(tasks.some((t) => t.title === "pick the colours")).toBe(true);
+    expect(tasks.some((t) => t.title === "Pick the colours")).toBe(true);
   });
 
   it("starting a session and voice name the setup assistant, never fr setup", async () => {

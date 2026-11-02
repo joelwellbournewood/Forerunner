@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, fromPosix, join } from "@forerunner/platform";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isScaffoldPlaceholder, scaffoldDocs } from "../src/docs.ts";
 import {
   chunkMarkdown,
   collectDocFiles,
@@ -179,5 +180,52 @@ describe("project docs search (spec J.1)", () => {
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the scaffold's placeholder sections are never search hits (phase E)", () => {
+  it("a freshly scaffolded doc set gives no 'To be written.' or '- first task' to 'what is next?', and a section with real words still matches", async () => {
+    // Before, the templates' sections ("## Next\n\n- first task", "To be written.") ranked by
+    // BM25 like any other and reached the chat's context as facts about the project.
+    await scaffoldDocs(repo, { name: "Notes" });
+    for (const query of ["what is next?", "how do I run it?", "the architecture", "deploy"]) {
+      const r = await searchDocs(repo, query);
+      expect(r.block, query).not.toContain("To be written");
+      expect(r.block, query).not.toContain("to be written");
+      expect(r.block, query).not.toContain("- first task");
+      expect(r.block, query).not.toContain("- nothing yet");
+    }
+    // The agent wrote the run section: it is found, and so is a section mixing real words with
+    // a placeholder line.
+    await put(
+      "README.md",
+      "# Notes\n\nA notes page.\n\n## Run\n\nOpen index.html in a browser.\n\n## Deploy\n\nCopy the folder to the host.\nTo be written.\n",
+    );
+    expect((await searchDocs(repo, "how do I run it?")).block).toContain(
+      "Open index.html in a browser.",
+    );
+    expect((await searchDocs(repo, "deploy")).block).toContain("Copy the folder to the host.");
+  });
+
+  it("isScaffoldPlaceholder knows every placeholder the templates write, and nothing else", () => {
+    for (const body of [
+      "To be written.",
+      "To be written: one line per component and what it owns.",
+      "Goal: to be written.",
+      "In scope: to be written. Out of scope: to be written.",
+      "Unit, integration, end to end: to be written.",
+      "- nothing yet",
+      "- nothing",
+      "- first task",
+      "| Symptom | Cause | Fix |\n| --- | --- | --- |",
+    ])
+      expect(isScaffoldPlaceholder(body), body).toBe(true);
+    for (const body of [
+      "Open index.html in a browser.",
+      "- Write the FAQ",
+      "| Symptom | Cause | Fix |\n| --- | --- | --- |\n| 500 | no key | add the key |",
+      "Copy the folder.\nTo be written.",
+    ])
+      expect(isScaffoldPlaceholder(body), body).toBe(false);
   });
 });

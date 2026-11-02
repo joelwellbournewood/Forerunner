@@ -203,13 +203,22 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   and review. Ask "what is going on?", "what failed and why?", "what is left?". Tell it what to
   change: "add a task: …" (a ready task, with **Undo**), "make the FAQ task depend on the README
   task", "skip the LICENSE task" (a pause), "resume …", "cancel …", "try … again", "start working
-  now", "stop" (stops the running session now; its task is ready again), "stop after this task",
+  now" (the reply links the session it started), "stop" (stops the running session now; its task is ready again), "stop after this task",
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
   session, "summary". A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other
   things, and "yes" with nothing waiting asks "Yes to what?" (or, when the card it meant was
   answered in the Inbox or expired, says so). Under each read-back the conversation says what
-  became of it: you said yes, you said no, or not answered. "start a session" when nothing can
+  became of it: you said yes, you said no, or not answered. You can answer an Inbox card in
+  Chat too ("approve the plan"; "try the contact page again", "cancel …" or "mark … done" on a
+  task whose card offers **Try again**, **Cancel task** or **Mark done anyway**): Chat reads it
+  back in the card's own words ('Approve and start (Plan for "Bakery": 3 tasks)? Writes these 3
+  tasks and starts working on them now.') and your **Yes** answers the card; the Inbox, Home
+  and the project's header keep that one card, with no second card about it and no
+  notification. A card that needs this computer's OK (a task that failed after its retries
+  with a serious problem the critic found) is answered on its card: Chat says "Answer it on its
+  card in the Inbox: "…" failed 4 times. Nothing else was filed." A move with a note ("try …
+  again, note: …") is read back as the move. "start a session" when nothing can
   start (Stop all is on, Claude is not connected, no task can run, the plan from your brief still
   waits for your approval) says why at once, as the Start dialog does. Asked about a project
   whose plan from the brief is still being drafted, waits in the Inbox, or failed, Chat says so
@@ -432,9 +441,13 @@ project's workspace folder) and the decision log. A task planned for you is then
 done, and if a task was waiting on it, a session starts and works on that task (the card's Done
 line says so); a task a specialist was working on goes back to ready, a session starts, and its
 next run gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
-and say in its report what it assumed; the task goes on in a session. **Cancel task** cancels it
-instead (asked once, naming the tasks that wait on it). You can also answer in your own words
-from the phone; one text then answers all the questions.
+and say in its report what it assumed; the task goes on in a session. A task planned for you has
+no specialist to decide in your place, so its card has no Go ahead without: "go ahead" typed on
+the phone or said in Chat is refused with "This card needs your answers: type them, or Cancel
+task.", and the card and the task wait (if you have no answer, type what the next task should do
+instead, for example "use placeholder text"). **Cancel task** cancels it instead (asked once,
+naming the tasks that wait on it). You can also answer in your own words from the phone; one
+text then answers all the questions.
 
 ## Autonomy and budgets
 

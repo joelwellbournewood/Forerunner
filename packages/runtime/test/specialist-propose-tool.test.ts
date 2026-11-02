@@ -378,7 +378,8 @@ describe("the PM's specialist.propose tool (spec C.5, ADR 0071)", () => {
       { ...toolInput("mistyped"), allowed_tools: ["cc:Nope"] },
       toolCtx(),
     );
-    expect(unknownTool.content).toMatch(/^Needs confirmation \(/);
+    // What the person is asked, in words, with no pending id (phase E).
+    expect(unknownTool.content).toMatch(/^Needs confirmation\. The person is asked: /);
     const pendingId = views.at(-1)?.pendingId ?? "";
     const refused = await rt.commands.confirm(pendingId, { kind: "yes", by: human() });
     expect(refused).toMatchObject({ status: "refused", code: "validation" });
@@ -392,7 +393,7 @@ describe("the PM's specialist.propose tool (spec C.5, ADR 0071)", () => {
       },
       toolCtx(),
     );
-    expect(longPrompt.content).toMatch(/^Needs confirmation \(/);
+    expect(longPrompt.content).toMatch(/^Needs confirmation\. The person is asked: /);
     const tooLong = await rt.commands.confirm(views.at(-1)?.pendingId ?? "", {
       kind: "yes",
       by: human(),

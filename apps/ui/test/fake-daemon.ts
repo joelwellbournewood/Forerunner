@@ -106,7 +106,7 @@ import {
   acceptsAnswer,
   budgetStopAnswer,
   cannotRunAnswer,
-  personQuestionsAnswer,
+  personQuestionsAnswerFor,
   signoffAnswer,
 } from "@forerunner/runtime/wiring/request-answers";
 import {
@@ -128,6 +128,7 @@ import type {
   ModelWatchReportSummary,
   QueueItemView,
 } from "../src/api/contracts.ts";
+import { FULL_REVIEW_SPECIALISTS, FULL_REVIEW_TIER } from "../src/lib/task-actions.ts";
 import { TASK_TRANSITIONS } from "../src/lib/task-transitions.ts";
 import {
   actionSentence,
@@ -1612,7 +1613,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       outcome: parsed.data.outcome,
       acceptanceCriteria: parsed.data.acceptanceCriteria,
       // Like the daemon: a task that names no tier gets the project's default (B.6).
-      riskTier: parsed.data.riskTier ?? project.defaultRiskTier ?? 1,
+      // A deploy or a migration is stored at the full review at least (`riskTierFor`, C-2).
+      riskTier: Math.max(
+        parsed.data.riskTier ?? project.defaultRiskTier ?? 1,
+        FULL_REVIEW_SPECIALISTS.has(parsed.data.specialist ?? "") ? FULL_REVIEW_TIER : 0,
+      ),
       status: parsed.data.status,
       priority: parsed.data.priority,
       claimedBy: null,
@@ -1782,6 +1787,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       words.push(
         `who does it to ${b.specialist === "person" ? "you" : (b.specialist ?? "the agent's choice")}`,
       );
+    }
+    // As the daemon's `riskTierFor` (C-2): a deploy or a migration stays at the full review.
+    if (FULL_REVIEW_SPECIALISTS.has(task.specialist ?? "") && task.riskTier < FULL_REVIEW_TIER) {
+      if (before.riskTier === undefined) before.riskTier = task.riskTier;
+      task.riskTier = FULL_REVIEW_TIER;
+      words.push("review level to Full review");
     }
     if (!words.length && !b.note?.trim())
       return errorBody(c, 409, "conflict", `Nothing to change on "${task.title}".`);
@@ -2077,30 +2088,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         202,
       );
     }
-    const session: SessionView = {
-      id: nextId("sess"),
-      agentId: agent.id,
-      agentName: agent.name,
+    const session = beginSession({
+      agent,
       projectId: parsed.data.projectId ?? null,
       trigger: parsed.data.trigger,
-      status: "running",
-      startedAt: new Date().toISOString(),
-      endedAt: null,
-      budgetCap: money(parsed.data.budgetUsdMicro ?? 6_250_000),
-      spent: money(0),
-      stepCap: 200,
-      steps: 0,
-      currentTask: null,
-      summary: "",
-      // As the daemon: the note for the session is kept on its handoff.
-      handoff: parsed.data.note?.trim() ? { note: parsed.data.note.trim() } : null,
-      runner: "desktop",
-      stopReason: null,
-      statusText: "Working",
-    };
-    state.sessions.push(session);
-    emit("session.changed", clone(session));
-    scheduleScriptedEvents(session);
+      budgetUsdMicro: parsed.data.budgetUsdMicro ?? 6_250_000,
+      note: parsed.data.note,
+    });
     return c.json(StartSessionView.parse({ result: "started", startId, session }), 202);
   });
   app.get("/sessions/:id", (c) => {
@@ -2332,15 +2326,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (p.id === r.projectId && p.waitingOnYou > 0) p.waitingOnYou -= 1;
     }
     // U-022, as the daemon's `syncPersonQuestions`: answers close a planned person task (done)
-    // or send a paused one back to ready; "Cancel task" cancels it; "Go ahead without" sends it
-    // back to ready without the answers (design §3.8). The card records the outcome.
+    // or send a paused one back to ready; "Cancel task" cancels it; "Go ahead without", which
+    // only a specialist's card offers (the route above refuses it on the person's own card,
+    // phase E), sends it back to ready without the answers (design §3.8). The card records the
+    // outcome.
     const personCard = r.changeCard as { key?: unknown; on_answer?: unknown } | null;
     if (typeof personCard?.key === "string" && personCard.key.startsWith("person_questions:")) {
       const task = state.tasks.find((t) => t.id === r.taskId);
-      const read = personQuestionsAnswer(parsed.data.answer as never);
+      const read = personQuestionsAnswerFor(personCard, parsed.data.answer as never);
       if (task && read?.kind === "cancel") task.status = "cancelled";
-      else if (task && read?.kind === "without")
-        task.status = personCard.on_answer === "done" ? "done" : "ready";
+      else if (task && read?.kind === "without") task.status = "ready";
       else if (task && read?.kind === "answers")
         task.status = personCard.on_answer === "ready" ? "ready" : "done";
       // As the daemon's resumeWork: an answer that leaves a task of the project runnable (the
@@ -2520,6 +2515,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     version: 1,
   });
 
+  /** The session each chat start began, by its action's id (the daemon's change log row). */
+  const startedSessions = new Map<string, string>();
   const chatReply = (
     text: string,
     projectId: string | undefined,
@@ -2595,10 +2592,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (state.pendingConfirmation && lower === "yes") {
       const confirmed = state.pendingConfirmation;
       state.pendingConfirmation = null;
+      // As the daemon's session.start from the chat (phase E): the start waits for its run,
+      // the reply is the change's sentence, and the turn's action names the session it began
+      // (its change log's `after.session_id`), which the conversation links.
+      const agent = AGENTS[0];
+      const target = state.projects.find((p) => p.id === turnProject);
+      if (agent) {
+        const session = beginSession({
+          agent,
+          projectId: turnProject,
+          trigger: "manual",
+          budgetUsdMicro: 6_250_000,
+        });
+        startedSessions.set(confirmed.id, session.id);
+      }
+      const sentence = `Started a session on ${target?.name ?? "this project"} (up to CHF 5).`;
       return {
         ...base,
-        reply: "Confirmed. Starting the session now.",
-        actions: [{ kind: "session_start", summary: confirmed.readback, id: confirmed.id }],
+        reply: sentence,
+        actions: [{ kind: "session.start", summary: sentence, id: confirmed.id }],
       };
     }
     if (state.pendingConfirmation && lower === "no") {
@@ -2744,6 +2756,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           sentence: a.summary,
           changeId: a.id ?? null,
           canUndo: !!a.undoToken,
+          // The session a chat start began, as the daemon's conversation view links it.
+          sessionId: (a.id ? startedSessions.get(a.id) : undefined) ?? null,
         })),
         question: reply.question,
         notice: false,
@@ -6234,6 +6248,44 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.events.push(event);
     emit("session.event", event);
     return event;
+  }
+
+  /**
+   * A session begins, as the daemon's start does once its run began: POST /sessions and the
+   * chat's yes to "start a session" (phase E: the chat's start waits for its run and links it).
+   */
+  function beginSession(start: {
+    agent: { id: string; name: string };
+    projectId: string | null;
+    trigger: string;
+    budgetUsdMicro: number;
+    note?: string | undefined;
+  }): SessionView {
+    const session: SessionView = {
+      id: nextId("sess"),
+      agentId: start.agent.id,
+      agentName: start.agent.name,
+      projectId: start.projectId,
+      trigger: start.trigger,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      budgetCap: money(start.budgetUsdMicro),
+      spent: money(0),
+      stepCap: 200,
+      steps: 0,
+      currentTask: null,
+      summary: "",
+      // As the daemon: the note for the session is kept on its handoff.
+      handoff: start.note?.trim() ? { note: start.note.trim() } : null,
+      runner: "desktop",
+      stopReason: null,
+      statusText: "Working",
+    };
+    state.sessions.push(session);
+    emit("session.changed", clone(session));
+    scheduleScriptedEvents(session);
+    return session;
   }
 
   /** After POST /sessions: a short scripted run with a warning and an escalation. */

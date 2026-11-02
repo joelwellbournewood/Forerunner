@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import { join, normalizeNewlines } from "@forerunner/platform";
+import { isScaffoldPlaceholder } from "./docs.ts";
 import { wordTokens } from "./embedding.ts";
 import { hasSecretShape } from "./files.ts";
 import { estimateTokens, type TokenCounter } from "./types.ts";
@@ -317,6 +318,9 @@ export async function loadDocChunks(
     }
     out.filesScanned++;
     for (const c of chunkMarkdown(f.path, text, opts)) {
+      // The scaffold's placeholder sections ("To be written.", "## Next\n\n- first task") say
+      // nothing about the project (phase E): never a hit.
+      if (isScaffoldPlaceholder(c.text)) continue;
       if (hasSecretShape(c.text) || hasSecretShape(c.heading)) {
         out.excluded.push({ path: c.path, heading: c.heading, reason: "secret shape" });
         continue;

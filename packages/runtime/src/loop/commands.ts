@@ -265,7 +265,7 @@ export class CommandLoop implements ConversationCommands {
         });
         onResult(viewOf(r, [call.name]));
         return r.status === "pending"
-          ? { status: "pending", pendingId: r.pendingId, card: r.card }
+          ? { status: "pending", pendingId: r.pendingId, card: r.card, readback: r.readback }
           : r.status === "refused"
             ? { status: "refused", reason: r.reason }
             : r.status === "cancelled"
@@ -558,6 +558,12 @@ export const SESSION_START_UNKNOWN_REASON =
 const CONVERSATION_SUMMARY = "conversation";
 
 /**
+ * How long a start from chat, voice or the palette waits for its run to begin: the daemon's
+ * `SESSION_START_WAIT_MS` (`POST /sessions`), the same 15 s.
+ */
+export const START_WAIT_MS = 15_000;
+
+/**
  * The start id a remote `start` row's result carries (`RemoteCommandWatcher.runStart` writes
  * `{ kind: "start", result, startId }`), or undefined for a result without one.
  */
@@ -652,7 +658,8 @@ export async function sessionOfStart(
  * is the undo of their own start. The words ("human <id> via chat") are never read for that.
  */
 export function sessionCommandPorts(deps: {
-  scheduler: Pick<Scheduler, "requestStart" | "cancelPending" | "waitingAhead" | "activeStart">;
+  scheduler: Pick<Scheduler, "requestStart" | "cancelPending" | "waitingAhead" | "activeStart"> &
+    Partial<Pick<Scheduler, "runOutcome">>;
   kill: {
     stop(
       scope: KillScope | "all",
@@ -664,6 +671,19 @@ export function sessionCommandPorts(deps: {
   store: Pick<StateStore, "session">;
   /** The runner this scheduler starts sessions on (the rows' `runner`); default `pc`. */
   runner?: SessionRow["runner"];
+  /**
+   * Waiting for a started run as `POST /sessions` does (phase E): the daemon's `session` events
+   * (`session.started` with the agent's id), its clock, and how long at most
+   * (`START_WAIT_MS`). Absent (a one-shot), the start answers the scheduler's outcome at once.
+   */
+  wait?: {
+    events: {
+      on(event: "session", listener: (e: { type?: string; agentId?: string }) => void): unknown;
+      off(event: "session", listener: (e: { type?: string; agentId?: string }) => void): unknown;
+    };
+    clock: Pick<Clock, "sleep">;
+    timeoutMs?: number;
+  };
 }): SessionCommandPorts {
   const logger = log("session-ports");
   const runner = deps.runner ?? "pc";
@@ -678,18 +698,50 @@ export function sessionCommandPorts(deps: {
     sessionOfStart(deps.store, agentId, start, runner);
   return {
     startSession: async (req) => {
-      const entry = await deps.scheduler.requestStart({
-        agentId: req.agentId,
-        projectId: req.projectId,
-        trigger: req.trigger,
-        reason: req.reason,
-        ...(req.budgetUsdMicro ? { budgetUsdMicro: req.budgetUsdMicro } : {}),
-      } as StartRequest);
-      return {
-        sessionId: undefined,
-        startId: entry.id,
-        outcome: entry.result,
-      } satisfies SessionStartOutcome;
+      // Phase E: a started run is waited for as `POST /sessions` waits (its `session.started`,
+      // its end, or the wait's limit), so the chat's "Started a session" names the session it
+      // started and a run that fails before its session begins is said as that failure (before,
+      // the reply came with the scheduler's outcome alone: no session to link, and "started"
+      // for a run that never began). Listening starts before asking: the run can begin first.
+      const wait = deps.wait;
+      let begun: () => void = () => undefined;
+      const sessionBegun = new Promise<"begun">((resolve) => {
+        begun = () => resolve("begun");
+      });
+      const onSession = (e: { type?: string; agentId?: string }) => {
+        if (e.type === "session.started" && e.agentId === req.agentId) begun();
+      };
+      wait?.events.on("session", onSession);
+      const waited = new AbortController();
+      try {
+        const entry = await deps.scheduler.requestStart({
+          agentId: req.agentId,
+          projectId: req.projectId,
+          trigger: req.trigger,
+          reason: req.reason,
+          ...(req.budgetUsdMicro ? { budgetUsdMicro: req.budgetUsdMicro } : {}),
+        } as StartRequest);
+        let sessionId: string | undefined;
+        if (wait && entry.result === "started") {
+          const ended =
+            deps.scheduler.runOutcome?.(entry.id) ?? new Promise<never>(() => undefined);
+          const timedOut = wait.clock.sleep(wait.timeoutMs ?? START_WAIT_MS, waited.signal).then(
+            () => "timeout" as const,
+            () => "timeout" as const,
+          );
+          const first = await Promise.race([sessionBegun, ended, timedOut]);
+          if (typeof first === "object" && !first.ok) throw first.error;
+          sessionId = (await sessionOf(req.agentId, entry))?.id;
+        }
+        return {
+          sessionId,
+          startId: entry.id,
+          outcome: entry.result,
+        } satisfies SessionStartOutcome;
+      } finally {
+        waited.abort();
+        wait?.events.off("session", onSession);
+      }
     },
     kill: async (scope, reason) => {
       if (

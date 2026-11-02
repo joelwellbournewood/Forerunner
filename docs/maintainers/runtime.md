@@ -883,7 +883,10 @@ abort reason (`KillSwitchStop.stopBy`, read with `stopByOf`; `personStopOf` is t
 the palette) is `stop_all` whatever `reason` it carries; `POST /shutdown` (Quit) is `quit`; the
 kill file (`fr kill`, a Stop all that survives a restart) is `stop_all`; the registry's
 `session.stop` (`sessionCommandPorts.kill`: the chat, voice) is `stop_all` for everything or
-the agent (both freeze) and `you` for one session (with `freeze: false`, as Stop now) or the
+the agent (both freeze, and compose writes the kill file for them as `POST /kill` does, so a
+"stop everything" said in chat holds across a restart until the person resumes; phase E:
+before, it held in the process only; test `chat-resume-restart.test.ts`) and `you` for one
+session (with `freeze: false`, as Stop now) or the
 undo of the person's own start; a chat "stop" names the running session, never the agent's
 scope (design §3.9: before, it froze the agent until Allow sessions again); the
 phone's `kill` is `stop_all` and its `stop` is `you` (`remote/watcher.ts`, and the cloud runner's
@@ -1280,7 +1283,12 @@ is where `project.small_project_mode` is read. `defaultRiskTier(project)` (0 wit
 else 1) is the one place a new task's tier is chosen when the task names none: the daemon's
 `POST /projects/:id/tasks` (`riskTier` optional), the `task.create` command (`risk_tier`
 optional) and the plan writer call it; the critic reviews at `task.risk_tier` and never reads
-the flag, so a named tier stands and flipping the flag leaves existing tasks alone.
+the flag, so a named tier stands and flipping the flag leaves existing tasks alone. Every one of
+them, and `task.update`, then stores `riskTierFor(specialist, tier)`: a deploy or a migration
+(`SIGNOFF_SPECIALISTS`, ADR 0104 decision 4) at the full review at least, whatever tier was
+named (phase C leftover C-2: before, only the critic applied the registry's floor, so the row
+read "Light review" and the run used the process sandbox on the host; the science evaluator's
+registry floor of 2 is still applied by the critic only).
 `applyProjectPlan(store, project, plan, author)`, served as `POST /projects/:id/plan`
 (`ProjectPlanBody` to `PlanProjectView`), writes a plan (phases with their tasks, loose tasks,
 one reason for every row) as milestone and task rows in one transaction: outside the mode a
@@ -1870,7 +1878,9 @@ calibrate [--force]`, `fr jobs handover <project> [--force]`, `fr jobs reports` 
 
 Answered decisions are recorded per project and never asked again unless superseded (spec
 J). `DecisionLog.ask()` opens a request of kind `decision` only when the project has no
-current answer to the same question (matching is case- and whitespace-insensitive through
+current answer to the same question, looked up as `recordAnswer` keys it (the card's first
+sentence, or every question of a person's questions card; phase E: before, the whole `why`, so a
+question of several sentences was asked again; matching is case- and whitespace-insensitive through
 `decision.question_normalised`); otherwise it returns the recorded decision and opens nothing.
 The daemon's answer route calls `recordAnswer()` for every answered decision request; a
 different answer to the same question supersedes the older row, the same answer is a no-op.
@@ -1924,7 +1934,14 @@ card left. The rules:
   intake (`intakeAnswer`), specialist proposal (`specialistAnswer`), model watch
   (`modelWatchAnswerOf`) and a person's questions (`personQuestionsAnswer`, U-022: the Inbox
   form's `{ answers: [{ question, answer }] }` with at least one non-blank answer, one text from
-  anywhere else, or the option "Cancel the task"; a blank answer is refused), found by
+  anywhere else, or the option "Cancel the task"; a blank answer is refused; "go ahead" is Go
+  ahead without only where the card offers it, phase E: `personQuestionsAnswerFor(card,
+  answer)` reads it against `offersGoAheadWithout(card)`, true for a specialist's or the
+  critic's questions, false for a task planned for the person, whose card offers the form and
+  Cancel task only; there the route, the chat's `request.answer` and the sync refuse it with
+  `NEEDS_YOUR_ANSWERS`, "This card needs your answers: type them, or Cancel task.", and the
+  card stays open; before, a typed "go ahead" from the phone, the web approvals or the chat
+  closed the person's task with no answers and the task after it started on nothing), found by
   `change_card.key` (`ANSWER_CARD_KEYS`; a test asserts each
   equals its producer's constant). These readers live in this module (it imports only types
   beyond `@forerunner/platform`, so the UI's stand-in daemon loads it in a browser
@@ -2078,9 +2095,10 @@ ceiling allows (`tierForAttempt`). The second rung, "split or change specialist"
 code, not a line in the brief: at `retryAction(task.attempt) === "split_or_change_specialist"`
 the executor reads the task's Run rows and, when the planned specialist already ran it, hands
 the run to `alternateSpecialist` (`src/registry/alternates.ts`, below), patches the task's
-`specialist` (so the third rung escalates the stand-in) and says so in a run warning; with no
-stand-in the task returns `needs_human` ("none can do what the coder does ... split the task
-or cancel it") and nothing runs. A specialist the person gave the task to after the failures
+`specialist` (so the third rung escalates the stand-in) and says so in a run warning; where the
+only stand-in is across the sign-off line (below) the specialist keeps the task and the ladder
+goes on; with no stand-in at all the task returns `needs_human` ("none can do what the tester
+does ... split the task or cancel it") and nothing runs. A specialist the person gave the task to after the failures
 (no run of it yet) keeps it. Before U-044 the same specialist ran the same brief again.
 Only a runner composed without a critic (an engine test world) closes a tier 0 task on its
 run ("tier 0: automated checks only"); the daemon always composes one, so every task is
@@ -2185,7 +2203,9 @@ waits on you" while 4 tasks waited on it).
   nothing. The same for the blocked-findings and failed-review cards, the person's answers (the
   existing start, now through `resumeWork`) and the questions card's new **Go ahead without**
   (`personQuestionsAnswer` reads it as `without`: the task goes back to ready with
-  `WITHOUT_ANSWERS_NOTE` queued for its brief). A planned person task (`on_answer: "done"`,
+  `WITHOUT_ANSWERS_NOTE` queued for its brief; only a specialist's card offers it, phase E: a
+  `without` stored on the person's own card, by a daemon from before, is recorded
+  `unrecognized_answer` and the questions are filed again, never a close on no answers). A planned person task (`on_answer: "done"`,
   New task's "Me") that the answers close calls `resumeWork` too, so the task that waited on it
   runs without a Start click (the review of fix/needs-me found it closed the task and started
   nothing; the Done line reads 'Answers saved in the decision record; "X" is done; a session
@@ -2216,7 +2236,11 @@ waits on you" while 4 tasks waited on it).
   back (`change_card.ask`: 'Pause "X"?', the rest as its body), not by the change card's object.
   Its buttons read **Yes** (with the question's consequence as its line) and **No** ("Nothing
   changes."); a click sends "Yes" or "No", which `isYes` and `acceptsAnswer` read in either
-  case (before: the stored "yes" and "no" with no line).
+  case (before: the stored "yes" and "no" with no line). Once answered, such a card (a Settings
+  confirmation too) says what came of it (`changeCardOutcome`, from the stored `verdict`; phase
+  C leftover C-29, before every one read "Answered."): a yes its done sentence ("Raised the
+  monthly cap from CHF 100 to CHF 900."), a no "You said no; nothing changed.", a yes the
+  registry refused "Not changed: <why>.".
 - **GET /inbox** returns the open cards, then the last `INBOX_ANSWERED_KEPT` (20) answered or
   withdrawn ones for the Inbox's Answered list, and `needsYouCount` (every open card: the
   Inbox's heading, the header badge, and the sum of the projects' `waitingOnYou` plus the cards of
@@ -2249,8 +2273,25 @@ waits on you" while 4 tasks waited on it).
   session" says the same sentence, with "Review it in the Inbox." for the button and no Yes/No
   card.
 - **Chat answering a high-risk card**: `request.answer` whose card needs a device confirmation
-  is refused with a pointer to the card ("Answer it on its card in the Inbox …"), no second card
-  (commands.md).
+  is refused with a pointer to the card ("Answer it on its card in the Inbox: "X" failed 4
+  times. Nothing else was filed.", the card's title from `cardWords`), no second card
+  (commands.md). The retry card after the ladder's last rung is high when the critic found a
+  high or critical problem (`loop/critic.ts`); the runner's failed-task card
+  (`fileFailedTaskCard`) and the review-failed card are medium.
+- **Chat answering a medium-risk card** (phase E): the read-back is the chat's own, in the card's
+  words (compose wires `cardWords` to `requestViews`); its pending row is `chat_only`
+  (`isChatOnlyCard`, `wiring/request-answers.ts`), which `GET /inbox` (open and Answered), the
+  stream's `inbox.changed` counts, the chat's `open_requests`, the project card's
+  `statusLine`, `waitingOnYou`, `health` and `needsYou` (`views.ts`, `project-health.ts`: Home
+  and the project header) leave out, and compose's `humanRequest.insert` hook sends no
+  `request_opened` notification for it (phase E review: the header said "Waiting for you: 2
+  questions" beside an Inbox of one, and a notification pointed to a card the Inbox hid). A
+  task move said in chat or voice on a task whose card offers it ("try X again", "cancel X",
+  "mark X done", "go ahead without the answers on X") is that card's answer (the commands'
+  `redirect`, commands.md), so it takes this path too. The chat refers to a
+  card by `cardReference(id, openIds)` (`conversation/agent.ts`): the shortest start of its id,
+  8 characters or more, that no other open card shares; ids are time-ordered, so cards filed in
+  the same minute (a plan's person cards) shared their first 8 and the answer was refused.
 - **The Tasks tab** reads which card holds a task (`cardKindOf`, `TaskDisplay.blocker.cardKind`):
   a task waiting on its retry card is "Needs your decision: tried 4 times" and offers Answer, Try
   again (now offered from `needs_human` too; it withdraws the card) and Cancel, never Go ahead
@@ -2458,8 +2499,15 @@ how the scheduler's `startSession` reads the cap the registry wrote (a temporary
 while its window is open, else `session_cap_usd_micro`), so a session started by the
 scheduler honours "give it 20 francs tonight" (spec Q.12). `sessionCommandPorts` builds the
 registry's `startSession` and `kill` ports over the scheduler, the kill switch and the
-store's sessions: `session.start` answers `{ outcome: started | queued | deferred, startId }`
-(the session id is never known synchronously; `startId` is the scheduler entry's id, one id
+store's sessions: `session.start` answers `{ outcome: started | queued | deferred, startId,
+sessionId }`. With `wait` (compose passes the daemon's `events` and clock; phase E) a started
+run is waited for as `POST /sessions` waits: its `session.started`, its end
+(`Scheduler.runOutcome`: a run that fails before its session begins throws that error, so the
+chat says the failure, never "Started"), or `START_WAIT_MS` (15 s); then `sessionId` is the
+row that start began (`sessionOfStart`), kept in the change log's `after.session_id`, and the
+conversation view's action carries it as `sessionId`, which the turn links ("Open the
+session"). Without `wait` (a one-shot) the session id is not known synchronously (`startId` is
+the scheduler entry's id, one id
 from the queue to the run, `Scheduler.requestStart`), which the registry keeps in the change
 log row (`after.start_id`) and names in the undo's kill scope (`KillScope.startId`,
 `@forerunner/commands`). The undo (a kill of the agent's scope naming the start, with
@@ -2680,13 +2728,17 @@ in one project cancelled a task in another. Now:
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
   who does it, the critic's last word and the first thing it still asks for (an open finding's
   required action); `sandboxReady` from the daemon for "Waiting for Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
-  failed with the reason, needs you, not reached, waiting for Docker, why it ended, the spend,
+  failed with the reason, needs you, not reached, waiting for Docker, how it ended in words
+  (`stopWords`: "How it ended: Stopped by you.", nothing when it ran out of work; phase E:
+  before, the raw reason, "Ended because: plan awaiting approval"), the spend,
   and `next_steps`; `# Next` before the first session), `# Working now` (the agent's running
   session: the task in flight and the specialist, minutes, steps, spend), `# Your files` (the
   project's folder: the first of `docsDirs`), and the open cards in full in the `open_requests`
   fact (`cardLine`: project, task, the whole question, a person-questions card's questions and
-  the options; this project's first, eight at most). The system prompt keeps only the projects
-  by name and goal (stage, autonomy and the cut summary are gone). `docs/status.md` is left out
+  the options; this project's first, eight at most; each card named by `cardReference`, which the
+  role prompt says is for `request_answer` only, never said to the person). The system prompt
+  keeps only the projects
+  by name and goal (stage, autonomy, the cut summary and, since phase E, the "[id …]" are gone). `docs/status.md` is left out
   of the doc search: its sections go stale and come in any order.
 - **The plan from the brief** (`planBlock`, from `ConversationDeps.intakeStatus`, which compose
   wires to `IntakeService.status`): `# Plan from the brief`, before the task list it explains:
@@ -4263,9 +4315,21 @@ every new specialist goes through review. The composition root turns registry en
 { exclude, requireWeb })` names the specialist that takes a task over: one whose registry tools
 cover `from`'s and whose tools on the run's driver cover `from`'s there, ranked by the words its
 description shares with `from`'s less the tools it has on top, then fewer extra tools, then the
-name; null when none fits. As shipped: coder and migration-specialist stand in for each other,
-tester goes to coder, designer and writer-marketing to each other, data-analyst to
-science-evaluator; researcher and science-evaluator have none. `SpecialistSpec` carries the
+name; null when none fits. A stand-in never crosses the sign-off line (`keepsSignoff`, the
+owner's decision 4, ADR 0104): an ordinary task never goes to `ops-deploy` or the
+`migration-specialist`, and a deploy or a migration never goes to an ordinary specialist,
+because the critic's floor, the sign-off and the stored level (`riskTierFor`) all follow who
+does the work (phase E review: a coder's task handed to the migration-specialist got a
+migration's full review and sign-off while it ran on the host at the light review, and a
+migration handed to the coder lost its sign-off). As shipped: tester goes to coder, designer
+and writer-marketing to each other, data-analyst to science-evaluator; coder, ops-deploy,
+migration-specialist, researcher and science-evaluator have none. Where only a specialist of
+the other kind fits (`acrossSignoff: true` finds one: the coder and the migration-specialist),
+the executor keeps the specialist at the second rung, logs why ("the coder tries again: the
+only specialist that could take it over, the migration-specialist, is for a data migration,
+which keeps the full review and your sign-off") and the brief says "your two previous attempts
+failed" (`retryConstraints(..., { kept })`); the ladder goes on to its next rung. With no fit
+of either kind the task waits for the person as before. `SpecialistSpec` carries the
 entry's `description` and `registryTools` (`allowed_tools` as written) for it. The executor
 uses it at the ladder's second rung (above) and for web work. **Web work (ADR 0107):** on the
 loop driver `cc:WebFetch` is `web_fetch` (the composition registers it unless

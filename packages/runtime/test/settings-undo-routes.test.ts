@@ -110,14 +110,14 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
       text: "add a task: write the Beta README",
     });
     expect(inTab.actions.map((a) => a.kind)).toEqual(["task.create"]);
-    expect(await taskTitles(beta.id)).toContain("write the Beta README");
-    expect(await taskTitles(alpha.id)).not.toContain("write the Beta README");
+    expect(await taskTitles(beta.id)).toContain("Write the Beta README");
+    expect(await taskTitles(alpha.id)).not.toContain("Write the Beta README");
     expect(inTab.activeProjectId).toBe(alpha.id);
     expect(await activeProjectId()).toBe(alpha.id);
 
     // The conversation panel (no tab) follows the active project, whatever it names.
     await chat({ projectId: beta.id, text: "add a task: write the Alpha changelog" });
-    expect(await taskTitles(alpha.id)).toContain("write the Alpha changelog");
+    expect(await taskTitles(alpha.id)).toContain("Write the Alpha changelog");
 
     // The header's switcher and the palette run project.switch: the daemon records it, logged as ui.
     const header = await execute([{ name: "project.switch", params: { project: beta.id } }], {
@@ -129,7 +129,7 @@ describe("settings, undo and the change log over the daemon (U-056 to U-061)", (
     expect(row.source).toBe("ui");
     // Chat now uses Beta too, and so does the next daemon after a restart.
     await chat({ text: "add a task: plan the Beta launch" });
-    expect(await taskTitles(beta.id)).toContain("plan the Beta launch");
+    expect(await taskTitles(beta.id)).toContain("Plan the Beta launch");
     await restart();
     expect(await activeProjectId()).toBe(beta.id);
   });

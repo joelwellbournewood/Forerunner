@@ -88,7 +88,7 @@ import { registerDataTools } from "../data/tools.ts";
 import type { DataLimits } from "../data/types.ts";
 import { DeviceManager } from "../devices/index.ts";
 import type { EnforcementHooks, HookDeps, RunBilling, RunContext } from "../enforcement/hooks.ts";
-import { clearKillRequest, KillFileWatcher } from "../enforcement/killfile.ts";
+import { clearKillRequest, KillFileWatcher, writeKillRequest } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
 import type { CapDecision, CapScope, CapsBilling, CapsPort } from "../enforcement/ports.ts";
 import { TokenIssuer } from "../enforcement/token.ts";
@@ -312,7 +312,7 @@ import {
   notificationEmailPort,
   SecretCheckedChannel,
 } from "../wiring/notification-ports.ts";
-import { assertAnswerAccepted } from "../wiring/request-answers.ts";
+import { assertAnswerAccepted, isChatOnlyCard } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { specialistCommandPort } from "../wiring/specialist-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
@@ -332,6 +332,7 @@ import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
 import { startBlocked as startBlockedReason } from "./start-blocked.ts";
 import { fileTools } from "./tools.ts";
+import { requestViews } from "./views.ts";
 
 /**
  * Composition root for one install: opens the store and the vault, picks the model provider,
@@ -2612,7 +2613,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const insertHumanRequest = store.humanRequest.insert.bind(store.humanRequest);
   store.humanRequest.insert = async (input) => {
     const row = await insertHumanRequest(input);
-    if (row.human_id === human.id) {
+    // The chat's read-back of an answer to a card (`isChatOnlyCard`) is asked in the chat the
+    // person is typing in, and the Inbox does not show it: no notification points there for it
+    // (phase E review: before, "Try again (...)? Answer it in the Inbox." was sent).
+    if (row.human_id === human.id && !isChatOnlyCard(row)) {
       // The notification names the project and the task (design §5, "Notification"). The
       // names are read before the insert returns, so the notification is recorded by then, as
       // it was before it named them.
@@ -2958,7 +2962,27 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // session.start reports the scheduler's outcome; the undo of a start that only queued drops
   // the waiting request (ADR 0036), of a start still running stops that session only, and of
   // a start whose session ended is a no-op the loop refuses with the reason (RT-P5-2).
-  const { startUndoState, ...sessionPorts } = sessionCommandPorts({ scheduler, kill, store });
+  // Phase E: a start from chat waits for its run as POST /sessions does (`START_WAIT_MS`).
+  const { startUndoState, ...sessionPorts } = sessionCommandPorts({
+    scheduler,
+    // A Stop all said in chat or voice ("stop everything") freezes as the header's does: it
+    // is written to the runtime's kill file, so the next start applies it again until the
+    // person resumes (U-019; phase E: before, it held in this process only, and a restart
+    // let sessions run again). Resume clears the file (the kill switch's `onResume`).
+    kill: {
+      stop: async (scope, reason, opts) => {
+        const report = await kill.stop(scope, reason, opts);
+        if (opts?.by === "stop_all")
+          writeKillRequest(
+            { scope, reason, requestedAt: clock.nowIso(), requestedBy: "daemon" },
+            dirs.runtime,
+          );
+        return report;
+      },
+    },
+    store,
+    wait: { events, clock },
+  });
   const commands = new CommandLoop({
     store,
     clock,
@@ -3037,6 +3061,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // U-034: the answer routes' check, so a word a structured card cannot act on is refused
       // in chat and voice too, with the card's options, and the card stays open.
       checkAnswer: (request, answer) => assertAnswerAccepted(request, answer),
+      // Phase E: a card answered in chat or voice is read back in the Inbox's own words (its
+      // title, the option and what it does) and its Done line is the reply once it is applied.
+      cardWords: async (request) => {
+        const [view] = await requestViews(store, [request]);
+        return view
+          ? {
+              title: view.title ?? request.why,
+              choices: (view.choices ?? []).map((c) => ({ label: c.label, explain: c.explain })),
+              outcome: view.outcome ?? null,
+            }
+          : null;
+      },
       // project.create by chat, voice or the palette (spec G.5, ADR 0058): the standard doc
       // set the dashboard's create scaffolds, in the background so the reply does not wait
       // for a clone; the outcome lands on the row (`summary_cache.docs`) as it does there.

@@ -1,5 +1,5 @@
 import { ForerunnerError } from "@forerunner/platform";
-import { defaultRiskTier } from "@forerunner/runtime";
+import { defaultRiskTier, riskTierFor } from "@forerunner/runtime";
 // The module itself, not the package index: the index loads this package (a cycle), and the
 // schema is needed when this module is evaluated.
 import {
@@ -194,6 +194,54 @@ async function withdrawCards(ctx: CommandContext, taskId: string): Promise<strin
   return out;
 }
 
+/** Normalised as the answer readers compare words: case, spaces, `_` and `-` do not matter. */
+const optionWord = (s: string) =>
+  s
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, " ");
+
+/**
+ * A move said in chat or voice as the answer of the task's open card that offers it (design
+ * §3.8: one card per question; §3.9: an answer to a card is read back once): "try X again" on
+ * a task whose failed card offers Try again is that card's Try again, "cancel X" its Cancel
+ * task, "mark X done" its Mark done anyway, "go ahead without the answers" its Go ahead without.
+ * Before (phase E review), the move was filed as a second card ('Resume "X"?') beside the one
+ * about the same task, and a yes there moved the task past what its card does (the session the
+ * card's Try again starts, its Done line). The answer then goes the card's way: read back in the
+ * card's words when the chat may answer it, or the reply points to the card when it needs this
+ * computer's OK. The Tasks tab's buttons (source ui) move the task as before. Null: no card of
+ * the task offers it, so the move is planned as said.
+ */
+export async function moveAsCardAnswer(
+  ctx: CommandContext,
+  params: { task: string; project?: string | undefined },
+  option: string,
+): Promise<{ name: "request.answer"; params: { request: string; answer: string } } | null> {
+  if (ctx.source !== "chat" && ctx.source !== "voice") return null;
+  if (!ctx.ports.cardWords) return null;
+  const task = await findTask(params, ctx).catch(() => null);
+  if (!task) return null;
+  const open = await ctx.store.humanRequest.list({ task_id: task.id, status: "open" } as never, {
+    orderBy: [{ column: "created_at" }, { column: "id" }],
+    limit: 50,
+  });
+  for (const r of open) {
+    const words = await ctx.ports.cardWords(r).catch(() => null);
+    const choice = words?.choices.find((c) => optionWord(c.label) === optionWord(option));
+    if (choice) return { name: "request.answer", params: { request: r.id, answer: choice.label } };
+  }
+  return null;
+}
+
+/** The card option a move to `to` is, when a card offers it. */
+function cardOptionFor(to: TaskStatus): string | null {
+  if (to === "ready") return "Try again";
+  if (to === "cancelled") return "Cancel task";
+  if (to === "done") return "Mark done anyway";
+  return null;
+}
+
 /** The open tasks of the project that wait on this one: Cancel names them (design §3.5). */
 export async function waitingOn(
   ctx: Pick<CommandContext, "store">,
@@ -226,8 +274,15 @@ export function moveAsk(
   stuck = 0,
 ): string {
   const t = quote(task.title);
-  if (to === "cancelled")
-    return `Cancel ${t}? It is dropped${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+  if (to === "cancelled") {
+    // C-38: what Yes does to a task whose run is going (ADR 0105, the Tasks tab's
+    // `cancelWorkLine`): its run stops and what it changed is taken out of the folder. A task
+    // left in review with no review running (phase C review) is only dropped.
+    const what = RUNNING.includes(from)
+      ? "Its run stops now and what it changed is removed"
+      : "It is dropped";
+    return `Cancel ${t}? ${what}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+  }
   if (to === "needs_human")
     return RUNNING.includes(from)
       ? `Stop ${t}? Its run stops now and it is paused; the session goes on with the rest.`
@@ -582,7 +637,8 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       title: params.title,
       outcome: params.outcome,
       acceptance_criteria: params.acceptance_criteria,
-      risk_tier: params.risk_tier ?? defaultRiskTier(project),
+      // C-2: a deploy or a migration is stored at the full review at least (`riskTierFor`).
+      risk_tier: riskTierFor(params.specialist, params.risk_tier ?? defaultRiskTier(project)),
       status: params.status,
       priority: PRIORITY_VALUES[params.priority],
       depends_on: dependsOn,
@@ -676,17 +732,14 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   scope: "project",
   reversible: true,
   undoStrategy: "put the task back to the status it had",
+  async redirect(params, ctx) {
+    const option = cardOptionFor(params.to);
+    // A person's note goes with the move; a card's answer has no room for it: as said.
+    return option && !params.note?.trim() ? moveAsCardAnswer(ctx, params, option) : null;
+  },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
-    if (!canTransition(TASK_TRANSITIONS, task.status, params.to)) {
-      throw new ForerunnerError(
-        "validation",
-        `task: illegal transition ${task.status} -> ${params.to}`,
-        {
-          details: { allowed: [...TASK_TRANSITIONS[task.status]] },
-        },
-      );
-    }
+    assertMove(task, params.to);
     const project = await ctx.store.project.mustGet(task.project_id);
     return buildCard({
       command: "task.transition",
@@ -710,6 +763,8 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   },
   async run(params, ctx) {
     const task = await findTask(params, ctx);
+    // The task may have moved on between the read-back and the yes (C-38).
+    assertMove(task, params.to);
     return personMove(ctx, task, params.to, {
       reason:
         params.reason ||
@@ -777,6 +832,10 @@ export const taskResume: CommandDef<TaskResumeParams> = {
   scope: "project",
   reversible: true,
   undoStrategy: "pause the task again",
+  async redirect(params, ctx) {
+    if (params.note?.trim()) return null;
+    return moveAsCardAnswer(ctx, params, params.without_answers ? "Go ahead without" : "Try again");
+  },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
     assertFrom(task, ["needs_human"], "paused or waiting for your answers");
@@ -841,6 +900,32 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
   },
   undo: (_params, before, after, ctx) => undoMove(before, after, ctx),
 };
+
+/**
+ * A move the task's status no longer allows, in words (phase C leftover C-38: before, "task:
+ * illegal transition done -> cancelled", which the chat said as "Not done: task: illegal
+ * transition ..."): a task already where the move would take it, or finished, says so and that
+ * nothing changed; any other says what it is now.
+ */
+function assertMove(task: TaskRow, to: TaskStatus): void {
+  if (canTransition(TASK_TRANSITIONS, task.status, to)) return;
+  const now = statusWords(task.status);
+  const settled = task.status === to || task.status === "done" || task.status === "cancelled";
+  throw new ForerunnerError(
+    "validation",
+    settled
+      ? `${quote(task.title)} is already ${now}; nothing changed.`
+      : `${quote(task.title)} is ${now} now, so it cannot be ${statusWords(to)}; nothing changed.`,
+    {
+      details: {
+        taskId: task.id,
+        status: task.status,
+        reason: "not_offered",
+        allowed: [...TASK_TRANSITIONS[task.status]],
+      },
+    },
+  );
+}
 
 function assertCan(task: TaskRow, to: TaskStatus, word: string): void {
   if (!canTransition(TASK_TRANSITIONS, task.status, to)) {
@@ -948,6 +1033,15 @@ function editPatch(params: TaskUpdateParams, task: TaskRow): EditPatch {
     patch.budget_usd_micro = params.budget_usd_micro;
   if (params.specialist !== undefined && (params.specialist ?? null) !== task.specialist)
     patch.specialist = params.specialist ?? null;
+  // C-2: a task handed to a deploy or a migration, or one lowered below the full review while it
+  // stays theirs, is stored at the full review at least (`riskTierFor`).
+  const specialist = patch.specialist !== undefined ? patch.specialist : task.specialist;
+  const tier = patch.risk_tier ?? task.risk_tier;
+  const floored = riskTierFor(specialist, tier);
+  if (floored !== tier) {
+    if (floored === task.risk_tier) delete patch.risk_tier;
+    else patch.risk_tier = floored;
+  }
   return patch;
 }
 

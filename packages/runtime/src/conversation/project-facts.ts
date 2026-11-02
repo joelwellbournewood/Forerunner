@@ -16,7 +16,7 @@ import {
 } from "../daemon/task-display.ts";
 import { parseRepoRef } from "../loop/docs.ts";
 import type { IntakeState } from "../session/intake.ts";
-import type { LastSessionOutcome } from "../session/result.ts";
+import { type LastSessionOutcome, stopWords } from "../session/result.ts";
 
 /**
  * What the chat knows about a project on every turn (design §3.9, core-experience.md): the
@@ -145,7 +145,10 @@ export function lastSessionBlock(project: ProjectRow, chfPerUsd = 1): string {
     if (out.leftOver?.length) lines.push(`Not reached: ${names(out.leftOver).join(", ")}`);
     if (out.waitingForDocker?.length)
       lines.push(`Waiting for Docker: ${names(out.waitingForDocker).join(", ")}`);
-    if (out.stopReason) lines.push(`Ended because: ${out.stopReason.replace(/_/g, " ")}`);
+    // In words (design §5.6; phase E: before, the raw reason, "Ended because: plan awaiting
+    // approval"); a session that simply ran out of work says nothing more.
+    const ended = out.stopReason ? stopWords(out.stopReason) : "";
+    if (ended) lines.push(`How it ended: ${ended}`);
     if (typeof out.spentChfMicro === "number" && out.spentChfMicro > 0)
       lines.push(`Spent: ${formatChf(out.spentChfMicro)}`);
   }

@@ -36,6 +36,7 @@ import {
 } from "../provider/types.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CHAT_REPLY } from "../setup/no-model.ts";
+import { isChatOnlyCard } from "../wiring/request-answers.ts";
 import { isYes } from "../wiring/state-ports.ts";
 import { cardFate } from "./card-fate.ts";
 import {
@@ -421,6 +422,22 @@ interface DescribedRequest {
 }
 
 /**
+ * The reference the model answers a card by (`request_answer`'s `request`): the shortest start
+ * of its id, at least 8 characters, that no other open card shares. Ids are time-ordered, so
+ * cards filed within a minute share their first 8 characters (a plan's person cards, filed
+ * together): before, the reference was always 8 long and `request.answer` refused it as
+ * matching several cards (phase E bench walk).
+ */
+export function cardReference(id: string, openIds: readonly string[]): string {
+  for (let n = 8; n < id.length; n++) {
+    const ref = id.slice(0, n);
+    if (ref.endsWith("-")) continue;
+    if (!openIds.some((other) => other !== id && other.startsWith(ref))) return ref;
+  }
+  return id;
+}
+
+/**
  * The `open_requests` fact for one turn and the requests it lists in full: those the human
  * asked about, those that block work and those not yet mentioned in this conversation; the
  * others only as a count. Each is listed whole (design §3.9: "the open cards in full": its
@@ -432,6 +449,7 @@ function openRequestsFact(
   conv: ConversationState,
   query: string,
   total: number = requests.length,
+  openIds: readonly string[] = requests.map((r) => r.row.id),
 ): { fact: string | number; shown: { id: string; names: string[] }[] } {
   if (!requests.length) return { fact: 0, shown: [] };
   const asked = ASKS_PENDING_RE.test(query);
@@ -448,7 +466,9 @@ function openRequestsFact(
     if (!r.blocking) return "";
     return conv.mentioned.has(r.id) && !asked ? " [already mentioned; blocking]" : " [blocking]";
   };
-  const list = shown.map((r) => `${r.row.id.slice(0, 8)}: ${r.line}${mark(r.row)}`).join(" | ");
+  const list = shown
+    .map((r) => `${cardReference(r.row.id, openIds)}: ${r.line}${mark(r.row)}`)
+    .join(" | ");
   const notes = [
     asked ? "the human asked" : unmentioned ? "not yet mentioned in this conversation" : null,
     held > 0 ? `+${held} already mentioned in this conversation` : null,
@@ -1211,18 +1231,25 @@ export class ConversationAgent {
     const stable = projects
       .map(
         (p) =>
-          `- ${p.name}${p.id === projectId ? " (active)" : ""}: ${p.goal.replace(/\s+/g, " ").slice(0, 300)} [id ${p.id}]`,
+          `- ${p.name}${p.id === projectId ? " (active)" : ""}: ${p.goal.replace(/\s+/g, " ").slice(0, 300)}`,
       )
       .join("\n");
     const unread = await store.message.inbox({ humanId }, { unreadOnly: true, limit: 5 });
-    const open = await store.humanRequest.open({ humanId }, { limit: 50 });
+    // The chat's own read-backs (an answer to a card waiting for its yes) are this
+    // conversation's lines, not cards to tell the human about (phase E).
+    const open = (await store.humanRequest.open({ humanId }, { limit: 50 })).filter(
+      (r) => !isChatOnlyCard(r),
+    );
     // This conversation's project first, then the cards about no project, then the others.
     const rank = (r: OpenRequest) =>
       r.project_id && r.project_id === projectId ? 0 : r.project_id ? 2 : 1;
     const requests = [...open].sort((a, b) => rank(a) - rank(b)).slice(0, 8);
     const described = await this.describeCards(requests);
     const sessions = await store.session.active(agentId);
-    const openRequests = openRequestsFact(described, conv, query, open.length);
+    // Every open card of the human counts for a reference, the chat's own read-backs too:
+    // `request.answer` resolves a reference among them all.
+    const allOpen = (await store.humanRequest.open({ humanId }, { limit: 500 })).map((r) => r.id);
+    const openRequests = openRequestsFact(described, conv, query, open.length, allOpen);
     const project = projectId ? await store.project.get(projectId) : undefined;
     const volatile = volatilePreamble({
       now: clock.nowIso(),
