@@ -54,7 +54,10 @@ commit of a repository it created for a project.
    confirmation) the status pull request is off by default**: a repository project keeps
    `docs/status.md` in the app (`<data>/projects/<id>/app-status/docs/status.md`, no commit, no
    pull request), the Docs tab reads its Status from there first ("kept in the app: no status
-   pull request (Settings turns it on)") and the session log says "kept in the app". One pull
+   pull request (Settings turns it on)") and the session log says "kept in the app". The
+   session's end still clones or fetches this computer's copy of the repository and puts it on
+   the default branch, as the status write did, so the Docs and Files tabs and the chat read
+   what is merged (nothing is pushed). One pull
    request to merge after every session was noise, even for a one-task project. The project
    setting **Status pull request** (Settings, Other settings; `settings.set status_pull_request`)
    turns the behaviour above back on for that project. Only this project's docs pull requests are

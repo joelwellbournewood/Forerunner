@@ -234,6 +234,35 @@ describe("project docs at session end (spec G.5)", () => {
     await w.close();
   });
 
+  it("with the status in the app, the session's end still clones and refreshes this computer's copy of the repository (C-57 review)", async () => {
+    // Review of fix/decisions: the in-app path returned before the docs clone was made or
+    // fetched, so the Docs and Files tabs and the chat's docs search read nothing (no clone)
+    // or the main of the last scaffold (a merge on the host never showed).
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    const project = await w.store.project.mustGet(w.project);
+    expect(docs.docsDirsFor(project)).toEqual([]);
+    await w.addTask("Add clamp", { risk_tier: 0 });
+    await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
+    const clone = join(root, "worktrees", w.project);
+    expect(docs.docsDirsFor(project)).toEqual([clone]);
+    expect(await readFile(join(clone, "README.md"), "utf8")).toBe("# sample\n");
+    // The person merges something on the host; the next session's end brings it in, on main.
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    writeFileSync(join(root, "seed", "notes.md"), "# notes\n");
+    await seed.commitAll("notes");
+    await seed.push("main");
+    await w.addTask("Add retries", { risk_tier: 0 });
+    await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
+    expect(await readFile(join(clone, "notes.md"), "utf8")).toBe("# notes\n");
+    expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe("main");
+    // Nothing went to the host: no status branch.
+    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toBeNull();
+    await w.close();
+  });
+
   it("without a repository the update lands under the project's data directory", async () => {
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
     const { root } = await bareRepo();

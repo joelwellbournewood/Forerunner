@@ -49,7 +49,9 @@ import type {
  * install marker `.forerunner/project.json` (spec A.4, ADR 0056) beside the set, never over
  * another project's. After each write the docs clone is back on the default branch, so the
  * Docs tab, the Files tab and the chat read what is merged, and `docsInPullRequests` names the
- * docs still waiting in a pull request. A project without a repository keeps the set under
+ * docs still waiting in a pull request; with the status pull request off (C-57) the session's
+ * end still clones or fetches that copy and puts it on the default branch (`refreshCopy`),
+ * pushing nothing. A project without a repository keeps the set under
  * `<projectsRoot>/<project id>/workspace`, where the session's work is committed with the
  * status update at session end. The critic's drift check (`checkDocDrift`) reads the same files.
  */
@@ -354,6 +356,19 @@ export class ProjectDocs implements ProjectDocsPort {
       const dir = this.statusInAppDir(project.id);
       mkdirSync(dir, { recursive: true });
       const res = await writeStatusUpdate(dir, update);
+      // The status write was also what kept this computer's copy of the repository current;
+      // without it a project made from a brief had no copy at all (its Docs tab said README.md
+      // was missing, its Files tab "Nothing written yet") and a merge never showed (review of
+      // fix/decisions, 2026-11-02). The copy is refreshed here, with nothing pushed.
+      try {
+        await this.refreshCopy(project, target);
+      } catch (e) {
+        // The status is in the app either way; the copy is read as it was.
+        this.logger.warn("this computer's copy of the repository not refreshed", {
+          projectId: project.id,
+          error: errorMessage(e),
+        });
+      }
       return { location: "app", dir, path: res.path, created: res.created };
     }
     // Forerunner's own status branch, never a task's: the critic accepted the task's branch,
@@ -537,6 +552,23 @@ export class ProjectDocs implements ProjectDocsPort {
       existingPr,
       first: first as { created: string[]; marker: InstallMarkerWrite | null } | null,
     };
+  }
+
+  /**
+   * This computer's copy of the repository (`<worktreeRoot>/<project id>`, the docs clone that
+   * `docsDirsFor` reads for the Docs and Files tabs and the chat's docs search), cloned when it
+   * is missing, fetched, and put on the default branch as the host has it (C-57: what the
+   * status pull request's write did on its way). Nothing is pushed; an empty repository is
+   * left as cloned, with no default branch to read yet.
+   */
+  private async refreshCopy(project: ProjectRow, target: ProjectRepoTarget): Promise<void> {
+    const dir = join(this.deps.worktreeRoot, safeSegment(project.id, "project"));
+    mkdirSync(this.deps.worktreeRoot, { recursive: true });
+    const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
+    const git = new GitOps({ cwd: dir, auth, identity: this.deps.identity });
+    if (existsSync(join(dir, ".git"))) await git.fetch();
+    else await git.clone(target.clone);
+    if (await git.hasRef(`origin/${target.base}`)) await this.backToBase(git, target);
   }
 
   /**

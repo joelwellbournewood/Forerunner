@@ -2569,7 +2569,13 @@ every needs-human or failed one, the ready and draft ones highest priority first
 repository and the project setting `status_pull_request` off (the default since C-57, ADR 0106,
 `statusPullRequestOn`)** the update is written to the app's own folder
 `<projectsRoot>/<id>/app-status/docs/status.md` (`statusInAppDir`, no git, outcome `location:
-"app"`, the log line "…, kept in the app"); `statusDocRoot(project)` names that folder once it
+"app"`, the log line "…, kept in the app"), and this computer's copy of the repository
+(`<worktreeRoot>/<id>`, what `docsDirsFor` reads for the Docs and Files tabs and the chat's docs
+search) is cloned when missing, fetched and put on the default branch as the host has it
+(`refreshCopy`, nothing pushed; a failure is a warning, the status is written either way). The
+status pull request's write did that on its way; without it a project made from a brief had no
+copy at all and a merge on the host never reached the tabs (review of fix/decisions, 2026-11-02).
+`statusDocRoot(project)` names that folder once it
 holds the file, and the docs routes read `docs/status.md` from it first (`DocsRoutesDeps.statusDocRoot`,
 the note "kept in the app: no status pull request (Settings turns it on)"). `settings.set
 status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in

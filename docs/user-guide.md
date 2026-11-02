@@ -233,7 +233,9 @@ default branch (the project's docs, or a README), so its tasks have something to
 that cannot be done, the task says so ("… is empty and Forerunner could not make its first commit
 …") and what to do. The project's status file (`docs/status.md`) stays in the app: each
 session's update is under **Docs**, Status ("kept in the app"), and no pull request is opened
-for it. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
+for it. At the end of each session Forerunner also brings this computer's copy of the
+repository up to date, so **Docs** and **Files** show what is merged on GitHub, including what
+you merged since the last session. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
 Advanced, Other settings): each session then adds its update to one pull request of its own,
 "docs: project status", which you merge when you like; it never goes into a task's reviewed
 pull request. Docs that wait in a pull request say so on the Docs tab, with the link; only this

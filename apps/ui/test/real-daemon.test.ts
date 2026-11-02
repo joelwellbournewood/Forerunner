@@ -5114,6 +5114,127 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
     ).toBe(true);
   }, 120_000);
 
+  it("a project made from a brief: after its session the Docs and Files tabs read the repository as merged, and a merge on the host shows after the next session (C-57)", async () => {
+    // Review of fix/decisions (2026-11-02): with the status kept in the app, nothing made or
+    // refreshed this computer's copy of the repository any more. A project made from a brief
+    // (no scaffold, so no copy) read every doc but Status as "missing · not written yet",
+    // although README.md was on main and the rest waited in the intake's PR, and Files said
+    // "Nothing written yet"; after a merge on the host, the tabs still showed the old main.
+    const briefRepo = { owner: "o", name: "brief" };
+    const briefBare = join(bare, "..", "brief.git");
+    await run(["git", "init", "--bare", "-b", "main", briefBare]);
+    const seedDir = join(bare, "..", "brief-seed");
+    const seed = new GitOps({
+      cwd: seedDir,
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(briefBare);
+    writeFileSync(join(seedDir, "README.md"), "# brief\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ ...briefRepo, private: true, cloneUrl: briefBare });
+    const brief = "A page that shows a random quote";
+    const project = await client.createProject({
+      name: "Brief page",
+      goal: goalFromBrief(brief),
+      brief,
+      intake: true,
+      repos: ["o/brief"],
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.projectId === project.id && r.status === "open",
+    );
+    expect(card?.title).toMatch(/^Plan for "Brief page"/);
+    const planned = (await client.sessions({ projectId: project.id })).length;
+    await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: "Approve and start",
+    });
+    const statuses = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const sessionsEnded = async (count: number) => {
+      const all = await client.sessions({ projectId: project.id });
+      return all.length >= count && all.every((s) => s.status !== "running");
+    };
+    await eventually(
+      () => sessionsEnded(planned + 1),
+      "the session the approval started to end",
+      statuses,
+      60_000,
+    );
+    const intakePr = (await host.listPullRequests(briefRepo, { state: "open" })).find((p) =>
+      /^fr\/intake-.+-docs$/.test(p.head.ref),
+    );
+    expect(intakePr, "the intake's docs pull request").toBeDefined();
+    // README.md is on main; the intake's docs wait in its pull request; Status is in the app.
+    const docs = await client.docs(project.id);
+    expect(docs.find((d) => d.path === "README.md")).toMatchObject({
+      exists: true,
+      note: "from this PC's copy of the repository",
+    });
+    expect(docs.find((d) => d.path === "docs/overview.md")).toMatchObject({
+      exists: false,
+      note: `waiting in pull request #${intakePr?.number}: merge it to add it`,
+    });
+    expect(docs.find((d) => d.path === "docs/status.md")).toMatchObject({
+      exists: true,
+      note: "kept in the app: no status pull request (Settings turns it on)",
+    });
+    const files = await client.projectFiles(project.id);
+    expect(files.folder).not.toBeNull();
+    expect(files.entries.map((e) => e.path)).toContain("README.md");
+    expect(files.entries.map((e) => e.path)).not.toContain("docs/overview.md");
+
+    // The person merges the intake's pull request on the host; the next session's end brings
+    // this computer's copy up to date, so the tabs read the merged docs.
+    await seed.fetch();
+    await run([
+      "git",
+      "-C",
+      seedDir,
+      "merge",
+      "--no-ff",
+      "-m",
+      "Merge the doc set",
+      `origin/${intakePr?.head.ref}`,
+    ]);
+    await seed.push("main");
+    await host.mergePullRequest(briefRepo, intakePr?.number ?? 0);
+    const agentId = (await client.agents())[0]?.id ?? "";
+    await client.createTask(project.id, {
+      title: "Write the credits in credits.md",
+      outcome: "credits.md names where the quotes come from",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const before = (await client.sessions({ projectId: project.id })).length;
+    const started = await client.startSession({ agentId, projectId: project.id });
+    expect(started.session?.id, await statuses()).toBeDefined();
+    await eventually(
+      () => sessionsEnded(before + 1),
+      "the second session to end",
+      statuses,
+      60_000,
+    );
+    const after = await client.docs(project.id);
+    expect(after.find((d) => d.path === "docs/overview.md")).toMatchObject({
+      exists: true,
+      note: "from this PC's copy of the repository",
+    });
+    expect((await client.doc(project.id, "docs/overview.md")).content.length).toBeGreaterThan(0);
+    expect((await client.projectFiles(project.id)).entries.map((e) => e.path)).toEqual(
+      expect.arrayContaining(["README.md", "docs/overview.md"]),
+    );
+    // Still no status pull request: the copy was refreshed without one.
+    expect(
+      (await host.listPullRequests(briefRepo, { state: "open" })).some(
+        (p) => p.head.ref === "fr/status",
+      ),
+    ).toBe(false);
+  }, 180_000);
+
   it("a second project on the same repository lists only its own docs pull requests, never the first one's scaffold (L-16)", async () => {
     // Live (2026-11-02): "The project's standard docs · pull request #1" on the Overview was a
     // scaffold PR an earlier project had left on forerunner-sandbox.
