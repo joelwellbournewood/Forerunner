@@ -15,6 +15,33 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
+## Status at 2026-11-02 03:00 UTC (paused at the weekly-limit warning)
+
+Every Claude session on the account reported the seven-day limit as `allowed_warning` (the exact percentage
+is not visible from a session; it resets 2026-11-08 05:00 UTC). The owner's ceiling is 90%. Phase C, the
+heaviest remaining step, was stopped at its first stage so as not to overshoot; nothing broken was pushed.
+
+- **Done and pushed (CI green on Windows and Linux at each):** wave 3 at 27014b7 (one-sentence project
+  status, the running chip, Stop all only while something runs, the project folder with Open folder and a
+  Files tab, a queued start runs when the session ends, the system's words); the live fixes at 7765efd (the
+  plan from a brief: whole-reply reading, prose shortened instead of refused, one retry with the problems in
+  words, true failure words, small plans for short briefs, ADR 0103; the chat told about planning; model text
+  rendered without breaking paths; the bench's live mode with prices in the call log).
+- **Phase B confirmed with the real model** (live3): 4 of 4 one-line briefs got a small plan on the first call
+  (before: 1 in 6), every session completed, and the work runs (pages, a todo list, a photo-rename script
+  with 13 passing tests); chat says what was built and where. Phase D (live4): six specialists do correct,
+  honest work; the researcher and science-evaluator are refused on an API key.
+- **Phase C stopped at the fixer stage.** Its spec now includes the GitHub walk and live3/live4 findings
+  (`round-2026-11-01/phase-c-spec.json`). Partial, unreviewed work is kept as patches in
+  `round-2026-11-01/wip/` (and, while the container lives, as local branches `wip/verification` and
+  `wip/continuity`). To resume: copy the spec to /tmp/frbench/phaseC.json and the leftovers to
+  /tmp/frbench/handoffs.json, apply each patch in its fixer's worktree, and run `phase-c.workflow.txt` with
+  `{"wave": 4, "keys": ["verification", "continuity", "github-result", "research-web"]}` (the fixers find
+  their branch and continue; review, fix-up, merge and validation run in full).
+- **API spend for live checks:** about USD 3.0 of the owner's USD 40 (live1 0.63, live2 0.79, GitHub 0.05,
+  live3 0.98, live4 0.54).
+- **Then:** E (sweep, `leftovers.json` 'later'), F, F2, G, G2, H as below.
+
 ## Progress, and the plan from here (approved by the owner, 2026-11-01 evening)
 
 Session `claude/nifty-knuth-f9udt0` (the branch to work on) did steps 0 to 3 below and fix

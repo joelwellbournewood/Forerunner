@@ -1,0 +1,153 @@
+{
+  "headline": "Phase C of the owner-approved plan (docs/status/handoff/NEXT-SESSION.md): work that ends wrong or stuck with the real model. Sources: the live reports /tmp/frbench/live1-report.md and /tmp/frbench/live2-report.md (part 3 is on current code), the GitHub walk (items prefixed 'GitHub' in /tmp/frbench/handoffs.json 'phase-C'), and the owner's decisions of 2026-11-01 recorded in NEXT-SESSION.md. The owner's test: their install 'boots up, but you can't really get a project into a workable state'.",
+  "areas": [
+    {
+      "key": "verification",
+      "title": "Nothing is Done without the right check: proportional verification of code tasks (owner decision), a missing deliverable is never accepted, the critic sees the project",
+      "problems": [
+        "[major] OWNER DECISION (NEXT-SESSION.md, 'Owner decisions of 2026-11-01', verbatim there): proportional verification of code tasks. (1) The project's build, lint and tests always run for a code task and are never shown as a level; a task that adds behaviour to a project without tests adds them. (2) The critic always reviews code tasks, with read access to the project, not only the diff. (3) Work a person will use (a page, an app, a CLI, an API) is also tried: started in its own environment (the sandbox) and used as a person would, with screenshots and outputs as evidence the critic judges. (4) Deploys, data migrations, money and security keep the full review and the owner's sign-off. (5) The person sees Done only after the right check passed, with 'Reviewed' or 'Reviewed and tried' and the evidence one click away; no 'checks only' or tier words. Record it as an ADR (next free number; 0103 is taken by fix/intake-live).",
+        "[major] live2 #5: the intake put every coding task at tier 0 ('Checks only'); no checks ran (no test command), so 'Build the three pages\u2026' became Done on a self-report that says 'nothing here has been tested'; the session review said 'accepted (grade 100, 0 finding(s))'. The coder's prompt says 'Acceptance criteria (the critic checks each)', false at tier 0. (fix/intake-live restored defaultRiskTier 1 for new projects; the planner can still choose tier 0 per task.)",
+        "[major] live2 part 3 B1: 'Members chart' (data-analyst; data/members.csv missing; criterion 'No number is invented'). After 'Go ahead without', the specialist rightly made no chart and ended with 'Questions for the person: Please add data/members.csv\u2026', but the task became DONE: the critic accepted (82) with 'Every bar uses the exact number from data/members.csv' marked met because there are no bars ('a blocked report is the right outcome'). Tasks: 'Members chart \u00b7 Done \u00b7 accepted'; Inbox 'Nothing needs you'; the 'Questions for the person:' lines made no card. Expected: not done, needs you, with a card asking for the file.",
+        "[major] live2 part 3 D2 and live2 #9: the critic gets only the diff and says it 'could not check the claims about the pages \u2026 because those files were not in the request' (4 of 5 reviews). It must read the files it needs.",
+        "[minor] live1 #6: the critic contradicts itself ('I count 29 entries\u2026 which leaves 30') and only reads the diff; its 3 findings show as '0 open' and are not followed up.",
+        "[minor] GitHub walk: a task 'Add a README.md\u2026' left the lead's README.md unchanged and the critic accepted with a 'wontfix' finding (part of the task not done).",
+        "[minor] live2 #8: a task added by the chat's intent parser gets the generic criterion 'The outcome described in the goal is achieved and verified.', which the critic marks met though nothing was verified.",
+        "[major] live B+D (02:00-02:40, current code): the critic judged from the diff alone in most reviews ('the request had no runtime check output and did not include index.html'; 'app.test.js and app.js are not in the diff'; 'I could not see data/sales.csv'; 'the test result comes from the worker's report only'), and it does not get the specialist's command output ('node test.js' printed ok but the critic said no test ran). 4 of 6 specialist accepts rested on the worker's word.",
+        "[major] live D: Done with a criterion 'not verified': the ops-deploy worker said criterion 1 was not verified (the build could not run) and the critic accepted (86); the task is Done. Also the drawer suggests 'edit to a light review' for a deploy task, against owner decision 4 (deploys keep the full review).",
+        "[minor] live B3: an 'accept' (86) was turned into a revise because packages/critic/src/critic.ts:717 treats only an exact 'none' as no doc drift ('none (docs/testing.md still says \u2026)' became a medium finding). The person sees 'accept' text with a revise outcome.",
+        "[minor] live B3: critic.ts:699 defaults a finding's fix to 'Fix: <the finding>' when the model gives no required_action, so the retry brief reads 'X -> Fix: X'.",
+        "[minor] live D: the session review says 'accepted (grade 100, 0 finding(s))' for a session that did 0 of 1 tasks."
+      ],
+      "u_entries": [],
+      "root_causes": [
+        "Tier semantics: the review level decides whether the critic runs at all (tier 0 = checks only, no critic). See packages/runtime/src/session/runner.ts (closeTier0 path near the in_review transition, ~1495-1530) and packages/critic.",
+        "The critic's request carries the diff only (packages/critic and packages/runtime/src/loop/critic.ts: find where the review prompt is built and what files it gets).",
+        "The critic's verdict treats a criterion about absent output as met; the critic prompt (evals/registry/critic or packages/critic) has no rule that a missing deliverable is never accepted.",
+        "The specialist's final 'Questions for the person:' trailer is not parsed into an Inbox card on that path (find where ask_person and report trailers are handled in packages/runtime/src/session).",
+        "The specialist's brief says 'the critic checks each' regardless of the tier (packages/runtime/src/session/executor.ts / brief.ts)."
+      ],
+      "fix_scope": "1. ADR for proportional verification (owner's words), then implement it: the always-on build/lint/test step for code tasks (from the project's own scripts; a task adding behaviour without tests adds them), the critic for every code task with read tools over the task's worktree (read_file/list_dir or the referenced files included), the 'try it' step for person-facing work (start it in the task's sandbox and use it: a headless browser for pages, the CLI with sample input, HTTP for an API; screenshots/outputs stored as evidence and given to the critic), the full review + owner sign-off kept for deploys, migrations, money and security. 2. A missing deliverable or a criterion about absent output is never accepted: the critic prompt says so and the runner treats such a verdict as not done; a specialist's 'Questions for the person:' opens a card. 3. The specialist's brief tells the truth about how its work is checked. 4. What the person sees: Done only after the right check; 'Reviewed' / 'Reviewed and tried' with the evidence one click away in the task drawer; no 'checks only' or tier words in the person's screens (the intake and plan card included). 5. Tests at the boundary: real-daemon cases with the stand-in (a page task is tried in a headless browser; a missing-deliverable task ends needs-you with a card; the critic's request includes the referenced files). The bench stand-in role-player must support the new steps. Keep the Docker rule (ADR 0101): tasks that need the full review run only in the Docker sandbox; 'try it' for a tier-1 page may use the process sandbox's headless browser where the design allows.",
+      "files": [
+        "packages/critic/src/",
+        "packages/runtime/src/loop/critic.ts",
+        "packages/runtime/src/session/runner.ts (the review path only)",
+        "packages/runtime/src/session/executor.ts (the brief's words about checking)",
+        "packages/runtime/src/brief.ts",
+        "evals/registry/critic/ and the specialists' prompts where they promise checks",
+        "packages/capabilities/src/browser/ (headless browser for 'try it')",
+        "apps/ui task drawer and Tasks tab review words",
+        "testenv/src/bench/ (stand-in critic and tester)",
+        "docs/decisions/ (new ADR)"
+      ],
+      "acceptance": "Fresh bench (--provider bench). (a) A coder task that builds a page: the session runs build/lint/tests, the critic reviews with the page's files, a 'try it' step opens the page in a headless browser and stores a screenshot; the task shows 'Done \u00b7 Reviewed and tried' and the drawer shows the evidence. (b) A data task whose input file is missing, answered 'Go ahead without': the task ends 'Needs you' with a card asking for the file, never Done. (c) The planner's tier 0 for a code task no longer means 'no critic'; no person screen says 'checks only' or 'tier'. (d) Unit and real-daemon tests for each; the full suite green. Live confirmation by a helper session after merge (Members-chart case and a small page task).",
+      "depends_on": []
+    },
+    {
+      "key": "continuity",
+      "title": "Work continues correctly: answers reach the next task, cancelling a running task stops and reverts it, a task over budget asks the person, the summary never points at an empty Inbox",
+      "problems": [
+        "[major] live2 #3: answers to a person task never reach the dependent task's brief. The owner answered 7 questions on 'Owner supplies the bakery's real content'; the coder of 'Replace placeholders\u2026' asked all the same questions again ('docs/data.md still holds only TODO placeholders and the decision record says the owner has not supplied \u2026'). The answers were only appended at the end of docs/decisions/0001-*.md; data.md stayed TODO. Root cause: packages/runtime/src/session/task-context.ts:156-168, 'Done before this task' for a person-done dependency uses dep.outcome (the planning-time promise), not the answers.",
+        "[major] live2 part 3 C1: cancelling a task that is already running (chat 'Skip the About page task' \u2192 Yes) keeps its files (about.html; index.html got a link to it), the critic reviewed and 'accepted' the cancelled task ('About page \u00b7 Cancelled \u00b7 accepted'), and the next task's README described the cancelled page. Expected: cancelling a running task stops it, and its changes are rolled back to the 'Workspace before <task>' snapshot (Undo of the cancel restores them), or the person is told plainly that the files stay; a cancelled task is never reviewed.",
+        "[major] live2 part 3 B2: a task over its budget ('Contact page', CHF 0.01, stopped 'after spending $0.00') becomes needs_human with no card; the session summary says '\"Contact page\" needs your decision (Inbox).' while the Inbox says 'Nothing needs you'; the Tasks tab shows 'Paused'; the drawer says 'The run stopped at this task's budget of $0.01\u2026 Press Resume\u2026' in USD on a CHF screen. Recovery only via Edit budget \u2192 Resume \u2192 Start. Expected: one Inbox card in one sentence with [Raise the budget and try again] (and Cancel task), CHF, and the summary never points at an empty Inbox.",
+        "[minor] live2 part 3 B3: the Start dialog says '\"About page\" needs about CHF 1.20, more than this session's work budget of CHF 2.40\u2026' (1.20 < 2.40: it means the running total); estimates ignore the task's own budget.",
+        "[re-check] On current code, re-check what the 20:21 walk saw on pre-wave-2 code: answering the plan's person task started nothing while a specialist's ask_person answer did (live2 #6; wave 2's 09371b2 should have fixed it); two 'approval: the monthly cap' cards stayed after confirming in Settings and both became 'The change you asked for was not made\u2026' after a restart although the cap WAS lowered; the Settings table showed the old cap until a reload (live2 #12). Fix what still fails.",
+        "[major] live D: a task refused at once (the researcher on an API key: needs_human) never reaches the Inbox: Inbox 'Nothing needs you', Home 'Waiting on you 0', project Summary '1 open question', session summary 'needs your decision (Inbox)'. The badge says 'Paused' and 'Press Resume' only starts another refusal (tried twice); the stored reason is cut at ~200 characters mid-sentence and shows tool names ('cc:WebFetch, cc:WebSearch'); after editing the specialist the drawer still showed the old reason. Every needs_human task must have exactly one card saying why and what to do, and Resume must not repeat a refusal."
+      ],
+      "u_entries": [],
+      "root_causes": [
+        "task-context.ts:156-168 uses the dependency's outcome for a person-done dependency; the answers live in the request rows / the decision record section.",
+        "The cancel path (task.transition to cancelled while the runner holds the task) does not abort the run or restore the workspace snapshot; the runner continues to review it (runner.ts, the per-task loop and recordMove; the workspace snapshot commit 'Workspace before <task>').",
+        "budget_exceeded moves the task to needs_human without filing a card (runner.ts budget path; findings.ts card filing; task-words.ts 'Paused'); amounts formatted in USD there.",
+        "StartSessionDialog's budget sentence compares a single item's estimate with the work budget when the overflow is cumulative."
+      ],
+      "fix_scope": "1. The dependent task's brief gets the person's answers: question \u2192 answer pairs (or the exact section of the decision record with them) under 'Done before this task' for a person-done dependency, and the specialist is told they are the person's answers. 2. Cancelling a running task: stop its run at once (the kill path for that task), restore the workspace to the task's 'before' snapshot, never send it to the critic; Undo of the cancel brings the files back; the reply/card says what happened in one sentence. 3. A task stopped by its budget files one Inbox card ('\"X\" stopped at its budget of CHF 0.01.' with [Raise the budget to CHF \u2026 and try again] and [Cancel task]); the session summary and the Tasks tab agree with the Inbox; CHF everywhere. 4. The Start dialog's budget sentence is true and estimates use the task's budget. 5. The re-checks, fixed where they still fail. Tests at the boundary for each (real-daemon cases; persisted state across a restart for the cards).",
+      "files": [
+        "packages/runtime/src/session/task-context.ts",
+        "packages/runtime/src/session/runner.ts (stop/cancel/budget paths, not the review path)",
+        "packages/runtime/src/session/findings.ts",
+        "packages/runtime/src/daemon/task-words.ts",
+        "packages/runtime/src/daemon/request-words.ts (the budget card's words)",
+        "apps/ui/src/components/StartSessionDialog.tsx",
+        "apps/ui/src/pages/SettingsPage.tsx (only if the re-check fails)"
+      ],
+      "acceptance": "Fresh bench (--provider bench). (a) A plan with a person task 'Answer the content questions' and a coder task after it: answer the card; the coder's brief (model-call log) contains the answers; the stand-in coder asks nothing again. (b) Start a session, cancel the running task from the Tasks tab and from chat: the run stops, its files are gone from the project folder, the critic never reviews it, the next task does not see them; Undo brings them back. (c) A task with budget CHF 0.01: one Inbox card with Raise the budget and try again; pressing it runs the task; the summary and Tasks tab agree; CHF everywhere. (d) The Start dialog sentence is true for a plan over its budget. (e) Re-checks done and reported.",
+      "depends_on": []
+    },
+    {
+      "key": "github-result",
+      "title": "The result is visible and GitHub works: empty repositories, PRs the person can find and merge, honest PR content, the project folder",
+      "problems": [
+        "[blocker] GitHub walk: a task in an EMPTY linked repository always fails: 'git checkout -B fr/\u2026 failed: fatal: 'origin/main' is not a commit and a branch '\u2026' cannot be created from it' (packages/capabilities/src/githost/pr-executor.ts:161-163 branches from origin/<base> without checking it exists; same pattern packages/runtime/src/loop/docs.ts:307 and the session status writer). Project creation silently fails to scaffold the docs there (daemon log only). The failure text is raw git output; the Summary says '\u2026 \u00b7 completed' for a session whose only task failed. Expected: make the first commit (README + the docs scaffold) on the default branch, then branch and PR; if that cannot be done, words that say the repository is empty and what to do.",
+        "[major] GitHub walk: 'N reviewed pull request(s) wait for you to merge' on the session page and the Summary leads nowhere: no link to the PR, no merge action; the Inbox says 'Nothing needs you'; the only links are the small 'PR' on the Tasks row and 'Its pull request' in the drawer (which offers only Redo). Expected: the PRs waiting for the person are listed with their links (an Inbox Update or card per PR, or one place on the Summary) and what merging does; a Merge action if the design and autonomy allow it.",
+        "[major] GitHub walk: the session status commit (docs/status.md) is pushed onto the task's PR branch AFTER the critic accepted it ('status update written \u2026 branch: fr/\u2026, committed: true'), so the PR holds a file the critic never saw (packages/runtime/src/loop/docs.ts ~300). Status updates must not land on a reviewed task's PR branch.",
+        "[major] GitHub walk: the coder is told it cannot use git: in the process sandbox 'git status --short --branch' and 'git branch --show-current' fail; the coder writes 'Git doesn't work in this sandbox, so I can't commit, push or open a PR' into its summary, marks its criterion not met, and that text goes into the commit message and the PR body. The brief must say Forerunner commits, pushes and opens the PR (fix/intake-live 71a2d14 already says Forerunner records the changes: build on it), git read commands should work in the task's worktree or be explained, and the PR body must not contradict itself.",
+        "[minor] live2 #7, mostly fixed by wave 3 (27014b7: FolderPath with Open folder on the Overview, a Files tab, the status sentence 'Done: \u2026 Your files: <folder>'): remaining, the chat's context must carry the project folder (it said 'the files are in the project folder you already set up', false); check the folder line on a GitHub-linked project too.",
+        "[minor] live2 #15: workspace git commits are only 'Workspace before <task>' snapshots; the last task's files (404.html) and docs/status.md stay uncommitted after the project is done.",
+        "[minor] GitHub walk: the docs-scaffold PR (#1, branch fr/docs-scaffold) opened silently at project creation is never shown; the Docs tab lists the docs as 'missing \u00b7 not written yet' while they wait in that PR.",
+        "[minor] GitHub walk: no PR or branch on the session page and the Changes page (only 'Changed 1 file: index.html'); the linked repository is not shown anywhere on the project page.",
+        "[minor] live2 #14: the intake asks 'Where should the site files live on your computer, and do you want them under version control (git)?': the app decides both; the intake prompt must say so (coordinate with fix/intake-live's prompt, already merged).",
+        "[major] live B (all 4 runs): the last task's work is never committed (only 'Workspace before \u2026' commits; the final task's files staged or modified). Same as live2 #15, now confirmed on current code.",
+        "[major] live D: git fails inside run_command where GIT_CONFIG_* is set: every git command exits 128 'missing config key GIT_CONFIG_KEY_0' because scrubEnv in packages/runtime/src/agent/sdk.ts:549 strips GIT_CONFIG_KEY_n (pattern (^|_)KEY(_|$)) but keeps GIT_CONFIG_COUNT; the same function feeds sandbox/process.ts and the Claude Code path. Likely also behind the GitHub walk's 'git status failed' in the coder's run.",
+        "[minor] live B4: Python bytecode (__pycache__/*.pyc) is staged into the project: a workspace without a .gitignore; scaffold one."
+      ],
+      "u_entries": [],
+      "root_causes": [
+        "pr-executor.ts:161-163 and loop/docs.ts:307 assume origin/<base> exists.",
+        "The session-end status writer (loop/docs.ts ~300) commits to the current task branch.",
+        "The process sandbox stand-in blocks or breaks git read commands; the brief does not say who commits.",
+        "No view lists PRs waiting for the person; needs-you counting ignores them.",
+        "The project view has no folder path; the desktop shell has (or needs) an open-folder command (apps/desktop/src-tauri)."
+      ],
+      "fix_scope": "1. Empty linked repository: the first commit (README and the docs scaffold) on the default branch, then the normal branch/PR flow; clear words when it cannot. Tested with the fake git host in testenv/src/githost (an empty repo) and a real-daemon case. 2. Status updates never land on a task's PR branch (commit them on the default branch or a separate status branch/PR, or keep them local). 3. The brief and the sandbox: git read commands work in the task's worktree (or the brief says why not), Forerunner says it commits/pushes/opens the PR; the PR body is the outcome, criteria and the specialist's summary without contradictions. 4. PRs waiting for the person: one place with their links and what merging does (the Inbox Updates or a card per PR, the Summary line linking them; needs-you counts agree); a Merge action only if the design/ADR allows at that autonomy (check ADR 0102 and the design; otherwise link to GitHub). 5. The docs-scaffold PR shown on the Docs tab ('waiting in pull request #1: open it'). 6. PR and branch on the session page and the Changes page; the linked repository on the project page. 7. The project folder: wave 3 added the path, Open folder (apps/desktop/src-tauri/src/folder.rs) and the Files tab; only the chat's context still needs the path. 8. The last task's work and status are committed at the end of a session in a folder project. 9. The intake prompt no longer asks where files live or whether to use git. Tests at the boundary for each.",
+      "files": [
+        "packages/capabilities/src/githost/",
+        "packages/runtime/src/loop/docs.ts",
+        "packages/runtime/src/session/executor.ts (the brief's words about git only)",
+        "packages/runtime/src/sandbox/ (git read commands in the process sandbox)",
+        "packages/runtime/src/daemon/views.ts (projectView: folder path, linked repository; PRs waiting)",
+        "apps/ui/src/pages/project/ (Summary, Docs tab)",
+        "apps/ui/src/pages/SessionPage.tsx and ChangesPage.tsx (PR/branch lines)",
+        "apps/desktop/src-tauri (open-folder command)",
+        "the intake prompt (folder/git question only)",
+        "testenv/src/githost/"
+      ],
+      "acceptance": "Fresh bench (--provider bench, the fake git host). (a) Link an empty repository, add a coder task, Start: the first commit is made, the task's branch and PR exist on the fake host, the task shows its PR link. (b) After the critic accepts, the PR contains only the task's changes (no status commit). (c) The coder's brief and the PR body say Forerunner commits and opens the PR; no 'git doesn't work' text. (d) The Summary lists the PR waiting to be merged with its link; the Inbox and counts agree. (e) The Docs tab shows the docs-scaffold PR. (f) The session and Changes pages show the PR and branch; the project page shows the linked repository. (g) A folder project: after the last task, git status in the folder is clean; the chat answers 'where are my files?' with the folder. Live confirmation on forerunner-sandbox by a helper session after merge.",
+      "depends_on": []
+    },
+    {
+      "key": "research-web",
+      "title": "Research tasks run on an API key: the researcher and science-evaluator get web access through Forerunner's own capability (owner decision)",
+      "problems": [
+        "[major] OWNER DECISION: give the researcher and the science-evaluator web access on the API-key path (the loop driver) through Forerunner's own fetch/search capability, within the network rules, so plans can include research. Today: on an API key the loop driver offers no web tool; registry/alternates.ts has no stand-in for them, so their tasks go to the person and nothing runs (executor.ts ~604-625, U-044). The CI log shows 'specialist tool not offered on the loop driver {specialist: researcher, tool: cc:WebFetch, reason: unmapped}'.",
+        "[minor] The plan card should say when a task cannot run on this install (a Docker-only task without Docker; anything else the install lacks), so the person is not surprised later.",
+        "[major] live D: the science-evaluator is refused even for data-only work (its registry entry lists cc:WebFetch), so a task that needs only local files is refused; the same routing would refuse any researcher task that works from given sources. Route by what the task needs, not only by the registry's tool list. The New task dialog offers researcher and science-evaluator on an API key with no warning."
+      ],
+      "u_entries": ["U-044"],
+      "root_causes": [
+        "packages/runtime/src/registry/tools.ts maps cc:WebFetch/cc:WebSearch to nothing on the loop driver ('unmapped').",
+        "packages/runtime/src/session/executor.ts routes web work to an alternate specialist or the person (needsWeb && !hasWeb)."
+      ],
+      "fix_scope": "1. Loop-driver web tools: web_fetch (GET a URL, readable text out, size and time limits, the egress rules and domain allowlist/denylist the app already enforces for tasks, no credentials sent) and web_search (if a search capability or provider exists in packages/capabilities; otherwise state the limitation and keep fetch only, recorded in an ADR), mapped from cc:WebFetch/cc:WebSearch in registry/tools.ts so the researcher and science-evaluator keep their registry entries. 2. Everything audited like other tools (tool calls in the run log; the critic sees the sources). 3. The executor no longer routes these specialists away on the loop driver when the tools exist. 4. The plan card says when a task cannot run on this install. 5. Tests: unit tests for the tools (limits, refusals, network rules) against a local HTTP fixture; a real-daemon case where a researcher task on the loop driver fetches a fixture page and cites it; the bench stand-in can play it. Live confirmation by a helper after merge.",
+      "files": [
+        "packages/runtime/src/registry/tools.ts",
+        "packages/runtime/src/registry/alternates.ts",
+        "packages/runtime/src/session/executor.ts (web routing only)",
+        "packages/capabilities/src/ (fetch/search)",
+        "packages/runtime/src/loop/ (tool definitions for the loop driver)",
+        "apps/ui plan card (the 'cannot run here' line)",
+        "docs/decisions/ (ADR if search is not available)"
+      ],
+      "acceptance": "Unit and real-daemon tests with a local HTTP fixture: a researcher task on the loop driver fetches the fixture page, writes docs/research.md citing its URL, and the critic sees the source; refused URLs (network rules) are refused with words; no task goes to the person because of missing web tools. The plan card names a task that cannot run on this install. Live confirmation by a helper after merge (a small real research task).",
+      "depends_on": []
+    }
+  ],
+  "parallel_groups": [["verification", "continuity", "github-result", "research-web"]],
+  "shared_files": [
+    "packages/runtime/src/session/runner.ts: verification owns the review path (in_review, critic, closeTier0); continuity owns the stop/cancel/budget paths and card filing for them; github-result owns nothing here except calls into docs.ts. Keep changes in your own paths.",
+    "packages/runtime/src/session/executor.ts: verification owns the brief's words about checking; github-result the words about git and who commits; research-web the web-tool routing (needsWeb/hasWeb). Small, separate hunks.",
+    "The intake prompt (packages/runtime/src/session/intake.ts and its prompt file): verification may change the tier guidance; github-result removes the folder/git question; research-web may add what the install can run. Keep each change to its own paragraph.",
+    "apps/ui task drawer / Tasks tab: verification owns the review words and evidence; github-result owns the PR/branch links; continuity owns the cancel and budget wording.",
+    "docs/decisions: take the next free ADR number at merge time (0103 is fix/intake-live's); if two areas take the same number, the merge renumbers one.",
+    "apps/ui/test/fake-daemon.ts and apps/ui/test/real-daemon.test.ts: every area adds its own cases; keep them in separate describe blocks."
+  ]
+}
