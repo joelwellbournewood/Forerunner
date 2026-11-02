@@ -95,9 +95,11 @@ function webTasks(quotes: boolean): PlanTaskOut[] {
       key: "page",
       title: "Create the page skeleton in index.html",
       outcome: `index.html is a valid HTML5 page that loads styles.css and script.js and has a place for ${what}.`,
+      // Only what this task's own run makes: styles.css and script.js are written by the tasks
+      // after it, so a criterion that the page links them could not be met here (C-10).
       acceptanceCriteria: [
         "index.html exists and is valid HTML5",
-        "index.html links styles.css and script.js",
+        `index.html has a place for ${what}`,
       ],
       priority: "high",
       dependsOn: [],
@@ -627,15 +629,19 @@ export function intakeProposal(input: IntakeInput, opts: PlanOptions): Record<st
 // What a specialist writes
 // ---------------------------------------------------------------------------------------
 
+/** A file name in a brief, a dotted one too ("test/main.test.js"; before, it was not seen). */
 const FILE_RE =
-  /(?:^|[\s(`'"])((?:[\w-]+\/)*[\w-]+\.(?:html|css|js|mjs|ts|md|json|txt|py|yml|yaml|csv|svg))\b/gi;
+  /(?:^|[\s(`'"])((?:[\w-]+\/)*[\w-]+(?:\.[\w-]+)*\.(?:html|css|js|mjs|ts|md|json|txt|py|yml|yaml|csv|svg))\b/gi;
 
 /** Files a brief names (title, outcome, criteria), in order, at most six. */
 export function filesNamed(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(FILE_RE)) {
     const f = m[1];
-    if (f && !out.includes(f) && !/^(e\.g|i\.e)\./i.test(f)) out.push(f);
+    // "Node.js", "Vue.js": a technology's name, not a file in the folder (the critic would
+    // look for it and say it is missing).
+    if (f && !out.includes(f) && !/^(e\.g|i\.e)\./i.test(f) && !/^[A-Z][A-Za-z0-9]*\.js$/.test(f))
+      out.push(f);
   }
   return out.slice(0, 6);
 }

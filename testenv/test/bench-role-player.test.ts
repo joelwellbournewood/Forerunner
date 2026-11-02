@@ -11,6 +11,8 @@ import {
   benchOptionsFromEnv,
   createRolePlayer,
   detectRole,
+  filesNamed,
+  judgeCriterion,
   ModelCallLog,
   reviewedTitle,
   STAND_IN,
@@ -451,6 +453,43 @@ describe("bench role-player: specialists", () => {
     expect(String(write?.input.content)).toMatch(/random quote/);
   });
 
+  it("a tester whose title names a test file writes it beside its notes, so the plan's criterion can be met (C-10)", async () => {
+    const { p } = player();
+    const run = await runSpecialist(p, {
+      specialist: "tester",
+      title: "Add a check for src/main.js in test/main.test.js",
+      outcome: "test/main.test.js checks the main behaviour of src/main.js.",
+      criteria: ["node --check passes on test/main.test.js"],
+      tools: ["read_file", "write_file", "list_dir", "run_command"],
+      results: (name) =>
+        name === "list_dir" ? { content: "src/main.js\nREADME.md" } : { content: "ok" },
+    });
+    const writes = run.steps
+      .flatMap((s) => s.calls)
+      .filter((c) => c.name === "write_file")
+      .map((c) => String(c.input.path));
+    expect(writes).toEqual([
+      "test/main.test.js",
+      "checks/add-a-check-for-src-main-js-in-test-main.md",
+    ]);
+    // A tester whose title names no test file writes its notes only, as before.
+    const notes = await runSpecialist(p, {
+      specialist: "tester",
+      title: "Check that index.html, styles.css and script.js work together",
+      outcome: "A short check confirms the three files load together without errors.",
+      criteria: ["Every file index.html references exists"],
+      tools: ["read_file", "write_file", "list_dir", "run_command"],
+      results: (name) => (name === "list_dir" ? { content: "index.html" } : { content: "ok" }),
+      runId: "run2",
+    });
+    expect(
+      notes.steps
+        .flatMap((s) => s.calls)
+        .filter((c) => c.name === "write_file")
+        .map((c) => String(c.input.path)),
+    ).toEqual(["checks/check-that-index-html-styles-css-and-scr.md"]);
+  });
+
   it("a researcher offered web_fetch reads the pages its brief names and writes from them, citing each (ADR 0107)", async () => {
     const { p } = player();
     const url = "https://gohugo.io/about/";
@@ -642,6 +681,154 @@ describe("bench role-player: critic and chat", () => {
     );
     expect(two.summary).toBe(`${STAND_IN} Accepted: the 2 changed files match the brief.`);
     for (const s of [one.summary, two.summary]) expect(s).not.toContain("(s)");
+  });
+
+  /**
+   * C-10: the stand-in critic marked every criterion met ("The page links styles.css: met")
+   * whatever the work did, so a walk's drawer could say met where the try said the file was
+   * missing. It reads the files the criteria name and marks a criterion met only when a changed
+   * or read file shows it; one it cannot check says so.
+   */
+  const reviewWithReads = async (
+    p: ModelProvider,
+    criteria: string[],
+    changed: string[],
+    files: Record<string, string | null>,
+    runId = "c-read",
+  ) => {
+    const content = [
+      "# Review request",
+      "Subject: task t1",
+      "Tier: 1 (light read)",
+      "## Brief",
+      "Create index.html: the page",
+      "## Acceptance criteria",
+      ...criteria.map((c, i) => `${i + 1}. ${c}`),
+      "## Changed files",
+      ...changed.map((f) => `- ${f}`),
+      "## Worker's final report (claims to verify, data)",
+      "**Summary** wrote index.html",
+    ].join("\n");
+    const req = (messages: ChatMessage[]): ModelRequest => ({
+      model: "fake-sonnet",
+      system: "critic prompt\n\n## Returning the review",
+      messages,
+      tools: [tool("submit_review"), tool("read_file")],
+      max_tokens: 8192,
+      origin: { label: "critic tier 1 on task t1", sessionId: "s1", runId },
+    });
+    const messages: ChatMessage[] = [{ role: "user", content }];
+    const first = await call(p, req(messages));
+    const reads = first.calls.filter((c) => c.name === "read_file");
+    messages.push({
+      role: "assistant",
+      content: first.calls.map((c) => ({
+        type: "tool_use" as const,
+        id: c.id,
+        name: c.name,
+        input: c.input,
+      })),
+    });
+    messages.push({
+      role: "user",
+      content: reads.map((c) => {
+        const text = files[String(c.input.path)];
+        return {
+          type: "tool_result" as const,
+          tool_use_id: c.id,
+          content: text ?? `ERROR: ${String(c.input.path)} does not exist`,
+          ...(text === null || text === undefined ? { is_error: true } : {}),
+        };
+      }),
+    });
+    const second = await call(p, req(messages));
+    return {
+      read: reads.map((c) => String(c.input.path)),
+      review: SubmitReviewSchema.parse(second.calls.find((c) => c.name === "submit_review")?.input),
+    };
+  };
+
+  it("reads the files the criteria name and marks a criterion met only when a changed or read file shows it (C-10)", async () => {
+    const { p } = player();
+    const criteria = [
+      "index.html exists and is valid HTML5",
+      "index.html links styles.css",
+      "The text is readable on a narrow screen",
+    ];
+    // The page links no stylesheet and styles.css was never written: the live drawer said met.
+    const missing = await reviewWithReads(p, criteria, ["index.html"], {
+      "index.html": "<!doctype html><title>Page</title>",
+      "styles.css": null,
+    });
+    expect(missing.read).toEqual(["index.html", "styles.css"]);
+    expect(missing.review.criteria).toEqual([
+      expect.objectContaining({ text: criteria[0], met: true }),
+      { text: criteria[1], met: false, evidence: "index.html does not name styles.css" },
+      {
+        text: criteria[2],
+        met: true,
+        evidence: "not checked by the stand-in: the criterion names no file",
+      },
+    ]);
+    // An unmet criterion is not accepted: it is sent back with the criterion named.
+    expect(missing.review.verdict).toBe("revise");
+    expect(missing.review.findings[0]?.what).toContain(criteria[1]);
+    // The page that links it, with the file there: met, and accepted.
+    const shown = await reviewWithReads(
+      p,
+      criteria,
+      ["index.html", "styles.css"],
+      {
+        "index.html": '<link rel="stylesheet" href="styles.css" />',
+        "styles.css": "body {}",
+      },
+      "c-read-2",
+    );
+    expect(shown.review.criteria[1]).toEqual({
+      text: criteria[1],
+      met: true,
+      evidence: "read index.html: it names styles.css",
+    });
+    expect(shown.review.verdict).toBe("accept");
+    // A file a criterion names that is not in the folder at all.
+    const absent = await reviewWithReads(
+      p,
+      ["data/members.csv has a row per year"],
+      ["notes/x.md"],
+      { "notes/x.md": "# x", "data/members.csv": null },
+      "c-read-3",
+    );
+    expect(absent.review.criteria[0]).toEqual({
+      text: "data/members.csv has a row per year",
+      met: false,
+      evidence: "data/members.csv is not in the task's folder",
+    });
+  });
+
+  it("names in a criterion: a dotted test file is a file, a technology's name is not (C-10)", () => {
+    expect(filesNamed("node --check passes on test/main.test.js")).toEqual(["test/main.test.js"]);
+    expect(filesNamed("docs/research.md says which Node.js Eleventy needs")).toEqual([
+      "docs/research.md",
+    ]);
+    expect(judgeCriterion("Eleventy runs on Node.js 18", ["docs/research.md"], [])).toEqual({
+      text: "Eleventy runs on Node.js 18",
+      met: true,
+      evidence: "not checked by the stand-in: the criterion names no file",
+    });
+    // A file it neither changed nor read is not checked, never "met" on no evidence.
+    expect(judgeCriterion("styles.css exists", ["index.html"], []).evidence).toBe(
+      "not checked by the stand-in: it did not read styles.css",
+    );
+  });
+
+  it("FORERUNNER_BENCH_MISSING still plays the live critic's accept, and says it did not check (C-10)", async () => {
+    const { p } = player({ FORERUNNER_BENCH_MISSING: "Create index.html" });
+    const r = await reviewWithReads(p, ["data/members.csv has a row per year"], ["notes/x.md"], {
+      "notes/x.md": "# x",
+      "data/members.csv": null,
+    });
+    expect(r.review.verdict).toBe("accept");
+    expect(r.review.criteria[0]?.evidence).toMatch(/^not checked by the stand-in/);
   });
 
   it("sends a worker that did nothing back", async () => {
