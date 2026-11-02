@@ -2479,7 +2479,10 @@ so the real flow goes on: an intake proposal `parseIntakeReply` accepts (a small
 tasks with no riskTier, the README and the decision only, when the request says "Plan size:
 small"; the live model's bad first replies with `FORERUNNER_BENCH_INTAKE_BAD`, `too-big` among
 them, the retry's request, which carries the refused reply, getting the plan), specialist runs through
-the app's own tools, a `submit_review` verdict, a chat reply that says what context it got
+the app's own tools (a run offered `web_fetch` whose brief names web addresses reads up to three
+of them first and writes its markdown file from them: each fact quoted with its page's address,
+the pages not read under "Uncertainty" with the refusal's words, every page under "Sources
+read", ADR 0107; `urlsNamed`, `factsOf`, `researchContent` in `plans.ts`), a `submit_review` verdict, a chat reply that says what context it got
 and quotes back the plan's state (`# Plan from the brief`) and the first task line it was told
 (`chatFacts`), so a journey can check that a reply names a task as a real model's would.
 Every request is a line of `<home>/bench/model-calls.jsonl` (`call-log.ts`), which is how a

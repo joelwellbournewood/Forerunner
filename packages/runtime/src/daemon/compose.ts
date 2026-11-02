@@ -32,6 +32,7 @@ import {
   ProjectsMirror,
   PrTaskExecutor,
   scheduleMirror,
+  web,
 } from "@forerunner/capabilities";
 import { criticSettingsOf } from "@forerunner/critic";
 import {
@@ -312,6 +313,7 @@ import { assertAnswerAccepted } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { specialistCommandPort } from "../wiring/specialist-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
+import { webFetchEnabled, webReadSitesResolver } from "../wiring/web-ports.ts";
 import type { SpeakStartedView } from "./api-types.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord, scaffoldProjectDocs } from "./create-project.ts";
@@ -1688,6 +1690,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // U-022 (ADR 0095): every specialist on the loop driver may ask the person; the questions go
   // to the Inbox and the run ends (the executor adds the name to each run's allowlist).
   tools.register(askPersonTool({ store }));
+  // Web research (ADR 0107, the owner's decision of 2026-11-01): the loop driver's `cc:WebFetch`,
+  // so the researcher and the science-evaluator run on an API key too. Public pages only, GET
+  // without credentials, size and time limits, the project's block list and site list read at
+  // every call; each refusal is an audit row with its reason. `FORERUNNER_WEB_FETCH=off` leaves
+  // it out, and then the intake plans no web work and the plan card says so.
+  const webFetchOn = webFetchEnabled(env);
+  if (webFetchOn)
+    tools.register(
+      web.webFetchTool({
+        sites: webReadSitesResolver(store.project),
+        audit: ports.audit,
+        clock,
+      }),
+    );
   // Cloudflare deploys (spec J.9, J.10, S.5, S.6, ADR 0035): the four tools go through the
   // same hooks and gate as every other tool; the deployer reads `project.settings.cloudflare`
   // per call, resolves the token by reference from the vault and asks the human through
@@ -2243,9 +2259,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // A rejected proposal ends the deferral of a creation with `intake: true` (spec G.5): the
     // standard set from the templates, through the same scaffold the create path runs.
     docs,
-    // U-044: specialists reach the web only on a subscription (the Agent SDK's WebFetch and
-    // WebSearch); with an API key alone the intake plans no task that needs the web.
-    webSpecialists: () => hasOauth,
+    // U-044, ADR 0107: specialists reach the web on a subscription (the Agent SDK's WebFetch and
+    // WebSearch) and, on an API key, through the web page reader; with neither the intake plans
+    // no task that needs the web.
+    webSpecialists: () => hasOauth || webFetchOn,
     // "Approve and start" (design §3.3): the approved plan starts through the scheduler, only
     // while the services run (a one-shot writes the plan and starts nothing).
     ...(opts.startServices !== false

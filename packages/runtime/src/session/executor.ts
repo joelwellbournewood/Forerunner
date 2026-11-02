@@ -108,6 +108,21 @@ import {
   type TaskExecutor,
 } from "./runner.ts";
 import { failureWords, taskContextBlock } from "./task-context.ts";
+import { type WebSource, webSourceArtifact, withWebSourceLog } from "./web-sources.ts";
+
+/** The registry's web search tool, which has no equivalent on an API key (ADR 0107). */
+const WEB_SEARCH_CC = `${CLAUDE_CODE_PREFIX}WebSearch`;
+
+/**
+ * The brief's line for a specialist that works from the web on a run that offers no web reader
+ * (ADR 0107): it works from what the project holds and says so when that is not enough.
+ */
+export const NO_WEB_ACCESS_LINE =
+  "This run has no web access: work from the files in the project and the sources this brief gives. If the task cannot be done without reading the web, stop and say so in the report.";
+
+/** The brief's line for a researcher on an API key: pages by address, no search (ADR 0107). */
+export const NO_WEB_SEARCH_LINE =
+  "Web search is not available on this run: read web pages by their address with web_fetch (the sources the brief names, the official site or documentation of what you research, pages those link to), and cite each page you use by its address.";
 
 /**
  * Runs one task through a specialist: validates the delegation brief, picks the billing
@@ -607,12 +622,16 @@ export class LoopTaskExecutor implements TaskExecutor {
       choice.driver === "sdk"
         ? (this.deps.specialists(item.specialist, "sdk") ?? defaultSpec)
         : defaultSpec;
-    // Web work goes where the web is (U-044). A specialist whose registry entry works from the
-    // web (`cc:WebFetch`, `cc:WebSearch`) gets no web tool on the loop driver, which runs what is
-    // billed to an API key; such a run could only fail and be retried. The task goes to a
-    // specialist that reaches the web on this driver and can do the rest of what this one does;
-    // with none, it waits for the person, and nothing runs or is spent.
+    // Web work goes where the web is (U-044, ADR 0107). On the loop driver, which runs what is
+    // billed to an API key, `cc:WebFetch` is the web capability's `web_fetch`, so the researcher
+    // and the science-evaluator keep their tasks. Where this runtime offers no web reader (an
+    // install that turned it off, a test world), the task goes to a specialist that reaches the
+    // web and can do the rest of what this one does; with none, the specialist runs without the
+    // web and is told so: the task may need none (the project's data, sources the brief gives),
+    // and one that does says so in its report. Before, it waited for the person with no card and
+    // nothing ran, even for a data-only science check (live, 2026-11-02).
     const profile = profileOf(spec);
+    const webLines: string[] = [];
     if (needsWeb(profile) && !hasWeb(profile)) {
       const lost = lostWebTools(profile);
       const pick = routed
@@ -625,11 +644,14 @@ export class LoopTaskExecutor implements TaskExecutor {
         });
         return this.runTask({ ...ctx, item: { ...item, specialist: pick.name } }, true);
       }
-      return {
-        outcome: "needs_human",
-        summary: `The ${spec.name} works from the web (${lost.join(", ")}), but runs billed to an API key get no web tools, and no other specialist has them there, so nothing ran. Add a Claude subscription in the setup assistant (its runs have web tools) and set the task back to ready, or cancel it.`,
-        costUsdMicro: 0,
-      };
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `the ${spec.name} has no web access on this run (${lost.join(", ")} not offered here); it works from what the project holds`,
+      });
+      webLines.push(NO_WEB_ACCESS_LINE);
+    } else if (choice.driver !== "sdk" && profile.registryTools.includes(WEB_SEARCH_CC)) {
+      // `cc:WebSearch` has no equivalent on an API key (ADR 0107): the page reader only.
+      webLines.push(NO_WEB_SEARCH_LINE);
     }
     // A run with no worktree on the SDK path still needs a working directory: its own,
     // under the executor's work root, and that is the only path the token allows.
@@ -806,7 +828,18 @@ export class LoopTaskExecutor implements TaskExecutor {
       sessionNote: ctx.sessionNote ?? null,
       currentRunId: run.id,
     });
-    const userText = [renderBrief(brief), context, lessonsBlock, answers, heard.block, queued.block]
+    // What this run can reach on the web (ADR 0107), as constraints of the brief.
+    const runBrief = webLines.length
+      ? { ...brief, constraints: [...brief.constraints, ...webLines] }
+      : brief;
+    const userText = [
+      renderBrief(runBrief),
+      context,
+      lessonsBlock,
+      answers,
+      heard.block,
+      queued.block,
+    ]
       .filter((t) => t)
       .join("\n\n");
     const label = `${spec.name} on ${task.title}`;
@@ -838,6 +871,8 @@ export class LoopTaskExecutor implements TaskExecutor {
     // the cost view and the estimate feedback never see a run that never ended.
     let lease: RunSandboxLease | null = null;
     let result: DriverOutcome;
+    // The pages the run read, for the critic (ADR 0107); the loop driver's `web_fetch` only.
+    const webSources: WebSource[] = [];
     try {
       if (choice.driver === "sdk") {
         const sdk = this.sdkDeps();
@@ -895,7 +930,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           ],
         };
       } else {
-        let tools = this.deps.toolsFor?.() ?? this.deps.tools;
+        let tools = withWebSourceLog(this.deps.toolsFor?.() ?? this.deps.tools, webSources);
         if (worktree && this.deps.sandbox) {
           lease = await this.deps.sandbox.open({
             task,
@@ -947,6 +982,8 @@ export class LoopTaskExecutor implements TaskExecutor {
             ...(r.injectionReports.length ? [{ injectionReports: r.injectionReports.length }] : []),
             // A fast-mode run says so on its Run row (ADR 0072): it was priced at the fast row.
             ...(fast.kind === "applied" ? [{ speed: "fast" }] : []),
+            // The pages it read, by address (ADR 0107); the text goes to the critic only.
+            ...(webSources.length ? [webSourceArtifact(webSources)] : []),
           ],
         };
       }
@@ -1080,6 +1117,8 @@ export class LoopTaskExecutor implements TaskExecutor {
       ...(worktree ? { worktree } : {}),
       finalReport: finalText,
       lessons: this.screenedLessons(task.id, finalText, spec.name),
+      // The pages it read, for the critic to check the cited claims against (ADR 0107).
+      ...(webSources.length ? { webSources } : {}),
     };
   }
 

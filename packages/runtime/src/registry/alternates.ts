@@ -1,3 +1,4 @@
+import { WEB_FETCH_TOOL } from "./tools.ts";
 import { CLAUDE_CODE_PREFIX } from "./types.ts";
 
 /**
@@ -6,8 +7,12 @@ import { CLAUDE_CODE_PREFIX } from "./types.ts";
  * - the retry ladder's second rung, "split or change specialist" (spec D.2): after two failed
  *   attempts the next attempt goes to a different specialist, not the same one again;
  * - a specialist whose registry entry names web tools (`cc:WebFetch`, `cc:WebSearch`) on a
- *   driver that does not offer them: the loop driver, which runs every task billed to an API
- *   key, has no web tool (`registry/tools.ts`), so such a run could only fail and be retried.
+ *   runtime that offers none on the run's driver. Since ADR 0107 the loop driver, which runs
+ *   every task billed to an API key, offers the web capability's `web_fetch` for `cc:WebFetch`,
+ *   so this happens only where the composition registered no web reader (an install that turned
+ *   it off, a test world). The task then goes to a specialist that reaches the web; with none,
+ *   the specialist runs without the web and is told so (the executor), because the work may need
+ *   none (data the project holds, sources the brief gives).
  *
  * A candidate fits when it can do everything the specialist it replaces can: its registry tools
  * cover the other's, and so do its tools on the driver the run uses (a registry entry may name
@@ -34,8 +39,11 @@ export const WEB_TOOLS: readonly string[] = [
   `${CLAUDE_CODE_PREFIX}WebSearch`,
 ];
 
-/** A tool that reaches the web on the loop driver: the browser capability's page fetch. */
-const LOOP_WEB_TOOLS: readonly string[] = ["browser_navigate"];
+/**
+ * Tools that reach the web on the loop driver: the web capability's page reader (ADR 0107) and
+ * the browser capability's page fetch.
+ */
+const LOOP_WEB_TOOLS: readonly string[] = [WEB_FETCH_TOOL, "browser_navigate"];
 
 /** Whether the registry entry works from the web (it names a web tool). */
 export function needsWeb(p: Pick<SpecialistProfile, "registryTools">): boolean {

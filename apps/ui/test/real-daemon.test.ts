@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { appDirs, join, SimulatedClock, SystemClock } from "@forerunner/platform";
@@ -2622,6 +2624,8 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
   intakeCalls: ModelRequest[];
   /** The chat turns' calls the stand-in received, in order (what the chat was told). */
   chatCalls: ModelRequest[];
+  /** The critic's review calls, in order (what the critic was shown). */
+  criticCalls: ModelRequest[];
 }> {
   const home = mkdtempSync(join(tmpdir(), "fr-ui-real-needs-me-"));
   const bench = benchOptionsFromEnv(
@@ -2631,10 +2635,12 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
   const provider = createRolePlayer(bench);
   const intakeCalls: ModelRequest[] = [];
   const chatCalls: ModelRequest[] = [];
+  const criticCalls: ModelRequest[] = [];
   const stream = provider.stream.bind(provider);
   provider.stream = (req) => {
     const role = detectRole(req).role;
     if (role === "intake") intakeCalls.push(req);
+    if (role === "critic") criticCalls.push({ ...req, messages: structuredClone(req.messages) });
     // A copy: the loop appends the reply to the same messages after the call.
     if (role === "chat") chatCalls.push({ ...req, messages: structuredClone(req.messages) });
     return stream(req);
@@ -2664,7 +2670,7 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
     },
     (input, init) => Promise.resolve(app.request(input, init)),
   );
-  return { rt, client, bench, intakeCalls, chatCalls };
+  return { rt, client, bench, intakeCalls, chatCalls, criticCalls };
 }
 
 describe("the UI client against the real daemon: a task that fails gets one card, and answering it resumes work (design §3.8)", () => {
@@ -3777,5 +3783,103 @@ describe("a project name another project has (wave 1 handoff)", () => {
     );
     expect((await client.projects()).map((p) => p.name)).toEqual(["Quote page"]);
     await rt.close();
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: research on an API key reads the web (ADR 0107)", () => {
+  // Live (2026-11-02, phase D): on an API key the researcher was refused at once ("Paused",
+  // "needs your decision" with no card in the Inbox) and nothing ran. The bench's stand-in runs
+  // on the loop driver as an API key does; its researcher reads the pages a brief names through
+  // `web_fetch` and writes from them.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let criticCalls: ModelRequest[];
+  let server: Server;
+  let pageUrl = "";
+  const hits: string[] = [];
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      hits.push(`${req.method} ${req.url}`);
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        "<!doctype html><html><head><title>Static site generators compared</title></head><body><main>" +
+          "<h1>Static site generators compared</h1>" +
+          "<p>Hugo builds a 10,000-page site in about 2 seconds.</p>" +
+          "<p>Eleventy needs Node.js 18 or newer.</p></main></body></html>",
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    pageUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/ssg.html`;
+    ({ rt, client, criticCalls } = await composeWithRolePlayer({}));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    server?.closeAllConnections();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+  });
+
+  it("a researcher task fetches the page, writes docs/research.md citing it, and the critic is shown the page", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Docs site", goal: "Pick a generator" });
+    // The fixture runs on this computer: the project names its host on its site list, as a
+    // person names an intranet page (a public site needs no entry).
+    const before = await rt.store.project.mustGet(project.id);
+    await client.updateProjectSettings(project.id, {
+      version: before.version,
+      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
+    });
+    const task = await client.createTask(project.id, {
+      title: "Compare two static site generators",
+      outcome: `docs/research.md says how fast Hugo builds and which Node.js Eleventy needs, citing ${pageUrl}`,
+      riskTier: 1,
+      specialist: "researcher",
+    });
+    // A page the network rules refuse: a private address the project does not name.
+    const refused = await client.createTask(project.id, {
+      title: "Read the router's admin page",
+      outcome: "docs/router.md says what http://10.0.0.7/admin shows",
+      riskTier: 1,
+      specialist: "researcher",
+    });
+    const states = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, await states()).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      states,
+      60_000,
+    );
+    // The researcher ran (no refusal, no hand-over to the person) and the critic reviewed it.
+    const done = await client.task(task.id);
+    expect(done.task.status, await states()).toBe("done");
+    expect(done.runs.map((r) => [r.kind, r.specialist])).toEqual([
+      ["review", "critic"],
+      ["work", "researcher"],
+    ]);
+    expect(hits).toContain("GET /ssg.html");
+    // The person opens the file on the Files tab: it cites the page and quotes it.
+    const file = await client.projectFile(project.id, "docs/research.md");
+    expect(file.content).toContain(pageUrl);
+    expect(file.content).toContain("Hugo builds a 10,000-page site in about 2 seconds.");
+    // The session's log names the page it read, in one short line.
+    const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
+    expect(lines).toContain(`read the web page ${new URL(pageUrl).host}/ssg.html`);
+    expect(lines).toContain("read the web page 10.0.0.7/admin (failed)");
+    // The critic was shown the page the researcher read, as data, beside the report.
+    const shown = criticCalls.map((c) => JSON.stringify(c.messages)).join("\n");
+    expect(shown).toContain(`### web page ${pageUrl}`);
+    expect(shown).toContain("Eleventy needs Node.js 18 or newer.");
+    // The refused page: the researcher was told why in words and wrote that it was not read.
+    const router = await client.projectFile(project.id, "docs/router.md");
+    expect(router.content).toContain(
+      "http://10.0.0.7/admin was not read: Refused: 10.0.0.7 is a private or local network address",
+    );
+    expect(shown).toContain("web page not read: http://10.0.0.7/admin (");
+    expect((await client.task(refused.id)).task.status, await states()).toBe("done");
+    expect(hits.every((h) => h === "GET /ssg.html")).toBe(true);
   }, 120_000);
 });

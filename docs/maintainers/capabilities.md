@@ -378,11 +378,59 @@ reference, value only in the header), S.5 (scopes documented and insufficient sc
 surfaced), S.6 (creating the board can be routed through a human), S.9 (audit row per outward
 action), U.9 (run event with counts on a session).
 
+## Web research (`src/web/`, ADR 0107)
+
+The researcher's and the science-evaluator's page reader on an API key (the owner's decision
+of 2026-11-01): `webFetchTool(opts)` is the `web_fetch` tool the runtime maps `cc:WebFetch` to
+on the loop driver (`packages/runtime/src/registry/tools.ts`, `WEB_FETCH_TOOL`; the name is
+spelled out here because the runtime imports this package). The composition root registers it
+as a built-in unless `FORERUNNER_WEB_FETCH=off`.
+
+- **Rules (`policy.ts`, `WebReadPolicy`).** `checkUrl`: `http:`/`https:` only, at most
+  `WEB_MAX_URL_CHARS` (2,000), no user name or password, a host on the project's block list
+  refused. `addressAllowed(host, address)`: a host on the project's site list (`named`) on any
+  address, any other only on a public one (`isPublicAddress`: a `net.BlockList` of this
+  computer, private, shared, link-local, CGNAT, multicast, documentation, benchmarking and
+  reserved ranges, IPv4 and IPv6, IPv4 inside IPv6 and NAT64 judged as IPv4). Patterns are the
+  token's (`domainCovered`). The lists come per call from `opts.sites(ctx)` (the daemon passes
+  the project's `settings.browser.allowedDomains` and `blockedDomains`).
+- **The read (`fetch.ts`, `readWebPage`).** A GET over `node:http(s)` with `agent: false` and a
+  `lookup` that resolves every address of the host (`opts.resolve`, default `dns.lookup` with
+  `all: true`) and refuses the connection when one is not allowed, so the check is on the
+  addresses the socket uses (an IP literal is checked before, as net resolves nothing for it).
+  No cookie, no authorisation, the AI-agent user agent. Redirects followed here, each hop
+  through `checkUrl` and the lookup, at most `WEB_MAX_REDIRECTS` (5). The body (gzip, deflate,
+  br decompressed) up to `maxBytes` (2 MiB) within `timeoutMs` (30 s) and the run's signal;
+  charset from the header. HTML through the browser's `extractFromHtml`/`renderExtract` (40
+  links at most); text, JSON, XML, CSV, YAML, markdown as they are; other types `not_supported`.
+  The visible text is cut at `maxChars` (default 30,000, the model may ask 500 to 60,000).
+- **Errors in words.** A refusal by the rules is `domain_not_allowed` "Refused: <why>." and
+  an audit row (`allowed: false`, `deniedReason`); an error status, a non-text page, too many
+  redirects, a host not found, a timeout are `unavailable` / `not_supported` with one
+  sentence. The loop driver returns the message to the model as `ERROR: ...`.
+- **The result.** `renderWebPage`: the final address, status and title, "redirected from" and
+  the cut note when they apply, then the text; `untrusted: { source: "web_page", origin }`;
+  `artifacts` with the address, final address, status, title, type, characters, `truncated`
+  (the executor's source log reads them, `runtime.md` "Web research").
+
+Not here: web search (no provider; `cc:WebSearch` stays unmapped on the loop driver), a proxy
+for computers that reach the web only through one (the client connects directly), PDF text.
+
 ## How it works
 
 ## How to change it
 
 ## Tests
+
+`web-fetch.test.ts` runs `web_fetch` against a real HTTP server on the loopback: a page read
+as text with its title and the hidden passage apart, text, JSON, gzip and Latin-1 pages, a
+redirect on the same site, the byte and character cuts; this computer and the local network
+refused before any request (each refusal an audit row), a name resolving to a private address
+(also one of several), a private host named on the site list read, the block list winning over
+the site list, every redirect hop checked, other schemes, credentials and long addresses
+refused; error status, non-text page, redirect loop, unknown host, timeout and the run's stop in
+words; the address table. Test host names resolve to the loopback through `opts.resolve`, and
+`opts.isPublic` counts the loopback public only behind them.
 
 `github.test.ts` reads commit statuses from the combined-status endpoint, sends the merge's
 `sha` pin to the stub and has `MemoryGitHost` refuse a merge

@@ -441,9 +441,18 @@ session log says so. When no other specialist can, the task waits for you on the
 with what to do (split it into smaller tasks, or cancel it) instead of running the same way a
 third time.
 
-Research on the web needs a Claude subscription: runs billed to an API key have no web tools.
-On an install with an API key only, project setup plans no web research, and a task given to
-the researcher waits for you, saying so, instead of failing and being retried.
+Research works with an API key too. The researcher and the science evaluator read web pages
+by their address: public pages only (never this computer or your local network), with a GET
+and no passwords or cookies, at most 2 MB per page, and nothing on the project's block list.
+There is no web search on an API key, so a research task does best when it names the sources
+or sites to read (on a Claude subscription the researcher uses Claude Code's own web tools
+instead). The session log
+names each page read ("read the web page gohugo.io/about/"), the research file cites each page
+by its address, and the critic checks the claims against the pages the researcher actually
+got. A page that cannot be read (refused, missing, not a text page) is said in words to the
+researcher, who writes it down as not read. An install can turn page reading off
+(`FORERUNNER_WEB_FETCH=off`); then project setup plans no web research, and a researcher's task
+runs from the project's own files and says so when that is not enough.
 
 Every setting is in **Settings → All settings** with a plain name and its own control: your
 default autonomy for new projects, the monthly spending cap, quiet hours (a time range, or off),

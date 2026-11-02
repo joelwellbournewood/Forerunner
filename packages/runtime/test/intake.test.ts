@@ -743,9 +743,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(runs.every((r) => r.prompt_version !== "")).toBe(true);
   });
 
-  it("with an API key alone the intake is told to plan no web work; with a subscription it is not (U-044)", async () => {
+  it("an install with a web reader plans web work on an API key too; only one without any is told to plan none (U-044, ADR 0107)", async () => {
     // This install has no Claude subscription: every specialist run goes through the loop
-    // driver, where the researcher and the science-evaluator lose WebFetch and WebSearch.
+    // driver, where the researcher and the science-evaluator read the web through `web_fetch`
+    // (ADR 0107). Before, the intake was told to plan no web work here.
     replies.push({ text: "no json here" });
     const apiOnly = await createProject({
       name: "Web plan, key only",
@@ -753,6 +754,32 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       brief: "Compare hosts",
     });
     await expect(rt.intake.propose(apiOnly)).rejects.toMatchObject({ code: "validation" });
+    expect(provider.calls.at(-1)?.system).not.toContain(NO_WEB_RULE);
+    // An install that turned the web reader off (`FORERUNNER_WEB_FETCH=off`) and has no
+    // subscription: no specialist reaches the web, and the intake plans none.
+    const noWeb = new IntakeService({
+      store: rt.store,
+      clock,
+      tokens: rt.tokens,
+      driver: rt.driver,
+      provider,
+      pricing: { estimate: () => 1, cost: () => 1 },
+      billingSourceId: rt.billingSourceId,
+      modelConfig: rt.modelConfig,
+      human: rt.human,
+      agent: rt.agent,
+      gitHost: host,
+      projectsRoot: rt.data.assets.projectsRoot,
+      worktreeRoot: join(home, "wt-noweb"),
+      webSpecialists: () => false,
+    });
+    replies.push({ text: "no json here" });
+    const off = await createProject({
+      name: "Web plan, web off",
+      goal: "g",
+      brief: "Compare hosts",
+    });
+    await expect(noWeb.propose(off)).rejects.toMatchObject({ code: "validation" });
     expect(provider.calls.at(-1)?.system).toContain(NO_WEB_RULE);
     const withSubscription = new IntakeService({
       store: rt.store,

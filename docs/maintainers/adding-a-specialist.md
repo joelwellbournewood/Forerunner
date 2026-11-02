@@ -158,7 +158,8 @@ commands, onDropped })` maps each runnable entry's `allowed_tools` accordingly:
 | `cc:Write`, `cc:Edit`, `cc:MultiEdit`, `cc:NotebookEdit` | `write_file` | as written |
 | `cc:Glob`, `cc:Grep`, `cc:LS` | `list_dir` | as written |
 | `cc:Bash` | `run_command`, only when `requires_sandbox: true` or the composition sandboxes every command (the daemon always does) | as written |
-| `cc:WebFetch`, `cc:WebSearch`, `cc:Task`, `cc:TodoWrite` | dropped (`unmapped`) | as written |
+| `cc:WebFetch` | `web_fetch` (the web capability's page reader, ADR 0107), while it is registered (the daemon registers it unless `FORERUNNER_WEB_FETCH=off`) | as written |
+| `cc:WebSearch`, `cc:Task`, `cc:TodoWrite` | dropped (`unmapped`; no search provider on an API key) | as written |
 | a Forerunner name (`ext:<id>:<tool>`, `run_command`, ...) | itself while the tool is registered at the lookup, else dropped (`unavailable`) | itself |
 
 `loopToolsFor(allowedTools, { available, commands })` returns `{ tools, dropped }`; order follows
@@ -171,17 +172,20 @@ the specialist and the tool, once per pair for the life of the composition: for 
 entry at compose, and for a bridged tool that has gone at a later run start. The run token
 carries the mapped names, so the hooks check what the driver calls. The eval runner uses the
 same function (`run_command` only with a sandbox port) and logs its drops. A specialist that
-needs the web on the loop driver must name a bridged fetch tool by its Forerunner name (or the
-browser capability's `browser_navigate`); its `cc:WebFetch` is dropped there and offered on the
-SDK driver only. An entry that names a web tool and gets none on the run's driver never runs
-there (U-044): the executor hands the task to a specialist that reaches the web on that driver
-and can do the rest, or the task waits for the person ("runs billed to an API key get no web
-tools"), and the intake plans no web work on an install without a subscription.
+reads the web names `cc:WebFetch`: on the loop driver (an API key) it gets `web_fetch`, which
+reads public pages and the hosts on the project's site list (ADR 0107), on the SDK driver the
+Agent SDK's own `WebFetch`. `cc:WebSearch` has no loop equivalent; a researcher on an API key is
+told in its brief to read pages by address. An entry that names a web tool and gets none on the
+run's driver (a runtime with no web reader) goes to a specialist that reaches the web there
+when one fits, else runs without the web and is told so in its brief (U-044, ADR 0107); it never
+waits for the person for a missing tool, and the intake plans no web work only on an install
+with neither a subscription nor the page reader.
 
 **Stand-ins (U-044).** When the retry ladder's second rung changes the specialist, or web work
 needs one that reaches the web, `alternateSpecialist` picks a runnable entry whose registry tools
 cover the replaced one's and whose driver tools cover its driver tools, closest by the words the
-descriptions share less the extra tools; none, and the task goes to the person. A new entry
+descriptions share less the extra tools; none, and at the second rung the task goes to the
+person (web work runs without the web instead, above). A new entry
 with the same tools as an existing one becomes that one's stand-in candidate, so its
 `description` decides between them.
 
@@ -466,7 +470,7 @@ agree across platforms.
   `maxPromptLines`) is refused with nothing on disk and the name free afterwards, an existing
   file is `claim_conflict` and never overwritten, a stale `proposal.json` makes the call take
   back its own file, and a description with a carriage return round-trips.
-- `packages/runtime/test/registry-tools.test.ts` (22): `loopToolsFor` entry by entry (every
+- `packages/runtime/test/registry-tools.test.ts` (23): `loopToolsFor` entry by entry (every
   known Claude Code tool mapped or listed as one without an equivalent), the read tools never
   yielding a write tool, an unknown `cc:Foo` dropped with its reason, the command gate for
   `cc:Bash` and `run_command`, bridged names while registered, order and duplicates;
@@ -479,8 +483,8 @@ agree across platforms.
   `write_file`, `list_dir` with the registry untouched, one task through the
   `LoopTaskExecutor` with the fake provider calling `read_file`, `write_file` and
   `run_command` (the first two allowed, the command refused by the hooks, an audit row each),
-  and the researcher's and a widget's `cc:WebFetch` dropped at compose with one audit row per
-  specialist and tool.
+  the researcher's and a widget's `cc:WebFetch` mapped to `web_fetch` and their `cc:WebSearch`
+  dropped at compose with one audit row per specialist and tool (ADR 0107).
 - `evals/test/checks.test.ts` (8): every check kind, flags, final-text targets, JSON pointer
   edge cases, command runs via argv in the task directory, injected runner, escaping paths.
 - `evals/test/runner.test.ts` (10): summary math, task status derivation, fixture and grader

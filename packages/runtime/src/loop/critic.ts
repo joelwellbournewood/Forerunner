@@ -40,6 +40,7 @@ import type { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelTier } from "../provider/types.ts";
 import { screenLessons } from "../session/lessons.ts";
 import { filePersonQuestions, reportedQuestions } from "../session/person-questions.ts";
+import { webSourceEvidence } from "../session/web-sources.ts";
 import {
   type CriticPort,
   type LessonCandidate,
@@ -305,6 +306,13 @@ export class CriticLoop implements CriticPort {
         ...(result.artifacts ?? []).map((a) => (typeof a === "string" ? a : JSON.stringify(a))),
       ],
     };
+    // The web pages the run read (ADR 0107): the critic checks each cited claim against the
+    // text the specialist got, as data, and sees which pages could not be read.
+    const sources = webSourceEvidence(result.webSources);
+    if (sources.inputFiles.length)
+      evidence.inputFiles = [...(evidence.inputFiles ?? []), ...sources.inputFiles];
+    if (sources.artifacts.length)
+      evidence.artifacts = [...(evidence.artifacts ?? []), ...sources.artifacts];
     if (tier >= 2 && worktree && changedFiles.length) {
       // Doc drift of the project's standard doc set (spec G.5, memory package); a drift is a
       // non-required check, so it is a low finding the human sees and the PM fixes at session

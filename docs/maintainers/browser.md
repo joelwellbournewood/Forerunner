@@ -347,10 +347,13 @@ nothing or the launch fails. Chromium is expected to be installed where Playwrig
 - The block list is the project's (`settings.browser.blockedDomains`); a per-agent block list
   is not read. `settings.browser` is written through `PUT /projects/:id/settings`; no UI
   screen edits it yet.
-- The registry's researcher names `cc:WebFetch` and `cc:WebSearch`, which have no loop-driver
-  equivalent (ADR 0043), so it has no browser on the loop path; a registry entry gets the
+- The registry's researcher names `cc:WebFetch` and `cc:WebSearch`; on the loop path its
+  `cc:WebFetch` is the web capability's `web_fetch` (ADR 0107, `capabilities.md` "Web
+  research"), not the browser, and `cc:WebSearch` has no equivalent. A registry entry gets the
   browser by naming `browser_navigate` and `browser_read` (dropped with a
   `registry.tool_unmapped` row while the capability is off, offered once it is on).
+  `web_fetch` reads the same `settings.browser` lists: the site list as hosts it may read even
+  on a private address, the block list as hosts it never reads.
 - `tests/e2e/src/scenario-capabilities.ts` keeps its own copy of the static reader and its own
   wiring; the scenario is not yet pointed at `composeRuntime`.
 - An installed `browser` capability row is not re-synced from the catalog: a row installed

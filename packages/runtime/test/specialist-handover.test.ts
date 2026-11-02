@@ -17,7 +17,9 @@ import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpe
  * driver (every run billed to an API key) drops, and they were still given research tasks:
  * each run could only fail and be retried. Now the second rung hands the task to a specialist
  * that can do what the first one does, and web work goes to a specialist that reaches the web
- * on the run's driver; with none, the task waits for the person and nothing is spent.
+ * on the run's driver. Since ADR 0107 the loop driver has a web reader for `cc:WebFetch`; where
+ * a runtime offers none and no other specialist reaches the web, the specialist runs without
+ * the web and is told so, because the task may need none.
  */
 const REGISTRY = fileURLToPath(new URL("../../../evals/registry", import.meta.url));
 const shipped = loadRegistry(REGISTRY);
@@ -209,19 +211,25 @@ describe("the retry ladder's second rung changes the specialist (U-044)", () => 
 });
 
 describe("web work goes where the web is (U-044)", () => {
-  it("a researcher's task on the loop driver (an API key) waits for the person; nothing runs", async () => {
+  it("a researcher's task where the runtime offers no web reader runs without the web, told so; it never waits for the person (ADR 0107)", async () => {
+    // The test tools have no `web_fetch` (the daemon registers one, `research-web.test.ts`).
+    // Before ADR 0107 the task waited for the person with no card and nothing ran, even when
+    // the work needed no web at all (live, 2026-11-02: a data-only science check).
     const w = await world({
       specialists: loopSpecs,
       names,
       attempt: 0,
       specialist: "researcher",
     });
-    expect(w.provider.calls).toHaveLength(0);
-    expect(w.result.outcome).toBe("needs_human");
-    expect(w.result.summary).toBe(
-      "The researcher works from the web (cc:WebFetch, cc:WebSearch), but runs billed to an API key get no web tools, and no other specialist has them there, so nothing ran. Add a Claude subscription in the setup assistant (its runs have web tools) and set the task back to ready, or cancel it.",
+    expect(w.provider.calls).toHaveLength(1);
+    expect(w.result.outcome).toBe("done");
+    expect(w.runs.map((r) => r.specialist)).toEqual(["researcher"]);
+    expect(w.provider.calls[0]?.messages[0]?.content as string).toContain(
+      "This run has no web access: work from the files in the project and the sources this brief gives.",
     );
-    expect(w.runs).toEqual([]);
+    expect(w.events).toContain(
+      "the researcher has no web access on this run (cc:WebFetch, cc:WebSearch not offered here); it works from what the project holds",
+    );
   });
 
   it("a specialist that reaches the web on this driver takes the researcher's task", async () => {

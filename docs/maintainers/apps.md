@@ -836,7 +836,12 @@ hours, the model rows, the desktop allowlist).
 
 Unit tests (`test/*.test.ts[x]`): `real-daemon` (U-008: the whole runtime composed as
 `fr daemon` composes it, with the scripted provider, and the UI's own `createClient` over
-`app.request`; 43 read calls of the screens parsed with the UI's schemas, a route missing or
+`app.request`; research on an API key (ADR 0107): with the bench's stand-in, a researcher
+task reads a loopback page named on the project's site list (`updateProjectSettings`),
+`docs/research.md` on the Files route cites and quotes it, the session's events name the page,
+the critic's calls carry the page as an input file, and a private page not on the list is
+refused in words in the log and the file (`composeWithRolePlayer` also returns
+`criticCalls`); 43 read calls of the screens parsed with the UI's schemas, a route missing or
 an answer of another shape failing the test; the flows of U-003 to U-006: a start answered
 with the session it began, the queue added, listed and dismissed, the docs listed and one
 read, a folder imported; U-025: Settings' `renameAgent` renames the principal, trimmed, and

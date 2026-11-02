@@ -96,6 +96,7 @@ import {
   summarizeSandboxWaiting,
 } from "./sandbox-gate.ts";
 import { type PersonStop, personStopOf, taskReasonForStop } from "./stop-words.ts";
+import type { WebSource } from "./web-sources.ts";
 
 /**
  * One working period of a principal agent (spec E). Code owns the skeleton: checklist, plan
@@ -216,6 +217,8 @@ export interface TaskExecutionResult {
   finalReport?: string;
   /** Lessons the specialist spelled out ("Lesson: ..."), recorded at session end. */
   lessons?: LessonCandidate[];
+  /** The web pages the run read (ADR 0107); the critic checks cited claims against them. */
+  webSources?: WebSource[];
 }
 
 export interface TaskExecutor {
@@ -472,6 +475,16 @@ function inputField(input: unknown, ...keys: string[]): string {
   return "";
 }
 
+/** A web address as a step line names it: the host and the path, no scheme, query or fragment. */
+function webPageName(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname === "/" ? "" : u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
 /**
  * One tool step in the person's words (design §3.7: "read index.html", "wrote styles.css",
  * "ran node --check: ok"); one short line, never the tool's output.
@@ -492,6 +505,10 @@ export function stepLine(step: Extract<TaskStep, { kind: "tool" }>): string {
     return `ran ${cut(cmd || "a command")}: ${step.isError ? "failed" : "ok"}`;
   }
   if (name === "ask_person") return "asked you a question (Inbox)";
+  if (name === "web_fetch" || name === "webfetch") {
+    const url = inputField(step.input, "url");
+    return url ? `read the web page ${cut(webPageName(url))}${failed}` : `read a web page${failed}`;
+  }
   return `used ${name.replace(/_/g, " ")}${failed}`;
 }
 

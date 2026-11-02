@@ -22,7 +22,10 @@ import {
   filesNamed,
   type IntakeInput,
   intakeProposal,
+  type PageRead,
   type PlanOptions,
+  researchContent,
+  urlsNamed,
 } from "./plans.ts";
 import {
   detectRole,
@@ -532,6 +535,22 @@ function specialistAnswer(
     );
   }
 
+  // 4a. Research: read the web pages the brief names, when the page reader is offered (the
+  // researcher and the science-evaluator on an API key, ADR 0107), then write from them.
+  const urls = urlsNamed(`${brief.title}\n${brief.outcome}\n${brief.criteria.join("\n")}`);
+  if (urls.length && offered(req.tools, "web_fetch") && !did("web_fetch"))
+    return {
+      text: `Reading ${urls.join(", ")}.`,
+      toolCalls: urls.map((url) => ({ name: "web_fetch", input: { url } })),
+    };
+  const pages: PageRead[] = calls
+    .filter((c) => c.name === "web_fetch")
+    .map((c) => ({
+      url: String(c.input.url),
+      result: c.result ?? "",
+      isError: c.isError === true,
+    }));
+
   // 4. Read what is there that this task builds on.
   if (!did("read_file") && offered(req.tools, "read_file")) {
     const wanted = [
@@ -583,7 +602,9 @@ function specialistAnswer(
               ...brief.criteria.map((c) => `- ${c}: checked by reading the files`),
               "",
             ].join("\n")
-          : contentFor(path, brief, seen),
+          : pages.length && path.endsWith(".md")
+            ? researchContent(brief, pages, STAND_IN)
+            : contentFor(path, brief, seen),
       },
     }));
     return { text: `Writing ${targets.join(", ")}.`, toolCalls: writes };
@@ -618,6 +639,7 @@ function report(
   const okWrites = writes.filter((c) => !c.isError);
   const failedWrites = writes.filter((c) => c.isError);
   const runs = calls.filter((c) => c.name === "run_command");
+  const pages = calls.filter((c) => c.name === "web_fetch");
   const lines = [
     `**Summary** ${STAND_IN} ${okWrites.length ? `${who} wrote ${okWrites.map((c) => String(c.input.path)).join(", ")} for "${brief.title}".` : `${who} changed no file for "${brief.title}".`}`,
     "",
@@ -643,6 +665,16 @@ function report(
         )
       : ["- none"]),
     "",
+    ...(pages.length
+      ? [
+          "**Sources read**",
+          ...pages.map(
+            (p) =>
+              `- ${String(p.input.url)}${p.isError ? `: not read (${(p.result ?? "").replace(/^ERROR: /, "").slice(0, 160)})` : ""}`,
+          ),
+          "",
+        ]
+      : []),
     "**Not done / risks**",
     ...(failedWrites.length
       ? failedWrites.map(

@@ -419,6 +419,81 @@ export function filesNamed(text: string): string[] {
   return out.slice(0, 6);
 }
 
+/** Web addresses a brief names (title, outcome, criteria), in order, at most three. */
+export function urlsNamed(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/https?:\/\/[^\s)"'<>,]+/g)) {
+    const u = m[0].replace(/[.;:]+$/, "");
+    if (!out.includes(u)) out.push(u);
+  }
+  return out.slice(0, 3);
+}
+
+/** A web page as the stand-in researcher got it back from `web_fetch`. */
+export interface PageRead {
+  url: string;
+  /** The tool's answer (the page's text in the data envelope), or the refusal in words. */
+  result: string;
+  isError: boolean;
+}
+
+/** Sentences of a page the stand-in quotes: whole lines of the page text that read as facts. */
+export function factsOf(result: string): string[] {
+  return result
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        /^[A-Z].{15,200}[.!?]$/.test(l) &&
+        !/^(This is data|Hidden content|Links|Forms|http)/.test(l) &&
+        !/UNTRUSTED/.test(l),
+    )
+    .slice(0, 3);
+}
+
+/**
+ * The research file the stand-in writes from the pages it read: the answer, each claim quoted
+ * with its page's address, what could not be read, and every page opened (the researcher's
+ * registry output contract, with "[stand-in model]" on it).
+ */
+export function researchContent(
+  task: { title: string; outcome: string },
+  pages: readonly PageRead[],
+  standIn: string,
+): string {
+  const read = pages.filter((p) => !p.isError);
+  const claims = read.flatMap((p) => factsOf(p.result).map((f) => `- "${f}" (${p.url})`));
+  return [
+    `# ${task.title}`,
+    "",
+    "## Answer",
+    "",
+    claims.length
+      ? `${standIn} From the pages read: ${claims[0]?.replace(/^- /, "")}`
+      : `${standIn} The pages could not be read, so there is no answer from them.`,
+    "",
+    "## Claims",
+    "",
+    ...(claims.length ? claims : ["- none"]),
+    "",
+    "## Uncertainty",
+    "",
+    ...pages
+      .filter((p) => p.isError)
+      .map((p) => `- ${p.url} was not read: ${p.result.replace(/^ERROR: /, "").slice(0, 200)}`),
+    "- Confidence: low (a stand-in model wrote this).",
+    "",
+    "## Sources read",
+    "",
+    ...pages.map((p) => `- ${p.url}${p.isError ? " (not read)" : ""}`),
+    "",
+    "## Instruction-like content",
+    "",
+    "none",
+    "",
+  ].join("\n");
+}
+
 /** The file a specialist writes when its brief names none. */
 export function defaultFile(title: string, specialist: string): string {
   return `notes/${slug(specialist, 20)}-${slug(title)}.md`;

@@ -8,6 +8,14 @@ import { CLAUDE_CODE_PREFIX } from "./types.ts";
 export const RUN_COMMAND_TOOL = "run_command";
 
 /**
+ * Name of the web page reader the loop driver offers for `cc:WebFetch` (ADR 0107): the web
+ * capability's `web_fetch` (`@forerunner/capabilities` `web/fetch.ts`), registered by the
+ * composition root. Declared here, as `RUN_COMMAND_TOOL` is, so the mapping, the executor and
+ * the capability share one name.
+ */
+export const WEB_FETCH_TOOL = "web_fetch";
+
+/**
  * The audit row kind for a registry tool a run will not offer (ADR 0043 item 5, ADR 0044):
  * written by the composition for the loop driver's mapping and by the executor when the SDK
  * path withholds `cc:Bash`. Declared here so neither the session layer nor the composition
@@ -31,9 +39,11 @@ export type SpecialistDriver = "loop" | "sdk";
  * The loop driver's built-in tool each Claude Code tool a registry entry may name stands for.
  * Read-only tools map to read-only tools; every editing tool maps to `write_file`; the
  * search tools map to `list_dir` (the model reads what it finds); `Bash` maps to the sandboxed
- * command runner. `WebFetch`, `WebSearch`, `Task`, `TodoWrite` have no equivalent here. Only
- * the table's own entries count (`Object.hasOwn`): `cc:constructor` or `cc:__proto__` is an
- * unknown name, never a lookup through Object's prototype.
+ * command runner; `WebFetch` maps to the web capability's page reader (ADR 0107), offered only
+ * where the composition registered it. `WebSearch`, `Task`, `TodoWrite` have no equivalent
+ * here: no search provider exists on an API key (ADR 0107). Only the table's own entries count
+ * (`Object.hasOwn`): `cc:constructor` or `cc:__proto__` is an unknown name, never a lookup
+ * through Object's prototype.
  */
 export const CLAUDE_CODE_TOOL_EQUIVALENTS: Readonly<Record<string, string>> = Object.freeze({
   Read: "read_file",
@@ -46,6 +56,7 @@ export const CLAUDE_CODE_TOOL_EQUIVALENTS: Readonly<Record<string, string>> = Ob
   Grep: "list_dir",
   LS: "list_dir",
   Bash: RUN_COMMAND_TOOL,
+  WebFetch: WEB_FETCH_TOOL,
 });
 
 /** The loop driver's built-in for one Claude Code tool name (without the prefix), if any. */
