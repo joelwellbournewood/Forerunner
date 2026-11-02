@@ -3994,7 +3994,15 @@ run began before the report; a report from before any run began has no run). Bef
 were paired with every run row by position, the critic's included, so the coder's report and
 files showed under the critic's run and the coder's own run was empty. A run stopped from
 outside reads "The run was stopped." instead of the driver's words, and reports and the
-review's summary read "(s)" plurals as their number says (`plainPlurals`). Results are
+review's summary read "(s)" plurals as their number says (`plainPlurals`). Phase E (screens):
+each run names its `sessionId` (the drawer's Open the session, and the log whose `task.step`
+lines it follows while the task runs); a report cut to six lines carries the whole of it (at
+most 80 lines) as `fullReport`; a run that read web pages lists them from its Run row's
+`webSources` artifact (`runWebSources`: address, title, and why one was not read; never the
+page text, ADR 0107, C-72); and a critic's run stopped from outside (`killed`, `stopped`) reads
+"Stopped before a verdict" with "The review stopped before a verdict: <who>." as its report
+(`reviewStopWords`: the cancel of the task, else the session's `handoff.stop_reason`, C-41).
+Results are
 `CommandResultViewSchema`; `/me.activeProjectId` is the registry's record, the one active
 project of every channel (U-056): the header's switcher, the palette and Home's Make active run
 `project.switch` (source `ui`) and the app shows `/me`'s project at start. `POST /chat` and

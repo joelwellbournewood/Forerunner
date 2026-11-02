@@ -165,8 +165,13 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it
-  waits for and what waits on it, its runs (who ran each one, with that run's report and the
-  files it changed; the critic's run is marked as the review), the critic's review in words
+  waits for and what waits on it, its runs (who ran each one, with **Open the session**, that
+  run's report with **The whole report** when it is long, and the files it changed: click one to
+  open it on the Files tab; in a project linked to a repository the files are in the task's pull
+  request. A research run lists the web pages it read and those it could not read, and why.
+  While the task runs, its last steps show there as they happen ("read index.html", "wrote
+  styles.css"). The critic's run is marked as the review; a review that was stopped says so and
+  who stopped it), the critic's review in words
   with **See what was checked** (the project's checks with their output, each page tried with
   what it showed and its screenshots, and anything that could not be run or tried, and why),
   its pull request, and **Edit**

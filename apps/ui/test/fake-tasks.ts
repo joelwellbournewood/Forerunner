@@ -191,6 +191,15 @@ export function fakeTaskDetail(
     reviewId: string | null;
     /** The specialist's report as the daemon serves it (a test may set its own). */
     report?: string;
+    /** The whole report when `report` is cut, as the daemon serves it. */
+    fullReport?: string;
+    sessionId?: string;
+    /** The files the run changed (default: index.html), as the daemon reads them from the log. */
+    files?: string[];
+    /** The pages a research run read (ADR 0107), as the daemon reads them from the Run row. */
+    webSources?: { url: string; title: string | null; refused: string | null }[];
+    /** Why a review stopped before its verdict, as the daemon words it (`reviewStopWords`). */
+    stoppedBecause?: string;
   }[],
   /** What the review ran and tried (ADR 0104), when a test seeded it. */
   evidence?: TaskReviewEvidence,
@@ -217,6 +226,8 @@ export function fakeTaskDetail(
     // As the daemon: the critic's runs are the reviews, with no report or files of their own.
     runs: mine.map((r) => {
       const review = r.specialist === "critic";
+      // As the daemon (C-41): a review stopped from outside says so and who stopped it.
+      const stoppedReview = review && (r.outcome === "killed" || r.outcome === "stopped");
       return {
         id: r.id,
         kind: review ? ("review" as const) : ("work" as const),
@@ -224,9 +235,20 @@ export function fakeTaskDetail(
         startedAt: r.createdAt,
         durationMs: r.durationMs,
         cost: r.cost,
-        outcome: r.outcome === "success" ? "Finished" : r.outcome,
-        report: review ? null : (r.report ?? "Wrote the page and checked it loads."),
-        files: review ? [] : ["index.html"],
+        outcome: stoppedReview
+          ? "Stopped before a verdict"
+          : r.outcome === "success"
+            ? "Finished"
+            : r.outcome,
+        report: stoppedReview
+          ? `The review stopped before a verdict: ${r.stoppedBecause ?? "it was stopped"}.`
+          : review
+            ? null
+            : (r.report ?? "Wrote the page and checked it loads."),
+        ...(r.fullReport && !review ? { fullReport: r.fullReport } : {}),
+        files: review ? [] : (r.files ?? ["index.html"]),
+        ...(r.sessionId ? { sessionId: r.sessionId } : {}),
+        ...(r.webSources?.length ? { webSources: r.webSources } : {}),
       };
     }),
     review:

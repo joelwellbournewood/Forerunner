@@ -32,6 +32,7 @@ import {
   type MoneyLike,
   usdMicroToChfMicro,
 } from "../../lib/money.ts";
+import { taskStepsFromLog, useSessionLog } from "../../lib/session-steps.ts";
 import {
   ACTIONS,
   actionsFor,
@@ -47,7 +48,7 @@ import {
 } from "../../lib/task-actions.ts";
 import { formatDateTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
-import { useClient } from "../../store/context.tsx";
+import { useClient, useStreamOptions, useUiState } from "../../store/context.tsx";
 import { useDockerReady, useWhoChoices } from "./NewTaskDialog.tsx";
 
 /**
@@ -222,25 +223,18 @@ function DrawerBody({
           <p className="text-neutral-500">No run yet.</p>
         ) : (
           <ul className="space-y-2">
-            {detail.runs.map((r) => (
-              <li
+            {detail.runs.map((r, i) => (
+              <RunEntry
                 key={r.id}
-                className="rounded border border-neutral-200 p-2 dark:border-neutral-800"
-                data-testid="drawer-run"
-                data-kind={r.kind}
-              >
-                <div className="text-xs text-neutral-500">
-                  {/* The critic's run is its review of the work (its words are under Review). */}
-                  {r.kind === "review" ? "Review by the critic" : whoName(r.specialist)} ·{" "}
-                  {formatDateTime(r.startedAt)} · {r.outcome} · <Money value={r.cost} />
-                </div>
-                {r.report ? <RichText text={r.report} className="mt-1" /> : null}
-                {r.files.length > 0 ? (
-                  <p className="mt-1 text-xs" data-testid="drawer-files">
-                    Changed: {r.files.join(", ")}
-                  </p>
-                ) : null}
-              </li>
+                run={r}
+                task={task}
+                // The newest work run of a running task is the one in flight.
+                live={
+                  d.key === "running" &&
+                  r.kind === "work" &&
+                  detail.runs.findIndex((x) => x.kind === "work") === i
+                }
+              />
             ))}
           </ul>
         )}
@@ -293,6 +287,143 @@ function DrawerBody({
         </p>
       ) : null}
     </div>
+  );
+}
+
+type DrawerRun = TaskDetailView["runs"][number];
+
+/**
+ * One run of the task (design §3.5): who ran it, when, how it ended and what it spent; its
+ * report (the whole of it one click away when it was cut); the files it changed, each opening
+ * the Files tab on that file; the web pages it read; and, while it runs, its last step lines
+ * from the session's live log with Open the session. Before (later #46, the owner's complaint
+ * 4), "Changed: index.html, script.js" was plain text and a running task showed nothing.
+ */
+function RunEntry({ run: r, task, live }: { run: DrawerRun; task: TaskView; live: boolean }) {
+  return (
+    <li
+      className="rounded border border-neutral-200 p-2 dark:border-neutral-800"
+      data-testid="drawer-run"
+      data-kind={r.kind}
+    >
+      <div className="text-xs text-neutral-500">
+        {/* The critic's run is its review of the work (its words are under Review). */}
+        {r.kind === "review" ? "Review by the critic" : whoName(r.specialist)} ·{" "}
+        {formatDateTime(r.startedAt)} · {r.outcome} · <Money value={r.cost} />
+        {r.sessionId ? (
+          <>
+            {" · "}
+            <Link
+              to={`/sessions/${encodeURIComponent(r.sessionId)}`}
+              className="text-blue-700 hover:underline dark:text-blue-300"
+            >
+              Open the session
+            </Link>
+          </>
+        ) : null}
+      </div>
+      {live && r.sessionId ? <LiveSteps sessionId={r.sessionId} taskId={task.id} /> : null}
+      {r.report ? <RichText text={r.report} className="mt-1" /> : null}
+      {r.fullReport ? (
+        <details className="mt-1 text-xs" data-testid="drawer-full-report">
+          <summary className="cursor-pointer text-neutral-500">The whole report</summary>
+          <RichText text={r.fullReport} className="mt-1" />
+        </details>
+      ) : null}
+      {r.files.length > 0 ? <ChangedFiles files={r.files} task={task} /> : null}
+      {r.webSources?.length ? <WebSources sources={r.webSources} /> : null}
+    </li>
+  );
+}
+
+/**
+ * The files a run changed (design §3.10: "per task, in the drawer, the files it changed"). In a
+ * project with a folder each opens the Files tab on that file (a file gone since says so
+ * there). A repository project's work is on its branch and pull request (ADR 0106), not in this
+ * install's copy of the default branch, so the files are named with the pull request.
+ */
+function ChangedFiles({ files, task }: { files: readonly string[]; task: TaskView }) {
+  const project = useUiState((s) => s.projects.find((p) => p.id === task.projectId));
+  if (project?.repository)
+    return (
+      <p className="mt-1 text-xs" data-testid="drawer-files">
+        Changed: {files.join(", ")}
+        {task.prUrl ? (
+          <>
+            ,{" "}
+            <ExternalLink href={task.prUrl} variant="inline">
+              in its pull request
+            </ExternalLink>
+          </>
+        ) : null}
+      </p>
+    );
+  return (
+    <p className="mt-1 text-xs" data-testid="drawer-files">
+      Changed:{" "}
+      {files.map((f, i) => (
+        <span key={f}>
+          {i > 0 ? ", " : ""}
+          <Link
+            to={`/projects/${encodeURIComponent(task.projectId)}/files?path=${encodeURIComponent(f)}`}
+            className="text-blue-700 hover:underline dark:text-blue-300"
+          >
+            {f}
+          </Link>
+        </span>
+      ))}
+    </p>
+  );
+}
+
+/** The pages a research run read and those it could not (ADR 0107, C-72), in words. */
+function WebSources({ sources }: { sources: NonNullable<DrawerRun["webSources"]> }) {
+  return (
+    <ul className="mt-1 space-y-0.5 text-xs" data-testid="drawer-web">
+      {sources.map((s, i) => (
+        // The same page can be read twice; the order is the run's.
+        // biome-ignore lint/suspicious/noArrayIndexKey: a list that never reorders
+        <li key={`${s.url}-${i}`}>
+          {s.refused ? (
+            <>
+              Not read: {s.url} ({s.refused})
+            </>
+          ) : (
+            <>
+              Read: {s.title ? `${s.title} ` : ""}
+              {s.title ? "(" : ""}
+              <ExternalLink href={s.url} variant="inline">
+                {s.url}
+              </ExternalLink>
+              {s.title ? ")" : ""}
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** How many of a running task's step lines the drawer shows; the session page has them all. */
+const DRAWER_STEP_LINES = 5;
+
+/** A running task's last step lines, from its session's live log (design §3.5, §4.14). */
+function LiveSteps({ sessionId, taskId }: { sessionId: string; taskId: string }) {
+  const client = useClient();
+  const streamOptions = useStreamOptions();
+  const events = useSessionLog(client, sessionId, streamOptions);
+  const steps = taskStepsFromLog(events, taskId, DRAWER_STEP_LINES);
+  if (!steps?.length) return null;
+  return (
+    <ul
+      className="mt-1 space-y-0.5 text-xs text-neutral-700 dark:text-neutral-300"
+      data-testid="drawer-steps"
+      aria-live="polite"
+    >
+      {steps.map((s) => (
+        <li key={s.seq}>{s.text}</li>
+      ))}
+    </ul>
   );
 }
 

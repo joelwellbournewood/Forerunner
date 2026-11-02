@@ -389,8 +389,18 @@ export interface FakeDaemonState {
   tasks: TaskView[];
   /** Who paused which task, and the order tasks were added (the daemon's row authors and ages). */
   taskMeta: FakeTaskMeta;
-  /** The tasks' runs (`/projects/:id/runs`, the drawer's runs); the critic's are its reviews. */
-  runs: (typeof RUNS)[number][];
+  /**
+   * The tasks' runs (`/projects/:id/runs`, the drawer's runs); the critic's are its reviews. A
+   * test may give a run the files it changed, the web pages it read, and why a review stopped
+   * (`GET /tasks/:id` serves them as the daemon reads them from the log and the Run row).
+   */
+  runs: ((typeof RUNS)[number] & {
+    report?: string;
+    fullReport?: string;
+    files?: string[];
+    webSources?: { url: string; title: string | null; refused: string | null }[];
+    stoppedBecause?: string;
+  })[];
   /**
    * What the critic's last review of a task ran and tried (ADR 0104), by task id; a done task
    * with an accepted review says "Reviewed and tried" when something was tried. A test seeds it.

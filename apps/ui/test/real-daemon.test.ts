@@ -34,6 +34,7 @@ import {
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
+import { taskStepsFromLog } from "../src/lib/session-steps.ts";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
 /**
@@ -4924,5 +4925,142 @@ describe("the UI client against the real daemon: research on an API key reads th
     } finally {
       await off.rt.close();
     }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: screens that lead somewhere (phase E, screens)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let bench: BenchOptions;
+  let criticCalls: ModelRequest[];
+  let server: Server;
+  let pageUrl = "";
+
+  beforeAll(async () => {
+    server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        "<!doctype html><html><head><title>Quotes people like</title></head><body><main>" +
+          "<p>Most people keep a favourite quote.</p></main></body></html>",
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    pageUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/quotes.html`;
+    ({ rt, client, bench, criticCalls } = await composeWithRolePlayer({}));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    server?.closeAllConnections();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+  });
+
+  /** A session on the project, waited for until it ends (60 s: Windows CI is slow). */
+  async function runSession(projectId: string): Promise<string> {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const states = async () =>
+      (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, await states()).not.toBe("");
+    await eventually(
+      async () =>
+        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+      "the session to end",
+      states,
+      60_000,
+    );
+    return sessionId;
+  }
+
+  it("GET /tasks/:id: each run names its session, its files open on the Files tab, its step lines are in that session's log, a research run names the pages it read (later #46, C-72)", async () => {
+    const project = await client.createProject({ name: "Drawer links", goal: "Open what ran" });
+    const before = await rt.store.project.mustGet(project.id);
+    await client.updateProjectSettings(project.id, {
+      version: before.version,
+      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
+    });
+    const page = await client.createTask(project.id, {
+      title: "Build the quote page in index.html",
+      outcome: "index.html shows a quote",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const research = await client.createTask(project.id, {
+      title: "Find what quotes people like",
+      outcome: `docs/research.md says what ${pageUrl} and http://10.0.0.7/admin say`,
+      riskTier: 1,
+      specialist: "researcher",
+    });
+    const sessionId = await runSession(project.id);
+
+    const done = await client.task(page.id);
+    const work = done.runs.find((r) => r.kind === "work");
+    expect(work?.sessionId).toBe(sessionId);
+    expect(work?.files.length).toBeGreaterThan(0);
+    // Each file the drawer links opens through the Files tab's route, as the link sends it.
+    for (const f of work?.files ?? []) {
+      expect((await client.projectFile(project.id, f)).path).toBe(f);
+    }
+    // While it ran, the drawer showed the run's step lines from that session's log: the log up
+    // to the task's end has them for this task.
+    const log = await client.sessionEvents(sessionId);
+    const end = log.findIndex(
+      (e) => e.type === "task.finished" && (e.payload as { taskId?: string }).taskId === page.id,
+    );
+    expect(end).toBeGreaterThan(0);
+    const live = taskStepsFromLog(log.slice(0, end), page.id);
+    expect(live?.length, JSON.stringify(log.map((e) => e.type))).toBeGreaterThan(0);
+    expect(taskStepsFromLog(log, page.id)).toBeNull();
+
+    // The research run lists the page it read and the one the network rules refused.
+    const read = (await client.task(research.id)).runs.find((r) => r.kind === "work");
+    expect(read?.webSources).toEqual([
+      expect.objectContaining({ url: pageUrl, title: "Quotes people like", refused: null }),
+      expect.objectContaining({
+        url: "http://10.0.0.7/admin",
+        refused: expect.stringMatching(/private or local network address/),
+      }),
+    ]);
+  }, 120_000);
+
+  it("GET /tasks/:id: a review stopped by Stop now says so and who stopped it (C-41)", async () => {
+    const project = await client.createProject({ name: "Review stopped", goal: "Say why" });
+    const task = await client.createTask(project.id, {
+      title: "Write notes/todo.md",
+      outcome: "notes/todo.md lists three things",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const agentId = (await client.agents())[0]?.id ?? "";
+    // The critic takes a minute to answer: the review is in flight when the person stops.
+    bench.criticDelayMs = 60_000;
+    try {
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      const status = async () =>
+        (await client.tasks(project.id)).find((t) => t.id === task.id)?.status;
+      const asked = criticCalls.length;
+      await eventually(
+        async () => (await status()) === "in_review" && criticCalls.length > asked,
+        "the critic's call to begin",
+        async () => `task ${await status()}, ${criticCalls.length - asked} critic call(s)`,
+        30_000,
+      );
+      await client.stopSession(sessionId, "stopped from the live view");
+      await eventually(
+        async () => !["running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () => `session ${(await client.session(sessionId)).status}`,
+        30_000,
+      );
+    } finally {
+      bench.criticDelayMs = 0;
+    }
+    const runs = (await client.task(task.id)).runs;
+    const review = runs.find((r) => r.kind === "review");
+    expect(review, JSON.stringify(runs)).toMatchObject({
+      outcome: "Stopped before a verdict",
+      report: "The review stopped before a verdict: you stopped the session.",
+    });
   }, 120_000);
 });

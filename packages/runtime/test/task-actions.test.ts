@@ -14,7 +14,7 @@ import {
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { pairReports } from "../src/daemon/task-display.ts";
+import { pairReports, reviewStopWords, runWebSources } from "../src/daemon/task-display.ts";
 import { plainPlurals, plainReason, runOrder } from "../src/daemon/task-words.ts";
 import { notesForTask } from "../src/session/next-session.ts";
 
@@ -286,5 +286,43 @@ describe("the words of a task's status (design §2, §5)", () => {
       t("urgent", 10, "2026-11-01T10:04:00Z"),
     ]).map((x) => x.id);
     expect(order).toEqual(["urgent", "readme", "notes", "license"]);
+  });
+});
+
+describe("the drawer's run words (phase E screens: C-41, C-72)", () => {
+  it("a review stopped before its verdict names who stopped it", () => {
+    expect(reviewStopWords({ status: "cancelled" }, "you")).toBe("you cancelled the task");
+    expect(reviewStopWords({ status: "ready" }, "you")).toBe("you stopped the session");
+    expect(reviewStopWords({ status: "ready" }, "stop_all")).toBe("Stop all stopped the session");
+    expect(reviewStopWords({ status: "ready" }, "quit")).toBe("Forerunner was closed");
+    expect(reviewStopWords({ status: "ready" }, null)).toBe("it was stopped");
+  });
+
+  it("a run's web pages: the address and title of each page read, why one was not read; never the text", () => {
+    expect(
+      runWebSources([
+        { speed: "fast" },
+        {
+          webSources: [
+            {
+              url: "https://a.example/x",
+              finalUrl: "https://a.example/y",
+              status: 200,
+              title: " A ",
+            },
+            { url: "http://10.0.0.7/admin", error: "Refused: 10.0.0.7 is a private address." },
+            { url: "" },
+          ],
+        },
+      ]),
+    ).toEqual([
+      { url: "https://a.example/x", title: "A", refused: null },
+      {
+        url: "http://10.0.0.7/admin",
+        title: null,
+        refused: "Refused: 10.0.0.7 is a private address",
+      },
+    ]);
+    expect(runWebSources(null)).toEqual([]);
   });
 });
