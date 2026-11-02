@@ -243,15 +243,16 @@ describe("the chat remembers the conversation (design §3.9)", () => {
     await w.chat("how are the notes?", w.notes);
     await w.chat("add a task: write the changelog", w.notes);
     const made = await w.chat("make this a task", w.quote);
-    expect(made.reply).toContain('"Put the author in a span under the quote."');
+    // The line before it is the task's outcome; its title is the line without the full stop.
+    expect(made.reply).toContain('"Put the author in a span under the quote"');
     // Undo in Quote Page: its own last change (the task just made), not the Notes CLI one.
     const undone = await w.chat("undo", w.quote);
-    expect(undone.reply).toContain("Put the author in a span under the quote.");
+    expect(undone.reply).toContain("Put the author in a span under the quote");
     const notesTasks = await w.store.task.forProject(w.notes);
-    expect(notesTasks.map((t) => [t.title, t.status])).toEqual([["write the changelog", "ready"]]);
+    expect(notesTasks.map((t) => [t.title, t.status])).toEqual([["Write the changelog", "ready"]]);
     // A second undo takes the one before it in this conversation: the FAQ task.
     const again = await w.chat("undo", w.quote);
-    expect(again.reply).toContain("write the FAQ");
+    expect(again.reply).toContain("Write the FAQ");
     expect((await w.store.task.forProject(w.notes))[0]?.status).toBe("ready");
     await w.store.close();
   });
