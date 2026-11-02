@@ -11,6 +11,7 @@ export * from "./docs-drift.ts";
 export * from "./evidence.ts";
 export * from "./fingerprint.ts";
 export * from "./followup.ts";
+export * from "./measured.ts";
 export * from "./model.ts";
 export * from "./patterns.ts";
 export * from "./rules.ts";

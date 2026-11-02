@@ -70,6 +70,16 @@ export interface TriedEvidence {
   output: string;
   /** Screenshots the runtime stored for the person (file names in the task's evidence folder). */
   screenshots?: { label: string; file: string }[];
+  /**
+   * The files of the task's folder the page asked for, found or not (relative paths, the page
+   * itself first), when the try recorded them: what runs on the page.
+   */
+  pageFiles?: string[];
+  /**
+   * False when the task changed none of the files that run on the page (ADR 0104): the problem
+   * was there before the task, so it is a low finding that says so, never the task's blocker.
+   */
+  causedByTask?: boolean;
 }
 
 /**

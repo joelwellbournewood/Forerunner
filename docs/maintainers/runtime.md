@@ -1907,20 +1907,38 @@ Proportional verification (ADR 0104, `src/loop/verification.ts`, `project-checks
   `migration-specialist`, `science-evaluator`). For `ops-deploy` and `migration-specialist`
   the evidence carries `signoffRequired` (`signoffReasonOf`): an accept becomes the person's
   sign-off, a revise goes through the retry ladder.
+- **The task's files** (ADR 0104 point 9). What the review checks and tries is decided on the
+  files the task changed over all its attempts (`filesOfTask`: this run's, then the
+  `task.files` events of the sessions of the task's runs), not on the last run's diff: on the
+  workspace path each run is committed, so a retry that changed nothing had no files, ran no
+  check and was accepted with its test still failing (bench walk C). Such a run gets the line
+  "attempt N changed no file; …" in the evidence. An open "Check failed" finding makes the
+  project's checks run whatever changed, and the pages open "Tried" findings name are tried again
+  first (`measuredFindingOf`). Those findings are resolved only by a re-run that passed, in the
+  critic package (`resolvedByRerun`).
 - **Checks.** For a code change (`isCodeChange`: anything but docs and notes) the project's
   `settings.checks` plus the `build`, `lint`, `typecheck` and `test` scripts of the folder's
   `package.json` (`projectChecks`: `npm run --silent <name>`; npm's "no test specified" and
-  empty scripts are skipped; nothing when the scripts need dependencies that are not installed,
-  or when `hasCommand("npm")` says npm is missing) run at every tier, in a lease of the
-  composition's `sandbox` port (`sandboxCheckRunner`), destroyed after the review. A lease the
-  port refuses means the checks are not run (`evidence.notChecked` says why); without a sandbox
-  port (an engine test world) they run as processes in the folder.
+  empty scripts are skipped; nothing when the scripts need dependencies that are not installed)
+  run at every tier, in a lease of the composition's `sandbox` port (`sandboxCheckRunner`),
+  destroyed after the review. npm is looked for where they run: `npm --version` in the lease
+  (`startsIn`; the lease's environment is not the daemon's), or `hasCommand("npm")` when a test
+  injects it, or the daemon's PATH without a sandbox port; without it the npm scripts are not
+  run and `evidence.notChecked` says so. A command that cannot start in the lease is a failed
+  check with "could not start: <reason>" as its output, never a failed review. A lease the port
+  refuses means the checks are not run (`evidence.notChecked` says why); without a sandbox port
+  (an engine test world) they run as processes in the folder.
 - **Read access.** `readTools` (default: the runtime's `read_file` and `list_dir`) and the
   folder's file list (`projectFileList`, at most 200) go to the review; the critic's token
   confines them to the task's folder.
 - **Try it.** `tryIt.tryPages` opens the pages the change made or styled (`pagesToTry`: at most
   three HTML pages, else `index.html` when a stylesheet or script changed) and the result is
-  `evidence.tried`; "unavailable" (no Chromium) is a `notChecked` line. The daemon's port is
+  `evidence.tried`; "unavailable" (no Chromium) is a `notChecked` line. `attributeTry` decides
+  whose an error on the page is: a page that opened and threw is the task's blocker only when
+  the task changed one of the files that run on it (the try's `pageFiles` without stylesheets,
+  images and fonts); otherwise it is marked `causedByTask: false`, not blocking, and its output
+  ends "not caused by this task: it changed none of the files that run on this page (…)". The
+  daemon's port is
   `@forerunner/capabilities` `browser.tryPages` with screenshots under
   `<data>/evidence/<task>/<review key>/` (`evidenceRootOf`), served back by
   `GET /tasks/:id/evidence?file=` (`evidenceFileOf` refuses anything outside the task's folder).

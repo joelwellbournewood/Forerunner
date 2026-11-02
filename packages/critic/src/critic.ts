@@ -38,6 +38,7 @@ import { docDriftFor } from "./docs-drift.ts";
 import { type RenderOptions, renderEvidence, subjectLabel } from "./evidence.ts";
 import { fingerprintOf } from "./fingerprint.ts";
 import { quotedWords, SIGNOFF_OPTIONS, signoffCard, signoffCardWords } from "./followup.ts";
+import { NOT_CAUSED_BY_TASK, resolvedByRerun, triedProblems } from "./measured.ts";
 import {
   type CriticModelPick,
   type CriticSettings,
@@ -742,12 +743,14 @@ export class CriticService {
     // So does a try that a person would be stopped by at once (ADR 0104): the page did not open
     // or threw an error. A smaller problem (a linked file that did not load) is a low finding
     // the critic weighs against the brief.
+    // A problem the task's own files cannot have caused (`causedByTask: false`: the page runs
+    // none of them) is told, not blamed: a low finding that names it so.
     for (const t of e.tried ?? []) {
       if (t.ok) continue;
-      const first = triedProblem(t.output);
+      const first = triedProblems(t.output)[0] ?? "it did not work";
       add({
-        severity: t.blocking ? "high" : "low",
-        description: `Tried ${t.target}: ${first}`,
+        severity: t.blocking && t.causedByTask !== false ? "high" : "low",
+        description: `Tried ${t.target}: ${first}${t.causedByTask === false ? NOT_CAUSED_BY_TASK : ""}`,
         requiredAction: `Make ${t.target} work when it is opened as a person would use it`,
         where: t.target,
       });
@@ -899,12 +902,17 @@ export class CriticService {
       findingIds.push(row.id);
     }
     // Earlier findings: an accept resolves them all (the critic saw them and accepted the
-    // rework); otherwise only the ones the critic listed as resolved.
+    // rework); otherwise only the ones the critic listed as resolved. A finding the runtime
+    // measured (a failed check, a page that did not work) is resolved by this review's own
+    // re-run that passed, and by nothing else: not by the accept, not by the model's list
+    // (ADR 0104, the review of 2026-11-02: an accept of a retry that ran no check closed a test
+    // that still failed).
     const resolvedIds: string[] = [];
-    const toResolve =
-      out.verdict === "accept"
-        ? extra.openFindings
-        : extra.openFindings.filter((f) => extra.resolved.includes(f.id));
+    const toResolve = extra.openFindings.filter((f) => {
+      const rerun = resolvedByRerun(f.description, out.verification);
+      if (rerun !== null) return rerun;
+      return out.verdict === "accept" || extra.resolved.includes(f.id);
+    });
     for (const f of toResolve) {
       await store.finding.resolve(f.id, f.version, input.evidence.runId ?? null);
       resolvedIds.push(f.id);
@@ -1139,13 +1147,6 @@ function failedRun(runId: string, message: string): RunResult {
     finishCurrent: false,
     context: { tokensBefore: 0, tokensAfter: 0, saved: 0, transforms: [], headroomUsed: false },
   };
-}
-
-/** The first problem line of a try's output (its "problem:" lines first), at most 300 characters. */
-function triedProblem(output: string): string {
-  const lines = output.split(/\r?\n/).map((l) => l.trim());
-  const problem = lines.find((l) => /^problem:/i.test(l))?.replace(/^problem:\s*/i, "");
-  return (problem ?? lines.find((l) => l) ?? "it did not work").slice(0, 300);
 }
 
 /**

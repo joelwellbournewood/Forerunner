@@ -83,10 +83,23 @@ Verification (ADR 0104, `types.ts`):
   `READING_REVIEW_TIMEOUT_MS`. `evidence.projectFiles` (the folder's files) is rendered under
   "Project files you can read (read_file, list_dir)".
 - **Tried.** `evidence.tried` (`TriedEvidence[]`: what, target, ok, blocking, output,
-  screenshots) is rendered under "Tried as a person would use it (by the runtime: verified)". A
-  try that is not ok is a finding: high when `blocking` (the page did not open or threw an
-  error), low otherwise (a linked file that did not load: the critic weighs it against the
-  brief).
+  screenshots, `pageFiles`, `causedByTask`) is rendered under "Tried as a person would use it (by
+  the runtime: verified)". A try that is not ok is a finding `Tried <page>: <first problem>`:
+  high when `blocking` (the page did not open or threw an error), low otherwise (a linked file
+  that did not load: the critic weighs it against the brief). `causedByTask: false` (the runtime
+  found that the task changed none of the files that run on the page) makes it low with the
+  suffix " (not caused by this task)" (`NOT_CAUSED_BY_TASK`).
+- **Measured findings** (`measured.ts`, ADR 0104 point 9). "Check failed: <name>" and "Tried
+  <page>: <problem>" state what the runtime measured. In `persist`, an earlier open finding of
+  that kind is resolved when this review's `verification` shows the check ran and passed, or the
+  page was tried and that problem is not among its problems (`resolvedByRerun`), whatever the
+  verdict; it is never resolved by an accept or by the model's `resolved` list. Every other open
+  finding is resolved as before (all on an accept, else the ones the model listed). A failed
+  check's finding asks "Make the check "X" pass; if it failed before this task, say so and why
+  under "Questions for the person:"" (`NOT_YOUR_FAILURE`, `tier0.ts`): the specialist says
+  whether the failure is the task's, and such a report goes to the person (the runtime's U-022
+  path). Test: `test/critic.test.ts` "a failed check or a page that threw is resolved only by a
+  passing re-run".
 - **Questions for the person.** `evidence.questionsForPerson` (the report's "Questions for the
   person:" list) is rendered as such, and `rules.ts` turns an accept into `human`
   (`ASKS_PERSON_RULE`): work that waits for the person is never accepted.

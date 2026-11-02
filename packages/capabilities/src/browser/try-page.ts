@@ -33,6 +33,11 @@ export interface PageTry {
   blocking: boolean;
   output: string;
   screenshots: { label: string; file: string }[];
+  /**
+   * The files of the folder the page asked for, found or not (relative paths, the page first):
+   * what runs on it, so the review can tell whose change an error on the page belongs to.
+   */
+  pageFiles: string[];
 }
 
 export interface TryPagesOptions {
@@ -159,6 +164,7 @@ async function tryOne(
   logger: Logger,
 ): Promise<PageTry> {
   const missing = new Set<string>();
+  const asked = new Set<string>([target]);
   const blocked = new Set<string>();
   const errors: string[] = [];
   const consoleErrors: string[] = [];
@@ -178,8 +184,12 @@ async function tryOne(
       // The network is off: the folder's own server, and data/blob URLs, nothing else.
       await context.route("**/*", (route) => {
         const url = route.request().url();
-        if (url.startsWith(`${origin}/`) || url.startsWith("data:") || url.startsWith("blob:"))
+        if (url.startsWith(`${origin}/`)) {
+          const rel = decodeURIComponent(new URL(url).pathname.replace(/^\/+/, ""));
+          asked.add(rel === "" || rel.endsWith("/") ? `${rel}index.html` : rel);
           return route.continue();
+        }
+        if (url.startsWith("data:") || url.startsWith("blob:")) return route.continue();
         blocked.add(hostOf(url));
         return route.abort("blockedbyclient");
       });
@@ -267,6 +277,7 @@ async function tryOne(
     blocking: !opened || (errors.length > 0 && blocked.size === 0),
     output: lines.join("\n"),
     screenshots,
+    pageFiles: [...asked],
   };
 }
 

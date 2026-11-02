@@ -460,3 +460,312 @@ describe("verification: nothing is Done without the right check", () => {
     await w.close();
   });
 });
+
+/**
+ * The review of 2026-11-02 (walks C and D on the bench): a retry that changed no file was
+ * accepted with no project checks and no try, and that accept resolved the earlier "Check
+ * failed" and "Tried" findings. A task whose test still failed, or whose page still threw, was
+ * "Done · Reviewed". On the workspace path (a project without a repository, the default) the
+ * executor commits each run, so `git diff HEAD` is empty and the run's own files were all the
+ * review saw.
+ */
+describe("verification: a retry that changes no file is checked again", () => {
+  /** Attempt 0 changes `first`; every later attempt changes nothing (as the walk's rewrite). */
+  const changesOnceThenNothing = (
+    w: Awaited<ReturnType<typeof loopWorld>>,
+    root: string,
+    first: string[],
+  ) => {
+    const once = doneExecutor(w, { worktree: root, changedFiles: first });
+    const again = doneExecutor(w, { worktree: root, changedFiles: [] });
+    return {
+      execute: (ctx: Parameters<typeof once.execute>[0]) =>
+        ctx.task.attempt === 0 ? once.execute(ctx) : again.execute(ctx),
+    };
+  };
+
+  it("a project test that still fails keeps the task from Done after a retry that changed no file; the failed check is resolved only by a passing re-run", async () => {
+    const root = taskFolder({
+      "package.json": JSON.stringify({ scripts: { test: "node --test" } }),
+      "src/clamp.js": "export const clamp = (x) => x;",
+    });
+    const leases: FakeSandbox[] = [];
+    const w = await loopWorld({
+      diff: null,
+      // The model accepts every time: only the code can keep the failing test from closing it.
+      replies: [submitReply({ grade: 90 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: {
+        sandbox: {
+          open: async () => {
+            const sandbox = new FakeSandbox({ worktree: root }).script(/test/, {
+              code: 1,
+              stdout: "not ok 1 - clamp keeps 5 inside 0..3",
+            });
+            leases.push(sandbox);
+            return { sandbox, engine: "fake", warnings: [] };
+          },
+        },
+        hasCommand: async () => true,
+      },
+    });
+    const task = await w.addTask("Add clamp", { risk_tier: 1 });
+    const result = await w.start(w.runner(changesOnceThenNothing(w, root, ["src/clamp.js"])), {
+      budgetCapUsdMicro: 5_000_000,
+    });
+    expect(result.reviews.length).toBeGreaterThan(1);
+    // Every review ran the project's test, the ones after a run that changed nothing too.
+    expect(leases).toHaveLength(result.reviews.length);
+    for (const lease of leases)
+      expect(lease.calls.map((c) => c.argv.join(" "))).toEqual(["npm run --silent test"]);
+    expect(result.reviews.every((r) => r.verdict !== "accept")).toBe(true);
+    expect((await w.store.task.mustGet(task.id)).status).not.toBe("done");
+    // The failure is still open: no accept resolved it.
+    const rows = await w.store.finding.list({ task_id: task.id } as never);
+    const checkFailed = rows.filter((f) => f.description === "Check failed: test");
+    expect(checkFailed.length).toBeGreaterThan(0);
+    expect(checkFailed.some((f) => f.status === "resolved")).toBe(false);
+    // The critic was told the task's files, and that this attempt changed none.
+    const last = JSON.stringify(reviewCalls(w).at(-1)?.request.messages);
+    expect(last).toContain("src/clamp.js");
+    expect(last).toContain("changed no file");
+    expect((await verificationOfTask(w, task.id))?.checks.map((c) => [c.name, c.passed])).toEqual([
+      ["test", false],
+    ]);
+    await w.close();
+
+    // The same task where the test passes on the second review: the re-run resolves the
+    // failure, and only then is it Done.
+    let reviewsSoFar = 0;
+    const w2 = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: {
+        sandbox: {
+          open: async () => {
+            reviewsSoFar++;
+            const sandbox = new FakeSandbox({ worktree: root }).script(
+              /test/,
+              reviewsSoFar === 1
+                ? { code: 1, stdout: "not ok 1 - clamp keeps 5 inside 0..3" }
+                : { code: 0, stdout: "ok 1 - clamp keeps 5 inside 0..3" },
+            );
+            return { sandbox, engine: "fake", warnings: [] };
+          },
+        },
+        hasCommand: async () => true,
+      },
+    });
+    const fixed = await w2.addTask("Add clamp", { risk_tier: 1 });
+    const second = await w2.start(w2.runner(changesOnceThenNothing(w2, root, ["src/clamp.js"])));
+    expect(second.reviews.map((r) => r.verdict)).toEqual(["revise", "accept"]);
+    expect((await w2.store.task.mustGet(fixed.id)).status).toBe("done");
+    const failed = (await w2.store.finding.list({ task_id: fixed.id } as never)).filter(
+      (f) => f.description === "Check failed: test",
+    );
+    expect(failed.map((f) => f.status)).toEqual(["resolved"]);
+    expect((await verificationOfTask(w2, fixed.id))?.checks.map((c) => [c.name, c.passed])).toEqual(
+      [["test", true]],
+    );
+    await w2.close();
+
+    // A test that failed before the task: the retry brief asks the specialist to say so, and
+    // when it does the person decides (one card with its question), not another rerun.
+    const w3 = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: {
+        sandbox: {
+          open: async () => ({
+            sandbox: new FakeSandbox({ worktree: root }).script(/test/, {
+              code: 1,
+              stdout: "not ok 1 - old date parsing (test/dates.test.js)",
+            }),
+            engine: "fake",
+            warnings: [],
+          }),
+        },
+        hasCommand: async () => true,
+      },
+    });
+    const old = await w3.addTask("Add clamp", { risk_tier: 1 });
+    const briefs: string[] = [];
+    const work = doneExecutor(w3, { worktree: root, changedFiles: ["src/clamp.js"] });
+    const said = doneExecutor(w3, {
+      worktree: root,
+      changedFiles: [],
+      finalReport:
+        "clamp is done and its test passes.\n\nQuestions for the person:\n- test/dates.test.js failed before my change (old date parsing): should I fix it in this task?",
+    });
+    const third = await w3.start(
+      w3.runner({
+        execute: async (ctx) => {
+          const open = await w3.store.finding.openFor(ctx.task.id);
+          briefs.push(open.map((f) => `${f.description} -> ${f.required_action}`).join("\n"));
+          return ctx.task.attempt === 0 ? work.execute(ctx) : said.execute(ctx);
+        },
+      }),
+      { budgetCapUsdMicro: 5_000_000 },
+    );
+    expect(briefs[1]).toContain('under "Questions for the person:"');
+    expect(third.reviews).toHaveLength(2);
+    expect((await w3.store.task.mustGet(old.id)).status).toBe("needs_human");
+    const cards = await w3.store.humanRequest.list({ task_id: old.id, status: "open" } as never, {
+      limit: 5,
+    });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.steps).toEqual([
+      "test/dates.test.js failed before my change (old date parsing): should I fix it in this task?",
+    ]);
+    await w3.close();
+  });
+
+  it("npm is looked for where the checks run, not on the daemon's PATH; a check that cannot start is a failed check, never a failed review", async () => {
+    // Found while writing the real-daemon case: the daemon's sandbox had no npm on its PATH while
+    // the daemon's own PATH did, and "spawn npm ENOENT" failed the whole review.
+    const root = taskFolder({
+      "package.json": JSON.stringify({ scripts: { test: "node --test" } }),
+      "src/a.js": "export const a = 1;",
+    });
+    const cannotStart = (argv: readonly string[]) => {
+      throw new Error(`spawn ${argv[0]} ENOENT`);
+    };
+    const leases: FakeSandbox[] = [];
+    const w = await loopWorld({
+      diff: null,
+      projectSettings: { checks: [{ name: "style", argv: ["stylecheck", "src"] }] },
+      replies: [submitReply({ grade: 90 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: {
+        sandbox: {
+          open: async () => {
+            const sandbox = new FakeSandbox({ worktree: root })
+              .script((argv) => argv[0] === "npm", cannotStart)
+              .script((argv) => argv[0] === "stylecheck", cannotStart);
+            leases.push(sandbox);
+            return { sandbox, engine: "fake", warnings: [] };
+          },
+        },
+      },
+    });
+    const task = await w.addTask("Add a");
+    const result = await w.start(
+      w.runner(doneExecutor(w, { worktree: root, changedFiles: ["src/a.js"] })),
+      { budgetCapUsdMicro: 1_000_000 },
+    );
+    expect(leases[0]?.calls.map((c) => c.argv.join(" "))).toEqual([
+      "npm --version",
+      "stylecheck src",
+    ]);
+    // Reviewed (sent back for the person's own check), not "the review failed".
+    expect(result.reviews[0]).toMatchObject({ taskId: task.id, verdict: "revise" });
+    const v = await verificationOfTask(w, task.id);
+    expect(v?.notChecked).toEqual([
+      "the project's test was not run: npm is not installed where the checks run",
+    ]);
+    expect(v?.checks.map((c) => [c.name, c.passed])).toEqual([["style", false]]);
+    expect(v?.checks[0]?.output).toBe("stylecheck src -> could not start: spawn stylecheck ENOENT");
+    await w.close();
+  });
+
+  it("a page that threw is tried again after a retry that changed no file, and stays sent back while it throws", async () => {
+    const root = taskFolder({
+      "index.html": "<script>document.getElementById('q').textContent='x'</script>",
+    });
+    const asked: TryPagesRequest[] = [];
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: {
+        tryIt: {
+          tryPages: async (req) => {
+            asked.push(req);
+            return {
+              tried: [
+                {
+                  what: "opened index.html in a browser, 1280 and 390 pixels wide",
+                  target: "index.html",
+                  ok: false,
+                  blocking: true,
+                  output: "opened index.html\nproblem: error on the page: quote is null",
+                  pageFiles: ["index.html"],
+                },
+              ],
+            };
+          },
+        },
+      },
+    });
+    const task = await w.addTask("Show a quote");
+    const result = await w.start(w.runner(changesOnceThenNothing(w, root, ["index.html"])), {
+      budgetCapUsdMicro: 5_000_000,
+    });
+    expect(result.reviews.length).toBeGreaterThan(1);
+    expect(asked).toHaveLength(result.reviews.length);
+    expect(asked.every((a) => a.pages.join() === "index.html")).toBe(true);
+    expect(result.reviews.every((r) => r.verdict !== "accept")).toBe(true);
+    expect((await w.store.task.mustGet(task.id)).status).not.toBe("done");
+    const tried = (await w.store.finding.list({ task_id: task.id } as never)).filter((f) =>
+      f.description.startsWith("Tried index.html"),
+    );
+    expect(tried.length).toBeGreaterThan(0);
+    expect(tried.some((f) => f.status === "resolved")).toBe(false);
+    await w.close();
+  });
+
+  it("an error on a page that this task's files do not run is told, not blamed on the task", async () => {
+    // Walk D: index.html threw before the task; the task only styled it. The error is not the
+    // task's, so it does not block it; the person sees it in what was checked.
+    const root = taskFolder({
+      "index.html":
+        "<link rel=stylesheet href=styles.css><script>document.getElementById('q').textContent='x'</script>",
+      "styles.css": "h1 { color: green; }",
+    });
+    const throwing = {
+      tryPages: async () => ({
+        tried: [
+          {
+            what: "opened index.html in a browser, 1280 and 390 pixels wide",
+            target: "index.html",
+            ok: false,
+            blocking: true,
+            output: "opened index.html\nproblem: error on the page: Cannot set properties of null",
+            pageFiles: ["index.html", "styles.css"],
+          },
+        ],
+      }),
+    };
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: { tryIt: throwing },
+    });
+    const task = await w.addTask("Style the page in styles.css");
+    await w.start(w.runner(doneExecutor(w, { worktree: root, changedFiles: ["styles.css"] })));
+    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    const [finding] = await w.store.finding.list({ task_id: task.id } as never);
+    expect(finding).toMatchObject({
+      severity: "low",
+      description:
+        "Tried index.html: error on the page: Cannot set properties of null (not caused by this task)",
+    });
+    const v = await verificationOfTask(w, task.id);
+    expect(v?.tried[0]).toMatchObject({ target: "index.html", ok: false, blocking: false });
+    expect(v?.tried[0]?.output).toContain(
+      "not caused by this task: it changed none of the files that run on this page (index.html)",
+    );
+    await w.close();
+
+    // The same error when the task changed the page's own file is the task's: sent back.
+    const w2 = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: { tryIt: throwing },
+    });
+    const own = await w2.addTask("Add the quote to index.html");
+    const r2 = await w2.start(
+      w2.runner(doneExecutor(w2, { worktree: root, changedFiles: ["index.html"] })),
+      { budgetCapUsdMicro: 1_000_000 },
+    );
+    expect(r2.reviews[0]).toMatchObject({ taskId: own.id, verdict: "revise" });
+    await w2.close();
+  });
+});

@@ -107,10 +107,55 @@ agentic way".
    action for asks to "Resolve it and show the evidence" instead of repeating itself ("X -> Fix:
    X"). A session whose planned tasks all wait for the person is not graded 100.
 
+9. **What a review measures is the task's work, and only a new measurement closes it**
+   (amendment of 2026-11-02, after the independent review walked the bench). A retry that
+   changed no file had no changed files (on the workspace path every run is committed, so the
+   diff of a run that changed nothing is empty), so `isCodeChange` and `pagesToTry` saw nothing:
+   no check ran, no page was tried, the model accepted, and the accept resolved the earlier
+   "Check failed: test" and "Tried index.html" findings. A task whose test still failed, or
+   whose page still threw, was "Done · Reviewed". Now:
+   - The review's changed files are the task's over all its attempts (`CriticLoop.filesOfTask`:
+     this run's, then the `task.files` events of the task's earlier runs); a run that changed
+     nothing is told so in the evidence, and its checks and tries run on the task's files again.
+     A "Check failed" finding still open runs the project's checks again whatever changed, and a
+     page a "Tried" finding names is tried again first.
+   - A finding the runtime measured ("Check failed: <name>", "Tried <page>: <problem>",
+     `@forerunner/critic` `measured.ts`) is resolved by this review's own re-run that passed (the
+     check ran and passed, the page was tried without that problem), whatever the verdict, and by
+     nothing else: not by an accept, not by the model's list of resolved findings. An accept with
+     such a finding still open (its check could not run this time) is refused by the store as
+     before (B.4), and the person gets the "rework, accept or cancel" card.
+   - **A failure the task did not cause.** For a page the code can tell: the try records the
+     files of the folder the page asked for (`pageFiles`), and an error on a page that opened is
+     the task's only when the task changed one of the files that run on it (the page, a script,
+     data it reads, a file it asked for that the task deleted; stylesheets, images and fonts run
+     nothing). Otherwise it is a low finding "… (not caused by this task)" and the try's output
+     says so ("not caused by this task: it changed none of the files that run on this page"),
+     which the person reads under **See what was checked**; it never sends the task back. For a
+     test the code cannot tell whose change broke it, so the failed check still blocks, and its
+     finding asks the specialist, who knows what it changed: "if it failed before this task, say
+     so and why under 'Questions for the person:'". Such a report is not accepted (the check
+     failed) and goes to the person as one question card (U-022), instead of a ladder of reruns
+     that cannot fix it.
+   - npm is looked for where the checks run: in the review's sandbox lease (`npm --version`),
+     whose environment is not the daemon's, never only on the daemon's PATH. A check whose
+     command cannot start there is a failed check with the reason as its output, never a failed
+     review (the real-daemon case met "spawn npm ENOENT" as "the critic review failed").
+   - The Edit dialog sends a review level the person left as it is as stored (a planner's tier 0
+     stays 0, read as the light review), except a deploy or a migration below the full review,
+     which Save raises to it while the form says so; the level shown and the level sent are
+     always the same, also when Who does it changes. Settings use the review levels' names
+     (Sandbox, Models, Performance, the calibration's and the handover's level): no tier number
+     on a person's screen.
+
 ## Consequences
 
 - Every finished task costs one critic call more than a tier-0 task did; the light review stays
   on the critic's tier-1 model.
+- A project whose test fails before any task (or a page that throws before any task) is met by
+  every later code task: a page error the task did not cause is only told; a failed test sends
+  the task back once with its output, and the specialist's question brings it to the person.
+  Every review of a code task runs the project's checks, so each retry pays their time again.
 - A project whose `package.json` has scripts but no installed dependencies gets no automatic
   checks until they are installed in the task's folder; the review says so.
 - A page task needs a Chromium to be "Reviewed and tried"; the desktop install finds Playwright's,

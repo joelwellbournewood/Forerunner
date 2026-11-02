@@ -296,7 +296,9 @@ the visible text (500 characters), linked files of the folder that did not load,
 errors, console errors (load failures excepted) and a screenshot (`<page>-<width>.png` in
 `outDir`). The result (`PageTry`) has the shape of the critic's `TriedEvidence`: `ok` when
 nothing went wrong, `blocking` when the page did not open or threw an error that no blocked
-request explains. `{ unavailable }` when no browser starts; a page that does not work is never
+request explains, and `pageFiles`: the files of the folder the page asked for, found or not, the
+page first (the runtime tells from it whether an error on the page can be the task's: ADR 0104
+point 9). `{ unavailable }` when no browser starts; a page that does not work is never
 an exception. The runtime's critic loop calls it through `TryItPort` (compose: screenshots under
 `<data>/evidence/<task>/<review key>/`). Test: `test/try-page.integration.test.ts` (a real
 Chromium, skipped with the reason without one).

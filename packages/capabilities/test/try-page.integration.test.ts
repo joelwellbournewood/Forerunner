@@ -58,6 +58,8 @@ describe.skipIf(!ready.ok)(`tryPages in a real browser (${ready.reason})`, () =>
     expect(t?.output).toContain("title: Garden club");
     expect(t?.output).toContain("Welcome, gardeners. See you soon.");
     expect(t?.screenshots.map((s) => s.file)).toEqual(["k/index-1280.png", "k/index-390.png"]);
+    // What runs on the page (the review tells whose change an error belongs to from it).
+    expect(t?.pageFiles).toEqual(["index.html", "styles.css", "script.js"]);
     expect(existsSync(join(out, "index-1280.png"))).toBe(true);
     expect(existsSync(join(out, "index-390.png"))).toBe(true);
   }, 60_000);
@@ -75,6 +77,8 @@ describe.skipIf(!ready.ok)(`tryPages in a real browser (${ready.reason})`, () =>
     const [missing, broken] = r.tried;
     expect(missing).toMatchObject({ ok: false, blocking: false });
     expect(missing?.output).toContain("problem: styles.css did not load (not found)");
+    // A file the page asked for counts whether it was found or not.
+    expect(missing?.pageFiles).toEqual(["index.html", "styles.css"]);
     expect(broken).toMatchObject({ ok: false, blocking: true });
     expect(broken?.output).toMatch(/problem: error on the page: .*null/);
   }, 60_000);

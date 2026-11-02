@@ -9,6 +9,8 @@ import {
   DEFAULT_WORK_TIER,
   escalationCeiling,
   type FollowupDecision,
+  type MeasuredFinding,
+  measuredFindingOf,
   quotedWords,
   RETRY_CARD_OPTIONS,
   type ReviewEvidence,
@@ -17,6 +19,7 @@ import {
   retryCardWords,
   saidByName,
   signoffCard,
+  type TriedEvidence,
   triedTimes,
 } from "@forerunner/critic";
 import { checkDocDrift, STATUS_DOC } from "@forerunner/memory";
@@ -46,6 +49,7 @@ import type { ModelTier } from "../provider/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
 import type { RunSandboxPort } from "../session/executor.ts";
 import { screenLessons } from "../session/lessons.ts";
+import { TASK_FILES_EVENT } from "../session/peers.ts";
 import {
   filePersonQuestions,
   listedQuestions,
@@ -67,7 +71,7 @@ import {
   type TaskReviewRequest,
 } from "./ports.ts";
 import { isCodeChange, notRunWords, projectChecks, projectFileList } from "./project-checks.ts";
-import { pagesToTry, type TryItPort } from "./try-it.ts";
+import { MAX_PAGES_TRIED, pagesToTry, type TryItPort } from "./try-it.ts";
 import { outcomeCriterion, reviewFloorOf, reviewTierOf, signoffReasonOf } from "./verification.ts";
 
 /**
@@ -332,28 +336,25 @@ export class CriticLoop implements CriticPort {
 
     // Evidence: the diff and the changed files, the project's checks, the standard-doc drift.
     const diff = await this.diffPort.diffFor(task, worktree);
-    const changedFiles = result.changedFiles?.length
-      ? result.changedFiles
-      : (diff?.changedFiles ?? []);
+    const runFiles = result.changedFiles?.length ? result.changedFiles : (diff?.changedFiles ?? []);
+    // What the task changed over all its attempts, this run's files first (ADR 0104, the review
+    // of 2026-11-02): the review checks the task's work, not the last run's diff. On the bench a
+    // retry that changed no file got no checks and no try, its accept closed a test that still
+    // failed, and the task was Done. (On the workspace path every run is committed, so the diff
+    // of a run that changed nothing is empty.)
+    const changedFiles = await this.filesOfTask(task.id, session.id, runFiles);
+    // A failed check or try still open is measured again, whatever this run changed.
+    const measured = (await store.finding.openFor(task.id))
+      .map((f) => measuredFindingOf(f.description))
+      .filter((m): m is MeasuredFinding => m !== null);
     const { checks: configured, invalid } = checksFromSettings(settings);
     // ADR 0104: the project's build, lint and tests always run for a code task, besides the
     // commands the project's settings name.
     const root = worktree && existsSync(worktree) ? worktree : undefined;
-    const code = isCodeChange(changedFiles);
+    const code = isCodeChange(changedFiles) || measured.some((m) => m.kind === "check");
     const own = code ? projectChecks(root) : { checks: [], skipped: null };
-    // The project's scripts need npm where they run; without it they are not run, and the
-    // review says so instead of failing the work for a tool the computer lacks.
-    const hasNpm = own.checks.length > 0 ? await (this.deps.hasCommand ?? onPath)("npm") : true;
-    const ownChecks = hasNpm ? own.checks : [];
-    const ownSkipped =
-      own.skipped ??
-      (hasNpm
-        ? null
-        : `${notRunWords(own.checks.map((c) => c.name))}: npm is not installed where the checks run`);
-    let checks = [
-      ...configured,
-      ...ownChecks.filter((c) => !configured.some((k) => k.name === c.name)),
-    ];
+    const ownChecks = own.checks.filter((c) => !configured.some((k) => k.name === c.name));
+    let checks = [...configured, ...ownChecks];
     const report = result.finalReport ?? result.summary;
     const questions = listedQuestions(report);
     const evidence: ReviewEvidence = {
@@ -363,7 +364,7 @@ export class CriticLoop implements CriticPort {
       brief: `${task.title}: ${task.outcome}`,
       finalReport: report,
       ...(questions.length ? { questionsForPerson: questions } : {}),
-      notChecked: ownSkipped ? [ownSkipped] : [],
+      notChecked: own.skipped ? [own.skipped] : [],
       ...(signoff ? { signoffRequired: signoff } : {}),
       ...(diff?.diff ? { diff: diff.diff } : {}),
       ...(changedFiles.length ? { changedFiles } : {}),
@@ -371,6 +372,11 @@ export class CriticLoop implements CriticPort {
       ...(result.runId ? { runId: result.runId } : {}),
       artifacts: [
         `attempt ${task.attempt + 1} by ${req.item.specialist}`,
+        ...(runFiles.length === 0 && changedFiles.length
+          ? [
+              `attempt ${task.attempt + 1} changed no file; the changed files listed are what the task's earlier attempts changed, and its checks and tries ran on them again`,
+            ]
+          : []),
         ...(invalid ? [`${invalid} malformed check(s) in settings.checks ignored`] : []),
         ...(result.artifacts ?? []).map((a) => (typeof a === "string" ? a : JSON.stringify(a))),
       ],
@@ -402,8 +408,16 @@ export class CriticLoop implements CriticPort {
       }
     }
 
-    // Try it (ADR 0104): a page the change made or styled is opened as a person would.
-    const pages = this.deps.tryIt ? pagesToTry(changedFiles, root) : [];
+    // Try it (ADR 0104): a page the task made or styled is opened as a person would, and a
+    // page an open finding says did not work is opened again first.
+    const again = measured.flatMap((m) =>
+      m.kind === "tried" && root && existsSync(join(root, ...m.target.split("/")))
+        ? [m.target]
+        : [],
+    );
+    const pages = this.deps.tryIt
+      ? [...new Set([...again, ...pagesToTry(changedFiles, root)])].slice(0, MAX_PAGES_TRIED)
+      : [];
     if (pages.length && root && this.deps.tryIt) {
       try {
         const tried = await this.deps.tryIt.tryPages({
@@ -413,7 +427,8 @@ export class CriticLoop implements CriticPort {
           pages,
           ...(req.signal ? { signal: req.signal } : {}),
         });
-        if ("tried" in tried) evidence.tried = tried.tried;
+        if ("tried" in tried)
+          evidence.tried = tried.tried.map((t) => attributeTry(t, changedFiles));
         else evidence.notChecked?.push(`${pagesWords(pages)} not tried: ${tried.unavailable}`);
       } catch (e) {
         evidence.notChecked?.push(
@@ -454,6 +469,22 @@ export class CriticLoop implements CriticPort {
           `${checks.map((c) => c.name).join(", ")} not run: the sandbox could not be opened (${errorMessage(e).split("\n")[0]?.slice(0, 200)})`,
         );
         checks = [];
+      }
+    }
+    // The project's scripts need npm where they run (in the lease, whose environment is not
+    // the daemon's); without it they are not run, and the review says so instead of failing the
+    // work for a tool the computer lacks, or failing the review on a command that cannot start.
+    if (ownChecks.length && checks.length) {
+      const hasNpm = this.deps.hasCommand
+        ? await this.deps.hasCommand("npm")
+        : lease
+          ? await startsIn(lease.sandbox, ["npm", "--version"])
+          : await onPath("npm");
+      if (!hasNpm) {
+        evidence.notChecked?.push(
+          `${notRunWords(ownChecks.map((c) => c.name))}: npm is not installed where the checks run`,
+        );
+        checks = checks.filter((c) => !ownChecks.includes(c));
       }
     }
     let output: ReviewOutput;
@@ -804,6 +835,31 @@ export class CriticLoop implements CriticPort {
   }
 
   /**
+   * The files a task changed over all its attempts (ADR 0104): this run's, then those of the
+   * task's earlier runs from their sessions' `task.files` events (the runner writes one per run
+   * that changed files, before the review). Relative paths, forward slashes, each once.
+   */
+  private async filesOfTask(
+    taskId: string,
+    sessionId: string,
+    runFiles: readonly string[],
+  ): Promise<string[]> {
+    const { store } = this.deps;
+    const files = new Set(runFiles.map(relPath));
+    const sessions = new Set([sessionId]);
+    for (const r of await store.run.forTask(taskId)) if (r.session_id) sessions.add(r.session_id);
+    for (const id of sessions) {
+      for (const e of await store.event.list(id, 0, 10_000)) {
+        if (e.type !== TASK_FILES_EVENT) continue;
+        const p = (e.payload ?? {}) as { taskId?: unknown; files?: unknown };
+        if (p.taskId !== taskId || !Array.isArray(p.files)) continue;
+        for (const f of p.files) if (typeof f === "string" && f.trim()) files.add(relPath(f));
+      }
+    }
+    return [...files];
+  }
+
+  /**
    * The ladder rung the work ran on: from the Run row's model on the ladder in force (an
    * adopted rung id is a rung too); the coder's default otherwise.
    */
@@ -833,12 +889,25 @@ export function sandboxCheckRunner(sandbox: Sandbox): CheckRunner {
   return {
     async run(cmd, opts) {
       const relative = cmd.cwd && !/^([a-zA-Z]:)?[\\/]/.test(cmd.cwd) ? cmd.cwd : undefined;
-      const r = await sandbox.run(cmd.argv, {
-        ...(relative ? { cwd: relative } : {}),
-        timeoutMs: cmd.timeoutMs ?? 120_000,
-        ...(opts.signal ? { signal: opts.signal } : {}),
-        maxOutputBytes: 256 * 1024,
-      });
+      let r: Awaited<ReturnType<Sandbox["run"]>>;
+      try {
+        r = await sandbox.run(cmd.argv, {
+          ...(relative ? { cwd: relative } : {}),
+          timeoutMs: cmd.timeoutMs ?? 120_000,
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          maxOutputBytes: 256 * 1024,
+        });
+      } catch (e) {
+        // A command that cannot start (not installed in the sandbox) is a check that did not
+        // pass, with the reason as its output, never a review that failed with an error.
+        if (opts.signal?.aborted) throw e;
+        return {
+          name: cmd.name,
+          passed: false,
+          output: `${cmd.argv.join(" ")} -> could not start: ${errorMessage(e).split("\n")[0]?.slice(0, 300)}`,
+          required: cmd.required !== false,
+        };
+      }
       const body = `${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`.trim();
       const tail = body.length > CHECK_OUTPUT_TAIL ? `...${body.slice(-CHECK_OUTPUT_TAIL)}` : body;
       const head = `${cmd.argv.join(" ")} -> ${r.timedOut ? "timeout" : `exit ${r.code}`} in ${r.durationMs} ms`;
@@ -852,6 +921,36 @@ export function sandboxCheckRunner(sandbox: Sandbox): CheckRunner {
   };
 }
 
+/** A changed file as the review compares it: forward slashes, no leading "./". */
+function relPath(f: string): string {
+  return f.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+/** Files a page loads that run nothing (styles, images, fonts): they cannot throw an error. */
+const INERT_FILE = /\.(css|png|jpe?g|gif|webp|avif|bmp|ico|svg|woff2?|ttf|otf|eot)$/i;
+
+/**
+ * Who a page's error belongs to (ADR 0104, the review of 2026-11-02). A page that opened and
+ * threw an error is the task's blocker when the task changed a file that runs on the page (the
+ * page itself, a script, data it reads; a file the page asked for and the task deleted). When the
+ * task changed none of them (it only styled the page) the error was there before the task: it is
+ * told in the try's output and becomes a low finding, never a reason to send the task back that
+ * no rework of the task can remove. A page that did not open is always a blocker.
+ */
+export function attributeTry(t: TriedEvidence, taskFiles: readonly string[]): TriedEvidence {
+  if (t.ok || !t.blocking || !t.pageFiles?.length) return t;
+  if (/did not open/i.test(t.output)) return t;
+  const runs = t.pageFiles.map(relPath).filter((f) => !INERT_FILE.test(f));
+  const changed = new Set(taskFiles.map(relPath));
+  if (runs.some((f) => changed.has(f))) return t;
+  return {
+    ...t,
+    blocking: false,
+    causedByTask: false,
+    output: `${t.output}\nnot caused by this task: it changed none of the files that run on this page (${runs.join(", ")})`,
+  };
+}
+
 /** "index.html was" / "index.html and about.html were", for a line about pages. */
 function pagesWords(pages: readonly string[]): string {
   return pages.length === 1 ? `${pages[0]} was` : `${pages.join(" and ")} were`;
@@ -859,4 +958,14 @@ function pagesWords(pages: readonly string[]): string {
 
 async function onPath(cmd: string): Promise<boolean> {
   return (await which(cmd).catch(() => null)) !== null;
+}
+
+/** Whether a command starts and exits 0 in a sandbox (a probe such as `npm --version`). */
+async function startsIn(sandbox: Sandbox, argv: readonly string[]): Promise<boolean> {
+  try {
+    const r = await sandbox.run(argv, { timeoutMs: 30_000, maxOutputBytes: 4096 });
+    return r.code === 0 && !r.timedOut;
+  } catch {
+    return false;
+  }
 }
