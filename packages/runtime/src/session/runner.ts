@@ -17,6 +17,7 @@ import {
   type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
+import { couldNotWords } from "../daemon/event-lines.ts";
 import { holdsTask, isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
@@ -1093,6 +1094,12 @@ export class SessionRunner {
         const queue: PlanItem[] = [...plan.items];
         /** Runs per task in this session: a guard against a task that keeps coming back. */
         const runsOf = new Map<string, number>();
+        /**
+         * The specialist each task last started with in this session: a later start is a retry
+         * (`again`), and one with another specialist a hand-over (`handedFrom`). The session log
+         * tells a retry by what came of it (design §3.7, `eventAudience`).
+         */
+        const startedWith = new Map<string, string>();
         /** Tasks not to take again in this session (a peer holds it, the sandbox, a limit). */
         const notAgain = new Set<string>();
         /** At levels 0 and 1 only what the person approved runs (its retries included). */
@@ -1295,11 +1302,16 @@ export class SessionRunner {
               `session ${session.id} started work`,
               { agentId: agent.id },
             );
+          const before = startedWith.get(task.id);
+          const again = before !== undefined;
+          startedWith.set(task.id, item.specialist);
           await emit("task.started", {
             taskId: task.id,
             title: task.title,
             specialist: item.specialist,
             estimateUsdMicro: item.estimateUsdMicro,
+            ...(again ? { again: true } : {}),
+            ...(again && before !== item.specialist ? { handedFrom: before } : {}),
           });
           runningTask = { id: task.id, title: task.title };
           // The claim is renewed every sixth of its TTL for as long as the task runs: a
@@ -1445,6 +1457,18 @@ export class SessionRunner {
             filesByTask.set(task.id, result.changedFiles);
             await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
           }
+          // What the session log needs to tell the run once (design §3.7, `eventAudience`):
+          // whether the critic reviews it next (the branches below), and the words of a run
+          // that said it could not do the work, which the critic's line then quotes.
+          const toCritic =
+            !!this.deps.critic &&
+            task.status === "in_progress" &&
+            (result.outcome === "done" || result.outcome === "in_review") &&
+            !(result.outcome === "done" && task.risk_tier === 0 && result.checksPassed);
+          const couldNot =
+            result.outcome === "done" || result.outcome === "in_review"
+              ? couldNotWords(result.summary)
+              : null;
           await emit(
             "task.finished",
             {
@@ -1455,6 +1479,9 @@ export class SessionRunner {
               outcome: result.outcome,
               costUsdMicro: result.costUsdMicro,
               summary: result.summary,
+              ...(toCritic ? { review: true } : {}),
+              ...(couldNot !== null ? { couldNot } : {}),
+              ...(again ? { again: true } : {}),
             },
             result.costUsdMicro,
           );
@@ -1594,6 +1621,8 @@ export class SessionRunner {
               await emit("critic.review_failed", {
                 taskId: task.id,
                 title: task.title,
+                specialist: item.specialist,
+                ...(couldNot !== null ? { couldNot } : {}),
                 warning: `critic review failed: ${reviewed.error}${
                   humanRequestId ? "; asked you to rework, accept or cancel" : ""
                 }`,
@@ -2236,7 +2265,11 @@ export class SessionRunner {
       !outcome.failed.length &&
       !outcome.needsYou.length &&
       !inReviewNow.length;
-    const update = sessionUpdateLine(project?.name ?? null, resultLines);
+    const update = sessionUpdateLine(
+      project?.name ?? null,
+      resultLines,
+      outcome.needsYou.map((t) => t.title),
+    );
     if (
       update &&
       stopReason !== "plan_awaiting_approval" &&
@@ -2469,11 +2502,19 @@ export class SessionRunner {
       // The caller files the card and reports it (U-045).
       return { failed: true, error: errorMessage(e) };
     }
+    // A run that said it could not do the work: the verdict's line quotes it, so the session log
+    // tells the attempt in one line (design §5, "Log line").
+    const couldNot =
+      request.result.outcome === "done" || request.result.outcome === "in_review"
+        ? couldNotWords(request.result.summary)
+        : null;
     await emit(
       "critic.verdict",
       {
         taskId: request.task.id,
         title: request.task.title,
+        specialist: request.item.specialist,
+        ...(couldNot !== null ? { couldNot } : {}),
         reviewId: outcome.reviewId,
         tier: outcome.tier,
         verdict: outcome.verdict,

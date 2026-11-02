@@ -4,7 +4,7 @@ import { eventAudience } from "../src/daemon/event-audience.ts";
 import { requestWords } from "../src/daemon/request-words.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import * as producers from "../src/notifications/producers.ts";
-import { sessionResultLines } from "../src/session/result.ts";
+import { sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
 
 /*
  * The writing rules of core-experience design §5, checked mechanically on what the system writes
@@ -35,6 +35,11 @@ const RULES: [string, RegExp][] = [
 /** What a text breaks: each rule it matches, and its length over `max`. */
 export function violations(text: string, max: number, opts: { lines?: number } = {}): string[] {
   const out = RULES.filter(([, re]) => re.test(text)).map(([name]) => `${name}: ${text}`);
+  // A text cut inside a quoted name leaves its quote open ('Quote page: "Style the page in
+  // styles.'): the cut a regex for "ends mid-word" cannot see when the cut falls after a dot.
+  if ((text.match(/"/g) ?? []).length % 2 === 1) out.push(`a quote left open (cut short): ${text}`);
+  // "…" after a space: the cut dropped what came before it instead of ending at a word.
+  if (/\s…/.test(text)) out.push(`cut before "…": ${text}`);
   if (text.length > max) out.push(`longer than ${max} (${text.length}): ${text}`);
   const lines = text.split("\n").length;
   if (lines > (opts.lines ?? 1)) out.push(`${lines} lines: ${text}`);
@@ -107,6 +112,54 @@ const EVENTS: [string, Record<string, unknown>][] = [
   ],
   ["critic.verdict", { taskId: ID, title: "Add clamp", verdict: "accept", decision: "accepted" }],
   ["critic.verdict", { taskId: ID, title: "Add clamp", verdict: "human", decision: "human" }],
+  // A run that could not do the work and the critic's verdict on it, in one line.
+  [
+    "critic.verdict",
+    {
+      taskId: ID,
+      title: "Style the page in styles.css",
+      specialist: "designer",
+      couldNot:
+        "The work needs something I do not have here, so I stopped without changing any file",
+      verdict: "revise",
+      decision: "revise",
+      retry: "split_or_change_specialist",
+      summary:
+        "[stand-in model] Sent back for rework: the worker reports it could not do the work.",
+    },
+  ],
+  [
+    "critic.verdict",
+    {
+      taskId: ID,
+      title: "Style the page in styles.css",
+      specialist: "writer-marketing",
+      couldNot: "",
+      verdict: "revise",
+      decision: "human",
+    },
+  ],
+  [
+    "critic.review_failed",
+    {
+      taskId: ID,
+      title: "Style the page in styles.css",
+      specialist: "designer",
+      couldNot: "The work needs Docker",
+      warning: `critic review failed: HTTP 500 on run ${ID}`,
+    },
+  ],
+  [
+    "task.started",
+    {
+      taskId: ID,
+      title: "Style the page in styles.css",
+      specialist: "writer-marketing",
+      again: true,
+      handedFrom: "designer",
+      estimateUsdMicro: 180_000,
+    },
+  ],
   ["task.retrying", { taskId: ID, text: 'Claude did not answer. Trying "Add clamp" again.' }],
   ["session.stopped", { by: "you", text: 'Stopped by you during "Add clamp". It is ready again.' }],
   [
@@ -243,6 +296,12 @@ describe("writing rules (design §5)", () => {
       expect(violations(l, 400)).toEqual([]);
       expect(l).not.toMatch(/\b0 (done|failed|sent back|in review|not started)\b|: 0\./);
     }
+    // The Inbox Update of the same session (design §3.8, rule 1: one line): the news, whole;
+    // the decision is its card's to say.
+    const update = sessionUpdateLine("Quote page", lines, ["Style the page in styles.css"]) ?? "";
+    expect(violations(update, 220), update).toEqual([]);
+    expect(update).toMatch(/^Quote page: /);
+    expect(update).not.toMatch(/needs your decision/);
   });
 
   it("the Inbox's cards: a title, at most two sentences, buttons of at most three words, consequences within 100", () => {
@@ -332,6 +391,9 @@ describe("writing rules (design §5)", () => {
     expect(violations("Notified you: telegram skipped (no chat id)", 200)).not.toEqual([]);
     expect(violations("Waits for: needs_human", 200)).not.toEqual([]);
     expect(violations("Session started (manual): session.brief", 200)).not.toEqual([]);
+    expect(violations('Quote page: "Style the page in styles.', 200)).not.toEqual([]);
+    expect(violations("Fine words, cut at a …", 200)).not.toEqual([]);
     expect(violations("Fine words, cut at a word…", 200)).toEqual([]);
+    expect(violations('Quote page: "Style the page in…" needs your decision', 60)).toEqual([]);
   });
 });

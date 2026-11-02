@@ -42,11 +42,31 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "chat.reply",
 ]);
 
-/** Who the line of an event is for (the session page shows `person` lines, Details the rest). */
+/**
+ * Who the line of an event is for (the session page shows `person` lines, Details the rest).
+ * The runner marks what a line depends on in the payload, so the live stream and a reload split
+ * the log the same way: `again` (the task already started in this session), `handedFrom` (the
+ * specialist before, when another one takes over), `review` (the critic reviews the run next)
+ * and `couldNot` (the run said it could not do the work; the critic's line quotes it).
+ */
 export function eventAudience(type: string, p: Record<string, unknown> = {}): EventAudience {
   if (!PERSON_EVENT_TYPES.has(type)) return "detail";
   // A run the person's own stop ended is told once, by the stop's line ("Stopped by you
   // during ..."), not again as a finished task.
   if (type === "task.finished" && p.outcome === "killed") return "detail";
+  // A retry in the same session is told by what came of it (design §3.7: about eight lines per
+  // task; the walk's failing task had twelve): the same specialist starting again is a detail,
+  // another one taking over is not.
+  if (type === "task.started" && p.again === true && typeof p.handedFrom !== "string")
+    return "detail";
+  // The critic's line says how a reviewed run ended: for a run that could not do the work it is
+  // the design's one line ('The designer could not …: "…". Trying again.'), and for a retry it
+  // says what came of it. The run's own line is then a detail.
+  if (
+    type === "task.finished" &&
+    p.review === true &&
+    (typeof p.couldNot === "string" || p.again === true)
+  )
+    return "detail";
   return "person";
 }

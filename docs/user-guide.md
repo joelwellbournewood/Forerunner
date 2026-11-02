@@ -181,9 +181,12 @@ by hand. The live view shows the current task and specialist, the step count and
 cost against the cap, and a log of what a person follows a session by, one line each: "The coder
 started "Create the page skeleton" (about CHF 0.14).", "Changed index.html.", "The critic
 accepted "Create the page skeleton".", "The designer could not do "Style the page": "The work
-needs something I do not have here"." and how it ended ("Session over: 2 done, 1 needs you. CHF
-0.06."). **Details** adds the internal steps (the brief, memory, each tool call, the notifications
-sent); escalations are highlighted, and raw output is behind a toggle. A session that has ended
+needs something I do not have here". Trying again." and how it ended ("Session over: 2 done, 1
+needs you. CHF 0.06."). A task the critic sends back is tried again in the same session; each
+try is one line, and "The writer takes over …" says when another specialist tries it. **Details**
+adds the internal steps (the brief, memory, each tool call, each start and finish of a retry, the
+notifications sent); escalations are highlighted, and raw output is behind a toggle. A session
+that has ended
 shows **finished**: its log is complete and the
 page no longer waits for events. A session stops cleanly when it reaches 80% of its cap (it finishes the
 current task and starts nothing new), when its wall clock runs out, or when you stop it.

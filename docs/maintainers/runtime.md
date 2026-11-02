@@ -4226,6 +4226,22 @@ measurements, the docs status, notifications). A `task.finished` the person's ow
 a detail: the `session.stopped` line tells it once. The session page shows the person lines and
 puts the rest under **Details**.
 
+A task reads in at most about eight person lines over all its attempts in a session (§3.7; the
+walk's task that could not be done read twelve: four starts, four "could not", three critic lines
+saying it again, one decision). A retry is told by what came of it, from marks the runner writes
+on the payload so the live stream and a reload split the log the same way: `task.started` has
+`again` when the task already started in this session (a detail) and `handedFrom` when another
+specialist takes over ('The writer takes over "Style the page" from the designer.', a person
+line); `task.finished` has `review` when the critic reviews the run next, `couldNot` (the
+specialist's words, `couldNotWords`) when its report says it could not do the work, and `again`.
+A reviewed run's own line is a detail when it could not do the work or is a retry; the critic's
+line says it: `critic.verdict` and `critic.review_failed` carry `couldNot` and `specialist`, and
+read 'The designer could not do "Style the page": "The work needs …". Trying again.' (design §5,
+"Log line"), "… It needs your decision (Inbox).", "… The critic accepted it anyway." or "… Its
+review did not run; it waits in the Inbox.". "Could not" is read from the report's first
+sentence only. The four-attempt task now reads in six lines (`session-log-person.test.ts`, and
+the role-played failing task in `apps/ui/test/real-daemon.test.ts`).
+
 A person line comes from `personLine` (`daemon/event-lines.ts`): one line, the task's title in
 quotes (`task.finished`, `critic.verdict`, `critic.review_failed` and `task.blocked_by_findings`
 carry `title`, `task.finished` also `specialist`; `eventViews` fills both in from the task's
@@ -4262,7 +4278,11 @@ is only money, how the session ended or what waits is no news. A session whose o
 card still has its line, worded to stay true once the card is answered ("Quote page: the
 session ended without finishing a task."); one whose only task the person stopped posts no
 Update (before: "<Project>: CHF 0.00." and '"X" needs your decision (Inbox).' beside the
-card).
+card). The card's sentence is removed as written: the runner passes the titles of the tasks
+that need the person and `needsYouSentence` builds the exact sentence the result has. A regex
+up to the previous dot cut it at the dot of a file name in the title, and the Update read
+'Quote page: "Style the page in styles.' (review of fix/system-text). A gist over 160
+characters is cut at a word, and a cut inside a quoted name closes the quote (`cutGist`).
 
 ### The writing rules, checked (`test/writing-rules.test.ts`)
 
@@ -4271,10 +4291,13 @@ session log's person lines (`describeEvent`), a session's result (`sessionResult
 Inbox's cards (`requestWords`: a title, at most two sentences, buttons of at most three words,
 consequences within 100) and the notifications (title within 60, body within 140). `violations`
 finds a UUID, a raw state, an event type name, "tier"/"ladder"/"verdict"/"ceiling"/"rung", USD
-or "$", a "(s)" plural, markdown, JSON, the stand-in tag and notification channels, and a text
-over its length; its last case plants each violation and expects it found. A new text a person
-reads gets a fixture here. It found the session result quoting a failed run's id
-(`sessionResultLines` now reads the reason through `withoutIds` and `plainPlurals`).
+or "$", a "(s)" plural, markdown, JSON, the stand-in tag and notification channels, a quote left
+open (a text cut inside a quoted name, which a check for "ends mid-word" misses when the cut
+falls after a dot), "…" after a space, and a text over its length; its last case plants each
+violation and expects it found. The session's Update (`sessionUpdateLine`) is checked with the
+result it comes from. A new text a person reads gets a fixture here. It found the session
+result quoting a failed run's id (`sessionResultLines` now reads the reason through `withoutIds`
+and `plainPlurals`).
 
 ### Costs view (design §5 rule 3)
 

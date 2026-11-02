@@ -2501,6 +2501,28 @@ describe("the UI client against the real daemon: a task that fails gets one card
     expect(first.session?.id).toBeTruthy();
     await eventually(ended, "the session to end", async () => "", 60_000);
 
+    // The session page's log (design §3.7, §5 "Log line"): at most about eight lines for the
+    // task over all its attempts; each attempt is one line with the specialist's words and
+    // what comes next, and no critic line says again that it could not (the walk read 12).
+    const log = (await client.sessionEvents(first.session?.id ?? "")).filter(
+      (e) => e.audience === "person",
+    );
+    const ofScope = log
+      .filter((e) => (e.payload as { taskId?: string } | null)?.taskId === scope.id)
+      .map((e) => e.text);
+    expect(ofScope.length, ofScope.join("\n")).toBeLessThanOrEqual(8);
+    const attempts = ofScope.filter((l) =>
+      /could not do "Write the scope in docs\/scope\.md": "[^"]+"\. (Trying again|It needs your decision \(Inbox\))\.$/.test(
+        l,
+      ),
+    );
+    expect(attempts.length, ofScope.join("\n")).toBe(
+      (await client.task(scope.id)).runs.filter((r) => r.kind === "work").length,
+    );
+    expect(ofScope.at(-1), ofScope.join("\n")).toMatch(/It needs your decision \(Inbox\)\.$/);
+    expect(ofScope.some((l) => /^The critic sent/.test(l))).toBe(false);
+    expect(ofScope.filter((l) => / started "Write the scope/.test(l))).toHaveLength(1);
+
     // Exactly one card, after the retries inside the session (design §4.3).
     const cardsOf = async () =>
       (await client.inbox(me.id)).requests.filter(

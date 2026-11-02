@@ -73,7 +73,8 @@ export function namedList(items: readonly string[], max = 3): string {
 /**
  * A report says the work was not done: "I could not complete this task", "I was unable to",
  * "I cannot". The run itself ended without an error, so its outcome reads "done"; the line must
- * not (design §5, "Log line" before and after).
+ * not (design §5, "Log line" before and after). Only the report's first sentence is read: "I
+ * wrote index.html. I could not open it in a browser." did the work.
  */
 const COULD_NOT =
   /\b(could not|couldn't|cannot|can't|was unable to|am unable to|unable to|did not (?:do|complete|finish))\b/i;
@@ -86,15 +87,31 @@ function reportWords(summary: string, max = 120): string | null {
   return w.replace(/^(summary|report)\s*[:-]?\s*/i, "").trim() || null;
 }
 
-/** The sentence of a report that says what stood in the way, after "I could not ...". */
-function couldNotReason(summary: string): string | null {
+/**
+ * When a run's report says it could not do the work: the sentence that says what stood in the
+ * way, as the log quotes it ("The work needs X", "" when the report gives no reason); null when
+ * the report does not say so. The runner writes it on the run's `task.finished` and on the
+ * critic's verdict about that run (`couldNot`), so the critic's line can say it (design §5,
+ * "Log line": 'The designer could not style the page: "…". Trying again.').
+ */
+export function couldNotWords(summary: string): string | null {
   const words = reportWords(summary, 200);
   if (!words) return null;
   const sentences = words.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g) ?? [words];
   const first = sentences[0]?.trim() ?? "";
+  if (!COULD_NOT.test(first)) return null;
   // "I could not complete this task. The work needs X." -> "The work needs X."
-  const reason = sentences.length > 1 && COULD_NOT.test(first) ? sentences[1]?.trim() : first;
-  return reason ? cutAtWord(reason, 100) : null;
+  const reason = sentences.length > 1 ? sentences[1]?.trim() : first;
+  return reason
+    ? cutAtWord(reason, 100)
+        .replace(/"/g, "'")
+        .replace(/[.\s]+$/, "")
+    : "";
+}
+
+/** '<Who> could not do "<task>": "<what stood in the way>".' */
+function couldNotLine(p: Payload, said: string): string {
+  return `${capital(specialistWho(p))} could not do ${taskName(p)}${said ? `: "${said}"` : ""}.`;
 }
 
 /** The session's counts that happened, short: "2 done, 1 needs you" (no zero counts). */
@@ -148,6 +165,11 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
         ? `You started the session with a budget of ${chf("budgetCapUsdMicro")}.`
         : `The session started with a budget of ${chf("budgetCapUsdMicro")}.`;
     case "task.started":
+      // A retry by another specialist (the ladder's "split, or with another specialist").
+      if (p.again === true && s("handedFrom"))
+        return `${capital(specialistWho(p))} takes over ${taskName(p)} from ${specialistWho({
+          specialist: s("handedFrom"),
+        })}.`;
       return `${capital(specialistWho(p))} started ${taskName(p)}${
         n("estimateUsdMicro") > 0 ? ` (about ${chf("estimateUsdMicro")})` : ""
       }.`;
@@ -169,15 +191,25 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       if (outcome === "killed") return `${capital(taskName(p))} was stopped.`;
       if (outcome === "needs_human")
         return `${capital(who)} has questions for you about ${taskName(p)} (Inbox).`;
-      const first = reportWords(summary, 200) ?? "";
-      if (COULD_NOT.test(first)) {
-        const why = couldNotReason(summary);
-        return `${capital(who)} could not do ${taskName(p)}${why ? `: "${why.replace(/"/g, "'").replace(/[.\s]+$/, "")}"` : ""}.`;
-      }
+      const said = couldNotWords(summary);
+      if (said !== null) return couldNotLine(p, said);
       return `${capital(who)} finished ${taskName(p)}${cost}.`;
     }
     case "critic.verdict": {
       const decision = s("decision");
+      const sentBack = decision === "revise" || decision === "retry" || s("verdict") === "revise";
+      // The run said it could not do the work: what it said and what the critic did with it
+      // are one line (design §5, "Log line"); the critic's "the worker reports it could not
+      // do the work" would only say it again.
+      if (typeof p.couldNot === "string") {
+        const head = couldNotLine(p, p.couldNot);
+        if (decision === "accepted") return `${head} The critic accepted it anyway.`;
+        if (decision === "human") return `${head} It needs your decision (Inbox).`;
+        if (decision === "blocked_by_findings")
+          return `${head} It stays in review: an earlier finding is still open.`;
+        if (sentBack) return `${head} Trying again.`;
+        return `${head} The critic reviewed it.`;
+      }
       const why = reportWords(s("summary"), 100)
         ?.replace(/^(sent back for rework|accepted)\s*:\s*/i, "")
         .replace(/[.\s]+$/, "");
@@ -185,11 +217,13 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       if (decision === "human") return `${capital(taskName(p))} needs your decision (Inbox).`;
       if (decision === "blocked_by_findings")
         return `${capital(taskName(p))} stays in review: an earlier finding is still open.`;
-      if (decision === "revise" || decision === "retry" || s("verdict") === "revise")
+      if (sentBack)
         return `The critic sent ${taskName(p)} back${why ? `: ${why}` : ""}. Trying again.`;
       return `The critic reviewed ${taskName(p)}.`;
     }
     case "critic.review_failed":
+      if (typeof p.couldNot === "string")
+        return `${couldNotLine(p, p.couldNot)} Its review did not run; it waits in the Inbox.`;
       return `The review of ${taskName(p)} did not run; it waits in the Inbox.`;
     case "task.retrying":
     case "session.stopped":
