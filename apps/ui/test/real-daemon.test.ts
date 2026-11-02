@@ -2900,6 +2900,12 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     const notes = (await client.queue(project.id)).map((q) => q.text).join("\n");
     expect(notes).toContain("The person rejected the plan");
     expect(notes).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-|T\d\d:\d\d:\d\d/);
+    // Home's row and the header say it in one sentence with the button (design §3.3, §5.1).
+    expect((await client.project(project.id)).statusLine).toEqual({
+      kind: "planning_failed",
+      text: "You rejected the plan. Nothing was written.",
+      action: { kind: "retry", label: "Draft a new plan", to: null },
+    });
     const again = await client.retryIntake(project.id);
     expect(again.state).toBe("drafting");
     await rt.intake.inFlight(project.id);
@@ -2930,6 +2936,12 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(failed.state).toBe("failed");
     // The banner's reason is in words (design §3.3), not the planning call's error text.
     expect(failed.error).toBe("Claude did not answer (model call failed).");
+    // Home's row and the header: a few words and Try again (design §2 item 5, §5.1).
+    expect((await client.project(project.id)).statusLine).toEqual({
+      kind: "planning_failed",
+      text: "Planning failed: Claude did not answer",
+      action: { kind: "retry", label: "Try again", to: null },
+    });
     // Try again (the banner's button): one draft, and it carries the person's words.
     const before = intakeCalls.length;
     const retried = await client.retryIntake(project.id);
@@ -3100,6 +3112,47 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
 
   it("/me says no provider is in force, which the header's no-key bar reads (design §3.1)", async () => {
     expect((await client.me()).provider).toBeNull();
+  });
+
+  // Review of fix/progress-navigation: Home read "Planning failed: Planning from the brief needs
+  // a Claude key or subscription. Add one in the app: Settings → Accounts and keys → Open the
+  // setup assistant, then retry." (about 170 characters) with no button. Design §2 item 5, §5.1.
+  it("a brief without Claude: the project's card says planning failed in one short sentence with Connect Claude, and the screens hear it", async () => {
+    const heard: Promise<string>[] = [];
+    const onProject = (p: { id: string }) =>
+      heard.push(rt.intake.status(p.id).then((s) => s.state));
+    rt.events.on("project", onProject);
+    try {
+      const created = await client.createProject({
+        name: "No key plan",
+        goal: "One page",
+        brief: "A page that shows a random quote.",
+        intake: true,
+      });
+      expect(created.statusLine?.text).toBe("Drafting the plan…");
+      await rt.intake.inFlight(created.id)?.catch(() => undefined);
+      // The draft's end is announced (`project.changed`), so Home and the header re-read the
+      // card without a reload; before, only the creation was, while the plan was drafting.
+      await eventually(
+        async () => (await Promise.all(heard)).includes("failed"),
+        "a project.changed after the plan failed",
+        async () => (await Promise.all(heard)).join(", "),
+        10_000,
+      );
+      const row = (await client.projects()).find((p) => p.id === created.id);
+      expect(row?.statusLine).toEqual({
+        kind: "planning_failed",
+        text: "Planning failed: Claude is not connected",
+        action: { kind: "link", label: "Connect Claude", to: "/setup" },
+      });
+      expect(row?.statusLine?.text.length).toBeLessThanOrEqual(80);
+      // The project page's plan banner keeps the reason in full, with where to add a key.
+      expect((await client.intakeStatus(created.id)).error).toContain(
+        "Settings → Accounts and keys → Open the setup assistant",
+      );
+    } finally {
+      rt.events.off("project", onProject);
+    }
   });
 
   it("the Start dialog's check says Claude is not connected, with the button that fixes it (design §3.6)", async () => {

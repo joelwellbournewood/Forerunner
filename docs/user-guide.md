@@ -67,8 +67,11 @@ Home shows, top to bottom:
 The sentence says, first match first: "Waiting for you: approve the plan" or "Waiting for you:
 2 questions"; 'Working on "Style the page" (3 of 7 done)'; 'Stuck: "Style the page" failed; 2
 tasks wait on it' or "Waiting for Docker: 1 task"; "Ready to continue: 3 tasks ready";
-"Drafting the plan…" or "Planning failed: why"; "Done: all 7 tasks. Your files: <folder>". Home
-and the project pages follow the work as it happens: no reload needed.
+"Drafting the plan…" or "Planning failed: Claude did not answer" with **Try again** (without a
+Claude key: "Planning failed: Claude is not connected" with **Connect Claude**), or "You
+rejected the plan. Nothing was written." with **Draft a new plan**; "Done: all 7 tasks. Your
+files: <folder>". The project's page has the reason in full. Home and the project pages follow
+the work as it happens: no reload needed.
 
 **New project** asks for a name, a goal, a short brief and a repository link; the agent drafts a
 plan for you to approve. The project starts at your default autonomy (Settings, where every

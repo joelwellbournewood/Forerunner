@@ -165,8 +165,9 @@ export const ProjectCard = z.object({
    * computed when read: what waits for the person, the task being worked on, what is stuck,
    * what is ready, the plan, or done with where the files are. It replaces the stage, health,
    * status and autonomy badges on the header, the Overview and Home. `action` is the one button
-   * it offers: a link, or `start` (Continue: the Start dialog). Absent on a card the state
-   * service serves.
+   * it offers: a link, `start` (Continue: the Start dialog), or `retry` (Try again / Draft a new
+   * plan after a failed or rejected plan: `POST /projects/:id/intake/retry`). Absent on a card
+   * the state service serves.
    */
   statusLine: z
     .object({
@@ -185,7 +186,7 @@ export const ProjectCard = z.object({
       text: z.string(),
       action: z
         .object({
-          kind: z.enum(["link", "start"]),
+          kind: z.enum(["link", "start", "retry"]),
           label: z.string(),
           to: z.string().nullable(),
         })

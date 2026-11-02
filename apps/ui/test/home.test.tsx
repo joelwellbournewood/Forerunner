@@ -155,6 +155,87 @@ describe("Home", () => {
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Gamma");
   });
 
+  /**
+   * Review of fix/progress-navigation: a failed plan read "Planning failed: Planning from the
+   * brief needs a Claude key or subscription. Add one in the app: Settings → …, then retry." on
+   * Home, with no button. Design §2 item 5, §3.3, §5.1: a short sentence and the one button.
+   */
+  const withPlan = (
+    harness: ReturnType<typeof createHarness>,
+    state: "failed" | "rejected",
+    error: string | null,
+  ) => {
+    const beacon = harness.daemon.state.projects.find((p) => p.id === "proj_beacon");
+    if (!beacon) throw new Error("fixture changed");
+    harness.daemon.state.projects.push({ ...beacon, id: "proj_gamma", name: "Gamma" });
+    harness.daemon.state.intake.proj_gamma = {
+      projectId: "proj_gamma",
+      state,
+      requestId: null,
+      outcome: state === "rejected" ? "rejected" : null,
+      appliedAt: null,
+      docs: null,
+      error,
+    };
+  };
+  const gammaRow = async () =>
+    within(
+      (await screen.findAllByTestId("project-card")).find(
+        (c) => c.dataset.projectId === "proj_gamma",
+      ) as HTMLElement,
+    );
+
+  it("a plan that failed: a few words and Try again, which drafts it again; the row follows (design §2, §3.3)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    withPlan(harness, "failed", "Claude did not answer (model call failed).");
+    renderApp("/", harness);
+    const row = await gammaRow();
+    expect(row.getByTestId("project-status")).toHaveTextContent(
+      /^Planning failed: Claude did not answer$/,
+    );
+    const retry = row.getByTestId("project-status-action");
+    expect(retry.tagName).toBe("BUTTON");
+    expect(retry).toHaveTextContent("Try again");
+    expect(retry).toHaveAttribute("title", "The agent drafts the plan from your brief again.");
+    await user.click(retry);
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_gamma/intake/retry")).toHaveLength(1),
+    );
+    await waitFor(async () =>
+      expect((await gammaRow()).getByTestId("project-status")).toHaveTextContent(
+        "Drafting the plan…",
+      ),
+    );
+  });
+
+  it("a rejected plan offers Draft a new plan; without Claude the button connects it (design §3.1, §3.3)", async () => {
+    const harness = createHarness();
+    withPlan(harness, "rejected", null);
+    renderApp("/", harness);
+    const row = await gammaRow();
+    expect(row.getByTestId("project-status")).toHaveTextContent(
+      "You rejected the plan. Nothing was written.",
+    );
+    expect(row.getByTestId("project-status-action")).toHaveTextContent("Draft a new plan");
+
+    const nokey = createHarness({ me: { provider: null } });
+    withPlan(
+      nokey,
+      "failed",
+      "Planning from the brief needs a Claude key or subscription. Add one in the app: Settings → Accounts and keys → Open the setup assistant, then retry.",
+    );
+    document.body.innerHTML = "";
+    renderApp("/", nokey);
+    const failed = await gammaRow();
+    expect(failed.getByTestId("project-status")).toHaveTextContent(
+      /^Planning failed: Claude is not connected$/,
+    );
+    const connect = failed.getByTestId("project-status-action");
+    expect(connect).toHaveTextContent("Connect Claude");
+    expect(connect).toHaveAttribute("href", "/setup");
+  });
+
   it("shows the not-connected state when the daemon is unreachable; no Stop all while nothing runs (design §3.1)", async () => {
     const harness = createHarness();
     const broken = {

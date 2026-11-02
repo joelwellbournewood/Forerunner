@@ -1,8 +1,9 @@
-import { SimulatedClock } from "@forerunner/platform";
+import { ForerunnerError, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { projectStatusLine } from "../src/daemon/project-status.ts";
+import { type PlanState, projectStatusLine } from "../src/daemon/project-status.ts";
 import { projectCard, projectSummary } from "../src/daemon/views.ts";
+import { INTAKE_NEEDS_A_MODEL, intakeFailureWords } from "../src/session/intake.ts";
 
 /**
  * The project's status sentence (design §2 "Project status"): one sentence replaces the stage,
@@ -231,14 +232,118 @@ describe("project status sentence (design §2)", () => {
         })
       ).statusLine,
     ).toEqual({ kind: "planning", text: "Drafting the plan…", action: null });
+    // The card reads the intake's own words through its facts, and whether Claude is connected.
     expect(
       (
         await card({
           sandboxReady: null,
-          plan: async () => ({ state: "failed", error: "Claude is not connected." }),
+          plan: async () => ({
+            state: "failed",
+            error: intakeFailureWords(new ForerunnerError("unavailable", INTAKE_NEEDS_A_MODEL)),
+          }),
+          hasModel: false,
         })
-      ).statusLine?.text,
-    ).toBe("Planning failed: Claude is not connected.");
+      ).statusLine,
+    ).toEqual({
+      kind: "planning_failed",
+      text: "Planning failed: Claude is not connected",
+      action: { kind: "link", label: "Connect Claude", to: "/setup" },
+    });
+  });
+
+  /**
+   * Review of fix/progress-navigation: Home read "Planning failed: Planning from the brief needs
+   * a Claude key or subscription. Add one in the app: Settings → Accounts and keys → Open the
+   * setup assistant, then retry." (about 170 characters, the error in full) with no button, and
+   * "You rejected the plan. Nothing was written." with none either. Design §2 item 5, §3.3,
+   * §5.1: a short sentence (80 characters at most) and the one button that unblocks it. Fed
+   * with what the intake really records (`intakeFailureWords`), not a made-up error.
+   */
+  it("5. planning failed: a short reason and the one button that unblocks it; a rejected plan offers a new one", () => {
+    const line = (planError: string | null, hasModel: boolean | null, plan: PlanState = "failed") =>
+      projectStatusLine({
+        projectId: "p1",
+        tasks: [],
+        displays: new Map(),
+        cards: [],
+        plan,
+        planError,
+        hasModel,
+        working: null,
+        folder: null,
+      });
+    const noKey = intakeFailureWords(new ForerunnerError("unavailable", INTAKE_NEEDS_A_MODEL));
+    expect(noKey).toContain("needs a Claude key or subscription");
+    // No Claude now: Try again cannot work (the retry route refuses), so the button connects it.
+    expect(line(noKey, false)).toEqual({
+      kind: "planning_failed",
+      text: "Planning failed: Claude is not connected",
+      action: { kind: "link", label: "Connect Claude", to: "/setup" },
+    });
+    // Connected since: what happened then, and Try again drafts the plan now.
+    expect(line(noKey, true)).toEqual({
+      kind: "planning_failed",
+      text: "Planning failed: Claude was not connected",
+      action: { kind: "retry", label: "Try again", to: null },
+    });
+    // Whatever went wrong while Claude is connected: a short reason and Try again.
+    const provider = (providerCode: string) =>
+      new ForerunnerError("provider_error", "the planning call ended error: model call failed", {
+        details: { providerCode },
+      });
+    const cases: [unknown, string][] = [
+      [provider("provider_error"), "Planning failed: Claude did not answer"],
+      [provider("rate_limited"), "Planning failed: Claude was busy"],
+      [provider("network"), "Planning failed: Claude could not be reached"],
+      [new ForerunnerError("timeout", "planning timed out"), "Planning failed: it took too long"],
+      [
+        new ForerunnerError("budget_exceeded", "over budget"),
+        "Planning failed: it used up its budget",
+      ],
+      [new ForerunnerError("killed", "stopped"), "Planning failed: it was stopped"],
+      [
+        new ForerunnerError("validation", "intake: the answer is not a JSON object"),
+        "Planning failed: Claude's answer was not a plan",
+      ],
+      [
+        new ForerunnerError("validation", "intake: the proposal is malformed: tasks"),
+        "Planning failed: Claude's plan was incomplete",
+      ],
+    ];
+    for (const [error, text] of cases)
+      expect(line(intakeFailureWords(error), true)).toEqual({
+        kind: "planning_failed",
+        text,
+        action: { kind: "retry", label: "Try again", to: null },
+      });
+    // An error nobody worded: its first sentence, cut at a word to stay within 80 characters.
+    const long = line(
+      intakeFailureWords(
+        new Error(
+          `The repository host answered something nobody expected while the plan was being saved ${"and more ".repeat(20)}. Second sentence.`,
+        ),
+      ),
+      null,
+    );
+    expect(long.text.length).toBeLessThanOrEqual(80);
+    expect(long.text).toMatch(/^Planning failed: The repository host answered .*…$/);
+    expect(long.text).not.toContain("Second sentence");
+    expect(long.action).toEqual({ kind: "retry", label: "Try again", to: null });
+    // No reason recorded at all.
+    expect(line(null, true).text).toBe("Planning failed");
+    // Design §3.3: "You rejected the plan. Nothing was written. [Draft a new plan]".
+    expect(line(null, true, "rejected")).toEqual({
+      kind: "planning_failed",
+      text: "You rejected the plan. Nothing was written.",
+      action: { kind: "retry", label: "Draft a new plan", to: null },
+    });
+    expect(line(null, false, "rejected").action).toEqual({
+      kind: "link",
+      label: "Connect Claude",
+      to: "/setup",
+    });
+    for (const l of [line(noKey, false), line(noKey, true), line(null, true, "rejected")])
+      expect(l.text.length).toBeLessThanOrEqual(80);
   });
 
   it("6. every task done: 'Done: all 3 tasks. Your files: <path>' (cancelled ones not counted)", async () => {

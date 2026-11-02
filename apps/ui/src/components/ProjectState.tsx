@@ -1,9 +1,65 @@
+import { useState } from "react";
 import { Link } from "react-router";
-import type { ProjectCard } from "../api/client.ts";
+import { describeError, type ProjectCard } from "../api/client.ts";
+import { useClient, useUiStore } from "../store/context.tsx";
 import { Badge, Button, buttonClassName, healthTone } from "./ui.tsx";
 
 /** What a status's Continue does, said with the button (design §3.2). */
 export const CONTINUE_EXPLAIN = "Starts a session that works until nothing more can run.";
+/** What a failed or rejected plan's Try again / Draft a new plan does (design §3.3). */
+export const RETRY_PLAN_EXPLAIN = "The agent drafts the plan from your brief again.";
+
+/**
+ * Try again / Draft a new plan on a failed or rejected plan (design §3.3): the intake's retry
+ * (`POST /projects/:id/intake/retry`), then the card read again, so the row says "Drafting the
+ * plan…" at once; the daemon announces the draft's end, which the store follows. A refusal
+ * (no Claude) shows under the button in the daemon's words.
+ */
+function RetryPlanButton({
+  projectId,
+  label,
+  testId,
+}: {
+  projectId: string;
+  label: string;
+  testId: string;
+}) {
+  const client = useClient();
+  const store = useUiStore();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const retry = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.retryIntake(projectId);
+      store.dispatch({ type: "project.upsert", project: await client.project(projectId) });
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button
+        variant="primary"
+        onClick={() => void retry()}
+        disabled={busy}
+        title={RETRY_PLAN_EXPLAIN}
+        data-testid={testId}
+      >
+        {label}
+      </Button>
+      {error ? (
+        <span className="text-sm text-red-700 dark:text-red-300" data-testid={`${testId}-error`}>
+          {error}
+        </span>
+      ) : null}
+    </>
+  );
+}
 
 /**
  * A project's state in one sentence (design §2 "Project status"): the line the project header,
@@ -49,6 +105,8 @@ export function ProjectStatus({
         >
           {action.label}
         </Button>
+      ) : action?.kind === "retry" ? (
+        <RetryPlanButton projectId={project.id} label={action.label} testId={`${testId}-action`} />
       ) : action?.kind === "link" && action.to ? (
         <Link
           to={action.to}

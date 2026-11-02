@@ -11,7 +11,8 @@ import { holdsTask, shortTitle } from "./task-words.ts";
  * 2. "Working on "Style the page" (3 of 7 done)"
  * 3. "Stuck: "Style the page" failed; 4 tasks wait on it" / "Waiting for Docker: 1 task"
  * 4. "Ready to continue: 3 tasks ready"
- * 5. "Drafting the plan…" / "Planning failed: <reason>"
+ * 5. "Drafting the plan…" / "Planning failed: <short reason>" [Try again] / "You rejected the
+ *    plan. Nothing was written." [Draft a new plan]; without Claude the button is Connect Claude
  * 6. "Done: all 7 tasks. Your files: <path>"
  *
  * The pure part (`projectStatusLine`) takes what was read; `projectFacts` reads it.
@@ -43,6 +44,11 @@ export interface ProjectStatusInput {
   plan: PlanState;
   /** Why planning failed, in words (`summary_cache.intake.error`). */
   planError?: string | null;
+  /**
+   * Whether a Claude credential is in force now (the intake can call the model); null when not
+   * known. Without one, Try again cannot work, so the button is Connect Claude.
+   */
+  hasModel?: boolean | null;
   /** The session working on the project now, if one runs. */
   working: ProjectWorking | null;
   /** The project's folder (its workspace, or the linked folder or repository checkout). */
@@ -50,6 +56,69 @@ export interface ProjectStatusInput {
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Status sentence length (design §5 rule 1). */
+const STATUS_MAX = 80;
+const PLAN_FAILED = "Planning failed";
+/** Connect Claude: the setup assistant, as the header's no-key bar opens it (design §3.1). */
+const CONNECT_CLAUDE = { kind: "link", label: "Connect Claude", to: "/setup" } as const;
+
+/**
+ * The intake's reasons (`intakeFailureWords`, `INTAKE_NEEDS_A_MODEL`, the lost "Change the
+ * plan" draft) as a few words after "Planning failed: " (design §2 item 5, §5.1: the sentence
+ * stays within 80 characters; the project page's plan banner keeps the reason in full).
+ * `noModel` marks the reasons that are a missing Claude credential.
+ */
+const PLAN_FAILURE_SHORT: readonly { match: RegExp; short: string; noModel?: true }[] = [
+  {
+    match: /needs a Claude key or subscription|No Claude key or subscription|No Claude credential/i,
+    short: "Claude is not connected",
+    noModel: true,
+  },
+  { match: /^Claude did not answer/i, short: "Claude did not answer" },
+  { match: /^Claude was busy/i, short: "Claude was busy" },
+  { match: /^Claude could not be reached/i, short: "Claude could not be reached" },
+  { match: /took longer than its time limit/i, short: "it took too long" },
+  { match: /used up the budget/i, short: "it used up its budget" },
+  { match: /used all the steps/i, short: "it ran out of steps" },
+  { match: /was stopped before it finished/i, short: "it was stopped" },
+  { match: /not the JSON plan/i, short: "Claude's answer was not a plan" },
+  { match: /plan was missing parts/i, short: "Claude's plan was incomplete" },
+  { match: /Forerunner closed before it was done/i, short: "Forerunner closed before it was done" },
+];
+
+/**
+ * "Planning failed: <a few words>" with the button that unblocks it: Connect Claude while no
+ * credential is in force (the retry route refuses then), otherwise Try again (the intake's
+ * retry, `POST /projects/:id/intake/retry`). A reason nobody worded is its first sentence, cut
+ * at a word.
+ */
+function planFailedLine(
+  error: string | null | undefined,
+  hasModel: boolean | null | undefined,
+): ProjectStatusLine {
+  // "The run failed: " is how a task run's reason starts; here "Planning failed" says it.
+  const said = (error ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^The run failed:\s*/i, "");
+  const known = said ? PLAN_FAILURE_SHORT.find((r) => r.match.test(said)) : undefined;
+  let reason: string;
+  if (known?.noModel) reason = hasModel === true ? "Claude was not connected" : known.short;
+  else if (known) reason = known.short;
+  else if (hasModel === false) reason = "Claude is not connected";
+  else {
+    const first = (said.split(/(?<=[.!?])\s/)[0] ?? "").replace(/[.!?…]+$/, "");
+    const room = STATUS_MAX - PLAN_FAILED.length - 2;
+    reason = first.length > room ? `${first.slice(0, room - 1).replace(/\s+\S*$/, "")}…` : first;
+  }
+  return {
+    kind: "planning_failed",
+    text: reason ? `${PLAN_FAILED}: ${reason}` : PLAN_FAILED,
+    action:
+      hasModel === false ? { ...CONNECT_CLAUDE } : { kind: "retry", label: "Try again", to: null },
+  };
+}
 
 /** "3 of 7 done": tasks not cancelled, and the ones done. */
 export function progressOf(tasks: readonly Pick<TaskRow, "status">[]): {
@@ -141,16 +210,16 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
   if (input.plan === "drafting" && total === 0)
     return { kind: "planning", text: "Drafting the plan…", action: null };
   if (input.plan === "failed" && total === 0)
-    return {
-      kind: "planning_failed",
-      text: input.planError ? `Planning failed: ${input.planError}` : "Planning failed",
-      action: null,
-    };
+    return planFailedLine(input.planError, input.hasModel);
+  // Design §3.3: "You rejected the plan. Nothing was written. [Draft a new plan]".
   if (input.plan === "rejected" && total === 0)
     return {
       kind: "planning_failed",
       text: "You rejected the plan. Nothing was written.",
-      action: null,
+      action:
+        input.hasModel === false
+          ? { ...CONNECT_CLAUDE }
+          : { kind: "retry", label: "Draft a new plan", to: null },
     };
 
   // 6. Done.

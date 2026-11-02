@@ -124,6 +124,8 @@ export interface ProjectCardFacts {
   sandboxReady: boolean | null;
   plan?: (projectId: string) => Promise<{ state: PlanState; error: string | null }>;
   folder?: (project: ProjectRow) => string | null;
+  /** Whether a Claude credential is in force (a failed plan's button: Try again or Connect). */
+  hasModel?: boolean | null;
 }
 
 export async function projectCard(
@@ -169,6 +171,7 @@ export async function projectCard(
     cards,
     plan: plan.state,
     planError: plan.error,
+    hasModel: facts?.hasModel ?? null,
     working,
     folder,
   });

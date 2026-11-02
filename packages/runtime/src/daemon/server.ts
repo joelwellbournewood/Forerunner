@@ -840,6 +840,8 @@ export function createDaemonApp(
         }
       },
       folder: (project) => rt.docs.docsDirsFor(project)[0] ?? null,
+      // A failed plan's button: Try again while Claude is connected, else Connect Claude.
+      hasModel: !!rt.provider,
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });

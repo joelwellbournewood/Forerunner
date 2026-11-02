@@ -4232,12 +4232,27 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   the Start dialog); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
   files: <folder>"; then paused or draft work. The task words are `taskDisplay`'s, so the
   sentence and the Tasks tab never disagree.
+- A failed plan reads "Planning failed: <a few words>" within 80 characters (design §2 item 5,
+  §5.1; review of fix/progress-navigation: Home showed the intake's whole error, about 170
+  characters, with no button). `planFailedLine` maps the intake's reasons
+  (`intakeFailureWords`, `INTAKE_NEEDS_A_MODEL`, the lost "Change the plan" draft) through
+  `PLAN_FAILURE_SHORT` ("Claude did not answer", "it took too long", "Claude's answer was not a
+  plan", ...); a reason nobody worded is its first sentence cut at a word. The button is
+  `{kind: "retry", label: "Try again"}` (the UI posts `POST /projects/:id/intake/retry`), or
+  **Connect Claude** (a link to `/setup`) when `hasModel` is false: the card facts' `hasModel`
+  is `!!rt.provider`, and without a provider the retry route refuses. The missing-key reason
+  reads "Claude is not connected", or "Claude was not connected" once a key is in force. A
+  rejected plan reads "You rejected the plan. Nothing was written." with `retry` "Draft a new
+  plan". The project page's plan banner keeps the reason in full.
+- `IntakeDeps.onDrafted` (compose: `events.emit("project", …)`) announces the end of every
+  background draft, filed or failed, so Home and the header leave "Drafting the plan…"
+  without a reload (before, a failed draft was never announced).
 - `progress {done, total}` (cancelled tasks not counted), `working {sessionId, agentName,
   taskId, taskTitle, since}` (`workingOn`: the project's planned, running or paused session and
   its last `task.started` without a `task.finished`), and `folder`: the first of
   `ProjectDocs.docsDirsFor` (the linked folder, this install's checkout, the workspace).
 - The server passes `ProjectCardFacts` (`sandboxReady`, the intake's state and error, the
-  folder); `projectSummary` adds `next` (`overviewNext`: open tasks in run order with their
+  folder, `hasModel`); `projectSummary` adds `next` (`overviewNext`: open tasks in run order with their
   status words, running and ready first, at most three lines then "and N more") and
   `lastSession.changedFiles` (the last session's `task.files` events). The UI fake computes
   both with the same functions. Tests: `test/project-status.test.ts`, and the real-daemon case

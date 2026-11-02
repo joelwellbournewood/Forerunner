@@ -96,7 +96,7 @@ import {
   sandboxNextStep,
   sandboxWords,
 } from "@forerunner/runtime/sandbox/readiness-types";
-import { NO_MODEL_CHAT_REPLY } from "@forerunner/runtime/setup/no-model";
+import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
 import {
   acceptsAnswer,
   personQuestionsAnswer,
@@ -1238,6 +1238,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         })),
       plan: state.intake[p.id]?.state ?? null,
       planError: state.intake[p.id]?.error ?? null,
+      // As the daemon (`!!rt.provider`): `/me`'s provider, unknown when the fixture names none.
+      hasModel: me.provider === undefined ? null : me.provider !== null,
       working,
       folder,
     });
@@ -1320,7 +1322,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon: a failed, rejected (Draft a new plan) or never run intake is drafted again.
     if (current.state !== "failed" && current.state !== "none" && current.state !== "rejected")
       return c.json(current, 202);
+    // As the daemon: without a model the retry is refused before anything starts.
+    if (me.provider === null)
+      return c.json(
+        {
+          code: "unavailable",
+          message: `Planning from the brief needs a Claude key or subscription. Add one in the app: ${SETUP_ASSISTANT_PATH}, then retry.`,
+        },
+        503,
+      );
     state.intake[id] = { ...current, state: "drafting", requestId: null, error: null };
+    // As the daemon: the screens hear the project changed ("Drafting the plan…").
+    emit("project.changed", { id });
     return c.json(state.intake[id], 202);
   });
   app.get("/projects/:id/summary", (c) => {
