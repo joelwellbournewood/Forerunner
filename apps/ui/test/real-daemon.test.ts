@@ -5667,16 +5667,18 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
     expect((await client.sessions()).length).toBe(before);
   });
 
-  it("the session log names the specialist that runs: after two failed attempts '… takes over … from the coder', and the finished line and the drawer name the same one (later #75, U-044)", async () => {
+  it("the session log names the specialist that runs: after two failed attempts '… takes over … from the tester', and the finished line and the drawer name the same one (later #75, U-044)", async () => {
     // Before: the runner wrote task.started and task.finished with the plan's specialist, while
     // the executor handed the third attempt to another one inside its run ("The coder started …"
     // and "The coder finished …" for the migration specialist's work), with no "takes over".
+    // A stand-in never crosses the sign-off line ('answers', C-2), so the coder keeps its own
+    // tasks; the hand-over is shown with the tester's task, which the coder takes over.
     const project = await client.createProject({ name: "Ladder", goal: "Name who runs" });
     const task = await client.createTask(project.id, {
       title: "Ladder notes: write notes/ladder.md",
       outcome: "notes/ladder.md lists the steps",
       riskTier: 1,
-      specialist: "coder",
+      specialist: "tester",
     });
     bench.fail = ["Ladder notes"];
     bench.failTimes = 2;
@@ -5698,7 +5700,7 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
     const states = JSON.stringify(work.map((r) => [r.specialist, r.outcome]));
     expect(work.length, states).toBeGreaterThanOrEqual(3);
     const third = work[0];
-    expect(third?.specialist, states).not.toBe("coder");
+    expect(third?.specialist, states).not.toBe("tester");
     const events = (
       await Promise.all(
         [...new Set(work.map((r) => r.sessionId ?? ""))].map((id) => client.sessionEvents(id)),
@@ -5714,11 +5716,11 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
       JSON.stringify(mine("task.started").map((e) => e.payload)),
     ).toMatchObject({
       specialist: third?.specialist,
-      handedFrom: "coder",
+      handedFrom: "tester",
     });
     expect(lastStart?.audience).toBe("person");
     expect(lastStart?.text).toMatch(
-      / takes over "Ladder notes: write notes\/ladder\.md" from the coder\.$/,
+      / takes over "Ladder notes: write notes\/ladder\.md" from the tester\.$/,
     );
     expect(mine("task.finished").at(-1)?.payload).toMatchObject({ specialist: third?.specialist });
   }, 120_000);
@@ -5726,12 +5728,14 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
   it("after a hand-over, the stand-in's own failed attempt is told as the stand-in's: its 'could not do' line names who ran it (U-044, review of later #75)", async () => {
     // Before: the critic's line about the stand-in's run named the plan's specialist, right
     // under "The migration specialist takes over …": "The coder could not do …. Trying again."
+    // The hand-over is the tester's task to the coder (a stand-in never crosses the sign-off
+    // line, 'answers' C-2).
     const project = await client.createProject({ name: "Third ladder", goal: "Name who ran" });
     const task = await client.createTask(project.id, {
       title: "Third ladder: write notes/third.md",
       outcome: "notes/third.md lists the steps",
       riskTier: 1,
-      specialist: "coder",
+      specialist: "tester",
     });
     bench.fail = ["Third ladder"];
     bench.failTimes = 3;
@@ -5771,7 +5775,7 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
       };
     }
     expect(handOver, JSON.stringify(said)).not.toBeNull();
-    expect(handOver?.specialist).not.toBe("coder");
+    expect(handOver?.specialist).not.toBe("tester");
     // The stand-in's own attempt failed too (the third planted failure): the critic's line
     // about it names the stand-in, as the line above it did.
     expect(handOver?.verdict?.payload, JSON.stringify(said)).toMatchObject({

@@ -18,7 +18,7 @@ specialist's description only, never by what the task is.
 1. **Named before it runs.** The runner asks the executor which specialist the attempt runs with
    (`TaskExecutor.chooseSpecialist`) before it writes `task.started`; `task.started` names that
    specialist, with `handedFrom` the one that ran the task last (in this session or an earlier
-   one), and the person line reads "The migration specialist takes over "X" from the coder.".
+   one), and the person line reads "The coder takes over "X" from the tester.".
    `task.finished` names the specialist that ran (`TaskExecutionResult.specialist`, which also
    covers the web routing of ADR 0107). The executor's own `execute` decides the same way, so a
    caller that did not ask gets the same specialist.
@@ -37,9 +37,12 @@ specialist's description only, never by what the task is.
   `cc:Bash`), so the ranking by the task changes a choice only where two or more fit.
 - Test worlds that wrap the executor forward `chooseSpecialist` as compose does.
 - The critic still reviews the attempt with the plan item's specialist (its review floor and
-  whether the person signs off): a coder task the migration specialist takes over is reviewed as
-  the coder's task, as before this decision. Whether a stand-in's own floor should apply is left
-  open; applying it would turn a light review into a full one, which waits for Docker.
+  whether the person signs off). A stand-in never crosses the sign-off line (phase E 'answers',
+  C-2, `keepsSignoff` in `registry/alternates.ts`): an ordinary task never goes to `ops-deploy`
+  or the `migration-specialist` and a deploy or a migration never goes to an ordinary
+  specialist, so the plan item's floor and the stand-in's are of the same kind. Where only a
+  specialist across the line would fit (the coder and the migration specialist as shipped), the
+  specialist keeps the task and `task.started` names it, with no "takes over" line.
 
 ## Alternatives considered
 

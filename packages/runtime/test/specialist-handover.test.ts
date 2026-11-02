@@ -172,7 +172,9 @@ describe("the stand-in for a specialist (U-044)", () => {
 
   it("ranks the ones that fit by what the task is: a page task goes to the designer before the migration specialist (later #75)", () => {
     // Before, the stand-in was picked by tool coverage and the replaced specialist's words only,
-    // never by what the task is. Here both fit (same tools as the coder's).
+    // never by what the task is. Here both fit (same tools as the coder's). The ranking is read
+    // with `acrossSignoff` (the executor's second look), because the migration specialist is
+    // across the sign-off line from the coder and the ordinary pick never gets it (C-2, below).
     const coder = profile("coder");
     const sameTools = (name: string) => ({
       ...profile(name),
@@ -180,27 +182,39 @@ describe("the stand-in for a specialist (U-044)", () => {
       driverTools: coder.driverTools,
     });
     const candidates = [sameTools("migration-specialist"), sameTools("designer")];
+    const across = { acrossSignoff: true } as const;
     // Without the task: the migration specialist, closest to the coder's own words.
-    expect(alternateSpecialist(coder, candidates)?.name).toBe("migration-specialist");
+    expect(alternateSpecialist(coder, candidates, across)?.name).toBe("migration-specialist");
     const page = {
       title: "Write the page's markup in index.html",
       outcome: "index.html holds the page's markup and links styles.css",
     };
-    expect(alternateSpecialist(coder, candidates, { task: page })?.name).toBe("designer");
-    // A data-format task still goes to the migration specialist.
+    expect(alternateSpecialist(coder, candidates, { ...across, task: page })?.name).toBe(
+      "designer",
+    );
+    // A data-format task still ranks the migration specialist first.
     const schema = {
       title: "Move the notes to the new data format",
       outcome: "Every note is in the new schema, with a rollback",
     };
-    expect(alternateSpecialist(coder, candidates, { task: schema })?.name).toBe(
+    expect(alternateSpecialist(coder, candidates, { ...across, task: schema })?.name).toBe(
       "migration-specialist",
     );
+    // ...yet the ordinary pick never hands a coder's task across the sign-off line (C-2): the
+    // designer gets it, whatever the task's words.
+    expect(alternateSpecialist(coder, candidates, { task: schema })?.name).toBe("designer");
     // Which ones fit is still the tools: a designer without the coder's tools never gets it.
     expect(
       alternateSpecialist(coder, [sameTools("migration-specialist"), profile("designer")], {
+        ...across,
         task: page,
       })?.name,
     ).toBe("migration-specialist");
+    expect(
+      alternateSpecialist(coder, [sameTools("migration-specialist"), profile("designer")], {
+        task: page,
+      }),
+    ).toBeNull();
   });
 });
 

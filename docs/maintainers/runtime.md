@@ -2109,9 +2109,10 @@ The choice is made before the run is announced (ADR 0108, phase E later #75):
 `LoopTaskExecutor.chooseSpecialist` (the registry's name for the plan's, then the ladder's
 stand-in, `ladderStandIn`) is what the runner asks before it writes `task.started`, which names
 that specialist with `handedFrom` the one that ran the task last (`lastWorkSpecialist`, in this
-session or an earlier one; the person line "The migration specialist takes over "X" from the
-coder."), and `execute` passes it on; `task.finished`, `critic.review_failed` and
-`critic.verdict` (its "The migration specialist could not do … Trying again." line, the
+session or an earlier one; the person line "The coder takes over "X" from the tester."; a
+specialist the ladder keeps because only one across the sign-off line fits is named as itself),
+and `execute` passes it on; `task.finished`, `critic.review_failed` and
+`critic.verdict` (its "The coder could not do … Trying again." line for the stand-in's run, the
 `ranBy` of `reviewTask`) name `TaskExecutionResult.specialist` (set by `execute`, and by the web
 routing), as does the lesson of a resolved finding. Before, these lines named the plan item's
 specialist for the stand-in's work; the verdict's line still did after `task.started` was fixed
