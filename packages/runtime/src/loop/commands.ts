@@ -351,9 +351,10 @@ export class CommandLoop implements ConversationCommands {
    * the id the PC's watcher recorded in the row's result (`startId`) names the start, and a
    * result without one (a runner that records none) cannot be tied to a session, so that undo
    * is refused as such rather than stopping something by guesswork; a `failed` row never ran.
-   * A start the registry can still act on (a port that named the session) and a composed
-   * change (the start is one part; its undo is a no-op inside the whole) go to the executor
-   * as before.
+   * A start whose port named the session (the chat's start waits for its run) is checked by
+   * that session: still running, the executor stops it; ended, it is refused as above. A
+   * composed change (the start is one part; its undo is a no-op inside the whole) goes to the
+   * executor as before.
    */
   private async endedStart(
     changeLogId: string,
@@ -389,7 +390,7 @@ export class CommandLoop implements ConversationCommands {
    * Why the undo of a change that is one `session.start` cannot work now (`endedStart`), with
    * the code the refusal carries, and whether nothing is left to undo (`ended`: the start's
    * session ended, it never ran, or it cannot be tied to a session) rather than in flight. Null
-   * when it can, or when the executor decides (a port that named the session, a composed
+   * when it can, or when the executor decides (a named session that still runs, a composed
    * change, a row that is not undoable). Reads only: `endedStart` marks the row, and the change
    * log shows the reason in place of Undo (`undoBlocked`, later #36).
    */
@@ -406,7 +407,14 @@ export class CommandLoop implements ConversationCommands {
       row.after && typeof row.after === "object" && !Array.isArray(row.after)
         ? (row.after as JsonObject)
         : {};
-    if (typeof after.session_id === "string") return null;
+    // A start that waited for its run names its session ('answers', phase E: the chat's start
+    // and `POST /sessions`' way): while that session runs the executor's undo stops it; once it
+    // ended there is nothing to undo, as for a start found through the scheduler.
+    if (typeof after.session_id === "string") {
+      const session = await store.session.get(after.session_id);
+      if (session && LIVE_SESSION.has(session.status)) return null;
+      return { reason: SESSION_START_ENDED_REASON, code: "validation", ended: true };
+    }
     let startId = typeof after.start_id === "string" ? after.start_id : undefined;
     let reason = SESSION_START_ENDED_REASON;
     if (typeof after.remote_command_id === "string") {
@@ -561,6 +569,8 @@ export const SESSION_START_UNDO_REASON = "undo of session.start";
 /** What the undo of a `session.start` whose session already ended answers with. */
 export const SESSION_START_ENDED_REASON =
   "the session this start began has already ended; there is nothing to undo";
+/** The statuses of a session that still runs: an undo of its start stops it. */
+const LIVE_SESSION: ReadonlySet<string> = new Set(["planned", "running", "paused"]);
 /**
  * The undo of a phone's `session.start` while the PC has taken the remote row but not
  * recorded its result yet: refused for the moment, the row stays undoable.

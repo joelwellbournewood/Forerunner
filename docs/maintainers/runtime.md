@@ -2572,7 +2572,11 @@ is nothing to undo") and the row is marked `irreversible` (the Changes screen st
 offering it; no undo row is written). `CommandLoop.undoBlocked` asks the same check
 (`startUndoRefusal`, which only reads) for `GET /changes`, so a start whose session ended is
 `undoable: false` with that reason before anyone presses Undo (phase E, later #36: the row
-offered Undo and the click then said it could not); inside a composed change (the phone's "switch,
+offered Undo and the click then said it could not). A start whose port named its session
+(`after.session_id`: the chat's start waits for its run, phase E 'answers') is checked by
+that session's row: while it is planned, running or paused the executor's undo stops it; once
+it ended the undo is refused the same way (before the merge of both, such a row read
+undoable and its Undo stopped nothing); inside a composed change (the phone's "switch,
 budget, start") the start part is the no-op and the rest is undone. A start made with a
 phone's or web client's device id (the daemon's `POST /commands/execute` with `deviceId`)
 is a remote row the PC's `RemoteCommandWatcher` runs, so its change log row has
