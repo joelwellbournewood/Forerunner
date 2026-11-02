@@ -81,14 +81,14 @@ describe("a session's Update", () => {
         ["Write notes/todo.md", 'Add a "Quote of the day" header to index.html'],
       ),
     ).toBe('Quote page: did 1 task: "Create styles.css".');
-    // Only a card: the line that stays true, never the card's sentence cut short.
+    // Only a card: no Update, never the card's sentence cut short (the card is the news).
     expect(
       sessionUpdateLine(
         "Quote page",
         ['"Style the page in styles.css" needs your decision (Inbox).', "CHF 0.01."],
         ["Style the page in styles.css"],
       ),
-    ).toBe("Quote page: the session ended without finishing a task.");
+    ).toBeNull();
   });
 
   it("a long gist is cut at a word and its quotes stay closed", () => {
@@ -109,14 +109,16 @@ describe("a session's Update", () => {
     expect(line, line).not.toMatch(/\s…/);
   });
 
-  it("a session whose only news is a card says so in words that stay true; the person's own stop posts nothing", () => {
+  it("a session whose only news is a card posts no Update: the card in Needs you says it; the person's own stop posts nothing", () => {
+    // Phase E, C-32: "Quote page: the session ended without finishing a task." stood right
+    // under the card it did not name (design §5.10: one place per fact).
     expect(
       sessionUpdateLine(
         "Quote page",
         ['"Style the page" needs your decision (Inbox).', "CHF 0.01."],
         ["Style the page"],
       ),
-    ).toBe("Quote page: the session ended without finishing a task.");
+    ).toBeNull();
     expect(sessionUpdateLine("Quote page", ["CHF 0.00."], [])).toBeNull();
     expect(sessionUpdateLine("Quote page", ["Stopped by you. CHF 0.00."], [])).toBeNull();
   });

@@ -1042,9 +1042,10 @@ undo's start part is a no-op, the kill switch stays open, no Resume is pressed);
 phone's quick chat answered on the PC; Saturday a medium card asked by chat and answered "yes"
 in the phone's inbox, applied by the PC's drain. The report (`formatPhase5`) is printed and
 written to `FORERUNNER_E2E_REPORT_DIR` as `phase5-week.txt`. Each morning J reads the session's
-one-line Update (design §3.8: "<Project>: did 1 task: …", or "<Project>: the session ended
-without finishing a task." when a card is its only news); when none is there the gate's message
-names the session's result and the Inbox's lines.
+one-line Update (design §3.8: "<Project>: did 1 task: …"); a session whose only news is a card
+posts none, and J reads that card instead (open, filed by the session for one of its tasks;
+Tuesday's sign-off); when neither is there the gate's message names the session's result, the
+Inbox's lines and its cards.
 
 Measured on 2026-10-20 (fake provider, Linux, about 50 s with the daemons' approvals poll
 every simulated minute; 49.8 s, 51.8 s and 51.6 s for the file in the three runs below): 12
@@ -2511,7 +2512,7 @@ the runtime's own intake parser, plan writer and critic schema; the live wrapper
 provider), `packages/runtime/test/cli-daemon-provider.test.ts` (the live path end to end
 against a stub of the Messages API: prices, no part of the key), `scripts/bench-scripts.test.ts`
 (calls.mjs, the daemon's and setup's environment, a live start without a key, a daemon that exits,
-the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (one call, so the critic's read path runs on every review), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card.
+the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (one call, so the critic's read path runs on every review), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card. The stand-in reads two brief lines as the live model did (phase E #95, `briefAsRead`): a brief that still says "End the report with one line per lesson" gets the lesson line at the end of a report deliverable (report.md, evaluation.md, ...), and a writer whose brief does not mention scratch notes leaves a `notes.md` at the root; the brief's `LESSONS_CONSTRAINT` keeps both out, so the bench shows what the brief causes instead of passing by construction (`packages/runtime/test/lessons-out-of-deliverables.test.ts`).
 
 Known limits: the stand-in proves mechanics, never model quality; on the stand-in the setup
 assistant and Settings still say no Claude key is connected; the daemon gets a new token on

@@ -257,6 +257,13 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
     }
     case "session.ended": {
       const counts = endedCounts(p);
+      // The person's stop has its own line just before (`session.stopped`): this one says only
+      // what it adds, the counts that happened and the money (phase E, C-42: "Stopped by you
+      // during …" was followed by "Stopped by you: nothing done. CHF 0.00.").
+      if (p.stopSaid === true)
+        return counts
+          ? `Session over: ${counts}. ${chf("spentUsdMicro")}.`
+          : `Session over. ${chf("spentUsdMicro")}.`;
       const status = sessionStatusText(s("status"), s("stopReason"));
       const head = status === "Done" ? "Session over" : status;
       return `${head}: ${counts || "nothing done"}. ${chf("spentUsdMicro")}.`;

@@ -229,6 +229,9 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       expect(call?.effort).toBe("high");
       expect(JSON.stringify(call?.messages)).toContain("Sign-in first, then a dashboard.");
       expect(call?.tools ?? []).toHaveLength(0);
+      // The planner is told a reviewer's findings are its report (ADR 0109, phase E #96): the
+      // registry PM prompt the intake starts with carries the rule.
+      expect(call?.system).toMatch(/reviewer[^.]*no outcome or criterion that asks it to write/);
 
       const row = await rt.store.humanRequest.mustGet(requestId);
       expect(row).toMatchObject({

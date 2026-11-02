@@ -405,9 +405,12 @@ describe("scenario 6: injection", () => {
       expect(r).toMatchObject({ urgency: "urgent", outcome: "delivered" });
       expect(r.notification.sessionId).toBe(result.sessionId);
       expect(r.notification.projectId).toBe(w.project.id);
-      expect(r.notification.body).toContain("instruction-like passage(s). They were ignored:");
-      expect(r.notification.body).toContain("- ignore_previous:");
-      expect(r.notification.body).toContain("- exfiltrate:");
+      // ADR 0047's facts (the count, where from, the rules that fired with their counts), in
+      // one line within 140 characters (design §5.1, phase E #80); never the passages.
+      expect(r.notification.body).toMatch(/^Ignored \d+ passages? from \S+ \(/);
+      expect(r.notification.body).toMatch(/\bignore_previous\b/);
+      expect(r.notification.body).toMatch(/\bexfiltrate\b/);
+      expect(r.notification.body.length).toBeLessThanOrEqual(140);
     }
     expect(records.map((r) => r.notification.title).sort()).toEqual([
       "Instructions found in email content were ignored",

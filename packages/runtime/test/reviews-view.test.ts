@@ -62,6 +62,13 @@ describe("reviews view", () => {
       await finding(r2.id, closed.id, "README.md is empty");
       const s = await review(null, "revise");
       await finding(s.id, null, "Say in the summary what the spend bought");
+      // The session check's own words, as the critic package writes them (phase E #80: the
+      // Reviews tab's Session checks read "1 of the 2 task(s)").
+      await finding(
+        s.id,
+        null,
+        "Summary claims 2 task(s) done but 1 of the 2 task(s) the session planned or ran are done",
+      );
 
       const view = await reviewsView(w.store, { projectId: w.project });
       expect(view.openFindings).toBe(1);
@@ -78,6 +85,11 @@ describe("reviews view", () => {
       const one = view.reviews[0];
       expect(one?.evidence).toEqual(["[unmet] styles.css exists", "ran: node --check script.js"]);
       expect(one?.summary).toBe("Sent back for rework: 2 findings.");
+      const words = view.reviews.flatMap((r) => r.findings.map((f) => f.description));
+      expect(words).toContain(
+        "Summary claims 2 tasks done but 1 of the 2 tasks the session planned or ran are done",
+      );
+      for (const d of words) expect(d).not.toMatch(/\(s\)/);
     } finally {
       await w.close();
     }

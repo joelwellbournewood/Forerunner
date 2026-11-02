@@ -744,9 +744,9 @@ describe("producers", () => {
     });
     // A long title shortens the names in it at a word, never what happened.
     expect(done.title).toBe('Quote page: did 2 tasks: "Create…" and "Write script.js"');
-    expect(done.body).toBe(
-      'Did 2 tasks: "Create index.html" and "Write script.js". Nothing left. CHF 0.20. Open the session for the details.',
-    );
+    // The body says what the title does not: the title's sentence is never said twice (phase
+    // E #89: a one-line result was the title and then the body again).
+    expect(done.body).toBe("Nothing left. CHF 0.20. Open the session for the details.");
     const stop = producers.sessionEnded("h-1", { ...facts, stopReason: "budget_exceeded" });
     expect(stop.kind).toBe("budget_stop");
     // CHF (U-074): the ledger's figure when the facts carry it, else the default rate.

@@ -406,6 +406,12 @@ export interface SessionResult {
   spentChfMicro?: number;
   steps: number;
   summary: string;
+  /**
+   * The result's lines without what an open Inbox card already says (`sessionResultLines(f,
+   * told)`): what the Update and the session-end notification carry, so the person hears each
+   * thing once (design §4.3, §5.10). Empty or only money and stops: nothing to tell.
+   */
+  news: string[];
   handoff: Record<string, unknown>;
   stopReason: string;
   /** What the human said during the session and the task each line reached (spec O.9). */
@@ -2154,19 +2160,18 @@ export class SessionRunner {
     // A task the person paused or stopped (the Tasks tab's Pause and Stop: needs_human by
     // them, no card) waits on nobody: it is "Paused by you", not a decision in the Inbox
     // (design §2), and their own click is not news (§5.11).
+    const openCards = project
+      ? await store.humanRequest.list({ status: "open", project_id: project.id } as never, {
+          limit: 1000,
+        })
+      : [];
     const carded = new Set(
-      project
-        ? (
-            await store.humanRequest.list({ status: "open", project_id: project.id } as never, {
-              limit: 1000,
-            })
-          )
-            // A card that asks nothing of its task (the project's Docker card) does not hold
-            // it: a task the person paused while one was open is "Paused by you" (wave 2).
-            .filter((r) => holdsTask(r))
-            .map((r) => r.task_id)
-            .filter((id): id is string => Boolean(id))
-        : [],
+      openCards
+        // A card that asks nothing of its task (the project's Docker card) does not hold
+        // it: a task the person paused while one was open is "Paused by you" (wave 2).
+        .filter((r) => holdsTask(r))
+        .map((r) => r.task_id)
+        .filter((id): id is string => Boolean(id)),
     );
     const pausedByYou = (id: string) => {
       const row = endState.rows.get(id);
@@ -2199,7 +2204,7 @@ export class SessionRunner {
       stopReason,
       spentChfMicro: spentChf,
     };
-    const resultLines = sessionResultLines({
+    const resultFacts = {
       outcome,
       inReview: inReviewNow.map(named),
       leftOutForBudget: (plan?.leftOutForBudget ?? [])
@@ -2213,8 +2218,19 @@ export class SessionRunner {
       openTasks: endState.openTasks,
       mergedPrs: merges.filter((m) => m.status === "merged").length,
       openPrs: merges.filter((m) => m.status !== "merged").length,
-    });
+    };
+    const resultLines = sessionResultLines(resultFacts);
     const summary = resultLines.join("\n");
+    // What the session says beyond its cards (design §4.3, §5.10: the person hears once): each
+    // open card was notified when it was filed and stands in the Inbox's Needs you, so the
+    // Update and the session-end notification leave out what a card says (the session page and
+    // the Overview keep the whole result). Before, one failed task was told by its card, by the
+    // session end's '"X" needs your decision' and by an Update under the card (phase E, #87).
+    const news = sessionResultLines(resultFacts, {
+      tasks: carded,
+      docker: openCards.some((r) => !holdsTask(r)),
+      plan: true,
+    }).filter((l) => l.trim().length > 0);
     // Project docs (spec G.5): the PM's status update into docs/status.md, on Forerunner's own
     // status branch and pull request, never on a task's reviewed one (ADR 0106); in a project's
     // folder it is committed with the session's work. A session that touched no task writes
@@ -2489,7 +2505,7 @@ export class SessionRunner {
       !inReviewNow.length;
     const update = sessionUpdateLine(
       project?.name ?? null,
-      resultLines,
+      news,
       outcome.needsYou.map((t) => t.title),
     );
     if (
@@ -2588,6 +2604,12 @@ export class SessionRunner {
             ...(sessionReview.verdict === "human"
               ? { escalation: true, warning: "the session review needs the human" }
               : {}),
+            // The card the critic filed for it is the one notification (design §4.3): the
+            // daemon tells an escalation only when no request of its own was filed. Without
+            // the id, a session review that asked the person was told twice.
+            ...(sessionReview.humanRequestId
+              ? { humanRequestId: sessionReview.humanRequestId }
+              : {}),
           },
           sessionReview.costUsdMicro,
         );
@@ -2607,6 +2629,10 @@ export class SessionRunner {
     await emit("session.ended", {
       status: finalStatus,
       stopReason,
+      // The person's stop was said by its own line (`session.stopped`): the end line after it
+      // says only what it adds (phase E, C-42: "Stopped by you during …" then "Stopped by you:
+      // nothing done. CHF 0.00.").
+      ...(personStop ? { stopSaid: true } : {}),
       spentUsdMicro: spent,
       completed: completed.length,
       inReview: inReview.length,
@@ -2656,6 +2682,7 @@ export class SessionRunner {
       spentChfMicro: spentChf,
       steps: budget.snapshot().steps,
       summary,
+      news,
       handoff,
       stopReason,
       heard,

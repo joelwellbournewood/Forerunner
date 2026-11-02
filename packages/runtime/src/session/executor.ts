@@ -138,6 +138,14 @@ const WEB_SEARCH_CC = `${CLAUDE_CODE_PREFIX}WebSearch`;
 export const NO_WEB_ACCESS_LINE =
   "This run has no web access: work from the files in the project and the sources this brief gives. If the task cannot be done without reading the web, stop and say so in the report.";
 
+/**
+ * The brief's line for lessons and scratch notes (phase E #95): lessons go in the final message,
+ * where the runner reads them, never in a deliverable; nothing the specialist only needed while
+ * working stays in the project, since every file there is part of the work the person opens.
+ */
+export const LESSONS_CONSTRAINT =
+  "Lessons go only in your final message, never in a file: end that message with one line per lesson worth keeping, as 'Lesson: ...'. Leave no scratch notes in the project: every file you leave there is part of the work.";
+
 /** The brief's line for a researcher on an API key: pages by address, no search (ADR 0107). */
 export const NO_WEB_SEARCH_LINE =
   "Web search is not available on this run: read web pages by their address with web_fetch (the sources the brief names, the official site or documentation of what you research, pages those link to), and cite each page you use by its address.";
@@ -747,7 +755,11 @@ export class LoopTaskExecutor implements TaskExecutor {
         // ADR 0104: the brief says how the work is checked, and it is true for every task.
         HOW_WORK_IS_CHECKED,
         TESTS_FOR_BEHAVIOUR,
-        "End the report with one line per lesson worth keeping, as 'Lesson: ...'.",
+        // Live walk 4 (2026-11-02): "End the report with one line per lesson" made a
+        // data-analyst and a science-evaluator, whose deliverable is a report, write their
+        // lessons into report.md and evaluation.md, and a writer left a scratch notes.md at the
+        // project's root. Lessons are read from the final message only (`lessonsFromReport`).
+        LESSONS_CONSTRAINT,
         // U-022: the person is the one who can answer; a specialist never guesses for them.
         `If the acceptance criteria need answers only the person can give (a choice of stack, hosting, repository, domain, an account), do not guess: call ${ASK_PERSON_TOOL} with the questions when it is offered, else end the report with "Questions for the person:" and one question per line.`,
         ...retryConstraints(task.attempt, openFindings, { kept: keptByLadder }),

@@ -449,14 +449,37 @@ describe("notifications wired into the daemon", () => {
     expect((logged as Json).audience).toBe("detail");
   });
 
-  it("a critic escalation on the bus is a critic_verdict raised to normal; one that filed a request is left to the request path", async () => {
+  it("a critic escalation that hands work to the person without a request is a critic_verdict raised to normal; a retry one rung up is not news; one that filed a request is left to the request path", async () => {
+    // A retry one rung up is an attempt inside the session (design §4.3: the person hears
+    // once, by the card after the last attempt). Before, it was told as "a task goes to a
+    // stronger model", then the card, then the session end (phase E #87).
+    const rungUp = rt.notifier.recent({ humanId: rt.human.id, limit: 200 }).length;
+    rt.events.emit("session", {
+      type: "critic.verdict",
+      payload: {
+        taskId: "task-0",
+        reviewId: "review-0",
+        verdict: "revise",
+        decision: "retry",
+        retry: "escalate",
+        grade: 40,
+        escalation: true,
+        summary: "The tests do not cover the new branch.",
+      },
+      agentId: rt.agent.id,
+      projectId,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(rt.notifier.recent({ humanId: rt.human.id, limit: 200 }).length).toBe(rungUp);
+
     const pending = nextRecord("critic_verdict");
     rt.events.emit("session", {
       type: "critic.verdict",
       payload: {
         taskId: "task-1",
         reviewId: "review-1",
-        verdict: "escalate",
+        verdict: "revise",
+        decision: "human",
         grade: 40,
         escalation: true,
         summary: "The tests do not cover the new branch.",
@@ -469,7 +492,7 @@ describe("notifications wired into the daemon", () => {
     // Design §5, "Notification": the project and what happened, never "Critic: escalate".
     expect(record.notification).toMatchObject({
       kind: "critic_verdict",
-      title: "Demo: a task goes to a stronger model",
+      title: "Demo: the critic sent a task back",
       body: "The tests do not cover the new branch. Open Reviews for the details.",
       link: `/projects/${projectId}/reviews`,
       dedupeKey: "review:review-1",

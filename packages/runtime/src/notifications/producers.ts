@@ -11,6 +11,7 @@ import { requestWords } from "../daemon/request-words.ts";
 import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
 import type { InjectionReport } from "../injection/scan.ts";
+import { isNewsLine } from "../session/result.ts";
 import type { Notification, NotificationRecord } from "./types.ts";
 
 /*
@@ -127,6 +128,12 @@ export interface SessionEndFacts {
   status: string;
   stopReason: string;
   summary: string;
+  /**
+   * The result's lines without what an open Inbox card already says (the runner's
+   * `SessionResult.news`): the notification tells these, the cards tell the rest (design
+   * §4.3: the person hears once). Absent: the summary's lines.
+   */
+  news?: string[];
   spentUsdMicro: number;
   /** The spend in CHF (the ledger's conversion); the title says CHF (U-074). */
   spentChfMicro?: number;
@@ -149,39 +156,86 @@ function chfMicroOf(usdMicro: number, rate: number = DEFAULT_CHF_PER_USD): numbe
   return usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate);
 }
 
+/** A text's non-empty lines, trimmed. */
+const linesOf = (text: string): string[] =>
+  text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
 /**
- * What a session's result says first, short, for the title: its first line ("\"Style the page\"
- * needs your decision (Inbox).", "Did 2 tasks: ...", "Stopped by you.") without the Inbox
+ * A result's first point and what follows it: the first sentence of its first line ("Did 2
+ * tasks: …", "\"Style the page\" needs your decision (Inbox).", "Stopped by you.") and the rest
+ * of the lines. The title says the first, the body only the rest: a body never repeats its
+ * title (phase E #89: a one-line result was the title and then the body again).
+ */
+function splitResult(lines: readonly string[]): { first: string; rest: string } {
+  const head = lines[0] ?? "";
+  // A sentence ends at ". " outside quotes: a title in quotes may hold a dot ("index.html").
+  let end = -1;
+  let quoted = false;
+  for (let i = 0; i < head.length; i++) {
+    const ch = head[i];
+    if (ch === '"') quoted = !quoted;
+    else if (!quoted && /[.!?]/.test(ch ?? "") && (i === head.length - 1 || head[i + 1] === " ")) {
+      end = i;
+      break;
+    }
+  }
+  const first = end < 0 ? head : head.slice(0, end + 1);
+  const rest = [head.slice(first.length).trim(), ...lines.slice(1)].filter(Boolean).join(" ");
+  return { first, rest };
+}
+
+/**
+ * What a session's result says first, short, for the title: its first point without the Inbox
  * pointer, which the body says.
  */
-function resultGist(summary: string): string {
-  const first = (summary.split("\n").find((l) => l.trim()) ?? "").trim();
-  const gist = /^(.+?[.!?])(\s|$)/.exec(first)?.[1] ?? first;
-  const g = gist.replace(/\s*\(Inbox\)/g, "").replace(/[.\s]+$/, "");
+function resultGist(first: string): string {
+  const g = first.replace(/\s*\(Inbox\)/g, "").replace(/[.\s]+$/, "");
   return /^(Did|Nothing|Stopped|The)\b/.test(g) ? g.charAt(0).toLowerCase() + g.slice(1) : g;
+}
+
+/** Stops the person made: Stop now ("you"), Stop all and Quit. */
+const PERSON_STOPS = new Set(["you", "stop_all", "quit"]);
+
+/**
+ * Whether a session's end is a notification of its own (design §4.3, §5.10, §5.11: the person
+ * hears once and is not echoed). A budget stop always is (urgent). The person's own stop is
+ * not: Stop now is their click (the session page says "Stopped by you"), and Stop all and Quit
+ * have the kill switch's urgent notification. Otherwise only news is: what the result says
+ * beyond the open cards (each told when it was filed), more than money, how it ended or what
+ * waits. Before, one failed task was told by its card and again by the session end, and Stop
+ * now sent "Quote page: stopped by you" back to the person who pressed it.
+ */
+export function sessionEndIsNews(r: SessionEndFacts): boolean {
+  if (r.stopReason === "budget_exceeded") return true;
+  if (PERSON_STOPS.has(r.stopReason)) return false;
+  return (r.news ?? linesOf(r.summary)).some(isNewsLine);
 }
 
 /**
  * Session end (spec E.5 "notify human"); a budget stop becomes the urgent `budget_stop`. The
  * title is the project and the result's first point ("Quote page: did 2 tasks: …"); the body the
- * result's next sentence and where to look.
+ * rest of the result and where to look, never the title again. With `news`, what an open card
+ * says is left out (the card was told when it was filed); `sessionEndIsNews` says whether to
+ * send it at all.
  */
 export function sessionEnded(humanId: string, r: SessionEndFacts): Notification {
   if (r.stopReason === "budget_exceeded") return budgetStop(humanId, r);
-  const needsYou = r.needsHuman.length > 0 || (r.failed?.length ?? 0) > 0;
-  const lines = r.summary
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const gist = resultGist(r.summary) || (r.completed.length ? "session done" : "session ended");
+  const lines = r.news ? r.news.map((l) => l.trim()).filter(Boolean) : linesOf(r.summary);
+  const { first, rest } = splitResult(lines);
+  // "Answer it in the Inbox" only when the words name something the person must answer: with
+  // `news`, the cards were told on their own.
+  const asks = r.news
+    ? lines.some((l) => /\bInbox\b/.test(l))
+    : r.needsHuman.length > 0 || (r.failed?.length ?? 0) > 0;
+  const gist = resultGist(first) || (r.completed.length ? "session done" : "session ended");
   return {
     kind: "session_ended",
     humanId,
     title: titled(r.projectName, gist),
-    body: bodyOf(
-      lines.slice(1).join(" ") || lines[0] || "",
-      needsYou ? "Answer it in the Inbox." : "Open the session for the details.",
-    ),
+    body: bodyOf(rest, asks ? "Answer it in the Inbox." : "Open the session for the details."),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,
     sessionId: r.sessionId,
@@ -189,14 +243,23 @@ export function sessionEnded(humanId: string, r: SessionEndFacts): Notification 
   };
 }
 
-/** A session hit its cap and stopped with a handoff (scenario 5). */
+/**
+ * A session hit its cap and stopped with a handoff (scenario 5). The title says the stop and
+ * the spend; the body what the result adds (what was done, what is left), never "The session's
+ * budget is used" or the money again.
+ */
 export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
   const chf = r.spentChfMicro ?? chfMicroOf(r.spentUsdMicro);
+  const said = (r.news ?? linesOf(r.summary))
+    .join(" ")
+    .replace(/The session's budget is used\.\s*/g, "")
+    .replace(/\s*CHF \d+\.\d{2}\.\s*$/, "")
+    .trim();
   return {
     kind: "budget_stop",
     humanId,
     title: titled(r.projectName, `stopped, the budget is used (${formatChf(chf)} spent)`),
-    body: bodyOf(r.summary.split("\n")[0] ?? "", "Start a session with a larger budget to go on."),
+    body: bodyOf(said, "Start a session with a larger budget to go on."),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,
     sessionId: r.sessionId,
@@ -250,16 +313,36 @@ export function criticVerdict(
  * The report's summary for a notification body: where the content came from, how many
  * instruction-like passages the scan found and which rules fired, never the passages
  * themselves (ADR 0047: a notification travels through channels the flagged text must not
- * reach; the quoted passages stay in the session log the link opens).
+ * reach; the quoted passages stay in the session log the link opens). One line within the
+ * body's 140 characters (design §5.1): the origin is shortened first (to its host), then the
+ * rule list ("and 2 more"); the count and the first rules stay. The source is the title's.
+ * Before (phase E #80): "Content from … (web_page) contained 3 instruction-like passage(s).
+ * They were ignored:" and one line per rule and the score, up to 1000 characters.
  */
 export function summarizeInjection(report: InjectionReport, origin?: string): string {
-  const where = origin ? ` from ${origin}` : "";
+  const total = report.matches.length;
   const counts = new Map<string, number>();
   for (const m of report.matches) counts.set(m.rule, (counts.get(m.rule) ?? 0) + 1);
-  const lines = [...counts]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([rule, n]) => `- ${rule}: ${n} passage${n === 1 ? "" : "s"}`);
-  return `Content${where} (${report.source}) contained ${report.matches.length} instruction-like passage(s). They were ignored:\n${lines.join("\n")}\nScore ${report.score}; open the session log to read them.`;
+  // The rules that fired most first; a count only where a rule fired more than once.
+  const rules = [...counts]
+    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
+    .map(([rule, n]) => (n > 1 ? `${rule} (${n})` : rule));
+  const action = "Open the session to read them.";
+  const build = (from: string | undefined, shown: number) => {
+    const listed = shown
+      ? `${rules.slice(0, shown).join(", ")}${rules.length > shown ? ` and ${rules.length - shown} more` : ""}`
+      : `${rules.length} ${rules.length === 1 ? "rule" : "rules"}`;
+    return `Ignored ${total} ${total === 1 ? "passage" : "passages"}${from ? ` from ${from}` : ""} (${listed}). ${action}`;
+  };
+  const whole = build(origin, rules.length);
+  if (whole.length <= NOTIFICATION_BODY_MAX) return whole;
+  const host = origin ? /^[a-z][\w+.-]*:\/\/([^/?#]+)/i.exec(origin)?.[1] : undefined;
+  const short = host ?? (origin ? cut(origin, 40) : undefined);
+  for (let shown = rules.length; shown >= 0; shown--) {
+    const text = build(short, shown);
+    if (text.length <= NOTIFICATION_BODY_MAX) return text;
+  }
+  return cut(build(undefined, 0), NOTIFICATION_BODY_MAX);
 }
 
 /**
@@ -276,7 +359,7 @@ export function injectionFlagged(
     kind: "injection_flagged",
     humanId,
     title: `Instructions found in ${report.source} content were ignored`,
-    body: cut(summarizeInjection(report, opts.origin), 1000),
+    body: summarizeInjection(report, opts.origin),
     link: opts.sessionId ? `/sessions/${opts.sessionId}` : "/inbox",
     projectId: opts.projectId ?? undefined,
     sessionId: opts.sessionId,

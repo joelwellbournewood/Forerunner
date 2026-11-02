@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -2744,13 +2744,14 @@ const ONE_PIXEL_PNG = Buffer.from(
 describe("the UI client against the real daemon: nothing is Done without the right check (ADR 0104)", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;
+  let bench: BenchOptions;
   const tries: TryPagesRequest[] = [];
 
   beforeAll(async () => {
     // The try port stands in for the headless browser (its own test drives a real Chromium):
     // it stores a screenshot where the daemon keeps them and says what a person would see.
     let evidenceRoot = "";
-    ({ rt, client } = await composeWithRolePlayer(
+    ({ rt, client, bench } = await composeWithRolePlayer(
       { FORERUNNER_BENCH_ASK: "Members chart", FORERUNNER_BENCH_MISSING: "Members chart" },
       {
         tryIt: {
@@ -2830,6 +2831,41 @@ describe("the UI client against the real daemon: nothing is Done without the rig
     // Nothing outside the task's own evidence folder is served.
     for (const bad of ["../../runtime/daemon.json", `${file}/../../x.png`, "x.png"])
       await expect(client.taskEvidence(page.id, bad)).rejects.toMatchObject({ status: 404 });
+  }, 60_000);
+
+  it("a task keeps only its latest review's screenshots: a review sent back and tried again replaces the first try's (phase E, C-20)", async () => {
+    // Before, every review's screenshots stayed under <data>/evidence/<task>/<review>/ for
+    // good (Redo and Try again added more); the drawer shows the latest review only.
+    const project = await client.createProject({ name: "About page", goal: "An about page" });
+    const page = await client.createTask(project.id, {
+      title: "Build about.html with the club's history",
+      outcome: "about.html tells the club's history in two paragraphs",
+      riskTier: 0,
+      specialist: "coder",
+    });
+    // The critic sends the first attempt back once, so the page is tried twice.
+    bench.reject = ["Build about.html"];
+    bench.rejectTimes = 1;
+    try {
+      await runSession(project.id);
+    } finally {
+      bench.reject = [];
+    }
+    const ofTask = tries.filter((t) => t.taskId === page.id);
+    expect(ofTask.length, JSON.stringify(ofTask.map((t) => t.reviewKey))).toBe(2);
+    const [first, latest] = ofTask;
+    expect((await client.tasks(project.id)).find((t) => t.id === page.id)?.status).toBe("done");
+    // On disk: the latest review's folder only.
+    expect(readdirSync(join(evidenceRootOf(rt.dirs), page.id))).toEqual([latest?.reviewKey]);
+    // The drawer still opens the latest review's screenshot; the first try's is gone.
+    const detail = await client.task(page.id);
+    const file = detail.review?.evidence?.tried?.[0]?.screenshots[0]?.file ?? "";
+    expect(file).toBe(`${latest?.reviewKey}/index-1280.png`);
+    const shot = await client.taskEvidence(page.id, file);
+    expect(Buffer.from(shot.base64, "base64").equals(ONE_PIXEL_PNG)).toBe(true);
+    await expect(
+      client.taskEvidence(page.id, `${first?.reviewKey}/index-1280.png`),
+    ).rejects.toMatchObject({ status: 404 });
   }, 60_000);
 
   it("a data task whose input file is missing, answered Go ahead without: it ends waiting for you with a card that asks for the file, never Done", async () => {

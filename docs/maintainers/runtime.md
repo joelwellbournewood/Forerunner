@@ -2077,6 +2077,13 @@ Proportional verification (ADR 0104, `src/loop/verification.ts`, `project-checks
   `@forerunner/capabilities` `browser.tryPages` with screenshots under
   `<data>/evidence/<task>/<review key>/` (`evidenceRootOf`), served back by
   `GET /tasks/:id/evidence?file=` (`evidenceFileOf` refuses anything outside the task's folder).
+  A task keeps only its latest review's screenshots, which the drawer shows: compose wraps
+  whichever try port it has so `keepOnlyThisTry` removes the task's other review folders
+  before each try (a retry, Try again and Redo replace them; before, phase E C-20, every
+  review's 30-60 KB per screenshot stayed for good). A project cannot be deleted, so its
+  evidence lives as long as its tasks; uninstall treats `<data>` as the person's data. Test:
+  `apps/ui/test/real-daemon.test.ts` (a review sent back and tried again leaves one folder;
+  the drawer's screenshot is served and the first try's is 404).
 - **Questions for the person.** A report with a "Questions for the person:" list is never
   accepted (the critic package's `ASKS_PERSON_RULE`); the loop files the report's questions as
   one card (`askPersonInstead`), quoting the specialist's own words (`quotedWords`), and the
@@ -2396,7 +2403,17 @@ The budget is enforced in code twice (the package cuts to it, the runner drops a
 it: `memory.over_budget`). `LoopTaskExecutor` loads lessons for the task text under
 `settings.task_memory_token_budget` (default 400) into the specialist's brief, tagged with
 the specialist's name. At session end `record` stores, in the agent's private memory, the
-`Lesson: ...` lines of the specialists' reports (`lessonsFromReport`), the critic findings
+`Lesson: ...` lines of the specialists' final messages (`lessonsFromReport` reads the run's
+final text, never a file). The brief says so in one line (`LESSONS_CONSTRAINT` in
+`session/executor.ts`): "Lessons go only in your final message, never in a file … Leave no
+scratch notes in the project: every file you leave there is part of the work." Before (phase
+E #95, live walk 4), "End the report with one line per lesson" made the data-analyst and the
+science-evaluator, whose deliverable is a report, end report.md and evaluation.md with
+"Lesson:" lines, and the writer-marketing registry entry asked for a `notes.md` beside the
+copy (it now asks for those notes in its final report). `test/lessons-out-of-deliverables.test.ts`
+runs a data-analyst and a writer on the bench's stand-in, which reads the brief as the live
+model did, and asserts the Files tab's report.md and docs/copy.md hold no "Lesson:" line, no
+notes.md is left and the lesson is in memory. Also stored: the critic findings
 the rework resolved (the finding row's description and required action), and the decisions
 the human answered since the last session; the package merges near duplicates. Every
 candidate first passes the injection gate (`src/session/lessons.ts`, `screenLessons`: the
@@ -3306,10 +3323,14 @@ Producers are bound to the real sources in `compose.ts`: `store.humanRequest.ins
 once, so every request this human receives (the hooks' approvals, the extension registry, the
 mirror, the Cloudflare deployer, the critic, the updater) raises `requestOpened` (urgent when
 blocking) and `inbox` on the bus; `startSession` reports the runner's result through
-`sessionEnded` (a budget stop becomes `budget_stop`); `KillSwitch.onStop` passes the report and
+`sessionEnded` when `sessionEndIsNews` (its `news`: the result without what an open card says;
+not after the person's own stop; a budget stop becomes `budget_stop` and is always told;
+`notifications.md`, "Hearing once"); `KillSwitch.onStop` passes the report and
 the reason to `killSwitch`; the restarter's `restart` event raises `updateApplied` for an update
-or a rollback; `critic.verdict` and `critic.session_review` bus events with `escalation: true`
-and no `humanRequestId` raise `criticVerdict` at normal urgency, with the session id (and the
+or a rollback; `critic.verdict` events that hand the task to the person and
+`critic.session_review` bus events with `escalation: true`
+and no `humanRequestId` raise `criticVerdict` at normal urgency (a retry one rung up is not
+told: design §4.3), with the session id (and the
 task id, grade and summary when the payload lacks them) from the review row `reviewId` names,
 so the delivery is logged on that session like the session-end one. Failures to notify are
 logged (`notification not sent`) and never fail the producing operation. Routes, mounted at the
@@ -3506,10 +3527,17 @@ one audit row `injection.flagged` (`INJECTION_FLAGGED_AUDIT`, `allowed: true`: t
 ignored, nothing was refused; the session, run, agent, human, the tool and source in
 `input_summary`, the passage count, rules and score in `result_summary`) and one urgent
 notification through `notifications.injectionFlagged` with the run's session and project.
-The producer's body (`summarizeInjection`) names the origin, the source, the number of
-passages and the rules with their counts, never the passages: they are in the tool call's own
-audit row and the session log the notification links to. Failures to notify are logged, never
-fail the run.
+The producer's title names the source and its body (`summarizeInjection`) the number of
+passages, the origin and the rules that fired (a count beside a rule that fired more than
+once), never the passages: they are in the tool call's own audit row and the session log the
+notification links to. The body is one line within 140 characters ("Ignored 4 passages from
+email_read (approval_bypass, exfiltrate, ignore_previous, new_identity). Open the session to
+read them."): a long origin is shortened to its host first, then the rule list ends in "and 2
+more". Before (phase E #80) it was "Content from … (web_page) contained 4 instruction-like
+passage(s). They were ignored:", one line per rule and the score, up to 1000 characters.
+Failures to notify are logged, never fail the run. The Reviews tab's finding words are read
+like its summaries (`findingView`: plurals as the number says, no ids), so the session check's
+"1 of the 2 task(s)" reads "1 of the 2 tasks".
 
 `server.ts` is the HTTP surface the desktop, Android and web shells talk to. Hono, bound to
 `127.0.0.1` only; every request carries `Authorization: Bearer <token>` compared with
@@ -4703,7 +4731,11 @@ carry `title`, `task.finished` also `specialist`; `eventViews` fills both in fro
 (`cutAtWord`), and "could not do" for a run whose report says it could not do the work although
 its outcome is "done" ("The writer could not do "Style the page": "The work needs something I
 do not have here""). `session.ended` names the counts that happened only ("Session over: 2 done,
-1 needs you. CHF 0.06."; "Stopped: Stop all: nothing done. CHF 0.00."); a task sent back and then
+1 needs you. CHF 0.06."; "Stopped: Stop all: nothing done. CHF 0.00."); after a stop the
+person made, whose own `session.stopped` line came just before (the runner sets `stopSaid`), it
+says only what it adds ("Session over: 1 done. CHF 0.02.", "Session over. CHF 0.00."): before
+(phase E, C-42) 'Stopped by you during "X". It is ready again.' was followed by "Stopped by
+you: nothing done. CHF 0.00.". A task sent back and then
 accepted in the same session counts as done only (the runner's `sentBackNow`). The
 `notification` line names what was sent and never the channels ("telegram skipped (no Telegram
 chat id)": delivery problems are not the session's news). `describeEvent` passes every line
@@ -4725,13 +4757,18 @@ evidence listed the prompt hash and the run id.
 ### The session's Update (design §3.8, §5.10, §5.11)
 
 `sessionUpdateLine` (`session/result.ts`) gives the Inbox one line of news per session, or
-null: a decision waiting in the Inbox is the card's to say (its sentence is left out, so the
-Update neither repeats the card beside it nor goes stale once it is answered), and a line that
-is only money, how the session ended or what waits is no news. A session whose only news is a
-card still has its line, worded to stay true once the card is answered ("Quote page: the
-session ended without finishing a task."); one whose only task the person stopped posts no
-Update (before: "<Project>: CHF 0.00." and '"X" needs your decision (Inbox).' beside the
-card). The card's sentence is removed as written: the runner passes the titles of the tasks
+null: what an open card says is the card's to say, and a line that is only money, how the
+session ended or what waits is no news (`isNewsLine`). The runner builds the Update from
+`SessionResult.news`, the result computed with `sessionResultLines(f, told)` where `told`
+holds the tasks an open card is about (`holdsTask`), whether the project's Docker card is open
+and the plan card: a waiting decision, a failed task with its card and a Docker wait with its
+card are left out, so the Update neither repeats the card beside it nor goes stale once it is
+answered. The session-end notification tells the same news (`notifications.md`, "Hearing
+once"). A session whose only news is its cards posts no Update: before (phase E, C-32) it read
+"Quote page: the session ended without finishing a task." right under the card it did not
+name. One whose only task the person stopped posts none either (before: "<Project>: CHF
+0.00." and '"X" needs your decision (Inbox).' beside the card). The card's sentence is also
+removed as written from lines given directly: the runner passes the titles of the tasks
 that need the person and `needsYouSentence` builds the exact sentence the result has. A regex
 up to the previous dot cut it at the dot of a file name in the title, and the Update read
 'Quote page: "Style the page in styles.' (review of fix/system-text). A gist over 160

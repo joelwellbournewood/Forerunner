@@ -950,8 +950,11 @@ export function findingView(f: FindingRow): FindingView {
     reviewId: f.review_id,
     taskId: f.task_id,
     severity: f.severity,
-    description: f.description,
-    requiredAction: f.required_action,
+    // Read as the review's summary is: plurals as the number says, no ids (design §5 rule 6;
+    // phase E #80: the session check's findings read "1 of the 2 task(s)"). The row keeps the
+    // critic's own text, which the fingerprints are computed from.
+    description: plainPlurals(withoutIds(f.description)),
+    requiredAction: plainPlurals(withoutIds(f.required_action)),
     status: f.status,
     resolvedByRun: f.resolved_by_run,
     fingerprint: f.fingerprint,

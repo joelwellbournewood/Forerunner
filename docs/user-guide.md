@@ -176,7 +176,9 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   styles.css"). The critic's run is marked as the review; a review that was stopped says so and
   who stopped it), the critic's review in words
   with **See what was checked** (the project's checks with their output, each page tried with
-  what it showed and its screenshots, and anything that could not be run or tried, and why),
+  what it showed and its screenshots, and anything that could not be run or tried, and why;
+  the screenshots are kept in Forerunner's data folder under `evidence`, only those of the
+  task's latest review: a new review replaces them),
   its pull request, and **Edit**
   (the wording, priority, budget, review level and who does it; for example a full-review task
   waiting for Docker can go to a light review, except a deploy or a data migration, which keeps
@@ -351,6 +353,14 @@ decision (Inbox); "Add script.js" failed: Claude did not answer), then what was 
 tasks: ...), then how it ended and what is next ("Nothing left.", "Left for next time: ...",
 "2 tasks wait on it.") with the cost in CHF. The Inbox gets one line per session naming the
 project; the full result is on the project.
+
+**You hear about each thing once.** A task that needs your answer, failed after its retries or
+waits for Docker has its card in the Inbox, and the card's notification is the one you get
+about it: the tries inside the session are not announced, and the session's own notification
+and its Inbox line say only what the cards do not (for example "did 2 tasks: …"). A session
+whose only news is a card sends nothing of its own. When you press **Stop now** yourself, no
+notification comes back to tell you; the session page says "Stopped by you". Stop all, Quit
+and a session that used up its budget are still announced.
 
 **Full-review tasks wait for Docker.** A task with a full review runs its tests and builds in
 the Docker sandbox, isolated from your computer, so the critic sees real results. While the
