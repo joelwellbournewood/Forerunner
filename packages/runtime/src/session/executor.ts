@@ -45,6 +45,7 @@ import {
 import {
   HOW_WORK_IS_CHECKED,
   outcomeCriterion,
+  signoffReasonOf,
   TESTS_FOR_BEHAVIOUR,
 } from "../loop/verification.ts";
 import {
@@ -383,6 +384,8 @@ export function gitConstraints(
 export function retryConstraints(
   attempt: number,
   openFindings: readonly { severity: string; description: string; required_action: string }[],
+  /** `kept`: the second rung kept the specialist (no stand-in of its kind), nothing was handed over. */
+  opts: { kept?: boolean } = {},
 ): string[] {
   const lines: string[] = [];
   // The "findings below" line only when findings follow (design §4.6): a retry after an error
@@ -396,7 +399,9 @@ export function retryConstraints(
       attempt === 1
         ? "retry 1 of the ladder: the brief was improved with the critic's findings below"
         : attempt === 2
-          ? "retry 2 of the ladder: two attempts by another specialist failed and the task was handed to you; keep the scope small and say in the report what should be split off if it does not fit"
+          ? opts.kept
+            ? "retry 2 of the ladder: your two previous attempts failed; keep the scope small and say in the report what should be split off if it does not fit"
+            : "retry 2 of the ladder: two attempts by another specialist failed and the task was handed to you; keep the scope small and say in the report what should be split off if it does not fit"
           : attempt >= ESCALATE_AFTER_ATTEMPTS
             ? `retry ${attempt} of the ladder: this run is escalated one model rung under the project ceiling; after this the human decides`
             : `retry ${attempt} of the ladder`;
@@ -528,6 +533,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     // gave the task to after those attempts (no run of it yet) keeps it. With no stand-in the
     // task waits for the person: a third run of the same brief by the same specialist could
     // only spend money.
+    let keptByLadder = false;
     if (task.attempt > 0 && retryAction(task.attempt, "sonnet") === "split_or_change_specialist") {
       const tried = new Set((await store.run.forTask(task.id)).map((r) => r.specialist));
       if (tried.has(defaultSpec.name)) {
@@ -535,19 +541,40 @@ export class LoopTaskExecutor implements TaskExecutor {
           exclude: tried,
         });
         const next = pick ? this.deps.specialists(pick.name) : undefined;
-        if (!next) {
+        // Phase E review (C-2): a stand-in never crosses the sign-off line (`keepsSignoff`):
+        // where only a specialist of the other kind could take it over (the coder and the
+        // migration-specialist with the shipped registry), the specialist keeps the task and
+        // the ladder goes on (the brief carries what failed; the next rung escalates the model).
+        // Its stored review level, its sandbox and its sign-off stay what the task is.
+        const across = next
+          ? null
+          : alternateSpecialist(profileOf(defaultSpec), this.profiles(), {
+              exclude: tried,
+              acrossSignoff: true,
+            });
+        if (!next && across) {
+          const kind = signoffReasonOf(defaultSpec.name) ?? signoffReasonOf(across.name);
+          keptByLadder = true;
+          this.deps.onEvent?.(task.id, {
+            type: "warning",
+            message: signoffReasonOf(defaultSpec.name)
+              ? `after ${task.attempt} failed attempts by the ${defaultSpec.name}, the ${defaultSpec.name} tries again: the only specialist that could take it over, the ${across.name}, does not keep ${kind}'s full review and your sign-off`
+              : `after ${task.attempt} failed attempts by the ${defaultSpec.name}, the ${defaultSpec.name} tries again: the only specialist that could take it over, the ${across.name}, is for ${kind}, which keeps the full review and your sign-off`,
+          });
+        } else if (!next) {
           return {
             outcome: "needs_human",
             summary: `${task.attempt} attempts by the ${defaultSpec.name} failed, and the retry ladder now hands the task to another specialist, but none can do what the ${defaultSpec.name} does, so nothing ran. Split the task into smaller tasks (New task on the Tasks tab) and cancel this one, or cancel it.`,
             costUsdMicro: 0,
           };
+        } else if (next) {
+          this.deps.onEvent?.(task.id, {
+            type: "warning",
+            message: `after ${task.attempt} failed attempts by the ${defaultSpec.name}, the retry ladder hands this task to the ${next.name} (split or change specialist)`,
+          });
+          item = { ...item, specialist: next.name };
+          defaultSpec = next;
         }
-        this.deps.onEvent?.(task.id, {
-          type: "warning",
-          message: `after ${task.attempt} failed attempts by the ${defaultSpec.name}, the retry ladder hands this task to the ${next.name} (split or change specialist)`,
-        });
-        item = { ...item, specialist: next.name };
-        defaultSpec = next;
       }
     }
 
@@ -654,7 +681,7 @@ export class LoopTaskExecutor implements TaskExecutor {
         "End the report with one line per lesson worth keeping, as 'Lesson: ...'.",
         // U-022: the person is the one who can answer; a specialist never guesses for them.
         `If the acceptance criteria need answers only the person can give (a choice of stack, hosting, repository, domain, an account), do not guess: call ${ASK_PERSON_TOOL} with the questions when it is offered, else end the report with "Questions for the person:" and one question per line.`,
-        ...retryConstraints(task.attempt, openFindings),
+        ...retryConstraints(task.attempt, openFindings, { kept: keptByLadder }),
       ],
       // The critic reviews against the same criterion (live2 #8: a generic one was "met").
       acceptanceCriteria: task.acceptance_criteria.length

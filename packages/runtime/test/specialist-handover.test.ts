@@ -55,6 +55,8 @@ async function world(opts: {
   specialist: string;
   /** Specialists that already ran the task (one Run row each). */
   ranBy?: string[];
+  /** The task's stored review level (its risk tier). */
+  riskTier?: number;
 }) {
   const h = harness();
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
@@ -77,6 +79,7 @@ async function world(opts: {
     attempt: opts.attempt,
     specialist: opts.specialist,
     budget_usd_micro: 2_000_000,
+    ...(opts.riskTier !== undefined ? { risk_tier: opts.riskTier } : {}),
   });
   for (const s of opts.ranBy ?? [])
     await store.run.insert({
@@ -141,8 +144,19 @@ describe("the stand-in for a specialist (U-044)", () => {
     const pick = (from: string, d: SpecialistDriver) =>
       alternateSpecialist(profile(from, d), d === "loop" ? loop : sdk)?.name ?? null;
     for (const d of ["loop", "sdk"] as const) {
-      expect(pick("coder", d)).toBe("migration-specialist");
-      expect(pick("migration-specialist", d)).toBe("coder");
+      // A deploy or a data migration keeps the full review and the person's sign-off (the
+      // owner's decision 4, ADR 0104), decided by who does it: no stand-in crosses that line.
+      // The migration-specialist alone has the coder's tools, so neither stands in for the
+      // other (phase E review: a coder's task handed over ran on the host while its row read
+      // "Full review", and a migration handed to the coder lost its sign-off).
+      expect(pick("coder", d)).toBeNull();
+      expect(pick("migration-specialist", d)).toBeNull();
+      expect(pick("ops-deploy", d)).toBeNull();
+      expect(
+        alternateSpecialist(profile("coder", d), d === "loop" ? loop : sdk, {
+          acrossSignoff: true,
+        })?.name,
+      ).toBe("migration-specialist");
       expect(pick("tester", d)).toBe("coder");
       expect(pick("designer", d)).toBe("writer-marketing");
       expect(pick("writer-marketing", d)).toBe("designer");
@@ -152,30 +166,74 @@ describe("the stand-in for a specialist (U-044)", () => {
     }
     // The ones that already ran the task are left out.
     expect(
-      alternateSpecialist(profile("coder"), loop, { exclude: new Set(["migration-specialist"]) }),
+      alternateSpecialist(profile("tester"), loop, { exclude: new Set(["coder"]) }),
     ).toBeNull();
   });
 });
 
 describe("the retry ladder's second rung changes the specialist (U-044)", () => {
-  it("after two failed attempts by the coder, the next run is the migration-specialist's", async () => {
+  it("after two failed attempts by the tester, the next run is the coder's", async () => {
+    const w = await world({
+      specialists: loopSpecs,
+      names,
+      attempt: 2,
+      specialist: "tester",
+      ranBy: ["tester", "tester"],
+    });
+    expect(w.result.outcome).toBe("done");
+    expect(w.runs.map((r) => r.specialist)).toEqual(["coder"]);
+    // The task now names its new specialist, so a later rung keeps it.
+    expect((await w.store.task.mustGet(w.task.id)).specialist).toBe("coder");
+    expect(w.events.join("\n")).toContain(
+      "after 2 failed attempts by the tester, the retry ladder hands this task to the coder",
+    );
+    // The brief tells the new specialist where it stands.
+    expect(w.provider.calls[0]?.messages[0]?.content as string).toContain(
+      "two attempts by another specialist failed and the task was handed to you",
+    );
+  });
+
+  it("the coder's task stays the coder's, at its review level: the only specialist with its tools is for data migrations, which keep the person's sign-off (phase E review, C-2)", async () => {
     const w = await world({
       specialists: loopSpecs,
       names,
       attempt: 2,
       specialist: "coder",
       ranBy: ["coder", "coder"],
+      riskTier: 1,
     });
+    // The rung goes on with the coder (the brief carries what failed; the next rung escalates
+    // the model), rather than waiting for the person with a Try again that could only repeat
+    // the same refusal.
     expect(w.result.outcome).toBe("done");
-    expect(w.runs.map((r) => r.specialist)).toEqual(["migration-specialist"]);
-    // The task now names its new specialist, so a later rung keeps it.
-    expect((await w.store.task.mustGet(w.task.id)).specialist).toBe("migration-specialist");
-    expect(w.events.join("\n")).toContain(
-      "after 2 failed attempts by the coder, the retry ladder hands this task to the migration-specialist",
+    expect(w.runs.map((r) => r.specialist)).toEqual(["coder"]);
+    const after = await w.store.task.mustGet(w.task.id);
+    expect(after.specialist).toBe("coder");
+    expect(after.risk_tier).toBe(1);
+    expect(w.events).toContain(
+      "after 2 failed attempts by the coder, the coder tries again: the only specialist that could take it over, the migration-specialist, is for a data migration, which keeps the full review and your sign-off",
     );
-    // The brief tells the new specialist where it stands.
-    expect(w.provider.calls[0]?.messages[0]?.content as string).toContain(
-      "two attempts by another specialist failed and the task was handed to you",
+    expect(w.events.join("\n")).not.toContain("hands this task to");
+    expect(w.provider.calls[0]?.messages[0]?.content as string).not.toContain(
+      "the task was handed to you",
+    );
+  });
+
+  it("a migration stays the migration-specialist's: it is never handed to the coder, so the sign-off stays (phase E review)", async () => {
+    const w = await world({
+      specialists: loopSpecs,
+      names,
+      attempt: 2,
+      specialist: "migration-specialist",
+      ranBy: ["migration-specialist", "migration-specialist"],
+      riskTier: 2,
+    });
+    expect(w.runs.map((r) => r.specialist)).toEqual(["migration-specialist"]);
+    const after = await w.store.task.mustGet(w.task.id);
+    expect(after.specialist).toBe("migration-specialist");
+    expect(after.risk_tier).toBe(2);
+    expect(w.events).toContain(
+      "after 2 failed attempts by the migration-specialist, the migration-specialist tries again: the only specialist that could take it over, the coder, does not keep a data migration's full review and your sign-off",
     );
   });
 

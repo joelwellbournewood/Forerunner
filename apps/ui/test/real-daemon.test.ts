@@ -34,6 +34,7 @@ import {
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
+import { reviewLevelName, reviewLevelValue } from "../src/lib/task-actions.ts";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
 /**
@@ -4932,9 +4933,12 @@ describe("the UI client against the real daemon: answers do what the person said
   let rt: RuntimeApp;
   let client: DaemonClient;
   let chatCalls: ModelRequest[];
+  let bench: BenchOptions;
 
   beforeAll(async () => {
-    ({ rt, client, chatCalls } = await composeWithRolePlayer({ FORERUNNER_BENCH_PERSON: "1" }));
+    ({ rt, client, chatCalls, bench } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_PERSON: "1",
+    }));
   }, 120_000);
   afterAll(async () => {
     await rt?.close();
@@ -5201,6 +5205,60 @@ describe("the UI client against the real daemon: answers do what the person said
     for (const t of rows.filter((r) => r.specialist === "ops-deploy"))
       expect(t.riskTier, t.title).toBe(2);
   }, 60_000);
+
+  it("a coder's task the retry ladder retries stays the coder's at the level it is stored and run at: never a migration's full review and sign-off on the host (phase E review, C-2)", async () => {
+    const project = await client.createProject({ name: "Notes ladder", goal: "A notes CLI" });
+    const task = await client.createTask(project.id, {
+      title: "Build the notes CLI in src/notes.js",
+      outcome: "node src/notes.js add and list notes",
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    // Nothing of the cases before may still run: this start must begin at once.
+    await eventually(
+      async () => (await client.sessions({})).every((s) => s.status !== "running"),
+      "the sessions of the cases before to end",
+      async () => (await client.sessions({})).map((s) => s.status).join(", "),
+      30_000,
+    );
+    bench.fail = ["Build the notes CLI"];
+    try {
+      const started = await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () =>
+          (await client.session(started.session?.id ?? "")).status !== "running" &&
+          (await client.task(task.id)).task.status !== "in_progress",
+        "the session to run the task's attempts and end",
+        async () => `${(await client.task(task.id)).task.status}`,
+        60_000,
+      );
+    } finally {
+      bench.fail = [];
+    }
+    const detail = await client.task(task.id);
+    const work = detail.runs.filter((r) => r.kind === "work");
+    // Every attempt (the ladder ran past its second rung) was the coder's.
+    expect(work.length, JSON.stringify(work)).toBeGreaterThanOrEqual(3);
+    expect(new Set(work.map((r) => r.specialist))).toEqual(new Set(["coder"]));
+    // At the store and on the row: the coder's task at the light review it was created at.
+    const stored = await rt.store.task.mustGet(task.id);
+    expect(stored.specialist).toBe("coder");
+    expect(stored.risk_tier).toBe(1);
+    const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
+    expect(row?.specialist).toBe("coder");
+    expect(reviewLevelName(reviewLevelValue(row?.riskTier ?? 0, row?.specialist))).toBe(
+      "Light review",
+    );
+    // One card after the retries, about the task (me: the Inbox's own list).
+    const openCards = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    const cards = await openCards();
+    expect(cards.map((c) => c.taskId)).toEqual([task.id]);
+  }, 90_000);
 
   it("'start a session' in the chat waits for the run and links the session it started", async () => {
     const project = await client.createProject({ name: "Quote chat", goal: "A quote page" });

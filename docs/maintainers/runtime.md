@@ -2095,9 +2095,10 @@ ceiling allows (`tierForAttempt`). The second rung, "split or change specialist"
 code, not a line in the brief: at `retryAction(task.attempt) === "split_or_change_specialist"`
 the executor reads the task's Run rows and, when the planned specialist already ran it, hands
 the run to `alternateSpecialist` (`src/registry/alternates.ts`, below), patches the task's
-`specialist` (so the third rung escalates the stand-in) and says so in a run warning; with no
-stand-in the task returns `needs_human` ("none can do what the coder does ... split the task
-or cancel it") and nothing runs. A specialist the person gave the task to after the failures
+`specialist` (so the third rung escalates the stand-in) and says so in a run warning; where the
+only stand-in is across the sign-off line (below) the specialist keeps the task and the ladder
+goes on; with no stand-in at all the task returns `needs_human` ("none can do what the tester
+does ... split the task or cancel it") and nothing runs. A specialist the person gave the task to after the failures
 (no run of it yet) keeps it. Before U-044 the same specialist ran the same brief again.
 Only a runner composed without a critic (an engine test world) closes a tier 0 task on its
 run ("tier 0: automated checks only"); the daemon always composes one, so every task is
@@ -4304,9 +4305,21 @@ every new specialist goes through review. The composition root turns registry en
 { exclude, requireWeb })` names the specialist that takes a task over: one whose registry tools
 cover `from`'s and whose tools on the run's driver cover `from`'s there, ranked by the words its
 description shares with `from`'s less the tools it has on top, then fewer extra tools, then the
-name; null when none fits. As shipped: coder and migration-specialist stand in for each other,
-tester goes to coder, designer and writer-marketing to each other, data-analyst to
-science-evaluator; researcher and science-evaluator have none. `SpecialistSpec` carries the
+name; null when none fits. A stand-in never crosses the sign-off line (`keepsSignoff`, the
+owner's decision 4, ADR 0104): an ordinary task never goes to `ops-deploy` or the
+`migration-specialist`, and a deploy or a migration never goes to an ordinary specialist,
+because the critic's floor, the sign-off and the stored level (`riskTierFor`) all follow who
+does the work (phase E review: a coder's task handed to the migration-specialist got a
+migration's full review and sign-off while it ran on the host at the light review, and a
+migration handed to the coder lost its sign-off). As shipped: tester goes to coder, designer
+and writer-marketing to each other, data-analyst to science-evaluator; coder, ops-deploy,
+migration-specialist, researcher and science-evaluator have none. Where only a specialist of
+the other kind fits (`acrossSignoff: true` finds one: the coder and the migration-specialist),
+the executor keeps the specialist at the second rung, logs why ("the coder tries again: the
+only specialist that could take it over, the migration-specialist, is for a data migration,
+which keeps the full review and your sign-off") and the brief says "your two previous attempts
+failed" (`retryConstraints(..., { kept })`); the ladder goes on to its next rung. With no fit
+of either kind the task waits for the person as before. `SpecialistSpec` carries the
 entry's `description` and `registryTools` (`allowed_tools` as written) for it. The executor
 uses it at the ladder's second rung (above) and for web work. **Web work (ADR 0107):** on the
 loop driver `cc:WebFetch` is `web_fetch` (the composition registers it unless
