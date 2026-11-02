@@ -492,6 +492,13 @@ export class PrTaskExecutor implements TaskExecutor {
         continue;
       }
       const r = await git.mergeFrom(ref, `Build on "${dep.title}" (pull request #${dep.number})`);
+      // A merge that failed with no conflicting file is no conflict between the pull requests
+      // (git refused for another reason): git's words, as any other git failure.
+      if (!r.ok && r.conflicts.length === 0)
+        throw new ForerunnerError(
+          "provider_error",
+          `git could not bring in the work of "${dep.title}" (pull request #${dep.number}): ${r.detail.split(/\r?\n/)[0] ?? ""}`,
+        );
       if (!r.ok)
         return {
           ok: false,

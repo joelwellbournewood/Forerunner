@@ -183,7 +183,9 @@ with their milestone.
   `needs_human` before the inner executor runs, with `dependencyConflictWords` ("The work it
   builds on conflicts: "B" (pull request #2) and "A" (pull request #1) both change index.html.
   Merge them on GitHub, resolving the conflict, then press Try again."), which the runner's
-  "could not run" card carries; nothing is dropped silently. A task with nothing unmerged
+  "could not run" card carries; nothing is dropped silently (a merge git refuses with no
+  conflicting file, such as local changes in the way, fails the run with git's words). A task
+  with nothing unmerged
   before it has no `DEPS_BASE_REF` (an old one is removed) and works as before. A rebase conflict pushes the branch as it is (so the person can fetch
   and resolve it; the steps name the worktree when the push fails) and becomes a blocking
   `decision` request (`change_card.key` `REBASE_CONFLICT_KEY`, the branch, base, files and
