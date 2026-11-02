@@ -26,8 +26,10 @@ import {
   heldKey,
   installStandIn,
   isAppUrl,
+  noSecondWindow,
   pageErrorsCheck,
   pageErrorText,
+  pageTargetCount,
   parseArgs,
   parseExcludedPortRanges,
   parseHandoffs,
@@ -1021,6 +1023,46 @@ describe("Ctrl- and Shift-clicked links, and what the page threw", () => {
     expect(clickSeenWords(synthetic, "Control")).toBe(
       "the page saw a click that did not come from the input path",
     );
+  });
+
+  it("never takes a window list it could not read for no second window", async () => {
+    const list = [
+      { type: "page", url: "http://tauri.localhost/" },
+      { type: "service_worker", url: "http://tauri.localhost/sw.js" },
+      { type: "iframe", url: "about:blank" },
+    ];
+    const one = await pageTargetCount(async () => list);
+    expect(one).toEqual({ count: 1 });
+    const two = await pageTargetCount(async () => [
+      ...list,
+      { type: "page", url: "http://tauri.localhost/" },
+    ]);
+    expect(two).toEqual({ count: 2 });
+    const failed = "GET http://127.0.0.1:9222/json: fetch failed";
+    const unread = await pageTargetCount(async () => {
+      throw new Error(failed);
+    });
+    expect(unread).toEqual({ count: null, error: failed });
+
+    expect(noSecondWindow(one, one)).toEqual({ ok: true, words: "1 page target(s), 1 before" });
+    expect(noSecondWindow(one, two)).toEqual({ ok: false, words: "2 page target(s), 1 before" });
+    // Both reads failed: the checks passed this as "0 page target(s), 0 before".
+    expect(noSecondWindow(unread, unread)).toEqual({
+      ok: false,
+      words: `could not tell whether a second window opened: the window's page targets could not be read before the click (${failed}) or after it (${failed})`,
+    });
+    expect(noSecondWindow(one, unread)).toEqual({
+      ok: false,
+      words: `could not tell whether a second window opened: the window's page targets could not be read after it (${failed})`,
+    });
+    expect(noSecondWindow(unread, one)).toMatchObject({ ok: false });
+
+    // The Ctrl-, Shift- and in-app Ctrl+click checks count with these, and no read of the
+    // window's list turns a failure into an empty one.
+    const script = readFileSync(join(REPO, "scripts", "desktop-window-check.mjs"), "utf8");
+    expect(script.match(/noSecondWindow\(windowsBefore, await pageTargets\(\)\)/g)).toHaveLength(2);
+    expect(script).not.toMatch(/listTargets\([^)]*\)\s*\.catch\(\s*\(\)\s*=>\s*\[\]\s*\)/);
+    expect(script).not.toMatch(/page target\(s\), \$\{windowsBefore\} before/);
   });
 
   it("the shell builds the opener plugin without its page script, so these clicks reach its new-window handler", () => {

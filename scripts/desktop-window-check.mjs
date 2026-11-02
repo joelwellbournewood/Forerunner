@@ -1157,6 +1157,45 @@ export function clickSeenWords(seen, key) {
 }
 
 /**
+ * How many page targets the window's DevTools list has, or `null` and why when it could not
+ * be read. A list that could not be read is never 0 pages: the "no second window" part of a
+ * link check must not pass on a count it never saw.
+ * @param {() => Promise<Array<{ type?: string }>>} read `listTargets` on the window's endpoint
+ * @returns {Promise<{ count: number | null, error?: string }>}
+ */
+export async function pageTargetCount(read) {
+  try {
+    const list = await read();
+    return { count: list.filter((t) => t.type === "page").length };
+  } catch (error) {
+    return { count: null, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * "No second window" for a click: as many page targets after it as before. When either count
+ * could not be read the check cannot tell, and that fails it.
+ * @param {{ count: number | null, error?: string }} before
+ * @param {{ count: number | null, error?: string }} after
+ * @returns {{ ok: boolean, words: string }}
+ */
+export function noSecondWindow(before, after) {
+  const unread = [
+    before.count === null ? `before the click (${before.error ?? "no answer"})` : "",
+    after.count === null ? `after it (${after.error ?? "no answer"})` : "",
+  ].filter(Boolean);
+  if (unread.length > 0)
+    return {
+      ok: false,
+      words: `could not tell whether a second window opened: the window's page targets could not be read ${unread.join(" or ")}`,
+    };
+  return {
+    ok: after.count === before.count,
+    words: `${after.count} page target(s), ${before.count} before`,
+  };
+}
+
+/**
  * Two spellings of one folder: on Windows case and `/` versus `\` do not matter; a trailing
  * separator never does.
  * @param {string} a
@@ -1773,11 +1812,9 @@ async function main() {
 
     // The window's page targets: a link must never open a second window (it would have no
     // daemon token). In a browser (--attach) a modified click opens a tab, so only the shell
-    // is held to it.
-    const pageTargets = async () =>
-      (await listTargets(cdpBase, { timeoutMs: 10_000 }).catch(() => [])).filter(
-        (t) => t.type === "page",
-      ).length;
+    // is held to it. A list that cannot be read fails that part (`noSecondWindow`).
+    const pageTargets = () => pageTargetCount(() => listTargets(cdpBase, { timeoutMs: 10_000 }));
+    const notCounted = { count: null, error: "not counted (--attach)" };
 
     // Ctrl+click and Shift+click on a link that leaves the app, with no target, as
     // ExternalLink renders it in the shell (the PR link, "Get Docker Desktop"): the webview
@@ -1793,18 +1830,18 @@ async function main() {
       await page.evaluate(injectLinkScript(id, target, ""));
       await page.evaluate(ARM_CLICK_PROBE);
       offset = logSize(shellLog);
-      const windowsBefore = shellMode ? await pageTargets() : 0;
+      const windowsBefore = shellMode ? await pageTargets() : notCounted;
       const before = await page.url();
       await page.getByTestId(id).click({ modifiers: [key] });
       await backToPage();
       const seen = await page.evaluate(READ_CLICK_PROBE).catch(() => null);
       if (shellMode) {
         const h = await handoffSince(offset, (x) => x.kind === "browser" && x.target === target);
-        const windowsAfter = await pageTargets();
+        const windows = noSecondWindow(windowsBefore, await pageTargets());
         check(
           name,
-          !!h && heldKey(seen, key) && windowsAfter === windowsBefore,
-          `${h ? `${h.via}: ${h.target}` : shellSaid(shellLog, offset)}; ${clickSeenWords(seen, key)}; ${windowsAfter} page target(s), ${windowsBefore} before`,
+          !!h && heldKey(seen, key) && windows.ok,
+          `${h ? `${h.via}: ${h.target}` : shellSaid(shellLog, offset)}; ${clickSeenWords(seen, key)}; ${windows.words}`,
         );
         await stays(before, `a ${key === "Control" ? "Ctrl" : "Shift"}+click on a link`);
       } else {
@@ -1828,7 +1865,7 @@ async function main() {
       const inApp = page.getByRole("link", { name: "Inbox" }).first();
       await page.evaluate(ARM_CLICK_PROBE);
       offset = logSize(shellLog);
-      const windowsBefore = shellMode ? await pageTargets() : 0;
+      const windowsBefore = shellMode ? await pageTargets() : notCounted;
       const before = await page.url();
       await inApp.click({ modifiers: ["Control"] });
       await backToPage();
@@ -1838,10 +1875,10 @@ async function main() {
         const said = parseHandoffs(logSince(shellLog, offset));
         const handed = said.filter((x) => x.kind !== "refused");
         const refusal = said.find((x) => x.kind === "refused");
-        const windowsAfter = await pageTargets();
+        const windows = noSecondWindow(windowsBefore, await pageTargets());
         check(
           name,
-          handed.length === 0 && heldKey(seen, "Control") && windowsAfter === windowsBefore,
+          handed.length === 0 && heldKey(seen, "Control") && windows.ok,
           [
             handed.length
               ? `handed off: ${handed.map((x) => x.target).join(", ")}`
@@ -1849,7 +1886,7 @@ async function main() {
                 ? `the shell refused it (${refusal.scheme}, ${refusal.via ?? "?"})`
                 : "nothing reached the shell",
             clickSeenWords(seen, "Control"),
-            `${windowsAfter} page target(s), ${windowsBefore} before`,
+            windows.words,
           ].join("; "),
         );
         await stays(before, "a Ctrl+click on an in-app link");

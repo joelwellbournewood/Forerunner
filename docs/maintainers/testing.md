@@ -2595,7 +2595,8 @@ click and the ACL refused its `open_url`; `apps.md`, "How a link leaves the app"
      have seen the click with the key held, from the input path (`ARM_CLICK_PROBE`, which also
      says when a script in the page cancelled it, as tauri-plugin-opener's page script did:
      run 41442343517, `apps.md`, "How a link leaves the app"), and the window's page targets
-     must not grow (no second window);
+     must not grow (no second window; `noSecondWindow`: a target list that could not be read,
+     before the click or after it, fails this part with "could not tell", never counts as 0);
    - a Ctrl+click on the sidebar's Inbox link, one of the app's own: no hand-off to a browser,
      no second window, the window stays on its page (the shell refuses the new window,
      `windows::new_window_action`; the detail says whether its refusal line came);
@@ -2707,7 +2708,9 @@ accepts; a rejection with a string read whole (run 41442343517's shape) and an E
 line; the uncaught-error check, required for an ACL refusal in release and debug words and
 for any other error, a note for others only when `UNCAUGHT_ERRORS_REQUIRED` is off; the click
 probe in a window with listeners in the DOM's order, the held key, a synthetic click, and the
-opener plugin's listener cancelling a Shift-click; the shell builds the opener without its
+opener plugin's listener cancelling a Shift-click; the page-target count, where a list that
+could not be read, before or after, fails "no second window" instead of passing as 0 and 0;
+the shell builds the opener without its
 page script and has `on_new_window`; the app's environment with both DevTools switches on two ports, and that the variables,
 the provider name, the shell's feature lists, wry's autoplay policy (both ways carry wry's whole
 default) and the shell's log line are the ones `supervisor.rs` and `devtools.rs` use; a port
