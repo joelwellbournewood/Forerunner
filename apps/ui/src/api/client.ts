@@ -159,9 +159,13 @@ import {
   StoreSecretView as StoreSecretViewSchema,
   type TaskAction,
   type TaskActionBody,
+  type TaskCheck,
   type TaskDetailView,
   TaskDetailView as TaskDetailViewSchema,
   type TaskDisplay,
+  type TaskEvidenceFileView,
+  TaskEvidenceFileView as TaskEvidenceFileViewSchema,
+  type TaskReviewEvidence,
   type TaskTransitionView,
   TaskTransitionView as TaskTransitionViewSchema,
   type TaskView,
@@ -337,8 +341,11 @@ export type {
   StoreSecretView,
   TaskAction,
   TaskActionBody,
+  TaskCheck,
   TaskDetailView,
   TaskDisplay,
+  TaskEvidenceFileView,
+  TaskReviewEvidence,
   TaskTransitionView,
   TaskView,
   UpdateLessonBody,
@@ -561,6 +568,8 @@ export interface DaemonClient {
   updateTask(taskId: string, body: UpdateTaskInput): Promise<TaskTransitionView>;
   /** The task drawer: what it asks, waits for, its runs, review and open cards. */
   task(taskId: string, signal?: AbortSignal): Promise<TaskDetailView>;
+  /** A screenshot the critic's review of the task kept (ADR 0104), named as the review names it. */
+  taskEvidence(taskId: string, file: string, signal?: AbortSignal): Promise<TaskEvidenceFileView>;
   /** The tasks a task waits on, all of them (U-040); refused for an unknown, cancelled or circular one. */
   setTaskDependencies(
     taskId: string,
@@ -995,6 +1004,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       put(routePath("updateTask", { id: taskId }), TaskTransitionViewSchema, body),
     task: (taskId, signal) =>
       get(routePath("task", { id: taskId }), TaskDetailViewSchema, undefined, signal),
+    taskEvidence: (taskId, file, signal) =>
+      get(routePath("taskEvidence", { id: taskId }), TaskEvidenceFileViewSchema, { file }, signal),
     setTaskDependencies: (taskId, body) =>
       post(routePath("setTaskDependencies", { id: taskId }), TaskTransitionViewSchema, body),
     startCheck: (projectId, filter, signal) =>

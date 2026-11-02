@@ -1,6 +1,14 @@
-import type { EventRow, HumanRequestRow, RunRow, StateStore, TaskRow } from "@forerunner/state";
+import type {
+  EventRow,
+  HumanRequestRow,
+  JsonValue,
+  ReviewRow,
+  RunRow,
+  StateStore,
+  TaskRow,
+} from "@forerunner/state";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
-import type { TaskDetailView, TaskView } from "./api-types.ts";
+import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
 import { holdsTask, plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
 
@@ -49,7 +57,82 @@ export async function loadTaskDisplayContext(
       if (agent) agentNames.set(agent.id, agent.name);
     }
   }
-  return { tasks, cards, sandboxReady, runs, agentNames };
+  // ADR 0104: a done task says how it was checked ("Reviewed", "Reviewed and tried").
+  const reviews = new Map<string, Pick<ReviewRow, "verdict" | "evidence">>();
+  for (const t of projectTasks) {
+    if (t.status !== "done") continue;
+    const latest = await store.review.latestForTask(t.id);
+    if (latest) reviews.set(t.id, latest);
+  }
+  return { tasks, cards, sandboxReady, runs, agentNames, reviews };
+}
+
+/** The `verification` record a review keeps in its evidence (ADR 0104), or null. */
+export function verificationIn(evidence: readonly JsonValue[] | null | undefined): {
+  checks: { name: string; passed: boolean; output: string }[];
+  tried: {
+    what: string;
+    target: string;
+    ok: boolean;
+    output: string;
+    screenshots: { label: string; file: string }[];
+  }[];
+  notChecked: string[];
+} | null {
+  for (const e of evidence ?? []) {
+    if (!e || typeof e !== "object" || Array.isArray(e) || !("verification" in e)) continue;
+    const v = e.verification as Record<string, unknown> | null;
+    if (!v || typeof v !== "object") continue;
+    const list = (x: unknown): Record<string, unknown>[] =>
+      Array.isArray(x)
+        ? x.filter((i): i is Record<string, unknown> => !!i && typeof i === "object")
+        : [];
+    const str = (x: unknown) => (typeof x === "string" ? x : "");
+    return {
+      checks: list(v.checks).map((c) => ({
+        name: str(c.name),
+        passed: c.passed === true,
+        output: str(c.output),
+      })),
+      tried: list(v.tried).map((t) => ({
+        what: str(t.what),
+        target: str(t.target),
+        ok: t.ok === true,
+        output: str(t.output),
+        screenshots: list(t.screenshots).map((s) => ({ label: str(s.label), file: str(s.file) })),
+      })),
+      notChecked: (Array.isArray(v.notChecked) ? v.notChecked : []).filter(
+        (n): n is string => typeof n === "string",
+      ),
+    };
+  }
+  return null;
+}
+
+/**
+ * How a done task was checked (ADR 0104): "Reviewed and tried" when the critic reviewed it and a
+ * page of it was tried, "Reviewed" when the critic reviewed it; null when it is not done, was
+ * closed without a review, or no review exists (a task closed before ADR 0104).
+ */
+export function taskCheck(
+  task: Pick<TaskRow, "status" | "reason">,
+  review: Pick<ReviewRow, "evidence"> | null | undefined,
+): TaskCheck | null {
+  if (task.status !== "done" || !review || /accepted without review/i.test(task.reason))
+    return null;
+  const tried = (verificationIn(review.evidence)?.tried.length ?? 0) > 0;
+  return { label: tried ? "Reviewed and tried" : "Reviewed", tried };
+}
+
+/** The review's evidence for the drawer (ADR 0104), or undefined for a review without one. */
+function reviewEvidence(review: Pick<ReviewRow, "evidence">): TaskReviewEvidence | undefined {
+  const v = verificationIn(review.evidence);
+  if (!v) return undefined;
+  return {
+    checks: v.checks.map((c) => ({ ...c, output: c.output.slice(0, 2000) })),
+    tried: v.tried,
+    notChecked: v.notChecked,
+  };
 }
 
 /** The critic's last verdict on the task, as a sentence for the drawer. */
@@ -226,6 +309,8 @@ export async function taskDetail(
         summary: reportText(latest.summary, 4) ?? "",
         // Each thing the critic still asks for once, however many reviews raised it.
         open: [...new Set(open.map((f) => plainReason(f.required_action || f.description, 160)))],
+        check: taskCheck(task, latest),
+        ...(reviewEvidence(latest) ? { evidence: reviewEvidence(latest) } : {}),
       }
     : null;
   const requests = await store.humanRequest.list({ task_id: task.id, status: "open" } as never, {

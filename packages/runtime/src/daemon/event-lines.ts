@@ -271,11 +271,13 @@ export function chfOf(usdMicro: number, chfPerUsd: number): string {
   return formatChf(usdToChfMicro(usd, chfPerUsd));
 }
 
-/** What a review tier means (the critic's depth for a task): plain words, the tier in brackets. */
+/**
+ * What a review tier means (the critic's depth for a task), in plain words. Tier 0 is reviewed
+ * as the light review (ADR 0104: no task closes on automatic checks alone).
+ */
 export function reviewLevel(tier: number): string {
   switch (tier) {
     case 0:
-      return "automatic checks only";
     case 1:
       return "a light review";
     case 2:

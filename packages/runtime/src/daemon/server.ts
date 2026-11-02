@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { formatChf, monthWindow, usdToChfMicro } from "@forerunner/billing";
 import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
 import {
@@ -28,6 +28,7 @@ import { createExtensionsRoutes, type DeviceConfirmation } from "../extensions/r
 import type { ExtensionView } from "../extensions/types.ts";
 import { sessionOfStart } from "../loop/commands.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
+import { evidenceFileOf } from "../loop/try-it.ts";
 import { parseAgentModelConfig } from "../models/run-settings.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
@@ -127,6 +128,7 @@ import {
   StartVoiceSessionBody,
   type SyncHealth,
   TaskActionBody,
+  type TaskEvidenceFileView,
   type TaskTransitionView,
   type TaskView,
   TransitionTaskBody,
@@ -162,6 +164,7 @@ import {
   changesTasks,
   loadTaskDisplayContext,
   runOrder,
+  taskCheck,
   taskDetail,
   taskDisplay,
 } from "./task-display.ts";
@@ -945,7 +948,11 @@ export function createDaemonApp(
     const rows = await rt.store.task.forProject(projectId, {}, { limit: 10_000 });
     const ctx = await loadTaskDisplayContext(rt.store, rows, sandboxReady());
     return runOrder(rows).map((t, i) =>
-      taskView(t, chf(), specialistLimit, { display: taskDisplay(t, ctx), runOrder: i }),
+      taskView(t, chf(), specialistLimit, {
+        display: taskDisplay(t, ctx),
+        runOrder: i,
+        check: taskCheck(t, ctx.reviews?.get(t.id)),
+      }),
     );
   };
   const oneTaskView = async (t: TaskRow): Promise<TaskView> =>
@@ -1051,6 +1058,22 @@ export function createDaemonApp(
     const views = await projectTaskViews(t.project_id);
     const view = views.find((v) => v.id === t.id) ?? taskView(t, chf(), specialistLimit);
     return c.json(await taskDetail(rt.store, view, t, views, chf()));
+  });
+
+  // ADR 0104: a screenshot the critic's review of the task kept ("Reviewed and tried"), for
+  // the drawer. Only a file of the task's own evidence folder, named as its review names it.
+  app.get("/tasks/:id/evidence", async (c) => {
+    const t = await rt.store.task.mustGet(c.req.param("id"));
+    const file = c.req.query("file") ?? "";
+    const abs = evidenceFileOf(rt.dirs, t.id, file);
+    if (!abs || !existsSync(abs))
+      throw new ForerunnerError("not_found", "This screenshot is not kept for this task.");
+    const view: TaskEvidenceFileView = {
+      file,
+      contentType: "image/png",
+      base64: readFileSync(abs).toString("base64"),
+    };
+    return c.json(view);
   });
 
   // Edit (design §3.5): `task.update`, logged with its Undo.

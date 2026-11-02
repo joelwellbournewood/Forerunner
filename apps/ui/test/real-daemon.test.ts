@@ -4,8 +4,13 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { appDirs, join, SimulatedClock, SystemClock } from "@forerunner/platform";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
-import { composeRuntime, type RuntimeApp } from "@forerunner/runtime/daemon/compose";
+import {
+  type ComposeOptions,
+  composeRuntime,
+  type RuntimeApp,
+} from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
+import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
@@ -2613,7 +2618,10 @@ describe("the UI client against the real daemon: Settings → Sandbox (Docker) (
  * The UI client against a real daemon whose model is the bench's role-playing stand-in, with
  * its failure injection (`FORERUNNER_BENCH_*`), on a clock that moves as in the app.
  */
-async function composeWithRolePlayer(env: Record<string, string>): Promise<{
+async function composeWithRolePlayer(
+  env: Record<string, string>,
+  over: Partial<ComposeOptions> = {},
+): Promise<{
   rt: RuntimeApp;
   client: DaemonClient;
   /** The stand-in's knobs, read at each call: a case can plant a failure for one step. */
@@ -2651,6 +2659,7 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.0.0-ui-contract",
     sandboxDetection: NO_ENGINE,
+    ...over,
   });
   const { app, token } = createDaemonApp(rt);
   const client = createClient(
@@ -2666,6 +2675,155 @@ async function composeWithRolePlayer(env: Record<string, string>): Promise<{
   );
   return { rt, client, bench, intakeCalls, chatCalls };
 }
+
+/** A PNG of one pixel: what a try's screenshot file holds here. */
+const ONE_PIXEL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+describe("the UI client against the real daemon: nothing is Done without the right check (ADR 0104)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  const tries: TryPagesRequest[] = [];
+
+  beforeAll(async () => {
+    // The try port stands in for the headless browser (its own test drives a real Chromium):
+    // it stores a screenshot where the daemon keeps them and says what a person would see.
+    let evidenceRoot = "";
+    ({ rt, client } = await composeWithRolePlayer(
+      { FORERUNNER_BENCH_ASK: "Members chart", FORERUNNER_BENCH_MISSING: "Members chart" },
+      {
+        tryIt: {
+          tryPages: async (req) => {
+            tries.push(req);
+            const dir = join(evidenceRoot, req.taskId, req.reviewKey);
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, "index-1280.png"), ONE_PIXEL_PNG);
+            return {
+              tried: req.pages.map((page) => ({
+                what: `opened ${page} in a browser, 1280 pixels wide`,
+                target: page,
+                ok: true,
+                blocking: false,
+                output: `opened ${page} at 1280 pixels wide, the network off\ntitle: Page\ntext seen: Hello`,
+                screenshots: [
+                  {
+                    label: "1280 pixels wide (a computer)",
+                    file: `${req.reviewKey}/index-1280.png`,
+                  },
+                ],
+              })),
+            };
+          },
+        },
+      },
+    ));
+    evidenceRoot = evidenceRootOf(rt.dirs);
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const runSession = async (projectId: string) => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+      30_000,
+    );
+  };
+
+  it("a page task the planner put at tier 0: the critic reviews it, the page is tried, the task says Reviewed and tried, and the drawer opens the evidence", async () => {
+    const project = await client.createProject({ name: "Garden page", goal: "A welcome page" });
+    const page = await client.createTask(project.id, {
+      title: "Build index.html with the club's welcome page",
+      outcome: "index.html shows the club's name and a welcome line",
+      riskTier: 0,
+      specialist: "coder",
+    });
+    await runSession(project.id);
+    const row = (await client.tasks(project.id)).find((t) => t.id === page.id);
+    expect(row?.status).toBe("done");
+    expect(row?.check).toEqual({ label: "Reviewed and tried", tried: true });
+    // The page was tried in the task's folder.
+    expect(tries.map((t) => [t.taskId, t.pages])).toEqual([[page.id, ["index.html"]]]);
+    const detail = await client.task(page.id);
+    // Reviewed by the critic (its run is in the drawer), never closed on the coder's word.
+    expect(detail.runs.map((r) => [r.kind, r.specialist])).toEqual([
+      ["review", "critic"],
+      ["work", "coder"],
+    ]);
+    expect(detail.review?.check).toEqual({ label: "Reviewed and tried", tried: true });
+    const tried = detail.review?.evidence?.tried ?? [];
+    expect(tried.map((t) => [t.target, t.ok])).toEqual([["index.html", true]]);
+    expect(tried[0]?.output).toContain("text seen: Hello");
+    const file = tried[0]?.screenshots[0]?.file ?? "";
+    expect(file).toMatch(/^[A-Za-z0-9._-]+\/index-1280\.png$/);
+    // One click away: the screenshot itself, as the drawer reads it.
+    const shot = await client.taskEvidence(page.id, file);
+    expect(shot).toMatchObject({ file, contentType: "image/png" });
+    expect(Buffer.from(shot.base64, "base64").equals(ONE_PIXEL_PNG)).toBe(true);
+    // Nothing outside the task's own evidence folder is served.
+    for (const bad of ["../../runtime/daemon.json", `${file}/../../x.png`, "x.png"])
+      await expect(client.taskEvidence(page.id, bad)).rejects.toMatchObject({ status: 404 });
+  }, 60_000);
+
+  it("a data task whose input file is missing, answered Go ahead without: it ends waiting for you with a card that asks for the file, never Done", async () => {
+    const project = await client.createProject({ name: "Garden data", goal: "A members chart" });
+    const chart = await client.createTask(project.id, {
+      title: "Members chart",
+      outcome: "charts/members.svg: a bar chart of members per year from data/members.csv",
+      acceptanceCriteria: [
+        "Every bar uses the exact number from data/members.csv",
+        "No number is invented",
+      ],
+      specialist: "data-analyst",
+    });
+    await runSession(project.id);
+    const me = await client.me();
+    const cardsOf = async () =>
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === chart.id && r.status === "open",
+      );
+    // First the specialist asks; the person answers with the card's own button.
+    const [asked] = await cardsOf();
+    if (!asked) throw new Error("no question card");
+    const goAhead = asked.choices?.find((c) => c.label === "Go ahead without");
+    expect(goAhead).toBeDefined();
+    const sessionsBefore = (await client.sessions({ projectId: project.id })).length;
+    await client.answerRequest(asked.id, { version: asked.version, answer: "Go ahead without" });
+    await eventually(
+      async () => {
+        const sessions = await client.sessions({ projectId: project.id });
+        return sessions.length > sessionsBefore && sessions.every((s) => s.status !== "running");
+      },
+      "the session the answer started to end",
+      async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
+      30_000,
+    );
+    // The work made no chart and asked for the file: not done, it needs you.
+    const row = (await client.tasks(project.id)).find((t) => t.id === chart.id);
+    expect(row?.status).toBe("needs_human");
+    expect(row?.check ?? null).toBeNull();
+    expect(row?.display?.label).toMatch(/^Needs your answer/);
+    const cards = await cardsOf();
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    expect(card?.title).toBe('"Members chart": the specialist asks you');
+    expect(card?.steps).toEqual([
+      'Please add data/members.csv to the project\'s folder: "Members chart" needs it and no number may be invented.',
+    ]);
+    // In the specialist's own words, never the critic's accept of a chart that was not made.
+    expect(card?.body).toContain("data/members.csv is missing");
+    expect(card?.body).not.toMatch(/Accepted/);
+    expect((await client.inbox(me.id)).needsYouCount).toBeGreaterThan(0);
+  }, 90_000);
+});
 
 describe("the UI client against the real daemon: a task that fails gets one card, and answering it resumes work (design §3.8)", () => {
   let rt: RuntimeApp;

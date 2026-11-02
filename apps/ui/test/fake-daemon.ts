@@ -65,6 +65,7 @@ import {
   StartVoiceSessionBody,
   storableSecretInfo,
   TaskActionBody,
+  type TaskReviewEvidence,
   TransitionTaskBody,
   UpdateTaskBody,
   VoiceAudioBody,
@@ -376,6 +377,13 @@ export interface FakeDaemonState {
   taskMeta: FakeTaskMeta;
   /** The tasks' runs (`/projects/:id/runs`, the drawer's runs); the critic's are its reviews. */
   runs: (typeof RUNS)[number][];
+  /**
+   * What the critic's last review of a task ran and tried (ADR 0104), by task id; a done task
+   * with an accepted review says "Reviewed and tried" when something was tried. A test seeds it.
+   */
+  reviewEvidence: Map<string, TaskReviewEvidence>;
+  /** Screenshots `GET /tasks/:id/evidence?file=` serves, by `<task id>/<file>`, base64. */
+  evidenceFiles: Map<string, string>;
   sessions: SessionView[];
   events: EventView[];
   requests: HumanRequestView[];
@@ -754,6 +762,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     projects: clone(PROJECTS),
     tasks: clone(TASKS),
     taskMeta: createTaskMeta(TASKS),
+    reviewEvidence: new Map(),
+    evidenceFiles: new Map(),
     runs: clone(RUNS),
     sessions: clone(SESSIONS),
     events: clone(EVENTS),
@@ -928,6 +938,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.projects = clone(PROJECTS);
     state.tasks = clone(TASKS);
     state.taskMeta = createTaskMeta(TASKS);
+    state.reviewEvidence = new Map();
+    state.evidenceFiles = new Map();
     state.sessions = clone(SESSIONS);
     state.events = clone(EVENTS);
     state.requests = clone(REQUESTS);
@@ -1446,8 +1458,24 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // --- Tasks (design §3.5): the daemon's words (`task-words`), run order, every change logged
   // with its Undo, as the daemon's `task.*` commands do.
   const sandboxReady = () => state.sandbox.ready;
+  /** As the daemon (ADR 0104): a done task the critic reviewed says how it was checked. */
+  const withChecks = (views: TaskView[]): TaskView[] =>
+    views.map((v) => {
+      if (v.status !== "done" || /accepted without review/i.test(v.reason))
+        return { ...v, check: null };
+      const reviewed = state.runs.some((r) => r.taskId === v.id && r.reviewId);
+      const evidence = state.reviewEvidence.get(v.id);
+      if (!reviewed && !evidence) return { ...v, check: null };
+      const tried = (evidence?.tried.length ?? 0) > 0;
+      return {
+        ...v,
+        check: { label: tried ? ("Reviewed and tried" as const) : ("Reviewed" as const), tried },
+      };
+    });
   const taskViewsOf = (projectId: string) =>
-    projectTaskViews(state.tasks, projectId, state.requests, sandboxReady(), state.taskMeta);
+    withChecks(
+      projectTaskViews(state.tasks, projectId, state.requests, sandboxReady(), state.taskMeta),
+    );
   const viewOf = (task: TaskView): TaskView =>
     taskViewsOf(task.projectId).find((v) => v.id === task.id) ?? task;
   /** The task as the screen showed it, or the daemon's 409 naming what it is now. */
@@ -1618,8 +1646,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         views,
         state.requests,
         state.runs.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        state.reviewEvidence.get(task.id),
       ),
     );
+  });
+  // As the daemon (ADR 0104): a screenshot the task's review kept, and nothing else.
+  app.get("/tasks/:id/evidence", (c) => {
+    const task = state.tasks.find((t) => t.id === c.req.param("id"));
+    if (!task) return errorBody(c, 404, "not_found", "no such task");
+    const file = c.req.query("file") ?? "";
+    const base64 = state.evidenceFiles.get(`${task.id}/${file}`);
+    if (!base64)
+      return errorBody(c, 404, "not_found", "This screenshot is not kept for this task.");
+    return c.json({ file, contentType: "image/png", base64 });
   });
   app.put("/tasks/:id", async (c) => {
     const task = state.tasks.find((t) => t.id === c.req.param("id"));
@@ -1666,7 +1705,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       before.riskTier = task.riskTier;
       task.riskTier = b.riskTier;
       words.push(
-        `review level to ${["Checks only", "Light review", "Full review", "Full review and your sign-off"][b.riskTier]}`,
+        `review level to ${["Light review", "Light review", "Full review", "Full review and your sign-off"][b.riskTier]}`,
       );
     }
     if (b.budgetUsdMicro !== undefined && b.budgetUsdMicro !== task.budget.usdMicro) {

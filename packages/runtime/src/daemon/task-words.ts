@@ -1,4 +1,5 @@
-import type { HumanRequestRow, RunRow, TaskRow, TaskStatus } from "@forerunner/state";
+import type { HumanRequestRow, ReviewRow, RunRow, TaskRow, TaskStatus } from "@forerunner/state";
+import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
 
@@ -75,6 +76,11 @@ export interface TaskDisplayContext {
   runs: ReadonlyMap<string, Pick<RunRow, "created_at" | "specialist">>;
   /** Agents' names by id: a running task names its agent, never an id. */
   agentNames: ReadonlyMap<string, string>;
+  /**
+   * The critic's latest review of each done task (ADR 0104: "Reviewed" or "Reviewed and
+   * tried"); absent where the caller does not need it.
+   */
+  reviews?: ReadonlyMap<string, Pick<ReviewRow, "verdict" | "evidence">>;
 }
 
 /** A title as a status names it: whole when short, else cut at a word. */
@@ -310,9 +316,12 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       }
       if (task.risk_tier >= FULL_REVIEW_TIER && ctx.sandboxReady === false)
         return display("docker", "Waiting for Docker", "warn", {
-          // A consequence line: at most 100 characters (design §5 rule 1).
-          detail:
-            "Full review needs Docker, not running on this computer. Set it up, or edit to a light review.",
+          // A consequence line: at most 100 characters (design §5 rule 1). A deploy or a data
+          // migration keeps the full review (ADR 0104, the owner's decision 4): no light-review
+          // way out is suggested for it.
+          detail: SIGNOFF_SPECIALISTS.has(task.specialist ?? "")
+            ? "A deploy or a migration keeps the full review, which needs Docker. Set it up in Settings."
+            : "Full review needs Docker, not running on this computer. Set it up, or edit to a light review.",
           blocker: { kind: "docker", taskId: null, requestId: null, title: null },
         });
       return display("ready", "Ready", "neutral");

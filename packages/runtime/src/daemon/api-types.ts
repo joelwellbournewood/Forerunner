@@ -311,6 +311,45 @@ export const TaskDisplay = z.object({
 });
 export type TaskDisplay = z.infer<typeof TaskDisplay>;
 
+/**
+ * How a done task's work was checked (ADR 0104): "Reviewed and tried" when the critic reviewed
+ * it and a page of it was opened in a browser, "Reviewed" when the critic reviewed it. Null for a
+ * task that is not done, or was closed without a review ("Done: accepted without review").
+ */
+export const TaskCheck = z.object({
+  label: z.enum(["Reviewed", "Reviewed and tried"]),
+  tried: z.boolean(),
+});
+export type TaskCheck = z.infer<typeof TaskCheck>;
+
+/**
+ * What the runtime ran and tried for the critic's last review of a task (ADR 0104), for the
+ * drawer: each check with the end of its output, each page tried with what happened and its
+ * screenshots (read with `GET /tasks/:id/evidence?file=`), and what could not be run and why.
+ */
+export const TaskReviewEvidence = z.object({
+  checks: z.array(z.object({ name: z.string(), passed: z.boolean(), output: z.string() })),
+  tried: z.array(
+    z.object({
+      what: z.string(),
+      target: z.string(),
+      ok: z.boolean(),
+      output: z.string(),
+      screenshots: z.array(z.object({ label: z.string(), file: z.string() })),
+    }),
+  ),
+  notChecked: z.array(z.string()),
+});
+export type TaskReviewEvidence = z.infer<typeof TaskReviewEvidence>;
+
+/** `GET /tasks/:id/evidence?file=`: one screenshot of the task's review, base64. */
+export const TaskEvidenceFileView = z.object({
+  file: z.string(),
+  contentType: z.string(),
+  base64: z.string(),
+});
+export type TaskEvidenceFileView = z.infer<typeof TaskEvidenceFileView>;
+
 export const TaskView = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -348,6 +387,8 @@ export const TaskView = z.object({
   display: TaskDisplay.optional(),
   /** Where the task stands in the order a session runs the project's tasks (0 first). */
   runOrder: z.number().int().optional(),
+  /** How its work was checked, for a done task (ADR 0104); absent from an older service. */
+  check: TaskCheck.nullable().optional(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -418,6 +459,13 @@ export const TaskDetailView = z.object({
       summary: z.string(),
       /** What the critic still asks for (open findings), in its words. */
       open: z.array(z.string()),
+      /**
+       * "Reviewed and tried" / "Reviewed" when the review accepted the work (ADR 0104); null
+       * otherwise. Absent from an older service.
+       */
+      check: TaskCheck.nullable().optional(),
+      /** What was run and tried for this review; absent from an older service or review. */
+      evidence: TaskReviewEvidence.optional(),
     })
     .nullable(),
   /** Inbox cards about this task that are still open. */
@@ -2550,6 +2598,8 @@ export const DAEMON_ROUTES = {
   createTask:
     "POST /projects/:id/tasks (CreateTaskBody -> 201 TaskChangeView: through the `task.create` command, so it is in Changes with its Undo; dependsOn must name tasks of the project that are not cancelled, else 409 conflict with cause validation and a message naming them, U-040; `specialist: person` makes a task for the person)",
   task: "GET /tasks/:id (TaskDetailView: the task drawer; 404 for an unknown task)",
+  taskEvidence:
+    "GET /tasks/:id/evidence?file= (TaskEvidenceFileView: a screenshot the critic's review of the task kept, ADR 0104, named as the drawer's review evidence names it (`<review>/<name>.png`), base64; 404 for an unknown task or a file that is not one of the task's own)",
   updateTask:
     "PUT /tasks/:id (UpdateTaskBody -> TaskChangeView: Edit through the `task.update` command, logged with its Undo; refused 409 conflict with cause validation while the task runs, is being reviewed, is done or cancelled; a stale version is 409 conflict with the task's status now)",
   taskAction:

@@ -761,6 +761,90 @@ describe("Tasks tab (design §3.5)", () => {
     expect(within(row).getByTestId("task-cap")).toHaveTextContent("of CHF 4.00 budget");
   });
 
+  it("a done task says how it was checked, and its drawer opens the evidence: the checks, the page tried and its screenshot (ADR 0104)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const tried = {
+      checks: [
+        {
+          name: "test",
+          passed: true,
+          output: "npm run --silent test -> exit 0 in 812 ms\n4 passing",
+        },
+      ],
+      tried: [
+        {
+          what: "opened index.html in a browser, 1280 and 390 pixels wide",
+          target: "index.html",
+          ok: true,
+          output:
+            "opened index.html at 1280 and 390 pixels wide, the network off\ntitle: Atlas docs\ntext seen: Search the docs",
+          screenshots: [{ label: "1280 pixels wide (a computer)", file: "run_1/index-1280.png" }],
+        },
+      ],
+      notChecked: [
+        "about.html was not tried: no Chromium, Edge or Chrome was found on this computer",
+      ],
+    };
+    harness.daemon.state.evidenceFiles.set("task_1/run_1/index-1280.png", "iVBORw0KGgo=");
+    renderApp("/projects/proj_atlas/tasks", harness);
+    // Reviewed without a try: the row and the drawer say "Reviewed".
+    const row = await rowOf("task_1");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent("Done");
+    expect(await within(row).findByTestId("task-check")).toHaveTextContent(/^Reviewed$/);
+    expect(row).not.toHaveTextContent(/checks only|tier/i);
+    await user.click(within(row).getByTestId("task-title"));
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(await within(drawer).findByTestId("drawer-check")).toHaveTextContent(
+      "Reviewed The critic read the work against each point above.",
+    );
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    // Reviewed and tried: the row says so, and the drawer opens what was run and tried.
+    harness.daemon.state.reviewEvidence.set("task_1", tried);
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(async () =>
+      expect(within(await rowOf("task_1")).getByTestId("task-check")).toHaveTextContent(
+        "Reviewed and tried",
+      ),
+    );
+    await user.click(within(await rowOf("task_1")).getByTestId("task-title"));
+    const again = await screen.findByTestId("task-drawer");
+    expect(await within(again).findByTestId("drawer-check")).toHaveTextContent(
+      "Reviewed and tried",
+    );
+    // One click away: the evidence, closed until asked for; the screenshot is read when opened.
+    const evidence = within(again).getByTestId("review-evidence");
+    expect(within(evidence).queryByTestId("evidence-screenshot")).not.toBeInTheDocument();
+    await user.click(within(evidence).getByText("See what was checked"));
+    expect(within(evidence).getByTestId("evidence-checks")).toHaveTextContent("test: passed");
+    expect(within(evidence).getByTestId("evidence-checks")).toHaveTextContent("4 passing");
+    expect(within(evidence).getByTestId("evidence-tried")).toHaveTextContent("index.html: worked");
+    expect(within(evidence).getByTestId("evidence-tried")).toHaveTextContent(
+      "text seen: Search the docs",
+    );
+    expect(within(evidence).getByTestId("evidence-not-checked")).toHaveTextContent(
+      "about.html was not tried: no Chromium",
+    );
+    const shot = await within(evidence).findByTestId("evidence-screenshot");
+    expect(shot.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(shot.getAttribute("alt")).toBe("The page, 1280 pixels wide (a computer)");
+  });
+
+  it("New task offers no Checks only (ADR 0104): the light review is the least a task gets", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const level = within(dialog).getByTestId("task-risk-tier") as HTMLSelectElement;
+    const labels = [...level.options].map((o) => o.textContent ?? "");
+    expect(labels.join(" / ")).not.toMatch(/checks only|automatic checks|tier/i);
+    expect(labels).toContain("Light review: the critic reads the work, nothing runs in isolation");
+    expect([...level.options].map((o) => o.value)).not.toContain("0");
+  });
+
   it("the fake daemon words a sandbox that is not running as the daemon does", () => {
     expect(fakeSandboxView("not_running").ready).toBe(false);
   });

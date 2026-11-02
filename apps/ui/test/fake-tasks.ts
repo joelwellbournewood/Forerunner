@@ -2,6 +2,7 @@ import type {
   HumanRequestView,
   TaskAction,
   TaskDetailView,
+  TaskReviewEvidence,
   TaskView,
 } from "@forerunner/runtime/daemon/api-types";
 import {
@@ -173,6 +174,8 @@ export function fakeTaskDetail(
     /** The specialist's report as the daemon serves it (a test may set its own). */
     report?: string;
   }[],
+  /** What the review ran and tried (ADR 0104), when a test seeded it. */
+  evidence?: TaskReviewEvidence,
 ): TaskDetailView {
   const byId = new Map(views.map((v) => [v.id, v]));
   const mine = runs.filter((r) => r.taskId === task.id);
@@ -218,6 +221,14 @@ export function fakeTaskDetail(
                 : "The critic sent it back for changes.",
             summary: "The work meets the criteria.",
             open: latest.verdict === "accept" ? [] : ["Add a test for the empty query."],
+            // As the daemon (ADR 0104): how a done task was checked, and the evidence.
+            check:
+              task.status === "done" && !/accepted without review/i.test(task.reason)
+                ? (evidence?.tried.length ?? 0) > 0
+                  ? { label: "Reviewed and tried" as const, tried: true }
+                  : { label: "Reviewed" as const, tried: false }
+                : null,
+            ...(evidence ? { evidence } : {}),
           }
         : null,
     cards: requests

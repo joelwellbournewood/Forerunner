@@ -125,7 +125,13 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   (Alice, 2 min)**, **Being reviewed**, **Needs your answer** (its card is in the Inbox),
   **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
   and the row offers **Answer**, **Try again** and **Cancel**), **Paused by you**, **Failed:
-  why**, **Done** (or **Done: accepted without review**), **Cancelled**. The rows follow a running session
+  why**, **Done** (or **Done: accepted without review**), **Cancelled**. A task is **Done** only
+  after the critic reviewed it; the row then says how it was checked: **Reviewed** (the critic
+  read the work and the project's files against each point, and the project's own build and
+  tests ran when it has them) or **Reviewed and tried** (a page it made was also opened in a
+  browser, as you would open it). Work whose report still asks you something (for example a
+  chart whose data file is missing) is never Done: it waits for your answer with a card in the
+  Inbox. The rows follow a running session
   by themselves. Each task offers what fits its status, each with a line saying what it does:
   **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
   and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
@@ -137,10 +143,13 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it
   waits for and what waits on it, its runs (who ran each one, with that run's report and the
-  files it changed; the critic's run is marked as the review), the critic's review in words,
+  files it changed; the critic's run is marked as the review), the critic's review in words
+  with **See what was checked** (the project's checks with their output, each page tried with
+  what it showed and its screenshots, and anything that could not be run or tried, and why),
   its pull request, and **Edit**
   (the wording, priority, budget, review level and who does it; for example a full-review task
-  waiting for Docker can go to a light review) and **Change what it waits for** (the project's
+  waiting for Docker can go to a light review, except a deploy or a data migration, which keeps
+  the full review and your sign-off) and **Change what it waits for** (the project's
   tasks by title; a failed one is flagged; a task cannot wait on itself, a cancelled task or a
   task that already waits on it). **New task** asks the title, what done looks like, what it
   waits for, the review level ("Light review: the critic reads the work, nothing runs in
@@ -290,8 +299,8 @@ to Linux containers, **Download the sandbox** with its size and progress), and *
 after each one. The task runs in the next session once the card says Ready. A task that an
 earlier version marked failed for want of a sandbox goes back to ready by itself then.
 
-A session where nothing was done because its tasks failed or were sent back gets a lower grade
-from the critic's session review.
+A session where nothing was done because its tasks failed, were sent back or wait for you gets a
+lower grade from the critic's session review.
 
 **Stopping and crashes.** A session's page has two stops. **Stop after this task** (the usual
 one) lets the task in flight finish, starts no other, and ends the session ("Stopped after the

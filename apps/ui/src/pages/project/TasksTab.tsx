@@ -460,7 +460,12 @@ export function TasksTab({
                       )}
                     </td>
                     <td className="py-1.5 pr-2">
-                      {run?.verdict ? (
+                      {t.check ? (
+                        // ADR 0104: a done task says how it was checked.
+                        <Badge tone="good" testId="task-check">
+                          {t.check.label}
+                        </Badge>
+                      ) : run?.verdict ? (
                         <Badge
                           tone={
                             run.verdict === "accept" || run.verdict === "pass" ? "good" : "warn"
