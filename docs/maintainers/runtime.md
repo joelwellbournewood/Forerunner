@@ -2301,9 +2301,10 @@ the status; `syncPrAnswers` applies the answer, below); every outcome is written
 back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or `pr.left_open` event
 (`pr.merge_failed` when the port threw; never fatal) and is counted in the summary ("Merged 1
 reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). The status
-update of `ProjectDocs` never goes on a task's branch (ADR 0106), merged or not. Tier 0 tasks close without a review and
-are never merged; a tier 3 task's accepting verdict becomes the human sign-off (`needs_human`,
-spec H), so it never reaches the merge either and the human who signs off merges. The kill
+update of `ProjectDocs` never goes on a task's branch (ADR 0106), merged or not. A tier 0 task is
+reviewed too (the light review, ADR 0104) and reaches this step like any accepted task; a tier 3
+task's accepting verdict becomes the human sign-off (`needs_human`, spec H), so it never reaches
+the merge and the human who signs off merges. The kill
 switch ends the step as it ends the session: a `killed` refusal of the hooks (the revoked
 token) or a stop during the checks wait is thrown on, never recorded as the level's refusal or
 filed as a request, and the session ends `killed`. The daemon composes it on its hooks, git
