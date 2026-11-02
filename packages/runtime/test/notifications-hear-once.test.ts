@@ -12,6 +12,7 @@ import {
 import { composeRuntime } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { CriticPort, SessionReviewOutcome } from "../src/loop/ports.ts";
+import { type SessionEndFacts, sessionEndIsNews } from "../src/notifications/producers.ts";
 import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -239,6 +240,40 @@ describe("one notification per outcome: a task that fails after its retries (des
       'Quote page: did 1 task: "Write the notes in docs/notes.md".',
     ]);
   }, 120_000);
+});
+
+describe("which session ends are told (sessionEndIsNews)", () => {
+  const facts = (stopReason: string, news: string[]): SessionEndFacts => ({
+    sessionId: "s-1",
+    status: "stopped",
+    stopReason,
+    summary: news.join("\n"),
+    news,
+    spentUsdMicro: 0,
+    completed: [],
+    needsHuman: [],
+  });
+  it("the person's stops are not (Stop now; Stop all and Quit have the kill switch's notice), a budget stop always is, otherwise only news", () => {
+    const did = ['Did 1 task: "A".', "CHF 0.01."];
+    expect(sessionEndIsNews(facts("you", did))).toBe(false);
+    expect(sessionEndIsNews(facts("stop_all", did))).toBe(false);
+    expect(sessionEndIsNews(facts("quit", did))).toBe(false);
+    expect(
+      sessionEndIsNews(facts("budget_exceeded", ["The session's budget is used. CHF 0.90."])),
+    ).toBe(true);
+    expect(sessionEndIsNews(facts("completed", did))).toBe(true);
+    // Only what waits, how it ended and the money: what the cards said, told already.
+    expect(sessionEndIsNews(facts("completed", ["1 task waits on other tasks. CHF 0.03."]))).toBe(
+      false,
+    );
+    expect(
+      sessionEndIsNews(
+        facts("stopped_by_message", ["Stopped after the task, as asked. CHF 0.00."]),
+      ),
+    ).toBe(false);
+    // The plan waiting on its card: the card is the news.
+    expect(sessionEndIsNews(facts("plan_awaiting_approval", ["CHF 0.00."]))).toBe(false);
+  });
 });
 
 describe("a session review that asked the person is told by its card alone", () => {
