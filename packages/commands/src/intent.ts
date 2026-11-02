@@ -119,11 +119,16 @@ export function stopScopeOf(clause: string): "all" | "agent" | null {
 const NOT_A_TASK =
   /^(?:session|sessions|sitzung|work|working|arbeit|everything|all|alles|it|that|this|now)$/i;
 
-/** A task named in a phrase: "the FAQ task" -> "FAQ"; quotes and "the" dropped. */
+/**
+ * A task named in a phrase: "the FAQ task" -> "FAQ", 'the task "Write the FAQ"' -> "Write the
+ * FAQ" (phase C leftover C-38: the leading "task" stayed and nothing matched); quotes and
+ * "the" dropped.
+ */
 function taskName(raw: string | undefined): string | null {
   const name = (raw ?? "")
     .trim()
     .replace(/^(?:the|die|der|das)\s+/i, "")
+    .replace(/^(?:task|aufgabe)\s+(?=\S)/i, "")
     .replace(/\s+(?:task|aufgabe)$/i, "")
     .replace(/^["'“”‘’](.*)["'“”‘’]$/, "$1")
     .trim();

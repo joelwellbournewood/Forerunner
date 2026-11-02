@@ -742,7 +742,9 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         ctx: w.ctx(),
       }),
     );
-    expect(illegal.reason).toMatch(/illegal transition/);
+    // In words (phase C leftover C-38), never "task: illegal transition ready -> done".
+    expect(illegal.reason).toMatch(/^".+" is .+ now, so it cannot be done; nothing changed\.$/);
+    expect(illegal.reason).not.toMatch(/illegal transition/);
 
     const c2 = done(
       await w.executor.execute({
@@ -836,6 +838,47 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     expect((p as { reason?: string }).reason).toContain("Answer it on its card in the Inbox");
     expect((await w.store.humanRequest.mustGet(high.id)).status).toBe("open");
     expect(await w.store.humanRequest.count()).toBe(before);
+    await w.store.close();
+  });
+
+  it("cancel from chat: a running task's read-back says its run stops and its work is removed; a task that finished before the yes says so in words (phase C leftover C-38)", async () => {
+    const w = await world();
+    const task = await w.store.task.insert({
+      project_id: w.pharma.id,
+      title: "Write the FAQ",
+      outcome: "faq.md",
+      status: "in_progress",
+      reason: "running",
+    } as never);
+    const chat = { ...w.ctx(), source: "chat" as const, activeProjectId: w.pharma.id };
+    const asked = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "Write the FAQ", to: "cancelled" },
+      ctx: chat,
+    });
+    expect(asked.status).toBe("pending");
+    expect((asked as { readback: string }).readback).toBe(
+      'Cancel "Write the FAQ"? Its run stops now and what it changed is removed.',
+    );
+    // The task finishes before the yes.
+    const running = await w.store.task.mustGet(task.id);
+    await w.store.task.transition(task.id, running.version, "in_review", "review", {
+      agentId: w.agent.id,
+    });
+    const reviewed = await w.store.task.mustGet(task.id);
+    await w.store.task.transition(task.id, reviewed.version, "done", "accepted", {
+      agentId: w.agent.id,
+    });
+    const yes = await w.executor.confirmByText(
+      (asked as { pendingId: string }).pendingId,
+      "yes",
+      w.ctx().actor,
+    );
+    expect(yes.status).toBe("refused");
+    expect((yes as { reason?: string }).reason).toBe(
+      '"Write the FAQ" is already done; nothing changed.',
+    );
+    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
     await w.store.close();
   });
 

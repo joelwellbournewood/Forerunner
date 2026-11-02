@@ -226,8 +226,15 @@ export function moveAsk(
   stuck = 0,
 ): string {
   const t = quote(task.title);
-  if (to === "cancelled")
-    return `Cancel ${t}? It is dropped${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+  if (to === "cancelled") {
+    // C-38: what Yes does to a task at work (ADR 0105, the Tasks tab's `cancelWorkLine`): its
+    // run stops and what it changed is taken out of the folder.
+    const what =
+      RUNNING.includes(from) || from === "in_review"
+        ? "Its run stops now and what it changed is removed"
+        : "It is dropped";
+    return `Cancel ${t}? ${what}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+  }
   if (to === "needs_human")
     return RUNNING.includes(from)
       ? `Stop ${t}? Its run stops now and it is paused; the session goes on with the rest.`
@@ -679,15 +686,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   undoStrategy: "put the task back to the status it had",
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
-    if (!canTransition(TASK_TRANSITIONS, task.status, params.to)) {
-      throw new ForerunnerError(
-        "validation",
-        `task: illegal transition ${task.status} -> ${params.to}`,
-        {
-          details: { allowed: [...TASK_TRANSITIONS[task.status]] },
-        },
-      );
-    }
+    assertMove(task, params.to);
     const project = await ctx.store.project.mustGet(task.project_id);
     return buildCard({
       command: "task.transition",
@@ -711,6 +710,8 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   },
   async run(params, ctx) {
     const task = await findTask(params, ctx);
+    // The task may have moved on between the read-back and the yes (C-38).
+    assertMove(task, params.to);
     return personMove(ctx, task, params.to, {
       reason:
         params.reason ||
@@ -842,6 +843,32 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
   },
   undo: (_params, before, after, ctx) => undoMove(before, after, ctx),
 };
+
+/**
+ * A move the task's status no longer allows, in words (phase C leftover C-38: before, "task:
+ * illegal transition done -> cancelled", which the chat said as "Not done: task: illegal
+ * transition ..."): a task already where the move would take it, or finished, says so and that
+ * nothing changed; any other says what it is now.
+ */
+function assertMove(task: TaskRow, to: TaskStatus): void {
+  if (canTransition(TASK_TRANSITIONS, task.status, to)) return;
+  const now = statusWords(task.status);
+  const settled = task.status === to || task.status === "done" || task.status === "cancelled";
+  throw new ForerunnerError(
+    "validation",
+    settled
+      ? `${quote(task.title)} is already ${now}; nothing changed.`
+      : `${quote(task.title)} is ${now} now, so it cannot be ${statusWords(to)}; nothing changed.`,
+    {
+      details: {
+        taskId: task.id,
+        status: task.status,
+        reason: "not_offered",
+        allowed: [...TASK_TRANSITIONS[task.status]],
+      },
+    },
+  );
+}
 
 function assertCan(task: TaskRow, to: TaskStatus, word: string): void {
   if (!canTransition(TASK_TRANSITIONS, task.status, to)) {

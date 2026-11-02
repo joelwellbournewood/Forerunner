@@ -624,6 +624,22 @@ describe("IntentParser: steering phrases (design §3.9)", () => {
       name: "task.transition",
       params: { task: "style", to: "ready" },
     });
+    // Phase C leftover C-38: the task named after the word "task", quoted or not, is found
+    // (before: 'no task matches "task "Write the FAQ""'); "skip" stays a pause (design §3.9: an
+    // instruction becomes a change with a read-back; the pause can be undone, a skip that
+    // cancelled would drop the task).
+    expect(await one('Skip the task "Write the FAQ"')).toEqual({
+      name: "task.pause",
+      params: { task: "Write the FAQ" },
+    });
+    expect(await one("cancel the task Write the FAQ")).toEqual({
+      name: "task.transition",
+      params: { task: "Write the FAQ", to: "cancelled" },
+    });
+    expect(await one('resume task "Write the FAQ"')).toEqual({
+      name: "task.resume",
+      params: { task: "Write the FAQ" },
+    });
   });
 
   it("the session: 'stop' and 'stop now' stop it; 'stop after this task' lets it finish; 'resume' allows sessions again", async () => {
