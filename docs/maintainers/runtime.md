@@ -2579,7 +2579,7 @@ copy at all and a merge on the host never reached the tabs (review of fix/decisi
 holds the file, and the docs routes read `docs/status.md` from it first (`DocsRoutesDeps.statusDocRoot`,
 the note "kept in the app: no status pull request (Settings turns it on)"). `settings.set
 status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in
-`GET /settings` for repository projects only) turns the following on. With a
+`GET /settings` only for a project on a host repository, `parseRepoRef` of `repos[0]` and not an absolute path, since a linked local folder opens no pull request) turns the following on. With a
 repository and the setting on it is committed as `docs: status after session <id>` on Forerunner's own status
 branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status"):
 a later session adds its commit to the open PR and comments the entry on it; once the PR is

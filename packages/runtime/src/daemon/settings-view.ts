@@ -11,8 +11,10 @@ import {
   DEFAULT_SESSION_CAP_CHF,
   type PricingTable,
 } from "@forerunner/billing";
+import { isAbsolute } from "@forerunner/platform";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import type { z } from "zod";
+import { parseRepoRef } from "../loop/docs.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
 import type { Money, SettingView } from "./api-types.ts";
@@ -28,6 +30,12 @@ export interface SettingsViewInput {
   providerName: string | null;
   registryDir: string;
   pricing: PricingTable;
+}
+
+/** Whether the project's first repository is one on a git host (not a folder on this PC). */
+function onHostRepository(p: ProjectRow): boolean {
+  const first = p.repos[0]?.trim() ?? "";
+  return !isAbsolute(first) && parseRepoRef(first) !== null;
 }
 
 /** The notification channels `settings.set notify_channel` accepts, desktop when unset. */
@@ -224,7 +232,9 @@ export function settingsView(input: SettingsViewInput): Row[] {
           risk: "medium",
         }),
         // C-57: a repository project's status as a pull request, off unless turned on.
-        ...(p.repos.length
+        // Only a project on a host repository: a linked folder on this computer opens no pull
+        // request, so the switch would change nothing there (C-57 review).
+        ...(onHostRepository(p)
           ? [
               project({
                 key: "project.status_pull_request",

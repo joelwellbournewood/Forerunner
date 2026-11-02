@@ -1751,7 +1751,9 @@ export const DOCS: DocView[] = [
     sizeBytes: 900,
     updatedAt: "2026-10-19T21:10:00.000Z",
     drift: false,
-    note: "",
+    // Atlas is a repository project with its status pull request off (C-57, the default): the
+    // daemon reads its Status from the app's copy and says so (docs-routes.ts).
+    note: "kept in the app: no status pull request (Settings turns it on)",
   },
   {
     path: "docs/decisions",

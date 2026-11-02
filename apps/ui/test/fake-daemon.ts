@@ -2434,6 +2434,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         task.status = "ready";
         task.reason = `you raised the budget per session to CHF ${(money(sessionCap).chfMicro / 1e6).toFixed(2)} in the Inbox`;
         touch(task);
+      } else if (budgetCard.source === "session_budget" && task && !moved && read === "raise") {
+        // As the daemon (budget-card.ts): one session of the named amount, so the task's own
+        // budget covers what it spent and that session; later sessions keep their budget.
+        const promised = Number(budgetCard.raise_to_usd_micro) || 0;
+        budget = Math.max(task.budget.usdMicro, task.actual.usdMicro + promised);
+        task.budget = money(budget);
+        task.cap = money(budget);
+        task.capSource = "task_budget";
+        task.status = "ready";
+        task.reason = `you gave it one session of CHF ${(money(promised).chfMicro / 1e6).toFixed(2)} in the Inbox`;
+        touch(task);
       } else if (task && !moved && (read === "raise" || read === "raise_session")) {
         budget = Math.max(task.budget.usdMicro, Number(budgetCard.raise_to_usd_micro) || 0);
         task.budget = money(budget);
@@ -3140,6 +3151,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const slot = settingSlot(leaf, s.scope === "project" ? s.scopeId : null);
       return slot in state.settingValues ? { ...s, value: state.settingValues[slot] } : s;
     });
+    // Like the daemon (settings-view.ts, C-57): a Status pull request row for each project on a
+    // host repository (not a folder on this computer), off unless the person turned it on.
+    for (const p of state.projects) {
+      const first = p.repos?.[0]?.trim() ?? "";
+      if (!/^[\w.-]+\/[\w.-]+$/.test(first)) continue;
+      rows.push({
+        key: "project.status_pull_request",
+        label: "Status pull request",
+        scope: "project",
+        scopeId: p.id,
+        value: state.settingValues[settingSlot("status_pull_request", p.id)] === true,
+        description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
+        risk: "low",
+      });
+    }
     // Like the daemon: one fast-mode row per project, the effect and surcharge both ways.
     for (const [projectId, on] of Object.entries(state.fastMode)) {
       rows.push({
@@ -4225,6 +4251,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     speed_quality_offset: "low",
     small_project_mode: "low",
     fast_mode: "medium",
+    status_pull_request: "low",
     critic_ceiling: "medium",
     session_reserve_share: "medium",
     quiet_hours: "low",
@@ -4242,6 +4269,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     projectId ? `${key}:${projectId}` : key;
   const PROJECT_KEYS = new Set([
     "small_project_mode",
+    "status_pull_request",
     "critic_ceiling",
     "session_reserve_share",
     "handover",
@@ -4590,6 +4618,46 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           apply: () => {
             state.fastMode[project.id] = value;
             return { before: { fast_mode: before }, after: { fast_mode: value } };
+          },
+        };
+      }
+      if (key === "status_pull_request" && project && typeof params.value === "boolean") {
+        // The daemon's card for this key (`SETTING_SPECS.status_pull_request`, C-57): on/off,
+        // and what the new value does, in the card and the sentence; the same value is refused.
+        const value = params.value;
+        const slot = settingSlot(key, project.id);
+        const before = state.settingValues[slot] === true;
+        const onOff = (v: boolean) => (v ? "on" : "off");
+        const what = `the status pull request for ${project.name}`;
+        if (before === value)
+          return refuse(`The status pull request for ${project.name} is already ${onOff(before)}.`);
+        const effect = value
+          ? "each session's status goes to the repository as one pull request, docs: project status, which you merge when you like"
+          : "each session's status stays in the app (Docs, Status); no status pull request is opened";
+        return {
+          name,
+          params,
+          risk,
+          card: card(
+            {
+              command: name,
+              what,
+              oldValue: onOff(before),
+              newValue: `${onOff(value)} (${effect})`,
+              scope: "project",
+              sentence: `Set ${what} from ${onOff(before)} to ${onOff(value)}: ${effect}. Undo.`,
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            risk,
+          ),
+          apply: () => {
+            state.settingValues[slot] = value;
+            return {
+              before: { key, project_id: project.id, value: before },
+              after: { key, project_id: project.id, value },
+            };
           },
         };
       }

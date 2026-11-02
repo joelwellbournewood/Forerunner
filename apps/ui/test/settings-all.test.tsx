@@ -88,6 +88,42 @@ describe("every setting is visible in Settings (U-060)", () => {
     );
   });
 
+  it("the status pull request: a repository project's row, off by default; On sends settings.set and the row reads on (C-57)", async () => {
+    // The daemon lists the row for a project on a host repository only (settings-view.ts).
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/settings", harness);
+    const row = await rowFor("project.status_pull_request");
+    expect(within(row).getByTestId("setting-scope")).toHaveTextContent("Atlas");
+    expect(within(row).getByTestId("setting-label")).toHaveTextContent("Status pull request");
+    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("off");
+    const rows = await screen.findAllByTestId("setting-row");
+    expect(rows.filter((r) => r.dataset.key === "project.status_pull_request")).toHaveLength(1);
+    await user.click(within(row).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    await user.selectOptions(within(dialog).getByTestId("setting-value"), "true");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
+    expect(postedCalls(harness, "/commands/execute")[0]?.body).toMatchObject({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "status_pull_request", value: true, project: "proj_atlas" },
+        },
+      ],
+    });
+    // The daemon's sentence: what the switch does, in words.
+    expect(await within(dialog).findByTestId("command-done")).toHaveTextContent(
+      "each session's status goes to the repository as one pull request",
+    );
+    await user.click(within(dialog).getByTestId("command-close"));
+    await waitFor(async () =>
+      expect(
+        within(await rowFor("project.status_pull_request")).getByTestId("setting-value-cell"),
+      ).toHaveTextContent("on"),
+    );
+  });
+
   it("the model watch: run the paid evaluations without asking, confirmed with a yes", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

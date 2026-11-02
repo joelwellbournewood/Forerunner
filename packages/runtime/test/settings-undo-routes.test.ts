@@ -348,4 +348,30 @@ describe("settingsView (U-060)", () => {
     expect(value("project.critic_ceiling")).toBeNull();
     await store.close();
   });
+
+  it("offers Status pull request only for a project on a host repository, not for a linked local folder (C-57 review)", async () => {
+    // Review of fix/decisions: the row showed for a project linked to a folder on this computer,
+    // where turning it on changes nothing (no pull request can be opened there).
+    const clock = new SimulatedClock("2026-10-20T18:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const human = await store.human.insert({ name: "J", email: "j@example.test" });
+    const onHost = await store.project.insert({ name: "Hosted", repos: ["o/site"] });
+    const folder = await store.project.insert({
+      name: "Folder",
+      repos: [join(tmpdir(), "a-folder")],
+    });
+    const none = await store.project.insert({ name: "Plain" });
+    const rows = settingsView({
+      human,
+      projects: [onHost, folder, none],
+      chfPerUsd: 0.8,
+      providerName: "fake",
+      registryDir: "registry",
+      pricing: BUILTIN_PRICING,
+    });
+    expect(
+      rows.filter((r) => r.key === "project.status_pull_request").map((r) => r.scopeId),
+    ).toEqual([onHost.id]);
+    await store.close();
+  });
 });

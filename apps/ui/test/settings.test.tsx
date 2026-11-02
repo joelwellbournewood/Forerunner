@@ -180,9 +180,10 @@ describe("Settings", () => {
   it("shows the scope on every row, the daemon status and the same-command hint", async () => {
     renderApp("/settings");
     const rows = await screen.findAllByTestId("setting-row");
-    // The fixture's 16 and Beacon's autonomy (the daemon lists every project's), less the three
-    // that change nothing (language, the model provider, chat.model): design §6 hides them.
-    expect(rows).toHaveLength(14);
+    // The fixture's 16, Beacon's autonomy (the daemon lists every project's) and Atlas's Status
+    // pull request (a project on a host repository, C-57), less the three that change nothing
+    // (language, the model provider, chat.model): design §6 hides them.
+    expect(rows).toHaveLength(15);
     const advanced = screen.getByTestId("settings-advanced");
     for (const row of rows) {
       // Every row under Advanced names its scope; in Basics a project's row names the project

@@ -1197,6 +1197,28 @@ describe("Inbox", () => {
       expect(harness.daemon.state.tasks.find((t) => t.id === "task_3")?.status).toBe("ready");
     });
 
+    it("Raise its budget gives the task one session of the named amount on top of what it spent", async () => {
+      const user = userEvent.setup();
+      const harness = setUp();
+      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+      const spent = t3?.actual.usdMicro ?? 0;
+      renderApp("/inbox", harness);
+      const card = await cardOf();
+      await user.click(within(card).getByRole("button", { name: "Raise its budget" }));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_session_budget/answer")[0]?.body).toEqual({
+          version: 1,
+          answer: "Raise its budget",
+        }),
+      );
+      await screen.findByTestId("done-line");
+      const after = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+      expect(after?.status).toBe("ready");
+      // As the daemon: what it spent plus one session of USD 10 (CHF 8.00), not USD 10 alone.
+      expect(after?.budget.usdMicro).toBe(Math.max(t3?.budget.usdMicro ?? 0, spent + 10_000_000));
+      expect(after?.reason).toBe("you gave it one session of CHF 8.00 in the Inbox");
+    });
+
     it("on the Tasks tab it reads Needs your decision: a session's budget is too small", async () => {
       const harness = setUp();
       const view = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
