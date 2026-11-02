@@ -115,10 +115,10 @@ export function BillingOrderSection() {
     >
       <h2 className="font-semibold">Claude: which to use first</h2>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-        Forerunner uses your Claude credentials in this order for everything: tasks, Chat, project
-        setup and reviews. When one cannot be used, the next one is. A subscription always runs
-        through Claude Code; an API key always goes straight to the API, where promotional credits
-        apply.
+        Forerunner uses your Claude credentials in this order for tasks, Chat, project setup and
+        reviews; a research task uses the API key first when one is saved, since only there can it
+        read web pages. When one cannot be used, the next one is. A subscription always runs through
+        Claude Code; an API key always goes straight to the API, where promotional credits apply.
       </p>
       {missing === "billingOrder" ? (
         <RouteMissing route="billingOrder" what="the order of your Claude credentials" />
@@ -126,8 +126,9 @@ export function BillingOrderSection() {
         <div className="mt-2 space-y-2">
           {!view.chosen && view.sources.length > 1 ? (
             <p className="text-sm" data-testid="billing-order-default">
-              You have not chosen an order yet: tasks use the subscription first, and Chat, project
-              setup and reviews use the API key first. Moving one sets this order for everything.
+              You have not chosen an order yet: tasks use the subscription first (research tasks the
+              API key), and Chat, project setup and reviews use the API key first. Moving one sets
+              this order for everything but research tasks.
             </p>
           ) : null}
           {view.sources.length === 0 ? (

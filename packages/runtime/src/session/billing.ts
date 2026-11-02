@@ -33,6 +33,13 @@ export interface TaskBillingRequest {
    * choice, the API key when there is one. Absent: the purpose's own order, as task runs use.
    */
   fallbackOrder?: readonly BillingSourceKind[];
+  /**
+   * Kinds tried first whatever the order (C-64, ADR 0107): a task whose specialist reads the web
+   * goes to the API key whenever one is saved and usable, since only the loop driver's page reader
+   * opens pages; the rest of the order follows. `firstWhy` is said in the pick's reason.
+   */
+  firstKinds?: readonly BillingSourceKind[];
+  firstWhy?: string;
 }
 
 /** Plan usage of a subscription source as the pick saw it, and what moves it. */

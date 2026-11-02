@@ -365,8 +365,17 @@ describe("Inbox", () => {
         'Build the docs site · coder · about CHF 0.40 · after "Compare two static site generators"',
       ]),
     );
-    // The usual install reads the web (ADR 0107): nothing is said.
+    // C-64: a Claude subscription and no API key: the researcher searches but opens no page.
     view.unmount();
+    const searchOnly = renderApp("/inbox", withPlan(createHarness({ webSearchOnly: true })));
+    card = await screen.findByTestId("intake-card");
+    await waitFor(() =>
+      expect(within(card).getAllByTestId("intake-task")[0]?.textContent).toBe(
+        "Compare two static site generators · researcher · about CHF 0.40 · Searches the web but opens no page on a Claude subscription",
+      ),
+    );
+    // The usual install reads the web (ADR 0107): nothing is said.
+    searchOnly.unmount();
     renderApp("/inbox", withPlan(createHarness()));
     card = await screen.findByTestId("intake-card");
     await waitFor(() =>

@@ -348,6 +348,42 @@ describe("the subscription path (ADR 0044)", () => {
     expect(JSON.stringify(logs)).not.toContain(API_KEY);
   });
 
+  it("a researcher's task goes to the API key although the subscription comes first, so it can read pages (C-64)", async () => {
+    // Before: with both credentials and no order chosen, the researcher ran on the subscription,
+    // where the hooks refuse every page (its domain list is empty) and only search works.
+    const w = await seedTask("Compare two static site generators");
+    const sdkCallsBefore = sdk.calls.length;
+    const providerCallsBefore = provider.calls.length;
+    const res = await rt.executor.execute({
+      task: w.task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: planItemFor(w.task, "researcher"),
+      signal: new AbortController().signal,
+    });
+    expect(res.outcome).toBe("done");
+    expect(sdk.calls).toHaveLength(sdkCallsBefore);
+    expect(provider.calls.length).toBeGreaterThan(providerCallsBefore);
+    const key = (await rt.billing.sources()).find((s) => s.kind === "api_key");
+    const run = (await rt.store.run.forTask(w.task.id))[0];
+    expect(run).toMatchObject({ specialist: "researcher", billing_source_id: key?.id });
+    // The loop run offers the page reader, and its brief says search is not available.
+    const req = provider.calls[provider.calls.length - 1];
+    expect((req?.tools ?? []).map((t) => t.name)).toContain("web_fetch");
+    expect(JSON.stringify(req?.messages)).toContain("Web search is not available on this run");
+    // The pick's audit row says why the API key came first.
+    const pick = (await rt.store.auditLog.list({ runId: res.runId })).find(
+      (r) => r.tool === BILLING_PICK_AUDIT_TOOL,
+    );
+    expect(pick?.result_summary).toMatch(/research reads web pages on the API key first/);
+    // A coder's task keeps the subscription first (no order chosen): only web work moves.
+    const coder = await seedTask("Add a footer");
+    const sdkBefore = sdk.calls.length;
+    expect((await execute(coder)).outcome).toBe("done");
+    expect(sdk.calls).toHaveLength(sdkBefore + 1);
+  });
+
   it("the hooks refuse a tool outside the allowlist and a path outside the run's directory on the SDK path too", async () => {
     const w = await seedTask("Read the docs");
     const decisions: Record<string, { decision: string; reason: string }> = {};
@@ -550,6 +586,97 @@ describe("the subscription path (ADR 0044)", () => {
     );
     expect(pick?.result_summary).toMatch(/^api_key "Anthropic API key"/);
     expect(pick?.result_summary).toMatch(/plan usage 95% is at or above the cap 95%/);
+  });
+});
+
+describe("research on a Claude subscription alone searches, and says so (C-64)", () => {
+  let rt: RuntimeApp;
+  let home: string;
+  const sdk = fakeSdk();
+  const clock = new SimulatedClock("2026-10-20T09:00:00Z");
+
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), "fr-subscription-only-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    mkdirSync(dirs.config, { recursive: true });
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home, FORERUNNER_PLAN_USD_MONTHLY: "100" },
+      dirs,
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ [SECRET_NAMES.anthropicOauth]: OAUTH }),
+      provider: new ScriptedProvider([{ text: "unused" }], clock),
+      gitHost: new MemoryGitHost("alice"),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "1.0.0",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      startServices: false,
+      sdkQuery: sdk.q,
+    });
+  });
+  afterAll(async () => {
+    await rt.close();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("the researcher runs on the subscription and its brief says it can search but not open pages", async () => {
+    expect(rt.webAccess()).toBe(true);
+    expect(rt.webSearchOnly()).toBe(true);
+    const projectId = (await rt.store.project.insert({ name: "Docs", goal: "g", repos: [] })).id;
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title: "Compare two static site generators",
+      outcome: "docs/research.md compares them",
+      risk_tier: 1,
+      status: "in_progress",
+      budget_usd_micro: 500_000,
+    });
+    const session = await rt.store.session.insert({
+      agent_id: rt.agent.id,
+      project_id: projectId,
+      trigger: "manual",
+      status: "running",
+      runner: "pc",
+    });
+    const token = rt.tokens.issue({
+      runId: `run-session-${task.id}`,
+      sessionId: session.id,
+      agentId: rt.agent.id,
+      ownerHumanId: rt.human.id,
+      projectId,
+      allowedTools: [...rt.toolsForRun().names(), ...claudeCodeToolNames()],
+      allowedPaths: (await rt.sessionGrant(projectId))?.allowedPaths ?? [],
+      allowedDomains: [],
+      grantedSecrets: [],
+      budgetUsdMicro: 2_000_000,
+      depth: 0,
+      maxDepth: 2,
+      autonomy: 3,
+      planApproved: true,
+      expiresAt: new Date(clock.now() + 60_000).toISOString(),
+    });
+    const res = await rt.executor.execute({
+      task,
+      session,
+      token,
+      budget: new SessionBudget({
+        sessionId: session.id,
+        budgetUsdMicro: 2_000_000,
+        stepCap: 50,
+        deadlineMs: clock.now() + 60_000,
+        reserveShare: 0,
+      }),
+      item: planItemFor(task, "researcher"),
+      signal: new AbortController().signal,
+    });
+    expect(res.outcome).toBe("done");
+    expect(sdk.calls).toHaveLength(1);
+    expect(sdk.calls[0]?.prompt).toContain(
+      "Web pages cannot be opened on this run (a Claude subscription)",
+    );
+    expect(sdk.calls[0]?.prompt).not.toContain("Web search is not available");
   });
 });
 

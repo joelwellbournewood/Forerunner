@@ -83,7 +83,10 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
-import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
+import {
+  NO_WEB_LIMITATION,
+  SEARCH_ONLY_LIMITATION,
+} from "@forerunner/runtime/daemon/model-settings-view";
 import {
   overviewNext,
   progressOf,
@@ -236,6 +239,12 @@ export interface FakeDaemonOptions {
    * entry that works from the web. Default: the install reads the web, no limitation.
    */
   noWebAccess?: boolean;
+  /**
+   * Research here only searches (C-64: a Claude subscription and no API key): `GET
+   * /settings/models` names `SEARCH_ONLY_LIMITATION` for the researcher and the
+   * science-evaluator, as the daemon does for every entry that reads pages.
+   */
+  webSearchOnly?: boolean;
   /**
    * Cloud runner vault keys the fake's "OS keyring" holds, runner id -> base64 of 32 bytes
    * (spec S.12, ADR 0068). `/runner-unlock/wrap` wraps them as the daemon does.
@@ -791,9 +800,19 @@ function initialVoiceStatus(options: FakeDaemonOptions): VoiceStatusView {
 const WEB_SPECIALISTS = new Set(["researcher", "science-evaluator"]);
 
 /** `GET /settings/models` as the daemon answers it with or without web access (ADR 0107). */
-function withWebAccess(view: ModelSettingsView, web: boolean): ModelSettingsView {
+function withWebAccess(
+  view: ModelSettingsView,
+  web: boolean,
+  searchOnly = false,
+): ModelSettingsView {
   for (const s of view.specialists)
-    s.limitation = !web && WEB_SPECIALISTS.has(s.name) ? NO_WEB_LIMITATION : null;
+    s.limitation = !WEB_SPECIALISTS.has(s.name)
+      ? null
+      : !web
+        ? NO_WEB_LIMITATION
+        : searchOnly
+          ? SEARCH_ONLY_LIMITATION
+          : null;
   return view;
 }
 
@@ -864,7 +883,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     speedQuality: {},
     settingValues: {},
     desktopAllowlist: [{ app: "code" }],
-    modelSettings: withWebAccess(clone(MODEL_SETTINGS), !options.noWebAccess),
+    modelSettings: withWebAccess(
+      clone(MODEL_SETTINGS),
+      !options.noWebAccess,
+      options.webSearchOnly ?? false,
+    ),
     acceptsTemperature: options.acceptsTemperature ?? true,
     voiceSessions: new Map(),
     nextVoiceLine: null,

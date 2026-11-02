@@ -4927,6 +4927,48 @@ describe("the UI client against the real daemon: research on an API key reads th
   }, 120_000);
 });
 
+describe("the UI client against the real daemon: research on a Claude subscription alone searches, and the screens say so (C-64)", () => {
+  // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
+  const oauth = ["sk-ant-oat01-", "subscription", "0".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "apikey", "0".repeat(40)].join(""); // not-a-secret
+
+  it("a subscription and no API key: the researcher and the science-evaluator search but open no page", async () => {
+    const sub = await composeWithRolePlayer(
+      {},
+      { vault: new MemoryVault({ anthropic_subscription_token: oauth }) },
+    );
+    try {
+      const models = await sub.client.modelSettings();
+      const limits = Object.fromEntries(models.specialists.map((x) => [x.name, x.limitation]));
+      expect(limits.researcher).toBe("Searches the web but opens no page on a Claude subscription");
+      expect(limits["science-evaluator"]).toBe(
+        "Searches the web but opens no page on a Claude subscription",
+      );
+      expect(limits.coder).toBeNull();
+    } finally {
+      await sub.rt.close();
+    }
+  }, 120_000);
+
+  it("with an API key saved beside it, research reads pages there: nothing is said", async () => {
+    const both = await composeWithRolePlayer(
+      {},
+      {
+        vault: new MemoryVault({
+          anthropic_subscription_token: oauth,
+          anthropic_api_key: apiKey,
+        }),
+      },
+    );
+    try {
+      const models = await both.client.modelSettings();
+      expect(models.specialists.find((x) => x.name === "researcher")?.limitation).toBeNull();
+    } finally {
+      await both.rt.close();
+    }
+  }, 120_000);
+});
+
 describe("the UI client against the real daemon: a task that waits for unmerged work builds on it (C-49, ADR 0106)", () => {
   // Live (2026-11-02, forerunner-sandbox): the tester of a two-task plan branched from main
   // while the coder's pull request was still open, found nothing to check and failed. Here a

@@ -78,6 +78,28 @@ list, so "the token's domains only" would have left research with nothing it may
    checked against the text the specialist actually got. The Run row keeps the addresses, not the
    text. The session log names each page in one line ("read the web page gohugo.io/about/").
 
+7. **Research goes to the API key; a subscription alone searches, and says so** (added 2026-11-02,
+   phase E, C-64; the session lead's default, pending the owner's confirmation). A task whose
+   specialist reads the web (its entry names `cc:WebFetch` or `cc:WebSearch`: the researcher and
+   the science-evaluator) is billed to the API key whenever one is saved and usable, whatever
+   order the person chose (`TaskBillingRequest.firstKinds`; the pick's audit row says "research
+   reads web pages on the API key first"); the rest of the order is used when it cannot be. With
+   only a Claude subscription such a task runs there search-only: its page reading stays refused
+   by the token's domain check (no `WebFetch` is opened on the SDK path), its brief says "Web
+   pages cannot be opened on this run (a Claude subscription): use web search, cite each result
+   you use by its address, and say in the report what you could not check on the page itself.",
+   and the plan card and New task say "Searches the web but opens no page on a Claude
+   subscription" (`SEARCH_ONLY_LIMITATION`, `RuntimeApp.webSearchOnly`). Settings' credential
+   order and the user guide say research is the exception. Alternatives the owner may still
+   choose: let the subscription's `WebFetch` read public pages under point 2's rules (a security
+   change on the SDK path), or keep following the person's order and say it.
+8. **No search service this round** (C-63, the session lead's default): research reads the pages
+   the brief or the plan names, the official sites of what it researches and the pages those link
+   to; the brief, the screens and the user guide say there is no web search on an API key and
+   promise none. A search service needs its own account, key and cost, which is the owner's call.
+9. **No site list or block list control this round** (C-66): the lists stay settable through
+   `PUT /projects/:id/settings` only, and the user guide says there is no screen for them.
+
 ## Consequences
 
 - A plan from a brief on an API key may include research; the researcher and the

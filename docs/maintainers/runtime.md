@@ -4308,7 +4308,18 @@ in the report") and the session log a warning. It never returns `needs_human` fo
 tool: the work may need no web at all (a data-only science check, sources the brief gives),
 and before, such a task waited for the person with no card (live, 2026-11-02). A researcher on
 the loop driver whose entry names `cc:WebSearch` gets `NO_WEB_SEARCH_LINE` in its brief (pages
-by address, cite each). The intake (the plan writer) is told to plan no web work only when the
+by address, cite each). **Research goes to the API key first (C-64, ADR 0107 point 7):** when
+the loop form of the specialist both needs and has the web (the page reader is on), the executor's
+billing pick passes `firstKinds: ["api_key"]` with `firstWhy` ("research reads web pages on the
+API key first"); `RouterTaskBilling.pick` puts those kinds ahead of the person's order (or the
+caller's fallback) when such a source is a candidate, and the router's next one is used when it
+is not usable; an order made only of first kinds is not called "your order" in the reason. With
+only a subscription, a web entry runs on the SDK path search-only: its `cc:WebFetch` stays refused
+by the token's domain check, and its brief carries `SEARCH_ONLY_LINE` ("Web pages cannot be
+opened on this run (a Claude subscription): use web search, ..."). Tests: two cases in
+`subscription-path.test.ts` (a researcher's task with both credentials runs on the API key with
+`web_fetch` and the no-search line, a coder's still on the subscription; a subscription alone
+gives the researcher the search-only line). The intake (the plan writer) is told to plan no web work only when the
 install has neither a subscription nor the page reader (`IntakeDeps.webSpecialists`, composed
 as `hasOauth || webFetchOn`; `NO_WEB_RULE`). Tests: `specialist-handover.test.ts`,
 `research-web.test.ts`, the U-044 case in `intake.test.ts`.
@@ -4514,7 +4525,10 @@ Each specialist also carries `limitation` (ADR 0107): what it cannot do on this 
 words, or null. The route passes `RuntimeApp.webAccess()` (a subscription or the web page
 reader); without either, an entry that names a web tool gets `NO_WEB_LIMITATION` ("Cannot read
 the web on this computer"), which the plan card shows beside its tasks and New task beside the
-choice. The command's ports
+choice; with `RuntimeApp.webSearchOnly()` (a subscription and no API key whose page reader could
+take research, C-64) an entry that names `cc:WebFetch` gets `SEARCH_ONLY_LIMITATION` ("Searches
+the web but opens no page on a Claude subscription", defined in `api-types.ts` for the UI, whose
+New task adds "Save an API key to let it read pages."). The command's ports
 (`CommandPorts.modelSettings`) are the runnable specialists' names and the provider's flags.
 
 ### Briefs (`src/brief.ts`)

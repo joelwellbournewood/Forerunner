@@ -480,8 +480,8 @@ what your plan covers, or a Max plan's work stops early.
 ### Which Claude credential is used first
 
 With both a Claude subscription and an API key saved, Settings → **Claude: which to use first**
-lists them in the order Forerunner uses them, for everything: tasks, Chat, project setup,
-reviews and the model watch. **Move up** and **Move down** change the order; the change is in
+lists them in the order Forerunner uses them for tasks, Chat, project setup, reviews and the
+model watch (research tasks excepted: they use the API key first, see below). **Move up** and **Move down** change the order; the change is in
 Changes, where you can undo it. Each row says:
 
 - how it is used: the subscription always runs **through Claude Code**; an API key always goes
@@ -496,7 +496,8 @@ limit is reached, the subscription rests until the time Claude gives (an hour wh
 none), the call is made again with the API key, and the session log says so; a task stopped
 that way goes back to ready and runs on the next credential, without counting as a failed
 attempt. Until you choose an order, tasks use the subscription first and Chat, project setup
-and reviews use the API key first.
+and reviews use the API key first. Whatever the order, a research task (the researcher, the
+science evaluator) uses the API key first when one is saved: only there can it open web pages.
 
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
@@ -525,9 +526,17 @@ task**. Nothing waits silently with only a "Resume" that would run into the same
 Research works with an API key too. The researcher and the science evaluator read web pages
 by their address: public pages only (never this computer or your local network), with a GET
 and no passwords or cookies, at most 2 MB per page, and nothing on the project's block list.
-There is no web search on an API key, so a research task does best when it names the sources
-or sites to read (on a Claude subscription the researcher uses Claude Code's own web tools
-instead). The session log
+There is no web search on an API key (none is set up this round: research reads the pages the
+brief or the plan names, the official sites of what it researches and the pages those link
+to), so a research task does best when it names the sources or sites to read. With an API key
+saved, research tasks always run on it, whatever order you chose for your credentials, because
+only there can they open pages. With only a Claude subscription, the researcher and the science
+evaluator can search the web through Claude Code but cannot open the pages themselves (Forerunner
+refuses their page reading there); the plan card and New task say "Searches the web but opens no
+page on a Claude subscription", and their brief tells them to cite the results they used and say
+what they could not check. There is no screen for a project's site list or block list yet; a
+project that must stay closed can only be closed for the whole install
+(`FORERUNNER_WEB_FETCH=off`). The session log
 names each page read ("read the web page gohugo.io/about/"), the research file cites each page
 by its address, and the critic checks the claims against the pages the researcher actually
 got. A page that cannot be read (refused, missing, not a text page) is said in words to the
