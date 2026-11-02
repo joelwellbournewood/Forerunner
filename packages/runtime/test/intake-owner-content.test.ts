@@ -47,11 +47,14 @@ describe("content the brief says the person will give (live L-11)", () => {
       phrase: "the member list and the photos",
       items: ["member list", "photos"],
     });
+    expect(promisedContent("I can give you more details.")?.items).toEqual(["details"]);
     for (const none of [
       "A page that shows a random quote",
       "I will give you feedback on the design",
       "I'll give you the API key and the password",
       "I will review the plan before it starts",
+      "I'll give the team a demo",
+      "I will give you access to the repository",
       // The person chose to start with stand-ins, or to give it later.
       "A bakery page; use placeholders, I will give you the menu",
       "A bakery page; I will give you the menu later",

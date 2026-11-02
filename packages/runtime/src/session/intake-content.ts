@@ -23,16 +23,20 @@ const STARTS_WITHOUT = /\b(?:placeholders?|dummy|lorem\s+ipsum|sample\s+(?:text|
 /** Where the list of items ends inside a clause: "… once it opens", "… for the page". */
 const LIST_END =
   /\s+(?:later|soon|next\s+week|tomorrow|when|once|before|after|by|so\s+that|to\s+put|for\s+the)\b.*$/i;
-/** What only the person can give for the work: words, numbers, facts, media. */
+/**
+ * What only the person can give for the work: words, numbers, facts, media; the item's last
+ * word ("the real menu", "phone numbers"), so "the team a demo" is not content.
+ */
 const CONTENT_WORD =
-  /\b(?:menus?|prices?|pricing|hours|opening\s+times|times|address(?:es)?|phone(?:\s+numbers?)?|telephone|e-?mails?(?:\s+address)?|contacts?|texts?|copy|content|wording|words|photos?|images?|pictures?|logos?|icons?|videos?|data|dataset|figures|numbers|list|names?|descriptions?|details|dates|schedule|timetable|quotes|faqs?|bios?|story|products?|catalogu?e|recipes?|team|members?|events?|locations?|map|colou?rs|fonts?|brand(?:ing)?|slogan|tagline|titles?|headlines?|csv|spreadsheets?|files?|documents?|pdfs?)\b/i;
+  /\b(?:menus?|prices?|pricing|hours|opening\s+times|times|address(?:es)?|phone(?:\s+numbers?)?|telephone|e-?mails?(?:\s+address)?|contacts?|texts?|copy|content|wording|words|photos?|images?|pictures?|logos?|icons?|videos?|data|dataset|figures|numbers|list|names?|descriptions?|details|dates|schedule|timetable|quotes|faqs?|bios?|story|products?|catalogu?e|recipes?|team|members?|events?|locations?|map|colou?rs|fonts?|brand(?:ing)?|slogan|tagline|titles?|headlines?|csv|spreadsheets?|files?|documents?|pdfs?)$/i;
 /** Never asked for in the Inbox: a secret is referred to by name (AGENTS.md). */
 const SECRET_WORD =
   /\b(?:keys?|tokens?|passwords?|passphrases?|credentials?|secrets?|logins?|accounts?)\b/i;
 /** Asked for as a place, not typed: a file or a picture. */
 const MEDIA_WORD =
   /\b(?:photos?|images?|pictures?|logos?|icons?|videos?|files?|csv|spreadsheets?|documents?|pdfs?)\b/i;
-const LEADING = /^(?:(?:the|a|an|my|our|their|your|its|all|any|some)\s+)+/i;
+const LEADING =
+  /^(?:(?:the|a|an|my|our|their|your|its|all|any|some|more|further|extra|additional)\s+)+/i;
 const ADJECTIVES = /^(?:(?:real|actual|final|exact|correct|proper|current|own|full|complete)\s+)+/i;
 
 /** What the brief says the person will give: its words as written, and each item. */
