@@ -5,14 +5,27 @@
 //   node scripts/bench/start.mjs --name intake --daemon-port 48210 --ui-port 1810 --fresh \
 //     [--env FORERUNNER_BENCH_INTAKE_BAD=reason-too-long]
 //   node scripts/bench/journeys/intake.cjs intake [--brief "..."] [--goal "..."] [--project "..."]
+//     [--watch]
 //   node scripts/bench/stop.mjs --name intake
 // Every screen is a step (<bench>/steps/NN-*.png and .txt). The result, with every check and
 // what the intake calls cost and sent, is <bench>/steps/intake-result.json. Planning that fails
-// is retried with Try again up to twice, as a person would. Exit code 0 when the bench worked.
+// is retried with Try again up to twice, as a person would. With --watch it then waits for the
+// session Approve and start began (up to 20 minutes) and checks that the critic reviewed every
+// task an agent finished (the owner's decision of 2026-11-01: the critic always reviews code
+// tasks). Exit code 0 when the bench worked.
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const { openApp, skipSetup, step, api, bench, modelCalls, until } = require("../recorder.cjs");
+const {
+  openApp,
+  skipSetup,
+  step,
+  api,
+  bench,
+  modelCalls,
+  until,
+  waitForSession,
+} = require("../recorder.cjs");
 
 const args = process.argv.slice(2);
 const NAME = args[0] && !args[0].startsWith("--") ? args[0] : "intake";
@@ -23,6 +36,7 @@ const opt = (flag, fallback) => {
 const BRIEF = opt("--brief", "A page that shows a random quote");
 const GOAL = opt("--goal", "");
 const PROJECT = opt("--project", `Quote page ${new Date().toISOString().slice(11, 19)}`);
+const WATCH = args.includes("--watch");
 
 const b = bench(NAME);
 const result = { bench: NAME, brief: BRIEF, startedAt: new Date().toISOString(), checks: [] };
@@ -159,6 +173,44 @@ async function approve(page, projectId) {
   return started;
 }
 
+/**
+ * --watch: the session Approve and start began runs to its end; every task an agent finished
+ * has the critic's review among its runs (the task drawer's runs, `GET /tasks/:id`), and the
+ * Tasks tab is a step.
+ */
+async function watchReviews(page, projectId, sessionId) {
+  const ended = await waitForSession(NAME, sessionId, 1_200_000).catch(() => null);
+  check("the session Approve and start began ends", !!ended, ended?.status ?? "not in 20 min");
+  const tasks = await api(NAME, "GET", `/projects/${encodeURIComponent(projectId)}/tasks`);
+  const finished = (Array.isArray(tasks) ? tasks : []).filter(
+    (t) => t.specialist && t.specialist !== "person" && ["done", "in_review"].includes(t.status),
+  );
+  const reviewed = [];
+  for (const t of finished) {
+    const detail = await api(NAME, "GET", `/tasks/${encodeURIComponent(t.id)}`);
+    const runs = Array.isArray(detail?.runs) ? detail.runs : [];
+    reviewed.push({
+      title: t.title,
+      specialist: t.specialist,
+      status: t.status,
+      riskTier: t.riskTier,
+      runs: runs.map((r) => `${r.kind}:${r.specialist}`),
+      critic: runs.some((r) => r.kind === "review" && r.specialist === "critic"),
+    });
+  }
+  result.reviews = reviewed;
+  check(
+    "the critic reviewed every task an agent finished",
+    reviewed.length > 0 && reviewed.every((r) => r.critic),
+    reviewed.map((r) => `${r.title} [${r.runs.join(", ")}]`).join(" | ") || "no task finished",
+  );
+  await page.goto(`${b.uiUrl}/projects/${encodeURIComponent(projectId)}/tasks`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.waitForTimeout(2500);
+  await step(page, "tasks after the session");
+}
+
 async function main() {
   const { browser, page } = await openApp(NAME);
   try {
@@ -177,6 +229,7 @@ async function main() {
         await page.goto(`${b.uiUrl}/projects/${encodeURIComponent(projectId)}`);
         await page.waitForTimeout(3000);
         await step(page, "project after approve");
+        if (WATCH) await watchReviews(page, projectId, sessionId);
       }
     }
     // What the intake was asked and what it cost (the model-call log; no key in it).
@@ -184,10 +237,15 @@ async function main() {
     result.intakeCalls = calls.map((c) => ({
       model: c.model,
       messages: Array.isArray(c.messages) ? c.messages.length : null,
-      smallProjectLine:
-        /Small-project mode: [^\n]*/.exec(
+      planSizeLine:
+        /Plan size: [^\n]*/.exec(
           typeof c.messages?.[0]?.content === "string" ? c.messages[0].content : "",
         )?.[0] ?? null,
+      // What Forerunner told the model on the second call (a refused reply, or a plan too big).
+      retryAsked:
+        Array.isArray(c.messages) && typeof c.messages[2]?.content === "string"
+          ? c.messages[2].content.slice(0, 600)
+          : null,
       outputTokens: c.reply?.usage?.output_tokens ?? null,
       replyChars: (c.reply?.text ?? "").length,
       injected: c.injected ?? null,

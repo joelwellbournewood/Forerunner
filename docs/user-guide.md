@@ -52,10 +52,11 @@ Every project is a card: stage, next milestone, health, spend against budget, ho
 wait on you, and the latest critic grade. "New project" asks for a name, a goal, a short brief
 and a repository link; the project starts at your default autonomy (Settings) and becomes the
 active project. The goal is optional when you write a brief: left empty, the brief's first
-sentence is the goal. A brief of a sentence or two (under 200 characters, no list, no
-repository link) gets a small plan: one milestone of one to three tasks, without a separate
-critic review (small-project mode, which you can turn off in Settings); a longer brief or a list
-of features gets a full plan.
+sentence is the goal. Without a repository link, a brief of a sentence or two (under 200
+characters, no list) gets a small plan: one milestone of one to three tasks and two short
+documents (if the agent plans more, Forerunner asks it once more for a smaller plan). Its tasks
+are reviewed like any other: the critic checks each one after the agent has done it. A longer
+brief or a list of features gets a full plan.
 
 The active project is always shown in the header. It is one project for every channel: what
 you pick in the header (or the palette's "Switch project", or Make active on Home) is the

@@ -1393,22 +1393,39 @@ before it ended.", "Claude's plan was missing its tasks.", "Claude's plan was mi
 outcome.", "Claude's plan had tasks waiting for each other in a circle.", with " Forerunner asked
 Claude twice." after a refused retry; "Claude did not answer (model call failed).", "Your Claude
 usage limit is reached. Try again once it resets." (`provider_usage_limit`), "Claude did not finish
-the plan in time." (5) The prompt states every limit the reader enforces, asks the decision record
-to open with a "Decision: " line in one or two sentences (the plan card shows it), asks for an
-estimate for every task a specialist does (`firstSession.items`, in run order: the card has a
+the plan in time." (5) The prompt states every limit the reader enforces, asks the decision
+record to open with a "Decision: " line in one or two sentences (the plan card shows it), asks for
+an estimate for every task a specialist does (`firstSession.items`, in run order: the card has a
 cost per task), never asks a specialist to commit, push or open a pull request (the executor
 records the changes), and says what a small plan is (`SMALL_PLAN_RULES`: one milestone of one to
 three tasks, no reviewer, deploy, marketing or research task unless asked, no person task unless
-the work cannot start, only README.md and the decision record). A new project whose brief is
-short (`isShortBrief`: under `SHORT_BRIEF_CHARS`, 200, at most two lines, no list) and that brings
-no repository starts in small-project mode (`createProjectRecord`, ADR 0103), so the request says
-"Small-project mode: on (a small plan: see Size in your instructions)". Tests:
+the work cannot start, riskTier left out, only README.md and the decision record). (6) **Plan
+size (ADR 0103).** `intakePlanSize` asks for "Plan size: small (a short brief: see Size in your
+instructions)" when the project has no repository and the brief it is drafted from is short
+(`isShortBrief`: under `SHORT_BRIEF_CHARS`, 200, at most two lines, no list), or the project is in
+small-project mode; otherwise "Plan size: what the brief needs". The size comes from the brief the
+project keeps (`summary_cache.brief`), so Try again after a restart asks the same. A first plan of
+more than `SMALL_PLAN_MAX_TASKS` (3) tasks for a draft from the brief alone is asked for once more
+(`smallPlanProblem`: "Your plan has 6 tasks in 3 milestones, but "Plan size: small" asks for one
+milestone with one to three tasks. …"); the second plan stands whatever its size, and when the
+second reply cannot be used or its call ends other than by a stop, the first plan is filed
+("…, the first plan kept" in the session summary). A draft with the person's changes is never
+checked for size. The project is NOT put in small-project mode (`createProjectRecord` keeps it
+off): the mode's tier 0 took the critic off a one-line brief's coder task (review of
+fix/intake-live), against the owner's decision that the critic always reviews code tasks, so a
+small plan's tasks get the default tier 1 and a critic review after the specialist. Tests:
 `intake-live.test.ts` (the six live replies, `fixtures/intake-live1.json`, each read and each
 refused one a plan card on the first call through the daemon; an approved one writes the
 shortened reason; a reply without tasks and a cyclic one asked for once more with the problems
 in words, two Run rows, the summed cost; the words for each cause after the second try; a
-provider error and the usage limit not repeated; the request for a one-line brief and for a long
-one), `intake.test.ts`, `effort-offset.test.ts` (every call of a draft at the effort).
+provider error and the usage limit not repeated; a one-line brief's request asks for a small
+plan, the project stays out of small-project mode and its approved build task is written at tier
+1, a long brief's request asks for what it needs; a too-big small plan asked for once more, the
+second plan standing, the first kept when the second fails, no size check after Change the
+plan), `intake.test.ts` (the plan size across a restart), `effort-offset.test.ts` (every call of
+a draft at the effort); the UI side in `apps/ui/test/real-daemon.test.ts` ("a one-line brief's
+work is reviewed by the critic": the coder's run, then the critic's review, before the task is
+done).
 **Change the plan keeps the person's words (design §3.3).** The answered card keeps the change
 (`change_card.change`) and each plan card the changes it was drafted with (`changes`, in
 order); the new draft is asked with all of them (`IntakeDraftOptions.changes`,

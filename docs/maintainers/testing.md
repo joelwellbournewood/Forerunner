@@ -2437,9 +2437,11 @@ did not answer (model call failed)."). The injections match task titles, so they
 plan's titles ("quote list", "random quote"), not "Step 3". `scripts/bench/journeys/intake.cjs
 <bench> [--brief ...]` walks New project with a one-line brief and no Goal, the plan card and
 Approve and start through the UI, pressing Try again at most twice, and records the checks, the
-plan card's lines and every intake call (the Small-project mode line sent, output tokens) in
-`steps/intake-result.json`; it reads only what a person reads, so it runs the same on the
-real model (`--provider bench-live`).
+plan card's lines and every intake call (the Plan size line sent, what the second call was told,
+output tokens) in `steps/intake-result.json`; with `--watch` it waits for the session Approve and
+start began and checks that the critic reviewed every task an agent finished (the task's runs,
+`GET /tasks/:id`). It reads only what a person reads, so it runs the same on the real model
+(`--provider bench-live`). The smoke journey checks that the critic made calls.
 
 Since a session reworks a sent-back task in the same session (design §4.3, ADR 0102), the e2e
 worlds see a task's whole retry ladder in one session: `RecordingPlanner` (`tests/e2e/src/world.ts`)
@@ -2454,9 +2456,9 @@ The model is `fr daemon --provider bench`: the role-player in `testenv/src/bench
 reads the run label the loop driver puts on every call (`ModelRequest.origin.label`:
 `intake <id>`, `<specialist> on <title>`, `critic tier <n> on ...`, `conversation`) and answers
 so the real flow goes on: an intake proposal `parseIntakeReply` accepts (a small plan of two
-tasks, the README and the decision only, when the request says "Small-project mode: on"; the
-live model's bad first replies with `FORERUNNER_BENCH_INTAKE_BAD`, the retry's request, which
-carries the refused reply, getting the plan), specialist runs through
+tasks with no riskTier, the README and the decision only, when the request says "Plan size:
+small"; the live model's bad first replies with `FORERUNNER_BENCH_INTAKE_BAD`, `too-big` among
+them, the retry's request, which carries the refused reply, getting the plan), specialist runs through
 the app's own tools, a `submit_review` verdict, a chat reply that says what context it got.
 Every request is a line of `<home>/bench/model-calls.jsonl` (`call-log.ts`), which is how a
 tester sees what the app sends a model. `--provider bench-live` wraps the Messages API in the

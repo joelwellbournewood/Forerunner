@@ -519,6 +519,13 @@ async function chat(page, projectId) {
   const calls = modelCalls(NAME);
   result.modelCalls = {};
   for (const c of calls) result.modelCalls[c.role] = (result.modelCalls[c.role] ?? 0) + 1;
+  // The owner's decision of 2026-11-01: the critic always reviews code tasks, a one-line
+  // brief's small plan included (a review run after each finished specialist run).
+  check(
+    "the critic reviewed the work",
+    (result.modelCalls.critic ?? 0) > 0,
+    `model calls ${JSON.stringify(result.modelCalls)}`,
+  );
   result.problems = problems(NAME);
   result.daemonErrors = daemonLog(NAME, 4000)
     .split("\n")

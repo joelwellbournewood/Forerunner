@@ -91,8 +91,8 @@ function intakeRequest(small = false): ModelRequest {
           "Stage: idea",
           "Repositories: none",
           small
-            ? "Small-project mode: on (a small plan: see Size in your instructions)"
-            : "Small-project mode: off",
+            ? "Plan size: small (a short brief: see Size in your instructions)"
+            : "Plan size: what the brief needs",
           "",
           "Brief (data, between the markers):",
           "<<<BRIEF",
@@ -224,7 +224,7 @@ describe("bench role-player: intake", () => {
     expect(tasks.find((t) => t.key === "step3")?.dependsOn).toEqual(["step2"]);
   });
 
-  it("in small-project mode plans one to three tasks, a README and the decision only", async () => {
+  it('asked for "Plan size: small" plans one to three tasks, a README and the decision only, and leaves the review level to Forerunner', async () => {
     const { p } = player();
     const proposal = parseIntakeReply((await call(p, intakeRequest(true))).text);
     const tasks = proposal.plan.milestones.flatMap((m) => m.tasks);
@@ -232,6 +232,8 @@ describe("bench role-player: intake", () => {
     expect(tasks.length).toBeGreaterThanOrEqual(1);
     expect(tasks.length).toBeLessThanOrEqual(3);
     expect(tasks.map((t) => t.specialist)).not.toContain("writer-marketing");
+    // No task names a tier: the project's default (light review) applies, so the critic reviews.
+    expect(tasks.map((t) => t.riskTier)).toEqual(tasks.map(() => undefined));
     expect(Object.keys(proposal.docs).sort()).toEqual([
       "README.md",
       "docs/decisions/0001-plain-static-page.md",
@@ -286,6 +288,18 @@ describe("bench role-player: intake", () => {
     expect(() => parseIntakeReply(said)).toThrow(/not a JSON object/);
     const fixed = (await call(prose.p, retryOf(intakeRequest(), said))).text;
     expect(() => parseIntakeReply(fixed)).not.toThrow();
+    // too-big: asked for a small plan, the full plan first (the live model's six tasks); the
+    // retry, asked for the size, gets the small plan.
+    const big = player({ FORERUNNER_BENCH_INTAKE_BAD: "too-big" });
+    const full = (await call(big.p, intakeRequest(true))).text;
+    expect(parseIntakeReply(full).plan.milestones.flatMap((m) => m.tasks).length).toBeGreaterThan(
+      3,
+    );
+    const small = (await call(big.p, retryOf(intakeRequest(true), full))).text;
+    const smallTasks = parseIntakeReply(small).plan.milestones.flatMap((m) => m.tasks);
+    expect(smallTasks.length).toBeGreaterThanOrEqual(1);
+    expect(smallTasks.length).toBeLessThanOrEqual(3);
+    expect(lines(big.log).map((l) => l.injected ?? null)).toEqual(["intake-bad=too-big", null]);
   });
 
   it("plants a malformed plan or a failed planning call", async () => {

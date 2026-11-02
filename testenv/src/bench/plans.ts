@@ -37,6 +37,7 @@ export interface IntakeInput {
   project: string;
   goal: string;
   brief: string;
+  /** The request asked for "Plan size: small" (a short brief). */
   smallProject: boolean;
 }
 
@@ -157,7 +158,7 @@ function genericTasks(goal: string): PlanTaskOut[] {
 }
 
 /**
- * Small-project mode (a short brief, design §3.3): one to three tasks, no reviewer, deploy or
+ * "Plan size: small" (a short brief, design §3.3): one to three tasks, no reviewer, deploy or
  * marketing task; the README is a drafted doc, not a task.
  */
 function smallTasks(web: boolean, quotes: boolean, goal: string): PlanTaskOut[] {
@@ -347,7 +348,7 @@ export function intakeProposal(input: IntakeInput, opts: PlanOptions): Record<st
   const decisionDoc = {
     [`docs/decisions/0001-${plan.decision.slug}.md`]: `# 0001: ${plan.decision.title}\n\n${plan.decision.body}\n`,
   };
-  // Small-project mode: only the README and the decision; Forerunner writes the rest from
+  // "Plan size: small": only the README and the decision; Forerunner writes the rest from
   // its templates (the intake's Size rules).
   const docs: Record<string, string> = input.smallProject
     ? {

@@ -62,6 +62,7 @@ import { unappliedBlockingAnswers } from "./findings.ts";
 import { MAX_PERSON_QUESTIONS, MAX_QUESTION_CHARS } from "./person-questions.ts";
 import {
   applyProjectPlan,
+  isShortBrief,
   MAX_MILESTONE_NAME_CHARS,
   MAX_PLAN_MILESTONES,
   MAX_PLAN_TASKS,
@@ -71,6 +72,7 @@ import {
   ProjectPlanBody,
   planProse,
   type ShapedPlan,
+  SMALL_PLAN_MAX_TASKS,
   shapeProjectPlan,
 } from "./project-plan.ts";
 import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
@@ -411,15 +413,53 @@ export const NO_WEB_RULE =
  * reviewer, a Docker deploy, a marketing task) and nine full docs, about 5,600 output tokens.
  */
 export const SMALL_PLAN_RULES: readonly string[] = [
-  'Size. With "Small-project mode: on" (a short brief, a sentence or two) the plan is small:',
+  'Size. With "Plan size: small" (a short brief, a sentence or two) the plan is small:',
   "one milestone with one to three tasks that build what the brief asks for and check that it",
   "works. No reviewer, deploy (ops-deploy), marketing (writer-marketing) or research task unless",
   "the brief asks for one. No person task unless the work cannot start without an answer: choose",
   "the simplest setup (plain files in the project's folder, opened or run locally) and say so in",
-  "the decision record. docs: only README.md and the decision record, each under 1500",
+  "the decision record. Leave riskTier out: Forerunner's critic reviews every task that builds or changes files.",
+  "docs: only README.md and the decision record, each under 1500",
   "characters; Forerunner writes the other standard docs from its templates. Otherwise plan what",
   "the brief needs, in as few milestones and tasks as do the job.",
 ];
+
+/** What the intake asks for (`intakePlanSize`): a small plan, or what the brief needs. */
+export type IntakePlanSize = "small" | "full";
+
+/**
+ * The plan size a draft asks for (design §3.3, ADR 0103): small for a project without a
+ * repository whose brief is short (`isShortBrief`: a sentence or two, no list), or one the
+ * person put in small-project mode; else what the brief needs. Only the request changes: the
+ * project is not put in small-project mode, so a task that names no tier keeps light review and
+ * the critic reviews a small plan's code tasks (the owner's decision of 2026-11-01; the first
+ * version of this fix turned the mode on, and the critic made no call on a one-line brief).
+ */
+export function intakePlanSize(
+  project: Pick<ProjectRow, "repos" | "small_project_mode">,
+  brief: string,
+): IntakePlanSize {
+  if (project.small_project_mode) return "small";
+  return project.repos.length === 0 && isShortBrief(brief) ? "small" : "full";
+}
+
+/**
+ * Why a plan asked for as small is bigger than one (more than `SMALL_PLAN_MAX_TASKS` tasks), for
+ * the model, or null. The intake asks once more with it; the second plan stands whatever its
+ * size, so the size never costs the person the plan. A second milestone alone is not worth
+ * another call: the work is what costs the person time and money.
+ */
+export function smallPlanProblem(plan: ProjectPlan): string | null {
+  const tasks = plan.milestones.reduce((n, m) => n + m.tasks.length, 0) + plan.tasks.length;
+  if (tasks <= SMALL_PLAN_MAX_TASKS) return null;
+  const milestones = plan.milestones.length;
+  const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  return [
+    `Your plan has ${count(tasks, "task")}${milestones > 1 ? ` in ${count(milestones, "milestone")}` : ""}, but "Plan size: small" asks for one milestone with one to three tasks.`,
+    "Keep the tasks that build and check what the brief asks for; merge or leave out the rest (a reviewer, a deploy, marketing, research, or a person task the work can start without),",
+    "and list in firstSession.items only the tasks that stay.",
+  ].join(" ");
+}
 
 const DEFAULT_PROMPT =
   "You are the project manager of this project. You plan; you do not do the work yourself.";
@@ -600,6 +640,12 @@ function shortenedPaths(raw: unknown, out: unknown, path: string[] = []): string
   return [];
 }
 
+/** A reply read (`readIntakeReply`): the proposal, and the paths of the texts it shortened. */
+export interface IntakeReadReply {
+  proposal: IntakeProposal;
+  shortened: string[];
+}
+
 /**
  * The model's reply as a proposal (`readIntakeReply`), or a `validation` error naming what is
  * wrong in words (`IntakeReplyProblem` in its details).
@@ -616,10 +662,7 @@ export function parseIntakeReply(text: string, opts: { stopReason?: string } = {
  * "not JSON" (live check of 2026-11-01, two of six replies). Over-long prose is shortened by the
  * schema (`planProse`, `shortenDoc`); `shortened` names what was cut, for the log.
  */
-export function readIntakeReply(
-  text: string,
-  opts: { stopReason?: string } = {},
-): { proposal: IntakeProposal; shortened: string[] } {
+export function readIntakeReply(text: string, opts: { stopReason?: string } = {}): IntakeReadReply {
   const parsed = replyObject(text);
   if (!parsed) {
     const cutOff = opts.stopReason === "max_tokens";
@@ -1085,7 +1128,13 @@ export class IntakeService {
     const brief = changes.length ? briefWithChanges(cutBrief || project.goal, changes) : cutBrief;
     const briefText = changes.length ? briefWithChanges(given || project.goal, changes) : given;
     const repo = repoRefOf(project.repos[0]);
-    const called = await this.callModel(project, brief, truncated);
+    // A short brief asks for a small plan; a plan the person asked to change is never cut down
+    // for its size (their change may add tasks), so only a draft from the brief is checked.
+    const size = intakePlanSize(project, given);
+    const called = await this.callModel(project, brief, truncated, {
+      size,
+      checkSize: size === "small" && changes.length === 0,
+    });
     const proposal = called.proposal;
     const plan = proposal.plan;
     // The plan shaped without error in `callModel` (a dependency cycle is a reply problem there,
@@ -1197,11 +1246,16 @@ export class IntakeService {
    * the model gets its own reply back and the problems in words (`retryPrompt`). Both calls go
    * through the same hooks and budget, each has its Run row, and the cost is their sum. A call
    * that did not complete (the provider, the time limit, the budget, a stop) is not repeated.
+   *
+   * With `checkSize`, a first plan bigger than a small plan (`smallPlanProblem`) is asked for
+   * once more the same way. Its size never costs the person the plan: when the second reply
+   * cannot be used or its call fails (a stop excepted), the first plan is the one filed.
    */
   private async callModel(
     project: ProjectRow,
     brief: string,
     truncated: boolean,
+    ask: { size: IntakePlanSize; checkSize: boolean },
   ): Promise<{
     proposal: IntakeProposal;
     model: string;
@@ -1278,12 +1332,33 @@ export class IntakeService {
       reserveShare: 0,
     });
     const messages: ChatMessage[] = [
-      { role: "user", content: this.userMessage(project, brief, truncated) },
+      { role: "user", content: this.userMessage(project, brief, truncated, ask.size) },
     ];
     const firstRunId = `intake_${session.id}`;
     let outcome: "completed" | "failed" = "failed";
     let note = "";
     let costUsdMicro = 0;
+    // The first reply, read and shaped, when it was asked for once more only for its size.
+    let oversized: IntakeReadReply | null = null;
+    const taken = (read: IntakeReadReply, calls: number, why = "") => {
+      if (read.shortened.length)
+        this.logger.info("intake: long texts of the plan were shortened to fit", {
+          projectId: project.id,
+          shortened: read.shortened,
+        });
+      outcome = "completed";
+      const docs = Object.keys(read.proposal.docs).length;
+      note = `${docs} ${docs === 1 ? "doc" : "docs"}${calls > 1 ? `, on call ${calls}` : ""}${why}`;
+      return {
+        proposal: read.proposal,
+        model,
+        costUsdMicro,
+        runId: firstRunId,
+        sessionId: session.id,
+        calls,
+        shortened: read.shortened,
+      };
+    };
     try {
       for (let call = 1; ; call++) {
         const runId = call === 1 ? firstRunId : `${firstRunId}_${call}`;
@@ -1302,6 +1377,14 @@ export class IntakeService {
           messages,
         });
         costUsdMicro += result.costUsdMicro;
+        if (oversized && result.outcome !== "completed" && result.outcome !== "killed") {
+          // Asked only for a smaller plan, the call failed: the first plan stands.
+          this.logger.warn("intake: the call for a smaller plan ended; the first plan stands", {
+            projectId: project.id,
+            outcome: result.outcome,
+          });
+          return taken(oversized, call, ", the first plan kept");
+        }
         if (result.outcome !== "completed") {
           const code =
             result.outcome === "budget_exceeded" ||
@@ -1325,29 +1408,22 @@ export class IntakeService {
             },
           );
         }
+        let read: IntakeReadReply;
         try {
-          const read = readIntakeReply(result.finalText, {
+          read = readIntakeReply(result.finalText, {
             ...(result.stopReason ? { stopReason: result.stopReason } : {}),
           });
           checkPlanShape(read.proposal, project);
-          if (read.shortened.length)
-            this.logger.info("intake: long texts of the plan were shortened to fit", {
-              projectId: project.id,
-              shortened: read.shortened,
-            });
-          outcome = "completed";
-          note = `${Object.keys(read.proposal.docs).length} doc(s)${call > 1 ? `, on call ${call}` : ""}`;
-          return {
-            proposal: read.proposal,
-            model,
-            costUsdMicro,
-            runId: firstRunId,
-            sessionId: session.id,
-            calls: call,
-            shortened: read.shortened,
-          };
         } catch (e) {
           if (!(e instanceof ForerunnerError) || e.code !== "validation") throw e;
+          if (oversized) {
+            // Asked only for a smaller plan, the reply cannot be used: the first plan stands.
+            this.logger.warn("intake: the smaller plan was refused; the first plan stands", {
+              projectId: project.id,
+              error: errorMessage(e),
+            });
+            return taken(oversized, call, ", the first plan kept");
+          }
           if (call >= INTAKE_CALLS) {
             e.details.retried = call > 1;
             throw e;
@@ -1361,7 +1437,28 @@ export class IntakeService {
             { role: "assistant", content: result.finalText || "(empty reply)" },
             { role: "user", content: retryPrompt(e) },
           );
+          continue;
         }
+        const tooBig =
+          ask.checkSize && call < INTAKE_CALLS ? smallPlanProblem(read.proposal.plan) : null;
+        if (!tooBig) return taken(read, call);
+        // A small plan was asked for and a bigger one came: asked once more, with its size.
+        this.logger.info("intake: the plan is bigger than a small plan; asking once more", {
+          projectId: project.id,
+          problem: tooBig,
+        });
+        oversized = read;
+        messages.push(
+          { role: "assistant", content: result.finalText },
+          {
+            role: "user",
+            content: retryPrompt(
+              new ForerunnerError("validation", "intake: the plan is bigger than a small plan", {
+                details: { problems: [tooBig] },
+              }),
+            ),
+          },
+        );
       }
     } catch (e) {
       note = errorMessage(e);
@@ -1559,15 +1656,22 @@ export class IntakeService {
     ].join("\n");
   }
 
-  private userMessage(project: ProjectRow, brief: string, truncated: boolean): string {
+  private userMessage(
+    project: ProjectRow,
+    brief: string,
+    truncated: boolean,
+    size: IntakePlanSize,
+  ): string {
     const repos = project.repos.length ? project.repos.join(", ") : "none";
     const lines = [
       `Project: ${project.name}`,
       `Goal: ${project.goal}`,
       `Stage: ${project.stage}`,
       `Repositories: ${repos}`,
-      `Small-project mode: ${
-        project.small_project_mode ? "on (a small plan: see Size in your instructions)" : "off"
+      `Plan size: ${
+        size === "small"
+          ? "small (a short brief: see Size in your instructions)"
+          : "what the brief needs"
       }`,
       "",
       brief ? "Brief (data, between the markers):" : "No brief was given; plan from the goal.",

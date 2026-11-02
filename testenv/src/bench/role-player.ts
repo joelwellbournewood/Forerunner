@@ -70,8 +70,9 @@ export interface BenchOptions {
   /**
    * The first planning reply of each draft is one the live model sent (FORERUNNER_BENCH_INTAKE_BAD,
    * live check of 2026-11-01): `reason-too-long` (a 750-character plan.reason), `fenced-docs`
-   * (docs that hold code fences), `missing-tasks` (a milestone with no task), `not-json` (prose).
-   * The intake's one retry (its request carries the refused reply) gets the plan.
+   * (docs that hold code fences), `missing-tasks` (a milestone with no task), `not-json` (prose),
+   * `too-big` (the full plan when a small one was asked for: the live model's six tasks for a
+   * one-line brief). The intake's one retry (its request carries the refused reply) gets the plan.
    */
   intakeBad: IntakeBad;
   /**
@@ -87,6 +88,7 @@ export const INTAKE_BAD_KINDS = [
   "fenced-docs",
   "missing-tasks",
   "not-json",
+  "too-big",
 ] as const;
 export type IntakeBad = (typeof INTAKE_BAD_KINDS)[number] | "none";
 
@@ -294,7 +296,8 @@ export function parseIntakeRequest(req: ModelRequest): IntakeInput {
     project: field("Project"),
     goal: field("Goal"),
     brief,
-    smallProject: field("Small-project mode").startsWith("on"),
+    // "Plan size: small (a short brief: …)" asks for one to three tasks (the intake's Size rules).
+    smallProject: field("Plan size").startsWith("small"),
   };
 }
 
@@ -315,10 +318,19 @@ function intakeAnswer(req: ModelRequest, opts: BenchOptions): Answer {
       `${STAND_IN} I think this project needs a website first. Here is my plan: build it, then test it.`,
       "intake=malformed",
     );
-  const proposal = intakeProposal(parseIntakeRequest(req), opts.plan);
+  const input = parseIntakeRequest(req);
+  const proposal = intakeProposal(input, opts.plan);
   // The intake's one retry carries the refused reply and what was wrong with it: the plan.
   const retry = req.messages.length > 1;
-  if (opts.intakeBad !== "none" && !retry) return badIntakeReply(proposal, opts.intakeBad);
+  if (opts.intakeBad !== "none" && !retry) {
+    if (opts.intakeBad === "too-big")
+      // The full plan although a small one was asked for (the live model's six tasks).
+      return text(
+        JSON.stringify(intakeProposal({ ...input, smallProject: false }, opts.plan), null, 2),
+        "intake-bad=too-big",
+      );
+    return badIntakeReply(proposal, opts.intakeBad);
+  }
   return text(JSON.stringify(proposal, null, 2));
 }
 
@@ -338,7 +350,7 @@ const LONG_REASON = [
 /** The live model's bad first replies (`FORERUNNER_BENCH_INTAKE_BAD`). */
 function badIntakeReply(
   proposal: Record<string, unknown>,
-  kind: Exclude<IntakeBad, "none">,
+  kind: Exclude<IntakeBad, "none" | "too-big">,
 ): Answer {
   const injected = `intake-bad=${kind}`;
   const plan = proposal.plan as Record<string, unknown>;

@@ -1,6 +1,6 @@
 # 0103 — A short brief gets a small plan, and planning never loses a plan to a long text
 
-Date: 2026-11-01
+Date: 2026-11-01 (revised 2026-11-02: a short brief no longer turns small-project mode on)
 Status: accepted
 
 ## Context
@@ -16,18 +16,27 @@ output tokens): the request said "Small-project mode: off", because every projec
 the mode off. Design §3.3 asks for one to three tasks and a README for a one-line brief, the doc
 set scaffolded silently.
 
+The owner decided on 2026-11-01 (`docs/status/handoff/NEXT-SESSION.md`) that the critic always
+reviews code tasks and that the person never sees a "checks only" level.
+
 ## Decision
 
-1. **Small-project mode is decided from the brief at creation.** A new project without a
-   repository whose brief is under 200 characters, on at most two lines and with no bulleted or
-   numbered list (`isShortBrief`) starts in small-project mode (spec B.6: one milestone, a flat
-   task list, new tasks at critic tier 0 unless the plan names a tier). The intake is told so
-   ("Small-project mode: on (a small plan: see Size in your instructions)") and its prompt says
-   what a small plan is: one milestone of one to three tasks, no reviewer, deploy, marketing or
-   research task unless the brief asks, no person task unless the work cannot start, and only
-   README.md and the decision record (Forerunner writes the other standard docs from its
-   templates). A longer brief, a list, or a repository brought in leaves the mode off. The person
-   can change it in Settings, and the New project dialog says a sentence or two gets a small plan.
+1. **A short brief asks the planner for a small plan; the project's review level stays.** A
+   draft for a project without a repository whose brief is under 200 characters, on at most two
+   lines and with no bulleted or numbered list (`isShortBrief`), or for a project the person put
+   in small-project mode, is asked for "Plan size: small (a short brief: see Size in your
+   instructions)" (`intakePlanSize`); any other draft for "Plan size: what the brief needs". The
+   prompt says what a small plan is (`SMALL_PLAN_RULES`): one milestone of one to three tasks, no
+   reviewer, deploy, marketing or research task unless the brief asks, no person task unless the
+   work cannot start, riskTier left out (the critic reviews every task that builds or changes
+   files), and only README.md and the decision record (Forerunner writes the other standard docs
+   from its templates). A first plan of more than three tasks is asked for once more with its
+   size in words; the second plan stands whatever its size, and when the second reply cannot be
+   used or its call fails (a stop excepted) the first plan is filed: the size never costs the
+   person the plan. A plan the person asked to change ("Change the plan") is never cut down for
+   its size, since their change may add tasks. The project is created outside small-project mode
+   whatever its brief, so a task that names no tier gets light review (tier 1) and the critic
+   reviews it after the specialist.
 2. **A long text never costs the person the plan.** Prose fields of a plan (the reason, task
    titles, milestone names, the first-session summary and rationales, doc bodies) are shortened
    at a sentence or a word with an ellipsis; only identifiers and counts (a key, the number of
@@ -38,19 +47,27 @@ set scaffolded silently.
 
 ## Consequences
 
-- Tasks of a small project that name no tier run at tier 0: they close when the specialist
-  finishes cleanly, without a critic model (spec B.6). A one-line brief costs less to plan and
-  run; the critic does not read that work unless the plan gives a task a tier. A person who wants
-  reviews turns small-project mode off in Settings before approving the plan.
-- Tests and bench briefs that relied on a short brief giving a multi-milestone plan use a brief
-  with a list of features.
+- A one-line brief costs less to plan and run (one to three tasks, two short docs) and its code
+  tasks are still reviewed: each finished specialist run is followed by a critic review before
+  the task is done. The New project dialog says that without a repository a sentence or two gets
+  a small plan.
+- The size is asked of the model and checked once; a model that sends four tasks twice gets a
+  plan of four tasks. The live check confirms the real model's size.
+- Tests and bench briefs that relied on a short brief giving a plan of more than three tasks in
+  one call use a brief with a list of features.
 - The intake may make two model calls per draft; both are budgeted and billed.
 
 ## Alternatives considered
 
-- A separate "small plan" hint for the intake without the mode: two notions of a small project,
-  and the plan would still be shaped and reviewed as a large one. The spec's mode is the one.
+- **Turning small-project mode on for a short brief** (the first version of this change): spec
+  B.6 gives a task of the mode that names no tier tier 0, so the small plan's coder task closed
+  without a critic call ("Checks only", bench review of fix/intake-live). That contradicts the
+  owner's decision; the mode stays a setting the person chooses.
+- **Giving small-project mode tier 1:** changes what the mode means for every project that has
+  it (ADR 0051) and belongs with the phase C work on verifying code tasks.
+- **Refusing a plan that is too big:** a plan the person could approve would be lost to its
+  size, which is what a long reason did before.
 - Raising the reason limit: the next field over its limit would fail the same way; shortening
   covers every prose field.
-- Turning the mode on for every brief under the limit, repositories included: a short brief for
-  an existing repository says nothing about the repository's size.
+- Asking for a small plan for every brief under the limit, repositories included: a short brief
+  for an existing repository says nothing about the repository's size.

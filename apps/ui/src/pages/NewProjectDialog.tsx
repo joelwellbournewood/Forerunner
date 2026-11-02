@@ -105,7 +105,7 @@ export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: ()
         </Field>
         <Field
           label="Brief"
-          hint="What you want, in your words. A sentence or two gets a small plan (up to three tasks); a list of features gets a full one."
+          hint="What you want, in your words. Without a repository, a sentence or two gets a small plan (up to three tasks); a list of features gets a full one."
         >
           <textarea
             className={`${INPUT_CLASS} min-h-28`}

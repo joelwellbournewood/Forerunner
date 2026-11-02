@@ -1348,6 +1348,8 @@ describe("PM intake: Change the plan keeps the person's words until the new plan
       await after.intake.inFlight(projectId);
       expect(second.calls).toHaveLength(1);
       expect(told(second.calls[0])).toContain(asked);
+      // The plan size comes from the brief the project keeps, so it holds across the restart.
+      expect(told(second.calls[0])).toContain("Plan size: small");
       const pending = await req2(`/projects/${projectId}/intake`);
       expect(pending).toMatchObject({ state: "pending", error: null });
       expect(pending.requestId).not.toBe(requestId);

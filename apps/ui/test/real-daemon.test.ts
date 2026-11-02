@@ -2645,7 +2645,7 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(await client.sessions({ projectId: project.id })).toHaveLength(before);
   }, 60_000);
 
-  it("a one-line brief without a Goal: the dialog's goal, a small project, a first reply without tasks asked for once more, one card (live check of 2026-11-01)", async () => {
+  it("a one-line brief without a Goal: the dialog's goal, a small plan, a first reply without tasks asked for once more, one card (live check of 2026-11-01)", async () => {
     bench.intakeBad = "missing-tasks";
     try {
       const before = intakeCalls.length;
@@ -2658,14 +2658,16 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
         intake: true,
       });
       expect(project.goal).toBe("A page that shows a random quote");
-      // A short brief, no repository: small-project mode (ADR 0103).
-      expect(project.smallProjectMode).toBe(true);
+      // A short brief asks for a small plan, without small-project mode: its tasks keep the
+      // critic's review (ADR 0103; the owner's decision of 2026-11-01).
+      expect(project.smallProjectMode).toBe(false);
+      expect(project.defaultRiskTier).toBe(1);
       await rt.intake.inFlight(project.id);
       // The first reply had no tasks; the intake asked once more, with the problem in words.
       const calls = intakeCalls.slice(before);
       expect(calls).toHaveLength(2);
       expect(String(calls[0]?.messages[0]?.content)).toContain(
-        "Small-project mode: on (a small plan: see Size in your instructions)",
+        "Plan size: small (a short brief: see Size in your instructions)",
       );
       expect(String(calls[1]?.messages[2]?.content)).toContain("- plan: the plan has no task");
       expect(await client.intakeStatus(project.id)).toMatchObject({ state: "pending" });
@@ -2840,6 +2842,65 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(last.indexOf("No build step.")).toBeLessThan(last.indexOf("Add a dark mode."));
     expect((await client.intakeStatus(project.id)).state).toBe("pending");
   }, 60_000);
+});
+
+describe("the UI client against the real daemon: a one-line brief's work is reviewed by the critic (the owner's decision of 2026-11-01)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    ({ rt, client } = await composeWithRolePlayer({}));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("New project with a one-line brief, Approve and start: the coder builds, then the critic reviews, before the task is done", async () => {
+    const brief = "A page that shows a random quote";
+    const project = await client.createProject({
+      name: "Reviewed quote",
+      goal: goalFromBrief(brief),
+      brief,
+      intake: true,
+    });
+    // A small plan, not small-project mode: a task that names no tier gets light review.
+    expect(project.smallProjectMode).toBe(false);
+    expect(project.defaultRiskTier).toBe(1);
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.projectId === project.id && r.status === "open",
+    );
+    if (!card) throw new Error("no plan card");
+    expect(card.title).toBe('Plan for "Reviewed quote": 2 tasks');
+    await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+    const tasks = await client.tasks(project.id);
+    const build = tasks.find((t) => t.specialist === "coder");
+    if (!build) throw new Error(`no coder task in ${tasks.map((t) => t.title).join(", ")}`);
+    expect(build.riskTier).toBeGreaterThanOrEqual(1);
+    const states = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    await eventually(
+      async () => (await client.task(build.id)).task.status === "done",
+      "the build task to be done",
+      states,
+      60_000,
+    );
+    // The task's runs, newest first: the critic's review after the coder's work.
+    const runs = (await client.task(build.id)).runs;
+    expect(runs.map((r) => [r.kind, r.specialist])).toEqual([
+      ["review", "critic"],
+      ["work", "coder"],
+    ]);
+    // Nothing is left running for the next case: the session Approve and start began ends.
+    await eventually(
+      async () =>
+        (await client.sessions({ projectId: project.id })).every((s) => s.status !== "running"),
+      "the session to end",
+      states,
+      60_000,
+    );
+  }, 150_000);
 });
 
 describe("the UI client against the real daemon: a run that errors fails its task, which gets a card (design §3.8, §4.4)", () => {

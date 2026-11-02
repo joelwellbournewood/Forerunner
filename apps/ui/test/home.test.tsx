@@ -106,9 +106,12 @@ describe("Home", () => {
     // Only the Brief is labelled "brief": a hint naming it would label the Goal too (the bench's
     // smoke journey fills the field by its label, case aside).
     expect(within(dialog).getAllByLabelText(/brief/i)).toHaveLength(1);
+    // The condition the daemon applies is named (design §5.9): with a repository link the plan
+    // is sized from the repository, not the brief.
     expect(dialog).toHaveTextContent(
-      "A sentence or two gets a small plan (up to three tasks); a list of features gets a full one.",
+      "Without a repository, a sentence or two gets a small plan (up to three tasks); a list of features gets a full one.",
     );
+    expect(within(dialog).getAllByLabelText(/Repository link/)).toHaveLength(1);
     await user.type(within(dialog).getByLabelText("Name"), "Quote page");
     await user.type(
       within(dialog).getByLabelText(/Brief/),

@@ -255,7 +255,11 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
       body: JSON.stringify({ name: `Quote page ${n}`, goal: "A random quote", brief, ...extra }),
     });
     expect(res.status).toBe(201);
-    return (await json(res)) as { id: string; smallProjectMode?: boolean };
+    return (await json(res)) as {
+      id: string;
+      smallProjectMode?: boolean;
+      defaultRiskTier?: number;
+    };
   };
   /** The plan card of a project as the Inbox shows it (`GET /inbox`, what the UI reads). */
   const planCard = async (projectId: string) => {
@@ -288,11 +292,21 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
     await rt?.close();
   });
 
+  /**
+   * The live replies were asked for with "Small-project mode: off": a brief with a list asks
+   * for a plan of what the brief needs, as that request did, so each reply is read as it was
+   * sent. (A short brief's request asks for a small plan, and a bigger reply is asked for once
+   * more: below.)
+   */
+  const LIST_BRIEF = [
+    "A one-page website that shows a random quote each time it is opened:",
+    "- plain HTML, CSS and JavaScript",
+    "- no build step",
+  ].join("\n");
+
   for (const line of [1, 22, 24, 25]) {
     it(`live reply ${line} (refused live) becomes a plan card on the first call`, async () => {
-      const project = await createProject(
-        "A one-page website that shows a random quote each time it is opened; plain HTML, CSS and JavaScript; no build step",
-      );
+      const project = await createProject(LIST_BRIEF);
       provider.queue.push({ text: live(line).reply_text });
       const before = provider.calls.length;
       const res = await req(`/projects/${project.id}/intake`, { method: "POST", body: "{}" });
@@ -307,7 +321,7 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
   }
 
   it("an approved live plan whose reason was too long writes its tasks with the shortened reason", async () => {
-    const project = await createProject("A page that shows a random quote");
+    const project = await createProject(LIST_BRIEF);
     provider.queue.push({ text: live(22).reply_text });
     const res = await req(`/projects/${project.id}/intake`, { method: "POST", body: "{}" });
     expect(res.status).toBe(202);
@@ -447,22 +461,30 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
     expect(provider.calls.length - before).toBe(1);
   });
 
-  it("the request for a one-line brief says small-project mode is on and what a small plan is; a long brief's says off", async () => {
+  it("a one-line brief asks for a small plan and keeps the critic: not small-project mode, the approved build task is written at tier 1; a long brief asks for what it needs", async () => {
     const short = await createProject("A page that shows a random quote");
-    expect(short.smallProjectMode).toBe(true);
+    // The owner's decision of 2026-11-01: the critic always reviews code tasks. Small-project
+    // mode gives a task that names no tier tier 0 (checks only, no critic), so a short brief
+    // asks the planner for a small plan without turning the mode on (ADR 0103).
+    expect(short.smallProjectMode).toBe(false);
+    expect(short.defaultRiskTier).toBe(1);
     provider.queue.push({ text: JSON.stringify(proposal()) });
     expect((await req(`/projects/${short.id}/intake`, { method: "POST", body: "{}" })).status).toBe(
       202,
     );
     const sent = provider.calls.at(-1) as ModelRequest;
     const user = String(sent.messages[0]?.content);
-    expect(user).toContain("Small-project mode: on (a small plan: see Size in your instructions)");
+    expect(user).toContain("Plan size: small (a short brief: see Size in your instructions)");
+    expect(user).not.toContain("Small-project mode");
     expect(user).toContain("<<<BRIEF\nA page that shows a random quote");
     // The instructions say what a small plan is, and every limit the reader enforces.
     const system = sent.system ?? "";
-    expect(system).toContain('Size. With "Small-project mode: on"');
+    expect(system).toContain('Size. With "Plan size: small"');
     expect(system).toContain("one milestone with one to three tasks");
     expect(system).toContain("No reviewer, deploy (ops-deploy), marketing (writer-marketing)");
+    expect(system).toContain(
+      "Leave riskTier out: Forerunner's critic reviews every task that builds or changes files.",
+    );
     expect(system).toContain("docs: only README.md and the decision record");
     expect(system).toContain("plan.reason: at most 500 characters");
     expect(system).toContain("A task title: at most 200 characters");
@@ -481,7 +503,23 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
     // The planner never asks a specialist to commit: Forerunner does (live: the coder could not).
     expect(system).toContain("Forerunner commits each");
     expect(system).toContain("never asks a specialist to commit, push or open a pull request");
-    // The plan of a small project is one milestone: the card counts what is written.
+    // Approved, the build task is written at tier 1 (light review): the critic reviews it.
+    const [row] = await rt.store.humanRequest.open({ humanId: rt.human.id, projectId: short.id });
+    if (!row) throw new Error("no plan card");
+    const answered = await req(`/requests/${row.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ version: row.version, answer: "Approve and start" }),
+    });
+    expect(answered.status).toBe(200);
+    const written = (await (await req(`/projects/${short.id}/tasks`)).json()) as {
+      title: string;
+      specialist: string | null;
+      riskTier: number;
+    }[];
+    expect(written.map((t) => [t.title, t.specialist, t.riskTier])).toEqual([
+      ["Build the quote page", "coder", 1],
+    ]);
+    // A long brief with a list of features asks for the plan the brief needs.
     const longBrief = [
       "A quotes website for our book club.",
       "- a page that shows a random quote",
@@ -496,7 +534,91 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
       202,
     );
     expect(String((provider.calls.at(-1) as ModelRequest).messages[0]?.content)).toContain(
-      "Small-project mode: off",
+      "Plan size: what the brief needs",
     );
+  });
+
+  /** The plan card's task count as `GET /inbox` serves its title ("…: 6 tasks"). */
+  const cardTasks = async (projectId: string) =>
+    Number(/: (\d+) tasks?$/.exec(String((await planCard(projectId)).title))?.[1]);
+  const draft = async (projectId: string) => {
+    const before = provider.calls.length;
+    const res = await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(202);
+    return provider.calls.length - before;
+  };
+
+  it("a short brief's plan that comes back bigger than a small plan is asked for once more; the second reply stands whatever its size", async () => {
+    // Live reply 23: six tasks over three milestones for the brief "A page that shows a random
+    // quote" (with "Small-project mode: off" then). Asked for a small plan, the same reply is
+    // asked for once more with its size in words; the smaller second plan is the card.
+    const p1 = await createProject("A page that shows a random quote");
+    provider.queue.push({ text: live(23).reply_text }, { text: JSON.stringify(proposal()) });
+    expect(await draft(p1.id)).toBe(2);
+    const told = String((provider.calls.at(-1) as ModelRequest).messages[2]?.content);
+    expect(told).toContain("Forerunner could not use your reply:");
+    expect(told).toContain(
+      '- Your plan has 6 tasks in 3 milestones, but "Plan size: small" asks for one milestone with one to three tasks.',
+    );
+    expect(await cardTasks(p1.id)).toBe(1);
+    const change = (await rt.store.humanRequest.open({ humanId: rt.human.id, projectId: p1.id }))[0]
+      ?.change_card as JsonObject;
+    expect(change.model_calls).toBe(2);
+    // Asked once only: a second reply as big is the plan the person reads.
+    const p2 = await createProject("A page that shows a random quote");
+    provider.queue.push({ text: live(23).reply_text }, { text: live(25).reply_text });
+    expect(await draft(p2.id)).toBe(2);
+    expect(await cardTasks(p2.id)).toBe(5);
+    // Its size never costs the person the plan: a second reply that cannot be read, or a second
+    // call that fails, leaves the first plan as the card.
+    const p3 = await createProject("A page that shows a random quote");
+    provider.queue.push(
+      { text: live(23).reply_text },
+      { text: "Here is a smaller plan: build it." },
+    );
+    expect(await draft(p3.id)).toBe(2);
+    expect(await cardTasks(p3.id)).toBe(6);
+    const p4 = await createProject("A page that shows a random quote");
+    provider.queue.push({ text: live(23).reply_text }, { error: "overloaded_error" });
+    expect(await draft(p4.id)).toBe(2);
+    expect(await cardTasks(p4.id)).toBe(6);
+    // A plan within the size, and any plan for a brief with a list, is taken on the first call.
+    const p5 = await createProject("A page that shows a random quote");
+    provider.queue.push({ text: JSON.stringify(proposal()) });
+    expect(await draft(p5.id)).toBe(1);
+    const p6 = await createProject(LIST_BRIEF);
+    provider.queue.push({ text: live(23).reply_text });
+    expect(await draft(p6.id)).toBe(1);
+    expect(await cardTasks(p6.id)).toBe(6);
+  });
+
+  it("a plan the person asked to change is never cut down for its size: their change may add tasks", async () => {
+    const project = await createProject("A page that shows a random quote");
+    provider.queue.push({ text: JSON.stringify(proposal()) });
+    expect(await draft(project.id)).toBe(1);
+    const [row] = await rt.store.humanRequest.open({
+      humanId: rt.human.id,
+      projectId: project.id,
+    });
+    if (!row) throw new Error("no plan card");
+    const before = provider.calls.length;
+    provider.queue.push({ text: live(23).reply_text });
+    const answered = await req(`/requests/${row.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({
+        version: row.version,
+        answer: {
+          choice: "Change the plan",
+          text: "Add a deploy, a review and the quote list as tasks.",
+        },
+      }),
+    });
+    expect(answered.status).toBe(200);
+    await rt.intake.inFlight(project.id);
+    expect(provider.calls.length - before).toBe(1);
+    expect(String((provider.calls.at(-1) as ModelRequest).messages[0]?.content)).toContain(
+      "Add a deploy, a review and the quote list as tasks.",
+    );
+    expect(await cardTasks(project.id)).toBe(6);
   });
 });

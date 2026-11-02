@@ -29,14 +29,16 @@ export const SMALL_PROJECT_RISK_TIER = 0;
 
 /** A brief shorter than this, on at most two lines and with no list, asks for a small plan. */
 export const SHORT_BRIEF_CHARS = 200;
+/** Most tasks a small plan has (design §3.3: one to three), in one milestone. */
+export const SMALL_PLAN_MAX_TASKS = 3;
 
 /**
  * Whether a project's brief asks for a small plan (design §3.3: "a one-line brief gets a small
  * plan"): under `SHORT_BRIEF_CHARS` characters, at most two lines, no bulleted or numbered
- * list. A project created with such a brief starts in small-project mode (`createProjectRecord`,
- * ADR 0103), so the intake is told so and its plan is one milestone of one to three tasks.
- * Before, every project started with the mode off and a one-line brief got six tasks over three
- * milestones (live check of 2026-11-01). No brief at all leaves the mode off.
+ * list. The intake then asks for one milestone of one to three tasks ("Plan size: small",
+ * `intakePlanSize`, ADR 0103); a one-line brief had got six tasks over three milestones (live
+ * check of 2026-11-01). It does not turn small-project mode on: the mode's tier 0 would take the
+ * critic off the code tasks (the owner's decision of 2026-11-01). No brief at all is not short.
  */
 export function isShortBrief(brief: string | null | undefined): boolean {
   const t = (brief ?? "").trim();
