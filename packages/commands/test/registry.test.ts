@@ -142,7 +142,9 @@ describe("CommandRegistry", () => {
       content: "Switched. Undo.",
     });
     const pending = await by("budget_set").execute({ amountChf: 20 }, toolCtx);
-    expect(pending.content).toMatch(/^Needs confirmation \(p1\)/);
+    // In words, with no id the model could repeat to the person (phase E).
+    expect(pending.content).toMatch(/^Needs confirmation\. The person is asked: /);
+    expect(pending.content).not.toContain("p1");
     expect(pending.content).toContain("CHF 5 to CHF 20");
     const refused = await by("device_revoke").execute({ device: "x" }, toolCtx);
     expect(refused.isError).toBe(true);

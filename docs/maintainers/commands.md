@@ -59,7 +59,9 @@ dots replaced by underscores (`budget_set`), the schema is the command's, the ac
 `actionClass` or derived from the risk (low `routine_reversible`, medium `non_routine`, high
 `permission_change`), and `execute` calls `binding.execute` (the executor) with a context from
 `binding.ctxFor(toolCtx, command)`. A pending confirmation comes back to the model as text to
-read out. The conversation agent's own tools are replaced by these in the daemon wiring step.
+read out: "Needs confirmation. The person is asked: <the card's one-line read-back>", with no
+pending id (phase E: the model repeated ids to the person, live walk 2 #10). The conversation
+agent's own tools are replaced by these in the daemon wiring step.
 
 | Command | Scope | Risk | Reversible | Writes |
 | --- | --- | --- | --- | --- |
