@@ -301,7 +301,10 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
           },
         });
       }
-      if (card)
+      if (card) {
+        // A questions card filed after the person went ahead without answering offers no Go
+        // ahead without again (live L-3); the row offers what the card offers.
+        const asked = card.change_card as { go_ahead?: unknown } | null | undefined;
         return display("answer", "Needs your answer", "warn", {
           detail: "Its card is in the Inbox.",
           blocker: {
@@ -310,8 +313,12 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
             requestId: card.id,
             title: null,
             cardKind: "questions",
+            ...(asked && typeof asked === "object" && asked.go_ahead === false
+              ? { goAhead: false }
+              : {}),
           },
         });
+      }
       if (isPausedByPerson(task, false))
         return display("paused", "Paused by you", "neutral", {
           detail: "No session runs it until you press Resume.",

@@ -532,13 +532,12 @@ export class CriticLoop implements CriticPort {
     // accept waits for the person. Its questions are filed, not a sign-off (which asks nothing
     // the person can answer), and the retry ladder stops at this first verdict: a rerun by a
     // specialist cannot answer them, it only spends again. Once the person chose "Go ahead
-    // without" on the task, its questions are not filed again (live L-3: a second card offered
-    // Go ahead without again, a run's cost each time): the verdict stands, a human verdict its
-    // sign-off, which shows what the specialist did without the answers.
+    // without" on the task, a run that still cannot go on without them (an input file that is
+    // missing) asks once more, in its own words, but without offering Go ahead without again
+    // (live L-3: the second card offered it again, which only ran the same ask, a run's cost
+    // each time).
     const reported =
-      output.verdict === "accept" || (await wentAheadWithout(store, task.id))
-        ? null
-        : reportedQuestions(result.finalReport ?? result.summary);
+      output.verdict === "accept" ? null : reportedQuestions(result.finalReport ?? result.summary);
     let askedPerson: string | undefined;
     if (reported) {
       askedPerson = await this.askPersonInstead({
@@ -848,6 +847,8 @@ export class CriticLoop implements CriticPort {
         questionsReason(args.result.finalReport ?? args.result.summary, args.questions) ??
         quotedWords(args.result.finalReport ?? args.result.summary) ??
         `The critic: ${output.summary}`,
+      // The person went ahead without answering on this task before: no Go ahead without again.
+      goAhead: !(await wentAheadWithout(store, current.id)),
     });
     return request.id;
   }

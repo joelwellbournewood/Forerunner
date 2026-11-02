@@ -440,9 +440,9 @@ done, and if a task was waiting on it, a session starts and works on that task (
 line says so); a task a specialist was working on goes back to ready, a session starts, and its
 next run gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
 and say in its report what it assumed; the task goes on in a session, also when you press it while
-another task runs. You are not asked about that task again: if the work cannot be done without
-your answer (a file that is missing), its card shows what the specialist did and why, and you
-accept it, send it back or cancel it. **Cancel task** cancels it
+another task runs. The specialist is not let ask you the same again: if the work cannot be done
+at all without your answer (a file that is missing), you get one card that says why in its own
+words, where you can answer or cancel the task, without a second **Go ahead without**. **Cancel task** cancels it
 instead (asked once, naming the tasks that wait on it). You can also answer in your own words
 from the phone; one text then answers all the questions.
 

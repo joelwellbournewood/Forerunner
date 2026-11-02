@@ -308,7 +308,9 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
       .filter(Boolean)
       .join(" ") || null;
   const choices: RequestChoiceWords[] = [];
-  if (!planned)
+  // Not offered again once the person went ahead without on the task (live L-3): the work then
+  // needs what it asks for (a missing input), and going ahead again only ran the same ask.
+  if (!planned && card.go_ahead !== false)
     choices.push({
       label: "Go ahead without",
       explain: "The specialist decides and says what it assumed.",

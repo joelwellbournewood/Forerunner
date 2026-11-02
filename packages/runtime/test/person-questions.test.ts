@@ -4,6 +4,7 @@ import { join } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { requestWords } from "../src/daemon/request-words.ts";
+import { markAnswer } from "../src/session/answer-mark.ts";
 import {
   filePersonQuestions,
   isPersonTask,
@@ -415,7 +416,7 @@ describe("the critic path: a run that needs the person's answers (U-022)", () =>
     }
   });
 
-  it("after Go ahead without, a report that lists questions again files no second questions card (live L-3)", async () => {
+  it("after Go ahead without, a report that still cannot go on asks once more in its own words, without offering Go ahead without again (live L-3)", async () => {
     const w = await loopWorld({ replies: [submitReply({}, { times: 2 }), closingReply()] });
     try {
       const task = await w.addTask("Members chart");
@@ -427,12 +428,14 @@ describe("the critic path: a run that needs the person's answers (U-022)", () =>
         source: "specialist",
         questions: ["Where is data/members.csv?"],
       });
-      await w.store.humanRequest.answer(
+      const answered = await w.store.humanRequest.answer(
         card.request.id,
         card.request.version,
         GO_AHEAD_WITHOUT_OPTION,
         w.human,
       );
+      // Applied, as the sync does before the task's next run.
+      await markAnswer(w.store, w.clock, answered, "without");
       expect(await wentAheadWithout(w.store, task.id)).toBe(true);
       const result = await w.start(
         w.runner(
@@ -444,9 +447,15 @@ describe("the critic path: a run that needs the person's answers (U-022)", () =>
       );
       expect(result.completed).toEqual([]);
       const open = await w.store.humanRequest.open({ humanId: w.human });
-      // No new questions card; the critic's sign-off shows what was done without the answers.
-      expect(open.filter((r) => personQuestionsCardOf(r) !== null)).toEqual([]);
-      expect(open.map((r) => (r.change_card as JsonObject | null)?.key)).toContain(SIGNOFF_KEY);
+      // Not a sign-off quoting the critic's accept of work that was not made: one questions card
+      // in the specialist's words, which does not offer Go ahead without again.
+      expect(open.map((r) => (r.change_card as JsonObject | null)?.key)).not.toContain(SIGNOFF_KEY);
+      const asked = open.filter((r) => personQuestionsCardOf(r) !== null);
+      expect(asked).toHaveLength(1);
+      expect(personQuestionsCardOf(asked[0] as HumanRequestRow)?.go_ahead).toBe(false);
+      const words = requestWords(asked[0] as HumanRequestRow, { taskTitle: task.title });
+      expect(words.body).toBe('The specialist said: "No chart: data/members.csv is missing."');
+      expect(words.choices.map((c) => c.label)).toEqual(["Cancel task"]);
     } finally {
       await w.close();
     }

@@ -1570,13 +1570,18 @@ at its start, so the next run of the chart in that session was not told, asked t
 question again and the Inbox showed a second card with Go ahead without, a run's cost each
 time. So the Inbox path queues no note (the card is the one place), the executor leaves out a
 queued note that only repeats it (the Tasks tab still queues one), and from then on the task
-gets no second questions card: `ask_person` answers `ASK_REFUSED_AFTER_WITHOUT` (an error
-result; the run goes on and reports what it assumed, or why it cannot do the work) and the
-critic path files no questions for it (`wentAheadWithout`; a `human` verdict files its sign-off,
-which shows what was done without the answers). The decision log records the answer as for any
+is not asked the same way again: `ask_person` answers `ASK_REFUSED_AFTER_WITHOUT` (an error
+result; the run goes on and reports what it assumed, or why it cannot do the work). A report
+that still cannot go on without the person (an input file that is missing) gets one questions
+card in its own words, as the critic path files it, but with `go_ahead: false` on the card
+(`wentAheadWithout`): the Inbox offers Send answers and Cancel task, not Go ahead without
+again, and the Tasks tab row (`display.blocker.goAhead: false`, `task-words.ts`) offers Answer
+and Cancel. (A sign-off there quoted the stand-in critic's "Accepted: …" of a chart that was not
+made.) The decision log records the answer as for any
 `decision` (the answer route). Tests: `person-questions.test.ts` (which tasks, what a report
 asks, the reader, the critic path with a `human` and a `revise` verdict: one attempt, the
-questions and no sign-off; after Go ahead without no second questions card),
+questions and no sign-off; after Go ahead without one card in the report's words without Go
+ahead without),
 `person-questions-daemon.test.ts` (the composed daemon: planned and
 1.0.3 tasks asked at once with no run and no model call, a restart files no second card, the
 form's answers in the decision doc and the task done, "Cancel the task", a blank answer

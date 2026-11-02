@@ -310,6 +310,12 @@ export const TaskDisplay = z.object({
        * task). Absent from an older service.
        */
       cardKind: z.enum(["retry", "questions", "budget", "cannot_run"]).optional(),
+      /**
+       * False on a questions card that offers no Go ahead without: the person went ahead without
+       * answering on this task before (live L-3), so the Tasks tab offers Answer and Cancel.
+       * Absent: the card's own options apply.
+       */
+      goAhead: z.boolean().optional(),
     })
     .nullable(),
 });

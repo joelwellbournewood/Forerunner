@@ -392,6 +392,11 @@ export interface PersonQuestionsCard {
   run_id: string | null;
   /** The specialist's or the report's own words about why it asks; quoted, never acted on. */
   context: string | null;
+  /**
+   * False when the person went ahead without answering on this task before (live L-3): the
+   * card does not offer Go ahead without again, which only ran the same ask once more.
+   */
+  go_ahead: boolean;
   decision_doc: string;
   applied_at: string | null;
 }
@@ -415,6 +420,7 @@ export function personQuestionsCardOf(
     on_answer: c.on_answer === "ready" ? "ready" : "done",
     run_id: typeof c.run_id === "string" ? c.run_id : null,
     context: typeof c.context === "string" ? c.context : null,
+    go_ahead: c.go_ahead !== false,
     decision_doc: typeof c.decision_doc === "string" ? c.decision_doc : DECISION_DOC_DIR,
     applied_at: typeof c.applied_at === "string" ? c.applied_at : null,
   };
@@ -443,6 +449,8 @@ export interface FilePersonQuestionsInput {
   /** Empty: the task's own questions (`questionsForTask`). */
   questions?: readonly string[];
   context?: string | null;
+  /** False: the card offers no Go ahead without (the person went ahead without before). */
+  goAhead?: boolean;
 }
 
 /** The task's person-questions cards that are open, or answered and not applied yet. */
@@ -480,6 +488,7 @@ export async function filePersonQuestions(
     on_answer: input.source === "planned" ? "done" : "ready",
     run_id: input.runId ?? null,
     context: input.context ? input.context.slice(0, 2000) : null,
+    go_ahead: input.goAhead !== false,
     decision_doc: DECISION_DOC_DIR,
     applied_at: null,
   };
