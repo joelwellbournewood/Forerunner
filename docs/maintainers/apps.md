@@ -693,7 +693,11 @@ the real daemon's `202 StartSessionView`, parsed with its schema (`startOutcome:
 `"deferred"` answers no session, U-003); `POST /projects/:id/data/import` answers the
 runtime's `ImportResultView`, parsed with it (U-006);
 `/chat/stream` streams word tokens and scripts a read-back confirmation when the text contains
-"start a session", answered by "yes"/"no". The extension routes file a `capability_grant`
+"start a session", answered by "yes"/"no"; the yes begins a session as `POST /sessions` does
+(`beginSession`), replies with the daemon's sentence ("Started a session on Atlas (up to CHF
+5).", action kind `session.start`) and the conversation's turn carries that session's
+`sessionId`, which the turn links (Open the session), as the daemon's conversation view does
+from the start's change log row. The extension routes file a `capability_grant`
 request in the inbox for pending installs (answering it approves or denies), widen permissions
 into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emits
 `restart.requested` and bumps the version `/health` reports, or, like the daemon (U-070), answers

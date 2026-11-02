@@ -130,11 +130,18 @@ describe("Quick chat", () => {
     );
     await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(2));
     const agents = screen.getAllByTestId("chat-agent");
-    expect(agents[1]).toHaveTextContent("Confirmed. Starting the session now.");
+    expect(agents[1]).toHaveTextContent("Started a session on Atlas (up to CHF 5).");
     // No raw command chip ("session_start: ...", "task.create: ...").
     expect(agents[1]).not.toHaveTextContent(/session_start|session\.start:/);
     // The answered read-back says what became of it.
     expect(screen.getByTestId("readback-closed")).toHaveTextContent("(you said yes)");
+    // The turn links the session the start began (phase E), as the daemon's conversation does.
+    const started = harness.daemon.state.sessions.at(-1);
+    expect(started?.projectId).toBe("proj_atlas");
+    expect(started?.status).toBe("running");
+    const link = await screen.findByTestId("chat-session-link");
+    expect(link).toHaveTextContent("Open the session");
+    expect(link).toHaveAttribute("href", `/sessions/${started?.id}`);
   });
 
   it("a start the chat made links the session it started (phase E)", async () => {

@@ -2088,30 +2088,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         202,
       );
     }
-    const session: SessionView = {
-      id: nextId("sess"),
-      agentId: agent.id,
-      agentName: agent.name,
+    const session = beginSession({
+      agent,
       projectId: parsed.data.projectId ?? null,
       trigger: parsed.data.trigger,
-      status: "running",
-      startedAt: new Date().toISOString(),
-      endedAt: null,
-      budgetCap: money(parsed.data.budgetUsdMicro ?? 6_250_000),
-      spent: money(0),
-      stepCap: 200,
-      steps: 0,
-      currentTask: null,
-      summary: "",
-      // As the daemon: the note for the session is kept on its handoff.
-      handoff: parsed.data.note?.trim() ? { note: parsed.data.note.trim() } : null,
-      runner: "desktop",
-      stopReason: null,
-      statusText: "Working",
-    };
-    state.sessions.push(session);
-    emit("session.changed", clone(session));
-    scheduleScriptedEvents(session);
+      budgetUsdMicro: parsed.data.budgetUsdMicro ?? 6_250_000,
+      note: parsed.data.note,
+    });
     return c.json(StartSessionView.parse({ result: "started", startId, session }), 202);
   });
   app.get("/sessions/:id", (c) => {
@@ -2532,6 +2515,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     version: 1,
   });
 
+  /** The session each chat start began, by its action's id (the daemon's change log row). */
+  const startedSessions = new Map<string, string>();
   const chatReply = (
     text: string,
     projectId: string | undefined,
@@ -2607,10 +2592,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (state.pendingConfirmation && lower === "yes") {
       const confirmed = state.pendingConfirmation;
       state.pendingConfirmation = null;
+      // As the daemon's session.start from the chat (phase E): the start waits for its run,
+      // the reply is the change's sentence, and the turn's action names the session it began
+      // (its change log's `after.session_id`), which the conversation links.
+      const agent = AGENTS[0];
+      const target = state.projects.find((p) => p.id === turnProject);
+      if (agent) {
+        const session = beginSession({
+          agent,
+          projectId: turnProject,
+          trigger: "manual",
+          budgetUsdMicro: 6_250_000,
+        });
+        startedSessions.set(confirmed.id, session.id);
+      }
+      const sentence = `Started a session on ${target?.name ?? "this project"} (up to CHF 5).`;
       return {
         ...base,
-        reply: "Confirmed. Starting the session now.",
-        actions: [{ kind: "session_start", summary: confirmed.readback, id: confirmed.id }],
+        reply: sentence,
+        actions: [{ kind: "session.start", summary: sentence, id: confirmed.id }],
       };
     }
     if (state.pendingConfirmation && lower === "no") {
@@ -2756,6 +2756,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           sentence: a.summary,
           changeId: a.id ?? null,
           canUndo: !!a.undoToken,
+          // The session a chat start began, as the daemon's conversation view links it.
+          sessionId: (a.id ? startedSessions.get(a.id) : undefined) ?? null,
         })),
         question: reply.question,
         notice: false,
@@ -6246,6 +6248,44 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.events.push(event);
     emit("session.event", event);
     return event;
+  }
+
+  /**
+   * A session begins, as the daemon's start does once its run began: POST /sessions and the
+   * chat's yes to "start a session" (phase E: the chat's start waits for its run and links it).
+   */
+  function beginSession(start: {
+    agent: { id: string; name: string };
+    projectId: string | null;
+    trigger: string;
+    budgetUsdMicro: number;
+    note?: string | undefined;
+  }): SessionView {
+    const session: SessionView = {
+      id: nextId("sess"),
+      agentId: start.agent.id,
+      agentName: start.agent.name,
+      projectId: start.projectId,
+      trigger: start.trigger,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      budgetCap: money(start.budgetUsdMicro),
+      spent: money(0),
+      stepCap: 200,
+      steps: 0,
+      currentTask: null,
+      summary: "",
+      // As the daemon: the note for the session is kept on its handoff.
+      handoff: start.note?.trim() ? { note: start.note.trim() } : null,
+      runner: "desktop",
+      stopReason: null,
+      statusText: "Working",
+    };
+    state.sessions.push(session);
+    emit("session.changed", clone(session));
+    scheduleScriptedEvents(session);
+    return session;
   }
 
   /** After POST /sessions: a short scripted run with a warning and an escalation. */
