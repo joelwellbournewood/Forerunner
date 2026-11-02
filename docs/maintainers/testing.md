@@ -2430,7 +2430,18 @@ look at structure and states, so the same journey runs on the real model: the li
 file names and "[stand-in model]" reply, no Try again after a failed plan, "every planned task
 is done" passed on 0 of 0, "plan card missing" said the plan waited in the Inbox when the page
 said planning failed). Now a failed plan is asked about in the chat and tried again up to twice,
-each failure a finding with what the project page said. `scripts/bench/journeys/session-engine.cjs
+each failure a finding with what the project page said; a try is read from the daemon first and
+only after the Try again POST is answered, so the last try's banner is never counted as the
+next. Start is pressed only while a session has a task to run (`runnableTasks`: ready or
+running, not held by the person, Docker or such a task, not stuck), whether or not a task is
+done, and a Start the dialog keeps disabled is a finding with the dialog's reason, not a click
+(the review of 2026-11-02 walked live mode with the real intake replies: nothing done and all
+held, the journey pressed a disabled Start and ended on a 30 s click timeout before its files
+and chat checks; reproduced on the stand-in with `FORERUNNER_BENCH_ASK=page skeleton`). The page
+check accepts a stylesheet and a script in their own files or inline, and fails on a link to a
+file that was not written (`pageParts`). `smoke.cjs` runs only as a script; required, it gives
+its steps (`pressStart`, `runSession`, `planShown`, `askChat`) to a scratch walk of one of them.
+`scripts/bench/journeys/session-engine.cjs
 <bench> <label>` walks the session engine's acceptance (core-experience design §4): a 7-task chain
 (`FORERUNNER_BENCH_PLAN=chain`) started once from the Start dialog, then a hard daemon restart
 while a task runs, the session page after it and the next Start; its checks and the session

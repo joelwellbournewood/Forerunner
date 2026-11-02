@@ -37,13 +37,8 @@ function allDone(tasks) {
 
 const ON_THE_PERSON = new Set(["answer", "paused", "docker"]);
 
-/**
- * Every task the agents can do is done: the others wait on the person (a question, a pause),
- * on Docker, or on such a task (through what they wait for). A real plan may hold a task for
- * the person (the live run: "Human decisions: hosting, repository, quote source"); the stand-in's
- * default plan holds none. False for no tasks at all.
- */
-function agentsDone(tasks) {
+/** The tasks that wait on the person or on Docker, or on such a task through what they wait for. */
+function heldTasks(tasks) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const held = new Set(
     tasks.filter((t) => t.status !== "done" && ON_THE_PERSON.has(t.display?.key)).map((t) => t.id),
@@ -59,6 +54,33 @@ function agentsDone(tasks) {
       }
     }
   }
+  return held;
+}
+
+/** Task states a session takes up: ready to run, or running now. */
+const A_SESSION_RUNS = new Set(["ready", "claimed", "in_progress"]);
+
+/**
+ * The tasks a session could still run or is running: ready or running, and not held by the
+ * person, by Docker or by such a task, nor stuck behind a failed or cancelled one. Empty: the
+ * journey presses no more Start, whether or not a task is done (the review of 2026-11-02: with
+ * nothing done and everything held it pressed a disabled Start and the journey stopped there).
+ */
+function runnableTasks(tasks) {
+  const held = heldTasks(tasks);
+  return tasks.filter(
+    (t) => A_SESSION_RUNS.has(t.status) && !held.has(t.id) && t.display?.key !== "stuck",
+  );
+}
+
+/**
+ * Every task the agents can do is done: the others wait on the person (a question, a pause),
+ * on Docker, or on such a task (through what they wait for). A real plan may hold a task for
+ * the person (the live run: "Human decisions: hosting, repository, quote source"); the stand-in's
+ * default plan holds none. False for no tasks at all, and when no task is done.
+ */
+function agentsDone(tasks) {
+  const held = heldTasks(tasks);
   const open = tasks.filter((t) => t.status !== "done" && !held.has(t.id));
   const words = (t) => `"${t.title}": ${t.display?.label ?? t.status}`;
   return {
@@ -93,12 +115,44 @@ function pageLinks(html, files) {
   return { css: named(".css"), js: named(".js") };
 }
 
+/**
+ * The page's stylesheet and script: the written files it links (by path, `./` dropped), or a
+ * `<style>` / an inline `<script>` in the page itself ("plain HTML, CSS and JavaScript" allows
+ * one file; a real coder may write it so). `missing`: what it links in the project that was not
+ * written. An address with a scheme or `//` (a CDN) is not a project file.
+ */
+function pageParts(html, files) {
+  const written = new Set(files);
+  const local = (ref) => !/^([a-z][a-z0-9+.-]*:|\/\/|#|data:)/i.test(ref);
+  const norm = (ref) => ref.split(/[?#]/)[0].replace(/^\.\//, "").replace(/^\//, "");
+  const refs = (re) =>
+    [...html.matchAll(re)]
+      .map((m) => m[1])
+      .filter(local)
+      .map(norm);
+  const css = refs(/<link\b[^>]*\bhref\s*=\s*["']?([^"'\s>]+\.css)\b[^>]*>/gi);
+  const js = refs(/<script\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)[^>]*>/gi);
+  const found = (list) => list.filter((f) => written.has(f));
+  const inlineStyle = /<style\b[^>]*>\s*\S[\s\S]*?<\/style>/i.test(html);
+  const inlineScript = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].some(
+    (m) => !/\bsrc\s*=/.test(m[1]) && m[2].trim().length > 0,
+  );
+  return {
+    css: [...found(css), ...(inlineStyle ? ["inline <style>"] : [])],
+    js: [...found(js), ...(inlineScript ? ["inline <script>"] : [])],
+    missing: [...css, ...js].filter((f) => !written.has(f)),
+  };
+}
+
 module.exports = {
   planCardTasks,
   titlesMissing,
   replyNamesTask,
   allDone,
   agentsDone,
+  heldTasks,
+  runnableTasks,
   workFiles,
   pageLinks,
+  pageParts,
 };

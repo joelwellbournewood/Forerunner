@@ -8,8 +8,10 @@ import {
   agentsDone,
   allDone,
   pageLinks,
+  pageParts,
   planCardTasks,
   replyNamesTask,
+  runnableTasks,
   titlesMissing,
   workFiles,
   // @ts-expect-error plain JS module
@@ -206,6 +208,76 @@ describe("bench: the smoke journey's checks on structure and states", () => {
     expect(agentsDone(left).detail).toContain('not done: "Write the README": Ready');
   });
 
+  /**
+   * The review of 2026-11-02 walked live mode against the real intake replies: the first task
+   * ended needing the person's decision, the others waited on it or on the person's own task, and
+   * none was done. The journey's loop asked "is the agents' work done?", which needs a task done,
+   * so it pressed Start; Start was disabled ("Nothing can run: … needs your answer"), the click
+   * threw after 30 s and the files and chat checks never ran.
+   */
+  it("nothing is left for a session when every open task waits on the person, also with none done", () => {
+    const ready = { key: "ready", label: "Ready" };
+    const HELD: T[] = [
+      {
+        id: "a",
+        title: "Build the quote page",
+        status: "needs_human",
+        display: { key: "answer", label: "Needs your decision" },
+      },
+      {
+        id: "b",
+        title: "Test the pick logic and page rendering",
+        status: "ready",
+        dependsOn: ["a"],
+        display: { key: "waiting", label: 'Waiting for "Build the quote page"' },
+      },
+      LIVE[2] as T,
+      LIVE[3] as T,
+    ];
+    expect(runnableTasks(HELD)).toEqual([]);
+    // The check itself stays as it was: nothing the agents could do was done.
+    expect(agentsDone(HELD).ok).toBe(false);
+    expect(runnableTasks(LIVE)).toEqual([]);
+    expect(runnableTasks([])).toEqual([]);
+    // A ready task nobody holds, or one running, is left for a session.
+    const free: T = { id: "e", title: "Write the README", status: "ready", display: ready };
+    const running: T = {
+      id: "r",
+      title: "Style the page",
+      status: "in_progress",
+      display: { key: "running", label: "Running" },
+    };
+    expect(runnableTasks([...HELD, free, running]).map((t: T) => t.title)).toEqual([
+      "Write the README",
+      "Style the page",
+    ]);
+    // Stuck on a failed task, waiting for Docker, failed, a draft or cancelled: no session runs it.
+    const none: T[] = [
+      {
+        id: "s",
+        title: "Check the page",
+        status: "ready",
+        dependsOn: ["f"],
+        display: { key: "stuck", label: 'Stuck: "Build" failed' },
+      },
+      { id: "f", title: "Build", status: "failed", display: { key: "failed", label: "Failed" } },
+      {
+        id: "k",
+        title: "Publish",
+        status: "ready",
+        display: { key: "docker", label: "Waiting for Docker" },
+      },
+      { id: "d", title: "Draft", status: "draft", display: { key: "draft", label: "Draft" } },
+      {
+        id: "c",
+        title: "Old",
+        status: "cancelled",
+        display: { key: "cancelled", label: "Cancelled" },
+      },
+    ];
+    expect(runnableTasks(none)).toEqual([]);
+  });
+
   it("the plan card's task count and titles, whatever the titles are", () => {
     const card = [
       'Plan for "Quote page": 4 tasks',
@@ -259,5 +331,28 @@ describe("bench: the smoke journey's checks on structure and states", () => {
     const html =
       '<link rel="stylesheet" href="style.css"><script src="quotes.js"></script><script src="app.js"></script>';
     expect(pageLinks(html, written)).toEqual({ css: ["style.css"], js: ["quotes.js", "app.js"] });
+  });
+
+  it("the page's stylesheet and script: written files it links, or inline; a link to a file not written shows", () => {
+    const written = ["index.html", "style.css", "quotes.js", "app.js"];
+    expect(
+      pageParts(
+        '<link rel="stylesheet" href="style.css"><script src="quotes.js"></script><script src="./app.js"></script>',
+        written,
+      ),
+    ).toEqual({ css: ["style.css"], js: ["quotes.js", "app.js"], missing: [] });
+    // A real coder may keep it in one file, as "plain HTML, CSS and JavaScript" allows.
+    expect(
+      pageParts("<style>body { margin: 0 }</style><p id=q></p><script>const quotes = []</script>", [
+        "index.html",
+      ]),
+    ).toEqual({ css: ["inline <style>"], js: ["inline <script>"], missing: [] });
+    // A page that links what was never written, next to a CDN script (not a project file).
+    expect(
+      pageParts(
+        '<link rel="stylesheet" href="css/main.css"><script src="https://cdn.example.test/x.js"></script><script src="main.js"></script>',
+        ["index.html"],
+      ),
+    ).toEqual({ css: [], js: [], missing: ["css/main.css", "main.js"] });
   });
 });

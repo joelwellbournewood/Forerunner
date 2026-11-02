@@ -1,6 +1,8 @@
 // Smoke journey: a person gets a brief planned and worked on, through the UI.
 // The plan card's Approve and start writes the tasks and starts a session at once (design §3.3,
-// §3.8); the journey watches that session, then presses Start only while tasks are left.
+// §3.8); the journey watches that session, then presses Start only while a session has a task
+// to run (not one that waits on the person, on Docker or on such a task). A Start the dialog
+// keeps disabled is a finding with the dialog's reason, never a click that ends the journey.
 //   node scripts/bench/start.mjs --name smoke --daemon-port 47310 --ui-port 47311 --fresh
 //   node scripts/bench/journeys/smoke.cjs smoke [--live]
 //   node scripts/bench/stop.mjs --name smoke
@@ -34,8 +36,9 @@ const {
   replyNamesTask,
   allDone,
   agentsDone,
+  runnableTasks,
   workFiles,
-  pageLinks,
+  pageParts,
 } = require("./smoke-checks.cjs");
 
 const NAME = process.argv.slice(2).find((a) => !a.startsWith("--")) || "smoke";
@@ -130,26 +133,25 @@ async function setup(page) {
   );
 }
 
-/** What the project page says about the plan now: the banner's state and words, else the daemon's. */
+/**
+ * Where the plan stands once the daemon has an answer (it waits in the Inbox, or planning
+ * failed), with what the project page says about it; null while it is drafted. The daemon is
+ * asked first, so a banner still showing the last try's failure is not read as this try's.
+ */
 async function planShown(page, projectId) {
-  const banner = page.getByTestId("intake-banner").first();
-  if (await banner.count()) {
-    const state = await banner.getAttribute("data-state");
-    const said = oneLine(await banner.innerText());
-    if (state === "pending" || state === "failed") return { state, said };
-  }
   const s = await api(NAME, "GET", `/projects/${encodeURIComponent(projectId)}/intake`);
-  if (s.state === "pending" || s.state === "failed") {
+  if (s.state !== "pending" && s.state !== "failed") return null;
+  let banner = page.getByTestId("intake-banner").first();
+  if (!(await banner.count()) || (await banner.getAttribute("data-state")) !== s.state) {
     // The page has not followed yet: read it again as a person would.
     await page.reload();
     await page.waitForTimeout(1000);
-    const again = page.getByTestId("intake-banner").first();
-    const said = (await again.count())
-      ? oneLine(await again.innerText())
-      : `(no plan banner on the page; the daemon says ${s.state}${s.error ? `: ${s.error}` : ""})`;
-    return { state: s.state, said };
+    banner = page.getByTestId("intake-banner").first();
   }
-  return null;
+  const said = (await banner.count())
+    ? oneLine(await banner.innerText())
+    : `(no plan banner on the page; the daemon says ${s.state}${s.error ? `: ${s.error}` : ""})`;
+  return { state: s.state, said };
 }
 
 async function waitForPlan(page, projectId, label) {
@@ -195,8 +197,26 @@ async function createProject(page) {
       ]);
       break;
     }
-    await tryAgain.click();
-    await page.waitForTimeout(1500);
+    // The click's POST answers once the new draft has started (202, drafting), so what the
+    // project says after it is this try's, never the last one's failure.
+    const [sent] = await Promise.all([
+      page
+        .waitForResponse(
+          (r) =>
+            r.request().method() === "POST" && /\/intake\/retry$/.test(new URL(r.url()).pathname),
+          { timeout: 30_000 },
+        )
+        .catch(() => null),
+      tryAgain.click(),
+    ]);
+    if (!sent?.ok()) {
+      finding(
+        "Try again did not start a new plan",
+        sent ? `the retry was answered ${sent.status()}` : "pressing it sent nothing in 30 s",
+        [lastStep()],
+      );
+      break;
+    }
     await step(page, `plan try ${retry + 1}`);
     shown = await waitForPlan(page, projectId, `project plan waiting (try ${retry + 1})`);
     result.planTries.push(shown);
@@ -334,7 +354,13 @@ async function projectSessions(projectId) {
   return list.filter((x) => x.projectId === projectId);
 }
 
-/** Open the Start dialog and press Start; returns the session id, or null with the dialog's text. */
+/**
+ * Open the Start dialog and press Start; returns the session id, or null with the dialog's text.
+ * A Start the dialog keeps disabled is not pressed: `blocked` holds the dialog's reason ("Nothing
+ * can run: … needs your answer."), and the dialog is closed. Before (the review of 2026-11-02)
+ * the click waited 30 s on the disabled button and threw, which ended the journey before its
+ * files and chat checks.
+ */
 async function pressStart(page, projectId, n, attempt) {
   await openProject(page, projectId, "summary");
   await clickButton(page, "Start session");
@@ -344,7 +370,28 @@ async function pressStart(page, projectId, n, attempt) {
   );
   const dialog = page.getByRole("dialog");
   const scope = (await dialog.count()) ? dialog : page;
-  await clickButton(page, "Start", scope);
+  const start = scope.getByRole("button", { name: "Start", exact: true }).first();
+  const reason = page.getByTestId("start-session-blocked").first();
+  // The dialog reads what a start would do first (Start stays disabled until then).
+  const answer = await until(
+    async () => {
+      if (await reason.count()) return "blocked";
+      return (await start.isEnabled().catch(() => false)) ? "enabled" : null;
+    },
+    15_000,
+    500,
+    "the Start dialog to say whether a session can start",
+  ).catch(() => "disabled");
+  if (answer !== "enabled") {
+    const why = (await reason.count())
+      ? oneLine(await reason.innerText())
+      : `Start stayed disabled for 15 s; the dialog reads "${oneLine(dialogText, 300)}"`;
+    const close = scope.getByRole("button", { name: "Cancel", exact: true });
+    if (await close.count()) await close.first().click();
+    return { dialogText, sessionId: null, blocked: why, refusalStep: lastStep() };
+  }
+  await start.click();
+  await page.waitForTimeout(800);
   try {
     // After Start the person stays on the page; the dialog says it started with "Open the
     // session" (design §3.6), which a person clicks to watch it.
@@ -401,6 +448,15 @@ async function runSession(page, projectId, n) {
     dialogText,
   );
   const sessionId = started.sessionId;
+  if (started.blocked) {
+    // Tasks looked runnable to the journey, and the dialog says nothing can run: what it says.
+    finding(
+      `session ${n}: the Start dialog says nothing can run`,
+      `"${started.blocked}" (tasks then: ${agentsDone(before).detail})`,
+      [started.refusalStep],
+    );
+    return { n, sessionId: null, status: "not started", changed: [], blocked: started.blocked };
+  }
   if (!sessionId) {
     finding(`session ${n}: Start did not open a session`, (started.refusal || "").slice(-400), [
       started.refusalStep,
@@ -569,28 +625,33 @@ async function files(projectId) {
     written.length > 0,
     written.slice(0, 12).join(", "),
   );
-  // The brief asks for one page in plain HTML, CSS and JavaScript: whatever the files are called.
+  // The brief asks for one page in plain HTML, CSS and JavaScript: whatever the files are called,
+  // in their own files or inline in the page (one file is plain HTML, CSS and JavaScript too).
   const html = written.filter((f) => f.endsWith(".html"));
-  check(
-    "the brief's page is there: an .html page, a stylesheet and a script",
-    html.length > 0 &&
-      written.some((f) => f.endsWith(".css")) &&
-      written.some((f) => f.endsWith(".js")),
-    `${html.length} .html, ${written.filter((f) => f.endsWith(".css")).length} .css, ${written.filter((f) => f.endsWith(".js")).length} .js`,
-  );
   const page = html.find((f) => /(^|\/)index\.html$/.test(f)) ?? html[0];
-  const links = page
-    ? pageLinks(fs.readFileSync(path.join(workspace, page), "utf8"), written)
-    : { css: [], js: [] };
+  const parts = page
+    ? pageParts(fs.readFileSync(path.join(workspace, page), "utf8"), written)
+    : { css: [], js: [], missing: [] };
+  const cssFiles = written.filter((f) => f.endsWith(".css")).length;
+  const jsFiles = written.filter((f) => f.endsWith(".js")).length;
   check(
-    "the page links a stylesheet and a script that were written",
-    links.css.length > 0 && links.js.length > 0,
-    page ? `${page} links ${[...links.css, ...links.js].join(", ") || "nothing written"}` : "",
+    "the brief's page is there: an .html page with a stylesheet and a script (files or inline)",
+    !!page &&
+      (cssFiles > 0 || parts.css.includes("inline <style>")) &&
+      (jsFiles > 0 || parts.js.includes("inline <script>")),
+    `${html.length} .html, ${cssFiles} .css, ${jsFiles} .js${page ? `; ${page} has ${[...parts.css, ...parts.js].filter((p) => p.startsWith("inline")).join(" and ") || "nothing inline"}` : ""}`,
+  );
+  check(
+    "the page has its stylesheet and script: written files it links, or inline",
+    parts.css.length > 0 && parts.js.length > 0 && parts.missing.length === 0,
+    page
+      ? `${page}: ${[...parts.css, ...parts.js].join(", ") || "neither"}${parts.missing.length ? `; links what was not written: ${parts.missing.join(", ")}` : ""}`
+      : "",
   );
   note(`the project's folder is ${workspace} (a project without a repository works there, U-037)`);
 }
 
-(async () => {
+async function main() {
   out(
     `bench ${NAME}${LIVE ? " (live: the real model)" : ""}: UI ${b.uiUrl}, daemon ${b.daemonUrl}, home ${b.home}`,
   );
@@ -634,10 +695,15 @@ async function files(projectId) {
     }
     for (let i = first; i <= 6; i++) {
       const states = await taskStates(projectId);
-      if (!states.some((t) => ["ready", "in_progress", "draft"].includes(t.status))) break;
-      // A ready task that waits on the person (or on a task that does) is not one Start runs.
-      if (agentsDone(states).ok) break;
+      // Only while a session has something to run: a task that waits on the person, on Docker
+      // or on such a task is not one Start runs, whether or not another task is done.
+      if (runnableTasks(states).length === 0) {
+        if (states.some((t) => t.status !== "done" && t.status !== "cancelled"))
+          note(`no more Start: nothing left that a session can run (${agentsDone(states).detail})`);
+        break;
+      }
       const rec = await runSession(page, projectId, i);
+      if (rec.blocked) break;
       if (i === 1) {
         await tasksTab(page, projectId, "tasks after session 1");
         await openProject(page, projectId, "summary");
@@ -720,7 +786,14 @@ async function files(projectId) {
   );
   out(formatCallSummary(result.cost, { title: "what the model calls cost" }));
   out(`result: ${file}`);
-})().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+}
+
+// Run as a journey; required, it gives its steps to a scratch walk of one of them (the bench
+// name is still the first argument), e.g. pressStart on a project whose Start is disabled.
+if (require.main === module)
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+
+module.exports = { main, pressStart, runSession, planShown, askChat, result };
