@@ -313,16 +313,36 @@ export function criticVerdict(
  * The report's summary for a notification body: where the content came from, how many
  * instruction-like passages the scan found and which rules fired, never the passages
  * themselves (ADR 0047: a notification travels through channels the flagged text must not
- * reach; the quoted passages stay in the session log the link opens).
+ * reach; the quoted passages stay in the session log the link opens). One line within the
+ * body's 140 characters (design §5.1): the origin is shortened first (to its host), then the
+ * rule list ("and 2 more"); the count and the first rules stay. The source is the title's.
+ * Before (phase E #80): "Content from … (web_page) contained 3 instruction-like passage(s).
+ * They were ignored:" and one line per rule and the score, up to 1000 characters.
  */
 export function summarizeInjection(report: InjectionReport, origin?: string): string {
-  const where = origin ? ` from ${origin}` : "";
+  const total = report.matches.length;
   const counts = new Map<string, number>();
   for (const m of report.matches) counts.set(m.rule, (counts.get(m.rule) ?? 0) + 1);
-  const lines = [...counts]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([rule, n]) => `- ${rule}: ${n} passage${n === 1 ? "" : "s"}`);
-  return `Content${where} (${report.source}) contained ${report.matches.length} instruction-like passage(s). They were ignored:\n${lines.join("\n")}\nScore ${report.score}; open the session log to read them.`;
+  // The rules that fired most first; a count only where a rule fired more than once.
+  const rules = [...counts]
+    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
+    .map(([rule, n]) => (n > 1 ? `${rule} (${n})` : rule));
+  const action = "Open the session to read them.";
+  const build = (from: string | undefined, shown: number) => {
+    const listed = shown
+      ? `${rules.slice(0, shown).join(", ")}${rules.length > shown ? ` and ${rules.length - shown} more` : ""}`
+      : `${rules.length} ${rules.length === 1 ? "rule" : "rules"}`;
+    return `Ignored ${total} ${total === 1 ? "passage" : "passages"}${from ? ` from ${from}` : ""} (${listed}). ${action}`;
+  };
+  const whole = build(origin, rules.length);
+  if (whole.length <= NOTIFICATION_BODY_MAX) return whole;
+  const host = origin ? /^[a-z][\w+.-]*:\/\/([^/?#]+)/i.exec(origin)?.[1] : undefined;
+  const short = host ?? (origin ? cut(origin, 40) : undefined);
+  for (let shown = rules.length; shown >= 0; shown--) {
+    const text = build(short, shown);
+    if (text.length <= NOTIFICATION_BODY_MAX) return text;
+  }
+  return cut(build(undefined, 0), NOTIFICATION_BODY_MAX);
 }
 
 /**
@@ -339,7 +359,7 @@ export function injectionFlagged(
     kind: "injection_flagged",
     humanId,
     title: `Instructions found in ${report.source} content were ignored`,
-    body: cut(summarizeInjection(report, opts.origin), 1000),
+    body: summarizeInjection(report, opts.origin),
     link: opts.sessionId ? `/sessions/${opts.sessionId}` : "/inbox",
     projectId: opts.projectId ?? undefined,
     sessionId: opts.sessionId,

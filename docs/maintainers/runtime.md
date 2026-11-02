@@ -3445,10 +3445,17 @@ one audit row `injection.flagged` (`INJECTION_FLAGGED_AUDIT`, `allowed: true`: t
 ignored, nothing was refused; the session, run, agent, human, the tool and source in
 `input_summary`, the passage count, rules and score in `result_summary`) and one urgent
 notification through `notifications.injectionFlagged` with the run's session and project.
-The producer's body (`summarizeInjection`) names the origin, the source, the number of
-passages and the rules with their counts, never the passages: they are in the tool call's own
-audit row and the session log the notification links to. Failures to notify are logged, never
-fail the run.
+The producer's title names the source and its body (`summarizeInjection`) the number of
+passages, the origin and the rules that fired (a count beside a rule that fired more than
+once), never the passages: they are in the tool call's own audit row and the session log the
+notification links to. The body is one line within 140 characters ("Ignored 4 passages from
+email_read (approval_bypass, exfiltrate, ignore_previous, new_identity). Open the session to
+read them."): a long origin is shortened to its host first, then the rule list ends in "and 2
+more". Before (phase E #80) it was "Content from … (web_page) contained 4 instruction-like
+passage(s). They were ignored:", one line per rule and the score, up to 1000 characters.
+Failures to notify are logged, never fail the run. The Reviews tab's finding words are read
+like its summaries (`findingView`: plurals as the number says, no ids), so the session check's
+"1 of the 2 task(s)" reads "1 of the 2 tasks".
 
 `server.ts` is the HTTP surface the desktop, Android and web shells talk to. Hono, bound to
 `127.0.0.1` only; every request carries `Authorization: Bearer <token>` compared with

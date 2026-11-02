@@ -549,8 +549,12 @@ describe("the sandboxed browser and agent email wired into the daemon", () => {
       expect(r).toMatchObject({ urgency: "urgent", outcome: "delivered" });
       expect(r.notification.sessionId).toBe(session.id);
       expect(r.notification.projectId).toBe(projectId);
-      expect(r.notification.body).toContain("instruction-like passage(s). They were ignored:");
-      expect(r.notification.body).toContain("- ignore_previous:");
+      // ADR 0047's facts in one line within 140 characters (design §5.1, phase E #80): the
+      // count, where it came from and the rules that fired with their counts.
+      expect(r.notification.body).toMatch(
+        /^Ignored \d+ passages? from \S+ \(.*\bignore_previous\b/,
+      );
+      expect(r.notification.body.length).toBeLessThanOrEqual(140);
       expect(r.notification.body).not.toContain(HIDDEN_MARKER);
       expect(r.notification.body).not.toContain(ATTACKER);
     }
