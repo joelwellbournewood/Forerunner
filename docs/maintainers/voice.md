@@ -770,6 +770,17 @@ question); the card in `apps/ui/test/settings-voice.test.tsx`; `pnpm voice:insta
 `scripts/voice-install.test.ts`; the lock generator's offline parts in
 `scripts/voice-lock.test.ts`; the check's profile lines in `scripts/voice-run.test.ts`.
 
+These tests run the installer's real path checks on folders in the test run's temp folder
+(`testing.md`, "Where test temp files go"), most with Linux's layout on every OS, so espeak-ng's
+159 characters apply to them on Windows too. Each makes its folders with `voiceTestDir()`
+(`fr-v-` and six characters) and `voiceTestHome` / `voiceInstallWorld` from
+`voice-install-helpers.ts`; `voice-test-paths.test.ts` puts each of those layouts through
+`voicePathProblem` and the data folder's espeak-ng check, from this run's temp folder and from a
+stand-in as long as a run folder in CI's Windows temp folder. When the run folder was
+`fr-test-run-<pid>-<start>` (2622e74) and the homes `fr-voice-install-…`, 22 of these tests failed
+on Windows only, refused by the installer as a person's too-long folder would be: 164 characters
+where 159 fit. The installer was right; the tests' folders were too long.
+
 ## Known issues
 
 - U-024's fetch at run time (a model folder `fr_stt.py` cannot open) happens before the helper's

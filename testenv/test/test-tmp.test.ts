@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -12,7 +13,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { SimulatedClock, SystemClock } from "@forerunner/platform/clock";
-import { basename, dirname, join, relative, resolve, toPosix } from "@forerunner/platform/paths";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  toPosix,
+} from "@forerunner/platform/paths";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   ENV_BASE,
@@ -21,12 +30,16 @@ import {
   keptTempDir,
   parseRunFolderName,
   RUN_MARKER,
+  RUN_NAME_LENGTH,
+  RUN_PREFIX,
   removeFolder,
   runFolderName,
   STALE_AFTER_MS,
   startTestTmp,
   sweepStaleRunFolders,
   TEMP_VARS,
+  WINDOWS_CI_TEMP,
+  windowsCiTempStandIn,
 } from "../src/test-tmp.ts";
 
 /**
@@ -51,13 +64,22 @@ function tempDir(prefix: string): string {
   return dir;
 }
 
-/** A run folder as `startTestTmp` leaves it, with its marker last touched `markerAgeMs` ago. */
-function plantRun(base: string, pid: number, startedMs: number, markerAgeMs: number): string {
-  const dir = join(base, runFolderName(pid, startedMs));
+/**
+ * A run folder as `startTestTmp` leaves it (or, with `name`, as a run named it before the name was
+ * shortened), with its marker last touched `markerAgeMs` ago.
+ */
+function plantRun(
+  base: string,
+  pid: number,
+  startedMs: number,
+  markerAgeMs: number,
+  name = runFolderName(startedMs),
+): string {
+  const dir = join(base, name);
   mkdirSync(join(dir, "fr-email-abc123"), { recursive: true });
   writeFileSync(join(dir, "fr-email-abc123", "left.txt"), "x");
   const marker = join(dir, RUN_MARKER);
-  writeFileSync(marker, "planted by test-tmp.test.ts\n");
+  writeFileSync(marker, `planted by test-tmp.test.ts\npid: ${pid}\n`);
   const at = new Date(clock.now() - markerAgeMs);
   utimesSync(marker, at, at);
   return dir;
@@ -92,13 +114,15 @@ describe("one temp folder per test run", () => {
     // What a temp folder holds: a crashed run's folder (removed), and what must stay: another
     // run's live folder, a run of days that still touches its marker, a run-shaped folder
     // without the marker, other tools' folders, names that are close but not exact, a file.
-    const crashed = plantRun(sys, 101, now - 2 * DAY, 2 * DAY);
+    // (Two days ago, a second apart: a name carries the start, not the pid.)
+    const twoDays = (s: number) => now - 2 * DAY - s * 1000;
+    const crashed = plantRun(sys, 101, twoDays(0), 2 * DAY);
     const kept = [
       plantRun(sys, 102, now - 60_000, 60_000),
       plantRun(sys, 103, now - 3 * DAY, 5 * 60_000),
       aged(
         (() => {
-          const d = join(sys, runFolderName(104, now - 2 * DAY));
+          const d = join(sys, runFolderName(twoDays(1)));
           mkdirSync(d);
           return d;
         })(),
@@ -115,14 +139,14 @@ describe("one temp folder per test run", () => {
         3 * DAY,
       ),
       (() => {
-        const near = join(sys, `${runFolderName(105, now - 2 * DAY)}-x`);
+        const near = join(sys, `${runFolderName(twoDays(2))}-x`);
         mkdirSync(near);
         writeFileSync(join(near, RUN_MARKER), "");
         aged(join(near, RUN_MARKER), 2 * DAY);
         return near;
       })(),
       (() => {
-        const f = join(sys, runFolderName(106, now - 2 * DAY));
+        const f = join(sys, runFolderName(twoDays(3)));
         writeFileSync(f, "a file, not a folder");
         return aged(f, 2 * DAY);
       })(),
@@ -131,8 +155,8 @@ describe("one temp folder per test run", () => {
     // (Making a link on Windows needs a right a standard user does not have.)
     let target: string | undefined;
     if (process.platform !== "win32") {
-      target = plantRun(out, 107, now - 2 * DAY, 2 * DAY);
-      const link = join(sys, runFolderName(108, now - 2 * DAY));
+      target = plantRun(out, 107, twoDays(4), 2 * DAY);
+      const link = join(sys, runFolderName(twoDays(5)));
       symlinkSync(target, link, "dir");
       kept.push(link);
     }
@@ -159,7 +183,9 @@ describe("one temp folder per test run", () => {
     const seen = JSON.parse(readFileSync(join(out, "seen.json"), "utf8"));
     const runDir: string = seen.tmp;
     expect(dirname(runDir)).toBe(sys);
-    expect(parseRunFolderName(basename(runDir))?.pid).toBe(child.pid);
+    expect(parseRunFolderName(basename(runDir))).toBeDefined();
+    expect(seen.owner).toBe(String(child.pid));
+    expect(seen.marker).toContain(`pid: ${child.pid}`);
     expect(seen.env).toEqual({ TMPDIR: runDir, TMP: runDir, TEMP: runDir });
     expect(dirname(seen.dir)).toBe(runDir);
     expect(seen.child.tmp).toBe(runDir);
@@ -190,42 +216,92 @@ describe("one temp folder per test run", () => {
     const young = plantRun(base, 201, now - DAY + 60_000, DAY + 60_000);
     const touched = plantRun(base, 202, now - 2 * DAY, DAY - 60_000);
     const old = plantRun(base, 203, now - DAY - 60_000, DAY + 60_000);
+    // Named as runs named their folder until 2026-11-03, by a run that crashed before then.
+    const legacy = plantRun(
+      base,
+      204,
+      now - 2 * DAY,
+      2 * DAY,
+      `fr-test-run-204-${Math.floor((now - 2 * DAY) / 1000).toString(36)}`,
+    );
     const lines: string[] = [];
-    expect(sweepStaleRunFolders(base, { clock: at, log: (l) => lines.push(l) })).toEqual([
-      basename(old),
-    ]);
+    const removed = sweepStaleRunFolders(base, { clock: at, log: (l) => lines.push(l) });
+    expect(removed.sort()).toEqual([basename(old), basename(legacy)].sort());
     expect(existsSync(young)).toBe(true);
     expect(existsSync(touched)).toBe(true);
     expect(existsSync(old)).toBe(false);
+    expect(existsSync(legacy)).toBe(false);
     expect(lines).toEqual([
-      `Forerunner tests: removed 1 temporary folder(s) that a test run more than a day ago left in ${base}: ${basename(old)}.`,
+      `Forerunner tests: removed 2 temporary folder(s) that a test run more than a day ago left in ${base}: ${removed.join(", ")}.`,
     ]);
     // Nothing to remove: nothing said.
     expect(sweepStaleRunFolders(base, { clock: at, log: (l) => lines.push(l) })).toEqual([]);
     expect(lines).toHaveLength(1);
   });
 
-  it("a run's name carries its pid and start, and only that exact shape is a run folder", () => {
-    const name = runFolderName(4321, Date.parse("2026-11-03T02:43:00.123Z"));
-    expect(name.startsWith("fr-test-run-4321-")).toBe(true);
-    // Short, for Windows' path limit: the run folder adds this much to every test path (the
-    // voice install's "a folder that fits" case had 8 characters to spare on CI's Windows
-    // runner with a 27-character name). Linux's largest pid has 7 digits.
-    expect(runFolderName(4_194_304, Date.parse("2026-11-03T02:43:00Z")).length).toBe(26);
-    expect(parseRunFolderName(name)).toEqual({
-      pid: 4321,
+  it("a run's name is short and carries its start, and only that exact shape is a run folder", () => {
+    const start = Date.parse("2026-11-03T02:43:00.123Z");
+    const name = runFolderName(start);
+    expect(name).toBe(`frt-${Math.floor(start / 1000).toString(36)}`);
+    // Short, for Windows' path limits: the run folder adds its name and a separator to every
+    // path a test makes. `fr-test-run-<pid>-<start>`, 23 characters on CI's Windows runner, put
+    // 22 voice install tests over espeak-ng's 159 there (packages/runtime/test/
+    // voice-test-paths.test.ts). The same length whatever the pid, until 2038.
+    expect(RUN_NAME_LENGTH).toBe(10);
+    expect(name).toHaveLength(RUN_NAME_LENGTH);
+    expect(runFolderName(Date.parse("2038-01-01T00:00:00Z"))).toHaveLength(RUN_NAME_LENGTH);
+    expect(parseRunFolderName(name)).toEqual({ startedMs: Date.parse("2026-11-03T02:43:00.000Z") });
+    // A folder a run named the old way and left (a crash before the name was shortened) is
+    // still recognised, so a later run removes it.
+    expect(parseRunFolderName(`fr-test-run-4321-${name.slice(RUN_PREFIX.length)}`)).toEqual({
       startedMs: Date.parse("2026-11-03T02:43:00.000Z"),
     });
     for (const other of [
+      "frt-",
+      "frt-ABC123",
+      "frt-12-abc",
+      "frt_abc123",
+      `${name}-x`,
+      `x${name}`,
       "fr-test-run-",
       "fr-test-run-12",
       "fr-test-run-x-abc",
-      `${name}-x`,
-      `x${name}`,
       "fr-test-run-12-ABC",
       "fr-email-abc123",
     ])
       expect(parseRunFolderName(other), other).toBeUndefined();
+  });
+
+  it("the run folder leaves room on Windows: 47 characters from CI's Windows temp folder, and the deepest path the unit tests are known to leave in it stays below 260", () => {
+    // One `pnpm test` with the run folder kept (2026-11-03; testing.md, "The path budget"): the
+    // deepest path left was a continuity test's git ref, 163 characters below the run folder.
+    // The voice install tests' tighter limit (espeak-ng's 159) is voice-test-paths.test.ts's.
+    const DEEPEST_KNOWN = 163;
+    const WINDOWS_MAX_PATH = 260;
+    expect(WINDOWS_CI_TEMP).toHaveLength(36);
+    const standIn = windowsCiTempStandIn();
+    expect(standIn).toHaveLength(WINDOWS_CI_TEMP.length);
+    expect(isAbsolute(standIn)).toBe(true);
+    expect(windowsCiTempStandIn("win32")).toBe(WINDOWS_CI_TEMP);
+    const ci = join(standIn, runFolderName(clock.now()));
+    expect(ci).toHaveLength(47);
+    for (const run of [ci, tmpdir()])
+      expect(run.length + 1 + DEEPEST_KNOWN, run).toBeLessThan(WINDOWS_MAX_PATH);
+  });
+
+  it("two runs that start in the same second get a folder each", () => {
+    const base = tempDir("fr-tmpguard-same-");
+    const at = new SimulatedClock("2026-11-03T10:00:00.250Z");
+    const first = startTestTmp({ env: {}, base, clock: at, log: () => {}, pid: 11 });
+    const second = startTestTmp({ env: {}, base, clock: at, log: () => {}, pid: 12 });
+    expect(second.dir).not.toBe(first.dir);
+    expect(parseRunFolderName(basename(second.dir))?.startedMs).toBe(
+      Date.parse("2026-11-03T10:00:01.000Z"),
+    );
+    expect(readFileSync(join(first.dir, RUN_MARKER), "utf8")).toContain("pid: 11");
+    expect(readFileSync(join(second.dir, RUN_MARKER), "utf8")).toContain("pid: 12");
+    expect(second.stop()).toBe(true);
+    expect(first.stop()).toBe(true);
   });
 
   it("start and stop: the variables point at the run folder and are restored after; the folder goes", () => {
@@ -233,7 +309,7 @@ describe("one temp folder per test run", () => {
     const env: NodeJS.ProcessEnv = { TMPDIR: "/before", TMP: "C:\\before" };
     const run = startTestTmp({ env, base, log: () => {}, pid: 77 });
     expect(dirname(run.dir)).toBe(base);
-    expect(parseRunFolderName(basename(run.dir))?.pid).toBe(77);
+    expect(parseRunFolderName(basename(run.dir))).toBeDefined();
     expect(env).toEqual({
       TMPDIR: run.dir,
       TMP: run.dir,
@@ -335,15 +411,27 @@ describe("one temp folder per test run", () => {
     const cwd = join(dir, "busy");
     mkdirSync(cwd);
     writeFileSync(join(dir, "left.txt"), "x");
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-      cwd,
-      stdio: "ignore",
-    });
+    // The child says where it runs, and only then is the folder removed. Node's "spawn" event
+    // comes as soon as CreateProcess returns, before the child has run any of its own start-up,
+    // and it is that start-up which opens the working folder whose handle keeps it on Windows.
+    // Waiting for "spawn" alone, Windows CI on 2de0a25 removed the folder at the first try, 27 ms
+    // after the start: no process worked in it yet.
+    const child = spawn(
+      process.execPath,
+      ["-e", "console.log(process.cwd()); setInterval(() => {}, 1000)"],
+      { cwd, stdio: ["ignore", "pipe", "ignore"] },
+    );
     const exited = new Promise((done) => child.on("exit", done));
-    await new Promise((done, fail) => {
-      child.on("spawn", done);
+    const ranIn = await new Promise<string>((done, fail) => {
+      let said = "";
+      child.stdout?.on("data", (d) => {
+        said += String(d);
+        if (said.includes("\n")) done(said.trim());
+      });
       child.on("error", fail);
+      child.on("exit", (code) => fail(new Error(`the child ended (${code}) first: "${said}"`)));
     });
+    expect(realpathSync.native(ranIn)).toBe(realpathSync.native(cwd));
     const lines: string[] = [];
     try {
       const removed = removeFolder(dir, {

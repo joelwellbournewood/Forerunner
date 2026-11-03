@@ -1,5 +1,4 @@
-import { existsSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { type AppDirs, appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { describe, expect, it } from "vitest";
@@ -9,7 +8,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import { installVoice, readVoiceSettings, voiceDirs } from "../src/voice/install.ts";
 import { createVoiceInstallRoutes, VoiceInstallJobs } from "../src/voice/install-routes.ts";
 import { VoiceInstallEntryView, VoiceInstallView } from "../src/voice/install-types.ts";
-import { fakeRunner, NVIDIA, torchOnlyDeepDir } from "./voice-install-helpers.ts";
+import { fakeRunner, NVIDIA, torchOnlyDeepDir, voiceTestDir } from "./voice-install-helpers.ts";
 
 /**
  * Settings → Voice through the daemon (ADR 0090): the view with the catalog and the GPU, an
@@ -19,7 +18,8 @@ import { fakeRunner, NVIDIA, torchOnlyDeepDir } from "./voice-install-helpers.ts
  */
 
 function setup(opts: { busy?: string | null; nvidia?: boolean; gate?: Promise<void> } = {}) {
-  const h = mkdtempSync(join(tmpdir(), "fr-voice-routes-"));
+  // A short home of its own (voice-install-helpers.ts: the installer checks its length).
+  const h = voiceTestDir();
   const env = { FORERUNNER_HOME: h };
   const dirs: AppDirs = appDirs({ env });
   const fake = fakeRunner({ nvidiaSmi: opts.nvidia === false ? null : NVIDIA });
@@ -45,7 +45,7 @@ function setup(opts: { busy?: string | null; nvidia?: boolean; gate?: Promise<vo
 
 describe("GET /voice/install: where the next install goes (U-069)", () => {
   it("Windows without long paths and an install folder too deep: Settings → Voice names the data folder and says why", async () => {
-    const h = mkdtempSync(join(tmpdir(), "fr-voice-routes-deep-"));
+    const h = voiceTestDir();
     const env = { FORERUNNER_HOME: h };
     const dirs: AppDirs = appDirs({ env });
     const deep = torchOnlyDeepDir(h, dirs);
@@ -183,7 +183,7 @@ describe("GET/POST /voice/install", () => {
 
 describe("cancelling an install", () => {
   it("POST /voice/install/cancel aborts the running job; the result says cancelled", async () => {
-    const h = mkdtempSync(join(tmpdir(), "fr-voice-routes-cancel-"));
+    const h = voiceTestDir();
     const env = { FORERUNNER_HOME: h };
     const fake = fakeRunner({ nvidiaSmi: null });
     let signalled: AbortSignal | undefined;
@@ -225,7 +225,7 @@ describe("cancelling an install", () => {
 
 describe("the daemon serves the voice install routes", () => {
   it("behind the bearer token, listed in DAEMON_ROUTES", async () => {
-    const home = mkdtempSync(join(tmpdir(), "fr-voice-routes-daemon-"));
+    const home = voiceTestDir();
     const env = { FORERUNNER_HOME: home };
     const rt = await composeRuntime({
       env,
@@ -258,7 +258,7 @@ describe("the daemon serves the voice install routes", () => {
   });
 
   it("a daemon stop cancels a running install; a voice install blocks local voice meanwhile", async () => {
-    const home = mkdtempSync(join(tmpdir(), "fr-voice-routes-stop-"));
+    const home = voiceTestDir();
     const env = { FORERUNNER_HOME: home };
     const fake = fakeRunner({ nvidiaSmi: null });
     let aborted = false;

@@ -24,7 +24,13 @@ import {
   writeVoiceSettings,
 } from "../src/voice/install.ts";
 import type { VoiceInstallEvent } from "../src/voice/install-types.ts";
-import { fakeRunner, NVIDIA, torchOnlyDeepDir } from "./voice-install-helpers.ts";
+import {
+  fakeRunner,
+  NVIDIA,
+  torchOnlyDeepDir,
+  voiceTestDir,
+  voiceTestHome,
+} from "./voice-install-helpers.ts";
 
 /**
  * `fr voice install` / `fr voice remove` and the Settings → Voice switch (ADR 0090): a managed
@@ -33,10 +39,9 @@ import { fakeRunner, NVIDIA, torchOnlyDeepDir } from "./voice-install-helpers.ts
  * process goes through a runner; here a fake one answers like Python, pip and the helpers do.
  */
 
+/** A short home of its own (voice-install-helpers.ts: the installer checks its path's length). */
 function home(): { dirs: AppDirs; env: NodeJS.ProcessEnv } {
-  const h = mkdtempSync(join(tmpdir(), "fr-voice-install-"));
-  const env = { FORERUNNER_HOME: h };
-  return { dirs: appDirs({ env }), env };
+  return voiceTestHome(voiceTestDir());
 }
 
 const collect = () => {
@@ -535,7 +540,7 @@ describe("fr voice install", () => {
   describe("U-069: the install folder's path budget", () => {
     /** An install folder whose `voice\venv-gpu\Lib\site-packages` plus PyTorch's ~120 deeper characters passes 260. */
     const deepInstall = () => {
-      const root = mkdtempSync(join(tmpdir(), "fr-voice-deep-"));
+      const root = voiceTestDir();
       const dir = torchOnlyDeepDir(root, appDirs({ env: { FORERUNNER_HOME: root } }));
       return { dir, source: "install" as const, note: null };
     };
@@ -591,7 +596,7 @@ describe("fr voice install", () => {
     });
 
     it("a folder that fits asks nothing and stays", async () => {
-      const root = mkdtempSync(join(tmpdir(), "fr-voice-short-"));
+      const root = voiceTestDir();
       const short = { dir: join(root, "dependencies"), source: "install" as const, note: null };
       const { r, dirs, fake } = await install(short, false);
       expect(r.ok).toBe(true);
@@ -600,7 +605,7 @@ describe("fr voice install", () => {
     });
 
     it("a folder too deep for espeak-ng's own limit also goes to the data folder, on any OS", async () => {
-      const root = mkdtempSync(join(tmpdir(), "fr-voice-espeak-"));
+      const root = voiceTestDir();
       const deep = {
         dir: join(root, `Forerunner ${"y".repeat(120)}`, "dependencies"),
         source: "install" as const,

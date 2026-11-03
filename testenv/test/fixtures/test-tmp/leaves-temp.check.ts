@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "@forerunner/platform/paths";
 import { expect, it } from "vitest";
@@ -30,6 +30,9 @@ it("makes temp folders, starts a process that makes one, and removes none", () =
     JSON.stringify({
       tmp: tmpdir(),
       env: { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP },
+      // Whose run folder this is: the process that made it, and what its marker says.
+      owner: process.env.FORERUNNER_TEST_TMP_OWNER,
+      marker: readFileSync(join(tmpdir(), ".fr-test-run"), "utf8"),
       dir,
       child,
     }),
