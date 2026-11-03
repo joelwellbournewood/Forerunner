@@ -566,6 +566,88 @@ export class GitOps {
     return r.stdout.trim() !== "";
   }
 
+  /** The commit `ref` names in this checkout, or null when it names none. */
+  async resolveRef(ref: string): Promise<string | null> {
+    const r = await this.git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    if (r.code === 0) return r.stdout.trim() || null;
+    if (r.code === 1) return null;
+    this.must(r, `rev-parse --verify ${ref}`);
+    return null;
+  }
+
+  /** The best common ancestor of `a` and `b`, or null when they share none. */
+  async mergeBase(a: string, b = "HEAD"): Promise<string | null> {
+    const r = await this.git(["merge-base", a, b]);
+    if (r.code === 0) return r.stdout.trim() || null;
+    if (r.code === 1) return null;
+    this.must(r, `merge-base ${a} ${b}`);
+    return null;
+  }
+
+  /**
+   * The tree a merge of `a` and `b` would make, written to the object store without touching
+   * the worktree or any ref (`git merge-tree --write-tree`, git 2.38 or later). Null when the
+   * two conflict, or when this git cannot do it.
+   */
+  async mergeTree(a: string, b: string): Promise<string | null> {
+    const r = await this.git(["merge-tree", "--write-tree", "--no-messages", a, b]);
+    if (r.code !== 0) return null;
+    return r.stdout.split(/\r?\n/)[0]?.trim() || null;
+  }
+
+  /**
+   * The files a merge of `a` and `b` would conflict in, worked out without touching the
+   * worktree (`git merge-tree --write-tree --name-only`); empty when they merge cleanly or
+   * when this git cannot tell.
+   */
+  async conflictFiles(a: string, b: string): Promise<string[]> {
+    const r = await this.git(["merge-tree", "--write-tree", "--name-only", "--no-messages", a, b]);
+    if (r.code !== 1) return [];
+    return r.stdout
+      .split(/\r?\n/)
+      .slice(1)
+      .map((l) => l.trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * The patch id (`git patch-id --stable`) of the change from `from` (a commit or a tree) to
+   * `to`, diffed without context lines so the id names the changed lines alone; "empty" for no
+   * change. Two ways of making the same change (a rebase, a merge of other work in) share it.
+   */
+  async patchId(from: string, to = "HEAD"): Promise<string> {
+    const diff = this.must(
+      await this.git([
+        "diff",
+        "-U0",
+        "--binary",
+        "--full-index",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-renames",
+        from,
+        to,
+        "--",
+      ]),
+      "diff",
+    ).stdout;
+    if (!diff.trim()) return "empty";
+    const id = this.must(
+      await this.git(["patch-id", "--stable"], { input: diff }),
+      "patch-id",
+    ).stdout.trim();
+    return id.split(/\s+/)[0] || "empty";
+  }
+
+  /** The parents of a commit, first parent first (a merge commit has two or more). */
+  async parentsOf(rev = "HEAD"): Promise<string[]> {
+    const line = this.must(
+      await this.git(["rev-list", "--parents", "-n", "1", rev]),
+      `rev-list --parents ${rev}`,
+    ).stdout.trim();
+    return line.split(/\s+/).slice(1);
+  }
+
   /** The files whose content differs between the commits `from` and `to` (tree to tree). */
   async filesBetween(from: string, to = "HEAD"): Promise<string[]> {
     return this.must(await this.git(["diff", "--name-only", from, to]), "diff")

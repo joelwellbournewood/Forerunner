@@ -16,6 +16,9 @@ import {
   HUMAN_REQUEST_STATUSES,
   LESSON_SCOPES,
   LESSON_STATUSES,
+  MERGE_APPROVALS,
+  MERGE_METHODS,
+  MERGE_RECORD_STATES,
   MESSAGE_TYPES,
   MILESTONE_STATUSES,
   PROJECT_STATUSES,
@@ -804,6 +807,45 @@ export const ENTITIES: Record<string, EntityDef> = {
       }),
     ],
     indexes: [{ columns: ["scope", "scope_id", "period_start"], unique: true }],
+  },
+  merge_record: {
+    table: "merge_record",
+    description:
+      "The merge of one task's reviewed pull request (ADR 0111): the commit the critic accepted, pinned at the accept, and what became of the merge. Owned by the install's agent that made it; only that agent's daemon retries it.",
+    envelope: true,
+    columns: [
+      text("task_id", "The task whose pull request it is (one record per task).", ref("task")),
+      text("project_id", "The task's project.", nullableRef("project")),
+      text("agent_id", "The install's agent that owns the record and retries it.", ref("agent")),
+      int("pr_number", "The pull request's number on the host."),
+      text("pr_url", "The pull request's web URL."),
+      text(
+        "reviewed_head_sha",
+        "The commit the critic accepted, or a later head that keeps exactly its change; every merge is pinned to it.",
+      ),
+      text("reviewed_base_sha", "The base branch's head the task worktree had at the accept.", {
+        nullable: true,
+      }),
+      text("own_change_id", "Patch id of the task's own change (git patch-id of its diff).", {
+        nullable: true,
+      }),
+      text("state", "Where the merge is.", { default: "queued", enum: MERGE_RECORD_STATES }),
+      text("approval", "What freed the merge: nothing yet, the project's setting, the person.", {
+        default: "none",
+        enum: MERGE_APPROVALS,
+      }),
+      text("approved_by", "The human id or the setting that approved it.", { nullable: true }),
+      text("merge_sha", "The merge commit on the base branch.", { nullable: true }),
+      text("method", "How it was merged.", { nullable: true, enum: MERGE_METHODS }),
+      int("attempts", "Merge attempts so far.", { default: 0 }),
+      text("sentence", "One sentence for the person: why it waits, or what happened.", {
+        default: "",
+      }),
+      text("last_outcome", "The last attempt's outcome (merged, checks_pending, conflict, ...).", {
+        nullable: true,
+      }),
+    ],
+    indexes: [{ columns: ["task_id"], unique: true }, { columns: ["agent_id", "state"] }],
   },
   schema_migrations: {
     table: "schema_migrations",

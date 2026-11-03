@@ -2232,18 +2232,44 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     token: githubTokenNow,
     identity: gitIdentity,
   });
-  // The merge of a reviewed PR (spec J.9, ADR 0062): after an accepting review one `merge_pr`
-  // call through the hooks on the task worktree; level 3 merges at the reviewed head once the
-  // host's checks pass, below it the hooks refuse and the PR stays open for the human.
+  // The merge of a reviewed PR (spec J.9, ADR 0062 and 0111): after an accepting review the
+  // reviewed commit is pinned in the task's merge record, then one `merge_pr` call through the
+  // gate and the hooks, with a merge commit, after the branch's rules; level 3 merges once the
+  // host's checks pass, below it the PR stays open for the person with one sentence. A merge
+  // whose checks still run keeps its record: the git host watcher retries it on its own narrow
+  // token, and the start below resumes one a dead daemon left merging. Only this install's
+  // agent's records. `FORERUNNER_MERGE_CHECKS_WAIT_MS` bounds the wait inside a session (the
+  // bench sets 0: the retry finishes it).
+  const mergeWaitEnv = Number(env.FORERUNNER_MERGE_CHECKS_WAIT_MS?.trim() ?? "");
   const merge = new ReviewedPrMerge({
     store,
     clock,
     tokens,
     hooks,
+    audit: ports.audit,
     host: gitHost,
     worktreeRoot: dirs.worktrees,
     token: githubTokenNow,
     identity: gitIdentity,
+    agentIds: [agent.id],
+    allowedDomains: [hostOf(config?.githubApiBase ?? "https://api.github.com"), "github.com"],
+    // Stop all holds the retries too.
+    stopped: (agentId) => kill.isFrozen({ agentId }),
+    ...(env.FORERUNNER_MERGE_CHECKS_WAIT_MS?.trim() &&
+    Number.isFinite(mergeWaitEnv) &&
+    mergeWaitEnv >= 0
+      ? { checksWaitMs: Math.floor(mergeWaitEnv) }
+      : {}),
+    ...(env.FORERUNNER_MERGE_CHECKS_POLL_MS?.trim()
+      ? { checksPollMs: positiveMs(env.FORERUNNER_MERGE_CHECKS_POLL_MS, 30_000) }
+      : {}),
+  });
+  // Every merge the step makes (a session's, a retry's, a resumed one): the project's screens
+  // refresh and the daemon log names the record. 'dependent-branches' and 'merged-copy'
+  // subscribe here too.
+  merge.onMerged(({ task, mergeSha, method }) => {
+    logger.info("pull request merged", { taskId: task.id, mergeSha, method });
+    events.emit("project", { id: task.project_id });
   });
   // The runner's ports; the handover job builds a second runner over the same ones (below).
   const runnerDeps: Omit<SessionRunnerDeps, "planner"> = {
@@ -3627,6 +3653,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         },
         // A paused install reads nothing from the shared state and starts nothing.
         enabled: () => !schemaSync.paused,
+        // ADR 0111: the merges that wait (checks still running, a sleep, a restart) are tried
+        // once per poll with no session, on their own narrow token.
+        retryMerges: () => merge.retryWaiting(),
         onInjection: async (report, origin, projectId) => {
           const rules = [...new Set(report.matches.map((m) => m.rule))].sort();
           await store.auditLog.append({
@@ -3711,6 +3740,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         isLive: (sessionId) => kill.activeCount({ sessionId }) > 0,
       }).catch((e: unknown) => {
         logger.warn("interrupted sessions not ended", { error: errorMessage(e) });
+      });
+      // A merge a dead daemon left in the middle (ADR 0111): settled by what the host says
+      // (merged there, closed, or back to waiting for the watcher's retry).
+      await merge.resumeAtStart().catch((e: unknown) => {
+        logger.warn("merge records not resumed", { error: errorMessage(e) });
       });
     }
     // Change cards a stopped daemon showed have no closure behind them any more (U-029): they

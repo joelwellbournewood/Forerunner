@@ -1,7 +1,7 @@
 # 0062 — Merge after an accepting review: an unattended `merge_pr` call behind the hooks, the checks rule in the tool, and what is never merged automatically
 
 Date: 2026-10-23
-Status: accepted
+Status: accepted (amended by 0111: the merge record, no rebase, merge commits only, the rules first)
 
 ## Context
 

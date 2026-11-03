@@ -7,6 +7,7 @@ import { MIGRATION_0002 } from "./0002-headroom-savings.ts";
 import { MIGRATION_0003 } from "./0003-sources.ts";
 import { MIGRATION_0004 } from "./0004-shared-secrets.ts";
 import { MIGRATION_0005 } from "./0005-change-reasons.ts";
+import { MIGRATION_0006 } from "./0006-merge-records.ts";
 import { createTableSql } from "./generate.ts";
 import type { Migration } from "./types.ts";
 
@@ -19,7 +20,14 @@ export {
   renderMigrationModule,
 } from "./generate.ts";
 export type { Migration } from "./types.ts";
-export { MIGRATION_0001, MIGRATION_0002, MIGRATION_0003, MIGRATION_0004, MIGRATION_0005 };
+export {
+  MIGRATION_0001,
+  MIGRATION_0002,
+  MIGRATION_0003,
+  MIGRATION_0004,
+  MIGRATION_0005,
+  MIGRATION_0006,
+};
 
 const logger = log("state:migrations");
 
@@ -30,6 +38,7 @@ export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_0003,
   MIGRATION_0004,
   MIGRATION_0005,
+  MIGRATION_0006,
 ];
 
 const MIGRATIONS_TABLE = "schema_migrations";

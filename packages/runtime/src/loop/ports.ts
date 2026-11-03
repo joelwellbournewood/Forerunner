@@ -462,10 +462,15 @@ export interface ProjectDocsPort {
 // ---------------------------------------------------------------------------------------
 
 /**
- * What became of a reviewed pull request: merged, or left open and why. `not_allowed`: the
- * hooks refused the `merge_pr` call (the autonomy level, the grant); `unverified`: the
- * reviewed commit is not known (no task worktree), so nothing proves the PR head is what the
- * critic read. The other refusals file a request for the human.
+ * What became of a reviewed pull request: merged, or left open and why (ADR 0062, 0111).
+ * `not_allowed`: the gate (`mayMerge`) or the hooks refused the `merge_pr` call (the autonomy
+ * level, the grant); `unverified`: the reviewed commit is not known (no task worktree at the
+ * accept), so nothing proves the PR head is what the critic read; `checks_pending`: the checks
+ * still run, the merge record waits and the git host watcher retries it; `blocked_by_rules`:
+ * the branch's rules need what Forerunner cannot give (an approving review, a code owner,
+ * signed commits, ...); `merge_commits_off`: the repository or its rules allow no merge commit,
+ * the only way Forerunner merges; `unreachable`: the host did not answer, the record waits.
+ * Every outcome but merged carries the record's sentence for the person.
  */
 export type MergeStatus =
   | "merged"
@@ -476,6 +481,9 @@ export type MergeStatus =
   | "conflict"
   | "head_moved"
   | "closed"
+  | "blocked_by_rules"
+  | "merge_commits_off"
+  | "unreachable"
   | "failed";
 
 export interface MergeRequest {
@@ -497,15 +505,22 @@ export interface MergeOutcome {
   reason: string;
   /** The merge commit on the base branch. */
   mergeSha?: string;
-  /** The head that was merged or checked (after a rebase, the rebased head). */
+  /** The head that was merged or checked (after main was merged in, the new head). */
   headSha?: string;
-  /** True when the branch was rebased onto a base that had moved before the merge. */
+  /**
+   * Never set since ADR 0111: the merge step no longer rebases (a rebase copied merged-in
+   * work). Kept for the readers of older outcomes.
+   */
   rebased?: boolean;
+  /** True when the base was merged into the branch first (a merge commit, a normal push). */
+  updated?: boolean;
   failedChecks?: string[];
   pendingChecks?: string[];
   conflicts?: string[];
-  /** The request filed for the human (red check, conflict, moved head, checks still running). */
+  /** The request filed for the human (red check, conflict, moved head, a rule it cannot meet). */
   humanRequestId?: string;
+  /** The merge record's sentence for the person when it was not merged (ADR 0111). */
+  sentence?: string;
 }
 
 export interface MergePort {

@@ -1,7 +1,13 @@
 /**
  * Users, orgs, repositories, branches, git refs, commits and the contents API.
  */
-import { canCreateRepo, canSeeRepo, isAffiliated, matchesAllowlist } from "./auth.ts";
+import {
+  canCreateRepo,
+  canSeeRepo,
+  checkRepoAccess,
+  isAffiliated,
+  matchesAllowlist,
+} from "./auth.ts";
 import {
   bool,
   guardRepo,
@@ -178,6 +184,12 @@ export function registerRepoRoutes(app: HostApp, ctx: RouteContext): void {
     if (desc !== undefined) repo.description = desc;
     const priv = bool(body, "private");
     if (priv !== undefined) repo.private = priv;
+    const merges = bool(body, "allow_merge_commit");
+    if (merges !== undefined) repo.allowMergeCommit = merges;
+    const squash = bool(body, "allow_squash_merge");
+    if (squash !== undefined) repo.allowSquashMerge = squash;
+    const rebase = bool(body, "allow_rebase_merge");
+    if (rebase !== undefined) repo.allowRebaseMerge = rebase;
     const def = str(body, "default_branch");
     if (def !== undefined) {
       if (!(await repo.git.revParse(`refs/heads/${def}`)))
@@ -211,9 +223,27 @@ export function registerRepoRoutes(app: HostApp, ctx: RouteContext): void {
     );
   });
 
-  app.get("/repos/:owner/:repo/branches/*", async (c) => {
+  // The rules of the rulesets that apply to a branch: readable with read access.
+  app.get("/repos/:owner/:repo/rules/branches/*", (c) => {
     const repo = requireRepo(c, store, "metadata", "read");
-    const name = wildcardPath(c, "/branches/");
+    const name = wildcardPath(c, "/rules/branches/");
+    return c.json(repo.branchRules.get(name) ?? []);
+  });
+
+  app.get("/repos/:owner/:repo/branches/*", async (c) => {
+    const raw = wildcardPath(c, "/branches/");
+    // Classic protection: only an admin reads it (anyone else gets 404, as on GitHub).
+    if (raw.endsWith("/protection")) {
+      const repo = requireRepo(c, store, "metadata", "read");
+      const name = raw.slice(0, -"/protection".length);
+      const allowed =
+        checkRepoAccess(c.get("auth").subject, repo, "administration", "write") === "ok";
+      const protection = repo.protection.get(name);
+      if (!allowed || !protection) throw new HttpError(404, "Branch not protected");
+      return c.json(protection);
+    }
+    const repo = requireRepo(c, store, "metadata", "read");
+    const name = raw;
     const sha = await repo.git.revParse(`refs/heads/${name}`);
     if (!sha) throw new HttpError(404, "Branch not found");
     const info = await repo.git.commit(sha);

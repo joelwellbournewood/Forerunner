@@ -73,6 +73,11 @@ export const ANSWER_CARD_KEYS = {
    * Try again or Cancel task.
    */
   cannotRun: "task:cannot_run",
+  /**
+   * A reviewed pull request the merge step left to the person (U-028, ADR 0111,
+   * `MERGE_LEFT_OPEN_KEY` in `loop/merge.ts`): the merge record's sentence is its body.
+   */
+  mergeLeftOpen: "merge:left_open",
   planPrefix: "plan:",
   intakePrefix: "intake:",
   specialistPrefix: "specialist:",

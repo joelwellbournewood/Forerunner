@@ -8,6 +8,7 @@ import { DeviceRepo } from "./device.ts";
 import { EventRepo } from "./event.ts";
 import { HumanRequestRepo } from "./human-request.ts";
 import { LessonRepo } from "./lesson.ts";
+import { MergeRecordRepo } from "./merge-record.ts";
 import { MessageRepo } from "./message.ts";
 import {
   BillingSourceRepo,
@@ -38,6 +39,7 @@ export * from "./device.ts";
 export * from "./event.ts";
 export * from "./human-request.ts";
 export * from "./lesson.ts";
+export * from "./merge-record.ts";
 export * from "./message.ts";
 export * from "./misc.ts";
 export * from "./people.ts";
@@ -80,6 +82,7 @@ export interface Repos {
   remoteCommand: RemoteCommandRepo;
   billingSource: BillingSourceRepo;
   budgetWindow: BudgetWindowRepo;
+  mergeRecord: MergeRecordRepo;
 }
 
 export function createRepos(db: Database, clock: Clock): Repos {
@@ -115,5 +118,6 @@ export function createRepos(db: Database, clock: Clock): Repos {
     remoteCommand: new RemoteCommandRepo(db, clock),
     billingSource: new BillingSourceRepo(db, clock),
     budgetWindow: new BudgetWindowRepo(db, clock),
+    mergeRecord: new MergeRecordRepo(db, clock),
   };
 }

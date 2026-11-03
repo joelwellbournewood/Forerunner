@@ -145,6 +145,26 @@ export type SecretScope = (typeof SECRET_SCOPES)[number];
 export const SECRET_GRANT_STATUSES = ["pending", "active", "cancelled", "revoked"] as const;
 export type SecretGrantStatus = (typeof SECRET_GRANT_STATUSES)[number];
 
+/**
+ * A reviewed pull request's merge (ADR 0111): queued once the critic accepted it; merging
+ * while an attempt runs (a crash leaves it there, the daemon's start resumes it);
+ * waiting_checks while the host's checks run (the git host watcher retries it); merged;
+ * left_to_you with one sentence when the person has to act.
+ */
+export const MERGE_RECORD_STATES = [
+  "queued",
+  "merging",
+  "waiting_checks",
+  "merged",
+  "left_to_you",
+] as const;
+export type MergeRecordState = (typeof MERGE_RECORD_STATES)[number];
+/** What freed the merge: nothing yet, the project's setting, or the person's click. */
+export const MERGE_APPROVALS = ["none", "mode", "person"] as const;
+export type MergeApproval = (typeof MERGE_APPROVALS)[number];
+export const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
+export type MergeMethod = (typeof MERGE_METHODS)[number];
+
 export const EXTENSION_KINDS = [
   "connector",
   "mcp_server",
@@ -554,6 +574,40 @@ export interface SecretGrantRow extends BaseRow {
   ended_reason: string | null;
 }
 export type NewSecretGrant = New<SecretGrantRow, "name" | "owner_human_id">;
+
+/**
+ * The merge of one task's reviewed pull request (ADR 0111): the commit the critic accepted,
+ * pinned at the accept, and what became of the merge. Owned by the install's agent that made
+ * it (`agent_id`); only that agent's daemon retries it.
+ */
+export interface MergeRecordRow extends BaseRow {
+  task_id: string;
+  project_id: string | null;
+  agent_id: string;
+  pr_number: number;
+  pr_url: string;
+  /** The commit the critic accepted (the task worktree's HEAD at the accept), or a head that keeps its change. */
+  reviewed_head_sha: string;
+  /** The base branch's head the worktree had at the accept. */
+  reviewed_base_sha: string | null;
+  /** The patch id of the task's own change (`ownChangeId`); null when it could not be read. */
+  own_change_id: string | null;
+  state: MergeRecordState;
+  approval: MergeApproval;
+  /** Who or what approved: a human id, or the setting that freed it. */
+  approved_by: string | null;
+  merge_sha: string | null;
+  method: MergeMethod | null;
+  attempts: number;
+  /** One sentence for the person: why it waits, or what happened. Empty while nothing is to say. */
+  sentence: string;
+  /** The last attempt's outcome (`MergeStatus`), for the words. */
+  last_outcome: string | null;
+}
+export type NewMergeRecord = New<
+  MergeRecordRow,
+  "task_id" | "agent_id" | "pr_number" | "pr_url" | "reviewed_head_sha"
+>;
 
 export interface ExtensionRow extends BaseRow {
   kind: ExtensionKind;

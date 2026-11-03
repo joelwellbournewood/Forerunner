@@ -1,4 +1,5 @@
 export * from "./base-branch.ts";
+export * from "./branch-rules.ts";
 export * from "./git.ts";
 export * from "./github.ts";
 export * from "./github-graphql.ts";

@@ -268,6 +268,51 @@ export class FakeGitHost {
     return { sha, branch: target };
   }
 
+  /**
+   * The repository's merge settings, as its Settings page sets them (`allow_merge_commit`,
+   * `allow_squash_merge`, `allow_rebase_merge`).
+   */
+  setMergeSettings(
+    repo: string | { owner: string; name: string },
+    settings: {
+      allowMergeCommit?: boolean;
+      allowSquashMerge?: boolean;
+      allowRebaseMerge?: boolean;
+    },
+  ): void {
+    const r = this.requireRepo(repo);
+    if (settings.allowMergeCommit !== undefined) r.allowMergeCommit = settings.allowMergeCommit;
+    if (settings.allowSquashMerge !== undefined) r.allowSquashMerge = settings.allowSquashMerge;
+    if (settings.allowRebaseMerge !== undefined) r.allowRebaseMerge = settings.allowRebaseMerge;
+  }
+
+  /**
+   * The rules of a ruleset on `branch`, in GitHub's shape (`[{ type: "pull_request",
+   * parameters: { required_approving_review_count: 1 } }, ...]`); the merge applies them.
+   */
+  setBranchRules(
+    repo: string | { owner: string; name: string },
+    branch: string,
+    rules: Record<string, unknown>[],
+  ): void {
+    this.requireRepo(repo).branchRules.set(branch, rules as never);
+  }
+
+  /**
+   * Classic branch protection on `branch`, in GitHub's shape (`required_pull_request_reviews`,
+   * `required_status_checks`, `enforce_admins`, ...); null removes it. The merge applies it to
+   * everyone but an admin unless `enforce_admins.enabled`.
+   */
+  setBranchProtection(
+    repo: string | { owner: string; name: string },
+    branch: string,
+    protection: Record<string, unknown> | null,
+  ): void {
+    const r = this.requireRepo(repo);
+    if (protection) r.protection.set(branch, protection as never);
+    else r.protection.delete(branch);
+  }
+
   repo(repo: string | { owner: string; name: string }): RepoSummary | null {
     const r =
       typeof repo === "string"

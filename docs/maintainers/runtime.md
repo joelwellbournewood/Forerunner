@@ -49,7 +49,8 @@ level 1 runs routine work after plan approval (the approval is of one plan, boun
 `plan_id`: "Plan approval" under Sessions), level 2 frees routine reversible work, level 3
 also merges reviewed PRs and deploys to staging, level 4 everything else. The merge of a
 reviewed PR is a `merge_pr` tool call the session runner makes after an accepting review
-(`src/loop/merge.ts`, "Merge of a reviewed PR" under the core loop): unattended, so at level 2
+(`src/loop/merge.ts`, "Merge of a reviewed PR" under the core loop; its gate `mayMerge` and the
+merge record, ADR 0111): unattended, so at level 2
 the hooks refuse it with the audit row and the PR stays open for the human. The one exception
 to the hooks asking is a tool gated by the command registry (`ToolSpec.gate: "registry"`, set
 by `CommandLoop.tools` on the conversation agent's model path): its always-human rule is the
@@ -1259,7 +1260,10 @@ baseline read failed, or whose comments it could not read (the login unknown), k
 transient error during the first poll never fires the PR's history. A PR first seen after the
 baseline counts everything on it. Quiet hours (`isQuietHours`, may be async) skip the agent's PRs
 without touching their cursor, so what arrived fires once at the first poll after the window.
-`enabled()` false (the daemon: the schema sync gate paused) skips the poll. `pollOnce()` runs
+`enabled()` false (the daemon: the schema sync gate paused) skips the poll. After the PRs were
+read and the cursor saved, each poll runs the merge retry pass (`retryMerges`, the daemon's
+`ReviewedPrMerge.retryWaiting`, ADR 0111): every merge record of the install's agent that waits
+is tried once, with no session; a failing pass is logged and the poll goes on. `pollOnce()` runs
 one poll (a poll asked for while one runs answers that poll's result); `start()` / `stop()`
 put it on the clock. Tests: `githost-watcher.test.ts` (the fake git host through
 `GitHubHost`), `githost-wiring.test.ts` (the composed daemon). Requirement: E.1.
@@ -2566,47 +2570,118 @@ again's note and start), `critic.test.ts` and `followup.test.ts` (the card's wor
 card, no new question).
 
 **Merge of a reviewed PR (`ReviewedPrMerge`, `src/loop/merge.ts`, spec J.9,
-[ADR 0062](../decisions/0062-merge-after-review-checks-rule.md)).** When the verdict closes a
-task (`decision: "accepted"`) and the task has a `pr_url`, the runner calls
-`SessionRunnerDeps.merge.mergeReviewed` (`MergePort`). The port reads the reviewed commit
-(the HEAD of the task worktree `<worktreeRoot>/<task id>` that `PrTaskExecutor` pushed and
-the critic diffed; without a worktree the outcome is `unverified` and nothing is merged),
-derives a token from the session's (`merge_pr` only, the worktree only, budget 0) and makes
-one `merge_pr` call through the hooks with `RunContext.unattended`: below level 3 the hooks
-refuse it as `autonomy_insufficient` with the audit row (`not_allowed`, no request: the PR
-stays open as at level 2 before), at level 3 the tool runs. The tool (`mergePrTool`) holds the
-checks rule, so it holds for any caller: the PR head must be the reviewed commit and the
-worktree's HEAD (`head_moved` otherwise); a base that moved (`GitOps.isAncestor`) is rebased
-onto in the worktree and the branch pushed with a lease (`conflict` with the files when the
-rebase conflicts); the host's check runs and commit statuses on the head decide (`judgeChecks`,
-the latest run per name and the latest status per context, `GitHost.listCheckRuns` and
-`listCommitStatuses`: a failed, cancelled, timed-out or action-required run and a `failure` or
+[ADR 0062](../decisions/0062-merge-after-review-checks-rule.md), amended by
+[ADR 0111](../decisions/0111-the-merge-record-and-merge-commits-only.md)).** When the verdict
+closes a task (`decision: "accepted"`) and the task has a `pr_url`, the runner calls
+`SessionRunnerDeps.merge.mergeReviewed` (`MergePort`). The port first **pins the reviewed
+commit** in the task's merge record (`store.mergeRecord.pin`, table `merge_record`, one row per
+task): the HEAD of the task worktree `<worktreeRoot>/<task id>` that `PrTaskExecutor` pushed and
+the critic diffed, the base's head the worktree had, and `own_change_id` (`ownChangeId` in
+`@forerunner/capabilities`, the patch id of the task's own change), in every mode and at every
+level, before anything can move the branch. Without a worktree the reviewed commit is unknown:
+the record is left to the person (`unverified`, with its sentence) and nothing merges
+unattended. From then on every merge is pinned to the record's `reviewed_head_sha`, never to
+the worktree's HEAD.
+
+**One gated entry.** `mergeRecorded(record, authority)` is the only way anything merges a task's
+pull request: the session's accept (through `mergeReviewed`), the git host watcher's retry
+(`retryWaiting`, called from `GitHostWatcher.poll()` through its `retryMerges` dep), the resume at
+the daemon's start (`resumeAtStart`, next to `recoverInterruptedSessions`), and later the person's
+Merge in the app. It asks one gate first, `mayMerge(project, record, authority)`, with the project
+read again at every call: today's body frees an unattended merge only at autonomy level 3 or above
+and a person's click always (`authority.kind: "person"`, whose approval is added to
+`RunContext.approvals` for exactly that call); 'merge-in-app' replaces only that body with the
+merge mode. A refusal is one audit row on the hooks' audit port (`autonomy_insufficient: autonomy
+level 2 does not merge (level 3 Trusted does)`), the record `left_to_you` with the sentence
+("#4 waits for you to merge it: Forerunner merges by itself only at Trusted."), the task's reason
+as before, and no card (the level's normal course). Then `store.mergeRecord.claim` takes the
+record (`merging`, one more attempt, optimistic on the row's version, so two daemons on a shared
+store never merge one PR twice), and one `merge_pr` call goes through the hooks with
+`RunContext.unattended`: in a session on a token derived from the session's (`merge_pr` only, the
+worktree only, budget 0); outside one on its own narrow token (`tokens.issue`: `merge_pr` only,
+the worktree only, the PR's host only when it is the git host's (`allowedDomains`), no secret,
+budget 0, ten minutes, the project's level as it is now, `sessionId` `merge-<record id>`),
+revoked after the call. The hooks' `beforeToolCall` and its audit row are unchanged. While Stop all
+holds the agent (`stopped`, the daemon's `kill.isFrozen`) the retry pass tries nothing and writes
+no row; a stop or an unexpected error during an attempt puts the record back to
+`waiting_checks`, never `merging` for good. A record
+whose PR head moved to a commit that keeps exactly the reviewed change (`ownChangeId` of the new
+head equals the record's: the base merged in by a crashed earlier attempt or GitHub's Update
+branch) moves to that head and is tried again; any other moved head is `head_moved`.
+
+**The tool (`mergePrTool`)** holds the rules for any caller: the PR head must be the record's
+commit (`head_moved` otherwise); **merge commits only** (`mergePullRequest(…, { sha, method:
+"merge" })`; a repository whose `allow_merge_commit` is false, or whose rules allow no merge
+commit, is `merge_commits_off` and never merged by Forerunner); **the branch's rules first**
+(`GitHost.getBranchRules`: rulesets and, when readable, classic protection; `rulesBlock` turns an
+approving review, a code owner's review, an unreadable protection on an admin token or any rule
+Forerunner cannot meet into `blocked_by_rules` with its sentence, never gone around, not even on
+the person's click; required checks join the checks to wait for); **no replay**: the merge step
+never rebases and never force-pushes; a base that moved is merged as it is (GitHub combines the
+two in the merge commit, so a branch that carries a dependency's commits brings them to main as
+they are and GitHub marks that pull request merged too); only when an update is needed (a rule
+that the branch be up to date, or `input.update` from the gate) the base is merged into the
+branch in the worktree (`GitOps.mergeFrom`, a merge commit, a normal push; `conflict` with the
+files when it does not merge cleanly; `head_moved` when bringing it in changed the own change,
+and the branch goes back to the reviewed head; a task folder whose HEAD is a merge of the base
+onto the PR head that was never pushed, left by an attempt that stopped before its push, is set
+back to the PR head and the base merged in again, not taken for a head that moved), the record
+moves to the new head
+(`onNewHead`), and every check the reviewed head had must pass again there; the host's check runs
+and commit statuses on the head decide (`judgeChecks`, the latest run per name and the latest
+status per context: a failed, cancelled, timed-out or action-required run and a `failure` or
 `error` status refuse, `checks_failed`; a running run or a `pending` status is polled every
-`checksPollMs`, default 30 s, for up to `checksWaitMs`, default 10 min, and never past the
-session's wall-clock cap (the wait ends one poll before `SessionBudget.limits.deadlineMs`, so
-the last look, the merge and its audit row run on a live token), then `checks_pending`;
-nothing on the head while the base branch's head reports checks or statuses is pending too
-(the host has CI that has not reported on this head yet); nothing on either means the host
-has no CI; after a rebase every check and status the reviewed head had must pass again on the
-new head, and a host still showing the old head right after the push is waited for);
-`mergeable: false` is a conflict; the
-merge is pinned to the checked head (`mergePullRequest(…, { sha })`). Every refusal of the tool
-files one non-blocking `decision` request for the human (`fileLeftOpenRequest`: why, steps,
-"I merged it" / "Leave it open", `change_card.key` `MERGE_LEFT_OPEN_KEY` with the PR URL and
-the status; `syncPrAnswers` applies the answer, below); every outcome is written on the task row (`reason`, versioned with the agent), comes
-back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or `pr.left_open` event
-(`pr.merge_failed` when the port threw; never fatal) and is counted in the summary ("Merged 1
-reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). The status
-update of `ProjectDocs` never goes on a task's branch (ADR 0106), merged or not. A tier 0 task is
-reviewed too (the light review, ADR 0104) and reaches this step like any accepted task; a tier 3
-task's accepting verdict becomes the human sign-off (`needs_human`, spec H), so it never reaches
-the merge and the human who signs off merges. The kill
-switch ends the step as it ends the session: a `killed` refusal of the hooks (the revoked
-token) or a stop during the checks wait is thrown on, never recorded as the level's refusal or
-filed as a request, and the session ends `killed`. The daemon composes it on its hooks, git
-host, worktrees and identity (`RuntimeApp.merge`) and names `merge_pr` in the session grant
-(`RuntimeApp.sessionGrant(projectId)` is that grant, as `startSession` computes it); no tool
-registry offers it to a model.
+`checksPollMs`, default 30 s, for up to `checksWaitMs`, default 10 min, in a session and never past
+its wall-clock cap; a retry looks once (`checksWaitMs` 0); nothing on the head while the base
+branch reports checks is pending; a host still showing the old head right after the push is
+pending too); `mergeable: false` is a conflict (the files from `GitOps.conflictFiles` when the
+worktree is there).
+
+**What the record says.** Merged: `merged` with `merge_sha`, `method: "merge"`, the approval and
+who gave it (`approved_by`: `autonomy level 3`, or the person), and every `onMerged` listener is
+called (`ReviewedPrMerge.onMerged(listener)` / `merged(event)`: compose logs it and emits the
+project event; 'dependent-branches' and 'merged-copy' subscribe, and 'dependent-branches' calls
+`merged` for PRs the watcher sees merged on GitHub). Checks still running or the host silent
+(`unreachable`): `waiting_checks` with "#4 merges when its checks pass.", no card, retried at the
+next poll (after `MAX_MERGE_ATTEMPTS` tries, about a day, it goes to the person with one card
+whose sentence says what it waited on: "The checks of #4 have not finished in a day: ..." or,
+for `unreachable`, "GitHub has not answered about #4 for a day: ...").
+Anything the person must act on (`checks_failed`, `conflict`, `head_moved`, `blocked_by_rules`,
+`merge_commits_off`, `failed`): `left_to_you` with one sentence and one non-blocking `decision`
+request, filed once per record (`fileLeftOpenRequest`: `why` is 'The critic accepted "<task>",
+but pull request #4 was not merged. <the record's sentence>', steps, "I merged it" / "Leave it
+open", `change_card.key` `MERGE_LEFT_OPEN_KEY` with the PR URL, the status and the `sentence`;
+`syncPrAnswers` applies the answer, below). The Inbox shows the record's sentence, not the
+step's message (which carries commit ids and the host's words): `mergeLeftOpenCard` in
+`daemon/request-words.ts` (key `ANSWER_CARD_KEYS.mergeLeftOpen`) titles the card by its task
+and PR number, takes `change_card.sentence` as the body (a card filed without one: its `why`
+after the first sentence), gives each answer its consequence line, and once answered says
+"Noted: you merged pull request #4." or "Left open: pull request #4 stays open on GitHub.". An
+outcome with no sentence (a direct caller of `fileLeftOpenRequest`) is worded from its reason
+("It was left open: check ci/test failed."). The daemon log line `merge record` carries the
+sentence too. `not_allowed`, `unverified` and a closed PR: `left_to_you` with the
+sentence and no card. Every outcome is also written on the task row (`reason`, versioned with the
+agent); a session's comes back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or
+`pr.left_open` event (`pr.merge_failed` when the port threw; never fatal) and is counted in the
+summary ("Merged 1 reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"); a
+retry's is the daemon log line `merge record` with the task, the state, the outcome and the
+sentence.
+`resumeAtStart` settles a record a dead process left `merging` by the host: merged there,
+`merged`; closed, `left_to_you`; open, back to `waiting_checks` for the retry. A stop (the kill
+switch, a revoked token) during the step ends it as before (`killed`, thrown on, never recorded
+as the level's refusal or filed as a request) and puts a record it held back to `waiting_checks`.
+`FORERUNNER_MERGE_CHECKS_WAIT_MS` and `FORERUNNER_MERGE_CHECKS_POLL_MS` bound the session's wait
+(the bench sets the wait to 0). The status update of `ProjectDocs` never goes on a task's branch
+(ADR 0106), merged or not. A tier 0 task is reviewed too (the light review, ADR 0104) and reaches
+this step like any accepted task; a tier 3 task's accepting verdict becomes the human sign-off
+(`needs_human`, spec H), so it never reaches the merge and the human who signs off merges. The
+daemon composes it on its hooks and audit port, git host, worktrees, identity and agent
+(`RuntimeApp.merge`) and names `merge_pr` in the session grant (`RuntimeApp.sessionGrant(projectId)`
+is that grant, as `startSession` computes it); no tool registry offers it to a model. Tests:
+`loop-merge.test.ts`, `merge-record.test.ts` (real git against the fake git host: a dependent
+branch whose base moved, the up-to-date rule, the retry and its own token, the gate read again,
+the reviewed version held, a crash after main was merged in, the rules, merge commits off, the
+sentences), `merge-record-restart.test.ts` (the runtime composed twice on one home).
 
 **Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
 leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not
@@ -3413,7 +3488,8 @@ repository; each option clicked through `POST /requests/:id/answer` with the Inb
 then the task's next run: the person's resolved branch opened as the PR after a restart with
 the specialist not run, a branch that still conflicts asked again, a drop redone from the
 current base with the old commit gone, a cancel; both merge options on a card filed the old
-way and one filed by `fileLeftOpenRequest`).
+way and one filed by `fileLeftOpenRequest`, whose title, body, consequence lines and answered
+line are read from `GET /inbox`).
 
 **Session review answers (`syncSessionReviewAnswers`, `src/session/session-review-answers.ts`,
 U-033).** A session review with a `human` verdict files its request for the session's owner
@@ -6297,13 +6373,25 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   specialists derive their token from it and read the shared secret like a local one. There
   is no human-removal flow: a departing human's installs are ended by revoking their devices
   (which drops their copies) and the owner revoking the grants.
-- The merge after an accepting review (J.9, ADR 0062) waits for running checks for
+- The merge after an accepting review (J.9, ADR 0062 and 0111) waits for running checks for
   `checksWaitMs` (10 minutes, less when the session's wall clock ends sooner) inside the
-  session; CI that takes longer leaves the PR open with a request, and no later session retries
-  the merge on its own (the human merges, or a later rework and review merges again). A
-  repository whose base branch runs CI only on push (no workflow on pull requests) reports
-  nothing on a PR head, so its PRs wait out the bound and go to the human instead of merging.
-  A tier 3 task is merged by the human who signs it off, never by the step.
+  session; CI that takes longer leaves the merge record waiting, and the git host watcher's
+  retry merges it once the checks pass (one look per poll, about a day of tries before it goes
+  to the person). A repository whose base branch runs CI only on push (no workflow on pull
+  requests) reports nothing on a PR head while its base reports checks, so its PRs wait out
+  those tries and then go to the person. A tier 3 task is merged by the human who signs it off,
+  never by the step. GitHub's asynchronous merge request (with `bypass_rules: false`) is not
+  used: its documentation was not checked; the plain merge endpoint pinned to the sha runs after
+  Forerunner's own read of the branch's rules. The session page's line for a merge left open
+  (`pr.left_open`, from the runner, worded by `leftOpenWords`) still shows the step's message
+  ("the PR head 03808d8b405c is not the reviewed commit ..."), not the record's sentence, which
+  the Inbox card and the log line carry; 'merge-in-app' owns those words. Each retry attempt is
+  one `merge_pr` audit row and one issued token (about 1,440 a day for checks that run all
+  day). `getBranchRules` reads a 403 on the rules route as a failed merge (one card), and reads
+  an admin token whose branch GitHub reports `protected` with no classic protection to read
+  (404) as unreadable, so it blocks: whether GitHub's `protected` counts rulesets was not
+  checked. The retry runs only where the git host watcher runs (a GitHub token when the daemon
+  started).
 - The monthly jobs (ADR 0060) have run on the fake provider only: the handover test on
   Forerunner's own repository with a live model is a run on the final build within the live
   budget (`fr jobs handover <project> --force`), not done here. Their reports are files under

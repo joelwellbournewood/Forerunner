@@ -1,5 +1,6 @@
 import { ForerunnerError } from "@forerunner/platform";
 import {
+  type BranchRules,
   type CheckRunInfo,
   type CommentInfo,
   type CommitStatusInfo,
@@ -7,6 +8,7 @@ import {
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
   type IssueInfo,
+  type MergeMethod,
   markAgentText,
   type ProjectFieldInfo,
   type ProjectFieldSpec,
@@ -39,6 +41,8 @@ interface Repo extends RepoInfo {
   statuses: Map<string, CommitStatusInfo[]>;
   releases: ReleaseInfo[];
   nextNumber: number;
+  allowMergeCommit: boolean;
+  rules: Map<string, Partial<BranchRules>>;
 }
 
 interface MemoryProject extends ProjectInfo {
@@ -59,6 +63,8 @@ export class MemoryGitHost implements GitHost {
   private readonly projects = new Map<string, MemoryProject>();
   private nextId = 1;
   mergeableByDefault = true;
+  /** Every merge made, in order, with its method (tests assert merge commits only). */
+  readonly merges: { repo: string; number: number; method: MergeMethod; sha: string | null }[] = [];
   /** Every project call, in order (tests assert how many outward calls a sync made). */
   readonly projectCalls: { op: string; projectId?: string; detail?: string }[] = [];
 
@@ -91,6 +97,7 @@ export class MemoryGitHost implements GitHost {
       htmlUrl: r.htmlUrl,
       cloneUrl: r.cloneUrl,
       permissions: r.permissions,
+      allowMergeCommit: r.allowMergeCommit,
     };
   }
 
@@ -137,6 +144,8 @@ export class MemoryGitHost implements GitHost {
       statuses: new Map(),
       releases: [],
       nextNumber: 1,
+      allowMergeCommit: true,
+      rules: new Map(),
     };
     this.repos.set(fullName, repo);
     return this.getRepo(repo);
@@ -203,7 +212,7 @@ export class MemoryGitHost implements GitHost {
   async mergePullRequest(
     repo: RepoRef,
     number: number,
-    opts: { sha?: string } = {},
+    opts: { sha?: string; method?: MergeMethod } = {},
   ): Promise<{ merged: boolean; sha: string | null; message: string }> {
     const r = this.repo(repo);
     const pr = await this.getPullRequest(repo, number);
@@ -216,12 +225,22 @@ export class MemoryGitHost implements GitHost {
       };
     if (!pr.mergeable)
       return { merged: false, sha: null, message: "Pull Request is not mergeable" };
+    // GitHub's default method is a merge commit, and a repository can turn it off.
+    const method = opts.method ?? "merge";
+    if (method === "merge" && !r.allowMergeCommit)
+      return {
+        merged: false,
+        sha: null,
+        message: "Merge commits are not allowed on this repository.",
+      };
     pr.state = "closed";
     pr.merged = true;
+    pr.mergeCommitSha = `${method}-${number}`;
+    this.merges.push({ repo: this.key(repo), number, method, sha: opts.sha ?? null });
     const head = r.files.get(pr.head.ref);
     if (head)
       r.files.set(pr.base.ref, new Map([...(r.files.get(pr.base.ref) ?? new Map()), ...head]));
-    return { merged: true, sha: `merge-${number}`, message: "merged" };
+    return { merged: true, sha: pr.mergeCommitSha, message: "merged" };
   }
 
   async commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo> {
@@ -346,6 +365,30 @@ export class MemoryGitHost implements GitHost {
 
   setCommitStatuses(repo: RepoRef, ref: string, statuses: CommitStatusInfo[]): void {
     this.repo(repo).statuses.set(ref, statuses);
+  }
+
+  async getBranchRules(repo: RepoRef, branch: string): Promise<BranchRules> {
+    const set = this.repo(repo).rules.get(branch);
+    return {
+      requiredApprovals: 0,
+      codeOwnerReview: false,
+      upToDate: false,
+      requiredChecks: [],
+      allowedMethods: null,
+      blockers: [],
+      unreadable: false,
+      ...set,
+    };
+  }
+
+  /** Test seam: the rules a merge into `branch` must meet. */
+  setBranchRules(repo: RepoRef, branch: string, rules: Partial<BranchRules>): void {
+    this.repo(repo).rules.set(branch, rules);
+  }
+
+  /** Test seam: the repository's "Allow merge commits" setting. */
+  setAllowMergeCommit(repo: RepoRef, allowed: boolean): void {
+    this.repo(repo).allowMergeCommit = allowed;
   }
 
   async createRelease(
