@@ -2152,7 +2152,8 @@ export class IntakeService {
       docs = { error: redact(cut(errorMessage(e))) };
       this.logger.warn("intake docs not written", { requestId: row.id, error: errorMessage(e) });
     }
-    // W6-25: this computer's copy of the repository, so Docs and Files read it at once.
+    // W6-25: this computer's copy of the repository, so Docs and Files read it at once (one
+    // fetch after the docs write's own clone and push; nothing is left running behind it).
     if ("target" in docs && docs.target === "repository") {
       try {
         await this.deps.docs?.refreshCopy?.(project);

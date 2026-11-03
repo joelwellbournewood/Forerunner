@@ -493,7 +493,6 @@ export class PrTaskExecutor implements TaskExecutor {
       }
     };
     return {
-      ...inner,
       execute: async (c) => {
         if (hasLocalOnlyCopy(dir)) back();
         const source = await folderFor(task);
