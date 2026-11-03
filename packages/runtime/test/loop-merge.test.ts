@@ -8,6 +8,7 @@ import { FakeGitHost, FakeProvider, type ScriptedReply } from "@forerunner/teste
 import { MemoryVault } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
 import { composeRuntime } from "../src/daemon/compose.ts";
+import { describeEvent } from "../src/daemon/views.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import {
@@ -403,6 +404,15 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
       state: "waiting_checks",
       last_outcome: "checks_pending",
     });
+    // merge-in-app: the result and the session line say it merges by itself, never that it was
+    // left for the person (before: "Left 1 reviewed pull request for you to merge." and "...
+    // waits for you to merge it: a check is still running after 0 s: ci/test.").
+    expect(result.summary).toContain("1 reviewed pull request merges when its checks pass.");
+    expect(result.summary).not.toContain("for you to merge");
+    const left = m.w.events.find((e) => e.type === "pr.left_open");
+    expect(describeEvent("pr.left_open", left?.payload ?? {})).toBe(
+      `Pull request #${(await m.pr()).number} merges when its checks pass.`,
+    );
   });
 
   it("a base that moved in the same file conflicts: the human gets a request naming the file, the PR stays open", async () => {

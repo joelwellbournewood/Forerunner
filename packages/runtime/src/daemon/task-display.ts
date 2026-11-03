@@ -3,6 +3,7 @@ import type {
   EventRow,
   HumanRequestRow,
   JsonValue,
+  MergeRecordRow,
   ReviewRow,
   RunRow,
   StateStore,
@@ -63,10 +64,16 @@ export async function loadTaskDisplayContext(
   }
   // ADR 0104: a done task says how it was checked ("Reviewed", "Reviewed and tried").
   const reviews = new Map<string, Pick<ReviewRow, "verdict" | "evidence">>();
+  // merge-in-app: whether a done task's work is in main ("Merged", "Accepted · waiting for you
+  // to merge"), from its merge record for the pull request it has now.
+  const merges = new Map<string, MergeRecordRow>();
   for (const t of projectTasks) {
     if (t.status !== "done") continue;
     const latest = await store.review.latestForTask(t.id);
     if (latest) reviews.set(t.id, latest);
+    if (!t.pr_url) continue;
+    const record = await store.mergeRecord.forTask(t.id).catch(() => undefined);
+    if (record && record.pr_url === t.pr_url) merges.set(t.id, record);
   }
   const credentialWait = projectId ? await credentialWaitRow(store, projectId) : null;
   return {
@@ -76,6 +83,7 @@ export async function loadTaskDisplayContext(
     runs,
     agentNames,
     reviews,
+    merges,
     ...(credentialWait ? { credentialWait } : {}),
   };
 }

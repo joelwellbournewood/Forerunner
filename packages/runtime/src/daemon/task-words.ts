@@ -1,4 +1,11 @@
-import type { HumanRequestRow, ReviewRow, RunRow, TaskRow, TaskStatus } from "@forerunner/state";
+import type {
+  HumanRequestRow,
+  MergeRecordRow,
+  ReviewRow,
+  RunRow,
+  TaskRow,
+  TaskStatus,
+} from "@forerunner/state";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
@@ -81,6 +88,12 @@ export interface TaskDisplayContext {
    * tried"); absent where the caller does not need it.
    */
   reviews?: ReadonlyMap<string, Pick<ReviewRow, "verdict" | "evidence">>;
+  /**
+   * The merge record of each done task's pull request (merge-in-app, ADR 0111): the row says
+   * "Merged", "Accepted · merges when its checks pass" or "Accepted · waiting for you to merge".
+   * Absent where the caller does not read them, or for a task without a pull request: "Done".
+   */
+  merges?: ReadonlyMap<string, Pick<MergeRecordRow, "state" | "approval" | "sentence">>;
   /**
    * Whether a review of the task goes on in this app now (the kill switch holds it): a task
    * being reviewed's `live` (L-7). Absent: not said. A running task is not asked: its run goes
@@ -251,10 +264,31 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       });
     case "cancelled":
       return display("cancelled", "Cancelled", "neutral");
-    case "done":
-      return /accepted without review/i.test(task.reason)
-        ? display("done", "Done: accepted without review", "good")
-        : display("done", "Done", "good");
+    case "done": {
+      if (/accepted without review/i.test(task.reason))
+        return display("done", "Done: accepted without review", "good");
+      // merge-in-app: a task whose pull request has a merge record says whether its work is in
+      // main (before, "Done" whether or not anything was merged, and nothing said which).
+      const merge = ctx.merges?.get(task.id);
+      if (!merge) return display("done", "Done", "good");
+      const sentence = merge.sentence.trim();
+      const detail =
+        sentence && !/press Merge on the Overview\.?$/.test(sentence) ? sentence : null;
+      switch (merge.state) {
+        case "merged":
+          return display("done", "Merged", "good");
+        case "waiting_checks":
+          return display("done", "Accepted · merges when its checks pass", "good");
+        case "merging":
+          return display("done", "Accepted · merging", "good");
+        case "queued":
+          return merge.approval === "person"
+            ? display("done", "Accepted · merging", "good")
+            : display("done", "Accepted · waiting for you to merge", "good");
+        default:
+          return display("done", "Accepted · waiting for you to merge", "good", { detail });
+      }
+    }
     case "failed": {
       const why = plainReason(task.reason);
       return display("failed", why ? `Failed: ${why}` : "Failed", "bad", {

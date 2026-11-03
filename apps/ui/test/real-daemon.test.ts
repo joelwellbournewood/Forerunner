@@ -8005,6 +8005,15 @@ describe("the UI client against the real daemon: Merge in the app (merge-in-app,
       from: a.branch,
       dependsOn: [a.task.id],
     });
+    // The task rows say the work is accepted and not in main yet (before: "Done").
+    const labels = async () =>
+      (await client.tasks(project.id))
+        .filter((t) => t.id === a.task.id || t.id === b.task.id)
+        .map((t) => t.display?.label);
+    expect(await labels()).toEqual([
+      "Accepted · waiting for you to merge",
+      "Accepted · waiting for you to merge",
+    ]);
     const before = await client.projectPullRequests(project.id);
     const rowB = before.waiting.find((w) => w.number === b.pr.number);
     expect(rowB?.merge).toEqual({
@@ -8035,6 +8044,8 @@ describe("the UI client against the real daemon: Merge in the app (merge-in-app,
     expect(
       (await client.projectPullRequests(project.id)).waiting.filter((w) => w.kind === "task"),
     ).toEqual([]);
+    expect(await labels()).toEqual(["Merged", "Merged"]);
+    expect((await client.task(b.task.id)).task.display?.label).toBe("Merged");
     const recordA = await rt.store.mergeRecord.forTask(a.task.id);
     const recordB = await rt.store.mergeRecord.forTask(b.task.id);
     expect(recordA).toMatchObject({
@@ -8078,6 +8089,9 @@ describe("the UI client against the real daemon: Merge in the app (merge-in-app,
       canMerge: false,
       sentence: `#${c.pr.number} merges when its checks pass.`,
     });
+    expect((await client.task(c.task.id)).task.display?.label).toBe(
+      "Accepted · merges when its checks pass",
+    );
     await checkRun(c.pr.head.sha, "completed", "success");
     await rt.merge.retryWaiting();
     expect((await rt.store.mergeRecord.forTask(c.task.id))?.state).toBe("merged");

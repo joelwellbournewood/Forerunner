@@ -67,7 +67,12 @@ export interface ResultFacts {
   /** Reviewed pull requests the session merged, and those it left open for the person. */
   mergedPrs?: number;
   openPrs?: number;
+  /** Reviewed pull requests that merge by themselves once their checks pass (merge-in-app). */
+  waitingPrs?: number;
 }
+
+/** Merge outcomes that merge by themselves later (merge-in-app): not left for the person. */
+export const MERGE_WAITS: ReadonlySet<string> = new Set(["checks_pending", "unreachable"]);
 
 /** The status words a waiting task's dependency is named with. */
 function stateWords(status: string | null): string {
@@ -288,6 +293,20 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       f.openPrs
         ? [
             `Left ${f.openPrs} reviewed ${plural(f.openPrs, "pull request", "pull requests")} for you to merge.`,
+          ]
+        : [],
+  },
+  {
+    // merge-in-app: what merges by itself once its checks pass is not left for the person
+    // (before: "Left 1 reviewed pull request for you to merge" for one the retry then merged).
+    name: "merges when its checks pass",
+    line: 3,
+    build: (f) =>
+      f.waitingPrs
+        ? [
+            f.waitingPrs === 1
+              ? "1 reviewed pull request merges when its checks pass."
+              : `${f.waitingPrs} reviewed pull requests merge when their checks pass.`,
           ]
         : [],
   },
