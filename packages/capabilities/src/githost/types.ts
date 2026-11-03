@@ -272,6 +272,20 @@ export interface GitHost {
     opts: { title: string; body: string; head: string; base: string; draft?: boolean },
   ): Promise<PullRequestInfo>;
   getPullRequest(repo: RepoRef, number: number): Promise<PullRequestInfo>;
+  /**
+   * Edit a pull request (GitHub's `PATCH /pulls/:n`): its title, its body (a dependent pull
+   * request's "Builds on" line once what it builds on changed), or close it.
+   */
+  updatePullRequest(
+    repo: RepoRef,
+    number: number,
+    patch: { title?: string; body?: string; state?: "open" | "closed" },
+  ): Promise<PullRequestInfo>;
+  /**
+   * The commit `branch` points at on the host, or null when there is no such branch (the git
+   * host watcher reads the default branch's head once per poll).
+   */
+  getBranchHead(repo: RepoRef, branch: string): Promise<string | null>;
   listPullRequests(
     repo: RepoRef,
     opts?: { state?: "open" | "closed" | "all"; head?: string },

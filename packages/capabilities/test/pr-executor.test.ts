@@ -721,7 +721,11 @@ describe("a task that waits for unmerged work builds on it (C-49)", { timeout: 1
     // B's PR targets the default branch and says it carries A's unmerged work.
     const prB = await prOf(w, rb.branch);
     expect(prB?.base.ref).toBe("main");
-    expect(prB?.body).toContain('Builds on #1 ("Add index.html"), not merged yet');
+    // How to merge it so nothing conflicts (ADR 0111): never "Merge in any order".
+    expect(prB?.body).toContain(
+      "Builds on #1 (not merged yet): this pull request includes its changes. Merge #1 first, or use Merge in Forerunner, which merges them in order.",
+    );
+    expect(prB?.body).not.toMatch(/any order/i);
     // Only B's own work is B's: the session's files and the critic's diff base.
     expect(rb.changedFiles).toEqual(["check.sh"]);
     const wt = new GitOps({ cwd: join(w.root, "wt", b.id), identity });
@@ -744,7 +748,7 @@ describe("a task that waits for unmerged work builds on it (C-49)", { timeout: 1
     const rc = await runTask(w, c.id, sc.inner);
     expect(sc.saw[0]).toEqual(["README.md", "index.html", "styles.css"]);
     expect((await prOf(w, rc.branch))?.body).toContain(
-      'Builds on #1 ("Add index.html") and #2 ("Add styles.css"), not merged yet',
+      "Builds on #1 and #2 (not merged yet): this pull request includes their changes. Merge #1 and #2 first, or use Merge in Forerunner, which merges them in order.",
     );
     expect(rc.changedFiles).toEqual(["NOTES.md"]);
     expect(rb.changedFiles).toEqual(["styles.css"]);
@@ -759,7 +763,9 @@ describe("a task that waits for unmerged work builds on it (C-49)", { timeout: 1
     const d = await taskOf(w, "Add a footer", [a.id, b.id]);
     const rd = await runTask(w, d.id, seeing({ "footer.html": "<footer></footer>\n" }).inner);
     const prD = await prOf(w, rd.branch);
-    expect(prD?.body).toContain('Builds on #2 ("Add styles.css"), not merged yet');
+    expect(prD?.body).toContain(
+      "Builds on #2 (not merged yet): this pull request includes its changes. Merge #2 first, or use Merge in Forerunner, which merges them in order.",
+    );
     expect(prD?.body).not.toContain("#1");
     expect(rd.changedFiles).toEqual(["footer.html"]);
     await w.store.close();
@@ -793,7 +799,9 @@ describe("a task that waits for unmerged work builds on it (C-49)", { timeout: 1
     expect(await merges()).toBe(before);
     expect(await wt.filesBetween(DEPS_BASE_REF)).toEqual(["check.sh"]);
     const comments = await w.host.listPullRequestComments(repo, 2);
-    expect(comments.at(-1)?.body).toContain('Builds on #1 ("Add index.html"), not merged yet');
+    expect(comments.at(-1)?.body).toContain(
+      "Builds on #1 (not merged yet): this pull request includes its changes. Merge #1 first, or use Merge in Forerunner, which merges them in order.",
+    );
     expect(comments.at(-1)?.body).not.toMatch(/Lesson:/);
     await w.store.close();
   });

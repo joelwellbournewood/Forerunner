@@ -490,11 +490,43 @@ export class GitOps {
   }
 
   /**
-   * Merge `ref` into the current branch (a fast-forward when it can be; `message` names a merge
-   * commit); on conflicts, abort and report the files.
+   * Replay the commits of `branch` (default the current one) that are not in `upstream` onto
+   * `onto` (`git rebase --onto <onto> <upstream> [<branch>]`): a dependent branch rebuilt from
+   * its dependencies' marker (`DEPS_BASE_REF`) onto a new base replays only the task's own
+   * commits (merge commits are dropped, as a plain rebase drops them). On conflicts, abort and
+   * report the files; the branch is then as it was.
    */
-  async mergeFrom(ref: string, message?: string): Promise<RebaseResult> {
-    const r = await this.git(["merge", "--no-edit", ...(message ? ["-m", message] : []), ref]);
+  async rebaseOntoFrom(onto: string, upstream: string, branch?: string): Promise<RebaseResult> {
+    const r = await this.git(["rebase", "--onto", onto, upstream, ...(branch ? [branch] : [])]);
+    if (r.code === 0) return { ok: true, conflicts: [], detail: r.stdout.trim() };
+    const conflicts = (await this.git(["diff", "--name-only", "--diff-filter=U"])).stdout
+      .split(/\r?\n/)
+      .filter(Boolean);
+    await this.git(["rebase", "--abort"]);
+    return {
+      ok: false,
+      conflicts,
+      detail: redactToken(r.stderr.trim(), this.opts.auth?.token).slice(-800),
+    };
+  }
+
+  /**
+   * Merge `ref` into the current branch (a fast-forward when it can be, unless
+   * `noFastForward`: then always a merge commit, so a branch that brought other work in shows
+   * it; `message` names the merge commit); on conflicts, abort and report the files.
+   */
+  async mergeFrom(
+    ref: string,
+    message?: string,
+    opts: { noFastForward?: boolean } = {},
+  ): Promise<RebaseResult> {
+    const r = await this.git([
+      "merge",
+      "--no-edit",
+      ...(opts.noFastForward ? ["--no-ff"] : []),
+      ...(message ? ["-m", message] : []),
+      ref,
+    ]);
     if (r.code === 0) return { ok: true, conflicts: [], detail: r.stdout.trim() };
     const conflicts = (await this.git(["diff", "--name-only", "--diff-filter=U"])).stdout
       .split(/\r?\n/)
@@ -555,6 +587,23 @@ export class GitOps {
     }
     if (await this.hasRef(ref))
       this.must(await this.git(["update-ref", "-d", ref]), "update-ref -d");
+  }
+
+  /**
+   * The refs under `prefix` (`refs/forerunner/deps/`) with the commit each names, sorted by
+   * name: the dependencies a dependent branch's marker holds.
+   */
+  async refsUnder(prefix: string): Promise<{ ref: string; sha: string }[]> {
+    const r = this.must(
+      await this.git(["for-each-ref", "--format=%(refname) %(objectname)", prefix]),
+      "for-each-ref",
+    );
+    return r.stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim().split(/\s+/))
+      .filter((p): p is [string, string] => p.length === 2 && !!p[0] && !!p[1])
+      .map(([ref, sha]) => ({ ref, sha }))
+      .sort((a, b) => a.ref.localeCompare(b.ref));
   }
 
   /** Whether `base..head` holds a merge commit (a branch that brought other work in by merging). */

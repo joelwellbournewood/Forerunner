@@ -82,6 +82,52 @@ describe("GitOps", { timeout: 120_000 }, () => {
     expect(await a.currentBranch()).toBe("feat/y");
   });
 
+  it("mergeFrom with noFastForward always makes a merge commit; rebaseOntoFrom replays only the commits after a marker (dependent-branches)", async () => {
+    const { url } = await bareRepo();
+    const root = mkdtempSync(join(tmpdir(), "fr-wt-"));
+    const a = new GitOps({ cwd: join(root, "a"), identity });
+    await a.clone(url);
+    // A dependency's branch one commit ahead of main: a plain merge fast-forwards (no merge
+    // commit, so nothing showed the branch brought other work in), --no-ff makes one.
+    await a.createBranch("dep");
+    writeFileSync(join(root, "a", "dep.txt"), "dep\n");
+    await a.commitAll("dep: add dep.txt");
+    await a.checkout("main");
+    await a.createBranch("ff", "main");
+    expect((await a.mergeFrom("dep")).ok).toBe(true);
+    expect(await a.parentsOf("HEAD")).toHaveLength(1);
+    await a.createBranch("base", "main");
+    expect((await a.mergeFrom("dep", "Build on dep", { noFastForward: true })).ok).toBe(true);
+    expect(await a.parentsOf("HEAD")).toHaveLength(2);
+    expect(await a.hasMergesSince("main")).toBe(true);
+    const marker = await a.headSha();
+    // The task's own commit on top of the marker; rebuilt onto main, only it is replayed.
+    writeFileSync(join(root, "a", "own.txt"), "own\n");
+    await a.commitAll("own: add own.txt");
+    const rebuilt = await a.rebaseOntoFrom("main", marker);
+    expect(rebuilt.ok).toBe(true);
+    expect((await a.log(5)).map((c) => c.subject)).toEqual(["own: add own.txt", "seed"]);
+    expect(await a.changedFiles("main")).toEqual(["own.txt"]);
+    // A replay that conflicts is aborted, the files named, the branch as it was.
+    await a.createBranch("own2", marker);
+    writeFileSync(join(root, "a", "dep.txt"), "dep, changed by the task\n");
+    await a.commitAll("own2: change dep.txt");
+    const head = await a.headSha();
+    await a.checkout("main");
+    writeFileSync(join(root, "a", "dep.txt"), "main's own dep.txt\n");
+    await a.commitAll("main: a different dep.txt");
+    const conflict = await a.rebaseOntoFrom("main", marker, "own2");
+    expect(conflict).toMatchObject({ ok: false, conflicts: ["dep.txt"] });
+    expect(await a.currentBranch()).toBe("own2");
+    expect(await a.headSha()).toBe(head);
+    expect((await a.status()).dirty).toBe(false);
+    // The refs under a prefix, with their commits.
+    await a.setRef("refs/forerunner/deps/t1", marker);
+    expect(await a.refsUnder("refs/forerunner/deps/")).toEqual([
+      { ref: "refs/forerunner/deps/t1", sha: marker },
+    ]);
+  });
+
   it("passes the token to git through the environment, never on the command line", async () => {
     const calls: { argv: string[]; env: NodeJS.ProcessEnv }[] = [];
     const runner = async (argv: readonly string[], opts: RunOptions = {}): Promise<RunResult> => {

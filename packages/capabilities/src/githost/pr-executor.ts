@@ -16,6 +16,8 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { ensureBaseBranch } from "./base-branch.ts";
+// branch-rules.ts reads DEPS_BASE_REF from this module; both are used only inside functions.
+import { holdsMergedWork, ownChangeId } from "./branch-rules.ts";
 import { GitOps, type GitTokenSource, gitAuthFor, resolveGitToken } from "./git.ts";
 import { pushFailedWords } from "./push-words.ts";
 import type { GitHost, RepoRef } from "./types.ts";
@@ -145,14 +147,163 @@ export function pullRequestsText(deps: readonly UnmergedDependency[]): string {
     : `${each.slice(0, -1).join(", ")} and ${each[each.length - 1]}`;
 }
 
+/** "a", "a and b", "a, b and c". */
+function andList(items: readonly string[]): string {
+  return items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 /**
- * What a pull request that carries unmerged work says about it (C-49): which pull requests it
- * builds on, and that merging it merges their changes too, so the person can merge in any order.
+ * What a pull request that carries unmerged work says about it (C-49, ADR 0111): which pull
+ * requests it builds on, that it includes their changes, and how to merge it so nothing is
+ * copied or conflicts: those first (GitHub's Squash on either one first conflicts when this one
+ * changed their files), or Merge in Forerunner, which merges them in order with merge commits.
+ * Never "Merge in any order": that held only for GitHub's "Create a merge commit".
  */
-export function buildsOnText(deps: readonly UnmergedDependency[]): string {
+export function buildsOnText(deps: readonly Pick<UnmergedDependency, "number">[]): string {
   if (!deps.length) return "";
-  const one = deps.length === 1;
-  return `Builds on ${pullRequestsText(deps)}, not merged yet: this pull request includes ${one ? "its" : "their"} changes, so merging it merges ${one ? "them" : "theirs"} too. Merge in any order.`;
+  const numbers = andList(deps.map((d) => `#${d.number}`));
+  return `Builds on ${numbers} (not merged yet): this pull request includes ${deps.length === 1 ? "its" : "their"} changes. Merge ${numbers} first, or use Merge in Forerunner, which merges them in order.`;
+}
+
+/**
+ * A pull request body with its "Builds on" paragraph replaced by `line` (removed when `line` is
+ * empty, added after the first paragraph when it has none): what a dependent pull request says
+ * once what it builds on changed (merged, closed, redone; ADR 0111).
+ */
+export function withBuildsOn(body: string, line: string): string {
+  const paras = body.split(/\n{2,}/);
+  const at = paras.findIndex((p) => /^Builds on #\d/.test(p.trim()));
+  if (at >= 0) {
+    if (line) paras[at] = line;
+    else paras.splice(at, 1);
+  } else if (line) paras.splice(Math.min(1, paras.length), 0, line);
+  return paras.join("\n\n");
+}
+
+/**
+ * Where a dependent branch's worktree records each dependency its marker (`DEPS_BASE_REF`)
+ * holds: one ref per dependency task, naming the commit of that task's branch merged in. A
+ * rebuild reads them when a dependency's pull request is merged, closed or redone.
+ */
+export const DEPS_HELD_PREFIX = "refs/forerunner/deps/";
+export function depsHeldRef(taskId: string): string {
+  return `${DEPS_HELD_PREFIX}${safeSegment(taskId)}`;
+}
+
+/** What became of a dependency a dependent branch holds (ADR 0111). */
+export type HeldState =
+  /** Its pull request is open and still carries the work held: it stays in the base. */
+  | "open"
+  /** Merged with a merge commit: its commits are in the default branch as they are. */
+  | "in_main"
+  /** Merged by squash or rebase: its changes are in the default branch as other commits. */
+  | "copied"
+  /** Its pull request was closed without merging. */
+  | "closed"
+  /** Its task is being redone, or its pull request no longer carries the work held. */
+  | "redone"
+  /** Its task was cancelled. */
+  | "cancelled";
+
+export interface HeldDependency {
+  taskId: string;
+  title: string;
+  /** The commit of its branch the marker holds. */
+  sha: string;
+  /** Its pull request's number, when one is known. */
+  number: number | null;
+  branch: string | null;
+  state: HeldState;
+}
+
+/** Dropped from the base without being in the default branch: the review read work that is gone. */
+export const VOIDING_STATES: ReadonlySet<HeldState> = new Set(["closed", "redone", "cancelled"]);
+
+/**
+ * A dependent branch checked against what it builds on (ADR 0111): what it holds, what a
+ * rebuild dropped and kept, its head and own change before and after. `rebuilt` false: nothing
+ * it holds went away (the branch is as it was). `after` null: the rebuild conflicted in
+ * `conflicts` and was aborted (the branch is as it was).
+ */
+export interface DependentRebuild {
+  taskId: string;
+  branch: string;
+  held: HeldDependency[];
+  dropped: HeldDependency[];
+  kept: HeldDependency[];
+  rebuilt: boolean;
+  before: string;
+  after: string | null;
+  conflicts: string[];
+  /** `ownChangeId` before and after; null when it could not be told. */
+  ownBefore: string | null;
+  ownAfter: string | null;
+  /** A dependency was dropped whose work is not in the default branch (closed, redone, cancelled). */
+  voids: boolean;
+}
+
+/** What `rebuildDependents` did for one dependent task. */
+export interface DependentOutcome {
+  taskId: string;
+  /** Its pull request (open), when it has one. */
+  prNumber: number | null;
+  prUrl: string | null;
+  result: "unchanged" | "rebuilt" | "conflict" | "held" | "busy" | "failed";
+  rebuild?: DependentRebuild;
+  error?: string;
+}
+
+/** What the caller of `rebuildDependents` decides between the rebuild and its push. */
+export interface RebuildHooks {
+  /**
+   * Called once a dependent branch was rebuilt (or its rebuild conflicted), before anything is
+   * pushed: the runtime voids or moves the task's merge record here, so no merge can follow the
+   * new head first. False holds the push (a merge of that pull request is under way): the
+   * rebuild is tried again later.
+   */
+  beforePush?: (r: DependentRebuild, pr: { number: number; url: string }) => Promise<boolean>;
+}
+
+/**
+ * Worktrees a step works in now, in this process: a rebuild never touches one that a run, a
+ * resolved conflict or another rebuild is using (`inWorktree` waits for it, `tryWorktree` skips).
+ */
+const worktreesInUse = new Map<string, Promise<unknown>>();
+
+async function inWorktree<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  for (let held = worktreesInUse.get(dir); held; held = worktreesInUse.get(dir))
+    await held.catch(() => undefined);
+  const p = fn();
+  worktreesInUse.set(dir, p);
+  try {
+    return await p;
+  } finally {
+    if (worktreesInUse.get(dir) === p) worktreesInUse.delete(dir);
+  }
+}
+
+async function tryWorktree<T>(dir: string, fn: () => Promise<T>): Promise<T | null> {
+  if (worktreesInUse.has(dir)) return null;
+  return inWorktree(dir, fn);
+}
+
+/** "#4, which was closed" for the words of a rebuild (ADR 0111). */
+export function droppedWords(d: Pick<HeldDependency, "number" | "title" | "state">): string {
+  const name = d.number ? `#${d.number}` : `"${d.title.replace(/\s+/g, " ").trim()}"`;
+  switch (d.state) {
+    case "closed":
+      return `${name}, which was closed`;
+    case "redone":
+      return `${name}, which is being redone`;
+    case "cancelled":
+      return `${name}, whose task was cancelled`;
+    case "copied":
+      return `${name}, which was merged`;
+    default:
+      return name;
+  }
 }
 
 /** A model's report as plain text for a commit message: no markdown marks, no lesson lines. */
@@ -272,19 +423,35 @@ export class PrTaskExecutor implements TaskExecutor {
       // Tasks without a repository or a workspace run the inner executor as is.
       return this.deps.inner.execute(ctx);
     }
-    const branch =
-      task.branch ||
-      this.deps.branchFor?.(task) ||
-      `fr/${task.id.slice(0, 8)}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
     const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
-    mkdirSync(this.deps.worktreeRoot, { recursive: true });
+    // A rebuild of this task's branch (a dependency merged, closed or redone) waits for the run.
+    return inWorktree(dir, () => this.executeIn(ctx, target, dir));
+  }
+
+  /** The git of a task's worktree, with the person's token scoped to the clone URL's origin. */
+  private async gitFor(target: Target, dir: string): Promise<GitOps> {
     const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
-    const git = new GitOps({
+    return new GitOps({
       cwd: dir,
       // Scoped to the clone URL's origin; a local path or SSH remote gets no header.
       auth,
       identity: this.deps.identity,
     });
+  }
+
+  private async executeIn(
+    ctx: ExecuteCtx,
+    target: Target,
+    dir: string,
+  ): Promise<TaskExecutionResult> {
+    const { task } = ctx;
+    let branch =
+      task.branch ||
+      this.deps.branchFor?.(task) ||
+      `fr/${task.id.slice(0, 8)}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
+    mkdirSync(this.deps.worktreeRoot, { recursive: true });
+    const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
+    const git = await this.gitFor(target, dir);
     if (existsSync(join(dir, ".git"))) await git.fetch();
     else await git.clone(target.clone);
     // An empty repository (just created on GitHub) gets its first commit, a README with the
@@ -307,60 +474,86 @@ export class PrTaskExecutor implements TaskExecutor {
         return "Start the repository with a README\n\nThe repository was empty; Forerunner made this first commit so its tasks have a branch to start from.";
       },
     });
-    if (!task.branch) await this.deps.store.task.patch(task.id, { branch });
     const answered = await this.conflictAnswer(task);
-    if (answered?.outcome === "resolved")
+    if (answered?.outcome === "resolved") {
+      if (!task.branch) await this.deps.store.task.patch(task.id, { branch });
       return this.continueResolved(ctx, { git, dir, branch, target, answered });
+    }
     const dropped = answered?.outcome === "dropped";
     const existingPr = (
       await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch })
     )[0];
+    // A redo of a task whose pull request was merged or closed starts again on a fresh branch
+    // (the old name with a short suffix): a branch GitHub keeps after a merge (delete-on-merge
+    // off) never makes its push fail, and the old pull request stays as it was.
+    if (task.branch && !existingPr) branch = await this.freshBranch(git, target, task.branch);
+    if (branch !== task.branch) await this.deps.store.task.patch(task.id, { branch });
     const resume = !!existingPr && !dropped;
     // C-49 (ADR 0106): the done tasks this one waits for whose pull requests are not merged
     // yet. Their branches are merged into this task's before it runs, so it sees their work;
     // its own pull request still targets the default branch.
-    const unmerged = await this.unmergedDependencies(task, target);
-    // A branch that brought earlier work in by merging is kept up to date by merging too (a
-    // rebase would copy that work into the branch as new commits).
-    const merging =
-      unmerged.length > 0 ||
-      (resume &&
-        (await git.hasRef(`origin/${branch}`)) &&
-        (await git.hasMergesSince(`origin/${target.base}`, `origin/${branch}`)));
-    let depsBase: string | null = null;
-    if (merging) {
-      // A later run of the task keeps the base its work started from while nothing under it
-      // moved (a new merge commit each run would only add noise to its pull request).
-      if (resume && (await this.baseStillHolds(git, target, unmerged))) depsBase = DEPS_BASE_REF;
-      else {
-        const built = await this.dependencyBase(git, target, unmerged);
-        if (!built.ok)
-          return { outcome: "needs_human", summary: built.words, costUsdMicro: 0, branch };
-        depsBase = built.sha;
-      }
-    }
-    await git.setRef(DEPS_BASE_REF, depsBase);
-    // "Drop the branch and retry from scratch": the branch starts again from the base (with the
-    // work it builds on), even when a pull request already carries it (the PR then gets the new
-    // work).
-    await git.createBranch(
-      branch,
-      resume ? `origin/${branch}` : (depsBase ?? `origin/${target.base}`),
-    );
-    if (resume && depsBase) {
-      const merged = await git.mergeFrom(depsBase, mergeMessage(unmerged, target.base));
-      if (!merged.ok)
+    let unmerged = await this.unmergedDependencies(task, target);
+    if (resume) {
+      await git.createBranch(branch, `origin/${branch}`);
+      await this.dropStaleMarker(git);
+      // What it builds on went away since (merged by squash or rebase, closed, redone,
+      // cancelled): the branch is rebuilt first, so the run works on a true branch (ADR 0111).
+      const rebuilt = await this.rebuildBranch(git, ctx.task, target);
+      if (rebuilt?.rebuilt && !rebuilt.after)
         return this.conflict(ctx, {
           git,
           dir,
           branch,
           target,
-          conflicts: merged.conflicts,
+          conflicts: rebuilt.conflicts,
           costUsdMicro: 0,
           force: false,
           superseded: answered?.row ?? null,
           merging: true,
+          rebuild: rebuilt,
         });
+      // A branch that holds merged-in work (the dependencies' marker, or a merge commit since
+      // it left the base) is kept up to date by merging, never rebased (ADR 0111): a rebase
+      // would copy that work into the branch as new commits.
+      if (unmerged.length > 0 || (await holdsMergedWork(git, `origin/${target.base}`))) {
+        // A later run of the task keeps the base its work started from while nothing under it
+        // moved (a new merge commit each run would only add noise to its pull request).
+        if (!(await this.baseStillHolds(git, target, unmerged))) {
+          const built = await this.dependencyBase(git, target, unmerged);
+          await git.checkout(branch);
+          if (!built.ok)
+            return { outcome: "needs_human", summary: built.words, costUsdMicro: 0, branch };
+          const merged = await git.mergeFrom(built.sha, mergeMessage(unmerged, target.base));
+          if (!merged.ok)
+            return this.conflict(ctx, {
+              git,
+              dir,
+              branch,
+              target,
+              conflicts: merged.conflicts,
+              costUsdMicro: 0,
+              force: false,
+              superseded: answered?.row ?? null,
+              merging: true,
+            });
+          await this.setDepsBase(git, built.sha, built.held);
+        }
+      }
+    } else {
+      let depsBase: string | null = null;
+      let held: { taskId: string; sha: string }[] = [];
+      if (unmerged.length > 0) {
+        const built = await this.dependencyBase(git, target, unmerged);
+        if (!built.ok)
+          return { outcome: "needs_human", summary: built.words, costUsdMicro: 0, branch };
+        depsBase = built.sha;
+        held = built.held;
+      }
+      await this.setDepsBase(git, depsBase, held);
+      // "Drop the branch and retry from scratch", or a fresh branch: it starts again from the
+      // base (with the work it builds on), even when a pull request already carries it (the PR
+      // then gets the new work).
+      await git.createBranch(branch, depsBase ?? `origin/${target.base}`);
     }
 
     const inner = this.deps.inner.withWorktree
@@ -384,7 +577,25 @@ export class PrTaskExecutor implements TaskExecutor {
     await git.fetch();
     // A branch the host still has from before the drop is replaced, never built on.
     const replace = dropped && (await git.hasRef(`origin/${branch}`));
-    const synced = depsBase
+    // What it builds on may have gone away during the run: rebuilt before it is pushed.
+    const rebuilt = await this.rebuildBranch(git, ctx.task, target);
+    if (rebuilt?.rebuilt && !rebuilt.after)
+      return this.conflict(ctx, {
+        git,
+        dir,
+        branch,
+        target,
+        conflicts: rebuilt.conflicts,
+        costUsdMicro: result.costUsdMicro,
+        force: replace,
+        superseded: answered?.row ?? null,
+        merging: true,
+        rebuild: rebuilt,
+      });
+    if (rebuilt?.rebuilt) unmerged = await this.unmergedDependencies(task, target);
+    // Brought up to date the way it was built: by merging when it holds merged-in work.
+    const merging = await holdsMergedWork(git, `origin/${target.base}`);
+    const synced = merging
       ? await this.mergeMoved(git, target, unmerged)
       : await git.rebaseOnto(`origin/${target.base}`);
     if (!synced.ok) {
@@ -397,14 +608,14 @@ export class PrTaskExecutor implements TaskExecutor {
         costUsdMicro: result.costUsdMicro,
         force: replace,
         superseded: answered?.row ?? null,
-        merging: !!depsBase,
+        merging,
       });
     }
     let changedFiles: string[] = [];
     try {
       // The task's own work: from the base it started on (the default branch with the work it
       // builds on), never the dependencies' files.
-      changedFiles = depsBase
+      changedFiles = (await git.hasRef(DEPS_BASE_REF))
         ? await git.filesBetween(DEPS_BASE_REF)
         : await git.changedFiles(`origin/${target.base}`);
     } catch {
@@ -474,24 +685,33 @@ export class PrTaskExecutor implements TaskExecutor {
 
   /**
    * The default branch with the dependencies' branches merged in, in order, as a commit of its
-   * own (detached; `DEPS_BASE_REF` keeps it): what the task's work starts from. A dependency
-   * whose work conflicts with the base or with another one stops here, in words for the
-   * person's card: nothing is dropped silently.
+   * own (detached; `DEPS_BASE_REF` keeps it): what the task's work starts from. Each one is
+   * merged with a merge commit, never a fast-forward (ADR 0111), so a branch that brought a
+   * dependency in always shows it, and `held` names the commit of each one merged. A
+   * dependency whose work conflicts with the base or with another one stops here, in words for
+   * the person's card: nothing is dropped silently.
    */
   private async dependencyBase(
     git: GitOps,
     target: Target,
     unmerged: readonly UnmergedDependency[],
-  ): Promise<{ ok: true; sha: string } | { ok: false; words: string; conflicts: string[] }> {
+  ): Promise<
+    | { ok: true; sha: string; held: { taskId: string; sha: string }[] }
+    | { ok: false; words: string; conflicts: string[] }
+  > {
     await git.checkout(`origin/${target.base}`);
     const merged: UnmergedDependency[] = [];
+    const held: { taskId: string; sha: string }[] = [];
     for (const dep of unmerged) {
       const ref = `origin/${dep.branch}`;
-      if (!(await git.hasRef(ref))) {
+      const tip = await git.resolveRef(ref);
+      if (!tip) {
         this.logger.warn("a dependency's branch is gone from the host", { branch: dep.branch });
         continue;
       }
-      const r = await git.mergeFrom(ref, `Build on "${dep.title}" (pull request #${dep.number})`);
+      const r = await git.mergeFrom(ref, `Build on "${dep.title}" (pull request #${dep.number})`, {
+        noFastForward: true,
+      });
       // A merge that failed with no conflicting file is no conflict between the pull requests
       // (git refused for another reason): git's words, as any other git failure.
       if (!r.ok && r.conflicts.length === 0)
@@ -506,8 +726,32 @@ export class PrTaskExecutor implements TaskExecutor {
           conflicts: r.conflicts,
         };
       merged.push(dep);
+      held.push({ taskId: dep.taskId, sha: tip });
     }
-    return { ok: true, sha: await git.headSha() };
+    return { ok: true, sha: await git.headSha(), held };
+  }
+
+  /**
+   * The marker of what the branch builds on (`DEPS_BASE_REF`) and the dependencies it holds
+   * (`depsHeldRef`); null removes both (a branch on the default branch alone).
+   */
+  private async setDepsBase(
+    git: GitOps,
+    sha: string | null,
+    held: readonly { taskId: string; sha: string }[],
+  ): Promise<void> {
+    await git.setRef(DEPS_BASE_REF, sha);
+    for (const r of await git.refsUnder(DEPS_HELD_PREFIX)) await git.setRef(r.ref, null);
+    if (sha) for (const h of held) await git.setRef(depsHeldRef(h.taskId), h.sha);
+  }
+
+  /**
+   * A marker the checked-out branch does not hold (left from a branch that was replaced) says
+   * nothing about it: removed, with the dependencies it named.
+   */
+  private async dropStaleMarker(git: GitOps): Promise<void> {
+    const marker = await git.resolveRef(DEPS_BASE_REF);
+    if (marker && !(await git.isAncestor(marker))) await this.setDepsBase(git, null, []);
   }
 
   /** Whether the worktree's `DEPS_BASE_REF` already holds the base and every dependency's tip. */
@@ -520,6 +764,327 @@ export class PrTaskExecutor implements TaskExecutor {
     for (const ref of [`origin/${target.base}`, ...unmerged.map((d) => `origin/${d.branch}`)])
       if ((await git.hasRef(ref)) && !(await git.isAncestor(ref, DEPS_BASE_REF))) return false;
     return true;
+  }
+
+  /**
+   * The name a task's next run pushes to: its branch, unless that branch's pull request was
+   * merged or closed and none is open (a redo after the merge, or after the person closed it):
+   * then a fresh name, the old one with `-r2`, `-r3`, ..., that neither the host's branches nor
+   * any pull request has used.
+   */
+  private async freshBranch(git: GitOps, target: Target, current: string): Promise<string> {
+    const prs = await this.deps.host.listPullRequests(target.repo, {
+      state: "all",
+      head: current,
+    });
+    if (prs.some((p) => p.state === "open") || !prs.some((p) => p.state === "closed"))
+      return current;
+    const stem = current.replace(/-r\d+$/, "");
+    for (let n = 2; n < 100; n++) {
+      const name = `${stem}-r${n}`;
+      if (await git.hasRef(`origin/${name}`)) continue;
+      const used = await this.deps.host.listPullRequests(target.repo, { state: "all", head: name });
+      if (used.length === 0) return name;
+    }
+    return `${stem}-r${this.deps.clock.now().toString(36)}`;
+  }
+
+  /**
+   * The dependencies the checked-out branch's marker holds, each with what became of it
+   * (ADR 0111). A marker made before the held refs existed names none: then the task's
+   * dependencies whose branch on the host is in the marker are read as held.
+   */
+  private async heldDependencies(
+    git: GitOps,
+    task: TaskRow,
+    target: Target,
+    marker: string,
+  ): Promise<HeldDependency[]> {
+    let entries = (await git.refsUnder(DEPS_HELD_PREFIX)).map((r) => ({
+      taskId: r.ref.slice(DEPS_HELD_PREFIX.length),
+      sha: r.sha,
+    }));
+    if (!entries.length) {
+      for (const dep of await this.dependencyTasks(task)) {
+        const tip = dep.branch ? await git.resolveRef(`origin/${dep.branch}`) : null;
+        if (tip && (await git.isAncestor(tip, marker))) entries.push({ taskId: dep.id, sha: tip });
+      }
+    }
+    entries = entries.filter((e, i) => entries.findIndex((x) => x.taskId === e.taskId) === i);
+    const out: HeldDependency[] = [];
+    for (const e of entries) out.push(await this.heldState(git, target, e));
+    return out;
+  }
+
+  /** What became of one dependency a branch holds: its task, then its pull request, then main. */
+  private async heldState(
+    git: GitOps,
+    target: Target,
+    e: { taskId: string; sha: string },
+  ): Promise<HeldDependency> {
+    const dep = await this.deps.store.task.get(e.taskId);
+    const base = {
+      taskId: e.taskId,
+      title: dep?.title ?? e.taskId,
+      sha: e.sha,
+      branch: dep?.branch ?? null,
+    };
+    const numberOf = (url: string | null | undefined) => {
+      const m = /\/pull\/(\d+)/.exec(url ?? "");
+      return m ? Number(m[1]) : null;
+    };
+    // Its commits are in the default branch as they are (a merge commit): nothing to rebuild.
+    if (await git.isAncestor(e.sha, `origin/${target.base}`))
+      return { ...base, number: numberOf(dep?.pr_url), state: "in_main" };
+    if (!dep) return { ...base, number: null, state: "open" };
+    if (dep.status === "cancelled")
+      return { ...base, number: numberOf(dep.pr_url), state: "cancelled" };
+    if (dep.status !== "done") return { ...base, number: numberOf(dep.pr_url), state: "redone" };
+    const prs = dep.branch
+      ? await this.deps.host.listPullRequests(target.repo, { state: "all", head: dep.branch })
+      : [];
+    const open = prs.find((p) => p.state === "open");
+    if (open) {
+      // The open pull request still carries the work held (it may have moved on since).
+      const tip = await git.resolveRef(`origin/${dep.branch}`);
+      const carries = !!tip && (await git.isAncestor(e.sha, tip));
+      return { ...base, number: open.number, state: carries ? "open" : "redone" };
+    }
+    const latest = [...prs].sort((a, b) => b.number - a.number);
+    const merged = latest.find((p) => p.merged);
+    if (merged) return { ...base, number: merged.number, state: "copied" };
+    return { ...base, number: latest[0]?.number ?? numberOf(dep.pr_url), state: "closed" };
+  }
+
+  /** The tasks `task` waits for, and those they wait for, in the same project. */
+  private async dependencyTasks(task: TaskRow): Promise<TaskRow[]> {
+    const out: TaskRow[] = [];
+    const seen = new Set<string>([task.id]);
+    const visit = async (ids: readonly string[]): Promise<void> => {
+      for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const dep = await this.deps.store.task.get(id);
+        if (!dep || dep.project_id !== task.project_id) continue;
+        await visit(dep.depends_on ?? []);
+        out.push(dep);
+      }
+    };
+    await visit(task.depends_on ?? []);
+    return out;
+  }
+
+  /**
+   * The checked-out branch against what it builds on (ADR 0111). Null when it builds on the
+   * default branch alone. When a dependency it holds went away (merged by squash or rebase,
+   * closed, redone, cancelled) the branch is rebuilt: the base again (the default branch with
+   * the dependencies still open, each merged in), then only the task's own commits replayed on
+   * it (`git rebase --onto <new base> DEPS_BASE_REF`); the marker then names the new base, or
+   * is removed when nothing open is left. A rebuild that conflicts is aborted: the branch is as
+   * it was and `after` is null. Nothing is pushed here.
+   */
+  private async rebuildBranch(
+    git: GitOps,
+    task: TaskRow,
+    target: Target,
+  ): Promise<DependentRebuild | null> {
+    const marker = await git.resolveRef(DEPS_BASE_REF);
+    if (!marker || !(await git.isAncestor(marker))) return null;
+    const branch = await git.currentBranch();
+    const held = await this.heldDependencies(git, task, target, marker);
+    const dropped = held.filter((h) => h.state !== "open" && h.state !== "in_main");
+    const kept = held.filter((h) => h.state === "open");
+    const before = await git.headSha();
+    const base = `origin/${target.base}`;
+    const out: DependentRebuild = {
+      taskId: task.id,
+      branch,
+      held,
+      dropped,
+      kept,
+      rebuilt: false,
+      before,
+      after: before,
+      conflicts: [],
+      ownBefore: null,
+      ownAfter: null,
+      voids: dropped.some((d) => VOIDING_STATES.has(d.state)),
+    };
+    if (!dropped.length) return out;
+    out.rebuilt = true;
+    out.ownBefore = await ownChangeId(git, base).catch(() => null);
+    let newBase: string | null = null;
+    let newHeld: { taskId: string; sha: string }[] = [];
+    if (kept.length) {
+      const keep: UnmergedDependency[] = kept.map((k) => ({
+        taskId: k.taskId,
+        title: k.title,
+        branch: k.branch ?? "",
+        number: k.number ?? 0,
+        url: "",
+      }));
+      const built = await this.dependencyBase(git, target, keep);
+      await git.checkout(branch);
+      if (!built.ok) return { ...out, after: null, conflicts: built.conflicts };
+      newBase = built.sha;
+      newHeld = built.held;
+    }
+    const r = await git.rebaseOntoFrom(newBase ?? base, marker, branch);
+    if (!r.ok) return { ...out, after: null, conflicts: r.conflicts };
+    await this.setDepsBase(git, newBase, newHeld);
+    out.after = await git.headSha();
+    out.ownAfter = await ownChangeId(git, base).catch(() => null);
+    this.logger.info("dependent branch rebuilt", {
+      taskId: task.id,
+      branch,
+      dropped: dropped.map((d) => `${d.number ?? d.taskId}:${d.state}`),
+      kept: kept.map((k) => k.number),
+    });
+    return out;
+  }
+
+  /**
+   * After a dependency's pull request was merged (by any method) or closed, or its task was
+   * redone or cancelled (ADR 0111): every done task of the project that waits for it (directly
+   * or through others) and whose branch holds it is checked, and rebuilt where what it holds
+   * went away: force-pushed with a lease (never the default branch), its "Builds on" line
+   * updated. `hooks.beforePush` runs before each push (the runtime moves the merge record
+   * there). A task whose worktree a run or another rebuild uses now is `busy`: its own run
+   * rebuilds it, or the caller tries again.
+   */
+  async rebuildDependents(
+    projectId: string,
+    changedDependencyTaskId: string,
+    hooks: RebuildHooks = {},
+  ): Promise<DependentOutcome[]> {
+    const out: DependentOutcome[] = [];
+    const done = await this.deps.store.task.list(
+      { project_id: projectId, status: "done" } as never,
+      {
+        limit: 2000,
+      },
+    );
+    for (const t of done) {
+      if (t.id === changedDependencyTaskId || !t.branch || !(t.depends_on ?? []).length) continue;
+      const deps = await this.dependencyTasks(t);
+      if (!deps.some((d) => d.id === changedDependencyTaskId)) continue;
+      out.push(await this.rebuildTask(t, hooks, changedDependencyTaskId));
+    }
+    return out;
+  }
+
+  /**
+   * One done task's branch against what it builds on (`rebuildDependents`; the runtime also
+   * asks it right before an accepted task's merge). `onlyIfHolding`: skip the task (no host
+   * call) when its worktree does not hold that dependency.
+   */
+  async rebuildTask(
+    task: TaskRow,
+    hooks: RebuildHooks = {},
+    onlyIfHolding?: string,
+  ): Promise<DependentOutcome> {
+    const none: DependentOutcome = {
+      taskId: task.id,
+      prNumber: null,
+      prUrl: null,
+      result: "unchanged",
+    };
+    const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
+    if (!task.branch || !existsSync(join(dir, ".git"))) return none;
+    try {
+      const r = await tryWorktree(dir, () => this.rebuildIn(task, dir, hooks, onlyIfHolding));
+      return r ?? { ...none, result: "busy" };
+    } catch (e) {
+      this.logger.warn("dependent branch not rebuilt", { taskId: task.id, error: errorMessage(e) });
+      return { ...none, result: "failed", error: errorMessage(e) };
+    }
+  }
+
+  private async rebuildIn(
+    task: TaskRow,
+    dir: string,
+    hooks: RebuildHooks,
+    onlyIfHolding?: string,
+  ): Promise<DependentOutcome> {
+    const none: DependentOutcome = {
+      taskId: task.id,
+      prNumber: null,
+      prUrl: null,
+      result: "unchanged",
+    };
+    const target = await this.deps.repoFor(task);
+    const branch = task.branch;
+    if (!target || !branch) return none;
+    const git = await this.gitFor(target, dir);
+    // Cheap first: a worktree without the marker, or one whose held refs do not name the
+    // dependency that changed, has nothing to rebuild (a marker made before the held refs is
+    // read in full).
+    if (!(await git.hasRef(DEPS_BASE_REF))) return none;
+    if (onlyIfHolding) {
+      const held = await git.refsUnder(DEPS_HELD_PREFIX);
+      if (held.length && !(await git.hasRef(depsHeldRef(onlyIfHolding)))) return none;
+    }
+    const pr = (
+      await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch })
+    )[0];
+    if (!pr) return none;
+    const found = { ...none, prNumber: pr.number, prUrl: pr.htmlUrl };
+    await git.fetch();
+    if (!(await git.hasRef(`origin/${branch}`))) return found;
+    // Work nobody committed (a person's change after the run) is never swept into a rebuild.
+    if ((await git.status()).dirty) {
+      this.logger.warn("dependent branch not rebuilt: its worktree has uncommitted changes", {
+        taskId: task.id,
+      });
+      return { ...found, result: "busy" };
+    }
+    // The branch as the host has it (a person may have pushed to it).
+    await git.createBranch(branch, `origin/${branch}`);
+    await this.dropStaleMarker(git);
+    const marker = await git.resolveRef(DEPS_BASE_REF);
+    const heldRefs = await git.refsUnder(DEPS_HELD_PREFIX);
+    const r = await this.rebuildBranch(git, task, target);
+    if (!r) return found;
+    if (!r.rebuilt) {
+      // Nothing went away; a dependency merged with a merge commit leaves the line naming the
+      // ones still open.
+      await this.syncBuildsOn(target, pr.number, r.kept);
+      return { ...found, rebuild: r };
+    }
+    const push = (await hooks.beforePush?.(r, { number: pr.number, url: pr.htmlUrl })) ?? true;
+    if (!r.after) return { ...found, result: "conflict", rebuild: r };
+    if (!push) {
+      // Held: the branch and its marker go back to what the host has; the next try rebuilds.
+      await git.createBranch(branch, `origin/${branch}`);
+      await git.setRef(DEPS_BASE_REF, marker);
+      for (const h of await git.refsUnder(DEPS_HELD_PREFIX)) await git.setRef(h.ref, null);
+      for (const h of heldRefs) await git.setRef(h.ref, h.sha);
+      return { ...found, result: "held", rebuild: r };
+    }
+    await git.push(branch, { force: true, defaultBranch: target.base });
+    await this.syncBuildsOn(target, pr.number, r.kept);
+    this.logger.info("dependent pull request rebuilt", {
+      taskId: task.id,
+      pr: pr.number,
+      dropped: r.dropped.map((d) => d.number),
+    });
+    return { ...found, result: "rebuilt", rebuild: r };
+  }
+
+  /** The pull request's "Builds on" line as it is now (`withBuildsOn`); a failure is logged. */
+  private async syncBuildsOn(
+    target: Target,
+    number: number,
+    deps: readonly { number: number | null }[],
+  ): Promise<void> {
+    try {
+      const pr = await this.deps.host.getPullRequest(target.repo, number);
+      const line = buildsOnText(deps.flatMap((d) => (d.number ? [{ number: d.number }] : [])));
+      const body = withBuildsOn(pr.body, line);
+      if (body !== pr.body) await this.deps.host.updatePullRequest(target.repo, number, { body });
+    } catch (e) {
+      this.logger.warn("pull request words not updated", { pr: number, error: errorMessage(e) });
+    }
   }
 
   /**
@@ -543,7 +1108,7 @@ export class PrTaskExecutor implements TaskExecutor {
     if (!built.ok) return { ok: false, conflicts: built.conflicts };
     const r = await git.mergeFrom(built.sha, mergeMessage(unmerged, target.base));
     if (!r.ok) return r;
-    await git.setRef(DEPS_BASE_REF, built.sha);
+    await this.setDepsBase(git, built.sha, built.held);
     return { ok: true, conflicts: [] };
   }
 
@@ -658,13 +1223,14 @@ export class PrTaskExecutor implements TaskExecutor {
     }
     let rebased = false;
     let brought = false;
-    // A branch that builds on unmerged work (C-49) is brought up to date by merging; any other
-    // by a rebase onto the base, as before.
+    await this.dropStaleMarker(git);
+    // A branch that builds on unmerged work (C-49), or holds merged-in work (the marker, a
+    // merge commit since the base: `holdsMergedWork`), is brought up to date by merging, never
+    // rebased (ADR 0111); any other by a rebase onto the base, as before.
     const unmerged = await this.unmergedDependencies(ctx.task, target);
     const merging =
-      unmerged.length > 0 || (await git.hasMergesSince(`origin/${target.base}`, branch));
-    let depsBase: string | null = null;
-    if (merging) {
+      unmerged.length > 0 || (await holdsMergedWork(git, `origin/${target.base}`, branch));
+    if (merging && !(await this.baseStillHolds(git, target, unmerged))) {
       const built = await this.dependencyBase(git, target, unmerged);
       await git.checkout(branch);
       brought = built.ok && !(await git.isAncestor(built.sha));
@@ -686,8 +1252,8 @@ export class PrTaskExecutor implements TaskExecutor {
           again: true,
           merging: true,
         });
-      depsBase = built.sha;
-    } else if (!(await git.isAncestor(`origin/${target.base}`))) {
+      await this.setDepsBase(git, built.sha, built.held);
+    } else if (!merging && !(await git.isAncestor(`origin/${target.base}`))) {
       const rebase = await git.rebaseOnto(`origin/${target.base}`);
       if (!rebase.ok) {
         return this.conflict(ctx, {
@@ -704,11 +1270,10 @@ export class PrTaskExecutor implements TaskExecutor {
       }
       rebased = true;
     }
-    await git.setRef(DEPS_BASE_REF, depsBase);
     let changedFiles: string[] = [];
     try {
-      changedFiles = depsBase
-        ? await git.filesBetween(depsBase)
+      changedFiles = (await git.hasRef(DEPS_BASE_REF))
+        ? await git.filesBetween(DEPS_BASE_REF)
         : await git.changedFiles(`origin/${target.base}`);
     } catch {
       // informational, as above
@@ -766,11 +1331,20 @@ export class PrTaskExecutor implements TaskExecutor {
       again?: boolean;
       /** The branch builds on unmerged work and is brought up to date by a merge (C-49). */
       merging?: boolean;
+      /** A rebuild without a dependency that went away conflicted (ADR 0111). */
+      rebuild?: DependentRebuild;
     },
   ): Promise<TaskExecutionResult> {
     const { task } = ctx;
     const { branch, target, conflicts } = c;
     const repoName = `${target.repo.owner}/${target.repo.name}`;
+    const what = c.again
+      ? `The branch ${branch} still conflicts with ${target.base}`
+      : c.rebuild
+        ? `Rebuilding ${branch} without ${andList(c.rebuild.dropped.map(droppedWords))} conflicts`
+        : c.merging
+          ? `Bringing ${target.base} and the work it builds on into ${branch} conflicts`
+          : `Rebase of ${branch} onto ${target.base} conflicts`;
     let pushed = true;
     try {
       await c.git.push(branch, { force: c.force, defaultBranch: target.base });
@@ -789,7 +1363,7 @@ export class PrTaskExecutor implements TaskExecutor {
       task_id: task.id,
       session_id: ctx.session.id,
       kind: "decision",
-      why: `${c.again ? `The branch ${branch} still conflicts with ${target.base}` : c.merging ? `Bringing ${target.base} and the work it builds on into ${branch} conflicts` : `Rebase of ${branch} onto ${target.base} conflicts`} in ${files}; the agent could not resolve it. Resolve it yourself, let the agent redo the task from ${target.base}, or cancel the task.`,
+      why: `${what} in ${files}; the agent could not resolve it. Resolve it yourself, let the agent redo the task from ${target.base}, or cancel the task.`,
       steps: pushed
         ? [
             `Fetch ${branch} from ${repoName} and bring ${target.base} into it (rebase onto ${target.base} or merge ${target.base}), resolving ${files}`,
@@ -873,6 +1447,8 @@ export class PrTaskExecutor implements TaskExecutor {
           .filter(Boolean)
           .join("\n\n"),
       );
+      // Its body says what it builds on now (a dependency merged or dropped since it opened).
+      await this.syncBuildsOn(target, existingPr.number, unmerged);
       return existingPr.htmlUrl;
     }
     const criteria = task.acceptance_criteria.filter((c: string) => c.trim());
