@@ -1263,10 +1263,21 @@ without touching their cursor, so what arrived fires once at the first poll afte
 `enabled()` false (the daemon: the schema sync gate paused) skips the poll. After the PRs were
 read and the cursor saved, each poll runs the merge retry pass (`retryMerges`, the daemon's
 `ReviewedPrMerge.retryWaiting`, ADR 0111): every merge record of the install's agent that waits
-is tried once, with no session; a failing pass is logged and the poll goes on. `pollOnce()` runs
+is tried once, with no session; a failing pass is logged and the poll goes on. **What it reads
+is reported** (ADR 0111, 'dependent-branches'): `onPullRequestState(pr, info)` is called for
+every PR the poll reads (an open one on every poll, with `mergeable` and its head; a merged one,
+with `mergeCommitSha`, and a closed one once), before a PR that is not open is marked closed; a
+callback that throws is logged and leaves a merged or closed PR to be read again at the next
+poll. The baseline poll reports too (a report is no event: nothing fires from it). After the
+PRs, `onDefaultBranchHead({ projectId, repo, branch }, sha)` is called once per repository
+project (`repositoryProjects`; the default branch's name is read once per repository with
+`getRepo`, its head with `getBranchHead`); a failure is logged per project. The daemon wires
+both to `DependentBranches` (below); 'merge-in-app' (the conflict notice) and 'merged-copy' (the
+PC's copy) subscribe to them in compose.ts and do not edit the watcher. `pollOnce()` runs
 one poll (a poll asked for while one runs answers that poll's result); `start()` / `stop()`
 put it on the clock. Tests: `githost-watcher.test.ts` (the fake git host through
-`GitHubHost`), `githost-wiring.test.ts` (the composed daemon). Requirement: E.1.
+`GitHubHost`; the two "(g)" cases are the reports), `githost-wiring.test.ts` (the composed
+daemon). Requirement: E.1.
 
 **Plan approval (spec J.6, J.7; ADR 0053; `src/session/plan-approval.ts`).** A level 0 or 1
 session runs nothing the human has not approved. Once the plan is computed and cut,
@@ -2786,6 +2797,53 @@ is that grant, as `startSession` computes it); no tool registry offers it to a m
 branch whose base moved, the up-to-date rule, the retry and its own token, the gate read again,
 the reviewed version held, a crash after main was merged in, the rules, merge commits off, the
 sentences), `merge-record-restart.test.ts` (the runtime composed twice on one home).
+Small changes for the dependent branches (below): a merge whose head moved while it waited does
+not follow the new head when its record was moved meanwhile (a rebuild voided it); the record's
+word stands. `fileLeftOpenRequest` takes more card fields (`card`: a rebuild's `rebuild` and
+`without`). `MergeRecordRepo.pin` starts the record again (queued, no merge commit) for a redo's
+new pull request instead of answering "merged" for the old one.
+
+**Dependent branches (`src/session/dependent-branches.ts`, ADR 0111, 'dependent-branches').** A
+task that waits for an unmerged one builds on its branch (ADR 0106; the PR executor's marker and
+held refs, `capabilities.md`). `DependentBranches` keeps those branches true, wired in compose.ts:
+`pullRequestState(pr, info)` is the watcher's `onPullRequestState`: a task PR merged on GitHub
+marks its record `merged` (`merge_sha`, the method from `PrTaskExecutor.mergeMethodOf`,
+`last_outcome` `merged_on_host`) and is heard through `ReviewedPrMerge.merged` (so `onMerged`
+hears merges by any method on GitHub too, and a dependency GitHub marked merged inside its
+dependent's merge commit is no longer "waiting for you"); a PR closed without a merge leaves its
+record to the person ("#4 was closed without merging."); a PR Forerunner merged itself is left
+alone (its `onMerged` was heard). `dependencyMerged` (an `onMerged` listener) and every close call
+`rebuildFor(projectId, taskId)`, which is `PrTaskExecutor.rebuildDependents` with `beforePush`
+settling each dependent's record before its push: a dependency dropped whose work is not in main
+(closed, redone, cancelled) voids the review, `left_to_you` with "#8 was rebuilt without #4,
+which was closed. It was reviewed with #4's changes, so it waits for you: look at it before you
+merge it, or send it back." (`rebuiltWithoutSentence`; "which is being redone", "whose task was
+cancelled") and one card; a rebuild that only dropped what main has (a squash or rebase merge)
+keeps the record, moved to the new head with its `own_change_id`, when `ownChangeId` is
+unchanged, else `left_to_you` with `rebuiltChangedSentence` and one card; a rebuild that
+conflicts leaves the branch as it was, the record `left_to_you` with `rebuildConflictSentence`
+("#8 could not be rebuilt without #4, which was closed: both change src/page.ts. It waits for
+you: redo the task, or merge it on GitHub only if you want #4's changes too.") and one card. A
+card is the merge step's left-open card (`fileLeftOpenRequest`, with `rebuild` and `without` on
+it: `request-words.ts` titles it '"Add footer" was rebuilt without pull request #4' or '... could
+not be rebuilt without ...'); one already open for the task takes the new sentence instead of a
+second card. Nothing merges a `left_to_you` record unattended (the retry takes `waiting_checks`
+and `queued` only), in any mode. `sweep(projectId)` is the watcher's `onDefaultBranchHead`: it
+retries the rebuilds that could not run (`busy`, `held`, `failed`, kept in memory) and drops a
+dependency that is no longer done (redone, cancelled) from the done tasks waiting for it (store
+reads and local git only, unless a rebuild is due). `mergePort(merge)` is the runner's merge port:
+before an accepted task's merge it rebuilds the branch when what it holds went away while it ran
+or was reviewed; a void, a changed own change or a conflict pins the record at the reviewed
+commit and leaves it to the person (outcome `head_moved` or `conflict`, with its card). `RuntimeApp.dependentBranches`
+is the instance. Known gaps: the owed rebuilds are in memory (a restart in the window between a
+merge or close the watcher saw and a rebuild a busy worktree postponed relies on the run's own
+rebuild); a merge already under way when a dependency closes can still finish before the rebuild
+pushes. Tests: `dependent-branches-merge.test.ts` (the runner, the merge step, the watcher and
+`DependentBranches` composed as the daemon composes them, against the fake git host: a chain of
+three merged in order with merge commits, a squash on GitHub, a close, a redo, a cancel, a
+conflicting rebuild, a close during the review, a redo's record, a dependency merged inside its
+dependent's merge, two conflicting dependencies' card), `dependent-branches-restart.test.ts`
+(the runtime composed twice on one home: a squash while the app was closed).
 
 **Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
 leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not

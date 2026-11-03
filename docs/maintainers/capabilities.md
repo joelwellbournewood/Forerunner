@@ -47,7 +47,9 @@ with their milestone.
   `getRepo` reads `allow_merge_commit` (`RepoInfo.allowMergeCommit`; the fake host and the
   in-memory host refuse a merge commit where it is off, "Merge commits are not allowed on this
   repository."); a merged pull request carries `mergeCommitSha` (an open one's test merge is
-  never taken for it). `getBranchRules(repo, branch)` reads what a merge into the branch must
+  never taken for it). `updatePullRequest(repo, n, { title?, body?, state? })` edits a pull
+  request (a dependent's "Builds on" line, a close) and `getBranchHead(repo, branch)` reads the
+  commit a branch points at, or null (the git host watcher's default-branch head; ADR 0111). `getBranchRules(repo, branch)` reads what a merge into the branch must
   meet: the rulesets' rules (`GET /rules/branches/{branch}`, read access; a server without the
   endpoint answers 404, read as none: approvals, code owners, `required_status_checks` with
   `strict`, `required_linear_history` and `allowed_merge_methods` as `allowedMethods`, and
@@ -174,8 +176,11 @@ with their milestone.
   CRLF, through `GitOps.push` with a stub runner, so it does not depend on the machine's git.
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
   head)` takes a head other than HEAD; `filesBetween(from, to)` compares two trees;
-  `hasMergesSince(base, head)`, `setRef(ref, rev | null)` and `mergeFrom(ref, message?)` serve
-  the dependent branches below. For the merge step and its record (ADR 0111): `resolveRef`,
+  `hasMergesSince(base, head)`, `setRef(ref, rev | null)`, `mergeFrom(ref, message?, {
+  noFastForward })` (`--no-ff`: always a merge commit), `rebaseOntoFrom(onto, upstream, branch?)`
+  (`git rebase --onto`: replays only the commits after `upstream`; aborted and the files named on
+  a conflict), `refsUnder(prefix)` and `commitCount(from, to)` serve the dependent branches
+  below. For the merge step and its record (ADR 0111): `resolveRef`,
   `mergeBase`, `mergeTree` (`git merge-tree --write-tree`, git 2.38 or later, null on a
   conflict), `conflictFiles` (the files such a merge conflicts in), `patchId(from, to)` (the
   patch id of a diff without context lines, "empty" for none) and `parentsOf`.
@@ -185,7 +190,7 @@ with their milestone.
   change: from the marker, or from the marker merged with the base when the base was merged in
   since, or from where the branch left the base; the same change made another way keeps it, a
   commit on top changes it; null when it cannot be told). The merge step pins it at the accept;
-  'dependent-branches' uses both in the PR executor.
+  the PR executor uses both (dependent branches, below).
 - `PrTaskExecutor` (`pr-executor.ts`) forwards `chooseSpecialist` to its inner executor (the
   specialist the next attempt runs with, which the runner names on `task.started`; ADR 0108) and
   wraps any task executor in the branch-and-PR flow: clone
@@ -195,27 +200,57 @@ with their milestone.
   request whose body carries the outcome, the acceptance criteria (no heading when there are
   none) and the report without its "Lesson:" lines (`withoutLessons`; the commit message is the
   report as plain text, `plainReport`, L-19); a second run on the same task updates the PR.
-  **A task that waits for unmerged work builds on it** (C-49, ADR 0106, the session lead's
-  default): `unmergedDependencies` walks `depends_on` (deepest first) for done tasks of the
-  project whose branch still has an open pull request on the host; `dependencyBase` merges
-  their branches, in order, into the base on a detached HEAD (a fast-forward when it can) and
-  keeps the commit under `DEPS_BASE_REF` (`refs/forerunner/deps-base`) in the task's worktree;
-  the task's branch starts there, so its specialist sees the work. Its PR still targets the
-  default branch and says `buildsOnText` ('Builds on #1 ("A"), not merged yet: this pull
-  request includes its changes, ...'), so the person can merge in any order. Its
+  **A task that waits for unmerged work builds on it** (C-49, ADR 0106; kept true by ADR
+  0111, 'dependent-branches'): `unmergedDependencies` walks `depends_on` (deepest first) for
+  done tasks of the project whose branch still has an open pull request on the host;
+  `dependencyBase` merges their branches, in order, into the base on a detached HEAD, each with
+  a merge commit (`--no-ff`, never a fast-forward, so a branch that brought a dependency in
+  always shows it), and keeps the commit under `DEPS_BASE_REF` (`refs/forerunner/deps-base`) in
+  the task's worktree, with one ref per dependency held (`depsHeldRef`,
+  `refs/forerunner/deps/<task id>`, the commit of its branch merged in); the task's branch
+  starts there, so its specialist sees the work. Its PR still targets the default branch and
+  says `buildsOnText` ('Builds on #4 (not merged yet): this pull request includes its changes.
+  Merge #4 first, or use Merge in Forerunner, which merges them in order.'; never "Merge in any
+  order", which held only for GitHub's merge commits); `withBuildsOn` keeps that paragraph of
+  the body true when what it builds on changes (`GitHost.updatePullRequest`). Its
   `changedFiles` are `GitOps.filesBetween(DEPS_BASE_REF)` (its own work only), and the critic's
-  `GitDiffPort` diffs from that ref too (`runtime.md`). Such a branch is kept up to date by a
-  merge, not a rebase (`mergeMoved` after the run, only when the base or a dependency moved;
-  a later run reuses the base while nothing under it moved, `baseStillHolds`); a branch that
-  holds merge commits since the base (its dependencies were merged meanwhile) is merged the
-  same way. Dependencies whose work conflicts with the base or with each other end the run as
+  `GitDiffPort` diffs from that ref too (`runtime.md`). The marker is never removed while the
+  branch holds a dependency's commits (only a rebuild onto main without open dependencies
+  removes it; a marker the checked-out branch does not hold is stale and dropped). A branch
+  that holds merged-in work (`holdsMergedWork`: the marker, or a merge commit since the base,
+  such as GitHub's Update branch) is kept up to date by a merge, never rebased (`mergeMoved`
+  after the run and in `continueResolved`, only when the base or a dependency moved; a later
+  run reuses the base while nothing under it moved, `baseStillHolds`). **Rebuilds** (ADR 0111):
+  `rebuildBranch` reads what each held dependency became (`heldState`: `open`; `in_main`, its
+  commit is in the base, a merge commit, nothing to do; `copied`, merged by squash or rebase;
+  `closed`; `redone`, its task is not done or its open PR no longer carries the commit held;
+  `cancelled`) and, when one went away, rebuilds the branch: the base again with the
+  dependencies still open, then `git rebase --onto <new base> DEPS_BASE_REF`, which replays only
+  the task's own commits; the marker then names the new base, or is removed. A run does it
+  before the inner executor (a resume) and again before its push; a rebuild that conflicts is
+  aborted and files the rebase-conflict request with the dropped pull requests named
+  (`droppedWords`). `rebuildDependents(projectId, changedDependencyTaskId, hooks)` does it for
+  every done task of the project that waits for that one (directly or through others) and whose
+  worktree holds it (`rebuildTask` for one task), a task before those that build on it: a
+  rebuild that kept the task's own change records `refs/forerunner/rebuilt/<old head>` (the new
+  head) in its worktree, and a dependent holding the old head follows it (`rebuiltTo`: kept,
+  `open`) instead of reading it as redone (a 3-task chain on the bench, 2026-11-03, voided the
+  third task before this). Each: the branch as the host has it, rebuilt,
+  `hooks.beforePush(rebuild, pr)` (the runtime settles the merge record there), then a push
+  with a lease (never the default branch) and the "Builds on" line updated. A worktree a run or
+  another rebuild uses is skipped (`busy`; the run rebuilds it itself), as is one with
+  uncommitted changes. `mergeMethodOf(task, mergeSha, head)` reads how a PR was merged on the
+  host (two parents: `merge`; one: `rebase` when the PR had several commits and the last one is
+  repeated, else `squash`). A redo of a task whose PR was merged or closed (none open) pushes to
+  a fresh branch (`freshBranch`: the old name with `-r2`, `-r3`, ... that no host branch or PR
+  used), so a branch GitHub keeps after a merge never makes the push fail. Dependencies whose work conflicts with the base or with each other end the run as
   `needs_human` before the inner executor runs, with `dependencyConflictWords` ("The work it
   builds on conflicts: "B" (pull request #2) and "A" (pull request #1) both change index.html.
   Merge them on GitHub, resolving the conflict, then press Try again."), which the runner's
   "could not run" card carries; nothing is dropped silently (a merge git refuses with no
   conflicting file, such as local changes in the way, fails the run with git's words). A task
   with nothing unmerged
-  before it has no `DEPS_BASE_REF` (an old one is removed) and works as before. A rebase conflict pushes the branch as it is (so the person can fetch
+  before it starts with no `DEPS_BASE_REF` and works as before. A rebase conflict pushes the branch as it is (so the person can fetch
   and resolve it; the steps name the worktree when the push fails) and becomes a blocking
   `decision` request (`change_card.key` `REBASE_CONFLICT_KEY`, the branch, base, files and
   whether it was pushed) with the task outcome `needs_human`. Its options each lead somewhere
@@ -585,7 +620,13 @@ sees A's unmerged file, B's PR targets main and names A's PR, B's changed files 
 host meanwhile is no longer named; B's next attempt keeps its base (no new merge, its files its
 own, the PR's comment names A's PR); two dependencies that conflict end `needs_human` with the
 exact sentence and the inner executor never run; the PR body has no empty criteria heading and
-no "Lesson:" line, and the commit message no markdown (L-19). What each of the conflict request's options does, answered
+no "Lesson:" line, and the commit message no markdown (L-19). The dependent branches against
+the testenv fake GitHub (squash, rebase and close as GitHub makes them) are
+`packages/runtime/test/dependent-branches.test.ts` (no replay after a squash, the merge commit
+and marker of one dependency, a redo on a fresh branch, the PR words),
+`dependent-branches-merge.test.ts` (composed with the runner, the merge step and the watcher)
+and `dependent-branches-restart.test.ts`; `git.test.ts` has `noFastForward` and
+`rebaseOntoFrom`. What each of the conflict request's options does, answered
 through the daemon's route with the strings the Inbox shows and followed by the task's next
 run, is `packages/runtime/test/pr-answers.test.ts` (U-028). Like `git.test.ts` it spawns dozens of git processes, so both
 suites carry a 120 s timeout rather than the unit default of 20 s: loaded Windows runners have

@@ -398,6 +398,32 @@ export class GitHubHost implements GitHost {
     return toPr(await this.request<Json>("GET", `${this.repoPath(repo)}/pulls/${number}`));
   }
 
+  async updatePullRequest(
+    repo: RepoRef,
+    number: number,
+    patch: { title?: string; body?: string; state?: "open" | "closed" },
+  ): Promise<PullRequestInfo> {
+    return toPr(
+      await this.request<Json>("PATCH", `${this.repoPath(repo)}/pulls/${number}`, {
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.body !== undefined ? { body: patch.body } : {}),
+        ...(patch.state !== undefined ? { state: patch.state } : {}),
+      }),
+    );
+  }
+
+  async getBranchHead(repo: RepoRef, branch: string): Promise<string | null> {
+    const path = branch.split("/").map(encodeURIComponent).join("/");
+    const r = await this.request<Json | null>(
+      "GET",
+      `${this.repoPath(repo)}/branches/${path}`,
+      undefined,
+      { allow404: true },
+    );
+    const sha = (r?.commit as Json | undefined)?.sha;
+    return typeof sha === "string" && sha ? sha : null;
+  }
+
   async listPullRequests(
     repo: RepoRef,
     opts: { state?: "open" | "closed" | "all"; head?: string } = {},

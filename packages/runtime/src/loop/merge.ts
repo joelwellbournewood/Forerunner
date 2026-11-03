@@ -24,6 +24,7 @@ import {
 } from "@forerunner/platform";
 import type {
   HumanRequestRow,
+  JsonObject,
   MergeRecordRow,
   MergeRecordState,
   ProjectRow,
@@ -939,6 +940,10 @@ export class ReviewedPrMerge implements MergePort {
         worktree &&
         a.headSha !== record.reviewed_head_sha
       ) {
+        // A record moved by someone else while this merge waited (a dependent branch rebuilt
+        // without work its review read: dependent-branches) keeps that word: never followed.
+        const now = await store.mergeRecord.get(record.id);
+        if (now && now.state !== "merging") return this.outcomeOf(now, "head_moved");
         // A head that keeps exactly the reviewed change (main merged in, by a crashed earlier
         // attempt or GitHub's Update branch) moves the record; anything else waits for the person.
         if (await this.keepsOwnChange(record, worktree, a.headSha)) {
@@ -1340,6 +1345,8 @@ export async function fileLeftOpenRequest(
     humanId: string;
     agentId: string;
     outcome: MergeOutcome;
+    /** More of the card's fields (dependent-branches: `rebuild`, what a rebuild did). */
+    card?: JsonObject;
   },
 ): Promise<HumanRequestRow> {
   const { task, outcome } = input;
@@ -1363,6 +1370,7 @@ export async function fileLeftOpenRequest(
     blocking: false,
     risk: "medium",
     change_card: {
+      ...(input.card ?? {}),
       key: MERGE_LEFT_OPEN_KEY,
       task_id: task.id,
       pr_url: outcome.prUrl,

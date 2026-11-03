@@ -53,7 +53,10 @@ schema and the snapshot disagree.
   `(agent_id, state)`. Its repository is `MergeRecordRepo` (`src/repos/merge-record.ts`: `pin`
   at an accept, `move` by `MERGE_RECORD_TRANSITIONS`, `claim` (an optimistic take on the row's
   version, so two daemons never merge one PR twice), `forAgent`, `forTask`). A task accepted
-  before v6 has no record and is never merged unattended.
+  before v6 has no record and is never merged unattended. `pin` leaves a merged record as it is
+  for the same pull request; for another one (a redo's new pull request after the old one was
+  merged, 'dependent-branches') it starts the record again: queued, no merge commit or method,
+  no attempts. No schema change.
 - `src/migrations/index.ts`: `MIGRATIONS` (ascending) and `migrate(db, { clock?, migrations? })`.
   `migrate` creates `schema_migrations (version PK, name, applied_at)` if missing, then applies
   every pending migration inside **one transaction** (both dialects have transactional DDL) and

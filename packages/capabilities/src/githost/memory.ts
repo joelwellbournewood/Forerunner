@@ -200,6 +200,23 @@ export class MemoryGitHost implements GitHost {
     return pr;
   }
 
+  async updatePullRequest(
+    repo: RepoRef,
+    number: number,
+    patch: { title?: string; body?: string; state?: "open" | "closed" },
+  ): Promise<PullRequestInfo> {
+    const pr = await this.getPullRequest(repo, number);
+    if (patch.title !== undefined) pr.title = patch.title;
+    if (patch.body !== undefined) pr.body = patch.body;
+    if (patch.state === "closed" && pr.state === "open") pr.state = "closed";
+    else if (patch.state === "open" && pr.state === "closed" && !pr.merged) pr.state = "open";
+    return pr;
+  }
+
+  async getBranchHead(repo: RepoRef, branch: string): Promise<string | null> {
+    return this.repo(repo).files.has(branch) ? `sha-${branch}` : null;
+  }
+
   async listPullRequests(
     repo: RepoRef,
     opts: { state?: "open" | "closed" | "all"; head?: string } = {},

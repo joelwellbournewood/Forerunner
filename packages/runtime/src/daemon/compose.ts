@@ -31,6 +31,7 @@ import {
   mirrorStartHandler,
   ProjectsMirror,
   PrTaskExecutor,
+  type RepoRef,
   scheduleMirror,
   web,
 } from "@forerunner/capabilities";
@@ -204,6 +205,7 @@ import {
 import type { TaskBillingPort } from "../session/billing.ts";
 import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
+import { DependentBranches } from "../session/dependent-branches.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
   type BlockedSyncResult,
@@ -782,6 +784,11 @@ export interface RuntimeApp {
    * call through the daemon's hooks; level 3 merges, below it the PR stays open.
    */
   merge: ReviewedPrMerge;
+  /**
+   * Dependent branches kept true (ADR 0111): the git host watcher's reports, the rebuilds of
+   * the tasks that build on a merged, closed or redone one, and their merge records.
+   */
+  dependentBranches: DependentBranches;
   /**
    * The grant a session of this agent on `projectId` starts with (ADR 0044), as `startSession`
    * computes it: the tools (`merge_pr` among them, J.9), the worktrees root, the git host's and
@@ -2271,6 +2278,25 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     logger.info("pull request merged", { taskId: task.id, mergeSha, method });
     events.emit("project", { id: task.project_id });
   });
+  // Dependent branches stay true (ADR 0111, 'dependent-branches'): a task PR the git host
+  // watcher sees merged on GitHub marks its record merged (with the merge commit and the method)
+  // and is heard through `onMerged`; every merge and every close rebuilds the dependents that
+  // hold that work, settling their records before the push (a review that read work which is
+  // gone is left to the person); the default branch's head once per poll retries a rebuild that
+  // could not run and drops a dependency redone or cancelled; the session's merge port rebuilds
+  // an accepted task that holds work which went away while it was reviewed.
+  const dependentBranches = new DependentBranches({ store, clock, merge, executor });
+  merge.onMerged((e) => dependentBranches.dependencyMerged(e));
+  // The repository projects the watcher reads the default branch of (onDefaultBranchHead).
+  const repositoryProjects = async (): Promise<{ projectId: string; repo: RepoRef }[]> => {
+    const out: { projectId: string; repo: RepoRef }[] = [];
+    for (const p of await store.project.list({ active: true } as never, { limit: 500 })) {
+      const first = p.repos[0]?.trim() ?? "";
+      const ref = first.includes("/") && !isAbsolute(first) ? parseRepoRef(first) : null;
+      if (ref) out.push({ projectId: p.id, repo: ref });
+    }
+    return out;
+  };
   // The runner's ports; the handover job builds a second runner over the same ones (below).
   const runnerDeps: Omit<SessionRunnerDeps, "planner"> = {
     store,
@@ -2284,7 +2310,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     critic,
     memory,
     docs,
-    merge,
+    // The merge of an accepted task, after its branch was checked against what it builds on
+    // (dependent-branches): work that went away while it was reviewed voids the review.
+    merge: dependentBranches.mergePort(merge),
     schemaSync,
     // U-079: full-review tasks wait while the container sandbox is not ready.
     sandboxGate: sandbox.gate,
@@ -3662,6 +3690,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         // ADR 0111: the merges that wait (checks still running, a sleep, a restart) are tried
         // once per poll with no session, on their own narrow token.
         retryMerges: () => merge.retryWaiting(),
+        // dependent-branches: what the watcher reads of each task PR (a merge on GitHub by any
+        // method, a close), and the default branch's head once per poll and project.
+        onPullRequestState: async (pr, info) => {
+          await dependentBranches.pullRequestState(pr, info);
+          if (info.state !== "open" && pr.projectId) events.emit("project", { id: pr.projectId });
+        },
+        repositoryProjects,
+        onDefaultBranchHead: (project) => dependentBranches.sweep(project.projectId),
         onInjection: async (report, origin, projectId) => {
           const rules = [...new Set(report.matches.map((m) => m.rule))].sort();
           await store.auditLog.append({
@@ -3944,6 +3980,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     privateMemory: privateStore,
     docs,
     merge,
+    dependentBranches,
     sessionGrant: async (projectId) =>
       sessionGrant(
         projectId ? await store.project.mustGet(projectId) : null,
