@@ -5487,8 +5487,9 @@ default branch as the host has it after every merge, not only at a session's end
   `.forerunner-try/` in `.git/info/exclude` (`excludeNeverPushed`), the `Local only` folder made
   unless `origin/<base>` already tracks a path under it, and the record
   `.git/forerunner-copy.json` (`CopyRecord`: `updatedAt` from the Clock, `head`, `localOnly`
-  folder/tracked/none). With `head` (the watcher's read) and the copy already there on the
-  default branch, nothing is fetched; the record is written as checked. A checkout that fails (a
+  folder/tracked/none). With `head` and `base` (the watcher's read) and the copy already there
+  on that branch, nothing is fetched and the host is not asked (no `repoFor`, which calls
+  `getRepo`); the record is written as checked. A checkout that fails (a
   file the person changed in the copy that the merge changed too) keeps the old `updatedAt`.
 - Callers (compose.ts `refreshProjectCopy`, which emits the project event when the copy moved):
   `merge.onMerged` (a session's merge, a retry's, Merge in the app, and merges the watcher saw
