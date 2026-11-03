@@ -256,6 +256,31 @@ describe("AnthropicMessagesProvider", () => {
       ]);
     });
 
+    it("a message keeps one form from call to call, marked or not, so the cached prefix stays byte for byte (bench-api walk)", async () => {
+      const { bodies, p } = capture();
+      const ask = (messages: typeof thirdCall) =>
+        p.complete({
+          model: "claude-sonnet-5-5",
+          system: "sys",
+          messages,
+          tools,
+          max_tokens: 100,
+          cache: { system: true, tools: true, messages: true },
+        });
+      // Call 2 marks the brief (where call 1 ended); call 3 marks the first tool result instead.
+      await ask(thirdCall.slice(0, 3));
+      await ask(thirdCall);
+      const unmarked = (body: Record<string, unknown>) =>
+        JSON.stringify((body.messages as Msg[]).slice(0, 3), (k, v) =>
+          k === "cache_control" ? undefined : v,
+        );
+      // Before: the brief went as a block when marked and as a plain string when not, so the
+      // prompt call 2 cached was not the start of call 3's.
+      expect(unmarked(bodies[1] as Record<string, unknown>)).toBe(
+        unmarked(bodies[0] as Record<string, unknown>),
+      );
+    });
+
     it("without `messages` the history carries no mark (planning and chat callers that ask for none)", async () => {
       const { bodies, p } = capture();
       await p.complete({

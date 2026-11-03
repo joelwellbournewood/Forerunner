@@ -405,10 +405,15 @@ export const MAX_CACHE_BREAKPOINTS = 4;
  * the last block of the last message, so this call writes what is new to the cache, and the
  * last block of the last user message before the last assistant message, where an agent loop's
  * previous call ended, so its entry is read exactly however many blocks the step added (the
- * API's own lookback reaches only 20 positions). A plain-string message becomes one text block
- * to carry the mark; an empty text block never carries one (the API refuses it).
+ * API's own lookback reaches only 20 positions). Every plain-string message is sent as one text
+ * block, marked or not, so a message has the same form in every call and the cached prefix
+ * stays byte for byte (the bench-api walk: the brief went as a block when marked and as a
+ * string the call after); an empty text block never carries a mark (the API refuses it).
  */
 function cacheHistory(messages: Anthropic.MessageParam[], slots: number): void {
+  for (const [i, m] of messages.entries())
+    if (typeof m.content === "string")
+      messages[i] = { role: m.role, content: [{ type: "text", text: m.content }] };
   const marks: number[] = [];
   const last = messages.length - 1;
   if (last >= 0) marks.push(last);
