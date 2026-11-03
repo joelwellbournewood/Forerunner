@@ -1069,7 +1069,22 @@ export class PrTaskExecutor implements TaskExecutor {
     if (!pr) return none;
     const found = { ...none, prNumber: pr.number, prUrl: pr.htmlUrl };
     await git.fetch();
-    if (!(await git.hasRef(`origin/${branch}`))) return found;
+    const hostHead = await git.resolveRef(`origin/${branch}`);
+    if (!hostHead) return found;
+    // Read first, without touching the worktree: nothing it holds went away is the usual case
+    // (only the "Builds on" line may need to follow a dependency merged with a merge commit).
+    const held0 = await git.resolveRef(DEPS_BASE_REF);
+    if (held0 && (await git.isAncestor(held0, hostHead))) {
+      const held = await this.heldDependencies(git, task, target, held0);
+      if (!held.some((h) => h.state !== "open" && h.state !== "in_main")) {
+        await this.syncBuildsOn(
+          target,
+          pr.number,
+          held.filter((h) => h.state === "open"),
+        );
+        return found;
+      }
+    }
     // Work nobody committed (a person's change after the run) is never swept into a rebuild.
     if ((await git.status()).dirty) {
       this.logger.warn("dependent branch not rebuilt: its worktree has uncommitted changes", {
