@@ -1,5 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { type AppDirs, dirname, join } from "@forerunner/platform";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { type AppDirs, appDirs, dirname, join } from "@forerunner/platform";
 import {
   ESPEAK_PATH_MAX,
   espeakDataPath,
@@ -12,6 +13,47 @@ import {
   voiceDirs,
   WINDOWS_MAX_PATH,
 } from "../src/voice/install.ts";
+
+/**
+ * Where a voice install test makes its folders: one temporary folder of its own, `fr-v-` and
+ * mkdtemp's six characters, short on purpose. These tests run the installer's real path checks
+ * (U-069) on folders in the test run's temp folder (testenv/src/test-tmp.ts), most of them with
+ * Linux's layout on every OS, so espeak-ng's data folder in a home's venv, 80 characters below
+ * the home, must stay within its 159 characters on Windows too, where the temp folder is 36
+ * characters long on CI. `voice-test-paths.test.ts` checks each layout below against the
+ * installer's limits there; a folder a test makes some other way is not covered by it.
+ */
+export const VOICE_TEST_PREFIX = "fr-v-";
+
+/** A new temporary folder for one voice install test. */
+export function voiceTestDir(): string {
+  return mkdtempSync(join(tmpdir(), VOICE_TEST_PREFIX));
+}
+
+/** The name `voiceTestDir` gives a folder in `base` (mkdtemp adds six characters), unmade. */
+export function voiceTestDirPath(base: string): string {
+  return join(base, `${VOICE_TEST_PREFIX}XXXXXX`);
+}
+
+/** A voice test's home: `dir` (a `voiceTestDir`) is its FORERUNNER_HOME. */
+export function voiceTestHome(dir: string): { dirs: AppDirs; env: NodeJS.ProcessEnv } {
+  const env = { FORERUNNER_HOME: dir };
+  return { dirs: appDirs({ env }), env };
+}
+
+/**
+ * dependencies.test.ts's world in `root` (a `voiceTestDir`): a home, and an install folder
+ * whose `dependencies` subfolder holds voice when it fits (U-011). The install folder is the
+ * deepest layout of all: voice's espeak-ng folder is 88 characters below it.
+ */
+export function voiceInstallWorld(root: string): {
+  dirs: AppDirs;
+  env: NodeJS.ProcessEnv;
+  install: string;
+} {
+  const env = { FORERUNNER_HOME: join(root, "home") };
+  return { dirs: appDirs({ env }), env, install: join(root, "app") };
+}
 
 /**
  * A process runner that answers like Python, pip, nvidia-smi and the voice helpers do, for

@@ -21,23 +21,25 @@ import { basename, join } from "@forerunner/platform/paths";
  * daemons, git and browsers a test starts write to the temp folder too. By 2026-11-03 one
  * machine's temp folder held about 101,000 such entries (15 GB), and every full run added about
  * 1,500. Instead of asking every test to clean up, a run gets its own folder,
- * `<temp>/fr-test-run-<pid>-<start>`, and TMPDIR, TMP and TEMP point at it before any worker
- * starts: `os.tmpdir()` reads TMPDIR on POSIX and TEMP, then TMP, on Windows, and every
- * worker and every process a test starts inherits them. The run removes the folder at its end.
+ * `<temp>/frt-<start>` (the start in seconds, base 36), and TMPDIR, TMP and TEMP point at it
+ * before any worker starts: `os.tmpdir()` reads TMPDIR on POSIX and TEMP, then TMP, on Windows,
+ * and every worker and every process a test starts inherits them. The run removes the folder at
+ * its end. The name is short because every path a test makes is that much longer.
  *
- * Only folders this module made are ever removed: the exact name `fr-test-run-<pid>-<base36
- * time>`, a real directory (not a link) holding the marker file this module writes. A folder
- * whose run ended without removing it (a crash, a kill) is removed by a later run once its
- * marker has not been touched for a day (a live run touches it every 10 minutes, so a watch-mode
- * session that lasts days keeps its folder). Nothing else in the temp folder is touched, not
- * even other `fr-*` folders: they may belong to another run or another tool.
+ * Only folders this module made are ever removed: the exact name `frt-<base36 time>` (or
+ * `fr-test-run-<pid>-<base36 time>`, the name runs gave it until 2026-11-03), a real directory
+ * (not a link) holding the marker file this module writes. A folder whose run ended without
+ * removing it (a crash, a kill) is removed by a later run once its marker has not been touched
+ * for a day (a live run touches it every 10 minutes, so a watch-mode session that lasts days
+ * keeps its folder). Nothing else in the temp folder is touched, not even other `fr-*` folders:
+ * they may belong to another run or another tool.
  *
  * Imports only `node:fs`, `node:os` and two leaf modules of `@forerunner/platform`: it runs in
  * vitest's main process (`test-tmp-global-setup.ts`) and in Playwright's config loader.
  */
 
 /** The exact prefix of a run folder; nothing else in the temp folder is ever removed. */
-export const RUN_PREFIX = "fr-test-run-";
+export const RUN_PREFIX = "frt-";
 /** The file in a run folder that says what it is; the sweep removes no folder without it. */
 export const RUN_MARKER = ".fr-test-run";
 /** A run folder whose marker is older than this was left by a run that ended uncleanly. */
@@ -52,7 +54,31 @@ export const ENV_OWNER = "FORERUNNER_TEST_TMP_OWNER";
 /** The variables `os.tmpdir()` reads: TMPDIR on POSIX, TEMP then TMP on Windows. */
 export const TEMP_VARS = ["TMPDIR", "TMP", "TEMP"] as const;
 
-const RUN_NAME_RE = /^fr-test-run-(\d+)-([0-9a-z]+)$/;
+const RUN_NAME_RE = /^frt-([0-9a-z]+)$/;
+/** Runs until 2026-11-03 named their folder `fr-test-run-<pid>-<start>`; a crashed one's goes too. */
+const LEGACY_RUN_NAME_RE = /^fr-test-run-\d+-([0-9a-z]+)$/;
+/**
+ * A run folder's name is this long (until 2038, when the seconds since 1970 take a seventh base 36
+ * digit): every path a test makes is this plus one separator longer than without the run folder.
+ */
+export const RUN_NAME_LENGTH = 10;
+
+/**
+ * The temp folder of CI's Windows runner (windows-latest; the job log of run 41585526128): 36
+ * characters. Windows gives TEMP the 8.3 short form of a user name of more than 8 letters, so a
+ * person's is usually no longer. The longest temp folder the tests are known to run in: the
+ * path budgets (test-tmp.test.ts, packages/runtime/test/voice-test-paths.test.ts) are checked
+ * from it on every OS.
+ */
+export const WINDOWS_CI_TEMP = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp";
+
+/**
+ * A folder path as long as `WINDOWS_CI_TEMP` that this OS takes as absolute: that folder on
+ * Windows, `/` and as many characters elsewhere. Only its length counts; it is never made.
+ */
+export function windowsCiTempStandIn(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? WINDOWS_CI_TEMP : `/${"x".repeat(WINDOWS_CI_TEMP.length - 1)}`;
+}
 
 /** Why a removal failed, in words, for the codes it fails with. */
 function whyNotRemoved(code: string, message: string): string {
@@ -72,20 +98,23 @@ const stderrLog: Log = (line) => {
 };
 
 /**
- * `fr-test-run-<pid>-<start in seconds, base 36>`: 24 to 26 characters, because every path a
- * test makes is that much longer and Windows without long paths opens nothing of 260 or more.
+ * `frt-<start in seconds, base 36>`: `RUN_NAME_LENGTH` characters. Short because every path a
+ * test makes is that much longer, and the voice install tests' paths must fit espeak-ng's 159
+ * characters from CI's Windows temp folder (24 characters of `fr-test-run-<pid>-<start>` made
+ * 22 of them fail there; packages/runtime/test/voice-test-paths.test.ts). Two runs that start in
+ * the same second get the next free second (`startTestTmp`); the pid is in the marker.
  */
-export function runFolderName(pid: number, startedMs: number): string {
-  return `${RUN_PREFIX}${pid}-${Math.floor(startedMs / 1000).toString(36)}`;
+export function runFolderName(startedMs: number): string {
+  return `${RUN_PREFIX}${Math.floor(startedMs / 1000).toString(36)}`;
 }
 
-/** The pid and start time a run folder's name carries, or undefined for any other name. */
-export function parseRunFolderName(name: string): { pid: number; startedMs: number } | undefined {
-  const m = RUN_NAME_RE.exec(name);
+/** The start a run folder's name carries, or undefined for any other name. */
+export function parseRunFolderName(name: string): { startedMs: number } | undefined {
+  const m = RUN_NAME_RE.exec(name) ?? LEGACY_RUN_NAME_RE.exec(name);
   if (!m) return undefined;
-  const seconds = Number.parseInt(m[2] as string, 36);
+  const seconds = Number.parseInt(m[1] as string, 36);
   if (!Number.isFinite(seconds)) return undefined;
-  return { pid: Number(m[1]), startedMs: seconds * 1000 };
+  return { startedMs: seconds * 1000 };
 }
 
 /** Whether `dir` is a run folder this module made: the exact name, with the marker in it. */
@@ -225,7 +254,7 @@ export function startTestTmp(opts: StartOptions = {}): TestTmpRun {
   sweepStaleRunFolders(base, { clock, log, rm: opts.rm });
 
   let started = clock.now();
-  let dir = join(base, runFolderName(pid, started));
+  let dir = join(base, runFolderName(started));
   for (;;) {
     try {
       mkdirSync(dir);
@@ -233,7 +262,7 @@ export function startTestTmp(opts: StartOptions = {}): TestTmpRun {
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
       started += 1000;
-      dir = join(base, runFolderName(pid, started));
+      dir = join(base, runFolderName(started));
     }
   }
   const marker = join(dir, RUN_MARKER);
