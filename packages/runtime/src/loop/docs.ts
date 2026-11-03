@@ -376,17 +376,36 @@ export class ProjectDocs implements ProjectDocsPort {
    */
   async refreshCopy(
     project: ProjectRow,
-    opts: { head?: string } = {},
+    opts: { head?: string; base?: string } = {},
   ): Promise<{ refreshed: boolean }> {
+    // The watcher's read names the head and its branch: a copy already there needs no call to
+    // the host at all (it reads the head every poll, for every repository project).
+    const { head, base } = opts;
+    if (
+      head &&
+      base &&
+      repositoryOf(project) &&
+      existsSync(join(this.copyDir(project.id), ".git"))
+    ) {
+      const there = await this.withCopy(project.id, async (dir) => {
+        const git = this.gitOf(dir, undefined);
+        const at = await git.resolveRef("HEAD").catch(() => null);
+        const on = await git.currentBranch().catch(() => "");
+        if (at !== head || on !== base) return false;
+        await this.settle(git, dir, { base }, { checkout: false });
+        return true;
+      });
+      if (there) return { refreshed: false };
+    }
     const target = await this.deps.repoFor(project);
     if (!target) return { refreshed: false };
     return this.withCopy(project.id, async (dir) => {
       const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
       const git = this.gitOf(dir, auth);
-      if (opts.head && existsSync(join(dir, ".git"))) {
+      if (head && existsSync(join(dir, ".git"))) {
         const at = await git.resolveRef("HEAD").catch(() => null);
         const on = await git.currentBranch().catch(() => "");
-        if (at === opts.head && on === target.base) {
+        if (at === head && on === target.base) {
           await this.settle(git, dir, target, { checkout: false });
           return { refreshed: false };
         }
@@ -756,7 +775,7 @@ export class ProjectDocs implements ProjectDocsPort {
   private async settle(
     git: GitOps,
     dir: string,
-    target: ProjectRepoTarget,
+    target: Pick<ProjectRepoTarget, "base">,
     opts: { checkout?: boolean } = {},
   ): Promise<void> {
     const base = `origin/${target.base}`;
@@ -797,7 +816,7 @@ export class ProjectDocs implements ProjectDocsPort {
    * Docs and Files tabs, the chat's docs search) sees what is merged, not the last branch a
    * docs write used (before, the clone stayed on whichever PR branch was written last).
    */
-  private async backToBase(git: GitOps, target: ProjectRepoTarget): Promise<boolean> {
+  private async backToBase(git: GitOps, target: Pick<ProjectRepoTarget, "base">): Promise<boolean> {
     try {
       await git.createBranch(target.base, `origin/${target.base}`);
       return true;

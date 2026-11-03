@@ -460,7 +460,10 @@ export interface ProjectDocsPort {
    * 0113): cloned when missing, fetched, put on the default branch, nothing pushed. Absent in
    * compositions without one.
    */
-  refreshCopy?(project: ProjectRow, opts?: { head?: string }): Promise<{ refreshed: boolean }>;
+  refreshCopy?(
+    project: ProjectRow,
+    opts?: { head?: string; base?: string },
+  ): Promise<{ refreshed: boolean }>;
 }
 
 // ---------------------------------------------------------------------------------------

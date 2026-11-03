@@ -587,6 +587,43 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     await w.close();
   });
 
+  it("the watcher's read of a head the copy already has asks the host nothing; a new head brings the copy to it", async () => {
+    const w = await loopWorld();
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const { root, bare } = await bareRepo();
+    let asked = 0;
+    const docs = new ProjectDocs({
+      store: w.store,
+      clock: w.clock,
+      host: new MemoryGitHost("alice"),
+      repoFor: async () => {
+        asked++;
+        return { clone: bare, repo: REPO, base: "main" };
+      },
+      worktreeRoot: join(root, "worktrees"),
+      projectsRoot: join(root, "projects"),
+      identity,
+    });
+    expect(await docs.refreshCopy(project)).toEqual({ refreshed: true });
+    const clone = join(root, "worktrees", w.project);
+    const head = await new GitOps({ cwd: clone, identity }).headSha();
+    asked = 0;
+    expect(await docs.refreshCopy(project, { head, base: "main" })).toEqual({ refreshed: false });
+    expect(asked).toBe(0);
+    // Someone merges on the host: the next read names a new head, and the copy follows.
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    writeFileSync(join(root, "seed", "merged.md"), "# merged\n");
+    await seed.commitAll("merged");
+    await seed.push("main");
+    const moved = await seed.headSha();
+    expect(await docs.refreshCopy(project, { head: moved, base: "main" })).toEqual({
+      refreshed: true,
+    });
+    expect(await readFile(join(clone, "merged.md"), "utf8")).toBe("# merged\n");
+    expect(await new GitOps({ cwd: clone, identity }).headSha()).toBe(moved);
+    await w.close();
+  });
+
   it("a repository that already tracks a folder named Local only gets none, with one sentence", async () => {
     const w = await loopWorld();
     const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });

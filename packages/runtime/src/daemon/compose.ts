@@ -2274,11 +2274,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // too), when a repository is linked and after the intake wrote its docs. Under the copy's lock
   // (`ProjectDocs.withCopy`), which every docs write takes too. A refresh that changed the copy
   // tells the project's screens; a failure is logged and the copy is read as it was.
-  const refreshProjectCopy = async (projectId: string, head?: string): Promise<void> => {
+  const refreshProjectCopy = async (
+    projectId: string,
+    at?: { head: string; base: string },
+  ): Promise<void> => {
     try {
       const project = await store.project.get(projectId);
       if (!project) return;
-      const done = await docs.refreshCopy(project, head ? { head } : {});
+      const done = await docs.refreshCopy(project, at ?? {});
       if (done.refreshed) events.emit("project", { id: projectId });
     } catch (e) {
       logger.warn("this computer's copy of the repository not refreshed", {
@@ -3841,7 +3844,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         onDefaultBranchHead: async (project, sha) => {
           await Promise.all([
             dependentBranches.sweep(project.projectId),
-            refreshProjectCopy(project.projectId, sha),
+            refreshProjectCopy(project.projectId, { head: sha, base: project.branch }),
           ]);
         },
         onInjection: async (report, origin, projectId) => {
