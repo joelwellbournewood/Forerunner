@@ -676,9 +676,9 @@ active project.
 
 In the desktop app, a link that leaves Forerunner (a pull request, "Get Docker Desktop", a page
 named in a task) opens in your browser, also when you hold Ctrl or Shift while clicking. The
-app's own links stay in its one window: a Ctrl-click on one opens nothing else and leaves you
-where you are. **Open folder** opens a project's folder in your file manager; nothing in the app
-opens or runs a file.
+app's own links stay in its one window: a Ctrl-click or Shift-click on one (Inbox, a project)
+works like a plain click and shows that page in the same window. **Open folder** opens a
+project's folder in your file manager; nothing in the app opens or runs a file.
 
 ## Closing and quitting
 

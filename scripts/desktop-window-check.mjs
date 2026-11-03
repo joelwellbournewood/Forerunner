@@ -29,11 +29,13 @@
 //      written into the store first, pointing at a page this script serves, so it can also see
 //      the browser fetch it), Settings → Sandbox's "Get Docker Desktop" link, a target="_blank"
 //      link (the new-window path), a Ctrl+click and a Shift+click on a link with no target (as
-//      ExternalLink renders one in the shell), a Ctrl+click on the app's own Inbox link (no
-//      browser, no second window), a file: link (must open nothing) and Open folder on the
-//      Overview. After each, the window must still show the app on the same page; the page
-//      must throw no uncaught error (a refusal by the shell's ACL above all: the opener
-//      plugin's page script once made Ctrl/Shift-clicks do nothing that way);
+//      ExternalLink renders one in the shell), a Ctrl+click and a Shift+click on the app's own
+//      Inbox link (the Inbox in this window, as a plain click; no browser, no second window:
+//      the owner's decision of 2026-11-02, Q7), a file: link (must open nothing) and Open
+//      folder on the Overview. After each, the window must still show the app on the same page
+//      (on the Inbox after the in-app clicks); the page must throw no uncaught error (a refusal
+//      by the shell's ACL above all: the opener plugin's page script once made Ctrl/Shift-clicks
+//      do nothing that way);
 //   5. saves a screenshot (Page.captureScreenshot) and the visible text of every step, and of
 //      the page where the journey stopped (with `--exe`, the whole screen there too:
 //      `desktopScreenshot`), the shell's and the daemon's logs and result.json under --out;
@@ -1026,11 +1028,11 @@ export function isAppUrl(url, origins = APP_ORIGINS) {
 }
 
 /**
- * The shell's hand-offs in its log (apps/desktop/src-tauri/src/windows.rs `handed_to_browser_line`
- * and the refusal, folder.rs `handed_to_file_manager_line`), in order. tauri-plugin-log writes
- * `[date][time][module][LEVEL] message`; the message ends the line.
+ * The shell's hand-offs in its log (apps/desktop/src-tauri/src/windows.rs `handed_to_browser_line`,
+ * `shown_in_window_line` and the refusal, folder.rs `handed_to_file_manager_line`), in order.
+ * tauri-plugin-log writes `[date][time][module][LEVEL] message`; the message ends the line.
  * @param {string} text
- * @returns {Array<{ kind: "browser", via: string, target: string } | { kind: "folder", target: string } | { kind: "refused", scheme: string, via: string | null }>}
+ * @returns {Array<{ kind: "browser" | "window", via: string, target: string } | { kind: "folder", target: string } | { kind: "refused", scheme: string, via: string | null }>}
  */
 export function parseHandoffs(text) {
   const out = [];
@@ -1042,6 +1044,11 @@ export function parseHandoffs(text) {
       );
     if (m) {
       out.push({ kind: "browser", via: m[1], target: m[2] });
+      continue;
+    }
+    m = /shown in this window \((link|new window)\): (\S+)(?: \(query not logged\))?$/.exec(line);
+    if (m) {
+      out.push({ kind: "window", via: m[1], target: m[2] });
       continue;
     }
     m = /handed to the file manager: (.+)$/.exec(line);
@@ -1192,6 +1199,69 @@ export function noSecondWindow(before, after) {
   return {
     ok: after.count === before.count,
     words: `${after.count} page target(s), ${before.count} before`,
+  };
+}
+
+/**
+ * The verdict on a Ctrl- or Shift-click on one of the app's own links in the shell (Q7, the
+ * owner's decision of 2026-11-02): it acts like a plain click, so the window shows that page.
+ * It passes when the page saw the click with `key` held, the shell said it showed the page in
+ * this window ("shown in this window", `windows::shown_in_window_line`) and handed nothing to a
+ * browser or the file manager, the window moved from `before` to `route` and shows it (`shown`:
+ * the page's own heading, which is there only once the daemon answered, so the page kept its
+ * token), and no second window opened. Until then the shell refused the new window and nothing
+ * happened ("the shell refused it", run 41495902701), which now fails.
+ * @param {{
+ *   said: ReturnType<typeof parseHandoffs>,
+ *   seen: { ctrl?: boolean, shift?: boolean, trusted?: boolean, prevented?: boolean } | null | undefined,
+ *   key: "Control" | "Shift",
+ *   windows: { ok: boolean, words: string },
+ *   before: string,
+ *   after: string,
+ *   route: string,
+ *   shown: boolean,
+ *   origins?: readonly string[],
+ * }} o
+ * @returns {{ ok: boolean, detail: string }}
+ */
+export function inAppClickVerdict(o) {
+  const origins = o.origins ?? APP_ORIGINS;
+  const handed = o.said.filter((x) => x.kind === "browser" || x.kind === "folder");
+  const inWindow = o.said.find((x) => x.kind === "window");
+  const refusal = o.said.find((x) => x.kind === "refused");
+  const pathOf = (u) => {
+    try {
+      return new URL(u).pathname;
+    } catch {
+      return "";
+    }
+  };
+  const moved = isAppUrl(o.after, origins) && pathOf(o.after) === o.route && o.after !== o.before;
+  const shell = handed.length
+    ? `handed off: ${handed.map((x) => `${x.kind === "folder" ? "file manager" : "browser"} ${x.target}`).join(", ")}`
+    : inWindow
+      ? `the shell showed it in this window (${inWindow.via}: ${inWindow.target})`
+      : refusal
+        ? `the shell refused it (${refusal.scheme}, ${refusal.via ?? "?"}), so nothing happened`
+        : "nothing reached the shell";
+  const where = moved
+    ? `the window moved to ${o.route}`
+    : `the window is on ${o.after || "?"} (before the click ${o.before || "?"}), not on ${o.route}`;
+  return {
+    ok:
+      handed.length === 0 &&
+      !!inWindow &&
+      heldKey(o.seen, o.key) &&
+      moved &&
+      o.shown &&
+      o.windows.ok,
+    detail: [
+      shell,
+      clickSeenWords(o.seen, o.key),
+      where,
+      o.shown ? "the page shows it" : "the page does not show it",
+      o.windows.words,
+    ].join("; "),
   };
 }
 
@@ -1855,42 +1925,61 @@ async function main() {
       }
     }
 
-    // A Ctrl+click on one of the app's own links (the sidebar's Inbox): the webview asks for a
-    // new window, and the shell refuses it (`windows::new_window_action`): a second window
-    // would have no daemon token, and the system browser cannot show the app's own page. The
-    // person stays on the page they were on; nothing else opens.
-    {
-      const name =
-        "a Ctrl+click on one of the app's own links opens no browser and no second window";
-      const inApp = page.getByRole("link", { name: "Inbox" }).first();
+    // Ctrl+click and Shift+click on one of the app's own links (the sidebar's Inbox) act like a
+    // plain click (Q7, the owner's decision of 2026-11-02): the webview asks for a new window,
+    // and the shell moves this window to the page instead (`windows::new_window_action`,
+    // "shown in this window (new window)"). A second window would have no daemon token, and
+    // the system browser cannot show the app's own page, so neither opens. Until then the
+    // shell refused the new window and the person stayed where they were (run 41495902701).
+    // Each click starts on the project's page, so the move to the Inbox can be seen; the
+    // journey goes on from there.
+    const backToProject = async () => {
+      await page.getByRole("link", { name: "Home", exact: true }).first().click();
+      await page
+        .getByTestId("project-card")
+        .filter({ has: page.getByText(projectName, { exact: true }) })
+        .getByTestId("open-project")
+        .click();
+      await until("the project's page", 30_000, 500, async () =>
+        (await page.url()).includes(`/projects/${encodeURIComponent(projectId)}`) ? true : null,
+      ).catch(() => undefined);
+    };
+    for (const key of /** @type {const} */ (["Control", "Shift"])) {
+      const keyName = key === "Control" ? "Ctrl" : "Shift";
+      const name = `a ${keyName}+click on one of the app's own links (Inbox) shows that page in this window, with no browser and no second window`;
       await page.evaluate(ARM_CLICK_PROBE);
       offset = logSize(shellLog);
       const windowsBefore = shellMode ? await pageTargets() : notCounted;
       const before = await page.url();
-      await inApp.click({ modifiers: ["Control"] });
+      const inboxLink = page.getByRole("link", { name: "Inbox" }).first();
+      await inboxLink.click({ modifiers: [key] });
       await backToPage();
       const seen = await page.evaluate(READ_CLICK_PROBE).catch(() => null);
       if (shellMode) {
-        await sleep(3_000);
-        const said = parseHandoffs(logSince(shellLog, offset));
-        const handed = said.filter((x) => x.kind !== "refused");
-        const refusal = said.find((x) => x.kind === "refused");
-        const windows = noSecondWindow(windowsBefore, await pageTargets());
-        check(
-          name,
-          handed.length === 0 && heldKey(seen, "Control") && windows.ok,
-          [
-            handed.length
-              ? `handed off: ${handed.map((x) => x.target).join(", ")}`
-              : refusal
-                ? `the shell refused it (${refusal.scheme}, ${refusal.via ?? "?"})`
-                : "nothing reached the shell",
-            clickSeenWords(seen, "Control"),
-            windows.words,
-          ].join("; "),
-        );
-        await stays(before, "a Ctrl+click on an in-app link");
-      } else skip(name, `no shell (--attach); ${clickSeenWords(seen, "Control")}`);
+        // The shell's line comes once the page was moved; the verdict reads the log again.
+        await handoffSince(offset, (x) => x.kind === "window");
+        const shown = await page
+          .locator("#inbox-title")
+          .waitFor({ timeout: 15_000 })
+          .then(() => true)
+          .catch(() => false);
+        // Time for a second window or a browser hand-off to show, had either come.
+        await sleep(1_500);
+        const verdict = inAppClickVerdict({
+          said: parseHandoffs(logSince(shellLog, offset)),
+          seen,
+          key,
+          windows: noSecondWindow(windowsBefore, await pageTargets()),
+          before,
+          after: await page.url(),
+          route: "/inbox",
+          shown,
+          origins,
+        });
+        check(name, verdict.ok, verdict.detail);
+      } else skip(name, `no shell (--attach); ${clickSeenWords(seen, key)}`);
+      await shot(`after a ${keyName}+click on Inbox`);
+      await backToProject();
     }
 
     // A file: link opens nothing, in no program.

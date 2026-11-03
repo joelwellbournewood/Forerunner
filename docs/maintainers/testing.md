@@ -2633,13 +2633,22 @@ click and the ACL refused its `open_url`; `apps.md`, "How a link leaves the app"
      run 41442343517, `apps.md`, "How a link leaves the app"), and the window's page targets
      must not grow (no second window; `noSecondWindow`: a target list that could not be read,
      before the click or after it, fails this part with "could not tell", never counts as 0);
-   - a Ctrl+click on the sidebar's Inbox link, one of the app's own: no hand-off to a browser,
-     no second window, the window stays on its page (the shell refuses the new window,
-     `windows::new_window_action`; the detail says whether its refusal line came);
+   - a Ctrl+click, then a Shift+click, on the sidebar's Inbox link, one of the app's own, each
+     from the project's page: it acts like a plain click (Q7, the owner's decision of
+     2026-11-02), so the shell's log says "shown in this window (new window): <the Inbox's
+     URL>" (`windows::new_window_action` answers `ShowHere`), nothing is handed to a browser or
+     the file manager, the window moves to `/inbox` and shows the Inbox's heading (there only
+     once the daemon answered, so the page kept its token), the page saw the key held and no
+     second window opened (`inAppClickVerdict`; the detail names each part). Until then the
+     check expected nothing to happen, and run 41495902701 passed it with "the shell refused it
+     (http, new window)"; that is a failure now. The owner changed what is expected, which is
+     not a weaker check. After each, the journey goes back to the project's page (Home, the
+     project's card);
    - a `file:` link added to the page: no hand-off of any kind;
    - Open folder on the Overview: "handed to the file manager: <folder>", the folder the
      Overview shows, and no error under the button;
-   - after each, the window still shows the same app page (the shell must not navigate away);
+   - after each other step, the window still shows the same app page (the shell must not
+     navigate away);
    - at the end, "the page threw no uncaught error", required: every `Runtime.exceptionThrown`
      since the attach, with what was thrown (`pageErrorText`: a rejection with a string, as
      Tauri's refusals are, was recorded as "Uncaught (in promise)" only before). A refusal by
@@ -2686,7 +2695,9 @@ plugin:opener|open_url not allowed by ACL". The opener plugin's page script took
 over and the ACL refused its call; the plugin is now built without it (`apps.md`). The next run
 should pass that check, the Ctrl+ and Shift+click checks ("new window" hand-offs, the page saw
 the key held) and the in-app Ctrl+click (refused, nothing opens), with "the page threw no
-uncaught error: none". A Ctrl+click check that fails with "the page saw the click with Ctrl
+uncaught error: none". Run 41495902701 (on df361fc) did. Since the owner's decision Q7 of
+2026-11-02 the in-app Ctrl+ and Shift+clicks must show the Inbox in the window instead; one that
+fails with "the shell refused it" runs a shell from before that change. A Ctrl+click check that fails with "the page saw the click with Ctrl
 held" and nothing in the log means WebView2 raised no new-window request for it; one with "a
 script in the page cancelled it" means a page script took the click over again.
 
@@ -2746,7 +2757,11 @@ for any other error, a note for others only when `UNCAUGHT_ERRORS_REQUIRED` is o
 probe in a window with listeners in the DOM's order, the held key, a synthetic click, and the
 opener plugin's listener cancelling a Shift-click; the page-target count, where a list that
 could not be read, before or after, fails "no second window" instead of passing as 0 and 0;
-the shell builds the opener without its
+the in-app Ctrl+ and Shift+click verdict (`inAppClickVerdict`, Q7): the Inbox shown in this
+window passes, run 41495902701's refusal fails, and so does each part missing on its own (a
+browser hand-off, a second window, no heading, the window elsewhere or unmoved, the key not
+held, no "shown in this window" line), with the shell's words for that line pinned in
+`windows.rs`; the shell builds the opener without its
 page script and has `on_new_window`; the app's environment with both DevTools switches on two ports, and that the variables,
 the provider name, the shell's feature lists, wry's autoplay policy (both ways carry wry's whole
 default) and the shell's log line are the ones `supervisor.rs` and `devtools.rs` use; a port
