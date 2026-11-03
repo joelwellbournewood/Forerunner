@@ -704,6 +704,106 @@ gives up (`sessionOver` and `settle` in `packages/runtime/test/notifications-hea
 on c8c16fb a session still taking steps every 2 to 4 s outlived a fixed 30 s wait, and the
 runtime was closed under it, "sqlite database is closed").
 
+### Where test temp files go (`testenv/src/test-tmp.ts`)
+
+Tests make folders with `mkdtemp(join(tmpdir(), "fr-…"))` and many never remove them; the
+daemons, git, tsx and browsers a test starts write to the temp folder too, and so did
+`ci-env.ts`'s per-worker git config file (most workers end without running their `exit`
+handler). By 2026-11-03 the build machine's temp folder held about 101,000 entries from one
+round's test runs (17,704 `fr-email-*`, 7,756 `fr-update-*`, 5,232 `fr-voice-install-*` and
+more; about 15 GB, with 8 GB of the disk free).
+Instead of asking every test to clean up, each run gets one folder and removes it at its end;
+no test file needs to change.
+
+- **The run folder.** `<temp>/fr-test-run-<pid>-<start>` (the start in seconds, base 36), with
+  a marker file `.fr-test-run` that says what it is. The name is 24 to 26 characters, and every
+  path a test makes is that much longer: on Windows without long paths nothing of 260
+  characters or more opens. The tightest case known is `voice-install.test.ts`'s "a folder that
+  fits" (PyTorch's deepest file about 120 characters below site-packages): 250 characters where
+  259 is the most that fits, on CI's Windows runner (`C:\Users\RUNNER~1\AppData\Local\Temp`,
+  36 characters); it trips where the temp folder's own path is longer than 45 characters (a
+  long user name), where before it tripped above 70. TMPDIR, TMP and TEMP point at it: `os.tmpdir()` reads
+  TMPDIR on Linux and macOS and TEMP, then TMP, on Windows (where `GetTempPath` reads TMP, then
+  TEMP), so every `mkdtemp(join(tmpdir(), …))` and every program that asks the system for its
+  temp folder writes there. `FORERUNNER_TEST_TMP_RUN` names the folder,
+  `FORERUNNER_TEST_TMP_BASE` the temp folder it is in, `FORERUNNER_TEST_TMP_OWNER` the pid of the
+  process that made it.
+- **vitest.** `testenv/src/test-tmp-global-setup.ts` is the `globalSetup` of every vitest
+  config: the root `vitest.config.ts`, at the root level, so it runs once per invocation
+  whatever `--project` picks (unit, integration, e2e: vitest runs the root's global setup for
+  every project, and no project names its own); `tests/live/vitest.config.ts`;
+  `apps/ui/vitest.config.ts`; `apps/approvals-web/vitest.config.ts`. A global setup runs in
+  vitest's main process before any worker starts, and vitest builds a worker's environment from
+  `process.env` when it starts the worker, so the variables reach every worker and every process
+  a test starts. The teardown, after the last test file, sets the variables back to what they
+  were and removes the folder. Two configs in one process share one folder; a vitest run a test starts
+  (its owner is another pid) makes its own folder inside its parent's.
+- **Playwright** (`apps/ui/playwright.config.ts`). Playwright starts the web servers before any
+  `globalSetup`, so the config itself calls `startTestTmp()` when it loads in the runner process;
+  the fake daemon, the fake state service, Vite, the workers and the browsers they launch
+  inherit the variables, and workers, which load the config again, find
+  `FORERUNNER_TEST_TMP_RUN` set and make none. The runner removes the folder when it exits,
+  after it has stopped the web servers.
+- **Only its own folders.** At its start a run removes the run folders a run left in its temp
+  folder (a crash, a kill, a folder that could not be removed), and nothing else: the exact
+  name `fr-test-run-<digits>-<base 36>`, a real folder (not a link), holding the marker, with
+  both the start in the name and the marker's last change over a day old (a live run touches
+  its marker every 10 minutes, so a watch session of days keeps its folder). It prints what it
+  removed. Other `fr-*` folders (another run's, a tool's, the leftovers of runs before this
+  mechanism) are never touched; those older leftovers are for a person to remove.
+- **A file still open at the end** (on Windows, a process a test started that still runs with
+  its working folder in the run folder; Linux removes open files): the removal retries 10 times
+  with a growing wait (about 5 s), then prints `Forerunner tests: could not remove the
+  temporary folder <dir> (EBUSY on <path>: a file in it is still open, most likely by a process
+  a test started).` and tries again when vitest exits; if that fails too, a later run removes it
+  once it is a day old. Playwright's runner, already exiting, says it is left. A file this
+  user may not remove (one a container wrote as another user) is named as that instead.
+- **A test that sets TMPDIR, TMP or TEMP itself** gets what it set, and so does a process it
+  starts with that environment; the run never resets them. A test that restores them restores
+  the run folder.
+- **Evidence a person reads after the run** must not go in the run folder. Set
+  `FORERUNNER_LIVE_REPORT_DIR` or `FORERUNNER_E2E_REPORT_DIR` as before; without them the live
+  harness's `reportDir` and the phase 3 live calibration use `keptTempDir(prefix)`, a folder in
+  `FORERUNNER_TEST_TMP_BASE` beside the run folder, so the path they print still holds the files.
+- **What stays in the temp folder.** A few folders, each reused by every run:
+  `node-compile-cache` (Node's compile cache, which vitest's command line turns on before any
+  setup runs), `playwright-transform-cache-<uid>` (Playwright's, made before it reads its
+  config) and, on Linux, `hsperfdata_<user>` (the JVM always writes it to `/tmp`; the Android
+  keystore tests start `keytool`). vitest's own module folder (`<temp>/<21 random
+  characters>`) is made before the global setup too, and vitest removes it at its end. tsx's
+  cache (`tsx-<uid>`) is now in the run folder: the first tsx process of a run compiles what it
+  loads and the others reuse it, so a run no longer leans on a cache from an earlier one. What
+  else can still miss the run folder: a literal `"/tmp/…"` path in a test (use
+  `join(tmpdir(), …)`; `fast-mode.test.ts` had one, which on Windows was `C:\tmp`), and a
+  process a test starts with an environment of its own that leaves out TMPDIR (TEMP and TMP on
+  Windows).
+- **Measured** with one `pnpm test` (the unit project, 447 files) in a mount namespace whose
+  `/tmp` was an empty folder, so nothing else on the machine wrote there: before, 1,063 entries
+  and 105 MB were left (430 `forerunner-test-gitconfig-*`, 121 `fr-email-*`, 46 `fr-update-*`,
+  38 `fr-bench-*`, 31 `fr-voice-install-*` and 397 more under about 220 other names); after,
+  the run folder was gone and `node-compile-cache` and `hsperfdata_root` were all that was
+  left. The UI's vitest suite and the approvals web suite left `node-compile-cache`, Playwright
+  (34 specs) that and its transform cache.
+- **Not vitest.** The injection suite (`pnpm test:injection`, a tsx script) keeps writing its
+  report to `<temp>/forerunner-injection-report`, one folder it overwrites.
+
+`testenv/test/test-tmp.test.ts` covers it: this unit test runs in its run's folder with the three
+variables set; a child vitest run (`testenv/test/fixtures/test-tmp/`, the same global setup)
+started with TMPDIR, TMP and TEMP on a folder of the test's own, whose tests make folders, start
+a process that makes one and remove none, leaves exactly what was there before minus a planted
+crashed run's folder (and says so), while another run's live folder, a run of days that still
+touches its marker, a run-shaped folder without the marker, another tool's `fr-*` folder, a
+near-miss name, a file and a link (not on Windows) stay; a test in it that points the
+variables elsewhere gets that folder; the sweep's day boundary on the name and the marker; the
+exact name shape; start and stop setting the variables back, a parent run's too; an `EBUSY`
+that does not clear (retried, the folder left, the message, the try at exit); `EACCES` named as
+a permission; a real process working in the folder
+(on Windows the folder stays and the message says why, elsewhere it goes; it goes once the
+process ends); `keptTempDir`; and that every vitest and Playwright config in the repository
+wires it, with the root config's projects naming none of their own. `apps/ui/test/test-tmp.test.ts`,
+`apps/approvals-web/test/test-tmp.test.ts`, `apps/ui/e2e/temp-folder.spec.ts` and the
+`reportDir` cases of `tests/live/test/report.test.ts` check their suite's wiring.
+
 ## Known issues
 
 - Scenario 2 (`02-email-task.scenario.test.ts`) read the agent's `email.send` audit rows
@@ -1231,8 +1331,10 @@ It runs `calibrate()` over both sets on `AnthropicMessagesProvider` at tier 1 (S
 production pick; `ANTHROPIC_API_KEY` is accepted in place of `FORERUNNER_ANTHROPIC_KEY`), with
 the real `pricingFor`, capped in code by the session budget (`FORERUNNER_E2E_CALIBRATION_BUDGET_USD`,
 default 10 USD: the hooks refuse a call past it), prints one line per task and the formatted
-report, writes `phase3-calibration-live.txt` and the JSON report to the report directory, and
-asserts the 0.8 / 0.9 thresholds. Without `FORERUNNER_E2E_LIVE=1` and a key it is reported as
+report, writes `phase3-calibration-live.txt` and the JSON report to the report directory
+(without `FORERUNNER_E2E_REPORT_DIR`, a fresh `fr-phase3-live-*` folder beside the run's own
+temp folder, so it outlives the run: "Where test temp files go"), and asserts the 0.8 / 0.9
+thresholds. Without `FORERUNNER_E2E_LIVE=1` and a key it is reported as
 skipped. The Anthropic SDK reads `ANTHROPIC_BASE_URL` from the environment when the adapter is
 given no base URL, so unset it for the run unless the calls are meant to go through a proxy.
 The result and the cost go to `docs/status/gates.md` and `docs/status/COST.md`.
@@ -2030,7 +2132,10 @@ and the `message_start` note (and `no usage reported` without one), a call whose
 and the per-task comparison
 (`report.test.ts`): read from the report directory or the named path, the comparison made only
 for the same run, a file from another run flagged stale and listed with the reason, not made
-without a file, a task the other half lacks compared as null; the dry run through
+without a file, a task the other half lacks compared as null; `reportDir` without
+`FORERUNNER_LIVE_REPORT_DIR` making its folder beside the run's own temp folder (which the run
+removes; "Where test temp files go"), so the path a live run prints still holds the reports;
+the dry run through
 `composeRuntime`: `api_key` billing source, one
 task through a PR on the fake host, spend ledger = store cost ledger = audit rows, and a
 refusal that surfaces as a failed task; the dry run of the subscription half on a fake SDK

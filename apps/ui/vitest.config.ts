@@ -10,6 +10,9 @@ export default defineConfig({
     include: ["test/**/*.test.tsx", "test/**/*.test.ts"],
     // CI's environment on any machine (no git identity, FORCE_COLOR=1): testenv/src/ci-env.ts.
     setupFiles: ["../../testenv/src/ci-env.ts", "./test/setup.ts"],
+    // One temp folder per run, removed at its end (testenv/src/test-tmp.ts; testing.md, "Where
+    // test temp files go"): the real daemons and git these tests start write there too.
+    globalSetup: ["../../testenv/src/test-tmp-global-setup.ts"],
     passWithNoTests: true,
   },
 });

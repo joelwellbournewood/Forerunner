@@ -30,6 +30,10 @@ export default defineConfig(({ mode }) => {
       env: { ...(live ? { FORERUNNER_LIVE: "1" } : {}), FORERUNNER_LIVE_RUN: run },
       fileParallelism: false,
       sequence: { sequencer: PathOrderSequencer },
+      // One temp folder per run, removed at its end (testenv/src/test-tmp.ts; testing.md,
+      // "Where test temp files go"). The reports a live run prints go beside it, not into it
+      // (`reportDir` in src/report.ts), so they outlive the run as before.
+      globalSetup: ["../../testenv/src/test-tmp-global-setup.ts"],
       testTimeout: 1_800_000,
       hookTimeout: 600_000,
     },

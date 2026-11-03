@@ -29,7 +29,9 @@ const MARK = "FORERUNNER_TEST_CI_ENV";
 
 if (!process.env[MARK]) {
   // One empty file per worker process: a test that writes to "the global config" (none should)
-  // cannot change what another worker's tests read.
+  // cannot change what another worker's tests read. It is in the run's own temp folder
+  // (test-tmp.ts), which the run removes: most workers end without running their exit handler
+  // (a unit run left 430 of these files in the system temp folder before 2026-11-03).
   const empty = join(tmpdir(), `forerunner-test-gitconfig-${process.pid}`);
   writeFileSync(empty, "");
   process.on("exit", () => rmSync(empty, { force: true }));

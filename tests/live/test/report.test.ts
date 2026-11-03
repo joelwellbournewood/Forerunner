@@ -1,13 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "@forerunner/platform";
+import { basename, dirname, join } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   comparePhase1,
   completedOrInReview,
   PHASE1_EVIDENCE_FILE,
   PHASE1_EVIDENCE_VAR,
+  REPORT_DIR_VAR,
   readPhase1Evidence,
+  reportDir,
 } from "../src/report.ts";
 
 const temps: string[] = [];
@@ -167,5 +169,31 @@ describe("the per-task comparison of the subscription half with the API-key half
     for (const s of ["failed", "ready", "needs_human", "claimed", "cancelled", ""]) {
       expect(completedOrInReview(s), s).toBe(false);
     }
+  });
+});
+
+describe("where a live run's reports go", () => {
+  it("without FORERUNNER_LIVE_REPORT_DIR: a fresh folder beside the run's own temp folder, so the path the run prints still holds the files after it", () => {
+    // This run has its own temp folder, removed at its end (vitest.config.ts's globalSetup;
+    // testing.md, "Where test temp files go").
+    const run = process.env.FORERUNNER_TEST_TMP_RUN;
+    expect(
+      run,
+      "tests/live/vitest.config.ts names testenv/src/test-tmp-global-setup.ts",
+    ).toBeTruthy();
+    expect(tmpdir()).toBe(run);
+    const env = { ...process.env };
+    delete env[REPORT_DIR_VAR];
+    const dir = reportDir(env);
+    temps.push(dir);
+    expect(basename(dir).startsWith("fr-live-report-")).toBe(true);
+    expect(dirname(dir)).toBe(process.env.FORERUNNER_TEST_TMP_BASE);
+    expect(dirname(dir)).not.toBe(run);
+  });
+
+  it("with it: that folder, made when missing", () => {
+    const dir = join(tempDir(), "reports");
+    expect(reportDir({ [REPORT_DIR_VAR]: dir })).toBe(dir);
+    expect(existsSync(dir)).toBe(true);
   });
 });

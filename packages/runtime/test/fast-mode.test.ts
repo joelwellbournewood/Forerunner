@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import {
   type BillingSource,
   BUILTIN_PRICING,
@@ -6,6 +7,7 @@ import {
   mergePricing,
   type PricingTable,
 } from "@forerunner/billing";
+import { join } from "@forerunner/platform/paths";
 import { openStore, type StateStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver, type RunEvent } from "../src/agent/loop.ts";
@@ -207,7 +209,9 @@ async function runTask(opts: {
     sdk: {
       driver: new SdkAgentDriver({ hooks: h.hooks, kill: h.kill, clock, queryImpl: q }),
       credential: async () => ({ kind: "oauth_token", value: "oauth-test-value" }),
-      workRoot: "/tmp/fr-fast-mode-sdk",
+      // In the run's temp folder, which the run removes (testing.md, "Where test temp files
+      // go"); a literal "/tmp/…" bypassed it on Linux and was C:\tmp on Windows.
+      workRoot: join(tmpdir(), "fr-fast-mode-sdk"),
       pricing: (id) => pricingFor(id, table),
     },
     specialists: (n) => (n === "coder" ? specialist(opts.tier ?? "opus") : undefined),

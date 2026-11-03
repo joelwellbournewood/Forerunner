@@ -7,6 +7,9 @@ export default defineConfig({
     environment: "jsdom",
     include: ["test/**/*.test.tsx", "test/**/*.test.ts"],
     setupFiles: ["./test/setup.ts"],
+    // One temp folder per run, removed at its end (testenv/src/test-tmp.ts; testing.md, "Where
+    // test temp files go").
+    globalSetup: ["../../testenv/src/test-tmp-global-setup.ts"],
     passWithNoTests: true,
     testTimeout: 20_000,
   },

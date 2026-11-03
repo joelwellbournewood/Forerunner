@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, safeSegment } from "@forerunner/platform";
+import { keptTempDir } from "@forerunner/testenv/test-tmp";
 
 /**
  * Where a live run leaves its evidence files (the JSON reports the gate rows cite):
@@ -23,13 +23,18 @@ export function runIdFromEnv(env: NodeJS.ProcessEnv = process.env, fallback: str
   return run && run !== "" ? run : fallback;
 }
 
+/**
+ * Without `FORERUNNER_LIVE_REPORT_DIR`, a fresh folder in the temp folder the run started with:
+ * the run's own temp folder (testing.md, "Where test temp files go") is removed when the run
+ * ends, and the path this returns is printed for the person to read afterwards.
+ */
 export function reportDir(env: NodeJS.ProcessEnv = process.env): string {
   const configured = env[REPORT_DIR_VAR]?.trim();
   if (configured) {
     mkdirSync(configured, { recursive: true });
     return configured;
   }
-  return mkdtempSync(join(tmpdir(), "fr-live-report-"));
+  return keptTempDir("fr-live-report-", env);
 }
 
 export function writeReport(dir: string, name: string, data: unknown): string {
