@@ -765,8 +765,8 @@ export class ProjectDocs implements ProjectDocsPort {
     // the merge also changed) keeps the time of its last real update.
     const moved = hasBase && opts.checkout !== false ? await this.backToBase(git, target) : true;
     const before = readCopyRecord(dir);
-    excludeNeverPushed(dir);
     const tracked = hasBase ? ((await git.trackedUnder(base, [LOCAL_ONLY_DIR])) ?? []) : [];
+    excludeNeverPushed(dir, tracked.length ? [TRY_DIR] : NEVER_PUSHED);
     let localOnly: CopyRecord["localOnly"] = "none";
     if (tracked.length) localOnly = "tracked";
     else {

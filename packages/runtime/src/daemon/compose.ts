@@ -2213,8 +2213,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       worktreeRoot: dirs.worktrees,
       token: githubTokenNow,
       identity: gitIdentity,
+      // merged-copy (ADR 0113): the project's Local only folder, in its copy on this computer,
+      // goes into each run's worktree and back after it.
+      localOnlyFor: async (task) => {
+        const project = await store.project.get(task.project_id);
+        return project ? docs.localOnlyFolder(project) : null;
+      },
     });
   const executor = prExecutor(true);
+  // merged-copy: a run's Local only copy the app left when it closed or crashed during the run
+  // is copied back now, before any session starts.
+  try {
+    executor.recoverLocalOnly();
+  } catch (e) {
+    logger.warn("Local only copies not recovered at the start", { error: errorMessage(e) });
+  }
   // A repository for a project that has none (U-037, ADR 0097): the `repo.create` command's
   // port, with the person's GitHub token; the project's agent proposes one (`repoProposals`,
   // below) when a plan holds code work.

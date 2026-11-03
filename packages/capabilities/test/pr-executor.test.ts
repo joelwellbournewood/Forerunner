@@ -1,4 +1,13 @@
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, run, SimulatedClock } from "@forerunner/platform";
 import { KillSwitch, SessionBudget, type TaskExecutor, TokenIssuer } from "@forerunner/runtime";
@@ -844,6 +853,224 @@ describe("a task that waits for unmerged work builds on it (C-49)", { timeout: 1
     expect(log.stdout).not.toContain("**");
     expect(log.stdout).not.toMatch(/Lesson:/);
     expect(log.stdout).toContain("Wrote the files.");
+    await w.store.close();
+  });
+});
+
+describe("Local only: the person's folder the run can use and that never leaves this computer (merged-copy, ADR 0113)", {
+  timeout: 120_000,
+}, () => {
+  /** A run that does `work` in the worktree; what it saw is kept. */
+  function agent(work: (dir: string) => Promise<void> | void): TaskExecutor & {
+    withWorktree: (dir: string) => TaskExecutor;
+  } {
+    return {
+      async execute() {
+        return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+      },
+      withWorktree(dir) {
+        return {
+          async execute() {
+            await work(dir);
+            return { outcome: "done", summary: "Wrote the page.", costUsdMicro: 1000 };
+          },
+        };
+      },
+    };
+  }
+  async function setup() {
+    const w = await world();
+    const source = join(w.root, "copy", "Local only");
+    mkdirSync(join(source, "drafts"), { recursive: true });
+    writeFileSync(join(source, "notes.txt"), "the person's notes\n");
+    writeFileSync(join(source, "drafts", "plan.md"), "# plan\n");
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Write the page",
+      outcome: "page.html holds the page",
+      acceptance_criteria: ["page.html exists"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = (inner: TaskExecutor & { withWorktree: (dir: string) => TaskExecutor }) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner,
+        repoFor: async () => ({
+          clone: w.bare,
+          repo: { owner: "o", name: "sample" },
+          base: "main",
+        }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+        localOnlyFor: async () => source,
+      });
+    const ctx = async () => ({
+      task: await w.store.task.mustGet(task.id),
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    const onHost = async (branch: string | undefined) =>
+      (
+        await run(["git", "--git-dir", w.bare, "ls-tree", "-r", "--name-only", branch ?? "main"], {
+          allowFailure: true,
+        })
+      ).stdout
+        .split(/\r?\n/)
+        .filter(Boolean);
+    return { w, source, task, exec, ctx, onHost, wt: join(w.root, "wt", task.id) };
+  }
+
+  it("the run reads and writes it in its worktree; it is copied back, never committed, pushed, in the PR or the changed files", async () => {
+    const { w, source, exec, ctx, onHost, wt } = await setup();
+    const seen: string[] = [];
+    const res = await exec(
+      agent((dir) => {
+        seen.push(readFileSync(join(dir, "Local only", "notes.txt"), "utf8"));
+        seen.push(readFileSync(join(dir, "Local only", "drafts", "plan.md"), "utf8"));
+        writeFileSync(join(dir, "Local only", "summary.txt"), "the agent's summary\n");
+        writeFileSync(join(dir, "Local only", "drafts", "plan.md"), "# plan, done\n");
+        writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n");
+      }),
+    ).execute(await ctx());
+    expect(seen).toEqual(["the person's notes\n", "# plan\n"]);
+    expect(res.outcome).toBe("in_review");
+    expect(res.changedFiles).toEqual(["page.html"]);
+    expect(await onHost(res.branch)).toEqual(["README.md", "page.html"]);
+    const pr = (await w.host.listPullRequests({ owner: "o", name: "sample" }))[0];
+    expect(pr?.body ?? "").not.toContain("Local only");
+    // Back in the person's folder: the new file and the changed one; theirs untouched.
+    expect(readFileSync(join(source, "summary.txt"), "utf8")).toBe("the agent's summary\n");
+    expect(readFileSync(join(source, "drafts", "plan.md"), "utf8")).toBe("# plan, done\n");
+    expect(readFileSync(join(source, "notes.txt"), "utf8")).toBe("the person's notes\n");
+    // The worktree keeps no copy for the review to read, and no marker.
+    expect(existsSync(join(wt, "Local only"))).toBe(false);
+    expect(existsSync(join(wt, ".git", "forerunner-local-only.json"))).toBe(false);
+    expect(res.summary).toBe("Wrote the page.");
+    await w.store.close();
+  });
+
+  it("a file the person changed during the run keeps their version; the agent's is beside it, and the task's result says so", async () => {
+    const { w, source, exec, ctx } = await setup();
+    const res = await exec(
+      agent((dir) => {
+        writeFileSync(join(dir, "Local only", "notes.txt"), "the agent's notes\n");
+        writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n");
+        // The person edits the same file in their folder meanwhile.
+        writeFileSync(join(source, "notes.txt"), "the person's newer notes\n");
+      }),
+    ).execute(await ctx());
+    expect(res.outcome).toBe("in_review");
+    expect(readFileSync(join(source, "notes.txt"), "utf8")).toBe("the person's newer notes\n");
+    expect(readFileSync(join(source, "notes (from Write the page).txt"), "utf8")).toBe(
+      "the agent's notes\n",
+    );
+    expect(res.summary).toBe(
+      'You changed "notes.txt" in Local only during this run, so your version stays and the agent\'s is beside it as "notes (from Write the page).txt".\n\nWrote the page.',
+    );
+    // Never in the pull request.
+    const pr = (await w.host.listPullRequests({ owner: "o", name: "sample" }))[0];
+    expect(pr?.body ?? "").not.toContain("Local only");
+    await w.store.close();
+  });
+
+  it("an agent's own commit of a Local only file is refused at the push with one sentence; nothing reaches the host", async () => {
+    const { w, exec, ctx, onHost } = await setup();
+    const res = await exec(
+      agent(async (dir) => {
+        writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n");
+        await run(["git", "add", "-f", "Local only/notes.txt"], { cwd: dir });
+        await run(
+          [
+            "git",
+            "-c",
+            "user.name=Agent",
+            "-c",
+            "user.email=agent@example.test",
+            "commit",
+            "-q",
+            "-m",
+            "my own commit",
+          ],
+          { cwd: dir },
+        );
+      }),
+    ).execute(await ctx());
+    expect(res.outcome).toBe("failed");
+    expect(res.summary).toMatch(
+      /^Forerunner did not upload the branch fr\/[0-9a-f]{8}-write-the-page: it holds "Local only\/notes\.txt", files of Local only, which never leave this computer\. Press Try again to redo the work without them\.$/,
+    );
+    expect(await onHost(res.branch)).toEqual([]);
+    expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toEqual([]);
+    await w.store.close();
+  });
+
+  it("a link inside Local only that points out of it is not followed, either way", async () => {
+    const { w, source, exec, ctx } = await setup();
+    const outside = join(w.root, "outside");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "secret.txt"), "not the run's\n");
+    // A link (a junction on Windows) to a folder outside Local only, in the person's folder.
+    symlinkSync(outside, join(source, "elsewhere"), "junction");
+    let sawLink = true;
+    let planted = "";
+    const res = await exec(
+      agent((dir) => {
+        sawLink = existsSync(join(dir, "Local only", "elsewhere"));
+        // The agent plants its own link out of the folder, and writes through it.
+        planted = join(w.root, "planted-target");
+        mkdirSync(planted, { recursive: true });
+        symlinkSync(planted, join(dir, "Local only", "out"), "junction");
+        writeFileSync(join(dir, "Local only", "out", "x.txt"), "through the link\n");
+        writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n");
+      }),
+    ).execute(await ctx());
+    expect(res.outcome).toBe("in_review");
+    expect(sawLink).toBe(false);
+    // The agent's link was not copied back, nor followed into the person's folder.
+    expect(existsSync(join(source, "out"))).toBe(false);
+    expect(readFileSync(join(outside, "secret.txt"), "utf8")).toBe("not the run's\n");
+    expect(readdirSync(outside)).toEqual(["secret.txt"]);
+    await w.store.close();
+  });
+
+  it("a run killed after the copy in is recovered at the next start, by the same rules", async () => {
+    const { w, source, exec, ctx, wt } = await setup();
+    // The app closes in the middle of the run: the run never returns.
+    let stop: () => void = () => undefined;
+    const killed = new Promise<void>((r) => {
+      stop = r;
+    });
+    void exec(
+      agent(async (dir) => {
+        writeFileSync(join(dir, "Local only", "summary.txt"), "written before the crash\n");
+        stop();
+        await new Promise(() => undefined);
+      }),
+    ).execute(await ctx());
+    await killed;
+    expect(existsSync(join(wt, ".git", "forerunner-local-only.json"))).toBe(true);
+    expect(existsSync(join(source, "summary.txt"))).toBe(false);
+    // The next start (a new executor on the same folders) copies back what the run changed.
+    const next = exec(agent(() => undefined));
+    expect(next.recoverLocalOnly()).toBe(1);
+    expect(readFileSync(join(source, "summary.txt"), "utf8")).toBe("written before the crash\n");
+    expect(readFileSync(join(source, "notes.txt"), "utf8")).toBe("the person's notes\n");
+    expect(existsSync(join(wt, "Local only"))).toBe(false);
+    expect(existsSync(join(wt, ".git", "forerunner-local-only.json"))).toBe(false);
+    expect(next.recoverLocalOnly()).toBe(0);
     await w.store.close();
   });
 });

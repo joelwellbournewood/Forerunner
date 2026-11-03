@@ -157,6 +157,13 @@ describe("GitOps", { timeout: 120_000 }, () => {
     );
     const onHost = await run(["git", "--git-dir", bare, "ls-tree", "-r", "--name-only", "fr/task"]);
     expect(onHost.stdout.trim().split(/\r?\n/)).toEqual(["README.md", "page.html"]);
+    // Removed again by a later commit: the history would still upload it, so it is refused too.
+    await run(["git", "rm", "-q", "--cached", "Local only/notes ä.txt"], { cwd: dir });
+    await a.commitAll("taken out again");
+    expect(await a.neverPushedIn("fr/task", "main")).toEqual(["Local only/notes ä.txt"]);
+    await expect(a.push("fr/task", { defaultBranch: "main" })).rejects.toThrow(
+      /did not upload the branch fr\/task/,
+    );
     // A repository that already tracks a folder of that name is not refused for it.
     const tracked = new GitOps({ cwd: join(root, "b"), identity, neverPush: NEVER_PUSHED });
     const plain = new GitOps({ cwd: join(root, "seed2"), identity });

@@ -2695,6 +2695,8 @@ async function composeWithRolePlayer(
   chatCalls: ModelRequest[];
   /** The critic's calls the stand-in received, in order (what each review was given). */
   criticCalls: ModelRequest[];
+  /** The specialists' calls (merged-copy: what a run saw of its folder, tool results included). */
+  specialistCalls: ModelRequest[];
 }> {
   const home = mkdtempSync(join(tmpdir(), "fr-ui-real-needs-me-"));
   const bench = benchOptionsFromEnv(
@@ -2705,11 +2707,14 @@ async function composeWithRolePlayer(
   const intakeCalls: ModelRequest[] = [];
   const chatCalls: ModelRequest[] = [];
   const criticCalls: ModelRequest[] = [];
+  const specialistCalls: ModelRequest[] = [];
   const stream = provider.stream.bind(provider);
   provider.stream = (req) => {
     const role = detectRole(req).role;
     if (role === "intake") intakeCalls.push(req);
     if (role === "critic") criticCalls.push({ ...req, messages: structuredClone(req.messages) });
+    if (role === "specialist")
+      specialistCalls.push({ ...req, messages: structuredClone(req.messages) });
     // A copy: the loop appends the reply to the same messages after the call.
     if (role === "chat") chatCalls.push({ ...req, messages: structuredClone(req.messages) });
     return stream(req);
@@ -2740,7 +2745,7 @@ async function composeWithRolePlayer(
     },
     (input, init) => Promise.resolve(app.request(input, init)),
   );
-  return { rt, client, bench, intakeCalls, chatCalls, criticCalls };
+  return { rt, client, bench, intakeCalls, chatCalls, criticCalls, specialistCalls };
 }
 
 /** A PNG of one pixel: what a try's screenshot file holds here. */
@@ -7866,13 +7871,15 @@ describe("the UI client against the real daemon: this computer's copy follows ev
   let github: GitHubHost;
   let token = "";
   let home = "";
+  let criticCalls: ModelRequest[] = [];
+  let specialistCalls: ModelRequest[] = [];
   const identity = { name: "Alice", email: "alice@example.test" };
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), "fr-ui-real-copy-"));
     host = await FakeGitHost.start({ rootDir: join(home, "host") });
     host.createUser({ login: "alice", name: "Alice", email: identity.email });
-    for (const name of ["copy", "brief"])
+    for (const name of ["copy", "brief", "local"])
       await host.createRepo({
         owner: "alice",
         name,
@@ -7885,7 +7892,7 @@ describe("the UI client against the real daemon: this computer's copy follows ev
     const vault = new MemoryVault();
     await vault.set("github_token", token);
     // The watcher's poll is driven by the case (pollOnce), never by the clock.
-    ({ rt, client } = await composeWithRolePlayer(
+    ({ rt, client, criticCalls, specialistCalls } = await composeWithRolePlayer(
       {},
       {
         gitHost: github,
@@ -7995,5 +8002,72 @@ describe("the UI client against the real daemon: this computer's copy follows ev
       exists: true,
       note: "from this PC's copy of the repository",
     });
+  }, 120_000);
+
+  it("Local only: listed in Files with its line, in the task's folder during its run, and never on GitHub, in the PR or in the review", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({
+      name: "Local",
+      goal: "A summary written beside the person's own notes",
+      repos: ["alice/local"],
+    });
+    const folder = (await client.projectFiles(project.id)).copy?.localOnly?.folder ?? "";
+    expect(folder, "the Local only folder").not.toBe("");
+    writeFileSync(join(folder, "notes.txt"), "the person's own notes\n");
+    const listed = await client.projectFiles(project.id);
+    expect(listed.entries.map((e) => e.path)).toContain("Local only/notes.txt");
+    expect(listed.copy?.localOnly?.line).toBe("Never uploaded. Agents can read and change it.");
+
+    const task = await client.createTask(project.id, {
+      title: "Write the summary in summary.md",
+      outcome: "summary.md sums up the project in three lines",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const before = specialistCalls.length;
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+      60_000,
+    );
+    const row = await rt.store.task.mustGet(task.id);
+    expect(row.status).toBe("done");
+    // The run saw the file in its folder (its listing of the folder).
+    const seenByRun = specialistCalls
+      .slice(before)
+      .map((c) => JSON.stringify(c.messages))
+      .join("\n");
+    expect(seenByRun).toContain("Local only/notes.txt");
+    // Never on GitHub: the task's branch carries its own file only, and so does its PR.
+    const onBranch = await run([
+      "git",
+      "--git-dir",
+      host.repo("alice/local")?.dir ?? "",
+      "ls-tree",
+      "-r",
+      "--name-only",
+      row.branch ?? "",
+    ]);
+    expect(onBranch.stdout).toContain("summary.md");
+    expect(onBranch.stdout).not.toContain("Local only");
+    const pr = (await github.listPullRequests({ owner: "alice", name: "local" })).find(
+      (p) => p.head.ref === row.branch,
+    );
+    expect(pr?.body ?? "").not.toContain("Local only");
+    // Not evidence: the critic's diff and file list never name it.
+    const review = criticCalls
+      .map((c) => JSON.stringify(c.messages))
+      .filter((m) => m.includes("Write the summary in summary.md"));
+    expect(review.length).toBeGreaterThan(0);
+    for (const m of review) expect(m).not.toContain("Local only");
+    // The person's file is as it was; the task's folder keeps no copy.
+    expect((await client.projectFile(project.id, "Local only/notes.txt")).content).toBe(
+      "the person's own notes\n",
+    );
+    expect(readdirSync(join(rt.dirs.worktrees, task.id))).not.toContain("Local only");
   }, 120_000);
 });

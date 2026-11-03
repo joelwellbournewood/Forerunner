@@ -585,24 +585,50 @@ export class GitOps {
   }
 
   /**
-   * The paths under the `neverPush` folders that `ref` tracks and the remote's default branch
-   * does not (a repository that already tracks a folder of that name is not refused for it).
-   * Names are read raw (`-z`), so a name with spaces or non-ASCII letters is compared as is.
+   * The paths under the `neverPush` folders that a push of `ref` would upload: tracked at its
+   * tip, or touched by any of its commits no remote branch has yet (an agent's own commit that
+   * added a file and a later one that removed it still carry it). A folder the remote's default
+   * branch already tracks is the repository's own and is not checked. Tip names are read raw
+   * (`-z`) and the log's unquoted, so names with spaces or non-ASCII letters compare as they are.
    */
   async neverPushedIn(ref: string, defaultBranch?: string, remote = "origin"): Promise<string[]> {
-    const folders = this.opts.neverPush ?? [];
-    if (!folders.length) return [];
-    const onBranch = await this.trackedUnder(ref, folders);
-    if (onBranch === null) {
+    const guarded: string[] = [];
+    for (const f of this.opts.neverPush ?? []) {
+      const onBase = defaultBranch
+        ? await this.trackedUnder(`${remote}/${defaultBranch}`, [f])
+        : null;
+      if (!onBase?.length) guarded.push(f);
+    }
+    if (!guarded.length) return [];
+    const atTip = await this.trackedUnder(ref, guarded);
+    if (atTip === null) {
       // A branch that cannot be read is never pushed unchecked.
       this.must(await this.git(["rev-parse", "--verify", `${ref}^{commit}`]), `ls-tree ${ref}`);
       return [];
     }
-    if (!onBranch.length) return [];
-    const base = defaultBranch
-      ? new Set((await this.trackedUnder(`${remote}/${defaultBranch}`, folders)) ?? [])
-      : new Set<string>();
-    return onBranch.filter((p) => !base.has(p));
+    const log = this.must(
+      await this.git([
+        "-c",
+        "core.quotePath=false",
+        "log",
+        "--format=",
+        "--name-only",
+        ref,
+        "--not",
+        `--remotes=${remote}`,
+        "--",
+        ...guarded,
+      ]),
+      `log ${ref}`,
+    );
+    const touched = underNeverPushed(
+      log.stdout
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean),
+      guarded,
+    );
+    return [...new Set([...atTip, ...touched])];
   }
 
   /**
