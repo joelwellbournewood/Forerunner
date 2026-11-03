@@ -307,6 +307,9 @@ describe("durable always-human approvals (StateApprovals over the real store)", 
       const seen: Array<{ approvalKey?: string; approvalInput?: unknown }> = [];
       const capture: ToolSpec<{ pr: number }> = {
         ...mergeTool,
+        // A class the run's level frees (merge-in-app: merge_pr is free at no level since the
+        // owner's decision of 2026-11-02, so the call would wait for an approval instead).
+        actionClass: "deploy_staging",
         async execute(input, ctx) {
           seen.push({ approvalKey: ctx.approvalKey, approvalInput: ctx.approvalInput });
           return { content: `merged #${input.pr}` };
