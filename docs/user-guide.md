@@ -297,8 +297,9 @@ GitHub, resolving the conflict, then press **Try again**.
 
 **How Forerunner merges** (when it merges at all: today at Trusted). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
-the pull request waits for you with one sentence ("#4 changed after the review: look at the new
-commits, then merge it yourself or send it back."). It always makes a merge commit, so a pull
+the pull request waits for you with one Inbox card that says why in one sentence ("#4 changed
+after the review: look at the new commits, then merge it yourself or send it back."); **I merged
+it** and **Leave it open** close the card. It always makes a merge commit, so a pull
 request that carries another's work brings that work to the default branch as it is, and GitHub
 marks the other pull request merged too; it never rebases or force-pushes a branch, and when the
 default branch moved meanwhile the two are combined by the merge commit. It reads the branch's
@@ -306,10 +307,12 @@ rules first and never goes around them, even when your GitHub token is an admin'
 that needs an approving review ("This repository needs an approving review before merging, and
 GitHub does not let you approve your own pull request: merge it on GitHub once someone else
 approved it."), a code owner, signed commits or a merge queue, or that does not allow merge
-commits, is left for you to merge, with that sentence and one card. A rule that the branch be
-up to date brings the default branch into it by merging first. When the checks on GitHub still
-run, the merge waits and happens by itself once they pass, also if this computer slept or the
-app was closed meanwhile; a merge that waits for you always says why.
+commits, is left for you to merge, with one card that says that sentence. A rule that the branch
+be up to date brings the default branch into it by merging first. When the checks on GitHub
+still run, the merge waits and happens by itself once they pass, also if this computer slept or
+the app was closed meanwhile, with no card; after about a day of waiting (the checks still
+running, or GitHub not answering) it is left to you with a card that says which. A merge that
+waits for you always says why.
 
 **A project without a repository** works in its own folder on this computer (where its docs
 are): the agents read and write there, and the critic reviews what each task changed. At the

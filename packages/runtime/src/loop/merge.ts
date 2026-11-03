@@ -354,14 +354,20 @@ async function mergeChecked(
       ...(auth ? { auth } : {}),
       ...(deps.identity ? { identity: deps.identity } : {}),
     });
-    const local = await git.headSha();
-    if (local !== head)
-      return {
-        ...headMoved(name, head, input.head_sha),
-        message: `the task folder is at ${short(local)}, the PR head at ${short(head)}`,
-      };
     await git.fetch();
     const base = `origin/${pr.base.ref}`;
+    const local = await git.headSha();
+    if (local !== head) {
+      // An earlier try merged the base in here and stopped before its push (a crash, the app
+      // closing): that merge is set aside and made again below. Anything else in the task
+      // folder is not the reviewed version.
+      if (!(await unpushedBaseMerge(git, local, head, base)))
+        return {
+          ...headMoved(name, head, input.head_sha),
+          message: `the task folder is at ${short(local)}, the PR head at ${short(head)}`,
+        };
+      await git.createBranch(pr.head.ref, head);
+    }
     if (!(await git.isAncestor(base, "HEAD"))) {
       const beforeCi = await ciOf(host, ref.repo, head);
       const before = judgeChecks(beforeCi.runs, [], beforeCi.statuses);
@@ -475,6 +481,29 @@ async function mergeChecked(
       updated,
     };
   return { ...hostRefused(name, merged.message), headSha: head, updated };
+}
+
+/**
+ * Whether `local` is a merge of the base onto the PR's head that was never pushed: two parents,
+ * the first the PR head, the second already in `base`. Only this step makes such a commit after
+ * the review, so setting it aside loses nothing.
+ */
+async function unpushedBaseMerge(
+  git: GitOps,
+  local: string,
+  head: string,
+  base: string,
+): Promise<boolean> {
+  try {
+    const parents = await git.parentsOf(local);
+    return (
+      parents.length === 2 &&
+      parents[0] === head &&
+      (await git.isAncestor(parents[1] as string, base))
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** The files the task folder's head conflicts in with the base as the host has it now. */
@@ -1157,9 +1186,12 @@ export class ReviewedPrMerge implements MergePort {
     const waits = outcome.status === "checks_pending" || outcome.status === "unreachable";
     const stuck = waits && record.attempts >= MAX_MERGE_ATTEMPTS;
     const to: MergeRecordState = waits && !stuck ? "waiting_checks" : "left_to_you";
-    const sentence = stuck
-      ? `The checks of ${prName(record.pr_number)} have not finished in a day: look at them on GitHub, then merge it.`
-      : (outcome.sentence ?? "");
+    // A day of waiting says what it waited on: running checks, or GitHub not answering.
+    const sentence = !stuck
+      ? (outcome.sentence ?? "")
+      : outcome.status === "unreachable"
+        ? `GitHub has not answered about ${prName(record.pr_number)} for a day: look at it on GitHub, then merge it.`
+        : `The checks of ${prName(record.pr_number)} have not finished in a day: look at them on GitHub, then merge it.`;
     const wasLeft = record.state === "left_to_you";
     let out: MergeOutcome = { ...outcome, sentence };
     try {
@@ -1183,6 +1215,7 @@ export class ReviewedPrMerge implements MergePort {
       prUrl: outcome.prUrl,
       state: to,
       status: outcome.status,
+      ...(sentence ? { sentence } : {}),
     });
     return out;
   }
@@ -1310,13 +1343,18 @@ export async function fileLeftOpenRequest(
   },
 ): Promise<HumanRequestRow> {
   const { task, outcome } = input;
+  const number = parsePullUrl(outcome.prUrl)?.number;
+  const pr = number ? `pull request #${number}` : "its pull request";
+  // What the person reads (ADR 0111): the record's sentence, never the step's own message
+  // (commit ids, the host's words); a card filed without one says the message plainly.
+  const sentence = outcome.sentence?.trim() || leftOpenFallback(outcome.reason);
   return store.humanRequest.insert({
     human_id: input.humanId,
     project_id: task.project_id,
     task_id: task.id,
     session_id: input.sessionId,
     kind: "decision",
-    why: `The critic accepted "${task.title}", but its pull request ${outcome.prUrl} was not merged: ${outcome.reason.replace(/^PR left open for you: /, "")}.`.slice(
+    why: `The critic accepted "${task.title}", but ${pr} was not merged. ${sentence}`.slice(
       0,
       4000,
     ),
@@ -1329,10 +1367,21 @@ export async function fileLeftOpenRequest(
       task_id: task.id,
       pr_url: outcome.prUrl,
       status: outcome.status,
+      sentence,
       applied_at: null,
     },
     author_agent: input.agentId,
   });
+}
+
+/** "It was left open: check ci/test failed." for an outcome with no sentence of its own. */
+function leftOpenFallback(reason: string): string {
+  const said = reason
+    .replace(/^PR left open for you:\s*/i, "")
+    .replace(/https?:\/\/\S+/g, "it")
+    .replace(/[.\s]+$/, "")
+    .trim();
+  return said ? `It was left open: ${said}.` : "It was left open for you to merge.";
 }
 
 /**

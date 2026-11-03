@@ -49,6 +49,7 @@ describe("acceptsAnswer: what a card can act on (U-034)", () => {
     expect(ANSWER_CARD_KEYS.intakePrefix).toBe(INTAKE_KEY_PREFIX);
     expect(ANSWER_CARD_KEYS.specialistPrefix).toBe(SPECIALIST_KEY_PREFIX);
     expect(ANSWER_CARD_KEYS.modelWatchPrefix).toBe(MODEL_WATCH_REQUEST_PREFIX);
+    expect(ANSWER_CARD_KEYS.mergeLeftOpen).toBe(MERGE_LEFT_OPEN_KEY);
     expect(ANSWER_CARD_KEYS.optionOnly).toEqual([
       REBASE_CONFLICT_KEY,
       MERGE_LEFT_OPEN_KEY,

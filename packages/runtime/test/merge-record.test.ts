@@ -2,10 +2,18 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitHubHost, GitOps, PrTaskExecutor } from "@forerunner/capabilities";
-import { type Clock, join, run } from "@forerunner/platform";
+import {
+  type Clock,
+  ForerunnerError,
+  join,
+  Logger,
+  type LogRecord,
+  run,
+} from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
+import { requestViews } from "../src/daemon/views.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import {
   AllowAllCaps,
@@ -15,7 +23,7 @@ import {
   NoSecrets,
 } from "../src/enforcement/ports.ts";
 import type { CapabilityClaims } from "../src/enforcement/token.ts";
-import { MERGE_PR_TOOL, ReviewedPrMerge } from "../src/loop/merge.ts";
+import { MAX_MERGE_ATTEMPTS, MERGE_PR_TOOL, ReviewedPrMerge } from "../src/loop/merge.ts";
 import type { TaskExecutor } from "../src/session/runner.ts";
 import {
   closingReply,
@@ -79,6 +87,8 @@ interface RecordWorld {
   /** `git --git-dir <bare>` on the host's repository. */
   hostGit(...args: string[]): Promise<string>;
   setLevel(level: 2 | 3): Promise<void>;
+  /** The merge step's GitHub stops answering (every call throws a retryable error) or answers again. */
+  setHostDown(down: boolean): void;
 }
 
 async function recordWorld(opts: { level: 2 | 3; checksWaitMs?: number }): Promise<RecordWorld> {
@@ -137,6 +147,19 @@ async function recordWorld(opts: { level: 2 | 3; checksWaitMs?: number }): Promi
   });
   const calls: CapabilityClaims[] = [];
   const clock: Clock = w.clock;
+  // The merge step's view of GitHub, which a test can take down (it does not answer).
+  let hostDown = false;
+  const mergeHost = new Proxy(github, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        if (hostDown)
+          throw new ForerunnerError("timeout", "GitHub did not answer", { retryable: true });
+        return value.apply(target, args);
+      };
+    },
+  });
   const merge = new ReviewedPrMerge({
     store: w.store,
     clock,
@@ -149,7 +172,7 @@ async function recordWorld(opts: { level: 2 | 3; checksWaitMs?: number }): Promi
       afterToolCall: (ctx, tool, input, result) => hooks.afterToolCall(ctx, tool, input, result),
     },
     audit,
-    host: github,
+    host: mergeHost,
     worktreeRoot,
     token,
     identity,
@@ -224,6 +247,9 @@ async function recordWorld(opts: { level: 2 | 3; checksWaitMs?: number }): Promi
     async setLevel(level) {
       await w.store.project.patch(w.project, { autonomy_level: level });
     },
+    setHostDown(down) {
+      hostDown = down;
+    },
   };
   return m;
 }
@@ -237,6 +263,36 @@ const forcedPushes = (host: FakeGitHost, branch: string) =>
     );
 
 const mergeRows = (audit: MemoryAudit) => audit.entries.filter((e) => e.tool === MERGE_PR_TOOL);
+
+/** The task's cards as the Inbox shows them (`requestViews`, what GET /requests answers). */
+async function inboxCards(m: RecordWorld, taskId: string) {
+  const rows = await m.w.store.humanRequest.list({ task_id: taskId } as never);
+  return (await requestViews(m.w.store, rows)).map((v) => ({
+    title: v.title,
+    body: v.body,
+    choices: (v.choices ?? []).map((c) => [c.label, c.explain]),
+  }));
+}
+
+/** The daemon log's "merge record" lines while `fn` runs. */
+async function mergeLogLines(fn: () => Promise<unknown>): Promise<Record<string, unknown>[]> {
+  const lines: Record<string, unknown>[] = [];
+  const off = Logger.addSink((rec: LogRecord) => {
+    if (rec.scope === "merge" && rec.msg === "merge record") lines.push(rec.data ?? {});
+  });
+  try {
+    await fn();
+  } finally {
+    off();
+  }
+  return lines;
+}
+
+/** The left-open card's two answers, each with what it does (design §3.8). */
+const LEFT_OPEN_CHOICES = [
+  ["I merged it", "Closes this card and notes on the task that you merged it."],
+  ["Leave it open", "Closes this card; the pull request stays open on GitHub."],
+];
 
 describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 }, () => {
   it("(a) a dependent branch whose base moved is merged as it is, with a merge commit: nothing replayed or forced, the dependency's commit reaches main once and both PRs are merged", async () => {
@@ -385,6 +441,44 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
     expect((await m.record(t.id)).state).toBe("merged");
   });
 
+  it("(c) a merge that waited about a day goes to the person, with what it waited on: checks still running, or GitHub not answering", async () => {
+    const m = await recordWorld({ level: 3 });
+    const running = (pr: { headSha: string }) => m.check(pr.headSha, "ci/test", "in_progress");
+    const t = await m.runTask("Add feature", { afterPr: running });
+    const pr = await m.pr(t.id);
+    await m.w.store.mergeRecord.move((await m.record(t.id)).id, "waiting_checks", {
+      attempts: MAX_MERGE_ATTEMPTS,
+    });
+    await m.merge.retryWaiting();
+    const stuck = await m.record(t.id);
+    expect(stuck).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "checks_pending",
+      sentence: `The checks of #${pr.number} have not finished in a day: look at them on GitHub, then merge it.`,
+    });
+    expect((await inboxCards(m, t.id)).map((c) => c.body)).toEqual([stuck.sentence]);
+    // GitHub silent for a day is not "the checks have not finished".
+    const u = await m.runTask("Add footer", { afterPr: running });
+    const prU = await m.pr(u.id);
+    await m.w.store.mergeRecord.move((await m.record(u.id)).id, "waiting_checks", {
+      attempts: MAX_MERGE_ATTEMPTS,
+    });
+    m.setHostDown(true);
+    try {
+      await m.merge.retryWaiting();
+    } finally {
+      m.setHostDown(false);
+    }
+    const silent = await m.record(u.id);
+    expect(silent).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "unreachable",
+      sentence: `GitHub has not answered about #${prU.number} for a day: look at it on GitHub, then merge it.`,
+    });
+    expect((await inboxCards(m, u.id)).map((c) => c.body)).toEqual([silent.sentence]);
+    expect((await m.pr(u.id)).merged).toBe(false);
+  });
+
   it("(d) the gate reads the level at every call: a record made at level 3, the level then lowered to 2, is not merged by the retry", async () => {
     const m = await recordWorld({ level: 3 });
     const t = await m.runTask("Add feature", {
@@ -426,8 +520,19 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
       reviewed_head_sha: reviewed,
       last_outcome: "head_moved",
     });
-    expect(record.sentence).toMatch(/changed after the review/);
-    expect((await m.w.store.humanRequest.list({ task_id: t.id } as never)).length).toBe(1);
+    expect(record.sentence).toBe(
+      `#${pr.number} changed after the review: look at the new commits, then merge it yourself or send it back.`,
+    );
+    // The person reads the record's sentence on the one card, with no commit ids.
+    const cards = await inboxCards(m, t.id);
+    expect(cards).toEqual([
+      {
+        title: `The critic accepted "Add feature", but pull request #${pr.number} was not merged`,
+        body: record.sentence,
+        choices: LEFT_OPEN_CHOICES,
+      },
+    ]);
+    expect(JSON.stringify(cards)).not.toMatch(/[0-9a-f]{12}/);
   });
 
   it("(b) a crash after main was merged in: the head keeps the task's own change, so the record moves to it and the retry merges it", async () => {
@@ -457,6 +562,50 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
     expect(record.own_change_id).toBe(before.own_change_id);
   });
 
+  it("(b) a crash after main was merged in locally, before the push: that merge is set aside, main is brought in again, and nothing goes to the person", async () => {
+    const m = await recordWorld({ level: 3 });
+    m.host.setBranchRules(FULL, "main", [
+      {
+        type: "required_status_checks",
+        parameters: {
+          strict_required_status_checks_policy: true,
+          required_status_checks: [{ context: "ci/test" }],
+        },
+      },
+    ]);
+    const t = await m.runTask("Add feature", {
+      afterPr: (pr) => m.check(pr.headSha, "ci/test", "in_progress"),
+    });
+    const reviewed = (await m.record(t.id)).reviewed_head_sha;
+    expect((await m.record(t.id)).state).toBe("waiting_checks");
+    // Main moved; an earlier try merged it into the task folder and died before the push.
+    await m.host.seedCommit(FULL, { "docs/notes.md": "notes\n" }, "main moved", "main");
+    const git = new GitOps({
+      cwd: join(m.worktreeRoot, t.id),
+      identity,
+      auth: { token: m.token },
+    });
+    await git.fetch();
+    expect((await git.mergeFrom("origin/main", "Merge main into the branch")).ok).toBe(true);
+    expect(await git.headSha()).not.toBe(reviewed);
+    await m.check(reviewed, "ci/test", "completed", "success");
+    await m.merge.retryWaiting();
+    // Brought up to date by a merge commit pushed now, not "changed after the review".
+    const pr = await m.pr(t.id);
+    expect(pr.merged).toBe(false);
+    const parents = (await m.hostGit("rev-list", "--parents", "-n", "1", pr.head.sha)).split(" ");
+    expect(parents.slice(1)).toEqual([reviewed, await m.hostGit("rev-parse", "main")]);
+    expect(forcedPushes(m.host, pr.head.ref)).toEqual([]);
+    expect(await m.record(t.id)).toMatchObject({
+      state: "waiting_checks",
+      reviewed_head_sha: pr.head.sha,
+    });
+    expect(await inboxCards(m, t.id)).toEqual([]);
+    await m.check(pr.head.sha, "ci/test", "completed", "success");
+    await m.merge.retryWaiting();
+    expect(await m.pr(t.id)).toMatchObject({ merged: true });
+  });
+
   it("(e) a rule that needs an approving review: nothing merges, even on an admin token that GitHub would let around classic protection; one sentence and one card", async () => {
     const m = await recordWorld({ level: 3 });
     m.host.setBranchProtection(FULL, "main", {
@@ -470,15 +619,32 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
     expect(record.sentence).toBe(
       "This repository needs an approving review before merging, and GitHub does not let you approve your own pull request: merge it on GitHub once someone else approved it.",
     );
-    expect((await m.w.store.humanRequest.list({ task_id: t.id } as never)).length).toBe(1);
-    // A ruleset says the same.
+    // The one card says it.
+    const pr = await m.pr(t.id);
+    expect(await inboxCards(m, t.id)).toEqual([
+      {
+        title: `The critic accepted "Add feature", but pull request #${pr.number} was not merged`,
+        body: record.sentence,
+        choices: LEFT_OPEN_CHOICES,
+      },
+    ]);
+    // A ruleset says the same, on the card and in the daemon log.
     m.host.setBranchProtection(FULL, "main", null);
     m.host.setBranchRules(FULL, "main", [
       { type: "pull_request", parameters: { required_approving_review_count: 2 } },
     ]);
-    const u = await m.runTask("Add footer");
-    expect((await m.pr(u.id)).merged).toBe(false);
-    expect((await m.record(u.id)).sentence).toMatch(/approving review/);
+    const logged = await mergeLogLines(async () => {
+      const u = await m.runTask("Add footer");
+      expect((await m.pr(u.id)).merged).toBe(false);
+      const sentence = (await m.record(u.id)).sentence;
+      expect(sentence).toMatch(/approving review/);
+      expect((await inboxCards(m, u.id)).map((c) => c.body)).toEqual([sentence]);
+    });
+    expect(logged.at(-1)).toMatchObject({
+      state: "left_to_you",
+      status: "blocked_by_rules",
+      sentence: expect.stringMatching(/approving review/),
+    });
   });
 
   it("(f) a repository that does not allow merge commits is never merged by Forerunner: one sentence", async () => {
@@ -488,7 +654,11 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
     expect((await m.pr(t.id)).merged).toBe(false);
     const record = await m.record(t.id);
     expect(record).toMatchObject({ state: "left_to_you", last_outcome: "merge_commits_off" });
-    expect(record.sentence).toMatch(/does not allow merge commits/);
+    const pr = await m.pr(t.id);
+    expect(record.sentence).toBe(
+      `This repository does not allow merge commits, and Forerunner merges only with one: merge #${pr.number} on GitHub, or allow merge commits in its settings.`,
+    );
+    expect((await inboxCards(m, t.id)).map((c) => c.body)).toEqual([record.sentence]);
   });
 
   it("(h) a merge left to the person always says why: the level's refusal and an unknown reviewed version", async () => {

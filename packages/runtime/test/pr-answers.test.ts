@@ -449,10 +449,24 @@ describe('merge left open: "I merged it" and "Leave it open" (U-028)', () => {
     expect(filed.change_card).toMatchObject({ key: MERGE_LEFT_OPEN_KEY, task_id: task.id });
     const card = (await shownFor(w, task.id)) as HumanRequestView;
     expect(card.options).toEqual(["I merged it", "Leave it open"]);
+    // The Inbox shows it titled by its task, with no URL; an outcome with no sentence of its
+    // own says the step's message plainly; each answer says what it does.
+    expect(card.title).toBe(
+      'The critic accepted "Add feature", but pull request #7 was not merged',
+    );
+    expect(card.body).toBe("It was left open: check ci/test failed.");
+    expect(card.choices?.map((c) => [c.label, c.explain])).toEqual([
+      ["I merged it", "Closes this card and notes on the task that you merged it."],
+      ["Leave it open", "Closes this card; the pull request stays open on GitHub."],
+    ]);
     await click(w, card, card.options[0] as string);
     expect((await d.rt.store.task.mustGet(task.id)).reason).toMatch(/^merged by you: /);
     expect((await d.rt.store.humanRequest.mustGet(card.id)).change_card).toMatchObject({
       outcome: "merged",
     });
+    const inbox = InboxView.parse(await (await w.req("/inbox")).json());
+    expect(inbox.requests.find((r) => r.id === card.id)?.outcome).toBe(
+      "Noted: you merged pull request #7.",
+    );
   });
 });

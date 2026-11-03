@@ -782,6 +782,54 @@ function dockerCard(
   };
 }
 
+/** "pull request #4" for the card's PR URL, "its pull request" when it names none. */
+function prOfCard(card: JsonObject): string {
+  const n = /\/pulls?\/(\d+)/.exec(str(card.pr_url) ?? "")?.[1];
+  return n ? `pull request #${n}` : "its pull request";
+}
+
+/**
+ * A reviewed pull request the merge step left to the person (U-028, ADR 0111,
+ * `fileLeftOpenRequest` in `loop/merge.ts`): titled by its task, the merge record's sentence
+ * as the body (what happened and what to do, no commit ids), each answer with what it does.
+ * A card filed before the sentence was kept reads its own words after the first sentence.
+ */
+function mergeLeftOpenCard(
+  r: Pick<HumanRequestRow, "why" | "steps" | "options">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const choices: RequestChoiceWords[] = r.options.map(optionLabel).map((label, i) => ({
+    label,
+    explain: /^i merged/i.test(label)
+      ? "Closes this card and notes on the task that you merged it."
+      : /^leave/i.test(label)
+        ? "Closes this card; the pull request stays open on GitHub."
+        : null,
+    tone: i === 0 ? "primary" : "secondary",
+    confirm: null,
+    input: null,
+  }));
+  return {
+    title: ctx.taskTitle
+      ? `The critic accepted ${q(ctx.taskTitle)}, but ${prOfCard(card)} was not merged`
+      : firstSentence(r.why),
+    body: str(card.sentence) ?? afterFirstSentence(r.why),
+    choices,
+    links: [],
+    reply: "none",
+    details: r.steps,
+    outcome: null,
+  };
+}
+
+/** What became of a left-open card once answered (`syncPrAnswers` records its outcome). */
+function mergeLeftOpenOutcome(card: JsonObject): string | null {
+  if (card.outcome === "merged") return `Noted: you merged ${prOfCard(card)}.`;
+  if (card.outcome === "left_open") return `Left open: ${prOfCard(card)} stays open on GitHub.`;
+  return null;
+}
+
 /** Any other card: its own words, its options with the reject-like ones secondary. */
 function genericCard(
   r: Pick<HumanRequestRow, "kind" | "why" | "steps" | "options" | "change_card">,
@@ -899,6 +947,9 @@ export function requestWords(
   } else if (key?.startsWith(ANSWER_CARD_KEYS.intakePrefix)) {
     words = intakeCard(r, card, ctx);
     outcome = intakeOutcome(card);
+  } else if (key === ANSWER_CARD_KEYS.mergeLeftOpen) {
+    words = mergeLeftOpenCard(r, card, ctx);
+    outcome = mergeLeftOpenOutcome(card);
   } else if (key === "sandbox.not_ready") {
     words = dockerCard(r, card, ctx);
     if (card.outcome === "cancel")

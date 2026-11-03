@@ -70,7 +70,8 @@ the dependent rebuilds are 'dependent-branches'', which amends point 6 of ADR 01
    no longer file a card: the record says "#4 merges when its checks pass." (after about a day
    of tries it goes to the person). Every merge left to the person carries one sentence on the
    record; what the person must act on (a failed check, a conflict, a moved head, a rule, merge
-   commits off, a host refusal) files one card, once per record.
+   commits off, a host refusal, a day of waiting) files one card, once per record, and that card
+   says the record's sentence (never the step's own message, with its commit ids).
 4. **No replay.** The merge step never rebases and never force-pushes. When main moved, the
    pull request is merged as it is with a merge commit: GitHub combines the two and nothing is
    copied, and a pull request that carried a dependency's commits brings them to main as they

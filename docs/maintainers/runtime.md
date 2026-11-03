@@ -2616,7 +2616,10 @@ they are and GitHub marks that pull request merged too); only when an update is 
 that the branch be up to date, or `input.update` from the gate) the base is merged into the
 branch in the worktree (`GitOps.mergeFrom`, a merge commit, a normal push; `conflict` with the
 files when it does not merge cleanly; `head_moved` when bringing it in changed the own change,
-and the branch goes back to the reviewed head), the record moves to the new head
+and the branch goes back to the reviewed head; a task folder whose HEAD is a merge of the base
+onto the PR head that was never pushed, left by an attempt that stopped before its push, is set
+back to the PR head and the base merged in again, not taken for a head that moved), the record
+moves to the new head
 (`onNewHead`), and every check the reviewed head had must pass again there; the host's check runs
 and commit statuses on the head decide (`judgeChecks`, the latest run per name and the latest
 status per context: a failed, cancelled, timed-out or action-required run and a `failure` or
@@ -2633,17 +2636,29 @@ called (`ReviewedPrMerge.onMerged(listener)` / `merged(event)`: compose logs it 
 project event; 'dependent-branches' and 'merged-copy' subscribe, and 'dependent-branches' calls
 `merged` for PRs the watcher sees merged on GitHub). Checks still running or the host silent
 (`unreachable`): `waiting_checks` with "#4 merges when its checks pass.", no card, retried at the
-next poll (after `MAX_MERGE_ATTEMPTS` tries, about a day, it goes to the person with one card).
+next poll (after `MAX_MERGE_ATTEMPTS` tries, about a day, it goes to the person with one card
+whose sentence says what it waited on: "The checks of #4 have not finished in a day: ..." or,
+for `unreachable`, "GitHub has not answered about #4 for a day: ...").
 Anything the person must act on (`checks_failed`, `conflict`, `head_moved`, `blocked_by_rules`,
 `merge_commits_off`, `failed`): `left_to_you` with one sentence and one non-blocking `decision`
-request, filed once per record (`fileLeftOpenRequest`: why, steps, "I merged it" / "Leave it
-open", `change_card.key` `MERGE_LEFT_OPEN_KEY` with the PR URL and the status; `syncPrAnswers`
-applies the answer, below). `not_allowed`, `unverified` and a closed PR: `left_to_you` with the
+request, filed once per record (`fileLeftOpenRequest`: `why` is 'The critic accepted "<task>",
+but pull request #4 was not merged. <the record's sentence>', steps, "I merged it" / "Leave it
+open", `change_card.key` `MERGE_LEFT_OPEN_KEY` with the PR URL, the status and the `sentence`;
+`syncPrAnswers` applies the answer, below). The Inbox shows the record's sentence, not the
+step's message (which carries commit ids and the host's words): `mergeLeftOpenCard` in
+`daemon/request-words.ts` (key `ANSWER_CARD_KEYS.mergeLeftOpen`) titles the card by its task
+and PR number, takes `change_card.sentence` as the body (a card filed without one: its `why`
+after the first sentence), gives each answer its consequence line, and once answered says
+"Noted: you merged pull request #4." or "Left open: pull request #4 stays open on GitHub.". An
+outcome with no sentence (a direct caller of `fileLeftOpenRequest`) is worded from its reason
+("It was left open: check ci/test failed."). The daemon log line `merge record` carries the
+sentence too. `not_allowed`, `unverified` and a closed PR: `left_to_you` with the
 sentence and no card. Every outcome is also written on the task row (`reason`, versioned with the
 agent); a session's comes back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or
 `pr.left_open` event (`pr.merge_failed` when the port threw; never fatal) and is counted in the
 summary ("Merged 1 reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"); a
-retry's is the daemon log line `merge record` with the task, the state and the outcome.
+retry's is the daemon log line `merge record` with the task, the state, the outcome and the
+sentence.
 `resumeAtStart` settles a record a dead process left `merging` by the host: merged there,
 `merged`; closed, `left_to_you`; open, back to `waiting_checks` for the retry. A stop (the kill
 switch, a revoked token) during the step ends it as before (`killed`, thrown on, never recorded
@@ -3466,7 +3481,8 @@ repository; each option clicked through `POST /requests/:id/answer` with the Inb
 then the task's next run: the person's resolved branch opened as the PR after a restart with
 the specialist not run, a branch that still conflicts asked again, a drop redone from the
 current base with the old commit gone, a cancel; both merge options on a card filed the old
-way and one filed by `fileLeftOpenRequest`).
+way and one filed by `fileLeftOpenRequest`, whose title, body, consequence lines and answered
+line are read from `GET /inbox`).
 
 **Session review answers (`syncSessionReviewAnswers`, `src/session/session-review-answers.ts`,
 U-033).** A session review with a `human` verdict files its request for the session's owner
@@ -6359,7 +6375,16 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   those tries and then go to the person. A tier 3 task is merged by the human who signs it off,
   never by the step. GitHub's asynchronous merge request (with `bypass_rules: false`) is not
   used: its documentation was not checked; the plain merge endpoint pinned to the sha runs after
-  Forerunner's own read of the branch's rules.
+  Forerunner's own read of the branch's rules. The session page's line for a merge left open
+  (`pr.left_open`, from the runner, worded by `leftOpenWords`) still shows the step's message
+  ("the PR head 03808d8b405c is not the reviewed commit ..."), not the record's sentence, which
+  the Inbox card and the log line carry; 'merge-in-app' owns those words. Each retry attempt is
+  one `merge_pr` audit row and one issued token (about 1,440 a day for checks that run all
+  day). `getBranchRules` reads a 403 on the rules route as a failed merge (one card), and reads
+  an admin token whose branch GitHub reports `protected` with no classic protection to read
+  (404) as unreadable, so it blocks: whether GitHub's `protected` counts rulesets was not
+  checked. The retry runs only where the git host watcher runs (a GitHub token when the daemon
+  started).
 - The monthly jobs (ADR 0060) have run on the fake provider only: the handover test on
   Forerunner's own repository with a live model is a run on the final build within the live
   budget (`fr jobs handover <project> --force`), not done here. Their reports are files under
