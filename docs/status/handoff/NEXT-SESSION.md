@@ -15,32 +15,49 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
-## Status at 2026-11-02 03:00 UTC (paused at the weekly-limit warning)
+## Status at 2026-11-03 19:30 UTC (paused: the weekly limit is reached)
 
-Every Claude session on the account reported the seven-day limit as `allowed_warning` (the exact percentage
-is not visible from a session; it resets 2026-11-08 05:00 UTC). The owner's ceiling is 90%. Phase C, the
-heaviest remaining step, was stopped at its first stage so as not to overshoot; nothing broken was pushed.
+The account's seven-day limit was reached on 2026-11-03 and resets 2026-11-08 05:00 UTC. The
+owner did not approve paid extra usage, so nothing runs until then. A scheduled check-in in
+session `claude/nifty-knuth-f9udt0` resumes the work at 05:15 UTC on 2026-11-08.
 
-- **Done and pushed (CI green on Windows and Linux at each):** wave 3 at 27014b7 (one-sentence project
-  status, the running chip, Stop all only while something runs, the project folder with Open folder and a
-  Files tab, a queued start runs when the session ends, the system's words); the live fixes at 7765efd (the
-  plan from a brief: whole-reply reading, prose shortened instead of refused, one retry with the problems in
-  words, true failure words, small plans for short briefs, ADR 0103; the chat told about planning; model text
-  rendered without breaking paths; the bench's live mode with prices in the call log).
-- **Phase B confirmed with the real model** (live3): 4 of 4 one-line briefs got a small plan on the first call
-  (before: 1 in 6), every session completed, and the work runs (pages, a todo list, a photo-rename script
-  with 13 passing tests); chat says what was built and where. Phase D (live4): six specialists do correct,
-  honest work; the researcher and science-evaluator are refused on an API key.
-- **Phase C stopped at the fixer stage.** Its spec now includes the GitHub walk and live3/live4 findings
-  (`round-2026-11-01/phase-c-spec.json`). Partial, unreviewed work is kept as patches in
-  `round-2026-11-01/wip/` (and, while the container lives, as local branches `wip/verification` and
-  `wip/continuity`). To resume: copy the spec to /tmp/frbench/phaseC.json and the leftovers to
-  /tmp/frbench/handoffs.json, apply each patch in its fixer's worktree, and run `phase-c.workflow.txt` with
-  `{"wave": 4, "keys": ["verification", "continuity", "github-result", "research-web"]}` (the fixers find
-  their branch and continue; review, fix-up, merge and validation run in full).
-- **API spend for live checks:** about USD 3.0 of the owner's USD 40 (live1 0.63, live2 0.79, GitHub 0.05,
-  live3 0.98, live4 0.54).
-- **Then:** E (sweep, `leftovers.json` 'later'), F, F2, G, G2, H as below.
+- **Merged and pushed at c5910a9.** CI is green on Windows and Linux, including the Desktop app
+  workflow's real-window check. Merged so far:
+  - phase C (verification, continuity, GitHub result, research on the web);
+  - phase E wave 5 (answers, screens, noise, bench) and wave 6 (stops, asking, decisions,
+    verification);
+  - wave 7 group 1 (the merge record, ADR 0111; the budget stop, ADR 0112; desktop polish, with
+    Ctrl- and Shift-click on the app's own links acting as a plain click);
+  - wave 7 group 2 (dependent branches, credential limits);
+  - F2: the real window on Windows CI, and Docker full review on Linux;
+  - test temp files now go in one folder per run, removed at its end.
+- **The owner's decisions of 2026-11-02** are built in waves 7 and 8: merging, Autopilot, the
+  local copy, the Local only folder, the PR preview, credentials, budgets, web search, the site
+  rules, Ctrl-click, the status issue, the standard repository guide and collaboration. Their
+  full text is in the plan files backup below. Each still needs its ADR and user-guide entry
+  (phase G).
+- **Wave 7 group 3 is written, not yet reviewed:** merge-in-app, credential-chooser, cost and
+  merged-copy. The limit cut merged-copy off after 9 commits; the rest is still to do. The
+  branches are on GitHub as `claude/nifty-knuth-f9udt0-backup/fix-*`.
+- **The plan files are on GitHub too:** branch `claude/nifty-knuth-f9udt0-backup/plan-files`.
+  It holds the wave 7 and 8 specs, the owner's decisions, the leftovers, each wave's results, the
+  collaboration audit, the workflow scripts and the resume recipe. Its README says how to restore
+  them and resume, on this machine or a fresh one. Delete the backup branches once group 3 is
+  merged.
+- **Next, in order:**
+  1. group 3: reviews, merged-copy finished, fix-ups, merge;
+  2. group 4: budget resume, web search;
+  3. group 5: merged-task actions, site rules;
+  4. group 6: polish;
+  5. live check 2 with the real model;
+  6. wave 8: 16 areas in 8 groups (collaboration, the status issue, the repository guide);
+  7. then F, G, G2 and H, as below.
+- **Cost estimate for waves 7 and 8,** from what earlier rounds used: about USD 2,200 at API
+  prices (1,800 to 2,700). That is about three quarters of one week's included limit.
+- **API spend for live checks:** about USD 6 of the owner's USD 40.
+- **Open owner questions** (defaults are built if unanswered): 9 on collaboration
+  (`collab/owner-summary.md`) and 6 from waves 5 and 6 (`owner-questions-wave56.md`), both in
+  the plan files.
 
 ## Progress, and the plan from here (approved by the owner, 2026-11-01 evening)
 
