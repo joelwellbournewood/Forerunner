@@ -6474,7 +6474,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         order: [],
       });
     const order = [...(row.merge?.first ?? []), number];
-    const merging = (state.pullRequestMerges[id] ??= []);
+    const merging = state.pullRequestMerges[id] ?? [];
+    state.pullRequestMerges[id] = merging;
     for (const n of order) {
       const r = prs.waiting.find((w) => w.number === n);
       if (!r) continue;

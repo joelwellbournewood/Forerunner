@@ -8152,6 +8152,40 @@ describe("the UI client against the real daemon: Merge in the app (merge-in-app,
     }
   }, 120_000);
 
+  it("Forerunner's docs pull request merges on the click, as it is on GitHub now", async () => {
+    // The scaffold's docs pull request of a project on this repository (the first one opened it).
+    let project = { id: "" };
+    let docs:
+      | Awaited<ReturnType<DaemonClient["projectPullRequests"]>>["waiting"][number]
+      | undefined;
+    for (const p of await client.projects()) {
+      docs = (await client.projectPullRequests(p.id)).waiting.find((w) => w.kind === "docs");
+      if (docs) {
+        project = p;
+        break;
+      }
+    }
+    expect(docs?.merge).toEqual({ state: "ready", canMerge: true, sentence: null, first: [] });
+    const answer = await client.mergePullRequest(project.id, docs?.number ?? 0);
+    expect(answer).toEqual({
+      state: "queued",
+      sentence: `Merging #${docs?.number} as it is on GitHub now.`,
+      order: [docs?.number],
+    });
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: new SystemClock() });
+    await eventually(
+      async () => (await github.getPullRequest(REPO, docs?.number ?? 0)).merged,
+      "the docs pull request to be merged",
+      async () => JSON.stringify((await client.projectPullRequests(project.id)).waiting),
+      30_000,
+    );
+    // A merge commit, with the person's click in the audit row.
+    const pr = await github.getPullRequest(REPO, docs?.number ?? 0);
+    expect(
+      (await hostGit("rev-list", "--parents", "-n", "1", pr.mergeCommitSha ?? "")).split(" "),
+    ).toHaveLength(3);
+  }, 120_000);
+
   it("the merge mode is a setting per repository project: 'Merge automatically after review' asks a yes and the GET says the mode", async () => {
     const project = await client.createProject({ name: "Auto", goal: "A page", repos: [FULL] });
     const row = (await client.settings()).find(
